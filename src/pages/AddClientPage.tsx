@@ -1,6 +1,5 @@
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,13 +7,13 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ArrowLeft, Save } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
+import { supabase } from '@/integrations/supabase/client';
 
 const AddClientPage: React.FC = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const { toast } = useToast();
+  const [isSaving, setIsSaving] = useState(false);
 
   const [formData, setFormData] = useState({
     gstin: '',
@@ -100,25 +99,39 @@ const AddClientPage: React.FC = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!validateForm()) {
-      toast({
-        title: 'Validation Error',
-        description: 'Please fix the errors in the form.',
-        variant: 'destructive',
-      });
+      toast.error('Please fix the errors in the form.');
       return;
     }
 
-    // In a real app, this would save to the database
-    toast({
-      title: 'Client Added',
-      description: `${formData.name} has been successfully added.`,
-    });
+    setIsSaving(true);
 
-    navigate('/clients');
+    try {
+      const { error } = await supabase
+        .from('clients')
+        .insert([{
+          gstin: formData.gstin,
+          name: formData.name,
+          registration_type: formData.registrationType as 'Regular' | 'Composition' | 'Tax Deductor',
+          registration_date: formData.registrationDate,
+          mobile: formData.mobile,
+          email: formData.email,
+          selected_returns: formData.selectedReturns,
+        }]);
+
+      if (error) throw error;
+
+      toast.success(`${formData.name} has been successfully added.`);
+      navigate('/clients');
+    } catch (error: any) {
+      console.error('Error adding client:', error);
+      toast.error('Failed to add client: ' + error.message);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -275,9 +288,9 @@ const AddClientPage: React.FC = () => {
               <Button type="button" variant="outline" onClick={() => navigate(-1)}>
                 Cancel
               </Button>
-              <Button type="submit" className="flex items-center gap-2">
+              <Button type="submit" className="flex items-center gap-2" disabled={isSaving}>
                 <Save className="h-4 w-4" />
-                Add Client
+                {isSaving ? 'Adding...' : 'Add Client'}
               </Button>
             </div>
           </form>
