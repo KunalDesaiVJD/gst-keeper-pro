@@ -7,6 +7,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Download, FileText } from 'lucide-react';
 import { mockFilingStatus, mockClients } from '@/data/mockData';
 import { FilingStatusType, ReturnType } from '@/types';
+import { exportFilingStatusToPDF } from '@/utils/pdfExport';
+import { toast } from 'sonner';
 
 const FilingStatusPage: React.FC = () => {
   const [selectedMonth, setSelectedMonth] = useState<string>('01/2026');
@@ -69,6 +71,21 @@ const FilingStatusPage: React.FC = () => {
     });
     
     return records;
+  };
+
+  const handleExportPDF = () => {
+    const returnTypeMap: Record<string, ReturnType> = {
+      'gstr1': 'GSTR-1',
+      'gstr3b': 'GSTR-3B',
+      'itc04': 'ITC-04',
+      'gstr6': 'GSTR-6',
+      'gstr7': 'GSTR-7',
+      'cmp08': 'CMP-08',
+    };
+    const returnType = returnTypeMap[selectedTab];
+    const records = generateAllFilingRecords(returnType);
+    exportFilingStatusToPDF(records, returnType, selectedMonth);
+    toast.success('PDF exported successfully');
   };
 
   const FilingTable = ({ records, returnType }: { records: typeof mockFilingStatus; returnType: string }) => (
@@ -148,7 +165,7 @@ const FilingStatusPage: React.FC = () => {
           <h1 className="text-2xl font-heading font-bold text-foreground">Filing Status</h1>
           <p className="text-muted-foreground">Track GST return filing status for all clients</p>
         </div>
-        <Button variant="outline" className="flex items-center gap-2">
+        <Button variant="outline" className="flex items-center gap-2" onClick={handleExportPDF}>
           <Download className="h-4 w-4" />
           Export PDF
         </Button>

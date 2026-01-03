@@ -86,14 +86,19 @@ export interface BillNotInBooks {
 // 2B Version History
 export interface TwoBVersion {
   id: string;
-  clientGstin: string;
-  periodMonth: string; // MM/YY
-  tableType: 'Bills_Not_in_2B' | 'Bills_Not_in_Books';
+  clientId: string;
+  clientGstin?: string;
+  month: string; // MM/YY
+  periodMonth?: string;
+  tableType?: 'Bills_Not_in_2B' | 'Bills_Not_in_Books';
   versionNumber: number;
-  versionData: (BillNotIn2B | BillNotInBooks)[];
+  billsNotIn2B: BillNotIn2B[];
+  billsNotInBooks: BillNotInBooks[];
+  versionData?: (BillNotIn2B | BillNotInBooks)[];
   updatedBy: string;
   updatedAt: Date;
-  isCurrentVersion: boolean;
+  isCurrent: boolean;
+  isCurrentVersion?: boolean;
 }
 
 // ITC Summary Row
