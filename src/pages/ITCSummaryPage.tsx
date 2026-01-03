@@ -73,9 +73,10 @@ const ITCSummaryPage: React.FC = () => {
 
   const selectedClientData = clients.find(c => c.id === selectedClient);
 
-  // Fetch clients
+  // Fetch clients from Supabase
   useEffect(() => {
     const fetchClients = async () => {
+      console.log('Fetching clients from Supabase...');
       const { data, error } = await supabase
         .from('clients')
         .select('id, name, gstin')
@@ -83,11 +84,25 @@ const ITCSummaryPage: React.FC = () => {
       
       if (error) {
         console.error('Error fetching clients:', error);
+        toast.error('Failed to load clients: ' + error.message);
         return;
       }
+      console.log('Clients loaded:', data);
       setClients(data || []);
     };
     fetchClients();
+
+    // Real-time subscription for clients
+    const channel = supabase
+      .channel('clients-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => {
+        fetchClients();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // Fetch ITC Summary data when client/month changes
