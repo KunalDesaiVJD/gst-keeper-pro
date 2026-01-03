@@ -192,16 +192,15 @@ const LoginPage: React.FC = () => {
               </Dialog>
             </div>
             
-            {/* Demo Credentials Info */}
-            <div className="mt-6 p-4 bg-muted/50 rounded-lg border border-border">
-              <p className="text-xs font-medium text-muted-foreground mb-2">Demo Credentials:</p>
-              <div className="text-xs text-muted-foreground space-y-1">
-                <p><strong>Superadmin:</strong> superadmin / 123</p>
-                <p><strong>GST Manager:</strong> Kunal / 2026</p>
-                <p><strong>Employee:</strong> Amit / 2026</p>
-                <p><strong>Client:</strong> AAQCS2345D / AAQCS2345D</p>
+            {/* Development notice - removed credentials display for security */}
+            {process.env.NODE_ENV === 'development' && (
+              <div className="mt-6 p-4 bg-amber-500/10 rounded-lg border border-amber-500/30">
+                <p className="text-xs font-medium text-amber-600 mb-1">⚠️ Development Environment</p>
+                <p className="text-xs text-muted-foreground">
+                  This is a development build. Please use valid credentials to sign in.
+                </p>
               </div>
-            </div>
+            )}
           </CardContent>
         </Card>
         
