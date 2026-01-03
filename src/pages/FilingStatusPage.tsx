@@ -5,8 +5,8 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Download, FileText } from 'lucide-react';
-import { mockFilingStatus } from '@/data/mockData';
-import { FilingStatusType } from '@/types';
+import { mockFilingStatus, mockClients } from '@/data/mockData';
+import { FilingStatusType, ReturnType } from '@/types';
 
 const FilingStatusPage: React.FC = () => {
   const [selectedMonth, setSelectedMonth] = useState<string>('01/2026');
@@ -29,10 +29,49 @@ const FilingStatusPage: React.FC = () => {
     }
   };
 
-  const gstr1Records = mockFilingStatus.filter(f => f.returnType === 'GSTR-1');
-  const gstr3bRecords = mockFilingStatus.filter(f => f.returnType === 'GSTR-3B');
+  // Get all return types from all clients
+  const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08'];
 
-  const FilingTable = ({ records }: { records: typeof mockFilingStatus }) => (
+  // Generate filing records for all clients and all their selected returns
+  const generateAllFilingRecords = (returnType: ReturnType) => {
+    const records: typeof mockFilingStatus = [];
+    
+    mockClients.forEach(client => {
+      // Check if client has this return type selected
+      if (client.selectedReturns.includes(returnType)) {
+        // Find existing record or create placeholder
+        const existingRecord = mockFilingStatus.find(
+          f => f.clientId === client.id && f.returnType === returnType && f.month === selectedMonth
+        );
+        
+        if (existingRecord) {
+          records.push(existingRecord);
+        } else {
+          // Create a placeholder record for this client/return combination
+          records.push({
+            id: `temp-${client.id}-${returnType}`,
+            clientId: client.id,
+            clientName: client.name,
+            accountantName: client.assignedAccountant || '-',
+            returnType: returnType,
+            filingFrequency: client.registrationType === 'Composition' ? 'Quarterly' : 'Monthly',
+            otpDscPerson: '-',
+            contactNumber: client.mobile,
+            clientEmail: client.email,
+            status: 'Prepared',
+            targetDate: returnType === 'GSTR-1' ? 11 : returnType === 'GSTR-3B' ? 20 : 25,
+            remarks: '',
+            month: selectedMonth,
+            isLocked: false,
+          });
+        }
+      }
+    });
+    
+    return records;
+  };
+
+  const FilingTable = ({ records, returnType }: { records: typeof mockFilingStatus; returnType: string }) => (
     <div className="overflow-x-auto">
       <table className="gst-table">
         <thead>
@@ -92,7 +131,7 @@ const FilingStatusPage: React.FC = () => {
           {records.length === 0 && (
             <tr>
               <td colSpan={11} className="text-center py-8 text-muted-foreground">
-                No records found for the selected period.
+                No clients have {returnType} selected.
               </td>
             </tr>
           )}
@@ -107,7 +146,7 @@ const FilingStatusPage: React.FC = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-heading font-bold text-foreground">Filing Status</h1>
-          <p className="text-muted-foreground">Track GST return filing status</p>
+          <p className="text-muted-foreground">Track GST return filing status for all clients</p>
         </div>
         <Button variant="outline" className="flex items-center gap-2">
           <Download className="h-4 w-4" />
@@ -136,16 +175,32 @@ const FilingStatusPage: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Filing Status Tabs */}
+      {/* Filing Status Tabs - All Return Types */}
       <Tabs value={selectedTab} onValueChange={setSelectedTab}>
-        <TabsList className="grid w-full max-w-md grid-cols-2">
-          <TabsTrigger value="gstr1" className="flex items-center gap-2">
-            <FileText className="h-4 w-4" />
+        <TabsList className="grid w-full max-w-3xl grid-cols-6">
+          <TabsTrigger value="gstr1" className="flex items-center gap-1 text-xs">
+            <FileText className="h-3 w-3" />
             GSTR-1
           </TabsTrigger>
-          <TabsTrigger value="gstr3b" className="flex items-center gap-2">
-            <FileText className="h-4 w-4" />
+          <TabsTrigger value="gstr3b" className="flex items-center gap-1 text-xs">
+            <FileText className="h-3 w-3" />
             GSTR-3B
+          </TabsTrigger>
+          <TabsTrigger value="itc04" className="flex items-center gap-1 text-xs">
+            <FileText className="h-3 w-3" />
+            ITC-04
+          </TabsTrigger>
+          <TabsTrigger value="gstr6" className="flex items-center gap-1 text-xs">
+            <FileText className="h-3 w-3" />
+            GSTR-6
+          </TabsTrigger>
+          <TabsTrigger value="gstr7" className="flex items-center gap-1 text-xs">
+            <FileText className="h-3 w-3" />
+            GSTR-7
+          </TabsTrigger>
+          <TabsTrigger value="cmp08" className="flex items-center gap-1 text-xs">
+            <FileText className="h-3 w-3" />
+            CMP-08
           </TabsTrigger>
         </TabsList>
 
@@ -155,7 +210,7 @@ const FilingStatusPage: React.FC = () => {
               <CardTitle className="text-lg">GSTR-1 Filing Status - {selectedMonth}</CardTitle>
             </CardHeader>
             <CardContent>
-              <FilingTable records={gstr1Records} />
+              <FilingTable records={generateAllFilingRecords('GSTR-1')} returnType="GSTR-1" />
             </CardContent>
           </Card>
         </TabsContent>
@@ -166,7 +221,51 @@ const FilingStatusPage: React.FC = () => {
               <CardTitle className="text-lg">GSTR-3B Filing Status - {selectedMonth}</CardTitle>
             </CardHeader>
             <CardContent>
-              <FilingTable records={gstr3bRecords} />
+              <FilingTable records={generateAllFilingRecords('GSTR-3B')} returnType="GSTR-3B" />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="itc04">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">ITC-04 Filing Status - {selectedMonth}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <FilingTable records={generateAllFilingRecords('ITC-04')} returnType="ITC-04" />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="gstr6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">GSTR-6 Filing Status - {selectedMonth}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <FilingTable records={generateAllFilingRecords('GSTR-6')} returnType="GSTR-6" />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="gstr7">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">GSTR-7 Filing Status - {selectedMonth}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <FilingTable records={generateAllFilingRecords('GSTR-7')} returnType="GSTR-7" />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="cmp08">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">CMP-08 Filing Status - {selectedMonth}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <FilingTable records={generateAllFilingRecords('CMP-08')} returnType="CMP-08" />
             </CardContent>
           </Card>
         </TabsContent>
