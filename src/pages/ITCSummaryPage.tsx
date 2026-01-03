@@ -61,6 +61,12 @@ const getDefaultITCData = (): ITCData => ({
   ],
 });
 
+interface ReversalTotals {
+  igst: number;
+  cgst: number;
+  sgst: number;
+}
+
 const ITCSummaryPage: React.FC = () => {
   const { canUnlockSheets } = useAuth();
   const [selectedClient, setSelectedClient] = useState<string>('');
@@ -69,6 +75,8 @@ const ITCSummaryPage: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [itcSummaryId, setItcSummaryId] = useState<string | null>(null);
+  const [reversalFromReco, setReversalFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
+  const [reclaimFromReco, setReclaimFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
 
   // Editable ITC data state
   const [itcData, setItcData] = useState<ITCData>(getDefaultITCData());
@@ -107,6 +115,81 @@ const ITCSummaryPage: React.FC = () => {
     };
   }, []);
 
+  // Fetch reversal and reclaim data from 2B Reconciliation
+  const fetchRecoData = useCallback(async () => {
+    if (!selectedClient || !selectedMonth) {
+      setReversalFromReco({ igst: 0, cgst: 0, sgst: 0 });
+      setReclaimFromReco({ igst: 0, cgst: 0, sgst: 0 });
+      return;
+    }
+
+    // Fetch bills with reversal_month matching selected month (for reversals)
+    const { data: reversalBills, error: reversalError } = await supabase
+      .from('bills_not_in_2b')
+      .select('input_igst, input_cgst, input_sgst, reversal_month')
+      .eq('client_id', selectedClient)
+      .not('reversal_month', 'is', null);
+    
+    if (reversalError) {
+      console.error('Error fetching reversal data:', reversalError);
+    } else if (reversalBills) {
+      // Filter bills where reversal_month matches selected month pattern
+      const monthPatterns = [
+        selectedMonth, // e.g., "01/2026"
+        `Jan-${selectedMonth.split('/')[1]?.slice(-1) || '6'}`, // e.g., "Jan-6"
+        `Jan-${selectedMonth.split('/')[1] || '2026'}`, // e.g., "Jan-2026"
+      ];
+      
+      const matchingReversals = reversalBills.filter(b => {
+        const rev = b.reversal_month?.toLowerCase() || '';
+        const monthNum = selectedMonth.split('/')[0];
+        const yearShort = selectedMonth.split('/')[1]?.slice(-1) || '';
+        const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+        const monthName = monthNames[parseInt(monthNum) - 1] || '';
+        
+        return rev.includes(monthName) && (rev.includes(yearShort) || rev.includes(selectedMonth.split('/')[1] || ''));
+      });
+
+      const totals = matchingReversals.reduce((acc, b) => ({
+        igst: acc.igst + (b.input_igst || 0),
+        cgst: acc.cgst + (b.input_cgst || 0),
+        sgst: acc.sgst + (b.input_sgst || 0),
+      }), { igst: 0, cgst: 0, sgst: 0 });
+
+      setReversalFromReco(totals);
+    }
+
+    // Fetch bills with reclaim_month matching selected month (for reclaims)
+    const { data: reclaimBills, error: reclaimError } = await supabase
+      .from('bills_not_in_2b')
+      .select('input_igst, input_cgst, input_sgst, reclaim_month')
+      .eq('client_id', selectedClient)
+      .not('reclaim_month', 'is', null);
+    
+    if (reclaimError) {
+      console.error('Error fetching reclaim data:', reclaimError);
+    } else if (reclaimBills) {
+      const monthPatterns = [selectedMonth];
+      const monthNum = selectedMonth.split('/')[0];
+      const yearShort = selectedMonth.split('/')[1]?.slice(-1) || '';
+      const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+      const monthName = monthNames[parseInt(monthNum) - 1] || '';
+      
+      const matchingReclaims = reclaimBills.filter(b => {
+        const rec = b.reclaim_month?.toLowerCase() || '';
+        return rec.includes(monthName) && (rec.includes(yearShort) || rec.includes(selectedMonth.split('/')[1] || ''));
+      });
+
+      const totals = matchingReclaims.reduce((acc, b) => ({
+        igst: acc.igst + (b.input_igst || 0),
+        cgst: acc.cgst + (b.input_cgst || 0),
+        sgst: acc.sgst + (b.input_sgst || 0),
+      }), { igst: 0, cgst: 0, sgst: 0 });
+
+      setReclaimFromReco(totals);
+    }
+  }, [selectedClient, selectedMonth]);
+
   // Fetch ITC Summary data when client/month changes
   const fetchITCSummary = useCallback(async () => {
     if (!selectedClient || !selectedMonth) return;
@@ -139,7 +222,56 @@ const ITCSummaryPage: React.FC = () => {
 
   useEffect(() => {
     fetchITCSummary();
-  }, [fetchITCSummary]);
+    fetchRecoData();
+  }, [fetchITCSummary, fetchRecoData]);
+
+  // Update auto-linked rows when reversal/reclaim data changes from 2B Reco
+  useEffect(() => {
+    setItcData(prev => {
+      const newData = { ...prev };
+      
+      // Update Section 4A, row 5.4 (Reclaim of ITC Reversed for Previous months) with reclaim data
+      newData.section4A = prev.section4A.map(row => {
+        if (row.srNo === '5.4') {
+          return { 
+            ...row, 
+            igst: reclaimFromReco.igst, 
+            cgst: reclaimFromReco.cgst, 
+            sgst: reclaimFromReco.sgst 
+          };
+        }
+        return row;
+      });
+      
+      // Update Section 4B row "ITC Reversal for current month as per 2B RECO" with reversal data
+      newData.section4B = prev.section4B.map(row => {
+        if (row.particular === 'ITC Reversal for current month as per 2B RECO') {
+          return { 
+            ...row, 
+            igst: reversalFromReco.igst, 
+            cgst: reversalFromReco.cgst, 
+            sgst: reversalFromReco.sgst 
+          };
+        }
+        return row;
+      });
+
+      // Update Section 4D row (1) and 1.1 to match 5.4 reclaim values
+      newData.section4D = prev.section4D.map(row => {
+        if (row.srNo === '(1)' || row.srNo === '1.1') {
+          return { 
+            ...row, 
+            igst: reclaimFromReco.igst, 
+            cgst: reclaimFromReco.cgst, 
+            sgst: reclaimFromReco.sgst 
+          };
+        }
+        return row;
+      });
+      
+      return newData;
+    });
+  }, [reversalFromReco, reclaimFromReco]);
 
   // Real-time subscription
   useEffect(() => {
