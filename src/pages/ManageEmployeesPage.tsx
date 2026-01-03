@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,20 +8,29 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { 
-  Plus, 
   Trash2,
   UserPlus,
   Shield,
   Users
 } from 'lucide-react';
-import { mockUsers } from '@/data/mockData';
 import { useToast } from '@/hooks/use-toast';
 import { Navigate } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
+
+interface Employee {
+  id: string;
+  user_id: string;
+  first_name: string;
+  email: string | null;
+  role: 'gst_manager' | 'employee';
+}
 
 const ManageEmployeesPage: React.FC = () => {
   const { user, canManageEmployees } = useAuth();
   const { toast } = useToast();
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [newEmployee, setNewEmployee] = useState({
     firstName: '',
     role: 'employee' as 'gst_manager' | 'employee',
@@ -32,9 +41,54 @@ const ManageEmployeesPage: React.FC = () => {
     return <Navigate to="/dashboard" replace />;
   }
 
-  const employees = mockUsers.filter(u => u.role === 'gst_manager' || u.role === 'employee');
+  // Fetch employees from Supabase
+  const fetchEmployees = useCallback(async () => {
+    try {
+      // Fetch profiles with their roles
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, user_id, first_name, email');
+      
+      if (profilesError) throw profilesError;
 
-  const handleAddEmployee = () => {
+      const { data: roles, error: rolesError } = await supabase
+        .from('user_roles')
+        .select('user_id, role');
+      
+      if (rolesError) throw rolesError;
+
+      // Combine profiles with roles, filter for staff only
+      const employeeList = (profiles || [])
+        .map(p => {
+          const roleRecord = roles?.find(r => r.user_id === p.user_id);
+          return {
+            id: p.id,
+            user_id: p.user_id,
+            first_name: p.first_name,
+            email: p.email,
+            role: roleRecord?.role as 'gst_manager' | 'employee' || 'employee',
+          };
+        })
+        .filter(e => e.role === 'gst_manager' || e.role === 'employee');
+
+      setEmployees(employeeList);
+    } catch (error: any) {
+      console.error('Error fetching employees:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load employees: ' + error.message,
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    fetchEmployees();
+  }, [fetchEmployees]);
+
+  const handleAddEmployee = async () => {
     if (!newEmployee.firstName.trim()) {
       toast({
         title: 'Validation Error',
@@ -44,20 +98,76 @@ const ManageEmployeesPage: React.FC = () => {
       return;
     }
 
-    toast({
-      title: 'Employee Added',
-      description: `${newEmployee.firstName} has been added as ${newEmployee.role === 'gst_manager' ? 'GST Manager' : 'Employee'}. Login: ${newEmployee.firstName} / 2026`,
-    });
+    try {
+      // Generate a unique user_id for the employee (in real auth, this would come from Supabase Auth)
+      const tempUserId = crypto.randomUUID();
+      
+      // Insert into profiles
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .insert([{
+          user_id: tempUserId,
+          first_name: newEmployee.firstName,
+          email: `${newEmployee.firstName.toLowerCase()}@staff.local`,
+        }]);
+      
+      if (profileError) throw profileError;
 
-    setNewEmployee({ firstName: '', role: 'employee' });
-    setShowAddDialog(false);
+      // Insert into user_roles
+      const { error: roleError } = await supabase
+        .from('user_roles')
+        .insert([{
+          user_id: tempUserId,
+          role: newEmployee.role,
+        }]);
+      
+      if (roleError) throw roleError;
+
+      toast({
+        title: 'Employee Added',
+        description: `${newEmployee.firstName} has been added as ${newEmployee.role === 'gst_manager' ? 'GST Manager' : 'Employee'}. Login: ${newEmployee.firstName} / 2026`,
+      });
+
+      setNewEmployee({ firstName: '', role: 'employee' });
+      setShowAddDialog(false);
+      fetchEmployees();
+    } catch (error: any) {
+      console.error('Error adding employee:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to add employee: ' + error.message,
+        variant: 'destructive',
+      });
+    }
   };
 
-  const handleDeleteEmployee = (employeeId: string, name: string) => {
-    toast({
-      title: 'Employee Removed',
-      description: `${name} has been removed from the system.`,
-    });
+  const handleDeleteEmployee = async (employeeId: string, userId: string, name: string) => {
+    try {
+      // Delete from user_roles
+      await supabase
+        .from('user_roles')
+        .delete()
+        .eq('user_id', userId);
+      
+      // Delete from profiles
+      await supabase
+        .from('profiles')
+        .delete()
+        .eq('id', employeeId);
+
+      toast({
+        title: 'Employee Removed',
+        description: `${name} has been removed from the system.`,
+      });
+      
+      fetchEmployees();
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: 'Failed to delete employee: ' + error.message,
+        variant: 'destructive',
+      });
+    }
   };
 
   return (
@@ -143,47 +253,54 @@ const ManageEmployeesPage: React.FC = () => {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3">
-            {employees.map((emp) => (
-              <div
-                key={emp.id}
-                className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/30 transition-colors"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                    <span className="font-semibold text-primary">
-                      {emp.firstName.charAt(0)}
-                    </span>
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <p className="font-medium">{emp.firstName}</p>
-                      {emp.role === 'gst_manager' && (
-                        <Badge className="bg-primary/10 text-primary border-0 flex items-center gap-1">
-                          <Shield className="h-3 w-3" />
-                          GST Manager
-                        </Badge>
-                      )}
-                      {emp.role === 'employee' && (
-                        <Badge variant="secondary">Employee</Badge>
-                      )}
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      Login ID: {emp.userId}
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                  onClick={() => handleDeleteEmployee(emp.id, emp.firstName)}
+          {isLoading ? (
+            <p className="text-center py-8 text-muted-foreground">Loading...</p>
+          ) : (
+            <div className="space-y-3">
+              {employees.map((emp) => (
+                <div
+                  key={emp.id}
+                  className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/30 transition-colors"
                 >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            ))}
-          </div>
+                  <div className="flex items-center gap-4">
+                    <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                      <span className="font-semibold text-primary">
+                        {emp.first_name.charAt(0)}
+                      </span>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium">{emp.first_name}</p>
+                        {emp.role === 'gst_manager' && (
+                          <Badge className="bg-primary/10 text-primary border-0 flex items-center gap-1">
+                            <Shield className="h-3 w-3" />
+                            GST Manager
+                          </Badge>
+                        )}
+                        {emp.role === 'employee' && (
+                          <Badge variant="secondary">Employee</Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Login ID: {emp.first_name}
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                    onClick={() => handleDeleteEmployee(emp.id, emp.user_id, emp.first_name)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+              {employees.length === 0 && (
+                <p className="text-center py-8 text-muted-foreground">No employees found. Add your first employee above.</p>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

@@ -115,6 +115,36 @@ const ITCSummaryPage: React.FC = () => {
     };
   }, []);
 
+  // Convert month format "01/2026" to various patterns for matching
+  const getMonthPatterns = (monthStr: string) => {
+    const [monthNum, year] = monthStr.split('/');
+    const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    const monthName = monthNames[parseInt(monthNum) - 1] || '';
+    const yearShort = year?.slice(-2) || '';
+    const yearSingle = year?.slice(-1) || '';
+    
+    return {
+      monthName,
+      yearShort,
+      yearSingle,
+      fullYear: year || '',
+      monthNum,
+    };
+  };
+
+  // Check if a stored month value matches the selected month
+  const monthMatches = (storedMonth: string | null, selectedPatterns: ReturnType<typeof getMonthPatterns>): boolean => {
+    if (!storedMonth) return false;
+    const stored = storedMonth.toLowerCase().trim();
+    const { monthName, yearShort, yearSingle, fullYear } = selectedPatterns;
+    
+    // Match patterns like "jan-6", "jan-26", "jan-2026", "Jan 26", "01/2026", etc.
+    const hasMonth = stored.includes(monthName);
+    const hasYear = stored.includes(yearShort) || stored.includes(yearSingle) || stored.includes(fullYear);
+    
+    return hasMonth && hasYear;
+  };
+
   // Fetch reversal and reclaim data from 2B Reconciliation
   const fetchRecoData = useCallback(async () => {
     if (!selectedClient || !selectedMonth) {
@@ -123,7 +153,9 @@ const ITCSummaryPage: React.FC = () => {
       return;
     }
 
-    // Fetch bills with reversal_month matching selected month (for reversals)
+    const patterns = getMonthPatterns(selectedMonth);
+
+    // Fetch all bills with reversal_month for this client
     const { data: reversalBills, error: reversalError } = await supabase
       .from('bills_not_in_2b')
       .select('input_igst, input_cgst, input_sgst, reversal_month')
@@ -133,22 +165,8 @@ const ITCSummaryPage: React.FC = () => {
     if (reversalError) {
       console.error('Error fetching reversal data:', reversalError);
     } else if (reversalBills) {
-      // Filter bills where reversal_month matches selected month pattern
-      const monthPatterns = [
-        selectedMonth, // e.g., "01/2026"
-        `Jan-${selectedMonth.split('/')[1]?.slice(-1) || '6'}`, // e.g., "Jan-6"
-        `Jan-${selectedMonth.split('/')[1] || '2026'}`, // e.g., "Jan-2026"
-      ];
-      
-      const matchingReversals = reversalBills.filter(b => {
-        const rev = b.reversal_month?.toLowerCase() || '';
-        const monthNum = selectedMonth.split('/')[0];
-        const yearShort = selectedMonth.split('/')[1]?.slice(-1) || '';
-        const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-        const monthName = monthNames[parseInt(monthNum) - 1] || '';
-        
-        return rev.includes(monthName) && (rev.includes(yearShort) || rev.includes(selectedMonth.split('/')[1] || ''));
-      });
+      // Filter bills where reversal_month matches selected month
+      const matchingReversals = reversalBills.filter(b => monthMatches(b.reversal_month, patterns));
 
       const totals = matchingReversals.reduce((acc, b) => ({
         igst: acc.igst + (b.input_igst || 0),
@@ -156,10 +174,11 @@ const ITCSummaryPage: React.FC = () => {
         sgst: acc.sgst + (b.input_sgst || 0),
       }), { igst: 0, cgst: 0, sgst: 0 });
 
+      console.log('Reversal totals for', selectedMonth, ':', totals, 'from', matchingReversals.length, 'bills');
       setReversalFromReco(totals);
     }
 
-    // Fetch bills with reclaim_month matching selected month (for reclaims)
+    // Fetch all bills with reclaim_month for this client
     const { data: reclaimBills, error: reclaimError } = await supabase
       .from('bills_not_in_2b')
       .select('input_igst, input_cgst, input_sgst, reclaim_month')
@@ -169,16 +188,8 @@ const ITCSummaryPage: React.FC = () => {
     if (reclaimError) {
       console.error('Error fetching reclaim data:', reclaimError);
     } else if (reclaimBills) {
-      const monthPatterns = [selectedMonth];
-      const monthNum = selectedMonth.split('/')[0];
-      const yearShort = selectedMonth.split('/')[1]?.slice(-1) || '';
-      const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-      const monthName = monthNames[parseInt(monthNum) - 1] || '';
-      
-      const matchingReclaims = reclaimBills.filter(b => {
-        const rec = b.reclaim_month?.toLowerCase() || '';
-        return rec.includes(monthName) && (rec.includes(yearShort) || rec.includes(selectedMonth.split('/')[1] || ''));
-      });
+      // Filter bills where reclaim_month matches selected month
+      const matchingReclaims = reclaimBills.filter(b => monthMatches(b.reclaim_month, patterns));
 
       const totals = matchingReclaims.reduce((acc, b) => ({
         igst: acc.igst + (b.input_igst || 0),
@@ -186,6 +197,7 @@ const ITCSummaryPage: React.FC = () => {
         sgst: acc.sgst + (b.input_sgst || 0),
       }), { igst: 0, cgst: 0, sgst: 0 });
 
+      console.log('Reclaim totals for', selectedMonth, ':', totals, 'from', matchingReclaims.length, 'bills');
       setReclaimFromReco(totals);
     }
   }, [selectedClient, selectedMonth]);
