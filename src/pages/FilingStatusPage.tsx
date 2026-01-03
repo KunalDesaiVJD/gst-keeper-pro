@@ -219,7 +219,6 @@ const FilingStatusPage: React.FC = () => {
               status: status,
               target_date: row['Target Date'] || row['targetDate'] || 11,
               remarks: row['Remarks'] || row['remarks'] || null,
-              updated_by: user?.id || null,
             }, {
               onConflict: 'client_id,return_type,period_month'
             });
@@ -245,7 +244,7 @@ const FilingStatusPage: React.FC = () => {
     
     try {
       if (isNewRecord) {
-        // Insert new record
+        // Insert new record - don't pass updated_by since we're using mock auth
         const { error } = await supabase
           .from('filing_status')
           .insert([{
@@ -255,7 +254,6 @@ const FilingStatusPage: React.FC = () => {
             status: newStatus,
             target_date: record.target_date,
             filed_date: newStatus === 'Filed' ? new Date().toISOString().split('T')[0] : null,
-            updated_by: user?.id || null,
           }]);
         
         if (error) throw error;
@@ -263,7 +261,6 @@ const FilingStatusPage: React.FC = () => {
         // Update existing record
         const updateData: Record<string, unknown> = {
           status: newStatus,
-          updated_by: user?.id || null,
         };
         
         if (newStatus === 'Filed') {
@@ -302,7 +299,6 @@ const FilingStatusPage: React.FC = () => {
           status: 'Prepared',
           is_locked: false,
           filed_date: null,
-          updated_by: user?.id || null,
         })
         .eq('id', record.id);
       
