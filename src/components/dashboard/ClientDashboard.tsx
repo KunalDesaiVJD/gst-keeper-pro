@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -12,15 +12,99 @@ import {
   Phone,
   Mail
 } from 'lucide-react';
-import { mockClients, mockFilingStatus } from '@/data/mockData';
+import { supabase } from '@/integrations/supabase/client';
+
+interface ClientData {
+  id: string;
+  name: string;
+  gstin: string;
+  registration_type: string;
+  registration_date: string;
+  mobile: string | null;
+  email: string | null;
+  selected_returns: string[] | null;
+}
+
+interface FilingStatus {
+  return_type: string;
+  period_month: string;
+  status: string;
+}
 
 const ClientDashboard: React.FC = () => {
   const { user } = useAuth();
-  
-  // Find client data by matching PAN (userId) in GSTIN
-  const client = mockClients.find(c => 
-    c.gstin.includes(user?.userId || '')
-  );
+  const [client, setClient] = useState<ClientData | null>(null);
+  const [filingStatuses, setFilingStatuses] = useState<FilingStatus[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const fetchClientData = useCallback(async () => {
+    if (!user?.userId) return;
+
+    setIsLoading(true);
+    try {
+      // Find client by matching PAN (userId) in GSTIN
+      const { data: clients, error } = await supabase
+        .from('clients')
+        .select('*')
+        .ilike('gstin', `%${user.userId.toUpperCase()}%`);
+
+      if (error) {
+        console.error('Error fetching client:', error);
+        return;
+      }
+
+      if (clients && clients.length > 0) {
+        const clientData = clients[0];
+        setClient(clientData);
+
+        // Fetch filing status for this client
+        const { data: statusData } = await supabase
+          .from('filing_status')
+          .select('return_type, period_month, status')
+          .eq('client_id', clientData.id)
+          .order('period_month', { ascending: false });
+
+        setFilingStatuses(statusData || []);
+      }
+    } catch (error) {
+      console.error('Error:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user?.userId]);
+
+  useEffect(() => {
+    fetchClientData();
+  }, [fetchClientData]);
+
+  // Real-time subscription
+  useEffect(() => {
+    if (!client?.id) return;
+
+    const channel = supabase
+      .channel('client-dashboard-changes')
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'filing_status',
+        filter: `client_id=eq.${client.id}`
+      }, () => {
+        fetchClientData();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [client?.id, fetchClientData]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-muted-foreground">Loading...</p>
+      </div>
+    );
+  }
 
   if (!client) {
     return (
@@ -30,12 +114,11 @@ const ClientDashboard: React.FC = () => {
     );
   }
 
-  // Get filing status for this client only
-  const clientFilingStatus = mockFilingStatus.filter(f => f.clientId === client.id);
+  const selectedReturns = client.selected_returns || [];
 
   // Generate months from registration date
   const getMonthsFromRegistration = () => {
-    const regDate = new Date(client.registrationDate);
+    const regDate = new Date(client.registration_date);
     const now = new Date();
     const months: string[] = [];
     
@@ -52,8 +135,8 @@ const ClientDashboard: React.FC = () => {
   const months = getMonthsFromRegistration();
 
   const getFilingStatusForMonth = (returnType: string, month: string) => {
-    const status = clientFilingStatus.find(
-      f => f.returnType === returnType && f.month === month
+    const status = filingStatuses.find(
+      f => f.return_type === returnType && f.period_month === month
     );
     return status?.status || 'Pending';
   };
@@ -81,16 +164,20 @@ const ClientDashboard: React.FC = () => {
                 </p>
                 <div className="flex items-center gap-4 mt-2">
                   <Badge variant="outline" className="bg-primary/5">
-                    {client.registrationType}
+                    {client.registration_type}
                   </Badge>
-                  <span className="flex items-center gap-1 text-sm text-muted-foreground">
-                    <Phone className="h-3 w-3" />
-                    {client.mobile}
-                  </span>
-                  <span className="flex items-center gap-1 text-sm text-muted-foreground">
-                    <Mail className="h-3 w-3" />
-                    {client.email}
-                  </span>
+                  {client.mobile && (
+                    <span className="flex items-center gap-1 text-sm text-muted-foreground">
+                      <Phone className="h-3 w-3" />
+                      {client.mobile}
+                    </span>
+                  )}
+                  {client.email && (
+                    <span className="flex items-center gap-1 text-sm text-muted-foreground">
+                      <Mail className="h-3 w-3" />
+                      {client.email}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -114,11 +201,14 @@ const ClientDashboard: React.FC = () => {
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-2">
-            {client.selectedReturns.map((returnType) => (
+            {selectedReturns.map((returnType) => (
               <Badge key={returnType} className="bg-primary text-primary-foreground">
                 {returnType}
               </Badge>
             ))}
+            {selectedReturns.length === 0 && (
+              <p className="text-muted-foreground">No return types assigned</p>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -136,7 +226,7 @@ const ClientDashboard: React.FC = () => {
                   <th className="text-left py-3 px-4 font-medium text-muted-foreground">
                     Month
                   </th>
-                  {client.selectedReturns.map((returnType) => (
+                  {selectedReturns.map((returnType) => (
                     <th 
                       key={returnType} 
                       className="text-center py-3 px-4 font-medium text-muted-foreground"
@@ -150,7 +240,7 @@ const ClientDashboard: React.FC = () => {
                 {months.map((month) => (
                   <tr key={month} className="border-b border-border hover:bg-muted/30">
                     <td className="py-3 px-4 font-medium">{month}</td>
-                    {client.selectedReturns.map((returnType) => {
+                    {selectedReturns.map((returnType) => {
                       const status = getFilingStatusForMonth(returnType, month);
                       const isFiled = isFiledStatus(status);
                       

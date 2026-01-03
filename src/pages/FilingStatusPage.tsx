@@ -1,56 +1,148 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Download, FileText, Upload, Lock, Unlock } from 'lucide-react';
-import { mockFilingStatus, mockClients } from '@/data/mockData';
 import { FilingStatusType, ReturnType } from '@/types';
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
+import * as XLSX from 'xlsx';
+
+interface Client {
+  id: string;
+  name: string;
+  gstin: string;
+  mobile: string | null;
+  email: string | null;
+  assigned_accountant: string | null;
+  registration_type: string;
+  selected_returns: string[] | null;
+}
+
+interface FilingRecord {
+  id: string;
+  client_id: string;
+  return_type: string;
+  period_month: string;
+  status: FilingStatusType;
+  target_date: number | null;
+  filed_date: string | null;
+  remarks: string | null;
+  is_locked: boolean | null;
+  // Joined client data
+  clientName?: string;
+  clientEmail?: string;
+  contactNumber?: string;
+  accountantName?: string;
+  filingFrequency?: string;
+}
 
 const FilingStatusPage: React.FC = () => {
-  const { canUnlockSheets, isStaffRole } = useAuth();
+  const { canUnlockSheets, isStaffRole, user } = useAuth();
   const [selectedMonth, setSelectedMonth] = useState<string>('01/2026');
   const [selectedTab, setSelectedTab] = useState<string>('gstr1');
+  const [clients, setClients] = useState<Client[]>([]);
+  const [filingRecords, setFilingRecords] = useState<FilingRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Get all return types from all clients
   const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08'];
 
-  // Generate filing records for all clients and all their selected returns
-  const generateAllFilingRecords = (returnType: ReturnType) => {
-    const records: typeof mockFilingStatus = [];
+  // Fetch clients from Supabase
+  const fetchClients = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('clients')
+      .select('id, name, gstin, mobile, email, assigned_accountant, registration_type, selected_returns')
+      .order('name');
     
-    mockClients.forEach(client => {
-      // Check if client has this return type selected
-      if (client.selectedReturns.includes(returnType)) {
-        // Find existing record or create placeholder
-        const existingRecord = mockFilingStatus.find(
-          f => f.clientId === client.id && f.returnType === returnType && f.month === selectedMonth
+    if (error) {
+      console.error('Error fetching clients:', error);
+      toast.error('Failed to load clients');
+      return;
+    }
+    setClients(data || []);
+  }, []);
+
+  // Fetch filing status records
+  const fetchFilingRecords = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('filing_status')
+      .select('*')
+      .eq('period_month', selectedMonth);
+    
+    if (error) {
+      console.error('Error fetching filing records:', error);
+      return;
+    }
+    setFilingRecords(data || []);
+  }, [selectedMonth]);
+
+  useEffect(() => {
+    const loadData = async () => {
+      setIsLoading(true);
+      await Promise.all([fetchClients(), fetchFilingRecords()]);
+      setIsLoading(false);
+    };
+    loadData();
+  }, [fetchClients, fetchFilingRecords]);
+
+  // Real-time subscription
+  useEffect(() => {
+    const channel = supabase
+      .channel('filing-status-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'filing_status' }, () => {
+        fetchFilingRecords();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => {
+        fetchClients();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchClients, fetchFilingRecords]);
+
+  // Generate filing records for display
+  const generateAllFilingRecords = (returnType: ReturnType): FilingRecord[] => {
+    const records: FilingRecord[] = [];
+    
+    clients.forEach(client => {
+      const selectedReturns = client.selected_returns || [];
+      if (selectedReturns.includes(returnType)) {
+        const existingRecord = filingRecords.find(
+          f => f.client_id === client.id && f.return_type === returnType
         );
         
         if (existingRecord) {
-          records.push(existingRecord);
+          records.push({
+            ...existingRecord,
+            clientName: client.name,
+            clientEmail: client.email || '-',
+            contactNumber: client.mobile || '-',
+            accountantName: client.assigned_accountant || '-',
+            filingFrequency: client.registration_type === 'Composition' ? 'Quarterly' : 'Monthly',
+          });
         } else {
-          // Create a placeholder record for this client/return combination
           records.push({
             id: `temp-${client.id}-${returnType}`,
-            clientId: client.id,
-            clientName: client.name,
-            accountantName: client.assignedAccountant || '-',
-            returnType: returnType,
-            filingFrequency: client.registrationType === 'Composition' ? 'Quarterly' : 'Monthly',
-            otpDscPerson: '-',
-            contactNumber: client.mobile,
-            clientEmail: client.email,
+            client_id: client.id,
+            return_type: returnType,
+            period_month: selectedMonth,
             status: 'Prepared',
-            targetDate: returnType === 'GSTR-1' ? 11 : returnType === 'GSTR-3B' ? 20 : 25,
-            remarks: '',
-            month: selectedMonth,
-            isLocked: false,
+            target_date: returnType === 'GSTR-1' ? 11 : returnType === 'GSTR-3B' ? 20 : 25,
+            filed_date: null,
+            remarks: null,
+            is_locked: false,
+            clientName: client.name,
+            clientEmail: client.email || '-',
+            contactNumber: client.mobile || '-',
+            accountantName: client.assigned_accountant || '-',
+            filingFrequency: client.registration_type === 'Composition' ? 'Quarterly' : 'Monthly',
           });
         }
       }
@@ -70,7 +162,27 @@ const FilingStatusPage: React.FC = () => {
     };
     const returnType = returnTypeMap[selectedTab];
     const records = generateAllFilingRecords(returnType);
-    exportFilingStatusToPDF(records, returnType, selectedMonth);
+    
+    // Convert to format expected by PDF export
+    const pdfRecords = records.map((r) => ({
+      id: r.id,
+      clientId: r.client_id,
+      clientName: r.clientName || '',
+      accountantName: r.accountantName || '-',
+      returnType: r.return_type as ReturnType,
+      filingFrequency: (r.filingFrequency || 'Monthly') as 'Monthly' | 'Quarterly' | 'Composition',
+      otpDscPerson: '-',
+      contactNumber: r.contactNumber || '-',
+      clientEmail: r.clientEmail || '-',
+      status: r.status,
+      targetDate: r.target_date || 11,
+      filedDate: r.filed_date ? new Date(r.filed_date) : undefined,
+      remarks: r.remarks || '',
+      month: r.period_month,
+      isLocked: r.is_locked || false,
+    }));
+    
+    exportFilingStatusToPDF(pdfRecords, returnType, selectedMonth);
     toast.success('PDF exported successfully');
   };
 
@@ -83,9 +195,43 @@ const FilingStatusPage: React.FC = () => {
     if (!file) return;
 
     try {
-      // Parse Excel file for filing status import
-      toast.success('Filing status imported successfully');
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data);
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const jsonData = XLSX.utils.sheet_to_json(sheet);
+      
+      // Process each row and upsert to database
+      let importCount = 0;
+      for (const row of jsonData as any[]) {
+        const clientName = row['Client Name'] || row['clientName'];
+        const client = clients.find(c => c.name.toLowerCase() === clientName?.toLowerCase());
+        
+        if (client) {
+          const returnType = row['Return Type'] || row['returnType'];
+          const status = row['Status'] || row['status'] || 'Prepared';
+          
+          const { error } = await supabase
+            .from('filing_status')
+            .upsert({
+              client_id: client.id,
+              return_type: returnType,
+              period_month: selectedMonth,
+              status: status,
+              target_date: row['Target Date'] || row['targetDate'] || 11,
+              remarks: row['Remarks'] || row['remarks'] || null,
+              updated_by: user?.id || null,
+            }, {
+              onConflict: 'client_id,return_type,period_month'
+            });
+          
+          if (!error) importCount++;
+        }
+      }
+      
+      toast.success(`Imported ${importCount} filing records successfully`);
+      fetchFilingRecords();
     } catch (error) {
+      console.error('Import error:', error);
       toast.error('Failed to import Excel file. Please check the format.');
     }
     
@@ -94,20 +240,101 @@ const FilingStatusPage: React.FC = () => {
     }
   };
 
-  const handleStatusChange = (recordId: string, newStatus: FilingStatusType) => {
-    // In real app, this would update the database
-    if (newStatus === 'Filed') {
-      toast.success('Status changed to Filed. 2B and ITC sheets are now locked for this period.');
-    } else {
-      toast.success('Status updated successfully');
+  const handleStatusChange = async (record: FilingRecord, newStatus: FilingStatusType) => {
+    const isNewRecord = record.id.startsWith('temp-');
+    
+    try {
+      if (isNewRecord) {
+        // Insert new record
+        const { error } = await supabase
+          .from('filing_status')
+          .insert([{
+            client_id: record.client_id,
+            return_type: record.return_type as 'GSTR-1' | 'GSTR-3B' | 'ITC-04' | 'GSTR-6' | 'GSTR-7' | 'CMP-08',
+            period_month: selectedMonth,
+            status: newStatus,
+            target_date: record.target_date,
+            filed_date: newStatus === 'Filed' ? new Date().toISOString().split('T')[0] : null,
+            updated_by: user?.id || null,
+          }]);
+        
+        if (error) throw error;
+      } else {
+        // Update existing record
+        const updateData: Record<string, unknown> = {
+          status: newStatus,
+          updated_by: user?.id || null,
+        };
+        
+        if (newStatus === 'Filed') {
+          updateData.filed_date = new Date().toISOString().split('T')[0];
+        }
+        
+        const { error } = await supabase
+          .from('filing_status')
+          .update(updateData)
+          .eq('id', record.id);
+        
+        if (error) throw error;
+      }
+      
+      if (newStatus === 'Filed') {
+        toast.success('Status changed to Filed. 2B and ITC sheets are now locked for this period.');
+      } else {
+        toast.success('Status updated successfully');
+      }
+      
+      fetchFilingRecords();
+    } catch (error: any) {
+      console.error('Error updating status:', error);
+      toast.error('Failed to update status: ' + error.message);
     }
   };
 
-  const handleUnlock = (recordId: string) => {
-    toast.success('Sheet unlocked. You can now change the status.');
+  const handleUnlock = async (record: FilingRecord) => {
+    if (record.id.startsWith('temp-')) return;
+    
+    try {
+      // Change status back to Prepared and unlock
+      const { error } = await supabase
+        .from('filing_status')
+        .update({
+          status: 'Prepared',
+          is_locked: false,
+          filed_date: null,
+          updated_by: user?.id || null,
+        })
+        .eq('id', record.id);
+      
+      if (error) throw error;
+      
+      // Also unlock related 2B and ITC data
+      await supabase
+        .from('bills_not_in_2b')
+        .update({ is_locked: false })
+        .eq('client_id', record.client_id)
+        .eq('period_month', record.period_month);
+      
+      await supabase
+        .from('bills_not_in_books')
+        .update({ is_locked: false })
+        .eq('client_id', record.client_id)
+        .eq('period_month', record.period_month);
+      
+      await supabase
+        .from('itc_summaries')
+        .update({ is_locked: false })
+        .eq('client_id', record.client_id)
+        .eq('period_month', record.period_month);
+      
+      toast.success('Sheet unlocked. Status changed to Prepared.');
+      fetchFilingRecords();
+    } catch (error: any) {
+      toast.error('Failed to unlock: ' + error.message);
+    }
   };
 
-  const FilingTable = ({ records, returnType }: { records: typeof mockFilingStatus; returnType: string }) => (
+  const FilingTable = ({ records, returnType }: { records: FilingRecord[]; returnType: string }) => (
     <div className="overflow-x-auto">
       <table className="gst-table">
         <thead>
@@ -116,7 +343,6 @@ const FilingStatusPage: React.FC = () => {
             <th>Client Name</th>
             <th>Accountant</th>
             <th>Frequency</th>
-            <th>OTP/DSC Person</th>
             <th>Contact</th>
             <th>Email</th>
             <th>Status</th>
@@ -128,11 +354,11 @@ const FilingStatusPage: React.FC = () => {
         </thead>
         <tbody>
           {records.map((record, idx) => (
-            <tr key={record.id} className={record.isLocked ? 'bg-muted/30' : ''}>
+            <tr key={record.id} className={record.is_locked ? 'bg-muted/30' : ''}>
               <td>{idx + 1}</td>
               <td className="font-medium">
                 {record.clientName}
-                {record.isLocked && <Lock className="h-3 w-3 inline ml-2 text-muted-foreground" />}
+                {record.is_locked && <Lock className="h-3 w-3 inline ml-2 text-muted-foreground" />}
               </td>
               <td>{record.accountantName}</td>
               <td>
@@ -140,14 +366,13 @@ const FilingStatusPage: React.FC = () => {
                   {record.filingFrequency}
                 </Badge>
               </td>
-              <td>{record.otpDscPerson}</td>
               <td>{record.contactNumber}</td>
               <td className="text-xs">{record.clientEmail}</td>
               <td>
                 <Select 
-                  defaultValue={record.status} 
-                  disabled={record.isLocked && !canUnlockSheets()}
-                  onValueChange={(value) => handleStatusChange(record.id, value as FilingStatusType)}
+                  value={record.status} 
+                  disabled={record.is_locked && !canUnlockSheets()}
+                  onValueChange={(value) => handleStatusChange(record, value as FilingStatusType)}
                 >
                   <SelectTrigger className="w-40 h-8">
                     <SelectValue />
@@ -161,21 +386,21 @@ const FilingStatusPage: React.FC = () => {
                   </SelectContent>
                 </Select>
               </td>
-              <td className="text-center">{record.targetDate}</td>
+              <td className="text-center">{record.target_date}</td>
               <td>
-                {record.filedDate 
-                  ? new Date(record.filedDate).toLocaleDateString('en-IN')
+                {record.filed_date 
+                  ? new Date(record.filed_date).toLocaleDateString('en-IN')
                   : '-'
                 }
               </td>
               <td className="text-xs text-muted-foreground">{record.remarks || '-'}</td>
               {canUnlockSheets() && (
                 <td>
-                  {record.isLocked && (
+                  {record.is_locked && (
                     <Button 
                       variant="ghost" 
                       size="sm" 
-                      onClick={() => handleUnlock(record.id)}
+                      onClick={() => handleUnlock(record)}
                       className="h-7 px-2"
                     >
                       <Unlock className="h-3 w-3" />
@@ -187,7 +412,7 @@ const FilingStatusPage: React.FC = () => {
           ))}
           {records.length === 0 && (
             <tr>
-              <td colSpan={canUnlockSheets() ? 12 : 11} className="text-center py-8 text-muted-foreground">
+              <td colSpan={canUnlockSheets() ? 11 : 10} className="text-center py-8 text-muted-foreground">
                 No clients have {returnType} selected.
               </td>
             </tr>
@@ -196,6 +421,14 @@ const FilingStatusPage: React.FC = () => {
       </table>
     </div>
   );
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-muted-foreground">Loading...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -247,7 +480,7 @@ const FilingStatusPage: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Filing Status Tabs - All Return Types */}
+      {/* Filing Status Tabs */}
       <Tabs value={selectedTab} onValueChange={setSelectedTab}>
         <TabsList className="grid w-full max-w-3xl grid-cols-6">
           <TabsTrigger value="gstr1" className="flex items-center gap-1 text-xs">
@@ -276,71 +509,21 @@ const FilingStatusPage: React.FC = () => {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="gstr1">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">GSTR-1 Filing Status - {selectedMonth}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <FilingTable records={generateAllFilingRecords('GSTR-1')} returnType="GSTR-1" />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="gstr3b">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">GSTR-3B Filing Status - {selectedMonth}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <FilingTable records={generateAllFilingRecords('GSTR-3B')} returnType="GSTR-3B" />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="itc04">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">ITC-04 Filing Status - {selectedMonth}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <FilingTable records={generateAllFilingRecords('ITC-04')} returnType="ITC-04" />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="gstr6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">GSTR-6 Filing Status - {selectedMonth}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <FilingTable records={generateAllFilingRecords('GSTR-6')} returnType="GSTR-6" />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="gstr7">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">GSTR-7 Filing Status - {selectedMonth}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <FilingTable records={generateAllFilingRecords('GSTR-7')} returnType="GSTR-7" />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="cmp08">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">CMP-08 Filing Status - {selectedMonth}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <FilingTable records={generateAllFilingRecords('CMP-08')} returnType="CMP-08" />
-            </CardContent>
-          </Card>
-        </TabsContent>
+        {allReturnTypes.map((returnType) => {
+          const tabKey = returnType.toLowerCase().replace('-', '');
+          return (
+            <TabsContent key={returnType} value={tabKey}>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">{returnType} Filing Status - {selectedMonth}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <FilingTable records={generateAllFilingRecords(returnType)} returnType={returnType} />
+                </CardContent>
+              </Card>
+            </TabsContent>
+          );
+        })}
       </Tabs>
     </div>
   );
