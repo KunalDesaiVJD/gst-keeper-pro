@@ -17,12 +17,20 @@ import { mockClients, mockFilingStatus } from '@/data/mockData';
 const ClientDashboard: React.FC = () => {
   const { user } = useAuth();
   
-  // Find client data by matching PAN (userId)
+  // Find client data by matching PAN (userId) in GSTIN
   const client = mockClients.find(c => 
     c.gstin.includes(user?.userId || '')
-  ) || mockClients[0]; // Fallback for demo
+  );
 
-  // Get filing status for this client
+  if (!client) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-muted-foreground">Client data not found.</p>
+      </div>
+    );
+  }
+
+  // Get filing status for this client only
   const clientFilingStatus = mockFilingStatus.filter(f => f.clientId === client.id);
 
   // Generate months from registration date
@@ -51,7 +59,7 @@ const ClientDashboard: React.FC = () => {
   };
 
   const isFiledStatus = (status: string) => {
-    return status === 'Filed' || status === 'Filed - NIL';
+    return status === 'Filed';
   };
 
   return (
@@ -115,10 +123,10 @@ const ClientDashboard: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Filing Status Matrix */}
+      {/* Filing Tracker - Monthly matrix showing Filed/Not Filed */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg font-heading">Filing Status</CardTitle>
+          <CardTitle className="text-lg font-heading">Filing Tracker</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
@@ -156,7 +164,7 @@ const ClientDashboard: React.FC = () => {
                           ) : (
                             <span className="inline-flex items-center gap-1 text-warning">
                               <Clock className="h-4 w-4" />
-                              Pending
+                              Not Filed
                             </span>
                           )}
                         </td>

@@ -63,9 +63,9 @@ export const exportFilingStatusToPDF = (
     margin: { top: 40, left: 10, right: 10 },
   });
 
-  // Summary
-  const filed = records.filter(r => r.status === 'Filed' || r.status === 'Filed - NIL').length;
-  const pending = records.filter(r => r.status === 'Prepared' || r.status === 'Prepared - NIL' || r.status === 'Ready to Verify').length;
+  // Summary - Updated for new status types
+  const filed = records.filter(r => r.status === 'Filed').length;
+  const pending = records.filter(r => r.status === 'Prepared' || r.status === 'Data Pending' || r.status === 'Mismatch in Data' || r.status === 'Not Verified').length;
   
   const finalY = (doc as any).lastAutoTable.finalY || 40;
   doc.setFontSize(10);
