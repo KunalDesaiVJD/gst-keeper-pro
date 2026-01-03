@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
@@ -9,18 +8,23 @@ import {
   Download, 
   Plus,
   History,
-  Lock,
   Unlock,
   AlertCircle
 } from 'lucide-react';
 import { mockClients, mock2BNotIn2B } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
 import { format } from 'date-fns';
+import { toast } from 'sonner';
+import { export2BToExcel, import2BFromExcel } from '@/utils/excelExport';
+import VersionHistoryDialog from '@/components/dialogs/VersionHistoryDialog';
+import { TwoBVersion, BillNotIn2B } from '@/types';
 
 const TwoBReconciliationPage: React.FC = () => {
   const { user, canViewVersionHistory, canUnlockSheets } = useAuth();
   const [selectedClient, setSelectedClient] = useState<string>('');
   const [selectedMonth, setSelectedMonth] = useState<string>('01/2026');
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedClientData = mockClients.find(c => c.id === selectedClient);
 
@@ -33,6 +37,73 @@ const TwoBReconciliationPage: React.FC = () => {
     sgst: acc.sgst + row.inputSgst,
   }), { taxableValue: 0, igst: 0, cgst: 0, sgst: 0 });
 
+  // Mock version history
+  const mockVersions: TwoBVersion[] = selectedClient ? [
+    {
+      id: '1',
+      clientId: selectedClient,
+      month: selectedMonth,
+      versionNumber: 2,
+      billsNotIn2B: currentMonthData,
+      billsNotInBooks: [],
+      updatedBy: 'Priya',
+      updatedAt: new Date('2025-12-22T14:30:00'),
+      isCurrent: true,
+    },
+    {
+      id: '2',
+      clientId: selectedClient,
+      month: selectedMonth,
+      versionNumber: 1,
+      billsNotIn2B: currentMonthData.slice(0, 1),
+      billsNotInBooks: [],
+      updatedBy: 'Amit',
+      updatedAt: new Date('2025-12-20T10:00:00'),
+      isCurrent: false,
+    },
+  ] : [];
+
+  const handleExportExcel = () => {
+    if (!selectedClientData) {
+      toast.error('Please select a client first');
+      return;
+    }
+    export2BToExcel(selectedClientData.name, selectedMonth, currentMonthData, []);
+    toast.success('Excel file exported successfully');
+  };
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!selectedClient) {
+      toast.error('Please select a client first');
+      return;
+    }
+
+    try {
+      const data = await import2BFromExcel(file);
+      toast.success(`Imported ${data.billsNotIn2B.length} records from "Bills Not in 2B" and ${data.billsNotInBooks.length} from "Bills Not in Books"`);
+      // In real app, this would update the state/database
+    } catch (error) {
+      toast.error('Failed to import Excel file. Please check the format.');
+    }
+    
+    // Reset input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleRestoreVersion = (version: TwoBVersion) => {
+    // In real app, this would restore the version data
+    console.log('Restoring version:', version);
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
@@ -42,11 +113,18 @@ const TwoBReconciliationPage: React.FC = () => {
           <p className="text-muted-foreground">Manage bills not available in 2B or Books</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" className="flex items-center gap-2">
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            accept=".xlsx,.xls"
+            className="hidden"
+          />
+          <Button variant="outline" className="flex items-center gap-2" onClick={handleImportClick}>
             <Upload className="h-4 w-4" />
             Import Excel
           </Button>
-          <Button variant="outline" className="flex items-center gap-2">
+          <Button variant="outline" className="flex items-center gap-2" onClick={handleExportExcel}>
             <Download className="h-4 w-4" />
             Export Excel
           </Button>
@@ -84,7 +162,11 @@ const TwoBReconciliationPage: React.FC = () => {
               </Select>
             </div>
             {canViewVersionHistory() && selectedClient && (
-              <Button variant="outline" className="flex items-center gap-2">
+              <Button 
+                variant="outline" 
+                className="flex items-center gap-2"
+                onClick={() => setShowVersionHistory(true)}
+              >
                 <History className="h-4 w-4" />
                 View Versions
               </Button>
@@ -236,6 +318,16 @@ const TwoBReconciliationPage: React.FC = () => {
           </Card>
         </>
       )}
+
+      {/* Version History Dialog */}
+      <VersionHistoryDialog
+        open={showVersionHistory}
+        onOpenChange={setShowVersionHistory}
+        versions={mockVersions}
+        onRestore={handleRestoreVersion}
+        clientName={selectedClientData?.name || ''}
+        month={selectedMonth}
+      />
     </div>
   );
 };
