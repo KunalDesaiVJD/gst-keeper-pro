@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Lock, AlertCircle } from 'lucide-react';
+import { Lock, AlertCircle, Unlock } from 'lucide-react';
 import { mockClients } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
-
 const ITCSummaryPage: React.FC = () => {
   const { canUnlockSheets } = useAuth();
   const [selectedClient, setSelectedClient] = useState<string>('');
@@ -124,7 +124,7 @@ const ITCSummaryPage: React.FC = () => {
           <div className="grid grid-cols-2 gap-4 max-w-md">
             <Card className="bg-success/5 border-success/20">
               <CardContent className="p-4 text-center">
-                <p className="text-sm text-muted-foreground">RECLAMATION</p>
+                <p className="text-sm text-muted-foreground">RECLAIMED</p>
                 <p className="text-2xl font-bold text-success">₹{totalReclamation.toLocaleString('en-IN')}</p>
               </CardContent>
             </Card>
@@ -135,6 +135,16 @@ const ITCSummaryPage: React.FC = () => {
               </CardContent>
             </Card>
           </div>
+
+          {/* Unlock Button for Superadmin/GST Manager */}
+          {canUnlockSheets() && (
+            <div className="flex justify-end">
+              <Button variant="outline" size="sm" className="flex items-center gap-2">
+                <Unlock className="h-4 w-4" />
+                Unlock ITC Summary Sheet
+              </Button>
+            </div>
+          )}
 
           {/* ITC Summary Table */}
           <Card>
