@@ -11,7 +11,8 @@ import {
   Unlock,
   AlertCircle,
   Lock,
-  Trash2
+  Trash2,
+  Plus
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { format } from 'date-fns';
@@ -369,6 +370,45 @@ const TwoBReconciliationPage: React.FC = () => {
     }
   };
 
+  // Add new row handlers
+  const handleAddRow2B = async () => {
+    if (!selectedClient || isLocked) return;
+    
+    const { error } = await supabase
+      .from('bills_not_in_2b')
+      .insert([{
+        client_id: selectedClient,
+        date: new Date().toISOString().split('T')[0],
+        supplier_name: '',
+        period_month: selectedMonth,
+      }]);
+    
+    if (error) {
+      toast.error('Failed to add row: ' + error.message);
+    } else {
+      fetchBillsData();
+    }
+  };
+
+  const handleAddRowBooks = async () => {
+    if (!selectedClient || isLocked) return;
+    
+    const { error } = await supabase
+      .from('bills_not_in_books')
+      .insert([{
+        client_id: selectedClient,
+        date: new Date().toISOString().split('T')[0],
+        supplier_name: '',
+        period_month: selectedMonth,
+      }]);
+    
+    if (error) {
+      toast.error('Failed to add row: ' + error.message);
+    } else {
+      fetchBillsData();
+    }
+  };
+
   const handleUnlockSheet = async () => {
     if (!selectedClient) return;
     
@@ -597,7 +637,21 @@ const TwoBReconciliationPage: React.FC = () => {
                 <table className="gst-table">
                   <thead>
                     <tr>
-                      <th className="w-28">Date</th>
+                      <th className="w-28">
+                        <div className="flex flex-col items-center gap-1">
+                          <span>Date</span>
+                          {!isLocked && (
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              onClick={handleAddRow2B}
+                              className="h-6 w-6 p-0"
+                            >
+                              <Plus className="h-3 w-3" />
+                            </Button>
+                          )}
+                        </div>
+                      </th>
                       <th>Supplier Name</th>
                       <th className="w-28">Invoice No.</th>
                       <th className="w-36">GSTIN</th>
@@ -708,7 +762,7 @@ const TwoBReconciliationPage: React.FC = () => {
                     {billsNotIn2B.length === 0 && (
                       <tr>
                         <td colSpan={isLocked ? 10 : 11} className="text-center py-8 text-muted-foreground">
-                          No records found. Use "Import Excel" to add data.
+                          No records found. Click + button below Date or use "Import Excel" to add data.
                         </td>
                       </tr>
                     )}
@@ -740,7 +794,21 @@ const TwoBReconciliationPage: React.FC = () => {
                 <table className="gst-table">
                   <thead>
                     <tr>
-                      <th className="w-28">Date</th>
+                      <th className="w-28">
+                        <div className="flex flex-col items-center gap-1">
+                          <span>Date</span>
+                          {!isLocked && (
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              onClick={handleAddRowBooks}
+                              className="h-6 w-6 p-0"
+                            >
+                              <Plus className="h-3 w-3" />
+                            </Button>
+                          )}
+                        </div>
+                      </th>
                       <th>Supplier Name</th>
                       <th className="w-28">Invoice No.</th>
                       <th className="w-36">GSTIN</th>
@@ -846,7 +914,7 @@ const TwoBReconciliationPage: React.FC = () => {
                     {billsNotInBooks.length === 0 && (
                       <tr>
                         <td colSpan={isLocked ? 10 : 11} className="text-center py-8 text-muted-foreground">
-                          No records found. Use "Import Excel" to add data.
+                          No records found. Click + button below Date or use "Import Excel" to add data.
                         </td>
                       </tr>
                     )}
