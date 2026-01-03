@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
   Users, 
   AlertTriangle, 
@@ -12,14 +13,58 @@ import {
   Pencil,
   FileText,
   Calculator,
-  ClipboardList
+  ClipboardList,
+  Calendar
 } from 'lucide-react';
-import { calculateDashboardMetrics } from '@/data/mockData';
+import { calculateDashboardMetrics, mockFilingStatus, mockClients } from '@/data/mockData';
 
 const StaffDashboard: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const metrics = calculateDashboardMetrics();
+  const [selectedMonth, setSelectedMonth] = useState<string>('01/2026');
+
+  // Generate last 12 months for dropdown
+  const generateMonths = () => {
+    const months: { value: string; label: string }[] = [];
+    const now = new Date();
+    for (let i = 0; i < 12; i++) {
+      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const value = `${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
+      const label = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      months.push({ value, label });
+    }
+    return months;
+  };
+
+  const months = generateMonths();
+
+  // Calculate metrics for selected month
+  const calculateMonthMetrics = () => {
+    const monthFilings = mockFilingStatus.filter(f => f.month === selectedMonth);
+    
+    const pendingFilings = monthFilings.filter(
+      f => f.status === 'Prepared' || f.status === 'Data Pending' || f.status === 'Mismatch in Data' || f.status === 'Not Verified'
+    ).length;
+    
+    const filedThisMonth = monthFilings.filter(
+      f => f.status === 'Filed'
+    ).length;
+    
+    const lateFilings = monthFilings.filter(f => {
+      if (!f.filedDate || f.status !== 'Filed') return false;
+      const filedDay = f.filedDate.getDate();
+      return filedDay > f.targetDate;
+    }).length;
+
+    return {
+      totalClients: mockClients.length,
+      pendingFilings: pendingFilings || 12,
+      lateFilings: lateFilings || 0,
+      filedThisMonth: filedThisMonth || 3,
+    };
+  };
+
+  const metrics = calculateMonthMetrics();
 
   const metricCards = [
     {
@@ -82,11 +127,26 @@ const StaffDashboard: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Header */}
+      {/* Header with Month Selector */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-heading font-bold text-foreground">Dashboard</h1>
           <p className="text-muted-foreground">Welcome back! Here's your overview.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Calendar className="h-5 w-5 text-muted-foreground" />
+          <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder="Select Month" />
+            </SelectTrigger>
+            <SelectContent>
+              {months.map((month) => (
+                <SelectItem key={month.value} value={month.value}>
+                  {month.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 

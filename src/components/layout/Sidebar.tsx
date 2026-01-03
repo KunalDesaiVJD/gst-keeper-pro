@@ -21,42 +21,67 @@ interface NavItem {
 }
 
 const Sidebar: React.FC = () => {
-  const { user, logout, canManageEmployees } = useAuth();
+  const { user, logout, canManageEmployees, isStaffRole } = useAuth();
   const navigate = useNavigate();
 
-  const navItems: NavItem[] = [
-    {
-      label: 'Dashboard',
-      path: '/dashboard',
-      icon: <LayoutDashboard className="h-5 w-5" />,
-    },
-    {
-      label: '2B Reconciliation',
-      path: '/2b-reconciliation',
-      icon: <FileText className="h-5 w-5" />,
-    },
-    {
-      label: 'ITC Summary',
-      path: '/itc-summary',
-      icon: <Calculator className="h-5 w-5" />,
-      roles: ['superadmin', 'gst_manager', 'employee'],
-    },
-    {
-      label: 'Filing Status',
-      path: '/filing-status',
-      icon: <ClipboardList className="h-5 w-5" />,
-    },
-  ];
+  // Base nav items - different for client vs staff
+  const getNavItems = (): NavItem[] => {
+    if (!isStaffRole()) {
+      // Client only sees Dashboard and 2B Reconciliation
+      return [
+        {
+          label: 'Dashboard',
+          path: '/dashboard',
+          icon: <LayoutDashboard className="h-5 w-5" />,
+        },
+        {
+          label: '2B Reconciliation',
+          path: '/2b-reconciliation',
+          icon: <FileText className="h-5 w-5" />,
+        },
+      ];
+    }
 
-  // Add Employee Management for Superadmin
-  if (canManageEmployees()) {
-    navItems.push({
-      label: 'Manage Employees',
-      path: '/manage-employees',
-      icon: <Users className="h-5 w-5" />,
-      roles: ['superadmin'],
-    });
-  }
+    // Staff navigation
+    const items: NavItem[] = [
+      {
+        label: 'Dashboard',
+        path: '/dashboard',
+        icon: <LayoutDashboard className="h-5 w-5" />,
+      },
+      {
+        label: '2B Reconciliation',
+        path: '/2b-reconciliation',
+        icon: <FileText className="h-5 w-5" />,
+      },
+      {
+        label: 'ITC Summary',
+        path: '/itc-summary',
+        icon: <Calculator className="h-5 w-5" />,
+        roles: ['superadmin', 'gst_manager', 'employee'],
+      },
+      {
+        label: 'Filing Status',
+        path: '/filing-status',
+        icon: <ClipboardList className="h-5 w-5" />,
+        roles: ['superadmin', 'gst_manager', 'employee'],
+      },
+    ];
+
+    // Add Employee Management for Superadmin
+    if (canManageEmployees()) {
+      items.push({
+        label: 'Manage Employees',
+        path: '/manage-employees',
+        icon: <Users className="h-5 w-5" />,
+        roles: ['superadmin'],
+      });
+    }
+
+    return items;
+  };
+
+  const navItems = getNavItems();
 
   const filteredNavItems = navItems.filter(item => {
     if (!item.roles) return true;

@@ -1,35 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Download, FileText } from 'lucide-react';
+import { Download, FileText, Upload, Lock, Unlock } from 'lucide-react';
 import { mockFilingStatus, mockClients } from '@/data/mockData';
 import { FilingStatusType, ReturnType } from '@/types';
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
 
 const FilingStatusPage: React.FC = () => {
+  const { canUnlockSheets, isStaffRole } = useAuth();
   const [selectedMonth, setSelectedMonth] = useState<string>('01/2026');
   const [selectedTab, setSelectedTab] = useState<string>('gstr1');
-
-  const getStatusBadgeStyle = (status: FilingStatusType) => {
-    switch (status) {
-      case 'Filed':
-      case 'Filed - NIL':
-        return 'status-filed';
-      case 'Prepared':
-      case 'Prepared - NIL':
-        return 'status-pending';
-      case 'Ready to Verify':
-        return 'bg-info/10 text-info border-info/20';
-      case 'Not to be Filed':
-        return 'bg-muted text-muted-foreground';
-      default:
-        return '';
-    }
-  };
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Get all return types from all clients
   const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08'];
@@ -88,6 +74,39 @@ const FilingStatusPage: React.FC = () => {
     toast.success('PDF exported successfully');
   };
 
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      // Parse Excel file for filing status import
+      toast.success('Filing status imported successfully');
+    } catch (error) {
+      toast.error('Failed to import Excel file. Please check the format.');
+    }
+    
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleStatusChange = (recordId: string, newStatus: FilingStatusType) => {
+    // In real app, this would update the database
+    if (newStatus === 'Filed') {
+      toast.success('Status changed to Filed. 2B and ITC sheets are now locked for this period.');
+    } else {
+      toast.success('Status updated successfully');
+    }
+  };
+
+  const handleUnlock = (recordId: string) => {
+    toast.success('Sheet unlocked. You can now change the status.');
+  };
+
   const FilingTable = ({ records, returnType }: { records: typeof mockFilingStatus; returnType: string }) => (
     <div className="overflow-x-auto">
       <table className="gst-table">
@@ -104,13 +123,17 @@ const FilingStatusPage: React.FC = () => {
             <th className="w-20">Target</th>
             <th className="w-28">Filed Date</th>
             <th>Remarks</th>
+            {canUnlockSheets() && <th className="w-20">Action</th>}
           </tr>
         </thead>
         <tbody>
           {records.map((record, idx) => (
-            <tr key={record.id}>
+            <tr key={record.id} className={record.isLocked ? 'bg-muted/30' : ''}>
               <td>{idx + 1}</td>
-              <td className="font-medium">{record.clientName}</td>
+              <td className="font-medium">
+                {record.clientName}
+                {record.isLocked && <Lock className="h-3 w-3 inline ml-2 text-muted-foreground" />}
+              </td>
               <td>{record.accountantName}</td>
               <td>
                 <Badge variant="outline" className="text-xs">
@@ -121,17 +144,20 @@ const FilingStatusPage: React.FC = () => {
               <td>{record.contactNumber}</td>
               <td className="text-xs">{record.clientEmail}</td>
               <td>
-                <Select defaultValue={record.status}>
-                  <SelectTrigger className="w-36 h-8">
+                <Select 
+                  defaultValue={record.status} 
+                  disabled={record.isLocked && !canUnlockSheets()}
+                  onValueChange={(value) => handleStatusChange(record.id, value as FilingStatusType)}
+                >
+                  <SelectTrigger className="w-40 h-8">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Prepared">Prepared</SelectItem>
-                    <SelectItem value="Prepared - NIL">Prepared - NIL</SelectItem>
-                    <SelectItem value="Ready to Verify">Ready to Verify</SelectItem>
+                    <SelectItem value="Data Pending">Data Pending</SelectItem>
+                    <SelectItem value="Mismatch in Data">Mismatch in Data</SelectItem>
+                    <SelectItem value="Not Verified">Not Verified</SelectItem>
                     <SelectItem value="Filed">Filed</SelectItem>
-                    <SelectItem value="Filed - NIL">Filed - NIL</SelectItem>
-                    <SelectItem value="Not to be Filed">Not to be Filed</SelectItem>
                   </SelectContent>
                 </Select>
               </td>
@@ -143,11 +169,25 @@ const FilingStatusPage: React.FC = () => {
                 }
               </td>
               <td className="text-xs text-muted-foreground">{record.remarks || '-'}</td>
+              {canUnlockSheets() && (
+                <td>
+                  {record.isLocked && (
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => handleUnlock(record.id)}
+                      className="h-7 px-2"
+                    >
+                      <Unlock className="h-3 w-3" />
+                    </Button>
+                  )}
+                </td>
+              )}
             </tr>
           ))}
           {records.length === 0 && (
             <tr>
-              <td colSpan={11} className="text-center py-8 text-muted-foreground">
+              <td colSpan={canUnlockSheets() ? 12 : 11} className="text-center py-8 text-muted-foreground">
                 No clients have {returnType} selected.
               </td>
             </tr>
@@ -165,10 +205,25 @@ const FilingStatusPage: React.FC = () => {
           <h1 className="text-2xl font-heading font-bold text-foreground">Filing Status</h1>
           <p className="text-muted-foreground">Track GST return filing status for all clients</p>
         </div>
-        <Button variant="outline" className="flex items-center gap-2" onClick={handleExportPDF}>
-          <Download className="h-4 w-4" />
-          Export PDF
-        </Button>
+        <div className="flex items-center gap-2">
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            accept=".xlsx,.xls"
+            className="hidden"
+          />
+          {isStaffRole() && (
+            <Button variant="outline" className="flex items-center gap-2" onClick={handleImportClick}>
+              <Upload className="h-4 w-4" />
+              Import Excel
+            </Button>
+          )}
+          <Button variant="outline" className="flex items-center gap-2" onClick={handleExportPDF}>
+            <Download className="h-4 w-4" />
+            Export PDF
+          </Button>
+        </div>
       </div>
 
       {/* Month Filter */}

@@ -8,7 +8,7 @@ export const mockUsers: User[] = [
     firstName: 'Admin',
     role: 'superadmin',
     email: 'admin@vjdesai.com',
-    isFirstLogin: false,
+    isFirstLogin: true, // First login - force password change
     createdAt: new Date('2024-01-01'),
   },
   {
@@ -17,7 +17,7 @@ export const mockUsers: User[] = [
     firstName: 'Kunal',
     role: 'gst_manager',
     email: 'kunal@vjdesai.com',
-    isFirstLogin: false,
+    isFirstLogin: true, // First login - force password change
     createdAt: new Date('2024-01-01'),
   },
   {
@@ -26,7 +26,7 @@ export const mockUsers: User[] = [
     firstName: 'Amit',
     role: 'employee',
     email: 'amit@vjdesai.com',
-    isFirstLogin: false,
+    isFirstLogin: true, // First login - force password change
     createdAt: new Date('2024-01-01'),
   },
   {
@@ -35,7 +35,7 @@ export const mockUsers: User[] = [
     firstName: 'Priya',
     role: 'employee',
     email: 'priya@vjdesai.com',
-    isFirstLogin: false,
+    isFirstLogin: true, // First login - force password change
     createdAt: new Date('2024-01-01'),
   },
   // Client users (PAN-based)
@@ -163,7 +163,7 @@ export const mockClients: Client[] = [
   },
 ];
 
-// Mock Filing Status Records
+// Mock Filing Status Records - Updated with new status types
 export const mockFilingStatus: FilingStatusRecord[] = [
   {
     id: '1',
@@ -225,7 +225,7 @@ export const mockFilingStatus: FilingStatusRecord[] = [
     otpDscPerson: 'Dinesh Padshala',
     contactNumber: '34',
     clientEmail: 'account@accuratepms.in',
-    status: 'Ready to Verify',
+    status: 'Not Verified',
     targetDate: 11,
     remarks: '',
     month: '01/2026',
@@ -241,7 +241,7 @@ export const mockFilingStatus: FilingStatusRecord[] = [
     otpDscPerson: 'Miteshbhai',
     contactNumber: '22',
     clientEmail: 'ambergum@hotmail.com',
-    status: 'Prepared - NIL',
+    status: 'Data Pending',
     targetDate: 20,
     remarks: '',
     month: '01/2026',
@@ -264,7 +264,9 @@ export const mock2BNotIn2B: BillNotIn2B[] = [
     inputSgst: 4500,
     reversalMonth: '12/25',
     reclaimMonth: '',
+    periodMonth: '12/2025',
     isLocked: false,
+    isCarriedForward: false,
     updatedBy: 'Priya',
     updatedAt: new Date('2025-12-20'),
     version: 1,
@@ -282,28 +284,30 @@ export const mock2BNotIn2B: BillNotIn2B[] = [
     inputSgst: 0,
     reversalMonth: '12/25',
     reclaimMonth: '01/26',
+    periodMonth: '12/2025',
     isLocked: false,
+    isCarriedForward: false,
     updatedBy: 'Priya',
     updatedAt: new Date('2025-12-22'),
     version: 2,
   },
 ];
 
-// Dashboard Metrics Calculator
-export const calculateDashboardMetrics = (): DashboardMetrics => {
-  const currentMonth = new Date().getMonth() + 1;
-  const currentYear = new Date().getFullYear();
-  const currentMonthStr = `${String(currentMonth).padStart(2, '0')}/${currentYear}`;
+// Dashboard Metrics Calculator - Updated with new status types
+export const calculateDashboardMetrics = (month?: string): DashboardMetrics => {
+  const currentMonth = month || `${String(new Date().getMonth() + 1).padStart(2, '0')}/${new Date().getFullYear()}`;
   
-  const pendingFilings = mockFilingStatus.filter(
-    f => f.status === 'Prepared' || f.status === 'Prepared - NIL' || f.status === 'Ready to Verify'
+  const monthFilings = mockFilingStatus.filter(f => f.month === currentMonth);
+  
+  const pendingFilings = monthFilings.filter(
+    f => f.status === 'Prepared' || f.status === 'Data Pending' || f.status === 'Mismatch in Data' || f.status === 'Not Verified'
   ).length;
   
-  const filedThisMonth = mockFilingStatus.filter(
-    f => (f.status === 'Filed' || f.status === 'Filed - NIL') && f.month === currentMonthStr
+  const filedThisMonth = monthFilings.filter(
+    f => f.status === 'Filed'
   ).length;
   
-  const lateFilings = mockFilingStatus.filter(f => {
+  const lateFilings = monthFilings.filter(f => {
     if (!f.filedDate) return false;
     const filedDay = f.filedDate.getDate();
     return filedDay > f.targetDate;
@@ -311,7 +315,7 @@ export const calculateDashboardMetrics = (): DashboardMetrics => {
 
   return {
     totalClients: mockClients.length,
-    pendingFilings,
+    pendingFilings: pendingFilings || 12, // Default for demo
     lateFilings,
     filedThisMonth: filedThisMonth || 3, // Default for demo
     twoBReconciliationCount: mockClients.length,

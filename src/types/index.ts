@@ -7,14 +7,13 @@ export type RegistrationType = 'Regular' | 'Composition' | 'Tax Deductor';
 // Return Types
 export type ReturnType = 'GSTR-1' | 'GSTR-3B' | 'ITC-04' | 'GSTR-6' | 'GSTR-7' | 'CMP-08';
 
-// Filing Status
+// Filing Status - Updated to 5 options
 export type FilingStatusType = 
   | 'Prepared' 
-  | 'Prepared - NIL' 
-  | 'Ready to Verify' 
-  | 'Filed' 
-  | 'Filed - NIL' 
-  | 'Not to be Filed';
+  | 'Data Pending' 
+  | 'Mismatch in Data' 
+  | 'Not Verified' 
+  | 'Filed';
 
 // User interface
 export interface User {
@@ -57,7 +56,9 @@ export interface BillNotIn2B {
   inputSgst: number;
   reversalMonth: string; // MM/YY format
   reclaimMonth: string; // MM/YY format
+  periodMonth: string;
   isLocked: boolean;
+  isCarriedForward: boolean;
   updatedBy: string;
   updatedAt: Date;
   version: number;
@@ -77,7 +78,9 @@ export interface BillNotInBooks {
   inputSgst: number;
   bookEntryMonth: string; // MM/YY format
   billIn2BMonth: string; // MM/YY format
+  periodMonth: string;
   isLocked: boolean;
+  isCarriedForward: boolean;
   updatedBy: string;
   updatedAt: Date;
   version: number;

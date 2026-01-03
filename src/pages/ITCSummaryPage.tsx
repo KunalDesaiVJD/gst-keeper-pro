@@ -6,14 +6,21 @@ import { Badge } from '@/components/ui/badge';
 import { Lock, AlertCircle, Unlock } from 'lucide-react';
 import { mockClients } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
+import { toast } from 'sonner';
+
 const ITCSummaryPage: React.FC = () => {
   const { canUnlockSheets } = useAuth();
   const [selectedClient, setSelectedClient] = useState<string>('');
   const [selectedMonth, setSelectedMonth] = useState<string>('01/2026');
+  const [isLocked, setIsLocked] = useState(false);
 
   const selectedClientData = mockClients.find(c => c.id === selectedClient);
 
+  // Auto-linked value for 4(a) 5.4 - Reclaim of ITC Reversed for Previous months
+  const reclaimITCReversedPrev = 4500;
+
   // ITC Summary structure based on the Excel file
+  // 4(d)(1) is autolinked to same value as 4(a) 5.4
   const itcData = {
     section4A: [
       { srNo: '(1)', particular: 'Import of Goods', igst: 0, cgst: 0, sgst: 0 },
@@ -24,7 +31,7 @@ const ITCSummaryPage: React.FC = () => {
       { srNo: '5.1', particular: 'ITC for the Month', igst: 45000, cgst: 22500, sgst: 22500 },
       { srNo: '5.2', particular: 'ITC for Previous Month, if any', igst: 0, cgst: 0, sgst: 0 },
       { srNo: '5.3', particular: 'Debit Note', igst: 0, cgst: 0, sgst: 0 },
-      { srNo: '5.4', particular: 'Reclaim of ITC Reversed for Previous months', igst: 4500, cgst: 0, sgst: 0, isAutoLinked: true },
+      { srNo: '5.4', particular: 'Reclaim of ITC Reversed for Previous months', igst: reclaimITCReversedPrev, cgst: 0, sgst: 0, isAutoLinked: true },
       { srNo: '5.5', particular: 'Reclaim of ITC Reversed due to 180 days rule', igst: 0, cgst: 0, sgst: 0 },
     ],
     section4B: [
@@ -35,8 +42,9 @@ const ITCSummaryPage: React.FC = () => {
       { srNo: '', particular: 'ITC Reversal due to 180 days Analysis', igst: 0, cgst: 0, sgst: 0 },
     ],
     section4D: [
-      { srNo: '(1)', particular: 'ITC reclaimed which was reversed under Table 4(B)(2) in earlier tax period', igst: 0, cgst: 0, sgst: 0 },
-      { srNo: '1.1', particular: 'Reclaim of ITC Reversed for Previous months', igst: 0, cgst: 0, sgst: 0 },
+      // 4(d)(1) ITC reclaimed - autolinked to same value as 4(a) 5.4
+      { srNo: '(1)', particular: 'ITC reclaimed which was reversed under Table 4(B)(2) in earlier tax period', igst: reclaimITCReversedPrev, cgst: 0, sgst: 0, isAutoLinked: true },
+      { srNo: '1.1', particular: 'Reclaim of ITC Reversed for Previous months', igst: reclaimITCReversedPrev, cgst: 0, sgst: 0, isAutoLinked: true },
       { srNo: '1.2', particular: 'Reclaim of ITC Reversed due to 180 days rule', igst: 0, cgst: 0, sgst: 0 },
       { srNo: '(2)', particular: 'Ineligible ITC under section 16(4) & ITC restricted due to PoS rules', igst: 0, cgst: 0, sgst: 0 },
     ],
@@ -60,12 +68,17 @@ const ITCSummaryPage: React.FC = () => {
     sgst: total4A.sgst - total4B.sgst,
   };
 
-  const totalReclamation = itcData.section4A
+  const totalReclaimed = itcData.section4A
     .filter(r => r.srNo === '5.4' || r.srNo === '5.5')
     .reduce((acc, r) => acc + r.igst + r.cgst + r.sgst, 0);
 
   const totalReversal = itcData.section4B
     .reduce((acc, r) => acc + r.igst + r.cgst + r.sgst, 0);
+
+  const handleUnlock = () => {
+    setIsLocked(false);
+    toast.success('ITC Summary Sheet unlocked successfully');
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -125,7 +138,7 @@ const ITCSummaryPage: React.FC = () => {
             <Card className="bg-success/5 border-success/20">
               <CardContent className="p-4 text-center">
                 <p className="text-sm text-muted-foreground">RECLAIMED</p>
-                <p className="text-2xl font-bold text-success">₹{totalReclamation.toLocaleString('en-IN')}</p>
+                <p className="text-2xl font-bold text-success">₹{totalReclaimed.toLocaleString('en-IN')}</p>
               </CardContent>
             </Card>
             <Card className="bg-destructive/5 border-destructive/20">
@@ -137,12 +150,20 @@ const ITCSummaryPage: React.FC = () => {
           </div>
 
           {/* Unlock Button for Superadmin/GST Manager */}
-          {canUnlockSheets() && (
+          {canUnlockSheets() && isLocked && (
             <div className="flex justify-end">
-              <Button variant="outline" size="sm" className="flex items-center gap-2">
+              <Button variant="outline" size="sm" className="flex items-center gap-2" onClick={handleUnlock}>
                 <Unlock className="h-4 w-4" />
                 Unlock ITC Summary Sheet
               </Button>
+            </div>
+          )}
+
+          {/* Lock indicator */}
+          {isLocked && (
+            <div className="bg-warning/10 border border-warning/20 rounded-lg p-3 flex items-center gap-2 text-warning">
+              <Lock className="h-4 w-4" />
+              <span className="text-sm">This sheet is locked because the return has been filed. Only Superadmin or GST Manager can unlock.</span>
             </div>
           )}
 
@@ -259,9 +280,17 @@ const ITCSummaryPage: React.FC = () => {
                       <td colSpan={6} className="font-semibold">4 (D) Other Details</td>
                     </tr>
                     {itcData.section4D.map((row, idx) => (
-                      <tr key={`4d-${idx}`}>
+                      <tr key={`4d-${idx}`} className={row.isAutoLinked ? 'cell-locked' : ''}>
                         <td>{row.srNo}</td>
-                        <td>{row.particular}</td>
+                        <td className="flex items-center gap-2">
+                          {row.particular}
+                          {row.isAutoLinked && (
+                            <Badge variant="outline" className="text-xs flex items-center gap-1">
+                              <Lock className="h-3 w-3" />
+                              Auto-linked
+                            </Badge>
+                          )}
+                        </td>
                         <td className="text-right">{row.igst.toLocaleString('en-IN')}</td>
                         <td className="text-right">{row.cgst.toLocaleString('en-IN')}</td>
                         <td className="text-right">{row.sgst.toLocaleString('en-IN')}</td>

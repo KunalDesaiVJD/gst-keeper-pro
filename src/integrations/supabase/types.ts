@@ -14,16 +14,410 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      bills_not_in_2b: {
+        Row: {
+          client_id: string
+          date: string
+          id: string
+          input_cgst: number | null
+          input_igst: number | null
+          input_sgst: number | null
+          is_carried_forward: boolean | null
+          is_locked: boolean | null
+          period_month: string
+          reclaim_month: string | null
+          reversal_month: string | null
+          supplier_gstin: string | null
+          supplier_invoice_number: string | null
+          supplier_name: string
+          taxable_value: number | null
+          updated_at: string | null
+          updated_by: string | null
+          version: number | null
+        }
+        Insert: {
+          client_id: string
+          date: string
+          id?: string
+          input_cgst?: number | null
+          input_igst?: number | null
+          input_sgst?: number | null
+          is_carried_forward?: boolean | null
+          is_locked?: boolean | null
+          period_month: string
+          reclaim_month?: string | null
+          reversal_month?: string | null
+          supplier_gstin?: string | null
+          supplier_invoice_number?: string | null
+          supplier_name: string
+          taxable_value?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+          version?: number | null
+        }
+        Update: {
+          client_id?: string
+          date?: string
+          id?: string
+          input_cgst?: number | null
+          input_igst?: number | null
+          input_sgst?: number | null
+          is_carried_forward?: boolean | null
+          is_locked?: boolean | null
+          period_month?: string
+          reclaim_month?: string | null
+          reversal_month?: string | null
+          supplier_gstin?: string | null
+          supplier_invoice_number?: string | null
+          supplier_name?: string
+          taxable_value?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+          version?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bills_not_in_2b_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bills_not_in_books: {
+        Row: {
+          bill_in_2b_month: string | null
+          book_entry_month: string | null
+          client_id: string
+          date: string
+          id: string
+          input_cgst: number | null
+          input_igst: number | null
+          input_sgst: number | null
+          is_carried_forward: boolean | null
+          is_locked: boolean | null
+          period_month: string
+          supplier_gstin: string | null
+          supplier_invoice_number: string | null
+          supplier_name: string
+          taxable_value: number | null
+          updated_at: string | null
+          updated_by: string | null
+          version: number | null
+        }
+        Insert: {
+          bill_in_2b_month?: string | null
+          book_entry_month?: string | null
+          client_id: string
+          date: string
+          id?: string
+          input_cgst?: number | null
+          input_igst?: number | null
+          input_sgst?: number | null
+          is_carried_forward?: boolean | null
+          is_locked?: boolean | null
+          period_month: string
+          supplier_gstin?: string | null
+          supplier_invoice_number?: string | null
+          supplier_name: string
+          taxable_value?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+          version?: number | null
+        }
+        Update: {
+          bill_in_2b_month?: string | null
+          book_entry_month?: string | null
+          client_id?: string
+          date?: string
+          id?: string
+          input_cgst?: number | null
+          input_igst?: number | null
+          input_sgst?: number | null
+          is_carried_forward?: boolean | null
+          is_locked?: boolean | null
+          period_month?: string
+          supplier_gstin?: string | null
+          supplier_invoice_number?: string | null
+          supplier_name?: string
+          taxable_value?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+          version?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bills_not_in_books_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      clients: {
+        Row: {
+          assigned_accountant: string | null
+          created_at: string | null
+          created_by: string | null
+          email: string | null
+          gstin: string
+          id: string
+          mobile: string | null
+          name: string
+          registration_date: string
+          registration_type: Database["public"]["Enums"]["registration_type"]
+          selected_returns: Database["public"]["Enums"]["return_type"][] | null
+          updated_at: string | null
+        }
+        Insert: {
+          assigned_accountant?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          email?: string | null
+          gstin: string
+          id?: string
+          mobile?: string | null
+          name: string
+          registration_date: string
+          registration_type?: Database["public"]["Enums"]["registration_type"]
+          selected_returns?: Database["public"]["Enums"]["return_type"][] | null
+          updated_at?: string | null
+        }
+        Update: {
+          assigned_accountant?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          email?: string | null
+          gstin?: string
+          id?: string
+          mobile?: string | null
+          name?: string
+          registration_date?: string
+          registration_type?: Database["public"]["Enums"]["registration_type"]
+          selected_returns?: Database["public"]["Enums"]["return_type"][] | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      filing_status: {
+        Row: {
+          client_id: string
+          filed_date: string | null
+          id: string
+          is_locked: boolean | null
+          period_month: string
+          remarks: string | null
+          return_type: Database["public"]["Enums"]["return_type"]
+          status: Database["public"]["Enums"]["filing_status_type"] | null
+          target_date: number | null
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          client_id: string
+          filed_date?: string | null
+          id?: string
+          is_locked?: boolean | null
+          period_month: string
+          remarks?: string | null
+          return_type: Database["public"]["Enums"]["return_type"]
+          status?: Database["public"]["Enums"]["filing_status_type"] | null
+          target_date?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          client_id?: string
+          filed_date?: string | null
+          id?: string
+          is_locked?: boolean | null
+          period_month?: string
+          remarks?: string | null
+          return_type?: Database["public"]["Enums"]["return_type"]
+          status?: Database["public"]["Enums"]["filing_status_type"] | null
+          target_date?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "filing_status_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      itc_summaries: {
+        Row: {
+          client_id: string
+          data: Json
+          edit_history: Json | null
+          id: string
+          is_locked: boolean | null
+          period_month: string
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          client_id: string
+          data?: Json
+          edit_history?: Json | null
+          id?: string
+          is_locked?: boolean | null
+          period_month: string
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          client_id?: string
+          data?: Json
+          edit_history?: Json | null
+          id?: string
+          is_locked?: boolean | null
+          period_month?: string
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "itc_summaries_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          created_at: string | null
+          email: string | null
+          first_name: string
+          id: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          email?: string | null
+          first_name: string
+          id?: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          email?: string | null
+          first_name?: string
+          id?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      twob_versions: {
+        Row: {
+          client_id: string
+          id: string
+          is_current: boolean | null
+          period_month: string
+          table_type: string
+          updated_at: string | null
+          updated_by: string | null
+          version_data: Json | null
+          version_number: number | null
+        }
+        Insert: {
+          client_id: string
+          id?: string
+          is_current?: boolean | null
+          period_month: string
+          table_type: string
+          updated_at?: string | null
+          updated_by?: string | null
+          version_data?: Json | null
+          version_number?: number | null
+        }
+        Update: {
+          client_id?: string
+          id?: string
+          is_current?: boolean | null
+          period_month?: string
+          table_type?: string
+          updated_at?: string | null
+          updated_by?: string | null
+          version_data?: Json | null
+          version_number?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "twob_versions_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_roles: {
+        Row: {
+          id: string
+          is_first_login: boolean | null
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          is_first_login?: boolean | null
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          id?: string
+          is_first_login?: boolean | null
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_user_role: {
+        Args: { _user_id: string }
+        Returns: Database["public"]["Enums"]["app_role"]
+      }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
+      is_staff: { Args: { _user_id: string }; Returns: boolean }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "superadmin" | "gst_manager" | "employee" | "client"
+      filing_status_type:
+        | "Prepared"
+        | "Data Pending"
+        | "Mismatch in Data"
+        | "Not Verified"
+        | "Filed"
+      registration_type: "Regular" | "Composition" | "Tax Deductor"
+      return_type:
+        | "GSTR-1"
+        | "GSTR-3B"
+        | "ITC-04"
+        | "GSTR-6"
+        | "GSTR-7"
+        | "CMP-08"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +544,24 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["superadmin", "gst_manager", "employee", "client"],
+      filing_status_type: [
+        "Prepared",
+        "Data Pending",
+        "Mismatch in Data",
+        "Not Verified",
+        "Filed",
+      ],
+      registration_type: ["Regular", "Composition", "Tax Deductor"],
+      return_type: [
+        "GSTR-1",
+        "GSTR-3B",
+        "ITC-04",
+        "GSTR-6",
+        "GSTR-7",
+        "CMP-08",
+      ],
+    },
   },
 } as const
