@@ -1,7 +1,8 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
   Upload, 
@@ -9,66 +10,216 @@ import {
   Plus,
   History,
   Unlock,
-  AlertCircle
+  AlertCircle,
+  Lock,
+  Save,
+  Trash2
 } from 'lucide-react';
-import { mockClients, mock2BNotIn2B } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { export2BToExcel, import2BFromExcel } from '@/utils/excelExport';
 import VersionHistoryDialog from '@/components/dialogs/VersionHistoryDialog';
 import { TwoBVersion, BillNotIn2B } from '@/types';
+import { supabase } from '@/integrations/supabase/client';
+
+interface Client {
+  id: string;
+  name: string;
+  gstin: string;
+}
+
+interface BillRecord {
+  id: string;
+  client_id: string;
+  date: string;
+  supplier_name: string;
+  supplier_invoice_number: string | null;
+  supplier_gstin: string | null;
+  taxable_value: number | null;
+  input_igst: number | null;
+  input_cgst: number | null;
+  input_sgst: number | null;
+  period_month: string;
+  reversal_month?: string | null;
+  reclaim_month?: string | null;
+  book_entry_month?: string | null;
+  bill_in_2b_month?: string | null;
+  is_locked: boolean | null;
+  is_carried_forward: boolean | null;
+  version: number | null;
+  updated_at: string | null;
+  updated_by: string | null;
+}
 
 const TwoBReconciliationPage: React.FC = () => {
   const { user, canViewVersionHistory, canUnlockSheets } = useAuth();
   const [selectedClient, setSelectedClient] = useState<string>('');
   const [selectedMonth, setSelectedMonth] = useState<string>('01/2026');
   const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [billsNotIn2B, setBillsNotIn2B] = useState<BillRecord[]>([]);
+  const [billsNotInBooks, setBillsNotInBooks] = useState<BillRecord[]>([]);
+  const [isLocked, setIsLocked] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [versions, setVersions] = useState<TwoBVersion[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const selectedClientData = mockClients.find(c => c.id === selectedClient);
+  const selectedClientData = clients.find(c => c.id === selectedClient);
 
-  const currentMonthData = mock2BNotIn2B.filter(b => b.clientId === selectedClient);
+  // Fetch clients
+  const fetchClients = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('clients')
+      .select('id, name, gstin')
+      .order('name');
+    
+    if (error) {
+      console.error('Error fetching clients:', error);
+      return;
+    }
+    setClients(data || []);
+  }, []);
 
-  const totals = currentMonthData.reduce((acc, row) => ({
-    taxableValue: acc.taxableValue + row.taxableValue,
-    igst: acc.igst + row.inputIgst,
-    cgst: acc.cgst + row.inputCgst,
-    sgst: acc.sgst + row.inputSgst,
+  // Fetch bills data
+  const fetchBillsData = useCallback(async () => {
+    if (!selectedClient || !selectedMonth) return;
+
+    // Fetch bills not in 2B
+    const { data: notIn2B, error: error2B } = await supabase
+      .from('bills_not_in_2b')
+      .select('*')
+      .eq('client_id', selectedClient)
+      .eq('period_month', selectedMonth)
+      .order('date');
+    
+    if (error2B) {
+      console.error('Error fetching bills not in 2B:', error2B);
+    } else {
+      setBillsNotIn2B(notIn2B || []);
+      if (notIn2B && notIn2B.length > 0) {
+        setIsLocked(notIn2B[0].is_locked || false);
+      }
+    }
+
+    // Fetch bills not in books
+    const { data: notInBooks, error: errorBooks } = await supabase
+      .from('bills_not_in_books')
+      .select('*')
+      .eq('client_id', selectedClient)
+      .eq('period_month', selectedMonth)
+      .order('date');
+    
+    if (errorBooks) {
+      console.error('Error fetching bills not in books:', errorBooks);
+    } else {
+      setBillsNotInBooks(notInBooks || []);
+      if (notInBooks && notInBooks.length > 0 && !isLocked) {
+        setIsLocked(notInBooks[0].is_locked || false);
+      }
+    }
+
+    // Check filing status for lock
+    const { data: filingData } = await supabase
+      .from('filing_status')
+      .select('is_locked')
+      .eq('client_id', selectedClient)
+      .eq('period_month', selectedMonth)
+      .eq('status', 'Filed')
+      .maybeSingle();
+    
+    if (filingData?.is_locked) {
+      setIsLocked(true);
+    }
+  }, [selectedClient, selectedMonth]);
+
+  useEffect(() => {
+    fetchClients();
+  }, [fetchClients]);
+
+  useEffect(() => {
+    if (selectedClient && selectedMonth) {
+      fetchBillsData();
+    } else {
+      setBillsNotIn2B([]);
+      setBillsNotInBooks([]);
+      setIsLocked(false);
+    }
+  }, [selectedClient, selectedMonth, fetchBillsData]);
+
+  // Real-time subscription
+  useEffect(() => {
+    if (!selectedClient) return;
+
+    const channel = supabase
+      .channel('2b-reconciliation-changes')
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'bills_not_in_2b',
+        filter: `client_id=eq.${selectedClient}`
+      }, () => {
+        fetchBillsData();
+        toast.info('2B data updated by another user');
+      })
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'bills_not_in_books',
+        filter: `client_id=eq.${selectedClient}`
+      }, () => {
+        fetchBillsData();
+        toast.info('2B data updated by another user');
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [selectedClient, fetchBillsData]);
+
+  const totals2B = billsNotIn2B.reduce((acc, row) => ({
+    taxableValue: acc.taxableValue + (row.taxable_value || 0),
+    igst: acc.igst + (row.input_igst || 0),
+    cgst: acc.cgst + (row.input_cgst || 0),
+    sgst: acc.sgst + (row.input_sgst || 0),
   }), { taxableValue: 0, igst: 0, cgst: 0, sgst: 0 });
 
-  // Mock version history
-  const mockVersions: TwoBVersion[] = selectedClient ? [
-    {
-      id: '1',
-      clientId: selectedClient,
-      month: selectedMonth,
-      versionNumber: 2,
-      billsNotIn2B: currentMonthData,
-      billsNotInBooks: [],
-      updatedBy: 'Priya',
-      updatedAt: new Date('2025-12-22T14:30:00'),
-      isCurrent: true,
-    },
-    {
-      id: '2',
-      clientId: selectedClient,
-      month: selectedMonth,
-      versionNumber: 1,
-      billsNotIn2B: currentMonthData.slice(0, 1),
-      billsNotInBooks: [],
-      updatedBy: 'Amit',
-      updatedAt: new Date('2025-12-20T10:00:00'),
-      isCurrent: false,
-    },
-  ] : [];
+  const totalsBooks = billsNotInBooks.reduce((acc, row) => ({
+    taxableValue: acc.taxableValue + (row.taxable_value || 0),
+    igst: acc.igst + (row.input_igst || 0),
+    cgst: acc.cgst + (row.input_cgst || 0),
+    sgst: acc.sgst + (row.input_sgst || 0),
+  }), { taxableValue: 0, igst: 0, cgst: 0, sgst: 0 });
 
   const handleExportExcel = () => {
     if (!selectedClientData) {
       toast.error('Please select a client first');
       return;
     }
-    export2BToExcel(selectedClientData.name, selectedMonth, currentMonthData, []);
+    
+    const exportData2B: BillNotIn2B[] = billsNotIn2B.map(b => ({
+      id: b.id,
+      clientId: b.client_id,
+      date: new Date(b.date),
+      supplierName: b.supplier_name,
+      supplierInvoiceNumber: b.supplier_invoice_number || '',
+      supplierGstin: b.supplier_gstin || '',
+      taxableValue: b.taxable_value || 0,
+      inputIgst: b.input_igst || 0,
+      inputCgst: b.input_cgst || 0,
+      inputSgst: b.input_sgst || 0,
+      reversalMonth: b.reversal_month || '',
+      reclaimMonth: b.reclaim_month || '',
+      periodMonth: b.period_month,
+      isLocked: b.is_locked || false,
+      isCarriedForward: b.is_carried_forward || false,
+      updatedBy: b.updated_by || '',
+      updatedAt: b.updated_at ? new Date(b.updated_at) : new Date(),
+      version: b.version || 1,
+    }));
+    
+    export2BToExcel(selectedClientData.name, selectedMonth, exportData2B, []);
     toast.success('Excel file exported successfully');
   };
 
@@ -85,23 +236,243 @@ const TwoBReconciliationPage: React.FC = () => {
       return;
     }
 
+    if (isLocked) {
+      toast.error('Cannot import - sheet is locked');
+      return;
+    }
+
     try {
       const data = await import2BFromExcel(file);
-      toast.success(`Imported ${data.billsNotIn2B.length} records from "Bills Not in 2B" and ${data.billsNotInBooks.length} from "Bills Not in Books"`);
-      // In real app, this would update the state/database
-    } catch (error) {
-      toast.error('Failed to import Excel file. Please check the format.');
+      
+      // Insert bills not in 2B
+      if (data.billsNotIn2B.length > 0) {
+        const records = data.billsNotIn2B.map(b => ({
+          client_id: selectedClient,
+          date: b.date.toISOString().split('T')[0],
+          supplier_name: b.supplierName,
+          supplier_invoice_number: b.supplierInvoiceNumber,
+          supplier_gstin: b.supplierGstin,
+          taxable_value: b.taxableValue,
+          input_igst: b.inputIgst,
+          input_cgst: b.inputCgst,
+          input_sgst: b.inputSgst,
+          period_month: selectedMonth,
+          reversal_month: b.reversalMonth,
+          reclaim_month: b.reclaimMonth || null,
+          updated_by: user?.id || null,
+        }));
+        
+        const { error } = await supabase
+          .from('bills_not_in_2b')
+          .insert(records);
+        
+        if (error) throw error;
+      }
+
+      // Insert bills not in books
+      if (data.billsNotInBooks.length > 0) {
+        const records = data.billsNotInBooks.map(b => ({
+          client_id: selectedClient,
+          date: b.date.toISOString().split('T')[0],
+          supplier_name: b.supplierName,
+          supplier_invoice_number: b.supplierInvoiceNumber,
+          supplier_gstin: b.supplierGstin,
+          taxable_value: b.taxableValue,
+          input_igst: b.inputIgst,
+          input_cgst: b.inputCgst,
+          input_sgst: b.inputSgst,
+          period_month: selectedMonth,
+          book_entry_month: b.bookEntryMonth || null,
+          bill_in_2b_month: b.billIn2BMonth || null,
+          updated_by: user?.id || null,
+        }));
+        
+        const { error } = await supabase
+          .from('bills_not_in_books')
+          .insert(records);
+        
+        if (error) throw error;
+      }
+      
+      toast.success(`Imported ${data.billsNotIn2B.length} records to "Bills Not in 2B" and ${data.billsNotInBooks.length} to "Bills Not in Books"`);
+      fetchBillsData();
+    } catch (error: any) {
+      console.error('Import error:', error);
+      toast.error('Failed to import: ' + error.message);
     }
     
-    // Reset input
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   };
 
+  const handleAddRow2B = async () => {
+    if (!selectedClient || isLocked) return;
+
+    const newRecord = {
+      client_id: selectedClient,
+      date: new Date().toISOString().split('T')[0],
+      supplier_name: 'New Supplier',
+      supplier_invoice_number: '',
+      supplier_gstin: '',
+      taxable_value: 0,
+      input_igst: 0,
+      input_cgst: 0,
+      input_sgst: 0,
+      period_month: selectedMonth,
+      reversal_month: selectedMonth,
+      updated_by: user?.id || null,
+    };
+
+    const { error } = await supabase
+      .from('bills_not_in_2b')
+      .insert([newRecord]);
+    
+    if (error) {
+      toast.error('Failed to add row: ' + error.message);
+    } else {
+      fetchBillsData();
+    }
+  };
+
+  const handleAddRowBooks = async () => {
+    if (!selectedClient || isLocked) return;
+
+    const newRecord = {
+      client_id: selectedClient,
+      date: new Date().toISOString().split('T')[0],
+      supplier_name: 'New Supplier',
+      supplier_invoice_number: '',
+      supplier_gstin: '',
+      taxable_value: 0,
+      input_igst: 0,
+      input_cgst: 0,
+      input_sgst: 0,
+      period_month: selectedMonth,
+      updated_by: user?.id || null,
+    };
+
+    const { error } = await supabase
+      .from('bills_not_in_books')
+      .insert([newRecord]);
+    
+    if (error) {
+      toast.error('Failed to add row: ' + error.message);
+    } else {
+      fetchBillsData();
+    }
+  };
+
+  const handleDeleteRow2B = async (id: string) => {
+    if (isLocked) return;
+    
+    const { error } = await supabase
+      .from('bills_not_in_2b')
+      .delete()
+      .eq('id', id);
+    
+    if (error) {
+      toast.error('Failed to delete: ' + error.message);
+    } else {
+      fetchBillsData();
+    }
+  };
+
+  const handleDeleteRowBooks = async (id: string) => {
+    if (isLocked) return;
+    
+    const { error } = await supabase
+      .from('bills_not_in_books')
+      .delete()
+      .eq('id', id);
+    
+    if (error) {
+      toast.error('Failed to delete: ' + error.message);
+    } else {
+      fetchBillsData();
+    }
+  };
+
+  const handleUnlockSheet = async () => {
+    if (!selectedClient) return;
+    
+    try {
+      await supabase
+        .from('bills_not_in_2b')
+        .update({ is_locked: false })
+        .eq('client_id', selectedClient)
+        .eq('period_month', selectedMonth);
+      
+      await supabase
+        .from('bills_not_in_books')
+        .update({ is_locked: false })
+        .eq('client_id', selectedClient)
+        .eq('period_month', selectedMonth);
+      
+      setIsLocked(false);
+      toast.success('Sheet unlocked successfully');
+    } catch (error: any) {
+      toast.error('Failed to unlock: ' + error.message);
+    }
+  };
+
+  // Carry forward data to next month
+  const handleCarryForward = async () => {
+    if (!selectedClient || billsNotIn2B.length === 0) {
+      toast.error('No data to carry forward');
+      return;
+    }
+
+    // Calculate next month
+    const [month, year] = selectedMonth.split('/');
+    let nextMonth = parseInt(month) + 1;
+    let nextYear = parseInt(year);
+    if (nextMonth > 12) {
+      nextMonth = 1;
+      nextYear++;
+    }
+    const nextPeriod = `${String(nextMonth).padStart(2, '0')}/${nextYear}`;
+
+    try {
+      // Carry forward bills not in 2B that don't have a reclaim month
+      const toCarryForward = billsNotIn2B.filter(b => !b.reclaim_month);
+      
+      if (toCarryForward.length === 0) {
+        toast.info('All bills have been reclaimed. Nothing to carry forward.');
+        return;
+      }
+
+      const records = toCarryForward.map(b => ({
+        client_id: b.client_id,
+        date: b.date,
+        supplier_name: b.supplier_name,
+        supplier_invoice_number: b.supplier_invoice_number,
+        supplier_gstin: b.supplier_gstin,
+        taxable_value: b.taxable_value,
+        input_igst: b.input_igst,
+        input_cgst: b.input_cgst,
+        input_sgst: b.input_sgst,
+        period_month: nextPeriod,
+        reversal_month: b.reversal_month,
+        is_carried_forward: true,
+        updated_by: user?.id || null,
+      }));
+
+      const { error } = await supabase
+        .from('bills_not_in_2b')
+        .insert(records);
+      
+      if (error) throw error;
+      
+      toast.success(`Carried forward ${records.length} records to ${nextPeriod}`);
+    } catch (error: any) {
+      toast.error('Failed to carry forward: ' + error.message);
+    }
+  };
+
   const handleRestoreVersion = (version: TwoBVersion) => {
-    // In real app, this would restore the version data
     console.log('Restoring version:', version);
+    toast.info('Version restore functionality coming soon');
   };
 
   return (
@@ -120,7 +491,7 @@ const TwoBReconciliationPage: React.FC = () => {
             accept=".xlsx,.xls"
             className="hidden"
           />
-          <Button variant="outline" className="flex items-center gap-2" onClick={handleImportClick}>
+          <Button variant="outline" className="flex items-center gap-2" onClick={handleImportClick} disabled={isLocked}>
             <Upload className="h-4 w-4" />
             Import Excel
           </Button>
@@ -141,7 +512,7 @@ const TwoBReconciliationPage: React.FC = () => {
                   <SelectValue placeholder="Select Client" />
                 </SelectTrigger>
                 <SelectContent>
-                  {mockClients.map((client) => (
+                  {clients.map((client) => (
                     <SelectItem key={client.id} value={client.id}>
                       {client.name}
                     </SelectItem>
@@ -171,6 +542,15 @@ const TwoBReconciliationPage: React.FC = () => {
                 View Versions
               </Button>
             )}
+            {selectedClient && billsNotIn2B.length > 0 && !isLocked && (
+              <Button 
+                variant="outline" 
+                className="flex items-center gap-2"
+                onClick={handleCarryForward}
+              >
+                Carry Forward to Next Month
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -184,17 +564,17 @@ const TwoBReconciliationPage: React.FC = () => {
         </Card>
       ) : (
         <>
-          {/* Last Updated Info */}
-          {currentMonthData.length > 0 && (
-            <div className="flex items-center justify-between text-sm">
-              <div className="flex items-center gap-2 text-muted-foreground">
-                Last Updated: {format(currentMonthData[0].updatedAt, 'dd-MMM-yyyy HH:mm')} IST by {currentMonthData[0].updatedBy}
-                <Badge variant="outline" className="text-xs">v{currentMonthData[0].version}</Badge>
+          {/* Lock indicator */}
+          {isLocked && (
+            <div className="bg-warning/10 border border-warning/20 rounded-lg p-3 flex items-center justify-between text-warning">
+              <div className="flex items-center gap-2">
+                <Lock className="h-4 w-4" />
+                <span className="text-sm">This sheet is locked because the return has been filed.</span>
               </div>
               {canUnlockSheets() && (
-                <Button variant="ghost" size="sm" className="flex items-center gap-1">
-                  <Unlock className="h-3 w-3" />
-                  Unlock Sheet
+                <Button variant="outline" size="sm" onClick={handleUnlockSheet}>
+                  <Unlock className="h-4 w-4 mr-1" />
+                  Unlock
                 </Button>
               )}
             </div>
@@ -209,7 +589,7 @@ const TwoBReconciliationPage: React.FC = () => {
                   Client: {selectedClientData?.name}
                 </p>
               </div>
-              <Button size="sm" className="flex items-center gap-1">
+              <Button size="sm" className="flex items-center gap-1" onClick={handleAddRow2B} disabled={isLocked}>
                 <Plus className="h-4 w-4" />
                 Add Row
               </Button>
@@ -229,39 +609,58 @@ const TwoBReconciliationPage: React.FC = () => {
                       <th className="text-right">SGST</th>
                       <th>Reversal Month</th>
                       <th>Reclaim Month</th>
+                      {!isLocked && <th className="w-12"></th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {currentMonthData.map((row) => (
-                      <tr key={row.id}>
-                        <td>{format(row.date, 'dd/MM/yyyy')}</td>
-                        <td>{row.supplierName}</td>
-                        <td>{row.supplierInvoiceNumber}</td>
-                        <td className="font-mono text-xs">{row.supplierGstin}</td>
-                        <td className="text-right">{row.taxableValue.toLocaleString('en-IN')}</td>
-                        <td className="text-right">{row.inputIgst.toLocaleString('en-IN')}</td>
-                        <td className="text-right">{row.inputCgst.toLocaleString('en-IN')}</td>
-                        <td className="text-right">{row.inputSgst.toLocaleString('en-IN')}</td>
-                        <td>{row.reversalMonth}</td>
-                        <td>{row.reclaimMonth || '-'}</td>
+                    {billsNotIn2B.map((row) => (
+                      <tr key={row.id} className={row.is_carried_forward ? 'bg-blue-50 dark:bg-blue-950/20' : ''}>
+                        <td>{format(new Date(row.date), 'dd/MM/yyyy')}</td>
+                        <td>
+                          {row.supplier_name}
+                          {row.is_carried_forward && (
+                            <Badge variant="outline" className="ml-2 text-xs">CF</Badge>
+                          )}
+                        </td>
+                        <td>{row.supplier_invoice_number || '-'}</td>
+                        <td className="font-mono text-xs">{row.supplier_gstin || '-'}</td>
+                        <td className="text-right">{(row.taxable_value || 0).toLocaleString('en-IN')}</td>
+                        <td className="text-right">{(row.input_igst || 0).toLocaleString('en-IN')}</td>
+                        <td className="text-right">{(row.input_cgst || 0).toLocaleString('en-IN')}</td>
+                        <td className="text-right">{(row.input_sgst || 0).toLocaleString('en-IN')}</td>
+                        <td>{row.reversal_month || '-'}</td>
+                        <td>{row.reclaim_month || '-'}</td>
+                        {!isLocked && (
+                          <td>
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              onClick={() => handleDeleteRow2B(row.id)}
+                              className="h-7 w-7 p-0 text-destructive"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </td>
+                        )}
                       </tr>
                     ))}
-                    {currentMonthData.length === 0 && (
+                    {billsNotIn2B.length === 0 && (
                       <tr>
-                        <td colSpan={10} className="text-center py-8 text-muted-foreground">
-                          No records found. Click "Add Row" to add data.
+                        <td colSpan={isLocked ? 10 : 11} className="text-center py-8 text-muted-foreground">
+                          No records found. Click "Add Row" to add data or "Import Excel" to import.
                         </td>
                       </tr>
                     )}
                     {/* Totals Row */}
                     <tr className="bg-muted/50 font-semibold">
                       <td colSpan={4} className="text-right">TOTAL</td>
-                      <td className="text-right">{totals.taxableValue.toLocaleString('en-IN')}</td>
-                      <td className="text-right">{totals.igst.toLocaleString('en-IN')}</td>
-                      <td className="text-right">{totals.cgst.toLocaleString('en-IN')}</td>
-                      <td className="text-right">{totals.sgst.toLocaleString('en-IN')}</td>
+                      <td className="text-right">{totals2B.taxableValue.toLocaleString('en-IN')}</td>
+                      <td className="text-right">{totals2B.igst.toLocaleString('en-IN')}</td>
+                      <td className="text-right">{totals2B.cgst.toLocaleString('en-IN')}</td>
+                      <td className="text-right">{totals2B.sgst.toLocaleString('en-IN')}</td>
                       <td></td>
                       <td></td>
+                      {!isLocked && <td></td>}
                     </tr>
                   </tbody>
                 </table>
@@ -273,7 +672,7 @@ const TwoBReconciliationPage: React.FC = () => {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="text-lg">Bills Not Available in Books</CardTitle>
-              <Button size="sm" className="flex items-center gap-1">
+              <Button size="sm" className="flex items-center gap-1" onClick={handleAddRowBooks} disabled={isLocked}>
                 <Plus className="h-4 w-4" />
                 Add Row
               </Button>
@@ -293,23 +692,53 @@ const TwoBReconciliationPage: React.FC = () => {
                       <th className="text-right">SGST</th>
                       <th>Book Entry Month</th>
                       <th>Bill in 2B Month</th>
+                      {!isLocked && <th className="w-12"></th>}
                     </tr>
                   </thead>
                   <tbody>
-                    <tr>
-                      <td colSpan={10} className="text-center py-8 text-muted-foreground">
-                        No records found. Click "Add Row" to add data.
-                      </td>
-                    </tr>
+                    {billsNotInBooks.map((row) => (
+                      <tr key={row.id}>
+                        <td>{format(new Date(row.date), 'dd/MM/yyyy')}</td>
+                        <td>{row.supplier_name}</td>
+                        <td>{row.supplier_invoice_number || '-'}</td>
+                        <td className="font-mono text-xs">{row.supplier_gstin || '-'}</td>
+                        <td className="text-right">{(row.taxable_value || 0).toLocaleString('en-IN')}</td>
+                        <td className="text-right">{(row.input_igst || 0).toLocaleString('en-IN')}</td>
+                        <td className="text-right">{(row.input_cgst || 0).toLocaleString('en-IN')}</td>
+                        <td className="text-right">{(row.input_sgst || 0).toLocaleString('en-IN')}</td>
+                        <td>{row.book_entry_month || '-'}</td>
+                        <td>{row.bill_in_2b_month || '-'}</td>
+                        {!isLocked && (
+                          <td>
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              onClick={() => handleDeleteRowBooks(row.id)}
+                              className="h-7 w-7 p-0 text-destructive"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                    {billsNotInBooks.length === 0 && (
+                      <tr>
+                        <td colSpan={isLocked ? 10 : 11} className="text-center py-8 text-muted-foreground">
+                          No records found. Click "Add Row" to add data or "Import Excel" to import.
+                        </td>
+                      </tr>
+                    )}
                     {/* Totals Row */}
                     <tr className="bg-muted/50 font-semibold">
                       <td colSpan={4} className="text-right">TOTAL</td>
-                      <td className="text-right">0</td>
-                      <td className="text-right">0</td>
-                      <td className="text-right">0</td>
-                      <td className="text-right">0</td>
+                      <td className="text-right">{totalsBooks.taxableValue.toLocaleString('en-IN')}</td>
+                      <td className="text-right">{totalsBooks.igst.toLocaleString('en-IN')}</td>
+                      <td className="text-right">{totalsBooks.cgst.toLocaleString('en-IN')}</td>
+                      <td className="text-right">{totalsBooks.sgst.toLocaleString('en-IN')}</td>
                       <td></td>
                       <td></td>
+                      {!isLocked && <td></td>}
                     </tr>
                   </tbody>
                 </table>
@@ -323,7 +752,7 @@ const TwoBReconciliationPage: React.FC = () => {
       <VersionHistoryDialog
         open={showVersionHistory}
         onOpenChange={setShowVersionHistory}
-        versions={mockVersions}
+        versions={versions}
         onRestore={handleRestoreVersion}
         clientName={selectedClientData?.name || ''}
         month={selectedMonth}

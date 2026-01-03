@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
@@ -16,12 +16,26 @@ import {
   ClipboardList,
   Calendar
 } from 'lucide-react';
-import { calculateDashboardMetrics, mockFilingStatus, mockClients } from '@/data/mockData';
+import { supabase } from '@/integrations/supabase/client';
+
+interface DashboardMetrics {
+  totalClients: number;
+  pendingFilings: number;
+  lateFilings: number;
+  filedThisMonth: number;
+}
 
 const StaffDashboard: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [selectedMonth, setSelectedMonth] = useState<string>('01/2026');
+  const [metrics, setMetrics] = useState<DashboardMetrics>({
+    totalClients: 0,
+    pendingFilings: 0,
+    lateFilings: 0,
+    filedThisMonth: 0,
+  });
+  const [isLoading, setIsLoading] = useState(true);
 
   // Generate last 12 months for dropdown
   const generateMonths = () => {
@@ -38,33 +52,64 @@ const StaffDashboard: React.FC = () => {
 
   const months = generateMonths();
 
-  // Calculate metrics for selected month
-  const calculateMonthMetrics = () => {
-    const monthFilings = mockFilingStatus.filter(f => f.month === selectedMonth);
-    
-    const pendingFilings = monthFilings.filter(
-      f => f.status === 'Prepared' || f.status === 'Data Pending' || f.status === 'Mismatch in Data' || f.status === 'Not Verified'
-    ).length;
-    
-    const filedThisMonth = monthFilings.filter(
-      f => f.status === 'Filed'
-    ).length;
-    
-    const lateFilings = monthFilings.filter(f => {
-      if (!f.filedDate || f.status !== 'Filed') return false;
-      const filedDay = f.filedDate.getDate();
-      return filedDay > f.targetDate;
-    }).length;
+  const fetchMetrics = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      // Fetch total clients
+      const { count: clientCount } = await supabase
+        .from('clients')
+        .select('*', { count: 'exact', head: true });
 
-    return {
-      totalClients: mockClients.length,
-      pendingFilings: pendingFilings || 12,
-      lateFilings: lateFilings || 0,
-      filedThisMonth: filedThisMonth || 3,
+      // Fetch filing status for selected month
+      const { data: filingData } = await supabase
+        .from('filing_status')
+        .select('status, filed_date, target_date')
+        .eq('period_month', selectedMonth);
+
+      const pendingStatuses = ['Prepared', 'Data Pending', 'Mismatch in Data', 'Not Verified'];
+      const pendingFilings = filingData?.filter(f => pendingStatuses.includes(f.status || ''))?.length || 0;
+      const filedThisMonth = filingData?.filter(f => f.status === 'Filed')?.length || 0;
+      
+      // Calculate late filings (filed after target date)
+      const lateFilings = filingData?.filter(f => {
+        if (f.status !== 'Filed' || !f.filed_date || !f.target_date) return false;
+        const filedDay = new Date(f.filed_date).getDate();
+        return filedDay > f.target_date;
+      })?.length || 0;
+
+      setMetrics({
+        totalClients: clientCount || 0,
+        pendingFilings,
+        lateFilings,
+        filedThisMonth,
+      });
+    } catch (error) {
+      console.error('Error fetching metrics:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [selectedMonth]);
+
+  useEffect(() => {
+    fetchMetrics();
+  }, [fetchMetrics]);
+
+  // Real-time subscription
+  useEffect(() => {
+    const channel = supabase
+      .channel('dashboard-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => {
+        fetchMetrics();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'filing_status' }, () => {
+        fetchMetrics();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
     };
-  };
-
-  const metrics = calculateMonthMetrics();
+  }, [fetchMetrics]);
 
   const metricCards = [
     {
@@ -162,7 +207,9 @@ const StaffDashboard: React.FC = () => {
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground font-medium">{card.label}</p>
-                  <p className="text-4xl font-bold text-foreground mt-2">{card.value}</p>
+                  <p className="text-4xl font-bold text-foreground mt-2">
+                    {isLoading ? '...' : card.value}
+                  </p>
                 </div>
                 <div className={`p-3 rounded-full ${card.bgColor}`}>
                   {card.icon}
