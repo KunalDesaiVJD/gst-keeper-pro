@@ -1,0 +1,290 @@
+import React, { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ArrowLeft, Save } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
+
+const AddClientPage: React.FC = () => {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const { toast } = useToast();
+
+  const [formData, setFormData] = useState({
+    gstin: '',
+    name: '',
+    registrationType: '' as RegistrationType | '',
+    registrationDate: '',
+    mobile: '',
+    email: '',
+    selectedReturns: [] as ReturnType[],
+  });
+
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Get available returns based on registration type
+  const availableReturns = useMemo(() => {
+    if (!formData.registrationType) return [];
+    return RETURN_TYPES_BY_REGISTRATION[formData.registrationType as RegistrationType] || [];
+  }, [formData.registrationType]);
+
+  // Reset selected returns when registration type changes
+  const handleRegistrationTypeChange = (value: RegistrationType) => {
+    setFormData(prev => ({
+      ...prev,
+      registrationType: value,
+      selectedReturns: [], // Reset returns when type changes
+    }));
+  };
+
+  const handleReturnToggle = (returnType: ReturnType) => {
+    setFormData(prev => ({
+      ...prev,
+      selectedReturns: prev.selectedReturns.includes(returnType)
+        ? prev.selectedReturns.filter(r => r !== returnType)
+        : [...prev.selectedReturns, returnType],
+    }));
+  };
+
+  const validateGSTIN = (gstin: string): boolean => {
+    const gstinRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+    return gstinRegex.test(gstin);
+  };
+
+  const validateForm = (): boolean => {
+    const newErrors: Record<string, string> = {};
+
+    if (!formData.gstin) {
+      newErrors.gstin = 'GSTIN is required';
+    } else if (formData.gstin.length !== 15) {
+      newErrors.gstin = 'GSTIN must be exactly 15 characters';
+    } else if (!validateGSTIN(formData.gstin)) {
+      newErrors.gstin = 'Invalid GSTIN format';
+    }
+
+    if (!formData.name.trim()) {
+      newErrors.name = 'Client name is required';
+    }
+
+    if (!formData.registrationType) {
+      newErrors.registrationType = 'Registration type is required';
+    }
+
+    if (!formData.registrationDate) {
+      newErrors.registrationDate = 'Registration date is required';
+    }
+
+    if (!formData.mobile) {
+      newErrors.mobile = 'Mobile number is required';
+    } else if (!/^[0-9]{10}$/.test(formData.mobile)) {
+      newErrors.mobile = 'Mobile must be 10 digits';
+    }
+
+    if (!formData.email) {
+      newErrors.email = 'Email is required';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+      newErrors.email = 'Invalid email format';
+    }
+
+    if (formData.selectedReturns.length === 0) {
+      newErrors.returns = 'Select at least one return type';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!validateForm()) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please fix the errors in the form.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    // In a real app, this would save to the database
+    toast({
+      title: 'Client Added',
+      description: `${formData.name} has been successfully added.`,
+    });
+
+    navigate('/clients');
+  };
+
+  return (
+    <div className="space-y-6 animate-fade-in max-w-3xl mx-auto">
+      {/* Header */}
+      <div className="flex items-center gap-4">
+        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+          <ArrowLeft className="h-5 w-5" />
+        </Button>
+        <div>
+          <h1 className="text-2xl font-heading font-bold text-foreground">Add New Client</h1>
+          <p className="text-muted-foreground">Fill in the client details below</p>
+        </div>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Client Information</CardTitle>
+          <CardDescription>
+            All fields marked with * are required
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {/* GSTIN */}
+            <div className="space-y-2">
+              <Label htmlFor="gstin">GSTIN *</Label>
+              <Input
+                id="gstin"
+                value={formData.gstin}
+                onChange={(e) => setFormData(prev => ({ ...prev, gstin: e.target.value.toUpperCase() }))}
+                placeholder="e.g., 24AAQCS2345D1Z5"
+                maxLength={15}
+                className={errors.gstin ? 'border-destructive' : ''}
+              />
+              {errors.gstin && <p className="text-sm text-destructive">{errors.gstin}</p>}
+            </div>
+
+            {/* Client Name */}
+            <div className="space-y-2">
+              <Label htmlFor="name">Client Name *</Label>
+              <Input
+                id="name"
+                value={formData.name}
+                onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                placeholder="Enter client name"
+                className={errors.name ? 'border-destructive' : ''}
+              />
+              {errors.name && <p className="text-sm text-destructive">{errors.name}</p>}
+            </div>
+
+            {/* Registration Date */}
+            <div className="space-y-2">
+              <Label htmlFor="registrationDate">Registration Date *</Label>
+              <Input
+                id="registrationDate"
+                type="date"
+                value={formData.registrationDate}
+                onChange={(e) => setFormData(prev => ({ ...prev, registrationDate: e.target.value }))}
+                className={errors.registrationDate ? 'border-destructive' : ''}
+              />
+              {errors.registrationDate && <p className="text-sm text-destructive">{errors.registrationDate}</p>}
+              <p className="text-xs text-muted-foreground">
+                Filing status will be shown from this date onwards
+              </p>
+            </div>
+
+            {/* Registration Type */}
+            <div className="space-y-2">
+              <Label>Registration Type *</Label>
+              <Select
+                value={formData.registrationType}
+                onValueChange={(value) => handleRegistrationTypeChange(value as RegistrationType)}
+              >
+                <SelectTrigger className={errors.registrationType ? 'border-destructive' : ''}>
+                  <SelectValue placeholder="Select registration type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Regular">Regular</SelectItem>
+                  <SelectItem value="Composition">Composition</SelectItem>
+                  <SelectItem value="Tax Deductor">Tax Deductor</SelectItem>
+                </SelectContent>
+              </Select>
+              {errors.registrationType && <p className="text-sm text-destructive">{errors.registrationType}</p>}
+            </div>
+
+            {/* Return Types - Conditional based on Registration Type */}
+            {formData.registrationType && (
+              <div className="space-y-3">
+                <Label>Select Return Types *</Label>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {availableReturns.map((returnType) => (
+                    <div
+                      key={returnType}
+                      className="flex items-center space-x-2 p-3 border rounded-lg hover:bg-muted/50 transition-colors"
+                    >
+                      <Checkbox
+                        id={returnType}
+                        checked={formData.selectedReturns.includes(returnType)}
+                        onCheckedChange={() => handleReturnToggle(returnType)}
+                      />
+                      <Label
+                        htmlFor={returnType}
+                        className="cursor-pointer font-normal"
+                      >
+                        {returnType}
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+                {errors.returns && <p className="text-sm text-destructive">{errors.returns}</p>}
+                <p className="text-xs text-muted-foreground">
+                  {formData.registrationType === 'Regular' && 'Regular taxpayers can file GSTR-1, GSTR-3B, ITC-04, and GSTR-6'}
+                  {formData.registrationType === 'Composition' && 'Composition dealers file CMP-08 quarterly'}
+                  {formData.registrationType === 'Tax Deductor' && 'Tax Deductors file GSTR-7 monthly'}
+                </p>
+              </div>
+            )}
+
+            {/* Mobile */}
+            <div className="space-y-2">
+              <Label htmlFor="mobile">Mobile Number *</Label>
+              <Input
+                id="mobile"
+                type="tel"
+                value={formData.mobile}
+                onChange={(e) => setFormData(prev => ({ ...prev, mobile: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
+                placeholder="10-digit mobile number"
+                maxLength={10}
+                className={errors.mobile ? 'border-destructive' : ''}
+              />
+              {errors.mobile && <p className="text-sm text-destructive">{errors.mobile}</p>}
+            </div>
+
+            {/* Email */}
+            <div className="space-y-2">
+              <Label htmlFor="email">Email Address *</Label>
+              <Input
+                id="email"
+                type="email"
+                value={formData.email}
+                onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
+                placeholder="client@example.com"
+                className={errors.email ? 'border-destructive' : ''}
+              />
+              {errors.email && <p className="text-sm text-destructive">{errors.email}</p>}
+              <p className="text-xs text-muted-foreground">
+                OTP for password reset will be sent to this email
+              </p>
+            </div>
+
+            {/* Submit Buttons */}
+            <div className="flex gap-3 pt-4">
+              <Button type="button" variant="outline" onClick={() => navigate(-1)}>
+                Cancel
+              </Button>
+              <Button type="submit" className="flex items-center gap-2">
+                <Save className="h-4 w-4" />
+                Add Client
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
+export default AddClientPage;
