@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -13,18 +13,84 @@ import {
   Phone,
   Mail
 } from 'lucide-react';
-import { mockClients } from '@/data/mockData';
-import { Client } from '@/types';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
+
+interface Client {
+  id: string;
+  name: string;
+  gstin: string;
+  mobile: string | null;
+  email: string | null;
+  registration_type: string;
+  selected_returns: string[] | null;
+}
 
 const ClientsPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
-  const [clients] = useState<Client[]>(mockClients);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const fetchClients = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('clients')
+      .select('id, name, gstin, mobile, email, registration_type, selected_returns')
+      .order('name');
+    
+    if (error) {
+      console.error('Error fetching clients:', error);
+      toast.error('Failed to load clients');
+      return;
+    }
+    setClients(data || []);
+    setIsLoading(false);
+  }, []);
+
+  useEffect(() => {
+    fetchClients();
+
+    // Real-time subscription
+    const channel = supabase
+      .channel('clients-page-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => {
+        fetchClients();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchClients]);
+
+  const handleDeleteClient = async (id: string, name: string) => {
+    if (!confirm(`Are you sure you want to delete "${name}"?`)) return;
+
+    const { error } = await supabase
+      .from('clients')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      toast.error('Failed to delete client: ' + error.message);
+    } else {
+      toast.success('Client deleted successfully');
+      fetchClients();
+    }
+  };
 
   const filteredClients = clients.filter(client =>
     client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     client.gstin.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-muted-foreground">Loading clients...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -65,20 +131,24 @@ const ClientsPage: React.FC = () => {
                     <h3 className="font-semibold text-foreground">{client.name}</h3>
                     <p className="text-sm text-muted-foreground">GSTIN: {client.gstin}</p>
                     <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <Phone className="h-3 w-3" />
-                        {client.mobile}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Mail className="h-3 w-3" />
-                        {client.email}
-                      </span>
+                      {client.mobile && (
+                        <span className="flex items-center gap-1">
+                          <Phone className="h-3 w-3" />
+                          {client.mobile}
+                        </span>
+                      )}
+                      {client.email && (
+                        <span className="flex items-center gap-1">
+                          <Mail className="h-3 w-3" />
+                          {client.email}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 pt-2">
                       <Badge variant="outline" className="text-xs">
-                        {client.registrationType}
+                        {client.registration_type}
                       </Badge>
-                      {client.selectedReturns.map((ret) => (
+                      {client.selected_returns?.map((ret) => (
                         <Badge key={ret} variant="secondary" className="text-xs">
                           {ret}
                         </Badge>
@@ -90,7 +160,13 @@ const ClientsPage: React.FC = () => {
                   <Button variant="ghost" size="icon" title="Edit Client">
                     <Pencil className="h-4 w-4" />
                   </Button>
-                  <Button variant="ghost" size="icon" title="Delete Client" className="text-destructive hover:text-destructive">
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    title="Delete Client" 
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => handleDeleteClient(client.id, client.name)}
+                  >
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
@@ -102,7 +178,11 @@ const ClientsPage: React.FC = () => {
         {filteredClients.length === 0 && (
           <Card>
             <CardContent className="p-12 text-center">
-              <p className="text-muted-foreground">No clients found matching your search.</p>
+              <p className="text-muted-foreground">
+                {clients.length === 0 
+                  ? 'No clients found. Add your first client to get started.'
+                  : 'No clients found matching your search.'}
+              </p>
             </CardContent>
           </Card>
         )}

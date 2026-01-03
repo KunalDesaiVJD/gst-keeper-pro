@@ -7,12 +7,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { 
   Upload, 
   Download, 
-  Plus,
   History,
   Unlock,
   AlertCircle,
   Lock,
-  Save,
   Trash2
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -53,7 +51,7 @@ interface BillRecord {
 }
 
 const TwoBReconciliationPage: React.FC = () => {
-  const { user, canViewVersionHistory, canUnlockSheets } = useAuth();
+  const { canViewVersionHistory, canUnlockSheets } = useAuth();
   const [selectedClient, setSelectedClient] = useState<string>('');
   const [selectedMonth, setSelectedMonth] = useState<string>('01/2026');
   const [showVersionHistory, setShowVersionHistory] = useState(false);
@@ -61,7 +59,6 @@ const TwoBReconciliationPage: React.FC = () => {
   const [billsNotIn2B, setBillsNotIn2B] = useState<BillRecord[]>([]);
   const [billsNotInBooks, setBillsNotInBooks] = useState<BillRecord[]>([]);
   const [isLocked, setIsLocked] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
   const [versions, setVersions] = useState<TwoBVersion[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -259,7 +256,6 @@ const TwoBReconciliationPage: React.FC = () => {
           period_month: selectedMonth,
           reversal_month: b.reversalMonth,
           reclaim_month: b.reclaimMonth || null,
-          updated_by: user?.id || null,
         }));
         
         const { error } = await supabase
@@ -284,7 +280,6 @@ const TwoBReconciliationPage: React.FC = () => {
           period_month: selectedMonth,
           book_entry_month: b.bookEntryMonth || null,
           bill_in_2b_month: b.billIn2BMonth || null,
-          updated_by: user?.id || null,
         }));
         
         const { error } = await supabase
@@ -306,60 +301,41 @@ const TwoBReconciliationPage: React.FC = () => {
     }
   };
 
-  const handleAddRow2B = async () => {
-    if (!selectedClient || isLocked) return;
-
-    const newRecord = {
-      client_id: selectedClient,
-      date: new Date().toISOString().split('T')[0],
-      supplier_name: 'New Supplier',
-      supplier_invoice_number: '',
-      supplier_gstin: '',
-      taxable_value: 0,
-      input_igst: 0,
-      input_cgst: 0,
-      input_sgst: 0,
-      period_month: selectedMonth,
-      reversal_month: selectedMonth,
-      updated_by: user?.id || null,
-    };
-
+  // Inline editing handlers for Bills Not in 2B
+  const handleUpdate2BField = async (id: string, field: string, value: any) => {
+    if (isLocked) return;
+    
     const { error } = await supabase
       .from('bills_not_in_2b')
-      .insert([newRecord]);
+      .update({ [field]: value, updated_at: new Date().toISOString() })
+      .eq('id', id);
     
     if (error) {
-      toast.error('Failed to add row: ' + error.message);
+      toast.error('Failed to update: ' + error.message);
     } else {
-      fetchBillsData();
+      // Update local state
+      setBillsNotIn2B(prev => prev.map(b => 
+        b.id === id ? { ...b, [field]: value } : b
+      ));
     }
   };
 
-  const handleAddRowBooks = async () => {
-    if (!selectedClient || isLocked) return;
-
-    const newRecord = {
-      client_id: selectedClient,
-      date: new Date().toISOString().split('T')[0],
-      supplier_name: 'New Supplier',
-      supplier_invoice_number: '',
-      supplier_gstin: '',
-      taxable_value: 0,
-      input_igst: 0,
-      input_cgst: 0,
-      input_sgst: 0,
-      period_month: selectedMonth,
-      updated_by: user?.id || null,
-    };
-
+  // Inline editing handlers for Bills Not in Books
+  const handleUpdateBooksField = async (id: string, field: string, value: any) => {
+    if (isLocked) return;
+    
     const { error } = await supabase
       .from('bills_not_in_books')
-      .insert([newRecord]);
+      .update({ [field]: value, updated_at: new Date().toISOString() })
+      .eq('id', id);
     
     if (error) {
-      toast.error('Failed to add row: ' + error.message);
+      toast.error('Failed to update: ' + error.message);
     } else {
-      fetchBillsData();
+      // Update local state
+      setBillsNotInBooks(prev => prev.map(b => 
+        b.id === id ? { ...b, [field]: value } : b
+      ));
     }
   };
 
@@ -455,7 +431,6 @@ const TwoBReconciliationPage: React.FC = () => {
         period_month: nextPeriod,
         reversal_month: b.reversal_month,
         is_carried_forward: true,
-        updated_by: user?.id || null,
       }));
 
       const { error } = await supabase
@@ -473,6 +448,33 @@ const TwoBReconciliationPage: React.FC = () => {
   const handleRestoreVersion = (version: TwoBVersion) => {
     console.log('Restoring version:', version);
     toast.info('Version restore functionality coming soon');
+  };
+
+  // Render editable input for table cells
+  const renderEditableInput = (
+    value: string | number | null,
+    onChange: (value: any) => void,
+    type: 'text' | 'number' | 'date' = 'text',
+    className: string = ''
+  ) => {
+    if (isLocked) {
+      if (type === 'date' && value) {
+        return <span>{format(new Date(value as string), 'dd/MM/yyyy')}</span>;
+      }
+      return <span>{value ?? '-'}</span>;
+    }
+    
+    return (
+      <Input
+        type={type}
+        value={value ?? ''}
+        onChange={(e) => {
+          const val = type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value;
+          onChange(val);
+        }}
+        className={`h-8 text-sm ${className}`}
+      />
+    );
   };
 
   return (
@@ -582,54 +584,113 @@ const TwoBReconciliationPage: React.FC = () => {
 
           {/* Table 1: Bills Not Available in 2B */}
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader>
               <div>
                 <CardTitle className="text-lg">Bills Not Available in 2B</CardTitle>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Client: {selectedClientData?.name}
+                  Client: {selectedClientData?.name} | Edit cells directly to modify data
                 </p>
               </div>
-              <Button size="sm" className="flex items-center gap-1" onClick={handleAddRow2B} disabled={isLocked}>
-                <Plus className="h-4 w-4" />
-                Add Row
-              </Button>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
                 <table className="gst-table">
                   <thead>
                     <tr>
-                      <th>Date</th>
+                      <th className="w-28">Date</th>
                       <th>Supplier Name</th>
-                      <th>Invoice No.</th>
-                      <th>GSTIN</th>
-                      <th className="text-right">Taxable Value</th>
-                      <th className="text-right">IGST</th>
-                      <th className="text-right">CGST</th>
-                      <th className="text-right">SGST</th>
-                      <th>Reversal Month</th>
-                      <th>Reclaim Month</th>
+                      <th className="w-28">Invoice No.</th>
+                      <th className="w-36">GSTIN</th>
+                      <th className="text-right w-28">Taxable Value</th>
+                      <th className="text-right w-24">IGST</th>
+                      <th className="text-right w-24">CGST</th>
+                      <th className="text-right w-24">SGST</th>
+                      <th className="w-24">Reversal</th>
+                      <th className="w-24">Reclaim</th>
                       {!isLocked && <th className="w-12"></th>}
                     </tr>
                   </thead>
                   <tbody>
                     {billsNotIn2B.map((row) => (
                       <tr key={row.id} className={row.is_carried_forward ? 'bg-blue-50 dark:bg-blue-950/20' : ''}>
-                        <td>{format(new Date(row.date), 'dd/MM/yyyy')}</td>
                         <td>
-                          {row.supplier_name}
-                          {row.is_carried_forward && (
-                            <Badge variant="outline" className="ml-2 text-xs">CF</Badge>
+                          {renderEditableInput(
+                            row.date,
+                            (val) => handleUpdate2BField(row.id, 'date', val),
+                            'date'
                           )}
                         </td>
-                        <td>{row.supplier_invoice_number || '-'}</td>
-                        <td className="font-mono text-xs">{row.supplier_gstin || '-'}</td>
-                        <td className="text-right">{(row.taxable_value || 0).toLocaleString('en-IN')}</td>
-                        <td className="text-right">{(row.input_igst || 0).toLocaleString('en-IN')}</td>
-                        <td className="text-right">{(row.input_cgst || 0).toLocaleString('en-IN')}</td>
-                        <td className="text-right">{(row.input_sgst || 0).toLocaleString('en-IN')}</td>
-                        <td>{row.reversal_month || '-'}</td>
-                        <td>{row.reclaim_month || '-'}</td>
+                        <td>
+                          <div className="flex items-center gap-2">
+                            {renderEditableInput(
+                              row.supplier_name,
+                              (val) => handleUpdate2BField(row.id, 'supplier_name', val),
+                              'text',
+                              'min-w-[150px]'
+                            )}
+                            {row.is_carried_forward && (
+                              <Badge variant="outline" className="text-xs shrink-0">CF</Badge>
+                            )}
+                          </div>
+                        </td>
+                        <td>
+                          {renderEditableInput(
+                            row.supplier_invoice_number,
+                            (val) => handleUpdate2BField(row.id, 'supplier_invoice_number', val)
+                          )}
+                        </td>
+                        <td>
+                          {renderEditableInput(
+                            row.supplier_gstin,
+                            (val) => handleUpdate2BField(row.id, 'supplier_gstin', val),
+                            'text',
+                            'font-mono text-xs'
+                          )}
+                        </td>
+                        <td className="text-right">
+                          {renderEditableInput(
+                            row.taxable_value,
+                            (val) => handleUpdate2BField(row.id, 'taxable_value', val),
+                            'number',
+                            'text-right'
+                          )}
+                        </td>
+                        <td className="text-right">
+                          {renderEditableInput(
+                            row.input_igst,
+                            (val) => handleUpdate2BField(row.id, 'input_igst', val),
+                            'number',
+                            'text-right'
+                          )}
+                        </td>
+                        <td className="text-right">
+                          {renderEditableInput(
+                            row.input_cgst,
+                            (val) => handleUpdate2BField(row.id, 'input_cgst', val),
+                            'number',
+                            'text-right'
+                          )}
+                        </td>
+                        <td className="text-right">
+                          {renderEditableInput(
+                            row.input_sgst,
+                            (val) => handleUpdate2BField(row.id, 'input_sgst', val),
+                            'number',
+                            'text-right'
+                          )}
+                        </td>
+                        <td>
+                          {renderEditableInput(
+                            row.reversal_month,
+                            (val) => handleUpdate2BField(row.id, 'reversal_month', val)
+                          )}
+                        </td>
+                        <td>
+                          {renderEditableInput(
+                            row.reclaim_month,
+                            (val) => handleUpdate2BField(row.id, 'reclaim_month', val)
+                          )}
+                        </td>
                         {!isLocked && (
                           <td>
                             <Button 
@@ -647,7 +708,7 @@ const TwoBReconciliationPage: React.FC = () => {
                     {billsNotIn2B.length === 0 && (
                       <tr>
                         <td colSpan={isLocked ? 10 : 11} className="text-center py-8 text-muted-foreground">
-                          No records found. Click "Add Row" to add data or "Import Excel" to import.
+                          No records found. Use "Import Excel" to add data.
                         </td>
                       </tr>
                     )}
@@ -670,44 +731,104 @@ const TwoBReconciliationPage: React.FC = () => {
 
           {/* Table 2: Bills Not Available in Books */}
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader>
               <CardTitle className="text-lg">Bills Not Available in Books</CardTitle>
-              <Button size="sm" className="flex items-center gap-1" onClick={handleAddRowBooks} disabled={isLocked}>
-                <Plus className="h-4 w-4" />
-                Add Row
-              </Button>
+              <p className="text-sm text-muted-foreground">Edit cells directly to modify data</p>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
                 <table className="gst-table">
                   <thead>
                     <tr>
-                      <th>Date</th>
+                      <th className="w-28">Date</th>
                       <th>Supplier Name</th>
-                      <th>Invoice No.</th>
-                      <th>GSTIN</th>
-                      <th className="text-right">Taxable Value</th>
-                      <th className="text-right">IGST</th>
-                      <th className="text-right">CGST</th>
-                      <th className="text-right">SGST</th>
-                      <th>Book Entry Month</th>
-                      <th>Bill in 2B Month</th>
+                      <th className="w-28">Invoice No.</th>
+                      <th className="w-36">GSTIN</th>
+                      <th className="text-right w-28">Taxable Value</th>
+                      <th className="text-right w-24">IGST</th>
+                      <th className="text-right w-24">CGST</th>
+                      <th className="text-right w-24">SGST</th>
+                      <th className="w-24">Book Entry</th>
+                      <th className="w-24">In 2B</th>
                       {!isLocked && <th className="w-12"></th>}
                     </tr>
                   </thead>
                   <tbody>
                     {billsNotInBooks.map((row) => (
                       <tr key={row.id}>
-                        <td>{format(new Date(row.date), 'dd/MM/yyyy')}</td>
-                        <td>{row.supplier_name}</td>
-                        <td>{row.supplier_invoice_number || '-'}</td>
-                        <td className="font-mono text-xs">{row.supplier_gstin || '-'}</td>
-                        <td className="text-right">{(row.taxable_value || 0).toLocaleString('en-IN')}</td>
-                        <td className="text-right">{(row.input_igst || 0).toLocaleString('en-IN')}</td>
-                        <td className="text-right">{(row.input_cgst || 0).toLocaleString('en-IN')}</td>
-                        <td className="text-right">{(row.input_sgst || 0).toLocaleString('en-IN')}</td>
-                        <td>{row.book_entry_month || '-'}</td>
-                        <td>{row.bill_in_2b_month || '-'}</td>
+                        <td>
+                          {renderEditableInput(
+                            row.date,
+                            (val) => handleUpdateBooksField(row.id, 'date', val),
+                            'date'
+                          )}
+                        </td>
+                        <td>
+                          {renderEditableInput(
+                            row.supplier_name,
+                            (val) => handleUpdateBooksField(row.id, 'supplier_name', val),
+                            'text',
+                            'min-w-[150px]'
+                          )}
+                        </td>
+                        <td>
+                          {renderEditableInput(
+                            row.supplier_invoice_number,
+                            (val) => handleUpdateBooksField(row.id, 'supplier_invoice_number', val)
+                          )}
+                        </td>
+                        <td>
+                          {renderEditableInput(
+                            row.supplier_gstin,
+                            (val) => handleUpdateBooksField(row.id, 'supplier_gstin', val),
+                            'text',
+                            'font-mono text-xs'
+                          )}
+                        </td>
+                        <td className="text-right">
+                          {renderEditableInput(
+                            row.taxable_value,
+                            (val) => handleUpdateBooksField(row.id, 'taxable_value', val),
+                            'number',
+                            'text-right'
+                          )}
+                        </td>
+                        <td className="text-right">
+                          {renderEditableInput(
+                            row.input_igst,
+                            (val) => handleUpdateBooksField(row.id, 'input_igst', val),
+                            'number',
+                            'text-right'
+                          )}
+                        </td>
+                        <td className="text-right">
+                          {renderEditableInput(
+                            row.input_cgst,
+                            (val) => handleUpdateBooksField(row.id, 'input_cgst', val),
+                            'number',
+                            'text-right'
+                          )}
+                        </td>
+                        <td className="text-right">
+                          {renderEditableInput(
+                            row.input_sgst,
+                            (val) => handleUpdateBooksField(row.id, 'input_sgst', val),
+                            'number',
+                            'text-right'
+                          )}
+                        </td>
+                        <td>
+                          {renderEditableInput(
+                            row.book_entry_month,
+                            (val) => handleUpdateBooksField(row.id, 'book_entry_month', val)
+                          )}
+                        </td>
+                        <td>
+                          {renderEditableInput(
+                            row.bill_in_2b_month,
+                            (val) => handleUpdateBooksField(row.id, 'bill_in_2b_month', val)
+                          )}
+                        </td>
                         {!isLocked && (
                           <td>
                             <Button 
@@ -725,7 +846,7 @@ const TwoBReconciliationPage: React.FC = () => {
                     {billsNotInBooks.length === 0 && (
                       <tr>
                         <td colSpan={isLocked ? 10 : 11} className="text-center py-8 text-muted-foreground">
-                          No records found. Click "Add Row" to add data or "Import Excel" to import.
+                          No records found. Use "Import Excel" to add data.
                         </td>
                       </tr>
                     )}
