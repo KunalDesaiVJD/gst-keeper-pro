@@ -2,95 +2,112 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
-All colors MUST be HSL.
-*/
+/* VJ Desai & Co. GST Management System - Design System */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@500;600;700&display=swap');
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-
+    /* Primary Brand - Dark Blue (Sidebar) */
+    --primary: 220 60% 25%;
+    --primary-foreground: 0 0% 100%;
+    
+    /* Background & Foreground */
+    --background: 0 0% 97%;
+    --foreground: 222 47% 11%;
+    
+    /* Card - White cards on grey background */
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-
+    --card-foreground: 222 47% 11%;
+    
+    /* Popover */
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-
+    --popover-foreground: 222 47% 11%;
+    
+    /* Secondary - Light Grey */
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 47% 11%;
+    
+    /* Muted */
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    
+    /* Accent - Coral/Orange for highlights */
+    --accent: 16 100% 66%;
+    --accent-foreground: 0 0% 100%;
+    
+    /* Destructive - Red */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    
+    /* Success - Green */
+    --success: 142 76% 36%;
+    --success-foreground: 0 0% 100%;
+    
+    /* Warning - Amber/Orange */
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    
+    /* Info - Blue */
+    --info: 199 89% 48%;
+    --info-foreground: 0 0% 100%;
+    
+    /* Border & Input */
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 220 60% 25%;
+    
+    /* Radius */
     --radius: 0.5rem;
-
-    --sidebar-background: 0 0% 98%;
-
-    --sidebar-foreground: 240 5.3% 26.1%;
-
-    --sidebar-primary: 240 5.9% 10%;
-
-    --sidebar-primary-foreground: 0 0% 98%;
-
-    --sidebar-accent: 240 4.8% 95.9%;
-
-    --sidebar-accent-foreground: 240 5.9% 10%;
-
-    --sidebar-border: 220 13% 91%;
-
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    
+    /* Sidebar - Dark Blue Theme */
+    --sidebar-background: 220 60% 20%;
+    --sidebar-foreground: 220 20% 85%;
+    --sidebar-primary: 0 0% 100%;
+    --sidebar-primary-foreground: 220 60% 20%;
+    --sidebar-accent: 220 60% 28%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 220 50% 30%;
+    --sidebar-ring: 220 60% 50%;
+    
+    /* GST specific colors */
+    --gst-filed: 142 76% 36%;
+    --gst-pending: 38 92% 50%;
+    --gst-late: 0 84% 60%;
+    --gst-nil: 199 89% 48%;
+    
+    /* Custom gradients */
+    --gradient-sidebar: linear-gradient(180deg, hsl(220 60% 22%) 0%, hsl(220 60% 18%) 100%);
+    --gradient-card-hover: linear-gradient(135deg, hsl(0 0% 100%) 0%, hsl(220 20% 98%) 100%);
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
+    --background: 222 47% 8%;
     --foreground: 210 40% 98%;
-
-    --card: 222.2 84% 4.9%;
+    --card: 222 47% 11%;
     --card-foreground: 210 40% 98%;
-
-    --popover: 222.2 84% 4.9%;
+    --popover: 222 47% 11%;
     --popover-foreground: 210 40% 98%;
-
     --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-
-    --secondary: 217.2 32.6% 17.5%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 217 33% 17%;
     --secondary-foreground: 210 40% 98%;
-
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-
-    --destructive: 0 62.8% 30.6%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 16 100% 66%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 63% 31%;
     --destructive-foreground: 210 40% 98%;
-
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --border: 217 33% 17%;
+    --input: 217 33% 17%;
+    --ring: 212 27% 84%;
+    --sidebar-background: 220 60% 12%;
+    --sidebar-foreground: 220 20% 85%;
+    --sidebar-primary: 210 40% 98%;
+    --sidebar-primary-foreground: 220 60% 12%;
+    --sidebar-accent: 220 60% 18%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 220 50% 20%;
+    --sidebar-ring: 220 60% 50%;
   }
 }
 
@@ -101,5 +118,115 @@ All colors MUST be HSL.
 
   body {
     @apply bg-background text-foreground;
+    font-family: 'Inter', sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Poppins', sans-serif;
+  }
+}
+
+@layer components {
+  /* Metric Card Styles */
+  .metric-card {
+    @apply bg-card rounded-lg border border-border p-6 transition-all duration-200;
+    @apply hover:shadow-lg hover:border-primary/20 cursor-pointer;
+  }
+  
+  .metric-card-value {
+    @apply text-4xl font-bold text-foreground;
+  }
+  
+  .metric-card-label {
+    @apply text-sm text-muted-foreground font-medium;
+  }
+  
+  /* Status Badges */
+  .status-filed {
+    @apply bg-success/10 text-success border-success/20;
+  }
+  
+  .status-pending {
+    @apply bg-warning/10 text-warning border-warning/20;
+  }
+  
+  .status-late {
+    @apply bg-destructive/10 text-destructive border-destructive/20;
+  }
+  
+  .status-nil {
+    @apply bg-info/10 text-info border-info/20;
+  }
+  
+  /* Sidebar Active State */
+  .sidebar-item-active {
+    @apply bg-sidebar-accent text-sidebar-accent-foreground;
+  }
+  
+  /* Form Input Styles */
+  .form-input-gst {
+    @apply h-11 rounded-md border-input bg-background px-3 py-2;
+    @apply focus:ring-2 focus:ring-primary focus:border-transparent;
+    @apply transition-all duration-200;
+  }
+  
+  /* Table Styles */
+  .gst-table {
+    @apply w-full border-collapse;
+  }
+  
+  .gst-table th {
+    @apply bg-primary text-primary-foreground px-4 py-3 text-left text-sm font-semibold;
+  }
+  
+  .gst-table td {
+    @apply px-4 py-3 border-b border-border text-sm;
+  }
+  
+  .gst-table tr:hover {
+    @apply bg-muted/50;
+  }
+  
+  /* Locked Cell Style */
+  .cell-locked {
+    @apply bg-muted/70 text-muted-foreground cursor-not-allowed;
+  }
+  
+  /* Quick Action Button */
+  .quick-action-btn {
+    @apply inline-flex items-center gap-2 px-4 py-2.5 rounded-lg;
+    @apply bg-primary text-primary-foreground font-medium text-sm;
+    @apply hover:bg-primary/90 transition-all duration-200;
+    @apply shadow-sm hover:shadow-md;
+  }
+}
+
+@layer utilities {
+  /* Custom scrollbar for tables */
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    @apply bg-muted/30 rounded-full;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/30 rounded-full;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/50;
+  }
+  
+  /* Animation for loading states */
+  @keyframes pulse-glow {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  
+  .animate-pulse-glow {
+    animation: pulse-glow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
 }
