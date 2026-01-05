@@ -20,6 +20,7 @@ interface ITCRow {
   isHeader?: boolean;
   isAutoLinked?: boolean;
   editable?: boolean;
+  reasons?: string;
 }
 
 interface ITCData {
@@ -36,29 +37,29 @@ interface Client {
 
 const getDefaultITCData = (): ITCData => ({
   section4A: [
-    { srNo: '(1)', particular: 'Import of Goods', igst: 0, cgst: 0, sgst: 0, editable: true },
-    { srNo: '(2)', particular: 'Import of Services', igst: 0, cgst: 0, sgst: 0, editable: true },
-    { srNo: '(3)', particular: 'RCM ITC', igst: 0, cgst: 0, sgst: 0, editable: true },
-    { srNo: '(4)', particular: 'Inward Supplies from ISD', igst: 0, cgst: 0, sgst: 0, editable: true },
-    { srNo: '(5)', particular: 'All other ITC', igst: 0, cgst: 0, sgst: 0, isHeader: true },
-    { srNo: '5.1', particular: 'ITC for the Month', igst: 0, cgst: 0, sgst: 0, editable: true },
-    { srNo: '5.2', particular: 'ITC for Previous Month, if any', igst: 0, cgst: 0, sgst: 0, editable: true },
-    { srNo: '5.3', particular: 'Debit Note', igst: 0, cgst: 0, sgst: 0, editable: true },
-    { srNo: '5.4', particular: 'Reclaim of ITC Reversed for Previous months', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true },
-    { srNo: '5.5', particular: 'Reclaim of ITC Reversed due to 180 days rule', igst: 0, cgst: 0, sgst: 0, editable: true },
+    { srNo: '(1)', particular: 'Import of Goods', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '(2)', particular: 'Import of Services', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '(3)', particular: 'RCM ITC', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '(4)', particular: 'Inward Supplies from ISD', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '(5)', particular: 'All other ITC', igst: 0, cgst: 0, sgst: 0, isHeader: true, reasons: '' },
+    { srNo: '5.1', particular: 'ITC for the Month', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '5.2', particular: 'ITC for Previous Month, if any', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '5.3', particular: 'Debit Note', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '5.4', particular: 'Reclaim of ITC Reversed for Previous months', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
+    { srNo: '5.5', particular: 'Reclaim of ITC Reversed due to 180 days rule', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
   ],
   section4B: [
-    { srNo: '(1)', particular: 'ITC Reversal under Rule 38, 42 & 43, and Section 17(5)', igst: 0, cgst: 0, sgst: 0, editable: true },
-    { srNo: '(2)', particular: 'Others', igst: 0, cgst: 0, sgst: 0, editable: true },
-    { srNo: '', particular: 'ITC Reversal for current month as per 2B RECO', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true },
-    { srNo: '', particular: 'ITC Reversal for previous months, if any', igst: 0, cgst: 0, sgst: 0, editable: true },
-    { srNo: '', particular: 'ITC Reversal due to 180 days Analysis', igst: 0, cgst: 0, sgst: 0, editable: true },
+    { srNo: '(1)', particular: 'ITC Reversal under Rule 38, 42 & 43, and Section 17(5)', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '(2)', particular: 'Others', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '', particular: 'ITC Reversal for current month as per 2B RECO', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
+    { srNo: '', particular: 'ITC Reversal for previous months, if any', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '', particular: 'ITC Reversal due to 180 days Analysis', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
   ],
   section4D: [
-    { srNo: '(1)', particular: 'ITC reclaimed which was reversed under Table 4(B)(2) in earlier tax period', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true },
-    { srNo: '1.1', particular: 'Reclaim of ITC Reversed for Previous months', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true },
-    { srNo: '1.2', particular: 'Reclaim of ITC Reversed due to 180 days rule', igst: 0, cgst: 0, sgst: 0, editable: true },
-    { srNo: '(2)', particular: 'Ineligible ITC under section 16(4) & ITC restricted due to PoS rules', igst: 0, cgst: 0, sgst: 0, editable: true },
+    { srNo: '(1)', particular: 'ITC reclaimed which was reversed under Table 4(B)(2) in earlier tax period', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
+    { srNo: '1.1', particular: 'Reclaim of ITC Reversed for Previous months', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
+    { srNo: '1.2', particular: 'Reclaim of ITC Reversed due to 180 days rule', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '(2)', particular: 'Ineligible ITC under section 16(4) & ITC restricted due to PoS rules', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
   ],
 });
 
@@ -359,6 +360,19 @@ const ITCSummaryPage: React.FC = () => {
     });
   };
 
+  // Handle reasons change
+  const handleReasonsChange = (section: keyof ITCData, rowIndex: number, value: string) => {
+    if (isLocked) return;
+    
+    setItcData(prev => {
+      const newData = { ...prev };
+      const newSection = [...newData[section]];
+      newSection[rowIndex] = { ...newSection[rowIndex], reasons: value };
+      newData[section] = newSection;
+      return newData;
+    });
+  };
+
   // Save to database
   const handleSave = async () => {
     if (!selectedClient || !selectedMonth) return;
@@ -600,12 +614,13 @@ const ITCSummaryPage: React.FC = () => {
                       <th className="text-right w-28">CGST</th>
                       <th className="text-right w-28">SGST</th>
                       <th className="text-right w-32">TOTAL</th>
+                      <th className="w-40">REASONS</th>
                     </tr>
                   </thead>
                   <tbody>
                     {/* Section 4A */}
                     <tr className="bg-primary/5">
-                      <td colSpan={6} className="font-semibold">4 (A) ITC Available</td>
+                      <td colSpan={7} className="font-semibold">4 (A) ITC Available</td>
                     </tr>
                     {itcData.section4A.map((row, idx) => (
                       <React.Fragment key={`4a-${idx}`}>
@@ -626,6 +641,18 @@ const ITCSummaryPage: React.FC = () => {
                           <td className="text-right font-medium">
                             {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
                           </td>
+                          <td>
+                            {!row.isHeader && (
+                              <Input
+                                type="text"
+                                value={row.reasons || ''}
+                                onChange={(e) => handleReasonsChange('section4A', idx, e.target.value)}
+                                placeholder="Reason..."
+                                className="h-8 text-sm"
+                                disabled={isLocked}
+                              />
+                            )}
+                          </td>
                         </tr>
                         {/* Insert Total (5) row after row 5.5 */}
                         {row.srNo === '5.5' && (
@@ -638,6 +665,7 @@ const ITCSummaryPage: React.FC = () => {
                             <td className="text-right">
                               {(total5.igst + total5.cgst + total5.sgst).toLocaleString('en-IN')}
                             </td>
+                            <td></td>
                           </tr>
                         )}
                       </React.Fragment>
@@ -651,11 +679,12 @@ const ITCSummaryPage: React.FC = () => {
                       <td className="text-right">
                         {(total4A.igst + total4A.cgst + total4A.sgst).toLocaleString('en-IN')}
                       </td>
+                      <td></td>
                     </tr>
 
                     {/* Section 4B */}
                     <tr className="bg-primary/5">
-                      <td colSpan={6} className="font-semibold">4 (B) ITC Reversed</td>
+                      <td colSpan={7} className="font-semibold">4 (B) ITC Reversed</td>
                     </tr>
                     {itcData.section4B.map((row, idx) => (
                       <tr key={`4b-${idx}`} className={row.isAutoLinked ? 'cell-locked' : ''}>
@@ -675,6 +704,16 @@ const ITCSummaryPage: React.FC = () => {
                         <td className="text-right font-medium">
                           {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
                         </td>
+                        <td>
+                          <Input
+                            type="text"
+                            value={row.reasons || ''}
+                            onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
+                            placeholder="Reason..."
+                            className="h-8 text-sm"
+                            disabled={isLocked}
+                          />
+                        </td>
                       </tr>
                     ))}
                     <tr className="bg-muted/50 font-semibold">
@@ -686,6 +725,7 @@ const ITCSummaryPage: React.FC = () => {
                       <td className="text-right">
                         {(total4B.igst + total4B.cgst + total4B.sgst).toLocaleString('en-IN')}
                       </td>
+                      <td></td>
                     </tr>
 
                     {/* Section 4C */}
@@ -698,11 +738,12 @@ const ITCSummaryPage: React.FC = () => {
                       <td className="text-right">
                         {(net4C.igst + net4C.cgst + net4C.sgst).toLocaleString('en-IN')}
                       </td>
+                      <td></td>
                     </tr>
 
                     {/* Section 4D */}
                     <tr className="bg-primary/5">
-                      <td colSpan={6} className="font-semibold">4 (D) Other Details</td>
+                      <td colSpan={7} className="font-semibold">4 (D) Other Details</td>
                     </tr>
                     {itcData.section4D.map((row, idx) => (
                       <tr key={`4d-${idx}`} className={row.isAutoLinked ? 'cell-locked' : ''}>
@@ -721,6 +762,16 @@ const ITCSummaryPage: React.FC = () => {
                         <td className="text-right">{renderEditableCell('section4D', idx, row, 'sgst')}</td>
                         <td className="text-right font-medium">
                           {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
+                        </td>
+                        <td>
+                          <Input
+                            type="text"
+                            value={row.reasons || ''}
+                            onChange={(e) => handleReasonsChange('section4D', idx, e.target.value)}
+                            placeholder="Reason..."
+                            className="h-8 text-sm"
+                            disabled={isLocked}
+                          />
                         </td>
                       </tr>
                     ))}
