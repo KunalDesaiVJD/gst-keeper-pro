@@ -148,7 +148,13 @@ const ClientManagementSection: React.FC = () => {
                     {client.registration_type}
                   </Badge>
                   <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="icon" className="h-8 w-8" title="Edit">
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-8 w-8" 
+                      title="Edit"
+                      onClick={() => navigate(`/edit-client/${client.id}`)}
+                    >
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
                     <Button 

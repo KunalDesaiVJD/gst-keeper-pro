@@ -8,6 +8,7 @@ import MainLayout from "@/components/layout/MainLayout";
 import LoginPage from "@/pages/LoginPage";
 import DashboardPage from "@/pages/DashboardPage";
 import AddClientPage from "@/pages/AddClientPage";
+import EditClientPage from "@/pages/EditClientPage";
 import ClientsPage from "@/pages/ClientsPage";
 import TwoBReconciliationPage from "@/pages/TwoBReconciliationPage";
 import ITCSummaryPage from "@/pages/ITCSummaryPage";
@@ -34,6 +35,7 @@ const App = () => (
             <Route element={<MainLayout />}>
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/add-client" element={<AddClientPage />} />
+              <Route path="/edit-client/:clientId" element={<EditClientPage />} />
               <Route path="/clients" element={<ClientsPage />} />
               <Route path="/2b-reconciliation" element={<TwoBReconciliationPage />} />
               <Route path="/itc-summary" element={<ITCSummaryPage />} />

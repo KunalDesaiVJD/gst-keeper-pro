@@ -1,16 +1,16 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Download, FileText, Upload, Lock, Unlock, Search, Filter } from 'lucide-react';
+import { Download, FileText, Lock, Unlock, Search, Filter } from 'lucide-react';
 import { FilingStatusType, ReturnType } from '@/types';
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import * as XLSX from 'xlsx';
 
 interface Client {
   id: string;
@@ -48,7 +48,6 @@ const FilingStatusPage: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [filingRecords, setFilingRecords] = useState<FilingRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Filter states
   const [clientNameFilter, setClientNameFilter] = useState<string>('');
@@ -190,65 +189,26 @@ const FilingStatusPage: React.FC = () => {
     toast.success('PDF exported successfully');
   };
 
-  const handleImportClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const data = await file.arrayBuffer();
-      const workbook = XLSX.read(data);
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const jsonData = XLSX.utils.sheet_to_json(sheet);
-      
-      // Process each row and upsert to database
-      let importCount = 0;
-      for (const row of jsonData as any[]) {
-        const clientName = row['Client Name'] || row['clientName'];
-        const client = clients.find(c => c.name.toLowerCase() === clientName?.toLowerCase());
-        
-        if (client) {
-          const returnType = row['Return Type'] || row['returnType'];
-          const status = row['Status'] || row['status'] || 'Prepared';
-          
-          const { error } = await supabase
-            .from('filing_status')
-            .upsert({
-              client_id: client.id,
-              return_type: returnType,
-              period_month: selectedMonth,
-              status: status,
-              target_date: row['Target Date'] || row['targetDate'] || 11,
-              remarks: row['Remarks'] || row['remarks'] || null,
-            }, {
-              onConflict: 'client_id,return_type,period_month'
-            });
-          
-          if (!error) importCount++;
-        }
-      }
-      
-      toast.success(`Imported ${importCount} filing records successfully`);
-      fetchFilingRecords();
-    } catch (error) {
-      console.error('Import error:', error);
-      toast.error('Failed to import Excel file. Please check the format.');
-    }
-    
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
-
   const handleStatusChange = async (record: FilingRecord, newStatus: FilingStatusType) => {
     const isNewRecord = record.id.startsWith('temp-');
     
+    // GSTR-3B dependency check: require GSTR-1 to be filed first
+    if (record.return_type === 'GSTR-3B' && newStatus === 'Filed') {
+      const gstr1Record = filingRecords.find(
+        f => f.client_id === record.client_id && 
+             f.return_type === 'GSTR-1' && 
+             f.period_month === record.period_month
+      );
+      
+      if (!gstr1Record || gstr1Record.status !== 'Filed') {
+        toast.error('Cannot file GSTR-3B: GSTR-1 must be filed first for this period.');
+        return;
+      }
+    }
+    
     try {
       if (isNewRecord) {
-        // Insert new record - don't pass updated_by since we're using mock auth
+        // Insert new record
         const { error } = await supabase
           .from('filing_status')
           .insert([{
@@ -279,8 +239,10 @@ const FilingStatusPage: React.FC = () => {
         if (error) throw error;
       }
       
-      if (newStatus === 'Filed') {
-        toast.success('Status changed to Filed. 2B and ITC sheets are now locked for this period.');
+      if (newStatus === 'Filed' && record.return_type === 'GSTR-3B') {
+        toast.success('GSTR-3B filed. 2B and ITC sheets are now locked for this period.');
+      } else if (newStatus === 'Filed') {
+        toast.success('Status updated to Filed.');
       } else {
         toast.success('Status updated successfully');
       }
@@ -289,6 +251,42 @@ const FilingStatusPage: React.FC = () => {
     } catch (error: any) {
       console.error('Error updating status:', error);
       toast.error('Failed to update status: ' + error.message);
+    }
+  };
+
+  const handleRemarksChange = async (record: FilingRecord, newRemarks: string) => {
+    const isNewRecord = record.id.startsWith('temp-');
+    
+    if (isNewRecord) {
+      // Create the record first
+      try {
+        const { error } = await supabase
+          .from('filing_status')
+          .insert([{
+            client_id: record.client_id,
+            return_type: record.return_type as 'GSTR-1' | 'GSTR-3B' | 'ITC-04' | 'GSTR-6' | 'GSTR-7' | 'CMP-08',
+            period_month: selectedMonth,
+            status: record.status,
+            target_date: record.target_date,
+            remarks: newRemarks,
+          }]);
+        
+        if (error) throw error;
+        fetchFilingRecords();
+      } catch (error: any) {
+        console.error('Error saving remarks:', error);
+      }
+    } else {
+      try {
+        const { error } = await supabase
+          .from('filing_status')
+          .update({ remarks: newRemarks })
+          .eq('id', record.id);
+        
+        if (error) throw error;
+      } catch (error: any) {
+        console.error('Error updating remarks:', error);
+      }
     }
   };
 
@@ -362,6 +360,7 @@ const FilingStatusPage: React.FC = () => {
 
   const FilingTable = ({ records, returnType }: { records: FilingRecord[]; returnType: string }) => {
     const filteredRecords = applyFilters(records);
+    const [editingRemarks, setEditingRemarks] = useState<Record<string, string>>({});
     
     return (
       <div className="overflow-x-auto">
@@ -377,8 +376,8 @@ const FilingStatusPage: React.FC = () => {
               <th>Status</th>
               <th className="w-20">Target</th>
               <th className="w-28">Filed Date</th>
-              <th>Remarks</th>
-              {canUnlockSheets() && <th className="w-20">Action</th>}
+              <th className="w-40">Remarks</th>
+              {canUnlockSheets() && <th className="w-16">Unlock</th>}
             </tr>
           </thead>
           <tbody>
@@ -403,7 +402,7 @@ const FilingStatusPage: React.FC = () => {
                     disabled={record.is_locked && !canUnlockSheets()}
                     onValueChange={(value) => handleStatusChange(record, value as FilingStatusType)}
                   >
-                    <SelectTrigger className="w-40 h-8">
+                    <SelectTrigger className="w-40 h-8 [appearance:none]">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -415,22 +414,37 @@ const FilingStatusPage: React.FC = () => {
                     </SelectContent>
                   </Select>
                 </td>
-                <td className="text-center">{record.target_date}</td>
+                <td className="text-center font-mono text-sm">{record.target_date}</td>
                 <td>
                   {record.filed_date 
                     ? new Date(record.filed_date).toLocaleDateString('en-IN')
                     : '-'
                   }
                 </td>
-                <td className="text-xs text-muted-foreground">{record.remarks || '-'}</td>
+                <td>
+                  <Input
+                    value={editingRemarks[record.id] ?? record.remarks ?? ''}
+                    onChange={(e) => setEditingRemarks(prev => ({ ...prev, [record.id]: e.target.value }))}
+                    onBlur={() => {
+                      const newRemarks = editingRemarks[record.id];
+                      if (newRemarks !== undefined && newRemarks !== record.remarks) {
+                        handleRemarksChange(record, newRemarks);
+                      }
+                    }}
+                    placeholder="Add remarks..."
+                    className="h-7 text-xs"
+                    disabled={record.is_locked && !canUnlockSheets()}
+                  />
+                </td>
                 {canUnlockSheets() && (
-                  <td>
+                  <td className="text-center">
                     {record.is_locked && (
                       <Button 
                         variant="ghost" 
                         size="sm" 
                         onClick={() => handleUnlock(record)}
                         className="h-7 px-2"
+                        title="Unlock this record"
                       >
                         <Unlock className="h-3 w-3" />
                       </Button>
@@ -462,6 +476,21 @@ const FilingStatusPage: React.FC = () => {
     );
   }
 
+  // Generate months for selector
+  const generateMonths = () => {
+    const months: { value: string; label: string }[] = [];
+    const now = new Date();
+    for (let i = 0; i < 24; i++) {
+      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const value = `${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
+      const label = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+      months.push({ value, label });
+    }
+    return months;
+  };
+
+  const months = generateMonths();
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
@@ -471,19 +500,6 @@ const FilingStatusPage: React.FC = () => {
           <p className="text-muted-foreground">Track GST return filing status for all clients</p>
         </div>
         <div className="flex items-center gap-2">
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            accept=".xlsx,.xls"
-            className="hidden"
-          />
-          {isStaffRole() && (
-            <Button variant="outline" className="flex items-center gap-2" onClick={handleImportClick}>
-              <Upload className="h-4 w-4" />
-              Import Excel
-            </Button>
-          )}
           <Button variant="outline" className="flex items-center gap-2" onClick={handleExportPDF}>
             <Download className="h-4 w-4" />
             Export PDF
@@ -500,51 +516,46 @@ const FilingStatusPage: React.FC = () => {
               <span className="text-sm font-medium">Filters:</span>
             </div>
             
-            {/* Month Filter */}
-            <div className="w-48">
-              <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select Month" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="01/2026">January 2026</SelectItem>
-                  <SelectItem value="12/2025">December 2025</SelectItem>
-                  <SelectItem value="11/2025">November 2025</SelectItem>
-                  <SelectItem value="10/2025">October 2025</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            
-            {/* Client Name Filter */}
-            <div className="relative w-64">
+            {/* Month Selector */}
+            <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+              <SelectTrigger className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {months.map((month) => (
+                  <SelectItem key={month.value} value={month.value}>
+                    {month.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Client Name Search */}
+            <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <input
-                type="text"
-                placeholder="Search client name..."
+              <Input
+                placeholder="Search client..."
                 value={clientNameFilter}
                 onChange={(e) => setClientNameFilter(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 text-sm border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+                className="pl-9 w-48"
               />
             </div>
-            
+
             {/* Target Date Filter */}
-            <div className="w-40">
-              <Select value={targetDateFilter} onValueChange={setTargetDateFilter}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Target Date" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Targets</SelectItem>
-                  {getUniqueTargetDates().map(date => (
-                    <SelectItem key={date} value={date.toString()}>
-                      {date}th
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            
-            {/* Clear Filters */}
+            <Select value={targetDateFilter} onValueChange={setTargetDateFilter}>
+              <SelectTrigger className="w-32">
+                <SelectValue placeholder="Target Date" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Dates</SelectItem>
+                {getUniqueTargetDates().map((date) => (
+                  <SelectItem key={date} value={date.toString()}>
+                    Day {date}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
             {(clientNameFilter || targetDateFilter !== 'all') && (
               <Button 
                 variant="ghost" 
@@ -553,7 +564,6 @@ const FilingStatusPage: React.FC = () => {
                   setClientNameFilter('');
                   setTargetDateFilter('all');
                 }}
-                className="text-muted-foreground"
               >
                 Clear Filters
               </Button>
@@ -562,51 +572,40 @@ const FilingStatusPage: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Filing Status Tabs */}
-      <Tabs value={selectedTab} onValueChange={setSelectedTab}>
-        <TabsList className="grid w-full max-w-3xl grid-cols-6">
-          <TabsTrigger value="gstr1" className="flex items-center gap-1 text-xs">
-            <FileText className="h-3 w-3" />
-            GSTR-1
-          </TabsTrigger>
-          <TabsTrigger value="gstr3b" className="flex items-center gap-1 text-xs">
-            <FileText className="h-3 w-3" />
-            GSTR-3B
-          </TabsTrigger>
-          <TabsTrigger value="itc04" className="flex items-center gap-1 text-xs">
-            <FileText className="h-3 w-3" />
-            ITC-04
-          </TabsTrigger>
-          <TabsTrigger value="gstr6" className="flex items-center gap-1 text-xs">
-            <FileText className="h-3 w-3" />
-            GSTR-6
-          </TabsTrigger>
-          <TabsTrigger value="gstr7" className="flex items-center gap-1 text-xs">
-            <FileText className="h-3 w-3" />
-            GSTR-7
-          </TabsTrigger>
-          <TabsTrigger value="cmp08" className="flex items-center gap-1 text-xs">
-            <FileText className="h-3 w-3" />
-            CMP-08
-          </TabsTrigger>
-        </TabsList>
+      {/* Return Type Tabs */}
+      <Card>
+        <CardContent className="p-4">
+          <Tabs value={selectedTab} onValueChange={setSelectedTab}>
+            <TabsList className="grid grid-cols-6 w-full mb-4">
+              <TabsTrigger value="gstr1">GSTR-1</TabsTrigger>
+              <TabsTrigger value="gstr3b">GSTR-3B</TabsTrigger>
+              <TabsTrigger value="itc04">ITC-04</TabsTrigger>
+              <TabsTrigger value="gstr6">GSTR-6</TabsTrigger>
+              <TabsTrigger value="gstr7">GSTR-7</TabsTrigger>
+              <TabsTrigger value="cmp08">CMP-08</TabsTrigger>
+            </TabsList>
 
-        {allReturnTypes.map((returnType) => {
-          const tabKey = returnType.toLowerCase().replace('-', '');
-          return (
-            <TabsContent key={returnType} value={tabKey}>
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">{returnType} Filing Status - {selectedMonth}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <FilingTable records={generateAllFilingRecords(returnType)} returnType={returnType} />
-                </CardContent>
-              </Card>
+            <TabsContent value="gstr1">
+              <FilingTable records={generateAllFilingRecords('GSTR-1')} returnType="GSTR-1" />
             </TabsContent>
-          );
-        })}
-      </Tabs>
+            <TabsContent value="gstr3b">
+              <FilingTable records={generateAllFilingRecords('GSTR-3B')} returnType="GSTR-3B" />
+            </TabsContent>
+            <TabsContent value="itc04">
+              <FilingTable records={generateAllFilingRecords('ITC-04')} returnType="ITC-04" />
+            </TabsContent>
+            <TabsContent value="gstr6">
+              <FilingTable records={generateAllFilingRecords('GSTR-6')} returnType="GSTR-6" />
+            </TabsContent>
+            <TabsContent value="gstr7">
+              <FilingTable records={generateAllFilingRecords('GSTR-7')} returnType="GSTR-7" />
+            </TabsContent>
+            <TabsContent value="cmp08">
+              <FilingTable records={generateAllFilingRecords('CMP-08')} returnType="CMP-08" />
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
     </div>
   );
 };
