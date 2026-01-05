@@ -75,50 +75,59 @@ const UserControlPage: React.FC = () => {
     const fetchEmployees = async () => {
       setLoading(true);
       try {
+        // First fetch all profiles
+        const { data: profilesData, error: profilesError } = await supabase
+          .from('profiles')
+          .select('user_id, first_name, email');
+
+        if (profilesError) throw profilesError;
+        console.log('UserControl - Profiles fetched:', profilesData?.length, profilesData);
+
+        // Then fetch roles for staff
         const { data: rolesData, error: rolesError } = await supabase
           .from('user_roles')
           .select('user_id, role')
           .in('role', ['gst_manager', 'employee']);
 
         if (rolesError) throw rolesError;
+        console.log('UserControl - Roles fetched:', rolesData?.length, rolesData);
 
-        if (rolesData && rolesData.length > 0) {
-          // Dedupe user IDs
-          const uniqueUserIds = [...new Set(rolesData.map(r => r.user_id))];
-          
-          const { data: profilesData, error: profilesError } = await supabase
-            .from('profiles')
-            .select('user_id, first_name, email')
-            .in('user_id', uniqueUserIds);
-
-          if (profilesError) throw profilesError;
-
-          // Create role map (first occurrence wins)
-          const roleMap = new Map<string, string>();
-          rolesData.forEach(role => {
-            if (!roleMap.has(role.user_id)) {
-              roleMap.set(role.user_id, role.role);
-            }
-          });
-
-          // Only include profiles with valid names
-          const employeeList: Employee[] = [];
-          profilesData?.forEach(profile => {
-            const role = roleMap.get(profile.user_id);
-            if (role && profile.first_name && profile.first_name !== 'Unknown') {
-              employeeList.push({
-                user_id: profile.user_id,
-                first_name: profile.first_name,
-                email: profile.email || null,
-                role: role,
-              });
-            }
-          });
-
-          setEmployees(employeeList);
-        } else {
+        if (!rolesData || rolesData.length === 0) {
+          console.log('UserControl - No roles found');
           setEmployees([]);
+          return;
         }
+
+        // Create role map (dedupe by user_id, first occurrence wins)
+        const roleMap = new Map<string, string>();
+        rolesData.forEach(role => {
+          if (!roleMap.has(role.user_id)) {
+            roleMap.set(role.user_id, role.role);
+          }
+        });
+        console.log('UserControl - Role map size:', roleMap.size);
+
+        // Build employee list by joining profiles with roles, dedupe by first_name
+        const seenNames = new Set<string>();
+        const employeeList: Employee[] = [];
+        
+        (profilesData || []).forEach(profile => {
+          const role = roleMap.get(profile.user_id);
+          const nameLower = profile.first_name?.toLowerCase();
+          
+          if (role && profile.first_name && profile.first_name !== 'Unknown' && !seenNames.has(nameLower)) {
+            seenNames.add(nameLower);
+            employeeList.push({
+              user_id: profile.user_id,
+              first_name: profile.first_name,
+              email: profile.email || null,
+              role: role,
+            });
+          }
+        });
+
+        console.log('UserControl - Final employee list:', employeeList);
+        setEmployees(employeeList);
       } catch (error) {
         console.error('Error fetching employees:', error);
         toast({
