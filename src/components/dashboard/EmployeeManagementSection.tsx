@@ -10,7 +10,8 @@ import {
   Trash2,
   UserPlus,
   Shield,
-  Users
+  Users,
+  Pencil
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
@@ -33,6 +34,8 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
   const { canManageEmployees } = useAuth();
   const { toast } = useToast();
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [newEmployee, setNewEmployee] = useState({
@@ -209,6 +212,43 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
     }
   };
 
+  const handleEditEmployee = (employee: Employee) => {
+    setEditingEmployee(employee);
+    setShowEditDialog(true);
+  };
+
+  const handleUpdateRole = async () => {
+    if (!editingEmployee) return;
+
+    try {
+      const { error } = await supabase
+        .from('user_roles')
+        .update({ role: editingEmployee.role })
+        .eq('user_id', editingEmployee.user_id);
+
+      if (error) throw error;
+
+      // Update mock data
+      const mockUser = mockUsers.find(u => u.userId === editingEmployee.first_name);
+      if (mockUser) mockUser.role = editingEmployee.role;
+
+      toast({
+        title: 'Role Updated',
+        description: `${editingEmployee.first_name}'s role has been changed to ${editingEmployee.role === 'gst_manager' ? 'GST Manager' : 'Employee'}.`,
+      });
+
+      setShowEditDialog(false);
+      setEditingEmployee(null);
+      fetchEmployees();
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: 'Failed to update role: ' + error.message,
+        variant: 'destructive',
+      });
+    }
+  };
+
   // Only show for users who can manage employees
   if (!canManageEmployees()) {
     return null;
@@ -325,18 +365,68 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
                     </div>
                   </div>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                  onClick={() => handleDeleteEmployee(emp.id, emp.user_id, emp.first_name)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                    onClick={() => handleEditEmployee(emp)}
+                    title="Edit Role"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                    onClick={() => handleDeleteEmployee(emp.id, emp.user_id, emp.first_name)}
+                    title="Delete Employee"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
               </div>
             ))
           )}
         </div>
+
+        {/* Edit Role Dialog */}
+        <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit Employee Role</DialogTitle>
+            </DialogHeader>
+            {editingEmployee && (
+              <div className="space-y-4 pt-4">
+                <div className="space-y-2">
+                  <Label>Employee</Label>
+                  <p className="text-sm font-medium">{editingEmployee.first_name}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Role</Label>
+                  <Select
+                    value={editingEmployee.role}
+                    onValueChange={(value: 'gst_manager' | 'employee') => 
+                      setEditingEmployee(prev => prev ? { ...prev, role: value } : null)
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="gst_manager">GST Manager</SelectItem>
+                      <SelectItem value="employee">Employee</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex gap-2 justify-end pt-2">
+                  <Button variant="outline" onClick={() => setShowEditDialog(false)}>Cancel</Button>
+                  <Button onClick={handleUpdateRole}>Update Role</Button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   );

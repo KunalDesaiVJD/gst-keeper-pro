@@ -11,10 +11,12 @@ import {
   Trash2,
   Building2,
   Phone,
-  Mail
+  Mail,
+  Upload
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
 
 interface Client {
   id: string;
@@ -100,10 +102,13 @@ const ClientsPage: React.FC = () => {
           <h1 className="text-2xl font-heading font-bold text-foreground">Clients</h1>
           <p className="text-muted-foreground">Manage your client database</p>
         </div>
-        <Button onClick={() => navigate('/add-client')} className="flex items-center gap-2">
-          <Plus className="h-4 w-4" />
-          Add Client
-        </Button>
+        <div className="flex items-center gap-2">
+          <BulkAddClientsDialog onSuccess={() => fetchClients()} />
+          <Button onClick={() => navigate('/add-client')} className="flex items-center gap-2">
+            <Plus className="h-4 w-4" />
+            Add Client
+          </Button>
+        </div>
       </div>
 
       {/* Search */}
