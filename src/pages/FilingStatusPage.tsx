@@ -21,6 +21,8 @@ interface Client {
   assigned_accountant: string | null;
   registration_type: string;
   selected_returns: string[] | null;
+  registration_date: string;
+  cancellation_date?: string | null;
 }
 
 interface FilingRecord {
@@ -59,7 +61,7 @@ const FilingStatusPage: React.FC = () => {
   const fetchClients = useCallback(async () => {
     const { data, error } = await supabase
       .from('clients')
-      .select('id, name, gstin, mobile, email, assigned_accountant, registration_type, selected_returns')
+      .select('id, name, gstin, mobile, email, assigned_accountant, registration_type, selected_returns, registration_date')
       .order('name');
     
     if (error) {
@@ -110,11 +112,34 @@ const FilingStatusPage: React.FC = () => {
     };
   }, [fetchClients, fetchFilingRecords]);
 
+  // Helper function to check if client should be visible for selected month
+  const isClientVisibleForMonth = (client: Client, periodMonth: string): boolean => {
+    // Parse period month (format: MM/YYYY)
+    const [monthStr, yearStr] = periodMonth.split('/');
+    const periodDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1);
+    
+    // Parse registration date
+    const regDate = new Date(client.registration_date);
+    const regMonth = new Date(regDate.getFullYear(), regDate.getMonth(), 1);
+    
+    // Client should only be visible if period month >= registration month
+    if (periodDate < regMonth) {
+      return false;
+    }
+    
+    return true;
+  };
+
   // Generate filing records for display
   const generateAllFilingRecords = (returnType: ReturnType): FilingRecord[] => {
     const records: FilingRecord[] = [];
     
     clients.forEach(client => {
+      // Check if client should be visible for the selected month
+      if (!isClientVisibleForMonth(client, selectedMonth)) {
+        return; // Skip this client
+      }
+      
       const selectedReturns = client.selected_returns || [];
       if (selectedReturns.includes(returnType)) {
         const existingRecord = filingRecords.find(
