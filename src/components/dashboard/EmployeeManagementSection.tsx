@@ -25,7 +25,11 @@ interface Employee {
   role: 'gst_manager' | 'employee';
 }
 
-const EmployeeManagementSection: React.FC = () => {
+interface EmployeeManagementSectionProps {
+  filterRole?: 'all' | 'gst_manager' | 'employee';
+}
+
+const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ filterRole = 'all' }) => {
   const { canManageEmployees } = useAuth();
   const { toast } = useToast();
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -38,30 +42,58 @@ const EmployeeManagementSection: React.FC = () => {
 
   const fetchEmployees = useCallback(async () => {
     try {
-      const { data: profiles, error: profilesError } = await supabase
-        .from('profiles')
-        .select('id, user_id, first_name, email');
-      
-      if (profilesError) throw profilesError;
-
+      // First get roles for staff members only (employee or gst_manager)
       const { data: roles, error: rolesError } = await supabase
         .from('user_roles')
-        .select('user_id, role');
+        .select('user_id, role')
+        .in('role', ['employee', 'gst_manager']);
       
       if (rolesError) throw rolesError;
 
-      const employeeList = (profiles || [])
-        .map(p => {
-          const roleRecord = roles?.find(r => r.user_id === p.user_id);
+      if (!roles || roles.length === 0) {
+        setEmployees([]);
+        return;
+      }
+
+      // Deduplicate by user_id (keep first occurrence)
+      const uniqueRoles = roles.reduce((acc, role) => {
+        if (!acc.find(r => r.user_id === role.user_id)) {
+          acc.push(role);
+        }
+        return acc;
+      }, [] as typeof roles);
+
+      // Get profiles for these users
+      const userIds = uniqueRoles.map(r => r.user_id);
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, user_id, first_name, email')
+        .in('user_id', userIds);
+      
+      if (profilesError) throw profilesError;
+
+      // Deduplicate profiles by user_id (keep first with valid first_name)
+      const uniqueProfiles = (profiles || []).reduce((acc, profile) => {
+        const existing = acc.find(p => p.user_id === profile.user_id);
+        if (!existing) {
+          acc.push(profile);
+        }
+        return acc;
+      }, [] as typeof profiles);
+
+      const employeeList = uniqueRoles
+        .map(role => {
+          const profile = uniqueProfiles.find(p => p.user_id === role.user_id);
+          if (!profile) return null;
           return {
-            id: p.id,
-            user_id: p.user_id,
-            first_name: p.first_name,
-            email: p.email,
-            role: roleRecord?.role as 'gst_manager' | 'employee' || 'employee',
+            id: profile.id,
+            user_id: profile.user_id,
+            first_name: profile.first_name || 'Unknown',
+            email: profile.email,
+            role: role.role as 'gst_manager' | 'employee',
           };
         })
-        .filter(e => e.role === 'gst_manager' || e.role === 'employee');
+        .filter((e): e is Employee => e !== null);
 
       setEmployees(employeeList);
     } catch (error: any) {
@@ -89,13 +121,14 @@ const EmployeeManagementSection: React.FC = () => {
       const tempUserId = crypto.randomUUID();
       const email = `${newEmployee.firstName.toLowerCase().replace(/\s+/g, '.')}@staff.local`;
       
-      // Insert profile first (parent table)
+      // Insert profile first (parent table) with default password
       const { error: profileError } = await supabase
         .from('profiles')
         .insert([{
           user_id: tempUserId,
           first_name: newEmployee.firstName,
           email: email,
+          password: '2026', // Default password for first login
         }]);
       
       if (profileError) throw profileError;
@@ -178,6 +211,17 @@ const EmployeeManagementSection: React.FC = () => {
     return null;
   }
 
+  // Filter employees based on filterRole prop
+  const filteredEmployees = filterRole === 'all' 
+    ? employees 
+    : employees.filter(e => e.role === filterRole);
+
+  const sectionTitle = filterRole === 'gst_manager' 
+    ? 'GST Managers' 
+    : filterRole === 'employee' 
+      ? 'Employees' 
+      : 'Staff Members';
+
   return (
     <Card className="border-0 shadow-none">
       <CardHeader className="pb-4 px-0">
@@ -185,9 +229,9 @@ const EmployeeManagementSection: React.FC = () => {
           <div>
             <CardTitle className="text-base flex items-center gap-2">
               <Users className="h-4 w-4" />
-              Staff Members
+              {sectionTitle}
             </CardTitle>
-            <CardDescription className="text-xs">{employees.length} employees</CardDescription>
+            <CardDescription className="text-xs">{filteredEmployees.length} {filterRole === 'all' ? 'employees' : filterRole === 'gst_manager' ? 'managers' : 'employees'}</CardDescription>
           </div>
           <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
             <DialogTrigger asChild>
@@ -250,10 +294,10 @@ const EmployeeManagementSection: React.FC = () => {
         <div className="space-y-2 max-h-64 overflow-y-auto">
           {isLoading ? (
             <p className="text-center py-4 text-muted-foreground text-sm">Loading...</p>
-          ) : employees.length === 0 ? (
-            <p className="text-center py-4 text-muted-foreground text-sm">No employees yet.</p>
+          ) : filteredEmployees.length === 0 ? (
+            <p className="text-center py-4 text-muted-foreground text-sm">No {sectionTitle.toLowerCase()} yet.</p>
           ) : (
-            employees.map((emp) => (
+            filteredEmployees.map((emp) => (
               <div
                 key={emp.id}
                 className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/30 transition-colors"
