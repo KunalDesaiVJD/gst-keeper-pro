@@ -12,6 +12,7 @@ import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION } from '@/ty
 import { supabase } from '@/integrations/supabase/client';
 import { mockPasswords, mockUsers } from '@/data/mockData';
 import ClientCredentialsSection from '@/components/clients/ClientCredentialsSection';
+import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
 
 const AddClientPage: React.FC = () => {
   const navigate = useNavigate();
@@ -194,14 +195,17 @@ const AddClientPage: React.FC = () => {
   return (
     <div className="space-y-6 animate-fade-in max-w-3xl mx-auto">
       {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
-          <ArrowLeft className="h-5 w-5" />
-        </Button>
-        <div>
-          <h1 className="text-2xl font-heading font-bold text-foreground">Add New Client</h1>
-          <p className="text-muted-foreground">Fill in the client details below</p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+          <div>
+            <h1 className="text-2xl font-heading font-bold text-foreground">Add New Client</h1>
+            <p className="text-muted-foreground">Fill in the client details below</p>
+          </div>
         </div>
+        <BulkAddClientsDialog onSuccess={() => navigate('/clients')} />
       </div>
 
       <Card>

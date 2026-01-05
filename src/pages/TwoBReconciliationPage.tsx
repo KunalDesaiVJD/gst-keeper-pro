@@ -12,7 +12,8 @@ import {
   AlertCircle,
   Lock,
   Trash2,
-  Plus
+  Plus,
+  Save
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { format } from 'date-fns';
@@ -59,6 +60,10 @@ const TwoBReconciliationPage: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [billsNotIn2B, setBillsNotIn2B] = useState<BillRecord[]>([]);
   const [billsNotInBooks, setBillsNotInBooks] = useState<BillRecord[]>([]);
+  const [localBills2B, setLocalBills2B] = useState<BillRecord[]>([]);
+  const [localBillsBooks, setLocalBillsBooks] = useState<BillRecord[]>([]);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [versions, setVersions] = useState<TwoBVersion[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -95,6 +100,7 @@ const TwoBReconciliationPage: React.FC = () => {
       console.error('Error fetching bills not in 2B:', error2B);
     } else {
       setBillsNotIn2B(notIn2B || []);
+      setLocalBills2B(notIn2B || []);
       if (notIn2B && notIn2B.length > 0) {
         setIsLocked(notIn2B[0].is_locked || false);
       }
@@ -112,6 +118,7 @@ const TwoBReconciliationPage: React.FC = () => {
       console.error('Error fetching bills not in books:', errorBooks);
     } else {
       setBillsNotInBooks(notInBooks || []);
+      setLocalBillsBooks(notInBooks || []);
       if (notInBooks && notInBooks.length > 0 && !isLocked) {
         setIsLocked(notInBooks[0].is_locked || false);
       }
@@ -129,6 +136,8 @@ const TwoBReconciliationPage: React.FC = () => {
     if (filingData?.is_locked) {
       setIsLocked(true);
     }
+
+    setHasUnsavedChanges(false);
   }, [selectedClient, selectedMonth]);
 
   useEffect(() => {
@@ -141,7 +150,10 @@ const TwoBReconciliationPage: React.FC = () => {
     } else {
       setBillsNotIn2B([]);
       setBillsNotInBooks([]);
+      setLocalBills2B([]);
+      setLocalBillsBooks([]);
       setIsLocked(false);
+      setHasUnsavedChanges(false);
     }
   }, [selectedClient, selectedMonth, fetchBillsData]);
 
@@ -176,7 +188,7 @@ const TwoBReconciliationPage: React.FC = () => {
     };
   }, [selectedClient, fetchBillsData]);
 
-  const totals2B = billsNotIn2B.reduce((acc, row) => ({
+  const totals2B = localBills2B.reduce((acc, row) => ({
     taxableValue: acc.taxableValue + (row.taxable_value || 0),
     igst: acc.igst + (row.input_igst || 0),
     cgst: acc.cgst + (row.input_cgst || 0),
@@ -185,7 +197,7 @@ const TwoBReconciliationPage: React.FC = () => {
     reclaimCount: acc.reclaimCount + (row.reclaim_month ? 1 : 0),
   }), { taxableValue: 0, igst: 0, cgst: 0, sgst: 0, reversalCount: 0, reclaimCount: 0 });
 
-  const totalsBooks = billsNotInBooks.reduce((acc, row) => ({
+  const totalsBooks = localBillsBooks.reduce((acc, row) => ({
     taxableValue: acc.taxableValue + (row.taxable_value || 0),
     igst: acc.igst + (row.input_igst || 0),
     cgst: acc.cgst + (row.input_cgst || 0),
@@ -200,7 +212,7 @@ const TwoBReconciliationPage: React.FC = () => {
       return;
     }
     
-    const exportData2B: BillNotIn2B[] = billsNotIn2B.map(b => ({
+    const exportData2B: BillNotIn2B[] = localBills2B.map(b => ({
       id: b.id,
       clientId: b.client_id,
       date: new Date(b.date),
@@ -306,110 +318,171 @@ const TwoBReconciliationPage: React.FC = () => {
     }
   };
 
-  // Inline editing handlers for Bills Not in 2B
-  const handleUpdate2BField = async (id: string, field: string, value: any) => {
+  // Local editing handlers for Bills Not in 2B (update local state only)
+  const handleUpdate2BField = (id: string, field: string, value: any) => {
     if (isLocked) return;
     
-    const { error } = await supabase
-      .from('bills_not_in_2b')
-      .update({ [field]: value, updated_at: new Date().toISOString() })
-      .eq('id', id);
-    
-    if (error) {
-      toast.error('Failed to update: ' + error.message);
-    } else {
-      // Update local state
-      setBillsNotIn2B(prev => prev.map(b => 
-        b.id === id ? { ...b, [field]: value } : b
-      ));
-    }
+    setLocalBills2B(prev => prev.map(b => 
+      b.id === id ? { ...b, [field]: value } : b
+    ));
+    setHasUnsavedChanges(true);
   };
 
-  // Inline editing handlers for Bills Not in Books
-  const handleUpdateBooksField = async (id: string, field: string, value: any) => {
+  // Local editing handlers for Bills Not in Books (update local state only)
+  const handleUpdateBooksField = (id: string, field: string, value: any) => {
     if (isLocked) return;
     
-    const { error } = await supabase
-      .from('bills_not_in_books')
-      .update({ [field]: value, updated_at: new Date().toISOString() })
-      .eq('id', id);
-    
-    if (error) {
-      toast.error('Failed to update: ' + error.message);
-    } else {
-      // Update local state
-      setBillsNotInBooks(prev => prev.map(b => 
-        b.id === id ? { ...b, [field]: value } : b
-      ));
-    }
+    setLocalBillsBooks(prev => prev.map(b => 
+      b.id === id ? { ...b, [field]: value } : b
+    ));
+    setHasUnsavedChanges(true);
   };
 
-  const handleDeleteRow2B = async (id: string) => {
+  // Mark rows for deletion (local only)
+  const [deletedRows2B, setDeletedRows2B] = useState<string[]>([]);
+  const [deletedRowsBooks, setDeletedRowsBooks] = useState<string[]>([]);
+
+  const handleDeleteRow2B = (id: string) => {
     if (isLocked) return;
-    
-    const { error } = await supabase
-      .from('bills_not_in_2b')
-      .delete()
-      .eq('id', id);
-    
-    if (error) {
-      toast.error('Failed to delete: ' + error.message);
-    } else {
-      fetchBillsData();
+    setLocalBills2B(prev => prev.filter(b => b.id !== id));
+    // Track for actual deletion on save
+    if (billsNotIn2B.find(b => b.id === id)) {
+      setDeletedRows2B(prev => [...prev, id]);
     }
+    setHasUnsavedChanges(true);
   };
 
-  const handleDeleteRowBooks = async (id: string) => {
+  const handleDeleteRowBooks = (id: string) => {
     if (isLocked) return;
-    
-    const { error } = await supabase
-      .from('bills_not_in_books')
-      .delete()
-      .eq('id', id);
-    
-    if (error) {
-      toast.error('Failed to delete: ' + error.message);
-    } else {
-      fetchBillsData();
+    setLocalBillsBooks(prev => prev.filter(b => b.id !== id));
+    // Track for actual deletion on save
+    if (billsNotInBooks.find(b => b.id === id)) {
+      setDeletedRowsBooks(prev => [...prev, id]);
     }
+    setHasUnsavedChanges(true);
   };
 
-  // Add new row handlers
-  const handleAddRow2B = async () => {
+  // Add new row handlers (local only with temp ID)
+  const handleAddRow2B = () => {
     if (!selectedClient || isLocked) return;
     
-    const { error } = await supabase
-      .from('bills_not_in_2b')
-      .insert([{
-        client_id: selectedClient,
-        date: new Date().toISOString().split('T')[0],
-        supplier_name: '',
-        period_month: selectedMonth,
-      }]);
-    
-    if (error) {
-      toast.error('Failed to add row: ' + error.message);
-    } else {
-      fetchBillsData();
-    }
+    const tempId = `temp-${Date.now()}`;
+    setLocalBills2B(prev => [...prev, {
+      id: tempId,
+      client_id: selectedClient,
+      date: new Date().toISOString().split('T')[0],
+      supplier_name: '',
+      supplier_invoice_number: null,
+      supplier_gstin: null,
+      taxable_value: 0,
+      input_igst: 0,
+      input_cgst: 0,
+      input_sgst: 0,
+      period_month: selectedMonth,
+      reversal_month: null,
+      reclaim_month: null,
+      is_locked: false,
+      is_carried_forward: false,
+      version: 1,
+      updated_at: null,
+      updated_by: null,
+    }]);
+    setHasUnsavedChanges(true);
   };
 
-  const handleAddRowBooks = async () => {
+  const handleAddRowBooks = () => {
     if (!selectedClient || isLocked) return;
     
-    const { error } = await supabase
-      .from('bills_not_in_books')
-      .insert([{
-        client_id: selectedClient,
-        date: new Date().toISOString().split('T')[0],
-        supplier_name: '',
-        period_month: selectedMonth,
-      }]);
+    const tempId = `temp-${Date.now()}`;
+    setLocalBillsBooks(prev => [...prev, {
+      id: tempId,
+      client_id: selectedClient,
+      date: new Date().toISOString().split('T')[0],
+      supplier_name: '',
+      supplier_invoice_number: null,
+      supplier_gstin: null,
+      taxable_value: 0,
+      input_igst: 0,
+      input_cgst: 0,
+      input_sgst: 0,
+      period_month: selectedMonth,
+      book_entry_month: null,
+      bill_in_2b_month: null,
+      is_locked: false,
+      is_carried_forward: false,
+      version: 1,
+      updated_at: null,
+      updated_by: null,
+    }]);
+    setHasUnsavedChanges(true);
+  };
+
+  // Save all changes to database
+  const handleSaveAll = async () => {
+    if (!selectedClient || isLocked) return;
     
-    if (error) {
-      toast.error('Failed to add row: ' + error.message);
-    } else {
-      fetchBillsData();
+    setIsSaving(true);
+    try {
+      // Delete removed rows
+      if (deletedRows2B.length > 0) {
+        await supabase.from('bills_not_in_2b').delete().in('id', deletedRows2B);
+      }
+      if (deletedRowsBooks.length > 0) {
+        await supabase.from('bills_not_in_books').delete().in('id', deletedRowsBooks);
+      }
+
+      // Process bills not in 2B
+      for (const bill of localBills2B) {
+        if (bill.id.startsWith('temp-')) {
+          // Insert new record
+          const { id, ...billData } = bill;
+          await supabase.from('bills_not_in_2b').insert([billData]);
+        } else {
+          // Update existing record
+          const original = billsNotIn2B.find(b => b.id === bill.id);
+          if (original && JSON.stringify(original) !== JSON.stringify(bill)) {
+            const { id, ...updates } = bill;
+            await supabase
+              .from('bills_not_in_2b')
+              .update({ ...updates, updated_at: new Date().toISOString() })
+              .eq('id', id);
+          }
+        }
+      }
+
+      // Process bills not in books
+      for (const bill of localBillsBooks) {
+        if (bill.id.startsWith('temp-')) {
+          // Insert new record
+          const { id, ...billData } = bill;
+          await supabase.from('bills_not_in_books').insert([billData]);
+        } else {
+          // Update existing record
+          const original = billsNotInBooks.find(b => b.id === bill.id);
+          if (original && JSON.stringify(original) !== JSON.stringify(bill)) {
+            const { id, ...updates } = bill;
+            await supabase
+              .from('bills_not_in_books')
+              .update({ ...updates, updated_at: new Date().toISOString() })
+              .eq('id', id);
+          }
+        }
+      }
+
+      // Reset tracking
+      setDeletedRows2B([]);
+      setDeletedRowsBooks([]);
+      setHasUnsavedChanges(false);
+      
+      // Refresh data from server
+      await fetchBillsData();
+      
+      toast.success('Changes saved successfully');
+    } catch (error: any) {
+      console.error('Error saving:', error);
+      toast.error('Failed to save: ' + error.message);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -563,6 +636,16 @@ const TwoBReconciliationPage: React.FC = () => {
           <p className="text-muted-foreground">Manage bills not available in 2B or Books</p>
         </div>
         <div className="flex items-center gap-2">
+          {selectedClient && hasUnsavedChanges && !isLocked && (
+            <Button 
+              onClick={handleSaveAll} 
+              disabled={isSaving}
+              className="flex items-center gap-2"
+            >
+              <Save className="h-4 w-4" />
+              {isSaving ? 'Saving...' : 'Save Changes'}
+            </Button>
+          )}
           <input
             type="file"
             ref={fileInputRef}
@@ -702,7 +785,7 @@ const TwoBReconciliationPage: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {billsNotIn2B.map((row) => (
+                    {localBills2B.map((row) => (
                       <tr key={row.id} className={row.is_carried_forward ? 'bg-blue-50 dark:bg-blue-950/20' : ''}>
                         <td>
                           {renderEditableInput(
@@ -796,7 +879,7 @@ const TwoBReconciliationPage: React.FC = () => {
                         )}
                       </tr>
                     ))}
-                    {billsNotIn2B.length === 0 && (
+                    {localBills2B.length === 0 && (
                       <tr>
                         <td colSpan={isLocked ? 10 : 11} className="text-center py-8 text-muted-foreground">
                           No records found. Click + button below Date or use "Import Excel" to add data.
@@ -859,7 +942,7 @@ const TwoBReconciliationPage: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {billsNotInBooks.map((row) => (
+                    {localBillsBooks.map((row) => (
                       <tr key={row.id}>
                         <td>
                           {renderEditableInput(
@@ -948,7 +1031,7 @@ const TwoBReconciliationPage: React.FC = () => {
                         )}
                       </tr>
                     ))}
-                    {billsNotInBooks.length === 0 && (
+                    {localBillsBooks.length === 0 && (
                       <tr>
                         <td colSpan={isLocked ? 10 : 11} className="text-center py-8 text-muted-foreground">
                           No records found. Click + button below Date or use "Import Excel" to add data.
