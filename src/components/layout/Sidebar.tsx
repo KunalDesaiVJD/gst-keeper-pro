@@ -9,7 +9,8 @@ import {
   LogOut,
   Users,
   ChevronRight,
-  Shield
+  Shield,
+  Settings
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
@@ -84,6 +85,14 @@ const Sidebar: React.FC = () => {
         roles: ['superadmin'],
       });
     }
+
+    // Add Settings for all staff
+    items.push({
+      label: 'Settings',
+      path: '/settings',
+      icon: <Settings className="h-5 w-5" />,
+      roles: ['superadmin', 'gst_manager', 'employee'],
+    });
 
     return items;
   };

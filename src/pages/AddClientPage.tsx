@@ -10,6 +10,8 @@ import { ArrowLeft, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
+import { mockPasswords, mockUsers } from '@/data/mockData';
+import ClientCredentialsSection from '@/components/clients/ClientCredentialsSection';
 
 const AddClientPage: React.FC = () => {
   const navigate = useNavigate();
@@ -24,6 +26,8 @@ const AddClientPage: React.FC = () => {
     email: '',
     selectedReturns: [] as ReturnType[],
   });
+
+  const [clientCredentials, setClientCredentials] = useState<{ userId: string; password: string } | null>(null);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -99,6 +103,10 @@ const AddClientPage: React.FC = () => {
     return Object.keys(newErrors).length === 0;
   };
 
+  const handleCredentialsGenerated = (userId: string, password: string) => {
+    setClientCredentials({ userId, password });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -120,9 +128,24 @@ const AddClientPage: React.FC = () => {
           mobile: formData.mobile,
           email: formData.email,
           selected_returns: formData.selectedReturns,
+          client_user_id: clientCredentials?.userId || null,
         }]);
 
       if (error) throw error;
+
+      // If credentials were generated, add to mock data for login
+      if (clientCredentials) {
+        mockPasswords[clientCredentials.userId] = clientCredentials.password;
+        mockUsers.push({
+          id: `client-${Date.now()}`,
+          userId: clientCredentials.userId,
+          firstName: formData.name,
+          role: 'client',
+          email: formData.email,
+          isFirstLogin: true, // Require password change on first login
+          createdAt: new Date(),
+        });
+      }
 
       toast.success(`${formData.name} has been successfully added.`);
       navigate('/clients');
@@ -278,10 +301,15 @@ const AddClientPage: React.FC = () => {
                 className={errors.email ? 'border-destructive' : ''}
               />
               {errors.email && <p className="text-sm text-destructive">{errors.email}</p>}
-              <p className="text-xs text-muted-foreground">
-                OTP for password reset will be sent to this email
-              </p>
             </div>
+
+            {/* Client Login Credentials */}
+            {formData.gstin.length === 15 && (
+              <ClientCredentialsSection
+                gstin={formData.gstin}
+                onCredentialsGenerated={handleCredentialsGenerated}
+              />
+            )}
 
             {/* Submit Buttons */}
             <div className="flex gap-3 pt-4">

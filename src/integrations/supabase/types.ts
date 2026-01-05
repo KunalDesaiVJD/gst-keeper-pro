@@ -159,6 +159,7 @@ export type Database = {
       clients: {
         Row: {
           assigned_accountant: string | null
+          client_user_id: string | null
           created_at: string | null
           created_by: string | null
           email: string | null
@@ -173,6 +174,7 @@ export type Database = {
         }
         Insert: {
           assigned_accountant?: string | null
+          client_user_id?: string | null
           created_at?: string | null
           created_by?: string | null
           email?: string | null
@@ -187,6 +189,7 @@ export type Database = {
         }
         Update: {
           assigned_accountant?: string | null
+          client_user_id?: string | null
           created_at?: string | null
           created_by?: string | null
           email?: string | null
@@ -292,12 +295,43 @@ export type Database = {
           },
         ]
       }
+      password_reset_requests: {
+        Row: {
+          id: string
+          requested_at: string
+          requested_by_name: string
+          resolved_at: string | null
+          resolved_by: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          requested_at?: string
+          requested_by_name: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          requested_at?: string
+          requested_by_name?: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string | null
           email: string | null
           first_name: string
           id: string
+          password: string | null
           updated_at: string | null
           user_id: string
         }
@@ -306,6 +340,7 @@ export type Database = {
           email?: string | null
           first_name: string
           id?: string
+          password?: string | null
           updated_at?: string | null
           user_id: string
         }
@@ -314,6 +349,7 @@ export type Database = {
           email?: string | null
           first_name?: string
           id?: string
+          password?: string | null
           updated_at?: string | null
           user_id?: string
         }
