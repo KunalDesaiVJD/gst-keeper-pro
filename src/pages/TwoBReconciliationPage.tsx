@@ -683,12 +683,12 @@ const TwoBReconciliationPage: React.FC = () => {
     }
     
     return (
-      <Select value={value || ''} onValueChange={onChange}>
+      <Select value={value || 'none'} onValueChange={(v) => onChange(v === 'none' ? '' : v)}>
         <SelectTrigger className="h-8 text-sm w-24">
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="">-</SelectItem>
+          <SelectItem value="none">-</SelectItem>
           {reversalReclaimMonths.map((month) => (
             <SelectItem key={month.value} value={month.value}>
               {month.label}
