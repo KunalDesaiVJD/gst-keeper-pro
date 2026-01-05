@@ -181,14 +181,18 @@ const TwoBReconciliationPage: React.FC = () => {
     igst: acc.igst + (row.input_igst || 0),
     cgst: acc.cgst + (row.input_cgst || 0),
     sgst: acc.sgst + (row.input_sgst || 0),
-  }), { taxableValue: 0, igst: 0, cgst: 0, sgst: 0 });
+    reversalCount: acc.reversalCount + (row.reversal_month ? 1 : 0),
+    reclaimCount: acc.reclaimCount + (row.reclaim_month ? 1 : 0),
+  }), { taxableValue: 0, igst: 0, cgst: 0, sgst: 0, reversalCount: 0, reclaimCount: 0 });
 
   const totalsBooks = billsNotInBooks.reduce((acc, row) => ({
     taxableValue: acc.taxableValue + (row.taxable_value || 0),
     igst: acc.igst + (row.input_igst || 0),
     cgst: acc.cgst + (row.input_cgst || 0),
     sgst: acc.sgst + (row.input_sgst || 0),
-  }), { taxableValue: 0, igst: 0, cgst: 0, sgst: 0 });
+    bookEntryCount: acc.bookEntryCount + (row.book_entry_month ? 1 : 0),
+    in2BCount: acc.in2BCount + (row.bill_in_2b_month ? 1 : 0),
+  }), { taxableValue: 0, igst: 0, cgst: 0, sgst: 0, bookEntryCount: 0, in2BCount: 0 });
 
   const handleExportExcel = () => {
     if (!selectedClientData) {
@@ -450,11 +454,39 @@ const TwoBReconciliationPage: React.FC = () => {
     const nextPeriod = `${String(nextMonth).padStart(2, '0')}/${nextYear}`;
 
     try {
-      // Carry forward bills not in 2B that don't have a reclaim month
-      const toCarryForward = billsNotIn2B.filter(b => !b.reclaim_month);
+      // Get existing records in next month to check for duplicates
+      const { data: existingNextMonth, error: fetchError } = await supabase
+        .from('bills_not_in_2b')
+        .select('supplier_name, supplier_invoice_number, supplier_gstin, date')
+        .eq('client_id', selectedClient)
+        .eq('period_month', nextPeriod);
+
+      if (fetchError) throw fetchError;
+
+      // Create a set of unique keys for existing records in next month
+      const existingKeys = new Set(
+        (existingNextMonth || []).map(r => 
+          `${r.supplier_name}|${r.supplier_invoice_number || ''}|${r.supplier_gstin || ''}|${r.date}`
+        )
+      );
+
+      // Carry forward bills not in 2B that don't have a reclaim month and aren't already in next month
+      const toCarryForward = billsNotIn2B.filter(b => {
+        if (b.reclaim_month) return false; // Already reclaimed
+        
+        // Check if this record already exists in next month
+        const recordKey = `${b.supplier_name}|${b.supplier_invoice_number || ''}|${b.supplier_gstin || ''}|${b.date}`;
+        return !existingKeys.has(recordKey);
+      });
       
       if (toCarryForward.length === 0) {
-        toast.info('All bills have been reclaimed. Nothing to carry forward.');
+        const reclaimedCount = billsNotIn2B.filter(b => b.reclaim_month).length;
+        const alreadyTransferred = billsNotIn2B.length - reclaimedCount;
+        if (reclaimedCount === billsNotIn2B.length) {
+          toast.info('All bills have been reclaimed. Nothing to carry forward.');
+        } else {
+          toast.info(`All eligible entries already exist in ${nextPeriod}. No duplicates added.`);
+        }
         return;
       }
 
@@ -479,7 +511,12 @@ const TwoBReconciliationPage: React.FC = () => {
       
       if (error) throw error;
       
-      toast.success(`Carried forward ${records.length} records to ${nextPeriod}`);
+      const skippedCount = billsNotIn2B.filter(b => !b.reclaim_month).length - records.length;
+      if (skippedCount > 0) {
+        toast.success(`Carried forward ${records.length} records to ${nextPeriod}. ${skippedCount} duplicates skipped.`);
+      } else {
+        toast.success(`Carried forward ${records.length} records to ${nextPeriod}`);
+      }
     } catch (error: any) {
       toast.error('Failed to carry forward: ' + error.message);
     }
@@ -773,8 +810,8 @@ const TwoBReconciliationPage: React.FC = () => {
                       <td className="text-right">{totals2B.igst.toLocaleString('en-IN')}</td>
                       <td className="text-right">{totals2B.cgst.toLocaleString('en-IN')}</td>
                       <td className="text-right">{totals2B.sgst.toLocaleString('en-IN')}</td>
-                      <td></td>
-                      <td></td>
+                      <td className="text-center">{totals2B.reversalCount}</td>
+                      <td className="text-center">{totals2B.reclaimCount}</td>
                       {!isLocked && <td></td>}
                     </tr>
                   </tbody>
@@ -925,8 +962,8 @@ const TwoBReconciliationPage: React.FC = () => {
                       <td className="text-right">{totalsBooks.igst.toLocaleString('en-IN')}</td>
                       <td className="text-right">{totalsBooks.cgst.toLocaleString('en-IN')}</td>
                       <td className="text-right">{totalsBooks.sgst.toLocaleString('en-IN')}</td>
-                      <td></td>
-                      <td></td>
+                      <td className="text-center">{totalsBooks.bookEntryCount}</td>
+                      <td className="text-center">{totalsBooks.in2BCount}</td>
                       {!isLocked && <td></td>}
                     </tr>
                   </tbody>
