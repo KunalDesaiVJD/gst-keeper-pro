@@ -8,7 +8,8 @@ import {
   ClipboardList, 
   LogOut,
   Users,
-  ChevronRight
+  ChevronRight,
+  Shield
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
@@ -68,12 +69,18 @@ const Sidebar: React.FC = () => {
       },
     ];
 
-    // Add Employee Management for Superadmin
+    // Add Superadmin-only items
     if (canManageEmployees()) {
       items.push({
         label: 'Manage Employees',
         path: '/manage-employees',
         icon: <Users className="h-5 w-5" />,
+        roles: ['superadmin'],
+      });
+      items.push({
+        label: 'User Control',
+        path: '/user-control',
+        icon: <Shield className="h-5 w-5" />,
         roles: ['superadmin'],
       });
     }
