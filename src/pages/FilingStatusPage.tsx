@@ -275,7 +275,37 @@ const FilingStatusPage: React.FC = () => {
         if (error) throw error;
       }
       
+      // When GSTR-3B is filed, lock the 2B and ITC sheets
       if (newStatus === 'Filed' && record.return_type === 'GSTR-3B') {
+        // Lock bills_not_in_2b
+        await supabase
+          .from('bills_not_in_2b')
+          .update({ is_locked: true })
+          .eq('client_id', record.client_id)
+          .eq('period_month', record.period_month);
+        
+        // Lock bills_not_in_books
+        await supabase
+          .from('bills_not_in_books')
+          .update({ is_locked: true })
+          .eq('client_id', record.client_id)
+          .eq('period_month', record.period_month);
+        
+        // Lock ITC summary
+        await supabase
+          .from('itc_summaries')
+          .update({ is_locked: true })
+          .eq('client_id', record.client_id)
+          .eq('period_month', record.period_month);
+        
+        // Mark filing status as locked
+        await supabase
+          .from('filing_status')
+          .update({ is_locked: true })
+          .eq('client_id', record.client_id)
+          .eq('period_month', record.period_month)
+          .eq('return_type', 'GSTR-3B');
+        
         toast.success('GSTR-3B filed. 2B and ITC sheets are now locked for this period.');
       } else if (newStatus === 'Filed') {
         toast.success('Status updated to Filed.');

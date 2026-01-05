@@ -49,32 +49,41 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
   // Fetch employees from Supabase
   const fetchEmployees = useCallback(async () => {
     try {
-      // Fetch profiles with their roles
-      const { data: profiles, error: profilesError } = await supabase
-        .from('profiles')
-        .select('id, user_id, first_name, email');
-      
-      if (profilesError) throw profilesError;
-
+      // First fetch roles for staff (gst_manager and employee)
       const { data: roles, error: rolesError } = await supabase
         .from('user_roles')
-        .select('user_id, role');
+        .select('user_id, role')
+        .in('role', ['gst_manager', 'employee']);
       
       if (rolesError) throw rolesError;
 
-      // Combine profiles with roles, filter for staff only
-      const employeeList = (profiles || [])
-        .map(p => {
-          const roleRecord = roles?.find(r => r.user_id === p.user_id);
-          return {
-            id: p.id,
-            user_id: p.user_id,
-            first_name: p.first_name,
-            email: p.email,
-            role: roleRecord?.role as 'gst_manager' | 'employee' || 'employee',
-          };
-        })
-        .filter(e => e.role === 'gst_manager' || e.role === 'employee');
+      if (!roles || roles.length === 0) {
+        setEmployees([]);
+        return;
+      }
+
+      // Get user IDs of staff
+      const staffUserIds = roles.map(r => r.user_id);
+
+      // Fetch profiles for those users
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, user_id, first_name, email')
+        .in('user_id', staffUserIds);
+      
+      if (profilesError) throw profilesError;
+
+      // Combine profiles with roles
+      const employeeList = roles.map(role => {
+        const profile = profiles?.find(p => p.user_id === role.user_id);
+        return {
+          id: profile?.id || role.user_id,
+          user_id: role.user_id,
+          first_name: profile?.first_name || 'Unknown',
+          email: profile?.email || null,
+          role: role.role as 'gst_manager' | 'employee',
+        };
+      });
 
       setEmployees(employeeList);
     } catch (error: any) {

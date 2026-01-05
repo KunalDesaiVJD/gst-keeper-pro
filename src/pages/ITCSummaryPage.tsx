@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Badge } from '@/components/ui/badge';
 import { Lock, AlertCircle, Unlock, Save } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -68,7 +69,7 @@ interface ReversalTotals {
 }
 
 const ITCSummaryPage: React.FC = () => {
-  const { canUnlockSheets } = useAuth();
+  const { canUnlockSheets, user, isStaffRole } = useAuth();
   const [selectedClient, setSelectedClient] = useState<string>('');
   const [selectedMonth, setSelectedMonth] = useState<string>('01/2026');
   const [isLocked, setIsLocked] = useState(false);
@@ -83,14 +84,21 @@ const ITCSummaryPage: React.FC = () => {
 
   const selectedClientData = clients.find(c => c.id === selectedClient);
 
-  // Fetch clients from Supabase
+  // Fetch clients from Supabase - filtered for client role
   useEffect(() => {
     const fetchClients = async () => {
       console.log('Fetching clients from Supabase...');
-      const { data, error } = await supabase
+      let query = supabase
         .from('clients')
         .select('id, name, gstin')
         .order('name');
+      
+      // If user is a client, only fetch their own data
+      if (user && !isStaffRole()) {
+        query = query.eq('client_user_id', user.userId);
+      }
+      
+      const { data, error } = await query;
       
       if (error) {
         console.error('Error fetching clients:', error);
@@ -99,6 +107,11 @@ const ITCSummaryPage: React.FC = () => {
       }
       console.log('Clients loaded:', data);
       setClients(data || []);
+      
+      // Auto-select if client user and only one client
+      if (!isStaffRole() && data && data.length === 1) {
+        setSelectedClient(data[0].id);
+      }
     };
     fetchClients();
 
@@ -113,7 +126,7 @@ const ITCSummaryPage: React.FC = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [user, isStaffRole]);
 
   // Convert month format "01/2026" to various patterns for matching
   const getMonthPatterns = (monthStr: string) => {
@@ -403,18 +416,46 @@ const ITCSummaryPage: React.FC = () => {
     }
   };
 
-  const total4A = itcData.section4A.reduce((acc, row) => ({
-    igst: acc.igst + (row.isHeader ? 0 : row.igst),
-    cgst: acc.cgst + (row.isHeader ? 0 : row.cgst),
-    sgst: acc.sgst + (row.isHeader ? 0 : row.sgst),
+  // Calculate Total (5) = 5.1 + 5.2 - 5.3 + 5.4 + 5.5
+  const total5 = {
+    igst: (itcData.section4A.find(r => r.srNo === '5.1')?.igst || 0)
+        + (itcData.section4A.find(r => r.srNo === '5.2')?.igst || 0)
+        - (itcData.section4A.find(r => r.srNo === '5.3')?.igst || 0)
+        + (itcData.section4A.find(r => r.srNo === '5.4')?.igst || 0)
+        + (itcData.section4A.find(r => r.srNo === '5.5')?.igst || 0),
+    cgst: (itcData.section4A.find(r => r.srNo === '5.1')?.cgst || 0)
+        + (itcData.section4A.find(r => r.srNo === '5.2')?.cgst || 0)
+        - (itcData.section4A.find(r => r.srNo === '5.3')?.cgst || 0)
+        + (itcData.section4A.find(r => r.srNo === '5.4')?.cgst || 0)
+        + (itcData.section4A.find(r => r.srNo === '5.5')?.cgst || 0),
+    sgst: (itcData.section4A.find(r => r.srNo === '5.1')?.sgst || 0)
+        + (itcData.section4A.find(r => r.srNo === '5.2')?.sgst || 0)
+        - (itcData.section4A.find(r => r.srNo === '5.3')?.sgst || 0)
+        + (itcData.section4A.find(r => r.srNo === '5.4')?.sgst || 0)
+        + (itcData.section4A.find(r => r.srNo === '5.5')?.sgst || 0),
+  };
+
+  // Total 4A = rows 1-4 + Total (5)
+  const rows1To4 = itcData.section4A.slice(0, 4).reduce((acc, row) => ({
+    igst: acc.igst + row.igst,
+    cgst: acc.cgst + row.cgst,
+    sgst: acc.sgst + row.sgst,
   }), { igst: 0, cgst: 0, sgst: 0 });
 
+  const total4A = {
+    igst: rows1To4.igst + total5.igst,
+    cgst: rows1To4.cgst + total5.cgst,
+    sgst: rows1To4.sgst + total5.sgst,
+  };
+
+  // Total 4B = sum of all 4B rows
   const total4B = itcData.section4B.reduce((acc, row) => ({
     igst: acc.igst + row.igst,
     cgst: acc.cgst + row.cgst,
     sgst: acc.sgst + row.sgst,
   }), { igst: 0, cgst: 0, sgst: 0 });
 
+  // Net ITC (4C) = 4A - 4B
   const net4C = {
     igst: total4A.igst - total4B.igst,
     cgst: total4A.cgst - total4B.cgst,
@@ -465,18 +506,15 @@ const ITCSummaryPage: React.FC = () => {
         <CardContent className="p-4">
           <div className="flex items-center gap-4">
             <div className="flex-1 max-w-xs">
-              <Select value={selectedClient} onValueChange={setSelectedClient}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select Client" />
-                </SelectTrigger>
-                <SelectContent>
-                  {clients.map((client) => (
-                    <SelectItem key={client.id} value={client.id}>
-                      {client.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                options={clients.map(c => ({ value: c.id, label: c.name, sublabel: c.gstin }))}
+                value={selectedClient}
+                onValueChange={setSelectedClient}
+                placeholder="Search Client..."
+                searchPlaceholder="Type to search clients..."
+                emptyText="No clients found."
+                disabled={!isStaffRole() && clients.length <= 1}
+              />
             </div>
             <div className="w-40">
               <Select value={selectedMonth} onValueChange={setSelectedMonth}>
@@ -484,9 +522,11 @@ const ITCSummaryPage: React.FC = () => {
                   <SelectValue placeholder="Select Month" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="02/2026">Feb 2026</SelectItem>
                   <SelectItem value="01/2026">Jan 2026</SelectItem>
                   <SelectItem value="12/2025">Dec 2025</SelectItem>
                   <SelectItem value="11/2025">Nov 2025</SelectItem>
+                  <SelectItem value="10/2025">Oct 2025</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -568,24 +608,39 @@ const ITCSummaryPage: React.FC = () => {
                       <td colSpan={6} className="font-semibold">4 (A) ITC Available</td>
                     </tr>
                     {itcData.section4A.map((row, idx) => (
-                      <tr key={`4a-${idx}`} className={row.isAutoLinked ? 'cell-locked' : ''}>
-                        <td>{row.srNo}</td>
-                        <td className="flex items-center gap-2">
-                          {row.particular}
-                          {row.isAutoLinked && (
-                            <Badge variant="outline" className="text-xs flex items-center gap-1">
-                              <Lock className="h-3 w-3" />
-                              Auto-linked
-                            </Badge>
-                          )}
-                        </td>
-                        <td className="text-right">{renderEditableCell('section4A', idx, row, 'igst')}</td>
-                        <td className="text-right">{renderEditableCell('section4A', idx, row, 'cgst')}</td>
-                        <td className="text-right">{renderEditableCell('section4A', idx, row, 'sgst')}</td>
-                        <td className="text-right font-medium">
-                          {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
-                        </td>
-                      </tr>
+                      <React.Fragment key={`4a-${idx}`}>
+                        <tr className={row.isAutoLinked ? 'cell-locked' : ''}>
+                          <td>{row.srNo}</td>
+                          <td className="flex items-center gap-2">
+                            {row.particular}
+                            {row.isAutoLinked && (
+                              <Badge variant="outline" className="text-xs flex items-center gap-1">
+                                <Lock className="h-3 w-3" />
+                                Auto-linked
+                              </Badge>
+                            )}
+                          </td>
+                          <td className="text-right">{renderEditableCell('section4A', idx, row, 'igst')}</td>
+                          <td className="text-right">{renderEditableCell('section4A', idx, row, 'cgst')}</td>
+                          <td className="text-right">{renderEditableCell('section4A', idx, row, 'sgst')}</td>
+                          <td className="text-right font-medium">
+                            {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
+                          </td>
+                        </tr>
+                        {/* Insert Total (5) row after row 5.5 */}
+                        {row.srNo === '5.5' && (
+                          <tr className="bg-muted/30 font-medium">
+                            <td>Total (5)</td>
+                            <td className="text-xs text-muted-foreground">Total (5) = 5.1+5.2-5.3+5.4+5.5</td>
+                            <td className="text-right">{total5.igst.toLocaleString('en-IN')}</td>
+                            <td className="text-right">{total5.cgst.toLocaleString('en-IN')}</td>
+                            <td className="text-right">{total5.sgst.toLocaleString('en-IN')}</td>
+                            <td className="text-right">
+                              {(total5.igst + total5.cgst + total5.sgst).toLocaleString('en-IN')}
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     ))}
                     <tr className="bg-muted/50 font-semibold">
                       <td></td>

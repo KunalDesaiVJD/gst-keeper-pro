@@ -103,6 +103,8 @@ const UserControlPage: React.FC = () => {
           });
 
           setEmployees(employeeList);
+        } else {
+          setEmployees([]);
         }
       } catch (error) {
         console.error('Error fetching employees:', error);

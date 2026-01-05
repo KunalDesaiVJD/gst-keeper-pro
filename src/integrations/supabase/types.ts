@@ -473,7 +473,7 @@ export type Database = {
         | "Mismatch in Data"
         | "Not Verified"
         | "Filed"
-      registration_type: "Regular" | "Composition" | "Tax Deductor"
+      registration_type: "Regular" | "Composition" | "Tax Deductor" | "ISD"
       return_type:
         | "GSTR-1"
         | "GSTR-3B"
@@ -616,7 +616,7 @@ export const Constants = {
         "Not Verified",
         "Filed",
       ],
-      registration_type: ["Regular", "Composition", "Tax Deductor"],
+      registration_type: ["Regular", "Composition", "Tax Deductor", "ISD"],
       return_type: [
         "GSTR-1",
         "GSTR-3B",
