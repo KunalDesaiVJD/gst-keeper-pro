@@ -62,6 +62,7 @@ const StaffDashboard: React.FC = () => {
     employees: 0,
   });
   const [showReturnBreakdown, setShowReturnBreakdown] = useState(false);
+  const [selectedUserFilter, setSelectedUserFilter] = useState<'all' | 'gst_manager' | 'employee'>('all');
   const [isLoading, setIsLoading] = useState(true);
 
   const generateMonths = () => {
@@ -160,12 +161,22 @@ const StaffDashboard: React.FC = () => {
 
       // Fetch user/employee metrics if superadmin
       if (canManageEmployees()) {
+        // Get unique role entries by using a Set on user_id
         const { data: roles } = await supabase
           .from('user_roles')
-          .select('role');
+          .select('user_id, role')
+          .in('role', ['employee', 'gst_manager']);
         
-        const gstManagers = roles?.filter(r => r.role === 'gst_manager').length || 0;
-        const employees = roles?.filter(r => r.role === 'employee').length || 0;
+        // Deduplicate by user_id
+        const uniqueRoles = (roles || []).reduce((acc, role) => {
+          if (!acc.find(r => r.user_id === role.user_id)) {
+            acc.push(role);
+          }
+          return acc;
+        }, [] as { user_id: string; role: string }[]);
+
+        const gstManagers = uniqueRoles.filter(r => r.role === 'gst_manager').length;
+        const employees = uniqueRoles.filter(r => r.role === 'employee').length;
         
         setUserMetrics({
           totalEmployees: gstManagers + employees,
@@ -236,19 +247,22 @@ const StaffDashboard: React.FC = () => {
 
   const userMetricCards = [
     {
-      label: 'Total Employees',
+      label: 'Total Staff',
       value: userMetrics.totalEmployees,
       icon: <Users className="h-6 w-6 text-primary" />,
+      filterValue: 'all' as const,
     },
     {
       label: 'GST Managers',
       value: userMetrics.gstManagers,
       icon: <Shield className="h-6 w-6 text-primary" />,
+      filterValue: 'gst_manager' as const,
     },
     {
       label: 'Employees',
       value: userMetrics.employees,
       icon: <Users className="h-6 w-6 text-muted-foreground" />,
+      filterValue: 'employee' as const,
     },
   ];
 
@@ -410,7 +424,12 @@ const StaffDashboard: React.FC = () => {
               {userMetricCards.map((card, index) => (
                 <Card 
                   key={index}
-                  className="border hover:bg-muted/30 transition-colors"
+                  className={`border cursor-pointer transition-all duration-200 ${
+                    selectedUserFilter === card.filterValue 
+                      ? 'ring-2 ring-primary bg-primary/5' 
+                      : 'hover:bg-muted/30'
+                  }`}
+                  onClick={() => setSelectedUserFilter(card.filterValue)}
                 >
                   <CardContent className="p-4">
                     <div className="flex items-center gap-3">
@@ -427,8 +446,8 @@ const StaffDashboard: React.FC = () => {
               ))}
             </div>
 
-            {/* Embedded Employee Management */}
-            <EmployeeManagementSection />
+            {/* Embedded Employee Management with filter */}
+            <EmployeeManagementSection filterRole={selectedUserFilter} />
           </CardContent>
         </Card>
       )}

@@ -56,6 +56,24 @@ export const mockUsers: User[] = [
     isFirstLogin: true,
     createdAt: new Date('2024-01-01'),
   },
+  {
+    id: '7',
+    userId: 'Ayush',
+    firstName: 'Ayush',
+    role: 'employee',
+    email: 'ayush@staff.local',
+    isFirstLogin: true,
+    createdAt: new Date('2024-01-01'),
+  },
+  {
+    id: '8',
+    userId: 'Soumil',
+    firstName: 'Soumil',
+    role: 'employee',
+    email: 'soumil@staff.local',
+    isFirstLogin: true,
+    createdAt: new Date('2024-01-01'),
+  },
   // Client users (PAN-based)
   {
     id: '5',
@@ -103,6 +121,8 @@ export const mockPasswords: Record<string, string> = {
   'Priya': '2026',
   'Karan': '2026',
   'Umang': '2026',
+  'Ayush': '2026',
+  'Soumil': '2026',
   'AAQCS2345D': 'AAQCS2345D',
   'ABCDE1234F': 'ABCDE1234F',
   'PANDE7890K': 'PANDE7890K',
