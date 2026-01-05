@@ -80,16 +80,38 @@ const StaffDashboard: React.FC = () => {
   const fetchMetrics = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Fetch clients with their selected returns
+      // Fetch clients with their selected returns and registration dates
       const { data: clientData, count: clientCount } = await supabase
         .from('clients')
-        .select('id, selected_returns', { count: 'exact' });
+        .select('id, selected_returns, registration_date, cancellation_date', { count: 'exact' });
 
       // Fetch filing status for the selected month
       const { data: filingData } = await supabase
         .from('filing_status')
         .select('status, filed_date, target_date, return_type, client_id')
         .eq('period_month', selectedMonth);
+
+      // Helper to check if client is visible for the selected month
+      const isClientVisibleForMonth = (client: any): boolean => {
+        const [monthStr, yearStr] = selectedMonth.split('/');
+        const periodDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1);
+        
+        const regDate = new Date(client.registration_date);
+        const regMonth = new Date(regDate.getFullYear(), regDate.getMonth(), 1);
+        
+        if (periodDate < regMonth) return false;
+        
+        if (client.cancellation_date) {
+          const cancelDate = new Date(client.cancellation_date);
+          const cancelMonth = new Date(cancelDate.getFullYear(), cancelDate.getMonth(), 1);
+          if (periodDate > cancelMonth) return false;
+        }
+        
+        return true;
+      };
+
+      // Filter clients visible for this month
+      const visibleClients = clientData?.filter(isClientVisibleForMonth) || [];
 
       const pendingStatuses = ['Prepared', 'Data Pending', 'Mismatch in Data', 'Not Verified'];
       const pendingFilings = filingData?.filter(f => pendingStatuses.includes(f.status || ''))?.length || 0;
@@ -102,29 +124,33 @@ const StaffDashboard: React.FC = () => {
       })?.length || 0;
 
       setMetrics({
-        totalClients: clientCount || 0,
+        totalClients: visibleClients.length,
         pendingFilings,
         lateFilings,
         filedThisMonth,
       });
 
-      // Calculate return-wise metrics
+      // Calculate return-wise metrics using visible clients
       const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08'];
       const returnMetricsData: ReturnMetrics[] = allReturnTypes.map(rt => {
-        // Count clients with this return type selected
-        const clientsWithReturn = clientData?.filter(c => 
+        // Count visible clients with this return type selected
+        const clientsWithReturn = visibleClients.filter(c => 
           (c.selected_returns || []).includes(rt)
-        ).length || 0;
+        );
+        
+        const clientsWithReturnCount = clientsWithReturn.length;
 
         // Count filings for this return type
         const returnFilings = filingData?.filter(f => f.return_type === rt) || [];
-        const pending = returnFilings.filter(f => pendingStatuses.includes(f.status || '')).length;
         const filed = returnFilings.filter(f => f.status === 'Filed').length;
+        
+        // Pending = clients with return - filed (since not all have filing records yet)
+        const pending = clientsWithReturnCount - filed;
 
         return {
           returnType: rt,
-          totalClients: clientsWithReturn,
-          pending,
+          totalClients: clientsWithReturnCount,
+          pending: pending > 0 ? pending : 0,
           filed,
         };
       }).filter(rm => rm.totalClients > 0); // Only show returns with clients
@@ -268,6 +294,25 @@ const StaffDashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* Quick Actions - Moved to top */}
+      <Card>
+        <CardContent className="p-6">
+          <h2 className="text-lg font-heading font-semibold mb-4">Quick Actions</h2>
+          <div className="flex flex-wrap gap-3">
+            {quickActions.map((action, index) => (
+              <Button
+                key={index}
+                onClick={action.onClick}
+                className="quick-action-btn"
+              >
+                {action.icon}
+                {action.label}
+              </Button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Client Management Section */}
       <Card>
         <CardHeader className="pb-2">
@@ -385,25 +430,6 @@ const StaffDashboard: React.FC = () => {
           </CardContent>
         </Card>
       )}
-
-      {/* Quick Actions */}
-      <Card>
-        <CardContent className="p-6">
-          <h2 className="text-lg font-heading font-semibold mb-4">Quick Actions</h2>
-          <div className="flex flex-wrap gap-3">
-            {quickActions.map((action, index) => (
-              <Button
-                key={index}
-                onClick={action.onClick}
-                className="quick-action-btn"
-              >
-                {action.icon}
-                {action.label}
-              </Button>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
 
       {/* Client Management Detail Section */}
       <ClientManagementSection />

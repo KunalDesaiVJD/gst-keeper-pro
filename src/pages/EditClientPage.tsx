@@ -178,6 +178,7 @@ const EditClientPage: React.FC = () => {
           email: formData.email || null,
           assigned_accountant: formData.assignedAccountant || null,
           selected_returns: formData.selectedReturns,
+          cancellation_date: formData.cancellationDate || null,
         })
         .eq('id', clientId);
 
