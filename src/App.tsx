@@ -14,6 +14,7 @@ import ITCSummaryPage from "@/pages/ITCSummaryPage";
 import FilingStatusPage from "@/pages/FilingStatusPage";
 import ManageEmployeesPage from "@/pages/ManageEmployeesPage";
 import UserControlPage from "@/pages/UserControlPage";
+import SettingsPage from "@/pages/SettingsPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -39,6 +40,7 @@ const App = () => (
               <Route path="/filing-status" element={<FilingStatusPage />} />
               <Route path="/manage-employees" element={<ManageEmployeesPage />} />
               <Route path="/user-control" element={<UserControlPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
             </Route>
             
             <Route path="*" element={<NotFound />} />

@@ -5,20 +5,21 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Eye, EyeOff, Lock, User, KeyRound } from 'lucide-react';
+import { Eye, EyeOff, Lock, User } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import logo from '@/assets/logo.png';
+import ChangePasswordDialog from '@/components/auth/ChangePasswordDialog';
+import ForgotPasswordDialog from '@/components/auth/ForgotPasswordDialog';
 
 const LoginPage: React.FC = () => {
   const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [forgotPasswordPan, setForgotPasswordPan] = useState('');
-  const [showForgotDialog, setShowForgotDialog] = useState(false);
+  const [showFirstLoginDialog, setShowFirstLoginDialog] = useState(false);
+  const [pendingUserName, setPendingUserName] = useState('');
   
-  const { login } = useAuth();
+  const { login, completeFirstLogin } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -37,32 +38,34 @@ const LoginPage: React.FC = () => {
     setIsLoading(true);
     
     try {
-      const success = await login(userId, password);
-      if (success) {
-        navigate('/dashboard');
+      const result = await login(userId, password);
+      if (result.success) {
+        if (result.isFirstLogin) {
+          // Show password change dialog
+          setPendingUserName(userId);
+          setShowFirstLoginDialog(true);
+        } else {
+          navigate('/dashboard');
+        }
       }
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleForgotPassword = () => {
-    if (!forgotPasswordPan.trim() || forgotPasswordPan.length !== 10) {
-      toast({
-        title: 'Invalid PAN',
-        description: 'Please enter a valid 10-character PAN number.',
-        variant: 'destructive',
-      });
-      return;
+  const handleFirstLoginPasswordChange = async (newPassword: string) => {
+    const success = await completeFirstLogin(newPassword);
+    if (success) {
+      setShowFirstLoginDialog(false);
+      navigate('/dashboard');
     }
+  };
 
-    // Simulate OTP sent
-    toast({
-      title: 'OTP Sent',
-      description: `An OTP has been sent to the registered email address for PAN ${forgotPasswordPan}.`,
-    });
-    setShowForgotDialog(false);
-    setForgotPasswordPan('');
+  // Check if the user ID looks like a staff ID (not a PAN)
+  const isStaffUser = (id: string): boolean => {
+    // PAN is 10 characters with specific format: ABCDE1234F
+    const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
+    return !panRegex.test(id.toUpperCase());
   };
 
   return (
@@ -153,51 +156,18 @@ const LoginPage: React.FC = () => {
               </Button>
             </form>
             
-            {/* Forgot Password - Only for Clients */}
+            {/* Forgot Password - Only for Employees/GST Managers (not Clients or Superadmin) */}
             <div className="mt-6 text-center">
-              <Dialog open={showForgotDialog} onOpenChange={setShowForgotDialog}>
-                <DialogTrigger asChild>
-                  <button className="text-sm text-primary hover:text-primary/80 hover:underline transition-colors">
-                    Forgot Password? (Clients Only)
-                  </button>
-                </DialogTrigger>
-                <DialogContent className="sm:max-w-md">
-                  <DialogHeader>
-                    <DialogTitle className="flex items-center gap-2">
-                      <KeyRound className="h-5 w-5 text-primary" />
-                      Reset Password
-                    </DialogTitle>
-                    <DialogDescription>
-                      Enter your PAN number. An OTP will be sent to your registered email address.
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="space-y-4 pt-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="pan">PAN Number</Label>
-                      <Input
-                        id="pan"
-                        type="text"
-                        placeholder="Enter your 10-digit PAN"
-                        value={forgotPasswordPan}
-                        onChange={(e) => setForgotPasswordPan(e.target.value.toUpperCase())}
-                        maxLength={10}
-                        className="uppercase"
-                      />
-                    </div>
-                    <Button onClick={handleForgotPassword} className="w-full">
-                      Send OTP
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
+              <ForgotPasswordDialog />
             </div>
             
-            {/* Development notice - removed credentials display for security */}
+            {/* Development notice */}
             {process.env.NODE_ENV === 'development' && (
               <div className="mt-6 p-4 bg-amber-500/10 rounded-lg border border-amber-500/30">
                 <p className="text-xs font-medium text-amber-600 mb-1">⚠️ Development Environment</p>
                 <p className="text-xs text-muted-foreground">
-                  This is a development build. Please use valid credentials to sign in.
+                  Staff: Use name + "2026". Clients: Use PAN as both ID and password.
+                  First login requires password change.
                 </p>
               </div>
             )}
@@ -208,6 +178,15 @@ const LoginPage: React.FC = () => {
           © 2025 V.J. Desai & Co. All rights reserved.
         </p>
       </div>
+
+      {/* First Login Password Change Dialog */}
+      <ChangePasswordDialog
+        open={showFirstLoginDialog}
+        onOpenChange={setShowFirstLoginDialog}
+        onPasswordChanged={handleFirstLoginPasswordChange}
+        isFirstLogin={true}
+        userName={pendingUserName}
+      />
     </div>
   );
 };
