@@ -161,22 +161,45 @@ const StaffDashboard: React.FC = () => {
 
       // Fetch user/employee metrics if superadmin
       if (canManageEmployees()) {
-        // Get unique role entries by using a Set on user_id
+        // First fetch all profiles
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('user_id, first_name');
+        
+        // Then fetch roles for staff
         const { data: roles } = await supabase
           .from('user_roles')
           .select('user_id, role')
           .in('role', ['employee', 'gst_manager']);
         
-        // Deduplicate by user_id
-        const uniqueRoles = (roles || []).reduce((acc, role) => {
-          if (!acc.find(r => r.user_id === role.user_id)) {
-            acc.push(role);
-          }
-          return acc;
-        }, [] as { user_id: string; role: string }[]);
+        console.log('Dashboard - Profiles:', profiles?.length, profiles);
+        console.log('Dashboard - Roles:', roles?.length, roles);
 
-        const gstManagers = uniqueRoles.filter(r => r.role === 'gst_manager').length;
-        const employees = uniqueRoles.filter(r => r.role === 'employee').length;
+        // Create role map (dedupe by user_id)
+        const roleMap = new Map<string, string>();
+        (roles || []).forEach(role => {
+          if (!roleMap.has(role.user_id)) {
+            roleMap.set(role.user_id, role.role);
+          }
+        });
+
+        // Count unique names with roles
+        const seenNames = new Set<string>();
+        let gstManagers = 0;
+        let employees = 0;
+
+        (profiles || []).forEach(profile => {
+          const role = roleMap.get(profile.user_id);
+          const nameLower = profile.first_name?.toLowerCase();
+          
+          if (role && profile.first_name && !seenNames.has(nameLower)) {
+            seenNames.add(nameLower);
+            if (role === 'gst_manager') gstManagers++;
+            else if (role === 'employee') employees++;
+          }
+        });
+
+        console.log('Dashboard - Metrics:', { gstManagers, employees, total: gstManagers + employees });
         
         setUserMetrics({
           totalEmployees: gstManagers + employees,
