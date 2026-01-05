@@ -22,6 +22,7 @@ import {
 import { supabase } from '@/integrations/supabase/client';
 import ClientManagementSection from './ClientManagementSection';
 import EmployeeManagementSection from './EmployeeManagementSection';
+import PasswordResetRequestsSection from './PasswordResetRequestsSection';
 import { ReturnType } from '@/types';
 
 interface DashboardMetrics {
@@ -313,7 +314,8 @@ const StaffDashboard: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Client Management Section */}
+      {/* Password Reset Requests Section - All Staff can see */}
+      <PasswordResetRequestsSection />
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2">

@@ -62,27 +62,39 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
         return;
       }
 
-      // Get user IDs of staff
-      const staffUserIds = roles.map(r => r.user_id);
+      // Get unique user IDs of staff (dedupe)
+      const uniqueUserIds = [...new Set(roles.map(r => r.user_id))];
 
       // Fetch profiles for those users
       const { data: profiles, error: profilesError } = await supabase
         .from('profiles')
         .select('id, user_id, first_name, email')
-        .in('user_id', staffUserIds);
+        .in('user_id', uniqueUserIds);
       
       if (profilesError) throw profilesError;
 
-      // Combine profiles with roles
-      const employeeList = roles.map(role => {
-        const profile = profiles?.find(p => p.user_id === role.user_id);
-        return {
-          id: profile?.id || role.user_id,
-          user_id: role.user_id,
-          first_name: profile?.first_name || 'Unknown',
-          email: profile?.email || null,
-          role: role.role as 'gst_manager' | 'employee',
-        };
+      // Create a map of user_id to role (take first occurrence)
+      const roleMap = new Map<string, string>();
+      roles.forEach(role => {
+        if (!roleMap.has(role.user_id)) {
+          roleMap.set(role.user_id, role.role);
+        }
+      });
+
+      // Only include users that have matching profiles with valid names
+      const employeeList: Employee[] = [];
+      
+      profiles?.forEach(profile => {
+        const role = roleMap.get(profile.user_id);
+        if (role && profile.first_name && profile.first_name !== 'Unknown') {
+          employeeList.push({
+            id: profile.id,
+            user_id: profile.user_id,
+            first_name: profile.first_name,
+            email: profile.email || null,
+            role: role as 'gst_manager' | 'employee',
+          });
+        }
       });
 
       setEmployees(employeeList);
@@ -117,18 +129,19 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
       const tempUserId = crypto.randomUUID();
       const email = `${newEmployee.firstName.toLowerCase().replace(/\s+/g, '.')}@staff.local`;
       
-      // First, insert into profiles (which is the referenced table)
+      // First, insert into profiles with password
       const { error: profileError } = await supabase
         .from('profiles')
         .insert([{
           user_id: tempUserId,
           first_name: newEmployee.firstName,
           email: email,
+          password: '2026', // Default password stored in profiles
         }]);
       
       if (profileError) throw profileError;
 
-      // Then insert into user_roles (references profiles via user_id)
+      // Then insert into user_roles
       const { error: roleError } = await supabase
         .from('user_roles')
         .insert([{
@@ -143,9 +156,11 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
         throw roleError;
       }
 
-      // Add to mock data for login functionality
+      // Also add to mockPasswords for immediate login capability
       mockPasswords[newEmployee.firstName] = '2026';
-      mockUsers.push({
+      
+      // Add to mockUsers array for login
+      const newMockUser = {
         id: tempUserId,
         userId: newEmployee.firstName,
         firstName: newEmployee.firstName,
@@ -153,7 +168,11 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
         email: email,
         isFirstLogin: true,
         createdAt: new Date(),
-      });
+      };
+      
+      if (!mockUsers.find(u => u.userId === newEmployee.firstName)) {
+        mockUsers.push(newMockUser);
+      }
 
       toast({
         title: 'Employee Added',
