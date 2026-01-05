@@ -47,10 +47,80 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const login = useCallback(async (userId: string, password: string): Promise<{ success: boolean; isFirstLogin?: boolean }> => {
-    // Find user by userId (case-sensitive for clients/PAN, case-insensitive for staff)
-    const user = mockUsers.find(u => 
+    // First, try to find user in mockUsers
+    let user = mockUsers.find(u => 
       u.userId.toLowerCase() === userId.toLowerCase() || u.userId === userId
     );
+
+    // If not found in mock data, check database for employees and clients
+    if (!user) {
+      try {
+        // Check profiles table for staff/employees
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('user_id, first_name, email')
+          .or(`first_name.ilike.${userId}`)
+          .maybeSingle();
+
+        if (profile) {
+          // Get the role
+          const { data: roleData } = await supabase
+            .from('user_roles')
+            .select('role, is_first_login')
+            .eq('user_id', profile.user_id)
+            .maybeSingle();
+
+          if (roleData) {
+            // Create user object from DB data
+            user = {
+              id: profile.user_id,
+              userId: profile.first_name,
+              firstName: profile.first_name,
+              role: roleData.role as UserRole,
+              email: profile.email || '',
+              isFirstLogin: roleData.is_first_login ?? true,
+              createdAt: new Date(),
+            };
+            
+            // Add to mockUsers and mockPasswords for future logins
+            if (!mockUsers.find(u => u.userId === profile.first_name)) {
+              mockUsers.push(user);
+              mockPasswords[profile.first_name] = '2026'; // Default password
+            }
+          }
+        }
+
+        // Check clients table for client logins (using client_user_id which is PAN)
+        if (!user) {
+          const { data: client } = await supabase
+            .from('clients')
+            .select('id, name, email, client_user_id, gstin')
+            .or(`client_user_id.eq.${userId},client_user_id.ilike.${userId}`)
+            .maybeSingle();
+
+          if (client && client.client_user_id) {
+            // Create client user object
+            user = {
+              id: client.id,
+              userId: client.client_user_id,
+              firstName: client.name,
+              role: 'client' as UserRole,
+              email: client.email || '',
+              isFirstLogin: true,
+              createdAt: new Date(),
+            };
+            
+            // Add to mockUsers and mockPasswords
+            if (!mockUsers.find(u => u.userId === client.client_user_id)) {
+              mockUsers.push(user);
+              mockPasswords[client.client_user_id] = client.client_user_id; // Password is PAN
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error checking database for user:', error);
+      }
+    }
 
     if (!user) {
       toast({

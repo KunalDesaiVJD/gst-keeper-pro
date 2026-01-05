@@ -61,7 +61,7 @@ const FilingStatusPage: React.FC = () => {
   const fetchClients = useCallback(async () => {
     const { data, error } = await supabase
       .from('clients')
-      .select('id, name, gstin, mobile, email, assigned_accountant, registration_type, selected_returns, registration_date')
+      .select('id, name, gstin, mobile, email, assigned_accountant, registration_type, selected_returns, registration_date, cancellation_date')
       .order('name');
     
     if (error) {
@@ -127,6 +127,16 @@ const FilingStatusPage: React.FC = () => {
       return false;
     }
     
+    // Check cancellation date if present
+    if (client.cancellation_date) {
+      const cancelDate = new Date(client.cancellation_date);
+      const cancelMonth = new Date(cancelDate.getFullYear(), cancelDate.getMonth(), 1);
+      // Client should not be visible after cancellation month
+      if (periodDate > cancelMonth) {
+        return false;
+      }
+    }
+    
     return true;
   };
 
@@ -156,12 +166,13 @@ const FilingStatusPage: React.FC = () => {
             filingFrequency: client.registration_type === 'Composition' ? 'Quarterly' : 'Monthly',
           });
         } else {
+          // Create new record with 'Data Pending' as default status
           records.push({
             id: `temp-${client.id}-${returnType}`,
             client_id: client.id,
             return_type: returnType,
             period_month: selectedMonth,
-            status: 'Prepared',
+            status: 'Data Pending',
             target_date: returnType === 'GSTR-1' ? 11 : returnType === 'GSTR-3B' ? 20 : 25,
             filed_date: null,
             remarks: null,
@@ -501,17 +512,45 @@ const FilingStatusPage: React.FC = () => {
     );
   }
 
-  // Generate months for selector
+  // Generate months for selector based on client registration dates
   const generateMonths = () => {
-    const months: { value: string; label: string }[] = [];
+    const monthsSet = new Set<string>();
     const now = new Date();
+    
+    // Add default 24 months
     for (let i = 0; i < 24; i++) {
       const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const value = `${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
-      const label = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-      months.push({ value, label });
+      monthsSet.add(value);
     }
-    return months;
+    
+    // Add months from client registration dates (including future months up to 12 months ahead)
+    clients.forEach(client => {
+      if (client.registration_date) {
+        const regDate = new Date(client.registration_date);
+        const futureLimit = new Date(now.getFullYear(), now.getMonth() + 12, 1);
+        let currentDate = new Date(regDate.getFullYear(), regDate.getMonth(), 1);
+        
+        while (currentDate <= futureLimit) {
+          const value = `${String(currentDate.getMonth() + 1).padStart(2, '0')}/${currentDate.getFullYear()}`;
+          monthsSet.add(value);
+          currentDate.setMonth(currentDate.getMonth() + 1);
+        }
+      }
+    });
+    
+    // Convert to array and sort descending
+    const months = Array.from(monthsSet).map(value => {
+      const [month, year] = value.split('/').map(Number);
+      const date = new Date(year, month - 1, 1);
+      return {
+        value,
+        label: date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+        sortKey: year * 12 + month
+      };
+    });
+    
+    return months.sort((a, b) => b.sortKey - a.sortKey).map(({ value, label }) => ({ value, label }));
   };
 
   const months = generateMonths();

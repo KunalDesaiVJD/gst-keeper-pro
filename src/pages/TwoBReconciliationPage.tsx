@@ -70,6 +70,51 @@ const TwoBReconciliationPage: React.FC = () => {
 
   const selectedClientData = clients.find(c => c.id === selectedClient);
 
+  // Generate month options dynamically
+  const generateMonthOptions = () => {
+    const months: { value: string; label: string }[] = [];
+    const now = new Date();
+    // Generate 24 months (past 12 and future 12)
+    for (let i = -12; i <= 12; i++) {
+      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const value = `${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const label = `${monthNames[date.getMonth()]} ${date.getFullYear()}`;
+      months.push({ value, label });
+    }
+    // Sort in descending order (newest first)
+    return months.sort((a, b) => {
+      const [aM, aY] = a.value.split('/').map(Number);
+      const [bM, bY] = b.value.split('/').map(Number);
+      return bY * 12 + bM - (aY * 12 + aM);
+    });
+  };
+
+  const monthOptions = generateMonthOptions();
+
+  // Generate month dropdown options for reversal/reclaim
+  const shortMonthOptions = () => {
+    const options: { value: string; label: string }[] = [];
+    const now = new Date();
+    for (let i = -6; i <= 12; i++) {
+      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const yearShort = String(date.getFullYear()).slice(-2);
+      const value = `${monthNames[date.getMonth()]} ${yearShort}`;
+      options.push({ value, label: value });
+    }
+    return options.sort((a, b) => {
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const parseDate = (s: string) => {
+        const [m, y] = s.split(' ');
+        return (2000 + parseInt(y)) * 12 + monthNames.indexOf(m);
+      };
+      return parseDate(b.value) - parseDate(a.value);
+    });
+  };
+
+  const reversalReclaimMonths = shortMonthOptions();
+
   // Fetch clients
   const fetchClients = useCallback(async () => {
     const { data, error } = await supabase
@@ -627,6 +672,33 @@ const TwoBReconciliationPage: React.FC = () => {
     );
   };
 
+  // Render month dropdown for reversal/reclaim
+  const renderMonthDropdown = (
+    value: string | null,
+    onChange: (value: string) => void,
+    placeholder: string = 'Select'
+  ) => {
+    if (isLocked) {
+      return <span>{value ?? '-'}</span>;
+    }
+    
+    return (
+      <Select value={value || ''} onValueChange={onChange}>
+        <SelectTrigger className="h-8 text-sm w-24">
+          <SelectValue placeholder={placeholder} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="">-</SelectItem>
+          {reversalReclaimMonths.map((month) => (
+            <SelectItem key={month.value} value={month.value}>
+              {month.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
@@ -688,9 +760,11 @@ const TwoBReconciliationPage: React.FC = () => {
                   <SelectValue placeholder="Select Month" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="01/2026">Jan 2026</SelectItem>
-                  <SelectItem value="12/2025">Dec 2025</SelectItem>
-                  <SelectItem value="11/2025">Nov 2025</SelectItem>
+                  {monthOptions.map((month) => (
+                    <SelectItem key={month.value} value={month.value}>
+                      {month.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -854,15 +928,17 @@ const TwoBReconciliationPage: React.FC = () => {
                           )}
                         </td>
                         <td>
-                          {renderEditableInput(
+                          {renderMonthDropdown(
                             row.reversal_month,
-                            (val) => handleUpdate2BField(row.id, 'reversal_month', val)
+                            (val) => handleUpdate2BField(row.id, 'reversal_month', val || null),
+                            'Rev'
                           )}
                         </td>
                         <td>
-                          {renderEditableInput(
+                          {renderMonthDropdown(
                             row.reclaim_month,
-                            (val) => handleUpdate2BField(row.id, 'reclaim_month', val)
+                            (val) => handleUpdate2BField(row.id, 'reclaim_month', val || null),
+                            'Rec'
                           )}
                         </td>
                         {!isLocked && (
@@ -1006,15 +1082,17 @@ const TwoBReconciliationPage: React.FC = () => {
                           )}
                         </td>
                         <td>
-                          {renderEditableInput(
+                          {renderMonthDropdown(
                             row.book_entry_month,
-                            (val) => handleUpdateBooksField(row.id, 'book_entry_month', val)
+                            (val) => handleUpdateBooksField(row.id, 'book_entry_month', val || null),
+                            'Entry'
                           )}
                         </td>
                         <td>
-                          {renderEditableInput(
+                          {renderMonthDropdown(
                             row.bill_in_2b_month,
-                            (val) => handleUpdateBooksField(row.id, 'bill_in_2b_month', val)
+                            (val) => handleUpdateBooksField(row.id, 'bill_in_2b_month', val || null),
+                            'In 2B'
                           )}
                         </td>
                         {!isLocked && (

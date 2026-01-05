@@ -159,6 +159,7 @@ export type Database = {
       clients: {
         Row: {
           assigned_accountant: string | null
+          cancellation_date: string | null
           client_user_id: string | null
           created_at: string | null
           created_by: string | null
@@ -174,6 +175,7 @@ export type Database = {
         }
         Insert: {
           assigned_accountant?: string | null
+          cancellation_date?: string | null
           client_user_id?: string | null
           created_at?: string | null
           created_by?: string | null
@@ -189,6 +191,7 @@ export type Database = {
         }
         Update: {
           assigned_accountant?: string | null
+          cancellation_date?: string | null
           client_user_id?: string | null
           created_at?: string | null
           created_by?: string | null
