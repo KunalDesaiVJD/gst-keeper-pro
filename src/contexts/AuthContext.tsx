@@ -52,14 +52,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       u.userId.toLowerCase() === userId.toLowerCase() || u.userId === userId
     );
 
+    let dbPassword: string | null = null;
+
     // If not found in mock data, check database for employees and clients
     if (!user) {
       try {
-        // Check profiles table for staff/employees
+        // Check profiles table for staff/employees (case insensitive first_name match)
         const { data: profile } = await supabase
           .from('profiles')
-          .select('user_id, first_name, email')
-          .or(`first_name.ilike.${userId}`)
+          .select('user_id, first_name, email, password')
+          .ilike('first_name', userId)
           .maybeSingle();
 
         if (profile) {
@@ -71,6 +73,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .maybeSingle();
 
           if (roleData) {
+            dbPassword = profile.password;
+            
             // Create user object from DB data
             user = {
               id: profile.user_id,
@@ -85,7 +89,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Add to mockUsers and mockPasswords for future logins
             if (!mockUsers.find(u => u.userId === profile.first_name)) {
               mockUsers.push(user);
-              mockPasswords[profile.first_name] = '2026'; // Default password
+              mockPasswords[profile.first_name] = dbPassword || '2026';
             }
           }
         }
@@ -99,6 +103,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .maybeSingle();
 
           if (client && client.client_user_id) {
+            // For clients, password is same as client_user_id (PAN)
+            dbPassword = client.client_user_id;
+            
             // Create client user object
             user = {
               id: client.id,
@@ -113,7 +120,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Add to mockUsers and mockPasswords
             if (!mockUsers.find(u => u.userId === client.client_user_id)) {
               mockUsers.push(user);
-              mockPasswords[client.client_user_id] = client.client_user_id; // Password is PAN
+              mockPasswords[client.client_user_id] = client.client_user_id;
             }
           }
         }
@@ -131,8 +138,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false };
     }
 
-    // Verify password
-    const storedPassword = mockPasswords[user.userId];
+    // Verify password - check DB password first, then mock passwords
+    const storedPassword = dbPassword || mockPasswords[user.userId];
     if (password !== storedPassword) {
       toast({
         title: 'Login Failed',

@@ -83,23 +83,36 @@ const UserControlPage: React.FC = () => {
         if (rolesError) throw rolesError;
 
         if (rolesData && rolesData.length > 0) {
-          const userIds = rolesData.map(r => r.user_id);
+          // Dedupe user IDs
+          const uniqueUserIds = [...new Set(rolesData.map(r => r.user_id))];
           
           const { data: profilesData, error: profilesError } = await supabase
             .from('profiles')
             .select('user_id, first_name, email')
-            .in('user_id', userIds);
+            .in('user_id', uniqueUserIds);
 
           if (profilesError) throw profilesError;
 
-          const employeeList: Employee[] = rolesData.map(role => {
-            const profile = profilesData?.find(p => p.user_id === role.user_id);
-            return {
-              user_id: role.user_id,
-              first_name: profile?.first_name || 'Unknown',
-              email: profile?.email || null,
-              role: role.role,
-            };
+          // Create role map (first occurrence wins)
+          const roleMap = new Map<string, string>();
+          rolesData.forEach(role => {
+            if (!roleMap.has(role.user_id)) {
+              roleMap.set(role.user_id, role.role);
+            }
+          });
+
+          // Only include profiles with valid names
+          const employeeList: Employee[] = [];
+          profilesData?.forEach(profile => {
+            const role = roleMap.get(profile.user_id);
+            if (role && profile.first_name && profile.first_name !== 'Unknown') {
+              employeeList.push({
+                user_id: profile.user_id,
+                first_name: profile.first_name,
+                email: profile.email || null,
+                role: role,
+              });
+            }
           });
 
           setEmployees(employeeList);

@@ -13,6 +13,7 @@ import {
   Mail
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import ClientPasswordResetRequest from '@/components/clients/ClientPasswordResetRequest';
 
 interface ClientData {
   id: string;
@@ -267,6 +268,9 @@ const ClientDashboard: React.FC = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Password Reset Request Section */}
+      <ClientPasswordResetRequest />
     </div>
   );
 };
