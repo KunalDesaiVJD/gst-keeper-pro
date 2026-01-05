@@ -10,7 +10,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Settings, Lock, Users, AlertCircle, Check, X, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
-import { mockPasswords } from '@/data/mockData';
 
 interface PasswordResetRequest {
   id: string;
@@ -107,16 +106,6 @@ const SettingsPage: React.FC = () => {
 
   const handleChangeOwnPassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Validate current password (mock validation)
-    if (user && mockPasswords[user.userId] !== currentPassword) {
-      toast({
-        title: 'Invalid Password',
-        description: 'Current password is incorrect.',
-        variant: 'destructive',
-      });
-      return;
-    }
 
     if (newPassword.length < 8) {
       toast({
@@ -139,9 +128,18 @@ const SettingsPage: React.FC = () => {
     setIsChangingPassword(true);
 
     try {
-      // In real implementation, update password in database
-      if (user) {
-        mockPasswords[user.userId] = newPassword;
+      // Update password using Supabase Auth
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (error) {
+        toast({
+          title: 'Error',
+          description: error.message,
+          variant: 'destructive',
+        });
+        return;
       }
 
       toast({
@@ -152,6 +150,13 @@ const SettingsPage: React.FC = () => {
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
+    } catch (error) {
+      console.error('Error changing password:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to change password.',
+        variant: 'destructive',
+      });
     } finally {
       setIsChangingPassword(false);
     }
@@ -181,19 +186,23 @@ const SettingsPage: React.FC = () => {
     try {
       const employee = employees.find(e => e.user_id === selectedEmployee);
       if (employee) {
-        // Update mock password
-        mockPasswords[employee.first_name] = employeeNewPassword;
-
-        // Update is_first_login to false since admin set the password
+        // Note: In a real production app, you'd use a server-side function to reset passwords
+        // For now, we update the is_first_login flag
         await supabase
           .from('user_roles')
           .update({ is_first_login: false })
+          .eq('user_id', selectedEmployee);
+          
+        // Update password in profiles table for the fallback login
+        await supabase
+          .from('profiles')
+          .update({ password: employeeNewPassword })
           .eq('user_id', selectedEmployee);
       }
 
       toast({
         title: 'Password Reset',
-        description: `Password has been reset for ${employee?.first_name}.`,
+        description: `Password has been reset for ${employee?.first_name}. They can now login with the new password.`,
       });
 
       setSelectedEmployee('');
