@@ -70,14 +70,8 @@ const Sidebar: React.FC = () => {
       },
     ];
 
-    // Add Superadmin-only items
+    // Add Superadmin-only items (removed Manage Employees - now in Dashboard)
     if (canManageEmployees()) {
-      items.push({
-        label: 'Manage Employees',
-        path: '/manage-employees',
-        icon: <Users className="h-5 w-5" />,
-        roles: ['superadmin'],
-      });
       items.push({
         label: 'User Control',
         path: '/user-control',

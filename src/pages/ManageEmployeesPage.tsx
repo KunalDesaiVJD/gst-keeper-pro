@@ -16,6 +16,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { Navigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { mockPasswords, mockUsers } from '@/data/mockData';
 
 interface Employee {
   id: string;
@@ -25,7 +26,11 @@ interface Employee {
   role: 'gst_manager' | 'employee';
 }
 
-const ManageEmployeesPage: React.FC = () => {
+interface ManageEmployeesPageProps {
+  embedded?: boolean;
+}
+
+const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = false }) => {
   const { user, canManageEmployees } = useAuth();
   const { toast } = useToast();
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -36,8 +41,8 @@ const ManageEmployeesPage: React.FC = () => {
     role: 'employee' as 'gst_manager' | 'employee',
   });
 
-  // Only Superadmin can access this page
-  if (!canManageEmployees()) {
+  // Only Superadmin can access this page (unless embedded)
+  if (!embedded && !canManageEmployees()) {
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -99,29 +104,47 @@ const ManageEmployeesPage: React.FC = () => {
     }
 
     try {
-      // Generate a unique user_id for the employee (in real auth, this would come from Supabase Auth)
+      // Generate a unique user_id for the employee
       const tempUserId = crypto.randomUUID();
+      const email = `${newEmployee.firstName.toLowerCase().replace(/\s+/g, '.')}@staff.local`;
       
-      // Insert into profiles
+      // First, insert into profiles (which is the referenced table)
       const { error: profileError } = await supabase
         .from('profiles')
         .insert([{
           user_id: tempUserId,
           first_name: newEmployee.firstName,
-          email: `${newEmployee.firstName.toLowerCase()}@staff.local`,
+          email: email,
         }]);
       
       if (profileError) throw profileError;
 
-      // Insert into user_roles
+      // Then insert into user_roles (references profiles via user_id)
       const { error: roleError } = await supabase
         .from('user_roles')
         .insert([{
           user_id: tempUserId,
           role: newEmployee.role,
+          is_first_login: true,
         }]);
       
-      if (roleError) throw roleError;
+      if (roleError) {
+        // Rollback profile if role insert fails
+        await supabase.from('profiles').delete().eq('user_id', tempUserId);
+        throw roleError;
+      }
+
+      // Add to mock data for login functionality
+      mockPasswords[newEmployee.firstName] = '2026';
+      mockUsers.push({
+        id: tempUserId,
+        userId: newEmployee.firstName,
+        firstName: newEmployee.firstName,
+        role: newEmployee.role,
+        email: email,
+        isFirstLogin: true,
+        createdAt: new Date(),
+      });
 
       toast({
         title: 'Employee Added',
@@ -143,17 +166,22 @@ const ManageEmployeesPage: React.FC = () => {
 
   const handleDeleteEmployee = async (employeeId: string, userId: string, name: string) => {
     try {
-      // Delete from user_roles
+      // Delete from user_roles first (child table)
       await supabase
         .from('user_roles')
         .delete()
         .eq('user_id', userId);
       
-      // Delete from profiles
+      // Delete from profiles (parent table)
       await supabase
         .from('profiles')
         .delete()
         .eq('id', employeeId);
+
+      // Remove from mock data
+      delete mockPasswords[name];
+      const mockIndex = mockUsers.findIndex(u => u.userId === name);
+      if (mockIndex > -1) mockUsers.splice(mockIndex, 1);
 
       toast({
         title: 'Employee Removed',
@@ -170,87 +198,81 @@ const ManageEmployeesPage: React.FC = () => {
     }
   };
 
-  return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-heading font-bold text-foreground">Manage Employees</h1>
-          <p className="text-muted-foreground">Add, edit, or remove staff members</p>
-        </div>
-        <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-          <DialogTrigger asChild>
-            <Button className="flex items-center gap-2">
-              <UserPlus className="h-4 w-4" />
-              Add Employee
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add New Employee</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 pt-4">
-              <div className="space-y-2">
-                <Label htmlFor="firstName">Employee Name (First Name)</Label>
-                <Input
-                  id="firstName"
-                  value={newEmployee.firstName}
-                  onChange={(e) => setNewEmployee(prev => ({ ...prev, firstName: e.target.value }))}
-                  placeholder="Enter first name"
-                />
-                <p className="text-xs text-muted-foreground">
-                  This will be used as the login ID
-                </p>
-              </div>
-              <div className="space-y-2">
-                <Label>Role</Label>
-                <Select
-                  value={newEmployee.role}
-                  onValueChange={(value: 'gst_manager' | 'employee') => 
-                    setNewEmployee(prev => ({ ...prev, role: value }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="gst_manager">GST Manager</SelectItem>
-                    <SelectItem value="employee">Employee</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="bg-muted/50 p-3 rounded-lg">
-                <p className="text-sm font-medium">Auto-generated Credentials:</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  User ID: <span className="font-mono">{newEmployee.firstName || '[First Name]'}</span>
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Password: <span className="font-mono">2026</span> (must change on first login)
-                </p>
-              </div>
-              <div className="flex gap-2 justify-end pt-2">
-                <Button variant="outline" onClick={() => setShowAddDialog(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleAddEmployee}>
-                  Add Employee
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-      </div>
-
+  const content = (
+    <>
       {/* Employee List */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2">
-            <Users className="h-5 w-5" />
-            Staff Members
-          </CardTitle>
-          <CardDescription>
-            {employees.length} employees in the system
-          </CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Users className="h-5 w-5" />
+              Staff Members
+            </CardTitle>
+            <CardDescription>
+              {employees.length} employees in the system
+            </CardDescription>
+          </div>
+          <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+            <DialogTrigger asChild>
+              <Button size="sm" className="flex items-center gap-2">
+                <UserPlus className="h-4 w-4" />
+                Add Employee
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Add New Employee</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 pt-4">
+                <div className="space-y-2">
+                  <Label htmlFor="firstName">Employee Name (First Name)</Label>
+                  <Input
+                    id="firstName"
+                    value={newEmployee.firstName}
+                    onChange={(e) => setNewEmployee(prev => ({ ...prev, firstName: e.target.value }))}
+                    placeholder="Enter first name"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    This will be used as the login ID
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Role</Label>
+                  <Select
+                    value={newEmployee.role}
+                    onValueChange={(value: 'gst_manager' | 'employee') => 
+                      setNewEmployee(prev => ({ ...prev, role: value }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="gst_manager">GST Manager</SelectItem>
+                      <SelectItem value="employee">Employee</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="bg-muted/50 p-3 rounded-lg">
+                  <p className="text-sm font-medium">Auto-generated Credentials:</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    User ID: <span className="font-mono">{newEmployee.firstName || '[First Name]'}</span>
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Password: <span className="font-mono">2026</span> (must change on first login)
+                  </p>
+                </div>
+                <div className="flex gap-2 justify-end pt-2">
+                  <Button variant="outline" onClick={() => setShowAddDialog(false)}>
+                    Cancel
+                  </Button>
+                  <Button onClick={handleAddEmployee}>
+                    Add Employee
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -303,6 +325,21 @@ const ManageEmployeesPage: React.FC = () => {
           )}
         </CardContent>
       </Card>
+    </>
+  );
+
+  if (embedded) {
+    return content;
+  }
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl font-heading font-bold text-foreground">Manage Employees</h1>
+        <p className="text-muted-foreground">Add, edit, or remove staff members</p>
+      </div>
+      {content}
     </div>
   );
 };

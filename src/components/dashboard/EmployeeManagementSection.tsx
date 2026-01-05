@@ -15,6 +15,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { mockPasswords, mockUsers } from '@/data/mockData';
 
 interface Employee {
   id: string;
@@ -86,29 +87,49 @@ const EmployeeManagementSection: React.FC = () => {
 
     try {
       const tempUserId = crypto.randomUUID();
+      const email = `${newEmployee.firstName.toLowerCase().replace(/\s+/g, '.')}@staff.local`;
       
+      // Insert profile first (parent table)
       const { error: profileError } = await supabase
         .from('profiles')
         .insert([{
           user_id: tempUserId,
           first_name: newEmployee.firstName,
-          email: `${newEmployee.firstName.toLowerCase()}@staff.local`,
+          email: email,
         }]);
       
       if (profileError) throw profileError;
 
+      // Then insert role (references profile)
       const { error: roleError } = await supabase
         .from('user_roles')
         .insert([{
           user_id: tempUserId,
           role: newEmployee.role,
+          is_first_login: true,
         }]);
       
-      if (roleError) throw roleError;
+      if (roleError) {
+        // Rollback profile if role insert fails
+        await supabase.from('profiles').delete().eq('user_id', tempUserId);
+        throw roleError;
+      }
+
+      // Add to mock data for login
+      mockPasswords[newEmployee.firstName] = '2026';
+      mockUsers.push({
+        id: tempUserId,
+        userId: newEmployee.firstName,
+        firstName: newEmployee.firstName,
+        role: newEmployee.role,
+        email: email,
+        isFirstLogin: true,
+        createdAt: new Date(),
+      });
 
       toast({
         title: 'Employee Added',
-        description: `${newEmployee.firstName} has been added as ${newEmployee.role === 'gst_manager' ? 'GST Manager' : 'Employee'}.`,
+        description: `${newEmployee.firstName} has been added. Login: ${newEmployee.firstName} / 2026`,
       });
 
       setNewEmployee({ firstName: '', role: 'employee' });
@@ -128,8 +149,14 @@ const EmployeeManagementSection: React.FC = () => {
     if (!confirm(`Remove ${name} from the system?`)) return;
     
     try {
+      // Delete role first (child), then profile (parent)
       await supabase.from('user_roles').delete().eq('user_id', userId);
       await supabase.from('profiles').delete().eq('id', employeeId);
+
+      // Remove from mock data
+      delete mockPasswords[name];
+      const mockIndex = mockUsers.findIndex(u => u.userId === name);
+      if (mockIndex > -1) mockUsers.splice(mockIndex, 1);
 
       toast({
         title: 'Employee Removed',
@@ -152,15 +179,15 @@ const EmployeeManagementSection: React.FC = () => {
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-4">
+    <Card className="border-0 shadow-none">
+      <CardHeader className="pb-4 px-0">
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Users className="h-5 w-5" />
-              Employee Management
+            <CardTitle className="text-base flex items-center gap-2">
+              <Users className="h-4 w-4" />
+              Staff Members
             </CardTitle>
-            <CardDescription>{employees.length} staff members</CardDescription>
+            <CardDescription className="text-xs">{employees.length} employees</CardDescription>
           </div>
           <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
             <DialogTrigger asChild>
@@ -206,6 +233,9 @@ const EmployeeManagementSection: React.FC = () => {
                   <p className="text-xs text-muted-foreground mt-1">
                     Login: <span className="font-mono">{newEmployee.firstName || '[Name]'}</span> / 2026
                   </p>
+                  <p className="text-xs text-muted-foreground">
+                    (Must change on first login)
+                  </p>
                 </div>
                 <div className="flex gap-2 justify-end pt-2">
                   <Button variant="outline" onClick={() => setShowAddDialog(false)}>Cancel</Button>
@@ -216,12 +246,12 @@ const EmployeeManagementSection: React.FC = () => {
           </Dialog>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-0">
         <div className="space-y-2 max-h-64 overflow-y-auto">
           {isLoading ? (
-            <p className="text-center py-4 text-muted-foreground">Loading...</p>
+            <p className="text-center py-4 text-muted-foreground text-sm">Loading...</p>
           ) : employees.length === 0 ? (
-            <p className="text-center py-4 text-muted-foreground">No employees yet.</p>
+            <p className="text-center py-4 text-muted-foreground text-sm">No employees yet.</p>
           ) : (
             employees.map((emp) => (
               <div
@@ -229,7 +259,7 @@ const EmployeeManagementSection: React.FC = () => {
                 className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/30 transition-colors"
               >
                 <div className="flex items-center gap-3">
-                  <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center">
+                  <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
                     <span className="font-semibold text-primary text-sm">
                       {emp.first_name.charAt(0)}
                     </span>
@@ -246,7 +276,6 @@ const EmployeeManagementSection: React.FC = () => {
                         <Badge variant="secondary" className="text-xs">Employee</Badge>
                       )}
                     </div>
-                    <p className="text-xs text-muted-foreground">ID: {emp.first_name}</p>
                   </div>
                 </div>
                 <Button

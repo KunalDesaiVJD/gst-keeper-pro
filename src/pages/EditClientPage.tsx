@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,11 +10,24 @@ import { ArrowLeft, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
-import { mockPasswords, mockUsers } from '@/data/mockData';
-import ClientCredentialsSection from '@/components/clients/ClientCredentialsSection';
 
-const AddClientPage: React.FC = () => {
+interface ClientData {
+  id: string;
+  gstin: string;
+  name: string;
+  registration_type: RegistrationType;
+  registration_date: string;
+  mobile: string | null;
+  email: string | null;
+  assigned_accountant: string | null;
+  selected_returns: ReturnType[] | null;
+  cancellation_date?: string | null;
+}
+
+const EditClientPage: React.FC = () => {
   const navigate = useNavigate();
+  const { clientId } = useParams<{ clientId: string }>();
+  const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
   const [formData, setFormData] = useState({
@@ -25,13 +38,47 @@ const AddClientPage: React.FC = () => {
     mobile: '',
     email: '',
     assignedAccountant: '',
-    targetDate: 11,
     selectedReturns: [] as ReturnType[],
+    cancellationDate: '',
+    targetDate: 11,
   });
 
-  const [clientCredentials, setClientCredentials] = useState<{ userId: string; password: string } | null>(null);
-
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Fetch client data
+  useEffect(() => {
+    const fetchClient = async () => {
+      if (!clientId) return;
+
+      const { data, error } = await supabase
+        .from('clients')
+        .select('*')
+        .eq('id', clientId)
+        .single();
+
+      if (error || !data) {
+        toast.error('Client not found');
+        navigate('/clients');
+        return;
+      }
+
+      setFormData({
+        gstin: data.gstin,
+        name: data.name,
+        registrationType: data.registration_type as RegistrationType,
+        registrationDate: data.registration_date,
+        mobile: data.mobile || '',
+        email: data.email || '',
+        assignedAccountant: data.assigned_accountant || '',
+        selectedReturns: (data.selected_returns || []) as ReturnType[],
+        cancellationDate: (data as any).cancellation_date || '',
+        targetDate: 11,
+      });
+      setIsLoading(false);
+    };
+
+    fetchClient();
+  }, [clientId, navigate]);
 
   // Get available returns based on registration type
   const availableReturns = useMemo(() => {
@@ -41,10 +88,11 @@ const AddClientPage: React.FC = () => {
 
   // Reset selected returns when registration type changes
   const handleRegistrationTypeChange = (value: RegistrationType) => {
+    const newAvailableReturns = RETURN_TYPES_BY_REGISTRATION[value] || [];
     setFormData(prev => ({
       ...prev,
       registrationType: value,
-      selectedReturns: [], // Reset returns when type changes
+      selectedReturns: prev.selectedReturns.filter(r => newAvailableReturns.includes(r)),
     }));
   };
 
@@ -85,15 +133,11 @@ const AddClientPage: React.FC = () => {
       newErrors.registrationDate = 'Registration date is required';
     }
 
-    if (!formData.mobile) {
-      newErrors.mobile = 'Mobile number is required';
-    } else if (!/^[0-9]{10}$/.test(formData.mobile)) {
+    if (formData.mobile && !/^[0-9]{10}$/.test(formData.mobile)) {
       newErrors.mobile = 'Mobile must be 10 digits';
     }
 
-    if (!formData.email) {
-      newErrors.email = 'Email is required';
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+    if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
       newErrors.email = 'Invalid email format';
     }
 
@@ -101,12 +145,15 @@ const AddClientPage: React.FC = () => {
       newErrors.returns = 'Select at least one return type';
     }
 
+    // Validate cancellation date
+    if (formData.cancellationDate && formData.registrationDate) {
+      if (new Date(formData.cancellationDate) < new Date(formData.registrationDate)) {
+        newErrors.cancellationDate = 'Cancellation date cannot be before registration date';
+      }
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  };
-
-  const handleCredentialsGenerated = (userId: string, password: string) => {
-    setClientCredentials({ userId, password });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -120,9 +167,9 @@ const AddClientPage: React.FC = () => {
     setIsSaving(true);
 
     try {
-      const { data: clientData, error } = await supabase
+      const { error } = await supabase
         .from('clients')
-        .insert([{
+        .update({
           gstin: formData.gstin,
           name: formData.name,
           registration_type: formData.registrationType as 'Regular' | 'Composition' | 'Tax Deductor',
@@ -131,65 +178,28 @@ const AddClientPage: React.FC = () => {
           email: formData.email || null,
           assigned_accountant: formData.assignedAccountant || null,
           selected_returns: formData.selectedReturns,
-          client_user_id: clientCredentials?.userId || null,
-        }])
-        .select()
-        .single();
+        })
+        .eq('id', clientId);
 
       if (error) throw error;
 
-      // Create filing status records for all selected returns from registration date
-      if (clientData) {
-        const regDate = new Date(formData.registrationDate);
-        const now = new Date();
-        const filingRecords: any[] = [];
-        
-        // Generate months from registration date to current month
-        let currentDate = new Date(regDate.getFullYear(), regDate.getMonth(), 1);
-        while (currentDate <= now) {
-          const periodMonth = `${String(currentDate.getMonth() + 1).padStart(2, '0')}/${currentDate.getFullYear()}`;
-          
-          for (const returnType of formData.selectedReturns) {
-            filingRecords.push({
-              client_id: clientData.id,
-              return_type: returnType,
-              period_month: periodMonth,
-              status: 'Prepared',
-              target_date: returnType === 'GSTR-1' ? 11 : returnType === 'GSTR-3B' ? 20 : formData.targetDate,
-            });
-          }
-          
-          currentDate.setMonth(currentDate.getMonth() + 1);
-        }
-        
-        if (filingRecords.length > 0) {
-          await supabase.from('filing_status').insert(filingRecords);
-        }
-      }
-
-      // If credentials were generated, add to mock data for login
-      if (clientCredentials) {
-        mockPasswords[clientCredentials.userId] = clientCredentials.password;
-        mockUsers.push({
-          id: `client-${Date.now()}`,
-          userId: clientCredentials.userId,
-          firstName: formData.name,
-          role: 'client',
-          email: formData.email,
-          isFirstLogin: true, // Require password change on first login
-          createdAt: new Date(),
-        });
-      }
-
-      toast.success(`${formData.name} has been successfully added.`);
+      toast.success(`${formData.name} has been successfully updated.`);
       navigate('/clients');
     } catch (error: any) {
-      console.error('Error adding client:', error);
-      toast.error('Failed to add client: ' + error.message);
+      console.error('Error updating client:', error);
+      toast.error('Failed to update client: ' + error.message);
     } finally {
       setIsSaving(false);
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-muted-foreground">Loading client data...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in max-w-3xl mx-auto">
@@ -199,8 +209,8 @@ const AddClientPage: React.FC = () => {
           <ArrowLeft className="h-5 w-5" />
         </Button>
         <div>
-          <h1 className="text-2xl font-heading font-bold text-foreground">Add New Client</h1>
-          <p className="text-muted-foreground">Fill in the client details below</p>
+          <h1 className="text-2xl font-heading font-bold text-foreground">Edit Client</h1>
+          <p className="text-muted-foreground">Update client details</p>
         </div>
       </div>
 
@@ -240,20 +250,35 @@ const AddClientPage: React.FC = () => {
               {errors.name && <p className="text-sm text-destructive">{errors.name}</p>}
             </div>
 
-            {/* Registration Date */}
-            <div className="space-y-2">
-              <Label htmlFor="registrationDate">Registration Date *</Label>
-              <Input
-                id="registrationDate"
-                type="date"
-                value={formData.registrationDate}
-                onChange={(e) => setFormData(prev => ({ ...prev, registrationDate: e.target.value }))}
-                className={errors.registrationDate ? 'border-destructive' : ''}
-              />
-              {errors.registrationDate && <p className="text-sm text-destructive">{errors.registrationDate}</p>}
-              <p className="text-xs text-muted-foreground">
-                Filing status will be shown from this date onwards
-              </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Registration Date */}
+              <div className="space-y-2">
+                <Label htmlFor="registrationDate">Registration Date *</Label>
+                <Input
+                  id="registrationDate"
+                  type="date"
+                  value={formData.registrationDate}
+                  onChange={(e) => setFormData(prev => ({ ...prev, registrationDate: e.target.value }))}
+                  className={errors.registrationDate ? 'border-destructive' : ''}
+                />
+                {errors.registrationDate && <p className="text-sm text-destructive">{errors.registrationDate}</p>}
+              </div>
+
+              {/* Cancellation Date */}
+              <div className="space-y-2">
+                <Label htmlFor="cancellationDate">Cancellation Date (Optional)</Label>
+                <Input
+                  id="cancellationDate"
+                  type="date"
+                  value={formData.cancellationDate}
+                  onChange={(e) => setFormData(prev => ({ ...prev, cancellationDate: e.target.value }))}
+                  className={errors.cancellationDate ? 'border-destructive' : ''}
+                />
+                {errors.cancellationDate && <p className="text-sm text-destructive">{errors.cancellationDate}</p>}
+                <p className="text-xs text-muted-foreground">
+                  If set, client will not appear in Filing Status after this date
+                </p>
+              </div>
             </div>
 
             {/* Registration Type */}
@@ -300,11 +325,6 @@ const AddClientPage: React.FC = () => {
                   ))}
                 </div>
                 {errors.returns && <p className="text-sm text-destructive">{errors.returns}</p>}
-                <p className="text-xs text-muted-foreground">
-                  {formData.registrationType === 'Regular' && 'Regular taxpayers can file GSTR-1, GSTR-3B, ITC-04, and GSTR-6'}
-                  {formData.registrationType === 'Composition' && 'Composition dealers file CMP-08 quarterly'}
-                  {formData.registrationType === 'Tax Deductor' && 'Tax Deductors file GSTR-7 monthly'}
-                </p>
               </div>
             )}
 
@@ -367,14 +387,6 @@ const AddClientPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Client Login Credentials */}
-            {formData.gstin.length === 15 && (
-              <ClientCredentialsSection
-                gstin={formData.gstin}
-                onCredentialsGenerated={handleCredentialsGenerated}
-              />
-            )}
-
             {/* Submit Buttons */}
             <div className="flex gap-3 pt-4">
               <Button type="button" variant="outline" onClick={() => navigate(-1)}>
@@ -382,7 +394,7 @@ const AddClientPage: React.FC = () => {
               </Button>
               <Button type="submit" className="flex items-center gap-2" disabled={isSaving}>
                 <Save className="h-4 w-4" />
-                {isSaving ? 'Adding...' : 'Add Client'}
+                {isSaving ? 'Saving...' : 'Save Changes'}
               </Button>
             </div>
           </form>
@@ -392,4 +404,4 @@ const AddClientPage: React.FC = () => {
   );
 };
 
-export default AddClientPage;
+export default EditClientPage;

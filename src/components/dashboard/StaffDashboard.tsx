@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
 import { 
   Users, 
   AlertTriangle, 
@@ -12,11 +13,16 @@ import {
   FileText,
   Calculator,
   ClipboardList,
-  Calendar
+  Calendar,
+  Building2,
+  Shield,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import ClientManagementSection from './ClientManagementSection';
 import EmployeeManagementSection from './EmployeeManagementSection';
+import { ReturnType } from '@/types';
 
 interface DashboardMetrics {
   totalClients: number;
@@ -25,8 +31,21 @@ interface DashboardMetrics {
   filedThisMonth: number;
 }
 
+interface ReturnMetrics {
+  returnType: ReturnType;
+  totalClients: number;
+  pending: number;
+  filed: number;
+}
+
+interface UserMetrics {
+  totalEmployees: number;
+  gstManagers: number;
+  employees: number;
+}
+
 const StaffDashboard: React.FC = () => {
-  const { user } = useAuth();
+  const { user, canManageEmployees } = useAuth();
   const navigate = useNavigate();
   const [selectedMonth, setSelectedMonth] = useState<string>('01/2026');
   const [metrics, setMetrics] = useState<DashboardMetrics>({
@@ -35,6 +54,13 @@ const StaffDashboard: React.FC = () => {
     lateFilings: 0,
     filedThisMonth: 0,
   });
+  const [returnMetrics, setReturnMetrics] = useState<ReturnMetrics[]>([]);
+  const [userMetrics, setUserMetrics] = useState<UserMetrics>({
+    totalEmployees: 0,
+    gstManagers: 0,
+    employees: 0,
+  });
+  const [showReturnBreakdown, setShowReturnBreakdown] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   const generateMonths = () => {
@@ -54,13 +80,15 @@ const StaffDashboard: React.FC = () => {
   const fetchMetrics = useCallback(async () => {
     setIsLoading(true);
     try {
-      const { count: clientCount } = await supabase
+      // Fetch clients with their selected returns
+      const { data: clientData, count: clientCount } = await supabase
         .from('clients')
-        .select('*', { count: 'exact', head: true });
+        .select('id, selected_returns', { count: 'exact' });
 
+      // Fetch filing status for the selected month
       const { data: filingData } = await supabase
         .from('filing_status')
-        .select('status, filed_date, target_date')
+        .select('status, filed_date, target_date, return_type, client_id')
         .eq('period_month', selectedMonth);
 
       const pendingStatuses = ['Prepared', 'Data Pending', 'Mismatch in Data', 'Not Verified'];
@@ -79,12 +107,51 @@ const StaffDashboard: React.FC = () => {
         lateFilings,
         filedThisMonth,
       });
+
+      // Calculate return-wise metrics
+      const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08'];
+      const returnMetricsData: ReturnMetrics[] = allReturnTypes.map(rt => {
+        // Count clients with this return type selected
+        const clientsWithReturn = clientData?.filter(c => 
+          (c.selected_returns || []).includes(rt)
+        ).length || 0;
+
+        // Count filings for this return type
+        const returnFilings = filingData?.filter(f => f.return_type === rt) || [];
+        const pending = returnFilings.filter(f => pendingStatuses.includes(f.status || '')).length;
+        const filed = returnFilings.filter(f => f.status === 'Filed').length;
+
+        return {
+          returnType: rt,
+          totalClients: clientsWithReturn,
+          pending,
+          filed,
+        };
+      }).filter(rm => rm.totalClients > 0); // Only show returns with clients
+
+      setReturnMetrics(returnMetricsData);
+
+      // Fetch user/employee metrics if superadmin
+      if (canManageEmployees()) {
+        const { data: roles } = await supabase
+          .from('user_roles')
+          .select('role');
+        
+        const gstManagers = roles?.filter(r => r.role === 'gst_manager').length || 0;
+        const employees = roles?.filter(r => r.role === 'employee').length || 0;
+        
+        setUserMetrics({
+          totalEmployees: gstManagers + employees,
+          gstManagers,
+          employees,
+        });
+      }
     } catch (error) {
       console.error('Error fetching metrics:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [selectedMonth]);
+  }, [selectedMonth, canManageEmployees]);
 
   useEffect(() => {
     fetchMetrics();
@@ -99,6 +166,9 @@ const StaffDashboard: React.FC = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'filing_status' }, () => {
         fetchMetrics();
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_roles' }, () => {
+        fetchMetrics();
+      })
       .subscribe();
 
     return () => {
@@ -106,11 +176,11 @@ const StaffDashboard: React.FC = () => {
     };
   }, [fetchMetrics]);
 
-  const metricCards = [
+  const clientMetricCards = [
     {
       label: 'Total Clients',
       value: metrics.totalClients,
-      icon: <Users className="h-8 w-8 text-primary" />,
+      icon: <Building2 className="h-8 w-8 text-primary" />,
       onClick: () => navigate('/clients'),
       bgColor: 'bg-primary/5',
     },
@@ -134,6 +204,24 @@ const StaffDashboard: React.FC = () => {
       icon: <CheckCircle2 className="h-8 w-8 text-success" />,
       onClick: () => navigate('/filing-status?filter=filed'),
       bgColor: 'bg-success/5',
+    },
+  ];
+
+  const userMetricCards = [
+    {
+      label: 'Total Employees',
+      value: userMetrics.totalEmployees,
+      icon: <Users className="h-6 w-6 text-primary" />,
+    },
+    {
+      label: 'GST Managers',
+      value: userMetrics.gstManagers,
+      icon: <Shield className="h-6 w-6 text-primary" />,
+    },
+    {
+      label: 'Employees',
+      value: userMetrics.employees,
+      icon: <Users className="h-6 w-6 text-muted-foreground" />,
     },
   ];
 
@@ -180,30 +268,123 @@ const StaffDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Metric Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {metricCards.map((card, index) => (
-          <Card 
-            key={index}
-            className="metric-card cursor-pointer hover:shadow-card-hover transition-all duration-200"
-            onClick={card.onClick}
+      {/* Client Management Section */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2">
+            <Building2 className="h-5 w-5 text-primary" />
+            Client Management
+          </CardTitle>
+          <CardDescription>Overview of client filings and status</CardDescription>
+        </CardHeader>
+        <CardContent className="pt-4">
+          {/* Client Metric Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+            {clientMetricCards.map((card, index) => (
+              <Card 
+                key={index}
+                className="metric-card cursor-pointer hover:shadow-card-hover transition-all duration-200 border"
+                onClick={card.onClick}
+              >
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-sm text-muted-foreground font-medium">{card.label}</p>
+                      <p className="text-3xl font-bold text-foreground mt-1">
+                        {isLoading ? '...' : card.value}
+                      </p>
+                    </div>
+                    <div className={`p-2 rounded-full ${card.bgColor}`}>
+                      {card.icon}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {/* Return-wise Breakdown Toggle */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowReturnBreakdown(!showReturnBreakdown)}
+            className="text-sm text-muted-foreground mb-2"
           >
-            <CardContent className="p-6">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground font-medium">{card.label}</p>
-                  <p className="text-4xl font-bold text-foreground mt-2">
-                    {isLoading ? '...' : card.value}
-                  </p>
-                </div>
-                <div className={`p-3 rounded-full ${card.bgColor}`}>
-                  {card.icon}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+            {showReturnBreakdown ? <ChevronUp className="h-4 w-4 mr-1" /> : <ChevronDown className="h-4 w-4 mr-1" />}
+            {showReturnBreakdown ? 'Hide' : 'Show'} Return-wise Breakdown
+          </Button>
+
+          {/* Return-wise Breakdown */}
+          {showReturnBreakdown && returnMetrics.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    <th className="text-left p-2 font-medium">Return Type</th>
+                    <th className="text-center p-2 font-medium">Total Clients</th>
+                    <th className="text-center p-2 font-medium">Pending</th>
+                    <th className="text-center p-2 font-medium">Filed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {returnMetrics.map((rm) => (
+                    <tr key={rm.returnType} className="border-b hover:bg-muted/30">
+                      <td className="p-2">
+                        <Badge variant="outline">{rm.returnType}</Badge>
+                      </td>
+                      <td className="text-center p-2">{rm.totalClients}</td>
+                      <td className="text-center p-2">
+                        <span className="text-warning font-medium">{rm.pending}</span>
+                      </td>
+                      <td className="text-center p-2">
+                        <span className="text-success font-medium">{rm.filed}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* User Management Section - Superadmin Only */}
+      {canManageEmployees() && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2">
+              <Users className="h-5 w-5 text-primary" />
+              User Management
+            </CardTitle>
+            <CardDescription>Overview of staff members</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+              {userMetricCards.map((card, index) => (
+                <Card 
+                  key={index}
+                  className="border hover:bg-muted/30 transition-colors"
+                >
+                  <CardContent className="p-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-full bg-primary/5">
+                        {card.icon}
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">{card.label}</p>
+                        <p className="text-2xl font-bold">{isLoading ? '...' : card.value}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+
+            {/* Embedded Employee Management */}
+            <EmployeeManagementSection />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Quick Actions */}
       <Card>
@@ -224,11 +405,8 @@ const StaffDashboard: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Management Sections */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ClientManagementSection />
-        <EmployeeManagementSection />
-      </div>
+      {/* Client Management Detail Section */}
+      <ClientManagementSection />
     </div>
   );
 };
