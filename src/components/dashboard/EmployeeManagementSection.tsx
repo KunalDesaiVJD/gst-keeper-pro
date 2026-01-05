@@ -41,60 +41,63 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
   });
 
   const fetchEmployees = useCallback(async () => {
+    setIsLoading(true);
     try {
-      // First get roles for staff members only (employee or gst_manager)
+      // Fetch profiles and roles separately, then join in memory
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, user_id, first_name, email');
+      
+      if (profilesError) {
+        console.error('Error fetching profiles:', profilesError);
+        throw profilesError;
+      }
+
       const { data: roles, error: rolesError } = await supabase
         .from('user_roles')
         .select('user_id, role')
         .in('role', ['employee', 'gst_manager']);
       
-      if (rolesError) throw rolesError;
+      if (rolesError) {
+        console.error('Error fetching roles:', rolesError);
+        throw rolesError;
+      }
+
+      console.log('Profiles fetched:', profiles?.length, profiles);
+      console.log('Roles fetched:', roles?.length, roles);
 
       if (!roles || roles.length === 0) {
         setEmployees([]);
         return;
       }
 
-      // Deduplicate by user_id (keep first occurrence)
-      const uniqueRoles = roles.reduce((acc, role) => {
-        if (!acc.find(r => r.user_id === role.user_id)) {
-          acc.push(role);
+      // Create a map of user_id to role (deduplicated, keep first)
+      const roleMap = new Map<string, string>();
+      roles.forEach(r => {
+        if (!roleMap.has(r.user_id)) {
+          roleMap.set(r.user_id, r.role);
         }
-        return acc;
-      }, [] as typeof roles);
+      });
 
-      // Get profiles for these users
-      const userIds = uniqueRoles.map(r => r.user_id);
-      const { data: profiles, error: profilesError } = await supabase
-        .from('profiles')
-        .select('id, user_id, first_name, email')
-        .in('user_id', userIds);
-      
-      if (profilesError) throw profilesError;
+      // Create a map of user_id to profile (deduplicated by first_name to avoid duplicates)
+      const seenNames = new Set<string>();
+      const employeeList: Employee[] = [];
 
-      // Deduplicate profiles by user_id (keep first with valid first_name)
-      const uniqueProfiles = (profiles || []).reduce((acc, profile) => {
-        const existing = acc.find(p => p.user_id === profile.user_id);
-        if (!existing) {
-          acc.push(profile);
-        }
-        return acc;
-      }, [] as typeof profiles);
-
-      const employeeList = uniqueRoles
-        .map(role => {
-          const profile = uniqueProfiles.find(p => p.user_id === role.user_id);
-          if (!profile) return null;
-          return {
+      (profiles || []).forEach(profile => {
+        const role = roleMap.get(profile.user_id);
+        if (role && !seenNames.has(profile.first_name.toLowerCase())) {
+          seenNames.add(profile.first_name.toLowerCase());
+          employeeList.push({
             id: profile.id,
             user_id: profile.user_id,
-            first_name: profile.first_name || 'Unknown',
+            first_name: profile.first_name,
             email: profile.email,
-            role: role.role as 'gst_manager' | 'employee',
-          };
-        })
-        .filter((e): e is Employee => e !== null);
+            role: role as 'gst_manager' | 'employee',
+          });
+        }
+      });
 
+      console.log('Final employee list:', employeeList);
       setEmployees(employeeList);
     } catch (error: any) {
       console.error('Error fetching employees:', error);
