@@ -315,20 +315,24 @@ const AddClientPage: React.FC = () => {
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Target Date */}
-              <div className="space-y-2">
-                <Label htmlFor="targetDate">Default Target Date</Label>
-                <Input
-                  id="targetDate"
-                  type="number"
-                  min="1"
-                  max="31"
-                  value={formData.targetDate}
-                  onChange={(e) => setFormData(prev => ({ ...prev, targetDate: parseInt(e.target.value) || 11 }))}
-                  className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                />
-                <p className="text-xs text-muted-foreground">Day of month for filing target</p>
-              </div>
+            {/* Target Date */}
+            <div className="space-y-2">
+              <Label htmlFor="targetDate">Default Target Date (1-30)</Label>
+              <Input
+                id="targetDate"
+                type="number"
+                min="1"
+                max="30"
+                value={formData.targetDate}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value) || 11;
+                  const clampedVal = Math.min(30, Math.max(1, val));
+                  setFormData(prev => ({ ...prev, targetDate: clampedVal }));
+                }}
+                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              />
+              <p className="text-xs text-muted-foreground">Day of month (1-30) for filing target</p>
+            </div>
 
               {/* Assigned Accountant */}
               <div className="space-y-2">
