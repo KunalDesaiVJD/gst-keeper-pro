@@ -1,9 +1,10 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { 
   Upload, 
   Download, 
@@ -53,7 +54,7 @@ interface BillRecord {
 }
 
 const TwoBReconciliationPage: React.FC = () => {
-  const { canViewVersionHistory, canUnlockSheets } = useAuth();
+  const { canViewVersionHistory, canUnlockSheets, user, isStaffRole } = useAuth();
   const [selectedClient, setSelectedClient] = useState<string>('');
   const [selectedMonth, setSelectedMonth] = useState<string>('01/2026');
   const [showVersionHistory, setShowVersionHistory] = useState(false);
@@ -115,19 +116,32 @@ const TwoBReconciliationPage: React.FC = () => {
 
   const reversalReclaimMonths = shortMonthOptions();
 
-  // Fetch clients
+  // Fetch clients - filtered for client role
   const fetchClients = useCallback(async () => {
-    const { data, error } = await supabase
+    let query = supabase
       .from('clients')
       .select('id, name, gstin')
       .order('name');
+    
+    // If user is a client, only fetch their own data
+    if (user && !isStaffRole()) {
+      // Client users should only see their own client record
+      query = query.eq('client_user_id', user.userId);
+    }
+    
+    const { data, error } = await query;
     
     if (error) {
       console.error('Error fetching clients:', error);
       return;
     }
     setClients(data || []);
-  }, []);
+    
+    // Auto-select if client user and only one client
+    if (!isStaffRole() && data && data.length === 1) {
+      setSelectedClient(data[0].id);
+    }
+  }, [user, isStaffRole]);
 
   // Fetch bills data
   const fetchBillsData = useCallback(async () => {
@@ -741,18 +755,15 @@ const TwoBReconciliationPage: React.FC = () => {
         <CardContent className="p-4">
           <div className="flex items-center gap-4">
             <div className="flex-1 max-w-xs">
-              <Select value={selectedClient} onValueChange={setSelectedClient}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select Client" />
-                </SelectTrigger>
-                <SelectContent>
-                  {clients.map((client) => (
-                    <SelectItem key={client.id} value={client.id}>
-                      {client.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                options={clients.map(c => ({ value: c.id, label: c.name, sublabel: c.gstin }))}
+                value={selectedClient}
+                onValueChange={setSelectedClient}
+                placeholder="Search Client..."
+                searchPlaceholder="Type to search clients..."
+                emptyText="No clients found."
+                disabled={!isStaffRole() && clients.length <= 1}
+              />
             </div>
             <div className="w-40">
               <Select value={selectedMonth} onValueChange={setSelectedMonth}>

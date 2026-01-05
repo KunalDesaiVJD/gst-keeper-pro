@@ -172,7 +172,7 @@ const EditClientPage: React.FC = () => {
         .update({
           gstin: formData.gstin,
           name: formData.name,
-          registration_type: formData.registrationType as 'Regular' | 'Composition' | 'Tax Deductor',
+          registration_type: formData.registrationType as 'Regular' | 'Composition' | 'Tax Deductor' | 'ISD',
           registration_date: formData.registrationDate,
           mobile: formData.mobile || null,
           email: formData.email || null,
@@ -296,6 +296,7 @@ const EditClientPage: React.FC = () => {
                   <SelectItem value="Regular">Regular</SelectItem>
                   <SelectItem value="Composition">Composition</SelectItem>
                   <SelectItem value="Tax Deductor">Tax Deductor</SelectItem>
+                  <SelectItem value="ISD">ISD (Input Service Distributor)</SelectItem>
                 </SelectContent>
               </Select>
               {errors.registrationType && <p className="text-sm text-destructive">{errors.registrationType}</p>}

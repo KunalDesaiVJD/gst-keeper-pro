@@ -126,7 +126,7 @@ const AddClientPage: React.FC = () => {
         .insert([{
           gstin: formData.gstin,
           name: formData.name,
-          registration_type: formData.registrationType as 'Regular' | 'Composition' | 'Tax Deductor',
+          registration_type: formData.registrationType as 'Regular' | 'Composition' | 'Tax Deductor' | 'ISD',
           registration_date: formData.registrationDate,
           mobile: formData.mobile || null,
           email: formData.email || null,
@@ -274,6 +274,7 @@ const AddClientPage: React.FC = () => {
                   <SelectItem value="Regular">Regular</SelectItem>
                   <SelectItem value="Composition">Composition</SelectItem>
                   <SelectItem value="Tax Deductor">Tax Deductor</SelectItem>
+                  <SelectItem value="ISD">ISD (Input Service Distributor)</SelectItem>
                 </SelectContent>
               </Select>
               {errors.registrationType && <p className="text-sm text-destructive">{errors.registrationType}</p>}
@@ -305,9 +306,10 @@ const AddClientPage: React.FC = () => {
                 </div>
                 {errors.returns && <p className="text-sm text-destructive">{errors.returns}</p>}
                 <p className="text-xs text-muted-foreground">
-                  {formData.registrationType === 'Regular' && 'Regular taxpayers can file GSTR-1, GSTR-3B, ITC-04, and GSTR-6'}
+                  {formData.registrationType === 'Regular' && 'Regular taxpayers can file GSTR-1, GSTR-3B, and ITC-04'}
                   {formData.registrationType === 'Composition' && 'Composition dealers file CMP-08 quarterly'}
                   {formData.registrationType === 'Tax Deductor' && 'Tax Deductors file GSTR-7 monthly'}
+                  {formData.registrationType === 'ISD' && 'Input Service Distributors file GSTR-6 monthly'}
                 </p>
               </div>
             )}

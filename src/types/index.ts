@@ -1,8 +1,8 @@
 // User Roles
 export type UserRole = 'superadmin' | 'gst_manager' | 'employee' | 'client';
 
-// Registration Types
-export type RegistrationType = 'Regular' | 'Composition' | 'Tax Deductor';
+// Registration Types - ISD added for GSTR-6
+export type RegistrationType = 'Regular' | 'Composition' | 'Tax Deductor' | 'ISD';
 
 // Return Types
 export type ReturnType = 'GSTR-1' | 'GSTR-3B' | 'ITC-04' | 'GSTR-6' | 'GSTR-7' | 'CMP-08';
@@ -176,8 +176,10 @@ export interface AuthState {
 }
 
 // Return type availability based on registration type
+// GSTR-6 moved from Regular to ISD
 export const RETURN_TYPES_BY_REGISTRATION: Record<RegistrationType, ReturnType[]> = {
-  'Regular': ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6'],
+  'Regular': ['GSTR-1', 'GSTR-3B', 'ITC-04'],
   'Composition': ['CMP-08'],
   'Tax Deductor': ['GSTR-7'],
+  'ISD': ['GSTR-6'],
 };
