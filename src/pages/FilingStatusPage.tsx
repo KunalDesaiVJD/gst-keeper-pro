@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Download, FileText, Upload, Lock, Unlock } from 'lucide-react';
+import { Download, FileText, Upload, Lock, Unlock, Search, Filter } from 'lucide-react';
 import { FilingStatusType, ReturnType } from '@/types';
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
@@ -49,6 +49,10 @@ const FilingStatusPage: React.FC = () => {
   const [filingRecords, setFilingRecords] = useState<FilingRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Filter states
+  const [clientNameFilter, setClientNameFilter] = useState<string>('');
+  const [targetDateFilter, setTargetDateFilter] = useState<string>('all');
 
   const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08'];
 
@@ -330,93 +334,125 @@ const FilingStatusPage: React.FC = () => {
     }
   };
 
-  const FilingTable = ({ records, returnType }: { records: FilingRecord[]; returnType: string }) => (
-    <div className="overflow-x-auto">
-      <table className="gst-table">
-        <thead>
-          <tr>
-            <th className="w-12">No.</th>
-            <th>Client Name</th>
-            <th>Accountant</th>
-            <th>Frequency</th>
-            <th>Contact</th>
-            <th>Email</th>
-            <th>Status</th>
-            <th className="w-20">Target</th>
-            <th className="w-28">Filed Date</th>
-            <th>Remarks</th>
-            {canUnlockSheets() && <th className="w-20">Action</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {records.map((record, idx) => (
-            <tr key={record.id} className={record.is_locked ? 'bg-muted/30' : ''}>
-              <td>{idx + 1}</td>
-              <td className="font-medium">
-                {record.clientName}
-                {record.is_locked && <Lock className="h-3 w-3 inline ml-2 text-muted-foreground" />}
-              </td>
-              <td>{record.accountantName}</td>
-              <td>
-                <Badge variant="outline" className="text-xs">
-                  {record.filingFrequency}
-                </Badge>
-              </td>
-              <td>{record.contactNumber}</td>
-              <td className="text-xs">{record.clientEmail}</td>
-              <td>
-                <Select 
-                  value={record.status} 
-                  disabled={record.is_locked && !canUnlockSheets()}
-                  onValueChange={(value) => handleStatusChange(record, value as FilingStatusType)}
-                >
-                  <SelectTrigger className="w-40 h-8">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Prepared">Prepared</SelectItem>
-                    <SelectItem value="Data Pending">Data Pending</SelectItem>
-                    <SelectItem value="Mismatch in Data">Mismatch in Data</SelectItem>
-                    <SelectItem value="Not Verified">Not Verified</SelectItem>
-                    <SelectItem value="Filed">Filed</SelectItem>
-                  </SelectContent>
-                </Select>
-              </td>
-              <td className="text-center">{record.target_date}</td>
-              <td>
-                {record.filed_date 
-                  ? new Date(record.filed_date).toLocaleDateString('en-IN')
-                  : '-'
-                }
-              </td>
-              <td className="text-xs text-muted-foreground">{record.remarks || '-'}</td>
-              {canUnlockSheets() && (
-                <td>
-                  {record.is_locked && (
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      onClick={() => handleUnlock(record)}
-                      className="h-7 px-2"
-                    >
-                      <Unlock className="h-3 w-3" />
-                    </Button>
-                  )}
-                </td>
-              )}
-            </tr>
-          ))}
-          {records.length === 0 && (
+  // Apply filters to records
+  const applyFilters = (records: FilingRecord[]): FilingRecord[] => {
+    return records.filter(record => {
+      // Client name filter
+      if (clientNameFilter && !record.clientName?.toLowerCase().includes(clientNameFilter.toLowerCase())) {
+        return false;
+      }
+      // Target date filter
+      if (targetDateFilter !== 'all' && record.target_date !== parseInt(targetDateFilter)) {
+        return false;
+      }
+      return true;
+    });
+  };
+
+  // Get unique target dates for filter dropdown
+  const getUniqueTargetDates = (): number[] => {
+    const dates = new Set<number>();
+    allReturnTypes.forEach(rt => {
+      generateAllFilingRecords(rt).forEach(r => {
+        if (r.target_date) dates.add(r.target_date);
+      });
+    });
+    return Array.from(dates).sort((a, b) => a - b);
+  };
+
+  const FilingTable = ({ records, returnType }: { records: FilingRecord[]; returnType: string }) => {
+    const filteredRecords = applyFilters(records);
+    
+    return (
+      <div className="overflow-x-auto">
+        <table className="gst-table">
+          <thead>
             <tr>
-              <td colSpan={canUnlockSheets() ? 11 : 10} className="text-center py-8 text-muted-foreground">
-                No clients have {returnType} selected.
-              </td>
+              <th className="w-12">No.</th>
+              <th>Client Name</th>
+              <th>Accountant</th>
+              <th>Frequency</th>
+              <th>Contact</th>
+              <th>Email</th>
+              <th>Status</th>
+              <th className="w-20">Target</th>
+              <th className="w-28">Filed Date</th>
+              <th>Remarks</th>
+              {canUnlockSheets() && <th className="w-20">Action</th>}
             </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
+          </thead>
+          <tbody>
+            {filteredRecords.map((record, idx) => (
+              <tr key={record.id} className={record.is_locked ? 'bg-muted/30' : ''}>
+                <td>{idx + 1}</td>
+                <td className="font-medium">
+                  {record.clientName}
+                  {record.is_locked && <Lock className="h-3 w-3 inline ml-2 text-muted-foreground" />}
+                </td>
+                <td>{record.accountantName}</td>
+                <td>
+                  <Badge variant="outline" className="text-xs">
+                    {record.filingFrequency}
+                  </Badge>
+                </td>
+                <td>{record.contactNumber}</td>
+                <td className="text-xs">{record.clientEmail}</td>
+                <td>
+                  <Select 
+                    value={record.status} 
+                    disabled={record.is_locked && !canUnlockSheets()}
+                    onValueChange={(value) => handleStatusChange(record, value as FilingStatusType)}
+                  >
+                    <SelectTrigger className="w-40 h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Prepared">Prepared</SelectItem>
+                      <SelectItem value="Data Pending">Data Pending</SelectItem>
+                      <SelectItem value="Mismatch in Data">Mismatch in Data</SelectItem>
+                      <SelectItem value="Not Verified">Not Verified</SelectItem>
+                      <SelectItem value="Filed">Filed</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </td>
+                <td className="text-center">{record.target_date}</td>
+                <td>
+                  {record.filed_date 
+                    ? new Date(record.filed_date).toLocaleDateString('en-IN')
+                    : '-'
+                  }
+                </td>
+                <td className="text-xs text-muted-foreground">{record.remarks || '-'}</td>
+                {canUnlockSheets() && (
+                  <td>
+                    {record.is_locked && (
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => handleUnlock(record)}
+                        className="h-7 px-2"
+                      >
+                        <Unlock className="h-3 w-3" />
+                      </Button>
+                    )}
+                  </td>
+                )}
+              </tr>
+            ))}
+            {filteredRecords.length === 0 && (
+              <tr>
+                <td colSpan={canUnlockSheets() ? 11 : 10} className="text-center py-8 text-muted-foreground">
+                  {records.length === 0 
+                    ? `No clients have ${returnType} selected.`
+                    : 'No records match your filters.'}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
 
   if (isLoading) {
     return (
@@ -455,10 +491,16 @@ const FilingStatusPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Month Filter */}
+      {/* Filters */}
       <Card>
         <CardContent className="p-4">
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Filter className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-medium">Filters:</span>
+            </div>
+            
+            {/* Month Filter */}
             <div className="w-48">
               <Select value={selectedMonth} onValueChange={setSelectedMonth}>
                 <SelectTrigger>
@@ -472,6 +514,50 @@ const FilingStatusPage: React.FC = () => {
                 </SelectContent>
               </Select>
             </div>
+            
+            {/* Client Name Filter */}
+            <div className="relative w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Search client name..."
+                value={clientNameFilter}
+                onChange={(e) => setClientNameFilter(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 text-sm border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+            </div>
+            
+            {/* Target Date Filter */}
+            <div className="w-40">
+              <Select value={targetDateFilter} onValueChange={setTargetDateFilter}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Target Date" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Targets</SelectItem>
+                  {getUniqueTargetDates().map(date => (
+                    <SelectItem key={date} value={date.toString()}>
+                      {date}th
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            
+            {/* Clear Filters */}
+            {(clientNameFilter || targetDateFilter !== 'all') && (
+              <Button 
+                variant="ghost" 
+                size="sm"
+                onClick={() => {
+                  setClientNameFilter('');
+                  setTargetDateFilter('all');
+                }}
+                className="text-muted-foreground"
+              >
+                Clear Filters
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>

@@ -9,14 +9,14 @@ import {
   AlertTriangle, 
   CheckCircle2, 
   Clock,
-  Plus,
-  Pencil,
   FileText,
   Calculator,
   ClipboardList,
   Calendar
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import ClientManagementSection from './ClientManagementSection';
+import EmployeeManagementSection from './EmployeeManagementSection';
 
 interface DashboardMetrics {
   totalClients: number;
@@ -37,7 +37,6 @@ const StaffDashboard: React.FC = () => {
   });
   const [isLoading, setIsLoading] = useState(true);
 
-  // Generate last 12 months for dropdown
   const generateMonths = () => {
     const months: { value: string; label: string }[] = [];
     const now = new Date();
@@ -55,12 +54,10 @@ const StaffDashboard: React.FC = () => {
   const fetchMetrics = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Fetch total clients
       const { count: clientCount } = await supabase
         .from('clients')
         .select('*', { count: 'exact', head: true });
 
-      // Fetch filing status for selected month
       const { data: filingData } = await supabase
         .from('filing_status')
         .select('status, filed_date, target_date')
@@ -70,7 +67,6 @@ const StaffDashboard: React.FC = () => {
       const pendingFilings = filingData?.filter(f => pendingStatuses.includes(f.status || ''))?.length || 0;
       const filedThisMonth = filingData?.filter(f => f.status === 'Filed')?.length || 0;
       
-      // Calculate late filings (filed after target date)
       const lateFilings = filingData?.filter(f => {
         if (f.status !== 'Filed' || !f.filed_date || !f.target_date) return false;
         const filedDay = new Date(f.filed_date).getDate();
@@ -94,7 +90,6 @@ const StaffDashboard: React.FC = () => {
     fetchMetrics();
   }, [fetchMetrics]);
 
-  // Real-time subscription
   useEffect(() => {
     const channel = supabase
       .channel('dashboard-changes')
@@ -143,16 +138,6 @@ const StaffDashboard: React.FC = () => {
   ];
 
   const quickActions = [
-    {
-      label: 'Add Client',
-      icon: <Plus className="h-4 w-4" />,
-      onClick: () => navigate('/add-client'),
-    },
-    {
-      label: 'Edit Client',
-      icon: <Pencil className="h-4 w-4" />,
-      onClick: () => navigate('/clients'),
-    },
     {
       label: '2B Reconciliation',
       icon: <FileText className="h-4 w-4" />,
@@ -238,6 +223,12 @@ const StaffDashboard: React.FC = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Management Sections */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <ClientManagementSection />
+        <EmployeeManagementSection />
+      </div>
     </div>
   );
 };
