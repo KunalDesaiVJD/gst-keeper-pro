@@ -8,7 +8,7 @@ export const mockUsers: User[] = [
     firstName: 'Admin',
     role: 'superadmin',
     email: 'admin@vjdesai.com',
-    isFirstLogin: true, // First login - force password change
+    isFirstLogin: true,
     createdAt: new Date('2024-01-01'),
   },
   {
@@ -17,7 +17,7 @@ export const mockUsers: User[] = [
     firstName: 'Kunal',
     role: 'gst_manager',
     email: 'kunal@vjdesai.com',
-    isFirstLogin: true, // First login - force password change
+    isFirstLogin: true,
     createdAt: new Date('2024-01-01'),
   },
   {
@@ -26,7 +26,7 @@ export const mockUsers: User[] = [
     firstName: 'Amit',
     role: 'employee',
     email: 'amit@vjdesai.com',
-    isFirstLogin: true, // First login - force password change
+    isFirstLogin: true,
     createdAt: new Date('2024-01-01'),
   },
   {
@@ -35,7 +35,25 @@ export const mockUsers: User[] = [
     firstName: 'Priya',
     role: 'employee',
     email: 'priya@vjdesai.com',
-    isFirstLogin: true, // First login - force password change
+    isFirstLogin: true,
+    createdAt: new Date('2024-01-01'),
+  },
+  {
+    id: '5',
+    userId: 'Karan',
+    firstName: 'Karan',
+    role: 'gst_manager',
+    email: 'karan@staff.local',
+    isFirstLogin: true,
+    createdAt: new Date('2024-01-01'),
+  },
+  {
+    id: '6',
+    userId: 'Umang',
+    firstName: 'Umang',
+    role: 'employee',
+    email: 'umang@staff.local',
+    isFirstLogin: true,
     createdAt: new Date('2024-01-01'),
   },
   // Client users (PAN-based)
@@ -83,6 +101,8 @@ export const mockPasswords: Record<string, string> = {
   'Kunal': '2026',
   'Amit': '2026',
   'Priya': '2026',
+  'Karan': '2026',
+  'Umang': '2026',
   'AAQCS2345D': 'AAQCS2345D',
   'ABCDE1234F': 'ABCDE1234F',
   'PANDE7890K': 'PANDE7890K',
