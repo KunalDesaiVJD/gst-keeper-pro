@@ -10,7 +10,7 @@ import { ArrowLeft, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
-import { mockPasswords, mockUsers } from '@/data/mockData';
+import { mockPasswords } from '@/data/mockData';
 import ClientCredentialsSection from '@/components/clients/ClientCredentialsSection';
 import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
 
@@ -168,18 +168,9 @@ const AddClientPage: React.FC = () => {
         }
       }
 
-      // If credentials were generated, add to mock data for login
+      // If credentials were generated, add to mock passwords for client login
       if (clientCredentials) {
         mockPasswords[clientCredentials.userId] = clientCredentials.password;
-        mockUsers.push({
-          id: `client-${Date.now()}`,
-          userId: clientCredentials.userId,
-          firstName: formData.name,
-          role: 'client',
-          email: formData.email,
-          isFirstLogin: true, // Require password change on first login
-          createdAt: new Date(),
-        });
       }
 
       toast.success(`${formData.name} has been successfully added.`);

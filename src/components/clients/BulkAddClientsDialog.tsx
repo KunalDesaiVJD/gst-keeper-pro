@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/integrations/supabase/client';
 import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
-import { mockPasswords, mockUsers } from '@/data/mockData';
+import { mockPasswords } from '@/data/mockData';
 
 interface ValidationResult {
   row: number;
@@ -271,17 +271,8 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
           }
         }
 
-        // Add to mock data for login
+        // Add to mock passwords for client login
         mockPasswords[userId] = password;
-        mockUsers.push({
-          id: `client-${Date.now()}-${successCount}`,
-          userId,
-          firstName: data.name,
-          role: 'client',
-          email: data.email,
-          isFirstLogin: true,
-          createdAt: new Date(),
-        });
 
         successCount++;
       } catch (error: any) {

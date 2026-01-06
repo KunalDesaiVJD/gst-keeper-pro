@@ -16,7 +16,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { Navigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
-import { mockPasswords, mockUsers } from '@/data/mockData';
+
 
 interface Employee {
   id: string;
@@ -156,23 +156,7 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
         throw roleError;
       }
 
-      // Also add to mockPasswords for immediate login capability
-      mockPasswords[newEmployee.firstName] = '2026';
-      
-      // Add to mockUsers array for login
-      const newMockUser = {
-        id: tempUserId,
-        userId: newEmployee.firstName,
-        firstName: newEmployee.firstName,
-        role: newEmployee.role,
-        email: email,
-        isFirstLogin: true,
-        createdAt: new Date(),
-      };
-      
-      if (!mockUsers.find(u => u.userId === newEmployee.firstName)) {
-        mockUsers.push(newMockUser);
-      }
+      // Employees are now fully managed in Supabase - no mock data needed
 
       toast({
         title: 'Employee Added',
@@ -206,10 +190,7 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
         .delete()
         .eq('id', employeeId);
 
-      // Remove from mock data
-      delete mockPasswords[name];
-      const mockIndex = mockUsers.findIndex(u => u.userId === name);
-      if (mockIndex > -1) mockUsers.splice(mockIndex, 1);
+      // Employees are now fully managed in Supabase - no mock data needed
 
       toast({
         title: 'Employee Removed',
