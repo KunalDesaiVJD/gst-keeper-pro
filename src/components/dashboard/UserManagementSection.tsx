@@ -54,6 +54,18 @@ const UserManagementSection: React.FC = () => {
   const fetchEmployees = useCallback(async () => {
     setIsLoading(true);
     try {
+      // Fetch all profiles first
+      const { data: allProfiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, user_id, first_name, email');
+      
+      if (profilesError) {
+        console.error('UserManagement - Error fetching profiles:', profilesError);
+        throw profilesError;
+      }
+
+      console.log('UserManagement - All profiles fetched:', allProfiles?.length);
+
       // Fetch all staff roles (not superadmin, not client)
       const { data: roles, error: rolesError } = await supabase
         .from('user_roles')
@@ -65,7 +77,7 @@ const UserManagementSection: React.FC = () => {
         throw rolesError;
       }
 
-      console.log('UserManagement - Roles fetched:', roles?.length, roles);
+      console.log('UserManagement - Roles fetched:', roles?.length);
 
       if (!roles || roles.length === 0) {
         setEmployees([]);
@@ -73,53 +85,39 @@ const UserManagementSection: React.FC = () => {
         return;
       }
 
-      // Deduplicate roles by user_id (keep first occurrence)
-      const uniqueRoleMap = new Map<string, string>();
+      // Create a role map by user_id (dedupe by user_id)
+      const roleMap = new Map<string, string>();
       roles.forEach(r => {
-        if (!uniqueRoleMap.has(r.user_id)) {
-          uniqueRoleMap.set(r.user_id, r.role);
+        if (!roleMap.has(r.user_id)) {
+          roleMap.set(r.user_id, r.role);
         }
       });
 
-      const staffUserIds = Array.from(uniqueRoleMap.keys());
-      console.log('UserManagement - Unique staff user_ids:', staffUserIds.length);
+      console.log('UserManagement - Unique role user_ids:', roleMap.size);
 
-      // Fetch profiles for these staff users
-      const { data: profiles, error: profilesError } = await supabase
-        .from('profiles')
-        .select('id, user_id, first_name, email')
-        .in('user_id', staffUserIds);
-      
-      if (profilesError) {
-        console.error('UserManagement - Error fetching profiles:', profilesError);
-        throw profilesError;
-      }
-
-      console.log('UserManagement - Profiles fetched:', profiles?.length, profiles);
-
-      // Build employee list - one profile per user_id
+      // Build employee list by matching profiles to roles
       const seenUserIds = new Set<string>();
       const employeeList: Employee[] = [];
       let gstManagerCount = 0;
       let employeeCount = 0;
 
-      (profiles || []).forEach(profile => {
-        if (!seenUserIds.has(profile.user_id)) {
+      (allProfiles || []).forEach(profile => {
+        const role = roleMap.get(profile.user_id);
+        
+        // Only include if this profile has a staff role and we haven't seen this user_id yet
+        if (role && !seenUserIds.has(profile.user_id)) {
           seenUserIds.add(profile.user_id);
-          const role = uniqueRoleMap.get(profile.user_id) as 'gst_manager' | 'employee';
           
-          if (role) {
-            employeeList.push({
-              id: profile.id,
-              user_id: profile.user_id,
-              first_name: profile.first_name,
-              email: profile.email,
-              role: role,
-            });
+          employeeList.push({
+            id: profile.id,
+            user_id: profile.user_id,
+            first_name: profile.first_name,
+            email: profile.email,
+            role: role as 'gst_manager' | 'employee',
+          });
 
-            if (role === 'gst_manager') gstManagerCount++;
-            else if (role === 'employee') employeeCount++;
-          }
+          if (role === 'gst_manager') gstManagerCount++;
+          else if (role === 'employee') employeeCount++;
         }
       });
 
