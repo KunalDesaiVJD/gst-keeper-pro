@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { 
-  Users, 
   AlertTriangle, 
   CheckCircle2, 
   Clock,
@@ -15,13 +14,12 @@ import {
   ClipboardList,
   Calendar,
   Building2,
-  Shield,
   ChevronDown,
   ChevronUp
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import ClientManagementSection from './ClientManagementSection';
-import EmployeeManagementSection from './EmployeeManagementSection';
+import UserManagementSection from './UserManagementSection';
 import PasswordResetRequestsSection from './PasswordResetRequestsSection';
 import { ReturnType } from '@/types';
 
@@ -39,11 +37,6 @@ interface ReturnMetrics {
   filed: number;
 }
 
-interface UserMetrics {
-  totalEmployees: number;
-  gstManagers: number;
-  employees: number;
-}
 
 const StaffDashboard: React.FC = () => {
   const { user, canManageEmployees } = useAuth();
@@ -56,13 +49,7 @@ const StaffDashboard: React.FC = () => {
     filedThisMonth: 0,
   });
   const [returnMetrics, setReturnMetrics] = useState<ReturnMetrics[]>([]);
-  const [userMetrics, setUserMetrics] = useState<UserMetrics>({
-    totalEmployees: 0,
-    gstManagers: 0,
-    employees: 0,
-  });
   const [showReturnBreakdown, setShowReturnBreakdown] = useState(false);
-  const [selectedUserFilter, setSelectedUserFilter] = useState<'all' | 'gst_manager' | 'employee'>('all');
   const [isLoading, setIsLoading] = useState(true);
 
   const generateMonths = () => {
@@ -158,54 +145,7 @@ const StaffDashboard: React.FC = () => {
       }).filter(rm => rm.totalClients > 0); // Only show returns with clients
 
       setReturnMetrics(returnMetricsData);
-
-      // Fetch user/employee metrics if superadmin
-      if (canManageEmployees()) {
-        // First fetch all profiles
-        const { data: profiles } = await supabase
-          .from('profiles')
-          .select('user_id, first_name');
-        
-        // Then fetch roles for staff
-        const { data: roles } = await supabase
-          .from('user_roles')
-          .select('user_id, role')
-          .in('role', ['employee', 'gst_manager']);
-        
-        console.log('Dashboard - Profiles:', profiles?.length, profiles);
-        console.log('Dashboard - Roles:', roles?.length, roles);
-
-        // Create role map (dedupe by user_id)
-        const roleMap = new Map<string, string>();
-        (roles || []).forEach(role => {
-          if (!roleMap.has(role.user_id)) {
-            roleMap.set(role.user_id, role.role);
-          }
-        });
-
-        // Count unique user_ids with roles (dedupe by user_id, not name)
-        const seenUserIds = new Set<string>();
-        let gstManagers = 0;
-        let employees = 0;
-
-        (profiles || []).forEach(profile => {
-          const role = roleMap.get(profile.user_id);
-          
-          if (role && !seenUserIds.has(profile.user_id)) {
-            seenUserIds.add(profile.user_id);
-            if (role === 'gst_manager') gstManagers++;
-            else if (role === 'employee') employees++;
-          }
-        });
-
-        console.log('Dashboard - Metrics:', { gstManagers, employees, total: gstManagers + employees });
-        
-        setUserMetrics({
-          totalEmployees: gstManagers + employees,
-          gstManagers,
-          employees,
-        });
-      }
+      // User metrics are now handled by UserManagementSection component
     } catch (error) {
       console.error('Error fetching metrics:', error);
     } finally {
@@ -267,26 +207,6 @@ const StaffDashboard: React.FC = () => {
     },
   ];
 
-  const userMetricCards = [
-    {
-      label: 'Total Staff',
-      value: userMetrics.totalEmployees,
-      icon: <Users className="h-6 w-6 text-primary" />,
-      filterValue: 'all' as const,
-    },
-    {
-      label: 'GST Managers',
-      value: userMetrics.gstManagers,
-      icon: <Shield className="h-6 w-6 text-primary" />,
-      filterValue: 'gst_manager' as const,
-    },
-    {
-      label: 'Employees',
-      value: userMetrics.employees,
-      icon: <Users className="h-6 w-6 text-muted-foreground" />,
-      filterValue: 'employee' as const,
-    },
-  ];
 
   const quickActions = [
     {
@@ -432,47 +352,7 @@ const StaffDashboard: React.FC = () => {
       </Card>
 
       {/* User Management Section - Superadmin Only */}
-      {canManageEmployees() && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5 text-primary" />
-              User Management
-            </CardTitle>
-            <CardDescription>Overview of staff members</CardDescription>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-              {userMetricCards.map((card, index) => (
-                <Card 
-                  key={index}
-                  className={`border cursor-pointer transition-all duration-200 ${
-                    selectedUserFilter === card.filterValue 
-                      ? 'ring-2 ring-primary bg-primary/5' 
-                      : 'hover:bg-muted/30'
-                  }`}
-                  onClick={() => setSelectedUserFilter(card.filterValue)}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-full bg-primary/5">
-                        {card.icon}
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">{card.label}</p>
-                        <p className="text-2xl font-bold">{isLoading ? '...' : card.value}</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-
-            {/* Embedded Employee Management with filter */}
-            <EmployeeManagementSection filterRole={selectedUserFilter} />
-          </CardContent>
-        </Card>
-      )}
+      {canManageEmployees() && <UserManagementSection />}
 
       {/* Client Management Detail Section */}
       <ClientManagementSection />
