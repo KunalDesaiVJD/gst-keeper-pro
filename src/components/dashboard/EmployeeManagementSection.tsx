@@ -16,7 +16,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { mockPasswords, mockUsers } from '@/data/mockData';
+
 
 interface Employee {
   id: string;
@@ -154,17 +154,7 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
         throw roleError;
       }
 
-      // Add to mock data for login
-      mockPasswords[newEmployee.firstName] = '2026';
-      mockUsers.push({
-        id: tempUserId,
-        userId: newEmployee.firstName,
-        firstName: newEmployee.firstName,
-        role: newEmployee.role,
-        email: email,
-        isFirstLogin: true,
-        createdAt: new Date(),
-      });
+      // No need to update mock data - employees are now fully in Supabase
 
       toast({
         title: 'Employee Added',
@@ -192,10 +182,7 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
       await supabase.from('user_roles').delete().eq('user_id', userId);
       await supabase.from('profiles').delete().eq('id', employeeId);
 
-      // Remove from mock data
-      delete mockPasswords[name];
-      const mockIndex = mockUsers.findIndex(u => u.userId === name);
-      if (mockIndex > -1) mockUsers.splice(mockIndex, 1);
+      // No need to update mock data - employees are now fully in Supabase
 
       toast({
         title: 'Employee Removed',
@@ -228,9 +215,7 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
 
       if (error) throw error;
 
-      // Update mock data
-      const mockUser = mockUsers.find(u => u.userId === editingEmployee.first_name);
-      if (mockUser) mockUser.role = editingEmployee.role;
+      // No need to update mock data - employees are now fully in Supabase
 
       toast({
         title: 'Role Updated',
