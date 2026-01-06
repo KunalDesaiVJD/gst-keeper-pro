@@ -75,15 +75,7 @@ const UserControlPage: React.FC = () => {
     const fetchEmployees = async () => {
       setLoading(true);
       try {
-        // First fetch all profiles
-        const { data: profilesData, error: profilesError } = await supabase
-          .from('profiles')
-          .select('user_id, first_name, email');
-
-        if (profilesError) throw profilesError;
-        console.log('UserControl - Profiles fetched:', profilesData?.length, profilesData);
-
-        // Then fetch roles for staff
+        // Fetch roles first to get staff user_ids
         const { data: rolesData, error: rolesError } = await supabase
           .from('user_roles')
           .select('user_id, role')
@@ -98,6 +90,9 @@ const UserControlPage: React.FC = () => {
           return;
         }
 
+        // Get unique user_ids from roles
+        const staffUserIds = [...new Set(rolesData.map(r => r.user_id))];
+
         // Create role map (dedupe by user_id, first occurrence wins)
         const roleMap = new Map<string, string>();
         rolesData.forEach(role => {
@@ -107,16 +102,24 @@ const UserControlPage: React.FC = () => {
         });
         console.log('UserControl - Role map size:', roleMap.size);
 
-        // Build employee list by joining profiles with roles, dedupe by first_name
-        const seenNames = new Set<string>();
+        // Fetch profiles only for staff users
+        const { data: profilesData, error: profilesError } = await supabase
+          .from('profiles')
+          .select('user_id, first_name, email')
+          .in('user_id', staffUserIds);
+
+        if (profilesError) throw profilesError;
+        console.log('UserControl - Profiles fetched:', profilesData?.length, profilesData);
+
+        // Build employee list - dedupe by user_id (not name)
+        const seenUserIds = new Set<string>();
         const employeeList: Employee[] = [];
         
         (profilesData || []).forEach(profile => {
           const role = roleMap.get(profile.user_id);
-          const nameLower = profile.first_name?.toLowerCase();
           
-          if (role && profile.first_name && profile.first_name !== 'Unknown' && !seenNames.has(nameLower)) {
-            seenNames.add(nameLower);
+          if (role && profile.first_name && !seenUserIds.has(profile.user_id)) {
+            seenUserIds.add(profile.user_id);
             employeeList.push({
               user_id: profile.user_id,
               first_name: profile.first_name,
