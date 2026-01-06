@@ -452,9 +452,32 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      authenticate_staff: {
+        Args: { identifier: string; pass: string }
+        Returns: {
+          email: string
+          first_name: string
+          is_first_login: boolean
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }[]
+      }
+      complete_first_login: {
+        Args: { new_password: string; target_user_id: string }
+        Returns: undefined
+      }
       get_user_role: {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["app_role"]
+      }
+      get_user_snapshot: {
+        Args: { target_user_id: string }
+        Returns: {
+          email: string
+          first_name: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }[]
       }
       has_role: {
         Args: {

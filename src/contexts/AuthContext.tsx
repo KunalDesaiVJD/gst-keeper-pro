@@ -157,29 +157,52 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = useCallback(async (identifier: string, password: string): Promise<{ success: boolean; isFirstLogin?: boolean }> => {
     try {
-      // Step 1: Find the user by name or email
-      let profile: { user_id: string; first_name: string; email: string; password: string | null } | null = null;
-      
-      if (identifier.includes('@')) {
-        // Email login
-        const { data } = await supabase
-          .from('profiles')
-          .select('user_id, first_name, email, password')
-          .eq('email', identifier)
-          .maybeSingle();
-        profile = data;
-      } else {
-        // Name-based login (case insensitive)
-        const { data } = await supabase
-          .from('profiles')
-          .select('user_id, first_name, email, password')
-          .ilike('first_name', identifier)
-          .maybeSingle();
-        profile = data;
+      // First try staff authentication using the secure database function
+      const { data: staffData, error: staffError } = await supabase.rpc('authenticate_staff', {
+        identifier: identifier,
+        pass: password
+      });
+
+      if (staffError) {
+        console.error('Staff auth error:', staffError);
       }
 
-      // If not found by profile, check clients table (PAN login)
-      if (!profile && !identifier.includes('@')) {
+      // Check if staff authentication succeeded
+      if (staffData && staffData.length > 0) {
+        const staff = staffData[0];
+        
+        // Check for first login with default password
+        if (staff.is_first_login && password === '2026') {
+          setPendingFirstLogin({ userId: staff.user_id, firstName: staff.first_name });
+          toast({
+            title: 'Password Change Required',
+            description: 'Please set a new password to continue.',
+          });
+          return { success: true, isFirstLogin: true };
+        }
+
+        // Create user object and store
+        const userData: AppUser = {
+          id: staff.user_id,
+          email: staff.email || '',
+          firstName: staff.first_name,
+          role: staff.role as UserRole,
+          userId: staff.first_name,
+        };
+
+        localStorage.setItem(FALLBACK_AUTH_KEY, JSON.stringify(userData));
+        setUser(userData);
+        
+        toast({
+          title: 'Login Successful',
+          description: `Welcome back, ${userData.firstName}!`,
+        });
+        
+        return { success: true, isFirstLogin: false };
+      }
+
+      // If staff auth failed, try client login (PAN-based)
+      if (!identifier.includes('@')) {
         const { data: client } = await supabase
           .from('clients')
           .select('id, name, email, client_user_id')
@@ -218,70 +241,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      if (!profile) {
-        toast({
-          title: 'Login Failed',
-          description: 'User not found.',
-          variant: 'destructive',
-        });
-        return { success: false };
-      }
-
-      // Step 2: Verify password against profiles.password
-      if (profile.password !== password) {
-        toast({
-          title: 'Login Failed',
-          description: 'Invalid password.',
-          variant: 'destructive',
-        });
-        return { success: false };
-      }
-
-      // Step 3: Get user role and first login status
-      const { data: roleData } = await supabase
-        .from('user_roles')
-        .select('role, is_first_login')
-        .eq('user_id', profile.user_id)
-        .maybeSingle();
-
-      if (!roleData) {
-        toast({
-          title: 'Login Failed',
-          description: 'User role not found.',
-          variant: 'destructive',
-        });
-        return { success: false };
-      }
-
-      // Step 4: Check for first login
-      const isDefaultPassword = password === '2026';
-      if (roleData.is_first_login && isDefaultPassword) {
-        setPendingFirstLogin({ userId: profile.user_id, firstName: profile.first_name });
-        toast({
-          title: 'Password Change Required',
-          description: 'Please set a new password to continue.',
-        });
-        return { success: true, isFirstLogin: true };
-      }
-
-      // Step 5: Create user object and store
-      const userData: AppUser = {
-        id: profile.user_id,
-        email: profile.email,
-        firstName: profile.first_name,
-        role: roleData.role as UserRole,
-        userId: profile.first_name,
-      };
-
-      localStorage.setItem(FALLBACK_AUTH_KEY, JSON.stringify(userData));
-      setUser(userData);
-      
+      // No valid user found
       toast({
-        title: 'Login Successful',
-        description: `Welcome back, ${userData.firstName}!`,
+        title: 'Login Failed',
+        description: 'Invalid credentials. Please check your User ID and password.',
+        variant: 'destructive',
       });
-      
-      return { success: true, isFirstLogin: false };
+      return { success: false };
     } catch (error) {
       console.error('Login error:', error);
       toast({
@@ -299,11 +265,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     try {
-      // Update password in profiles table
-      const { error: updateError } = await supabase
-        .from('profiles')
-        .update({ password: newPassword })
-        .eq('user_id', pendingFirstLogin.userId);
+      // Use the secure database function to complete first login
+      const { error: updateError } = await supabase.rpc('complete_first_login', {
+        target_user_id: pendingFirstLogin.userId,
+        new_password: newPassword
+      });
 
       if (updateError) {
         toast({
@@ -314,26 +280,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return false;
       }
 
-      // Update first login status in database
-      await supabase
-        .from('user_roles')
-        .update({ is_first_login: false })
-        .eq('user_id', pendingFirstLogin.userId);
+      // Fetch complete user data using the secure function
+      const { data: userData, error: snapshotError } = await supabase.rpc('get_user_snapshot', {
+        target_user_id: pendingFirstLogin.userId
+      });
 
-      // Fetch complete user data
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('user_id, first_name, email')
-        .eq('user_id', pendingFirstLogin.userId)
-        .maybeSingle();
-
-      const { data: roleData } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', pendingFirstLogin.userId)
-        .maybeSingle();
-
-      if (!profile || !roleData) {
+      if (snapshotError || !userData || userData.length === 0) {
         toast({
           title: 'Error',
           description: 'Failed to complete login.',
@@ -342,21 +294,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return false;
       }
 
-      const userData: AppUser = {
-        id: profile.user_id,
-        email: profile.email || '',
-        firstName: profile.first_name,
-        role: roleData.role as UserRole,
-        userId: profile.first_name,
+      const userInfo = userData[0];
+      const appUser: AppUser = {
+        id: userInfo.user_id,
+        email: userInfo.email || '',
+        firstName: userInfo.first_name,
+        role: userInfo.role as UserRole,
+        userId: userInfo.first_name,
       };
 
-      localStorage.setItem(FALLBACK_AUTH_KEY, JSON.stringify(userData));
-      setUser(userData);
+      localStorage.setItem(FALLBACK_AUTH_KEY, JSON.stringify(appUser));
+      setUser(appUser);
       setPendingFirstLogin(null);
 
       toast({
         title: 'Password Set Successfully',
-        description: `Welcome, ${userData.firstName}!`,
+        description: `Welcome, ${appUser.firstName}!`,
       });
 
       return true;
