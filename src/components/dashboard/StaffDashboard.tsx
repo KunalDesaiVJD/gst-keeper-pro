@@ -183,17 +183,16 @@ const StaffDashboard: React.FC = () => {
           }
         });
 
-        // Count unique names with roles
-        const seenNames = new Set<string>();
+        // Count unique user_ids with roles (dedupe by user_id, not name)
+        const seenUserIds = new Set<string>();
         let gstManagers = 0;
         let employees = 0;
 
         (profiles || []).forEach(profile => {
           const role = roleMap.get(profile.user_id);
-          const nameLower = profile.first_name?.toLowerCase();
           
-          if (role && profile.first_name && !seenNames.has(nameLower)) {
-            seenNames.add(nameLower);
+          if (role && !seenUserIds.has(profile.user_id)) {
+            seenUserIds.add(profile.user_id);
             if (role === 'gst_manager') gstManagers++;
             else if (role === 'employee') employees++;
           }
