@@ -5,10 +5,12 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Badge } from '@/components/ui/badge';
-import { Lock, AlertCircle, Unlock, Save } from 'lucide-react';
+import { Lock, AlertCircle, Unlock, Save, Download } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
+import { exportITCSummaryToPDF } from '@/utils/itcPdfExport';
 import type { Json } from '@/integrations/supabase/types';
 
 interface ITCRow {
@@ -499,6 +501,29 @@ const ITCSummaryPage: React.FC = () => {
     return <span>{row[field].toLocaleString('en-IN')}</span>;
   };
 
+  const handleExportPDF = () => {
+    if (!selectedClientData) {
+      toast.error('Please select a client first');
+      return;
+    }
+    
+    exportITCSummaryToPDF({
+      clientName: selectedClientData.name,
+      clientGstin: selectedClientData.gstin,
+      month: selectedMonth,
+      itcData,
+      total5,
+      total4A,
+      total4B,
+      net4C,
+      totalReclaimed,
+      totalReversal,
+      isLocked,
+    });
+    
+    toast.success('PDF exported successfully');
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
@@ -507,12 +532,20 @@ const ITCSummaryPage: React.FC = () => {
           <h1 className="text-2xl font-heading font-bold text-foreground">ITC Summary</h1>
           <p className="text-muted-foreground">Input Tax Credit summary for the month</p>
         </div>
-        {selectedClient && !isLocked && (
-          <Button onClick={handleSave} disabled={isSaving} className="flex items-center gap-2">
-            <Save className="h-4 w-4" />
-            {isSaving ? 'Saving...' : 'Save Changes'}
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {selectedClient && (
+            <Button variant="outline" onClick={handleExportPDF} className="flex items-center gap-2">
+              <Download className="h-4 w-4" />
+              Download PDF
+            </Button>
+          )}
+          {selectedClient && !isLocked && (
+            <Button onClick={handleSave} disabled={isSaving} className="flex items-center gap-2">
+              <Save className="h-4 w-4" />
+              {isSaving ? 'Saving...' : 'Save Changes'}
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Filters */}

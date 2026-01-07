@@ -5,12 +5,31 @@ import { useToast } from '@/hooks/use-toast';
 
 type UserRole = 'superadmin' | 'gst_manager' | 'employee' | 'client';
 
+interface UserPermissions {
+  manage_employees: boolean;
+  unlock_sheets: boolean;
+  view_version_history: boolean;
+  manage_clients: boolean;
+  edit_filing_status: boolean;
+  export_data: boolean;
+}
+
+const DEFAULT_PERMISSIONS: UserPermissions = {
+  manage_employees: false,
+  unlock_sheets: false,
+  view_version_history: false,
+  manage_clients: false,
+  edit_filing_status: false,
+  export_data: false,
+};
+
 interface AppUser {
   id: string;
   email: string;
   firstName: string;
   role: UserRole;
-  userId: string; // For backward compatibility - PAN for clients, name for staff
+  userId: string;
+  permissions: UserPermissions;
 }
 
 interface AuthContextType {
@@ -26,12 +45,37 @@ interface AuthContextType {
   canUnlockSheets: () => boolean;
   canViewVersionHistory: () => boolean;
   canResetPasswords: () => boolean;
+  canManageClients: () => boolean;
+  canEditFilingStatus: () => boolean;
+  canExportData: () => boolean;
+  hasPermission: (permission: keyof UserPermissions) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Storage key for fallback auth
 const FALLBACK_AUTH_KEY = 'vjdesai_user';
+
+// Fetch permissions from database
+const fetchUserPermissions = async (userId: string): Promise<UserPermissions> => {
+  const { data, error } = await supabase
+    .from('user_permissions')
+    .select('permission_key')
+    .eq('user_id', userId);
+
+  if (error) {
+    console.error('Error fetching permissions:', error);
+    return { ...DEFAULT_PERMISSIONS };
+  }
+
+  const permissions = { ...DEFAULT_PERMISSIONS };
+  data?.forEach(p => {
+    if (p.permission_key in permissions) {
+      permissions[p.permission_key as keyof UserPermissions] = true;
+    }
+  });
+
+  return permissions;
+};
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
@@ -40,17 +84,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [pendingFirstLogin, setPendingFirstLogin] = useState<{ userId: string; firstName: string } | null>(null);
   const { toast } = useToast();
 
-  // Fetch user profile and role from database
   const fetchUserData = useCallback(async (authUserId: string, email: string): Promise<AppUser | null> => {
     try {
-      // Fetch profile
       const { data: profile } = await supabase
         .from('profiles')
         .select('first_name')
         .eq('user_id', authUserId)
         .maybeSingle();
 
-      // Fetch role
       const { data: roleData } = await supabase
         .from('user_roles')
         .select('role')
@@ -63,13 +104,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const firstName = profile?.first_name || email.split('@')[0];
-      
-      // For clients, userId is their PAN (extracted from client record)
-      // For staff, userId is their first_name (for backward compatibility with login)
       let userIdValue = firstName;
       
       if (roleData.role === 'client') {
-        // Try to find the client's PAN
         const { data: client } = await supabase
           .from('clients')
           .select('client_user_id')
@@ -81,12 +118,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
+      // Fetch permissions for staff
+      const permissions = roleData.role !== 'client' 
+        ? await fetchUserPermissions(authUserId)
+        : { ...DEFAULT_PERMISSIONS };
+
       return {
         id: authUserId,
         email: email,
         firstName: firstName,
         role: roleData.role as UserRole,
         userId: userIdValue,
+        permissions,
       };
     } catch (error) {
       console.error('Error fetching user data:', error);
@@ -94,15 +137,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  // Initialize auth state - check for stored fallback session first
   useEffect(() => {
     const initAuth = async () => {
-      // First, check for fallback auth (stored in localStorage)
       const storedUser = localStorage.getItem(FALLBACK_AUTH_KEY);
       if (storedUser) {
         try {
           const parsedUser = JSON.parse(storedUser) as AppUser;
-          // Verify user still exists in database
           const { data: roleData } = await supabase
             .from('user_roles')
             .select('role')
@@ -110,11 +150,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .maybeSingle();
           
           if (roleData) {
-            setUser(parsedUser);
+            // Refresh permissions on load
+            const permissions = roleData.role !== 'client'
+              ? await fetchUserPermissions(parsedUser.id)
+              : { ...DEFAULT_PERMISSIONS };
+            
+            const updatedUser = { ...parsedUser, permissions };
+            setUser(updatedUser);
+            localStorage.setItem(FALLBACK_AUTH_KEY, JSON.stringify(updatedUser));
             setIsLoading(false);
             return;
           } else {
-            // User no longer exists, clear storage
             localStorage.removeItem(FALLBACK_AUTH_KEY);
           }
         } catch {
@@ -122,7 +168,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      // Then check Supabase auth
       const { data: { subscription } } = supabase.auth.onAuthStateChange(
         (event, newSession) => {
           setSession(newSession);
@@ -157,7 +202,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = useCallback(async (identifier: string, password: string): Promise<{ success: boolean; isFirstLogin?: boolean }> => {
     try {
-      // First try staff authentication using the secure database function
       const { data: staffData, error: staffError } = await supabase.rpc('authenticate_staff', {
         identifier: identifier,
         pass: password
@@ -167,11 +211,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error('Staff auth error:', staffError);
       }
 
-      // Check if staff authentication succeeded
       if (staffData && staffData.length > 0) {
         const staff = staffData[0];
         
-        // Check for first login with default password
         if (staff.is_first_login && password === '2026') {
           setPendingFirstLogin({ userId: staff.user_id, firstName: staff.first_name });
           toast({
@@ -181,13 +223,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return { success: true, isFirstLogin: true };
         }
 
-        // Create user object and store
+        // Fetch permissions for staff user
+        const permissions = await fetchUserPermissions(staff.user_id);
+
         const userData: AppUser = {
           id: staff.user_id,
           email: staff.email || '',
           firstName: staff.first_name,
           role: staff.role as UserRole,
           userId: staff.first_name,
+          permissions,
         };
 
         localStorage.setItem(FALLBACK_AUTH_KEY, JSON.stringify(userData));
@@ -201,7 +246,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: true, isFirstLogin: false };
       }
 
-      // If staff auth failed, try client login (PAN-based)
       if (!identifier.includes('@')) {
         const { data: client } = await supabase
           .from('clients')
@@ -210,7 +254,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .maybeSingle();
         
         if (client) {
-          // For clients, password is their PAN
           if (password !== client.client_user_id) {
             toast({
               title: 'Login Failed',
@@ -220,13 +263,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return { success: false };
           }
 
-          // Create client user object
           const clientUser: AppUser = {
             id: client.id,
             email: client.email || '',
             firstName: client.name,
             role: 'client',
             userId: client.client_user_id,
+            permissions: { ...DEFAULT_PERMISSIONS },
           };
 
           localStorage.setItem(FALLBACK_AUTH_KEY, JSON.stringify(clientUser));
@@ -241,7 +284,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      // No valid user found
       toast({
         title: 'Login Failed',
         description: 'Invalid credentials. Please check your User ID and password.',
@@ -265,7 +307,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     try {
-      // Use the secure database function to complete first login
       const { error: updateError } = await supabase.rpc('complete_first_login', {
         target_user_id: pendingFirstLogin.userId,
         new_password: newPassword
@@ -280,7 +321,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return false;
       }
 
-      // Fetch complete user data using the secure function
       const { data: userData, error: snapshotError } = await supabase.rpc('get_user_snapshot', {
         target_user_id: pendingFirstLogin.userId
       });
@@ -295,12 +335,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const userInfo = userData[0];
+      const permissions = await fetchUserPermissions(userInfo.user_id);
+      
       const appUser: AppUser = {
         id: userInfo.user_id,
         email: userInfo.email || '',
         firstName: userInfo.first_name,
         role: userInfo.role as UserRole,
         userId: userInfo.first_name,
+        permissions,
       };
 
       localStorage.setItem(FALLBACK_AUTH_KEY, JSON.stringify(appUser));
@@ -325,12 +368,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [pendingFirstLogin, toast]);
 
   const logout = useCallback(async () => {
-    // Clear fallback auth
     localStorage.removeItem(FALLBACK_AUTH_KEY);
-    
-    // Clear Supabase session if exists
     await supabase.auth.signOut();
-    
     setSession(null);
     setUser(null);
     setPendingFirstLogin(null);
@@ -341,27 +380,61 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   }, [toast]);
 
-  // Role-based permission checks
+  // Role-based permission checks - Superadmin has all permissions by default
   const isStaffRole = useCallback((): boolean => {
     const staffRoles: UserRole[] = ['superadmin', 'gst_manager', 'employee'];
     return user ? staffRoles.includes(user.role) : false;
   }, [user]);
 
-  const canManageEmployees = useCallback((): boolean => {
-    return user?.role === 'superadmin';
+  const hasPermission = useCallback((permission: keyof UserPermissions): boolean => {
+    if (!user) return false;
+    // Superadmin has all permissions
+    if (user.role === 'superadmin') return true;
+    // GST Manager has all permissions
+    if (user.role === 'gst_manager') return true;
+    // Check specific permission for employees
+    return user.permissions[permission] === true;
   }, [user]);
+
+  const canManageEmployees = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin') return true;
+    return hasPermission('manage_employees');
+  }, [user, hasPermission]);
 
   const canUnlockSheets = useCallback((): boolean => {
-    return user?.role === 'superadmin' || user?.role === 'gst_manager';
-  }, [user]);
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission('unlock_sheets');
+  }, [user, hasPermission]);
 
   const canViewVersionHistory = useCallback((): boolean => {
-    return user?.role === 'superadmin' || user?.role === 'gst_manager';
-  }, [user]);
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission('view_version_history');
+  }, [user, hasPermission]);
 
   const canResetPasswords = useCallback((): boolean => {
     return user?.role === 'superadmin' || user?.role === 'gst_manager';
   }, [user]);
+
+  const canManageClients = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission('manage_clients');
+  }, [user, hasPermission]);
+
+  const canEditFilingStatus = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission('edit_filing_status');
+  }, [user, hasPermission]);
+
+  const canExportData = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission('export_data');
+  }, [user, hasPermission]);
 
   return (
     <AuthContext.Provider
@@ -378,6 +451,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canUnlockSheets,
         canViewVersionHistory,
         canResetPasswords,
+        canManageClients,
+        canEditFilingStatus,
+        canExportData,
+        hasPermission,
       }}
     >
       {children}

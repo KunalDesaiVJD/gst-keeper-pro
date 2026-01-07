@@ -659,7 +659,7 @@ const TwoBReconciliationPage: React.FC = () => {
     toast.info('Version restore functionality coming soon');
   };
 
-  // Render editable input for table cells
+  // Render editable input for table cells - FIXED: wider inputs for numbers
   const renderEditableInput = (
     value: string | number | null,
     onChange: (value: any) => void,
@@ -669,6 +669,9 @@ const TwoBReconciliationPage: React.FC = () => {
     if (isLocked) {
       if (type === 'date' && value) {
         return <span>{format(new Date(value as string), 'dd/MM/yyyy')}</span>;
+      }
+      if (type === 'number' && value !== null && value !== undefined) {
+        return <span className="font-mono">{Number(value).toLocaleString('en-IN')}</span>;
       }
       return <span>{value ?? '-'}</span>;
     }
@@ -681,7 +684,7 @@ const TwoBReconciliationPage: React.FC = () => {
           const val = type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value;
           onChange(val);
         }}
-        className={`h-8 text-sm ${className}`}
+        className={`h-8 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${type === 'number' ? 'w-28 text-right font-mono' : ''} ${className}`}
       />
     );
   };
@@ -860,11 +863,11 @@ const TwoBReconciliationPage: React.FC = () => {
                       <th>Supplier Name</th>
                       <th className="w-28">Invoice No.</th>
                       <th className="w-36">GSTIN</th>
-                      <th className="text-right w-28">Taxable Value</th>
-                      <th className="text-right w-24">IGST</th>
-                      <th className="text-right w-24">CGST</th>
-                      <th className="text-right w-24">SGST</th>
-                      <th className="w-24">Reversal</th>
+                      <th className="text-right w-32">Taxable Value</th>
+                      <th className="text-right w-28">IGST</th>
+                      <th className="text-right w-28">CGST</th>
+                      <th className="text-right w-28">SGST</th>
+                      <th className="w-28">Reversal</th>
                       <th className="w-24">Reclaim</th>
                       {!isLocked && <th className="w-12"></th>}
                     </tr>
@@ -1019,11 +1022,11 @@ const TwoBReconciliationPage: React.FC = () => {
                       <th>Supplier Name</th>
                       <th className="w-28">Invoice No.</th>
                       <th className="w-36">GSTIN</th>
-                      <th className="text-right w-28">Taxable Value</th>
-                      <th className="text-right w-24">IGST</th>
-                      <th className="text-right w-24">CGST</th>
-                      <th className="text-right w-24">SGST</th>
-                      <th className="w-24">Book Entry</th>
+                      <th className="text-right w-32">Taxable Value</th>
+                      <th className="text-right w-28">IGST</th>
+                      <th className="text-right w-28">CGST</th>
+                      <th className="text-right w-28">SGST</th>
+                      <th className="w-28">Book Entry</th>
                       <th className="w-24">In 2B</th>
                       {!isLocked && <th className="w-12"></th>}
                     </tr>
