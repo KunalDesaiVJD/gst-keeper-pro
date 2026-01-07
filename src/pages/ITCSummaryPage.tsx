@@ -11,7 +11,6 @@ import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { exportITCSummaryToPDF } from '@/utils/itcPdfExport';
-import type { Json } from '@/integrations/supabase/types';
 
 interface ITCRow {
   srNo: string;
