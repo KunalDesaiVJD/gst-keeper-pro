@@ -22,12 +22,14 @@ const AddClientPage: React.FC = () => {
     gstin: '',
     name: '',
     registrationType: '' as RegistrationType | '',
-    registrationDate: '',
+    registrationDate: '', // Optional - defaults to today if empty
     mobile: '',
     email: '',
     assignedAccountant: '',
-    targetDate: 11,
+    defaultTargetDate: '', // Optional - for GSTR-1, GSTR-7
+    otherTargetDate: '', // Optional - for GSTR-3B, ITC-04
     selectedReturns: [] as ReturnType[],
+    cancellationDate: '', // Optional
   });
 
   const [clientCredentials, setClientCredentials] = useState<{ userId: string; password: string } | null>(null);
@@ -82,8 +84,10 @@ const AddClientPage: React.FC = () => {
       newErrors.registrationType = 'Registration type is required';
     }
 
-    if (!formData.registrationDate) {
-      newErrors.registrationDate = 'Registration date is required';
+    // Registration date is now optional - no validation needed
+
+    if (!formData.assignedAccountant.trim()) {
+      newErrors.assignedAccountant = 'Assigned accountant is required';
     }
 
     if (!formData.mobile) {
@@ -121,18 +125,22 @@ const AddClientPage: React.FC = () => {
     setIsSaving(true);
 
     try {
+      // Use today's date if registration date is not provided
+      const effectiveRegDate = formData.registrationDate || new Date().toISOString().split('T')[0];
+      
       const { data: clientData, error } = await supabase
         .from('clients')
         .insert([{
           gstin: formData.gstin,
           name: formData.name,
           registration_type: formData.registrationType as 'Regular' | 'Composition' | 'Tax Deductor' | 'ISD',
-          registration_date: formData.registrationDate,
+          registration_date: effectiveRegDate,
           mobile: formData.mobile || null,
           email: formData.email || null,
           assigned_accountant: formData.assignedAccountant || null,
           selected_returns: formData.selectedReturns,
           client_user_id: clientCredentials?.userId || null,
+          cancellation_date: formData.cancellationDate || null,
         }])
         .select()
         .single();
@@ -141,7 +149,7 @@ const AddClientPage: React.FC = () => {
 
       // Create filing status records for all selected returns from registration date
       if (clientData) {
-        const regDate = new Date(formData.registrationDate);
+        const regDate = new Date(effectiveRegDate);
         const now = new Date();
         const filingRecords: any[] = [];
         
@@ -151,12 +159,20 @@ const AddClientPage: React.FC = () => {
           const periodMonth = `${String(currentDate.getMonth() + 1).padStart(2, '0')}/${currentDate.getFullYear()}`;
           
           for (const returnType of formData.selectedReturns) {
+            // Determine target date based on return type and user input
+            let targetDate: number | null = null;
+            if (returnType === 'GSTR-1' || returnType === 'GSTR-7') {
+              targetDate = formData.defaultTargetDate ? parseInt(formData.defaultTargetDate) : null;
+            } else if (returnType === 'GSTR-3B' || returnType === 'ITC-04') {
+              targetDate = formData.otherTargetDate ? parseInt(formData.otherTargetDate) : null;
+            }
+            
             filingRecords.push({
               client_id: clientData.id,
               return_type: returnType,
               period_month: periodMonth,
-              status: 'Prepared',
-              target_date: returnType === 'GSTR-1' ? 11 : returnType === 'GSTR-3B' ? 20 : formData.targetDate,
+              status: 'Data Pending',
+              target_date: targetDate,
             });
           }
           
@@ -235,19 +251,17 @@ const AddClientPage: React.FC = () => {
               {errors.name && <p className="text-sm text-destructive">{errors.name}</p>}
             </div>
 
-            {/* Registration Date */}
+            {/* Registration Date - Optional */}
             <div className="space-y-2">
-              <Label htmlFor="registrationDate">Registration Date *</Label>
+              <Label htmlFor="registrationDate">Registration Date</Label>
               <Input
                 id="registrationDate"
                 type="date"
                 value={formData.registrationDate}
                 onChange={(e) => setFormData(prev => ({ ...prev, registrationDate: e.target.value }))}
-                className={errors.registrationDate ? 'border-destructive' : ''}
               />
-              {errors.registrationDate && <p className="text-sm text-destructive">{errors.registrationDate}</p>}
               <p className="text-xs text-muted-foreground">
-                Filing status will be shown from this date onwards
+                Optional. If blank, today's date will be used for filing start month.
               </p>
             </div>
 
@@ -306,41 +320,88 @@ const AddClientPage: React.FC = () => {
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Target Date */}
-            <div className="space-y-2">
-              <Label htmlFor="targetDate">Default Target Date (1-30)</Label>
-              <Input
-                id="targetDate"
-                type="number"
-                min="1"
-                max="30"
-                value={formData.targetDate}
-                onChange={(e) => {
-                  const val = parseInt(e.target.value) || 11;
-                  const clampedVal = Math.min(30, Math.max(1, val));
-                  setFormData(prev => ({ ...prev, targetDate: clampedVal }));
-                }}
-                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-              />
-              <p className="text-xs text-muted-foreground">Day of month (1-30) for filing target</p>
+              {/* Default Target Date - GSTR-1, GSTR-7 */}
+              <div className="space-y-2">
+                <Label htmlFor="defaultTargetDate">Default Target Date (GSTR-1, GSTR-7)</Label>
+                <Input
+                  id="defaultTargetDate"
+                  type="number"
+                  min="1"
+                  max="30"
+                  value={formData.defaultTargetDate}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '') {
+                      setFormData(prev => ({ ...prev, defaultTargetDate: '' }));
+                    } else {
+                      const num = parseInt(val) || 1;
+                      const clamped = Math.min(30, Math.max(1, num));
+                      setFormData(prev => ({ ...prev, defaultTargetDate: clamped.toString() }));
+                    }
+                  }}
+                  placeholder="e.g., 11"
+                  className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                />
+                <p className="text-xs text-muted-foreground">Optional. Day 1-30 for GSTR-1 & GSTR-7</p>
+              </div>
+
+              {/* Other Target Date - GSTR-3B, ITC-04 */}
+              <div className="space-y-2">
+                <Label htmlFor="otherTargetDate">Other Target Date (GSTR-3B, ITC-04)</Label>
+                <Input
+                  id="otherTargetDate"
+                  type="number"
+                  min="1"
+                  max="30"
+                  value={formData.otherTargetDate}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '') {
+                      setFormData(prev => ({ ...prev, otherTargetDate: '' }));
+                    } else {
+                      const num = parseInt(val) || 1;
+                      const clamped = Math.min(30, Math.max(1, num));
+                      setFormData(prev => ({ ...prev, otherTargetDate: clamped.toString() }));
+                    }
+                  }}
+                  placeholder="e.g., 20"
+                  className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                />
+                <p className="text-xs text-muted-foreground">Optional. Day 1-30 for GSTR-3B & ITC-04</p>
+              </div>
             </div>
 
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Assigned Accountant */}
               <div className="space-y-2">
-                <Label htmlFor="assignedAccountant">Assigned Accountant</Label>
+                <Label htmlFor="assignedAccountant">Assigned Accountant *</Label>
                 <Input
                   id="assignedAccountant"
                   value={formData.assignedAccountant}
                   onChange={(e) => setFormData(prev => ({ ...prev, assignedAccountant: e.target.value }))}
                   placeholder="Accountant name"
+                  className={errors.assignedAccountant ? 'border-destructive' : ''}
                 />
+                {errors.assignedAccountant && <p className="text-sm text-destructive">{errors.assignedAccountant}</p>}
+              </div>
+
+              {/* Cancellation Date */}
+              <div className="space-y-2">
+                <Label htmlFor="cancellationDate">Cancellation Date</Label>
+                <Input
+                  id="cancellationDate"
+                  type="date"
+                  value={formData.cancellationDate}
+                  onChange={(e) => setFormData(prev => ({ ...prev, cancellationDate: e.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground">Optional. Filing stops after this date.</p>
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Mobile */}
               <div className="space-y-2">
-                <Label htmlFor="mobile">Mobile Number</Label>
+                <Label htmlFor="mobile">Mobile Number *</Label>
                 <Input
                   id="mobile"
                   type="tel"
@@ -355,7 +416,7 @@ const AddClientPage: React.FC = () => {
 
               {/* Email */}
               <div className="space-y-2">
-                <Label htmlFor="email">Email Address</Label>
+                <Label htmlFor="email">Email Address *</Label>
                 <Input
                   id="email"
                   type="email"
