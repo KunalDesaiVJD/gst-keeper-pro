@@ -33,12 +33,12 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
     // Template data with headers and example
     const templateData = [
       ['Bulk Client Import Template'],
-      ['Instructions: Fill in the details below. GSTIN must be exactly 15 characters. Registration Type must be: Regular, Composition, or Tax Deductor.'],
-      ['Selected Returns: For Regular - GSTR-1,GSTR-3B,ITC-04,GSTR-6 | For Composition - CMP-08 | For Tax Deductor - GSTR-7'],
+      ['Instructions: Fill in the details below. GSTIN must be exactly 15 characters. Registration Type must be: Regular, Composition, Tax Deductor, or ISD.'],
+      ['Selected Returns: For Regular - GSTR-1,GSTR-3B,ITC-04 | For Composition - CMP-08 | For Tax Deductor - GSTR-7 | For ISD - GSTR-6'],
       [],
-      ['GSTIN*', 'Client Name*', 'Registration Type*', 'Registration Date* (YYYY-MM-DD)', 'Mobile (10 digits)', 'Email', 'Assigned Accountant', 'Target Date (1-31)', 'Selected Returns (comma-separated)'],
-      ['24AAQCS2345D1Z5', 'Sample Company Pvt Ltd', 'Regular', '2024-01-15', '9876543210', 'sample@example.com', 'John Doe', '11', 'GSTR-1,GSTR-3B'],
-      ['24BBRCS9876E2Z6', 'Another Business', 'Composition', '2024-02-01', '9123456789', 'another@example.com', 'Jane Smith', '15', 'CMP-08'],
+      ['GSTIN*', 'Client Name*', 'Registration Type*', 'Registration Date (YYYY-MM-DD)', 'Mobile (10 digits)', 'Email', 'Assigned Accountant', 'Target Date (GSTR-1, GSTR-7)', 'Target Date (GSTR-3B, ITC-04)', 'Selected Returns (comma-separated)'],
+      ['24AAQCS2345D1Z5', 'Sample Company Pvt Ltd', 'Regular', '2024-01-15', '9876543210', 'sample@example.com', 'John Doe', '11', '20', 'GSTR-1,GSTR-3B'],
+      ['24BBRCS9876E2Z6', 'Another Business', 'Composition', '2024-02-01', '9123456789', 'another@example.com', 'Jane Smith', '', '15', 'CMP-08'],
     ];
 
     const sheet = XLSX.utils.aoa_to_sheet(templateData);
@@ -48,11 +48,12 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
       { wch: 18 }, // GSTIN
       { wch: 30 }, // Name
       { wch: 15 }, // Reg Type
-      { wch: 20 }, // Reg Date
+      { wch: 22 }, // Reg Date
       { wch: 15 }, // Mobile
       { wch: 25 }, // Email
       { wch: 20 }, // Accountant
-      { wch: 12 }, // Target Date
+      { wch: 26 }, // Target Date (GSTR-1, GSTR-7)
+      { wch: 26 }, // Target Date (GSTR-3B, ITC-04)
       { wch: 30 }, // Returns
     ];
 
@@ -76,8 +77,9 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
     const mobile = String(row[4] || '').trim();
     const email = String(row[5] || '').trim();
     const accountant = String(row[6] || '').trim();
-    const targetDate = parseInt(row[7]) || 11;
-    const returnsStr = String(row[8] || '').trim();
+    const defaultTargetDate = row[7] ? parseInt(row[7]) : null; // Target Date (GSTR-1, GSTR-7)
+    const otherTargetDate = row[8] ? parseInt(row[8]) : null; // Target Date (GSTR-3B, ITC-04)
+    const returnsStr = String(row[9] || '').trim();
 
     // Validate GSTIN
     if (!gstin) {
@@ -94,17 +96,15 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
     }
 
     // Validate Registration Type
-    const validRegTypes: RegistrationType[] = ['Regular', 'Composition', 'Tax Deductor'];
+    const validRegTypes: RegistrationType[] = ['Regular', 'Composition', 'Tax Deductor', 'ISD'];
     if (!regType) {
       errors.push('Registration type is required');
     } else if (!validRegTypes.includes(regType as RegistrationType)) {
       errors.push(`Invalid registration type. Must be: ${validRegTypes.join(', ')}`);
     }
 
-    // Validate Registration Date
-    if (!regDate) {
-      errors.push('Registration date is required');
-    } else {
+    // Registration Date is now optional - validate only if provided
+    if (regDate) {
       const date = new Date(regDate);
       if (isNaN(date.getTime())) {
         errors.push('Invalid date format. Use YYYY-MM-DD');
@@ -121,9 +121,12 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
       errors.push('Invalid email format');
     }
 
-    // Validate Target Date
-    if (targetDate < 1 || targetDate > 31) {
-      errors.push('Target date must be between 1 and 31');
+    // Validate Target Dates (optional, 1-31 if provided)
+    if (defaultTargetDate !== null && (defaultTargetDate < 1 || defaultTargetDate > 31)) {
+      errors.push('Target Date (GSTR-1, GSTR-7) must be between 1 and 31');
+    }
+    if (otherTargetDate !== null && (otherTargetDate < 1 || otherTargetDate > 31)) {
+      errors.push('Target Date (GSTR-3B, ITC-04) must be between 1 and 31');
     }
 
     // Validate Returns
@@ -152,11 +155,12 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
         gstin,
         name,
         registrationType: regType as RegistrationType,
-        registrationDate: regDate,
+        registrationDate: regDate || new Date().toISOString().split('T')[0], // Default to today
         mobile,
         email,
         accountant,
-        targetDate,
+        defaultTargetDate,
+        otherTargetDate,
         selectedReturns,
       },
       errors,
@@ -254,12 +258,20 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
             const periodMonth = `${String(currentDate.getMonth() + 1).padStart(2, '0')}/${currentDate.getFullYear()}`;
             
             for (const returnType of data.selectedReturns) {
+              // Determine target date based on return type
+              let targetDate: number | null = null;
+              if (returnType === 'GSTR-1' || returnType === 'GSTR-7') {
+                targetDate = data.defaultTargetDate;
+              } else if (returnType === 'GSTR-3B' || returnType === 'ITC-04') {
+                targetDate = data.otherTargetDate;
+              }
+              
               filingRecords.push({
                 client_id: clientData.id,
                 return_type: returnType,
                 period_month: periodMonth,
-                status: 'Prepared',
-                target_date: returnType === 'GSTR-1' ? 11 : returnType === 'GSTR-3B' ? 20 : data.targetDate,
+                status: 'Data Pending',
+                target_date: targetDate,
               });
             }
             

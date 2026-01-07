@@ -5,7 +5,9 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Download, FileText, Lock, Unlock, Search, Filter } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Download, FileText, Lock, Unlock, Search, Filter, ChevronDown } from 'lucide-react';
 import { FilingStatusType, ReturnType } from '@/types';
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
@@ -53,7 +55,7 @@ const FilingStatusPage: React.FC = () => {
   
   // Filter states
   const [clientNameFilter, setClientNameFilter] = useState<string>('');
-  const [targetDateFilter, setTargetDateFilter] = useState<string>('all');
+  const [selectedTargetDates, setSelectedTargetDates] = useState<number[]>([]);
 
   const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08'];
 
@@ -405,12 +407,21 @@ const FilingStatusPage: React.FC = () => {
       if (clientNameFilter && !record.clientName?.toLowerCase().includes(clientNameFilter.toLowerCase())) {
         return false;
       }
-      // Target date filter
-      if (targetDateFilter !== 'all' && record.target_date !== parseInt(targetDateFilter)) {
+      // Multi-select target date filter
+      if (selectedTargetDates.length > 0 && record.target_date !== null && !selectedTargetDates.includes(record.target_date)) {
         return false;
       }
       return true;
     });
+  };
+
+  // Toggle target date selection
+  const toggleTargetDate = (date: number) => {
+    setSelectedTargetDates(prev => 
+      prev.includes(date) 
+        ? prev.filter(d => d !== date)
+        : [...prev, date]
+    );
   };
 
   // Get unique target dates for filter dropdown
@@ -635,28 +646,57 @@ const FilingStatusPage: React.FC = () => {
               />
             </div>
 
-            {/* Target Date Filter */}
-            <Select value={targetDateFilter} onValueChange={setTargetDateFilter}>
-              <SelectTrigger className="w-32">
-                <SelectValue placeholder="Target Date" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Dates</SelectItem>
-                {getUniqueTargetDates().map((date) => (
-                  <SelectItem key={date} value={date.toString()}>
-                    Day {date}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {/* Multi-Select Target Date Filter */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="w-44 justify-between">
+                  {selectedTargetDates.length === 0 
+                    ? 'All Target Dates' 
+                    : `${selectedTargetDates.length} Date${selectedTargetDates.length > 1 ? 's' : ''} Selected`}
+                  <ChevronDown className="ml-2 h-4 w-4 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-56 p-3 bg-background border" align="start">
+                <div className="space-y-2">
+                  <div className="font-medium text-sm mb-2">Select Target Dates</div>
+                  <div className="max-h-48 overflow-y-auto space-y-1">
+                    {getUniqueTargetDates().map((date) => (
+                      <div key={date} className="flex items-center space-x-2 p-1 hover:bg-muted rounded">
+                        <Checkbox
+                          id={`date-${date}`}
+                          checked={selectedTargetDates.includes(date)}
+                          onCheckedChange={() => toggleTargetDate(date)}
+                        />
+                        <label 
+                          htmlFor={`date-${date}`} 
+                          className="text-sm cursor-pointer flex-1"
+                        >
+                          Day {date}
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                  {selectedTargetDates.length > 0 && (
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="w-full mt-2"
+                      onClick={() => setSelectedTargetDates([])}
+                    >
+                      Clear Selection
+                    </Button>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
 
-            {(clientNameFilter || targetDateFilter !== 'all') && (
+            {(clientNameFilter || selectedTargetDates.length > 0) && (
               <Button 
                 variant="ghost" 
                 size="sm"
                 onClick={() => {
                   setClientNameFilter('');
-                  setTargetDateFilter('all');
+                  setSelectedTargetDates([]);
                 }}
               >
                 Clear Filters

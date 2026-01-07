@@ -320,9 +320,9 @@ const AddClientPage: React.FC = () => {
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Default Target Date - GSTR-1, GSTR-7 */}
+              {/* Target Date (GSTR-1, GSTR-7) */}
               <div className="space-y-2">
-                <Label htmlFor="defaultTargetDate">Default Target Date (GSTR-1, GSTR-7)</Label>
+                <Label htmlFor="defaultTargetDate">Target Date (GSTR-1, GSTR-7)</Label>
                 <Input
                   id="defaultTargetDate"
                   type="number"
@@ -345,9 +345,9 @@ const AddClientPage: React.FC = () => {
                 <p className="text-xs text-muted-foreground">Optional. Day 1-30 for GSTR-1 & GSTR-7</p>
               </div>
 
-              {/* Other Target Date - GSTR-3B, ITC-04 */}
+              {/* Target Date (GSTR-3B, ITC-04) */}
               <div className="space-y-2">
-                <Label htmlFor="otherTargetDate">Other Target Date (GSTR-3B, ITC-04)</Label>
+                <Label htmlFor="otherTargetDate">Target Date (GSTR-3B, ITC-04)</Label>
                 <Input
                   id="otherTargetDate"
                   type="number"
