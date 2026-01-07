@@ -725,10 +725,11 @@ const TwoBReconciliationPage: React.FC = () => {
           <p className="text-muted-foreground">Manage bills not available in 2B or Books</p>
         </div>
         <div className="flex items-center gap-2">
-          {selectedClient && hasUnsavedChanges && !isLocked && (
+          {selectedClient && !isLocked && (
             <Button 
               onClick={handleSaveAll} 
-              disabled={isSaving}
+              disabled={isSaving || !hasUnsavedChanges}
+              variant={hasUnsavedChanges ? "default" : "outline"}
               className="flex items-center gap-2"
             >
               <Save className="h-4 w-4" />
