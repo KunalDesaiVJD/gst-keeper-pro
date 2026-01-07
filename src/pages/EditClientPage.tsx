@@ -202,26 +202,26 @@ const EditClientPage: React.FC = () => {
 
       if (error) throw error;
 
-      // Update target dates in filing_status records
+      // Update target dates in filing_status records for ALL return types
       const defaultTarget = formData.defaultTargetDate ? parseInt(formData.defaultTargetDate) : null;
       const otherTarget = formData.otherTargetDate ? parseInt(formData.otherTargetDate) : null;
 
-      // Update GSTR-1 and GSTR-7 target dates
+      // Update GSTR-1, GSTR-7, GSTR-6 target dates (first group)
       if (defaultTarget !== null) {
         await supabase
           .from('filing_status')
           .update({ target_date: defaultTarget })
           .eq('client_id', clientId)
-          .in('return_type', ['GSTR-1', 'GSTR-7']);
+          .in('return_type', ['GSTR-1', 'GSTR-7', 'GSTR-6']);
       }
 
-      // Update GSTR-3B and ITC-04 target dates
+      // Update GSTR-3B, ITC-04, CMP-08 target dates (second group)
       if (otherTarget !== null) {
         await supabase
           .from('filing_status')
           .update({ target_date: otherTarget })
           .eq('client_id', clientId)
-          .in('return_type', ['GSTR-3B', 'ITC-04']);
+          .in('return_type', ['GSTR-3B', 'ITC-04', 'CMP-08']);
       }
 
       toast.success(`${formData.name} has been successfully updated.`);
@@ -353,9 +353,9 @@ const EditClientPage: React.FC = () => {
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Target Date (GSTR-1, GSTR-7) */}
+              {/* Target Date (GSTR-1, GSTR-7, GSTR-6) */}
               <div className="space-y-2">
-                <Label htmlFor="defaultTargetDate">Target Date (GSTR-1, GSTR-7)</Label>
+                <Label htmlFor="defaultTargetDate">Target Date (GSTR-1, GSTR-7, GSTR-6)</Label>
                 <Input
                   id="defaultTargetDate"
                   type="number"
@@ -375,12 +375,12 @@ const EditClientPage: React.FC = () => {
                   placeholder="e.g., 11"
                   className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
-                <p className="text-xs text-muted-foreground">Optional. Day 1-30 for GSTR-1 & GSTR-7</p>
+                <p className="text-xs text-muted-foreground">Day 1-30 for GSTR-1, GSTR-7 & GSTR-6</p>
               </div>
 
-              {/* Target Date (GSTR-3B, ITC-04) */}
+              {/* Target Date (GSTR-3B, ITC-04, CMP-08) */}
               <div className="space-y-2">
-                <Label htmlFor="otherTargetDate">Target Date (GSTR-3B, ITC-04)</Label>
+                <Label htmlFor="otherTargetDate">Target Date (GSTR-3B, ITC-04, CMP-08)</Label>
                 <Input
                   id="otherTargetDate"
                   type="number"
@@ -400,7 +400,7 @@ const EditClientPage: React.FC = () => {
                   placeholder="e.g., 20"
                   className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
-                <p className="text-xs text-muted-foreground">Optional. Day 1-30 for GSTR-3B & ITC-04</p>
+                <p className="text-xs text-muted-foreground">Day 1-30 for GSTR-3B, ITC-04 & CMP-08</p>
               </div>
             </div>
 

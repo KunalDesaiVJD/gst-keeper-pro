@@ -161,9 +161,9 @@ const AddClientPage: React.FC = () => {
           for (const returnType of formData.selectedReturns) {
             // Determine target date based on return type and user input
             let targetDate: number | null = null;
-            if (returnType === 'GSTR-1' || returnType === 'GSTR-7') {
+            if (returnType === 'GSTR-1' || returnType === 'GSTR-7' || returnType === 'GSTR-6') {
               targetDate = formData.defaultTargetDate ? parseInt(formData.defaultTargetDate) : null;
-            } else if (returnType === 'GSTR-3B' || returnType === 'ITC-04') {
+            } else if (returnType === 'GSTR-3B' || returnType === 'ITC-04' || returnType === 'CMP-08') {
               targetDate = formData.otherTargetDate ? parseInt(formData.otherTargetDate) : null;
             }
             
@@ -320,9 +320,9 @@ const AddClientPage: React.FC = () => {
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Target Date (GSTR-1, GSTR-7) */}
+              {/* Target Date (GSTR-1, GSTR-7, GSTR-6) */}
               <div className="space-y-2">
-                <Label htmlFor="defaultTargetDate">Target Date (GSTR-1, GSTR-7)</Label>
+                <Label htmlFor="defaultTargetDate">Target Date (GSTR-1, GSTR-7, GSTR-6)</Label>
                 <Input
                   id="defaultTargetDate"
                   type="number"
@@ -342,12 +342,12 @@ const AddClientPage: React.FC = () => {
                   placeholder="e.g., 11"
                   className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
-                <p className="text-xs text-muted-foreground">Optional. Day 1-30 for GSTR-1 & GSTR-7</p>
+                <p className="text-xs text-muted-foreground">Day 1-30 for GSTR-1, GSTR-7 & GSTR-6</p>
               </div>
 
-              {/* Target Date (GSTR-3B, ITC-04) */}
+              {/* Target Date (GSTR-3B, ITC-04, CMP-08) */}
               <div className="space-y-2">
-                <Label htmlFor="otherTargetDate">Target Date (GSTR-3B, ITC-04)</Label>
+                <Label htmlFor="otherTargetDate">Target Date (GSTR-3B, ITC-04, CMP-08)</Label>
                 <Input
                   id="otherTargetDate"
                   type="number"
@@ -367,7 +367,7 @@ const AddClientPage: React.FC = () => {
                   placeholder="e.g., 20"
                   className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
-                <p className="text-xs text-muted-foreground">Optional. Day 1-30 for GSTR-3B & ITC-04</p>
+                <p className="text-xs text-muted-foreground">Day 1-30 for GSTR-3B, ITC-04 & CMP-08</p>
               </div>
             </div>
 
