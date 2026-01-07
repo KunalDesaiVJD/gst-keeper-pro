@@ -300,13 +300,11 @@ const FilingStatusPage: React.FC = () => {
           .eq('client_id', record.client_id)
           .eq('period_month', record.period_month);
         
-        // Mark filing status as locked
+        // Mark ONLY GSTR-3B filing status as locked (not GSTR-1 or other returns)
         await supabase
           .from('filing_status')
           .update({ is_locked: true })
-          .eq('client_id', record.client_id)
-          .eq('period_month', record.period_month)
-          .eq('return_type', 'GSTR-3B');
+          .eq('id', record.id); // Only lock this specific GSTR-3B record
         
         toast.success('GSTR-3B filed. 2B and ITC sheets are now locked for this period.');
       } else if (newStatus === 'Filed') {

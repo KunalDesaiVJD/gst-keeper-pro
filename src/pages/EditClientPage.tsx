@@ -202,6 +202,28 @@ const EditClientPage: React.FC = () => {
 
       if (error) throw error;
 
+      // Update target dates in filing_status records
+      const defaultTarget = formData.defaultTargetDate ? parseInt(formData.defaultTargetDate) : null;
+      const otherTarget = formData.otherTargetDate ? parseInt(formData.otherTargetDate) : null;
+
+      // Update GSTR-1 and GSTR-7 target dates
+      if (defaultTarget !== null) {
+        await supabase
+          .from('filing_status')
+          .update({ target_date: defaultTarget })
+          .eq('client_id', clientId)
+          .in('return_type', ['GSTR-1', 'GSTR-7']);
+      }
+
+      // Update GSTR-3B and ITC-04 target dates
+      if (otherTarget !== null) {
+        await supabase
+          .from('filing_status')
+          .update({ target_date: otherTarget })
+          .eq('client_id', clientId)
+          .in('return_type', ['GSTR-3B', 'ITC-04']);
+      }
+
       toast.success(`${formData.name} has been successfully updated.`);
       navigate('/clients');
     } catch (error: any) {
