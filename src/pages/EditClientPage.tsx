@@ -40,7 +40,8 @@ const EditClientPage: React.FC = () => {
     assignedAccountant: '',
     selectedReturns: [] as ReturnType[],
     cancellationDate: '',
-    targetDate: 11,
+    defaultTargetDate: '', // Target Date (GSTR-1, GSTR-7)
+    otherTargetDate: '', // Target Date (GSTR-3B, ITC-04)
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -62,6 +63,22 @@ const EditClientPage: React.FC = () => {
         return;
       }
 
+      // Fetch target dates from filing status records
+      const { data: filingData } = await supabase
+        .from('filing_status')
+        .select('return_type, target_date')
+        .eq('client_id', clientId)
+        .limit(10);
+      
+      let defaultTarget = '';
+      let otherTarget = '';
+      if (filingData) {
+        const gstr1Record = filingData.find(f => f.return_type === 'GSTR-1');
+        const gstr3bRecord = filingData.find(f => f.return_type === 'GSTR-3B');
+        if (gstr1Record?.target_date) defaultTarget = gstr1Record.target_date.toString();
+        if (gstr3bRecord?.target_date) otherTarget = gstr3bRecord.target_date.toString();
+      }
+
       setFormData({
         gstin: data.gstin,
         name: data.name,
@@ -72,7 +89,8 @@ const EditClientPage: React.FC = () => {
         assignedAccountant: data.assigned_accountant || '',
         selectedReturns: (data.selected_returns || []) as ReturnType[],
         cancellationDate: (data as any).cancellation_date || '',
-        targetDate: 11,
+        defaultTargetDate: defaultTarget,
+        otherTargetDate: otherTarget,
       });
       setIsLoading(false);
     };
@@ -251,35 +269,17 @@ const EditClientPage: React.FC = () => {
               {errors.name && <p className="text-sm text-destructive">{errors.name}</p>}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Registration Date */}
-              <div className="space-y-2">
-                <Label htmlFor="registrationDate">Registration Date *</Label>
-                <Input
-                  id="registrationDate"
-                  type="date"
-                  value={formData.registrationDate}
-                  onChange={(e) => setFormData(prev => ({ ...prev, registrationDate: e.target.value }))}
-                  className={errors.registrationDate ? 'border-destructive' : ''}
-                />
-                {errors.registrationDate && <p className="text-sm text-destructive">{errors.registrationDate}</p>}
-              </div>
-
-              {/* Cancellation Date */}
-              <div className="space-y-2">
-                <Label htmlFor="cancellationDate">Cancellation Date (Optional)</Label>
-                <Input
-                  id="cancellationDate"
-                  type="date"
-                  value={formData.cancellationDate}
-                  onChange={(e) => setFormData(prev => ({ ...prev, cancellationDate: e.target.value }))}
-                  className={errors.cancellationDate ? 'border-destructive' : ''}
-                />
-                {errors.cancellationDate && <p className="text-sm text-destructive">{errors.cancellationDate}</p>}
-                <p className="text-xs text-muted-foreground">
-                  If set, client will not appear in Filing Status after this date
-                </p>
-              </div>
+            {/* Registration Date */}
+            <div className="space-y-2">
+              <Label htmlFor="registrationDate">Registration Date *</Label>
+              <Input
+                id="registrationDate"
+                type="date"
+                value={formData.registrationDate}
+                onChange={(e) => setFormData(prev => ({ ...prev, registrationDate: e.target.value }))}
+                className={errors.registrationDate ? 'border-destructive' : ''}
+              />
+              {errors.registrationDate && <p className="text-sm text-destructive">{errors.registrationDate}</p>}
             </div>
 
             {/* Registration Type */}
@@ -331,21 +331,58 @@ const EditClientPage: React.FC = () => {
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Target Date */}
+              {/* Target Date (GSTR-1, GSTR-7) */}
               <div className="space-y-2">
-                <Label htmlFor="targetDate">Default Target Date</Label>
+                <Label htmlFor="defaultTargetDate">Target Date (GSTR-1, GSTR-7)</Label>
                 <Input
-                  id="targetDate"
+                  id="defaultTargetDate"
                   type="number"
                   min="1"
-                  max="31"
-                  value={formData.targetDate}
-                  onChange={(e) => setFormData(prev => ({ ...prev, targetDate: parseInt(e.target.value) || 11 }))}
+                  max="30"
+                  value={formData.defaultTargetDate}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '') {
+                      setFormData(prev => ({ ...prev, defaultTargetDate: '' }));
+                    } else {
+                      const num = parseInt(val) || 1;
+                      const clamped = Math.min(30, Math.max(1, num));
+                      setFormData(prev => ({ ...prev, defaultTargetDate: clamped.toString() }));
+                    }
+                  }}
+                  placeholder="e.g., 11"
                   className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
-                <p className="text-xs text-muted-foreground">Day of month for filing target</p>
+                <p className="text-xs text-muted-foreground">Optional. Day 1-30 for GSTR-1 & GSTR-7</p>
               </div>
 
+              {/* Target Date (GSTR-3B, ITC-04) */}
+              <div className="space-y-2">
+                <Label htmlFor="otherTargetDate">Target Date (GSTR-3B, ITC-04)</Label>
+                <Input
+                  id="otherTargetDate"
+                  type="number"
+                  min="1"
+                  max="30"
+                  value={formData.otherTargetDate}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '') {
+                      setFormData(prev => ({ ...prev, otherTargetDate: '' }));
+                    } else {
+                      const num = parseInt(val) || 1;
+                      const clamped = Math.min(30, Math.max(1, num));
+                      setFormData(prev => ({ ...prev, otherTargetDate: clamped.toString() }));
+                    }
+                  }}
+                  placeholder="e.g., 20"
+                  className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                />
+                <p className="text-xs text-muted-foreground">Optional. Day 1-30 for GSTR-3B & ITC-04</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Assigned Accountant */}
               <div className="space-y-2">
                 <Label htmlFor="assignedAccountant">Assigned Accountant</Label>
@@ -355,6 +392,22 @@ const EditClientPage: React.FC = () => {
                   onChange={(e) => setFormData(prev => ({ ...prev, assignedAccountant: e.target.value }))}
                   placeholder="Accountant name"
                 />
+              </div>
+
+              {/* Cancellation Date - moved here */}
+              <div className="space-y-2">
+                <Label htmlFor="cancellationDate">Cancellation Date (Optional)</Label>
+                <Input
+                  id="cancellationDate"
+                  type="date"
+                  value={formData.cancellationDate}
+                  onChange={(e) => setFormData(prev => ({ ...prev, cancellationDate: e.target.value }))}
+                  className={errors.cancellationDate ? 'border-destructive' : ''}
+                />
+                {errors.cancellationDate && <p className="text-sm text-destructive">{errors.cancellationDate}</p>}
+                <p className="text-xs text-muted-foreground">
+                  If set, client will not appear in Filing Status after this date
+                </p>
               </div>
             </div>
 
