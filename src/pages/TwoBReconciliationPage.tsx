@@ -848,7 +848,7 @@ const TwoBReconciliationPage: React.FC = () => {
                 View Versions
               </Button>
             )}
-            {selectedClient && billsNotIn2B.length > 0 && !isLocked && (
+            {selectedClient && (billsNotIn2B.length > 0 || billsNotInBooks.length > 0) && !isLocked && (
               <Button 
                 variant="outline" 
                 className="flex items-center gap-2"
