@@ -570,7 +570,7 @@ const TwoBReconciliationPage: React.FC = () => {
 
   // Carry forward data to next month
   const handleCarryForward = async () => {
-    if (!selectedClient || billsNotIn2B.length === 0) {
+    if (!selectedClient || (billsNotIn2B.length === 0 && billsNotInBooks.length === 0)) {
       toast.error('No data to carry forward');
       return;
     }
@@ -586,68 +586,123 @@ const TwoBReconciliationPage: React.FC = () => {
     const nextPeriod = `${String(nextMonth).padStart(2, '0')}/${nextYear}`;
 
     try {
-      // Get existing records in next month to check for duplicates
-      const { data: existingNextMonth, error: fetchError } = await supabase
-        .from('bills_not_in_2b')
-        .select('supplier_name, supplier_invoice_number, supplier_gstin, date')
-        .eq('client_id', selectedClient)
-        .eq('period_month', nextPeriod);
+      let totalCarried = 0;
+      let totalSkipped = 0;
 
-      if (fetchError) throw fetchError;
+      // CARRY FORWARD BILLS NOT IN 2B
+      if (billsNotIn2B.length > 0) {
+        // Get existing records in next month to check for duplicates
+        const { data: existingNextMonth2B, error: fetchError2B } = await supabase
+          .from('bills_not_in_2b')
+          .select('supplier_name, supplier_invoice_number, supplier_gstin, date')
+          .eq('client_id', selectedClient)
+          .eq('period_month', nextPeriod);
 
-      // Create a set of unique keys for existing records in next month
-      const existingKeys = new Set(
-        (existingNextMonth || []).map(r => 
-          `${r.supplier_name}|${r.supplier_invoice_number || ''}|${r.supplier_gstin || ''}|${r.date}`
-        )
-      );
+        if (fetchError2B) throw fetchError2B;
 
-      // Carry forward bills not in 2B that don't have a reclaim month and aren't already in next month
-      const toCarryForward = billsNotIn2B.filter(b => {
-        if (b.reclaim_month) return false; // Already reclaimed
+        // Create a set of unique keys for existing records in next month
+        const existingKeys2B = new Set(
+          (existingNextMonth2B || []).map(r => 
+            `${r.supplier_name}|${r.supplier_invoice_number || ''}|${r.supplier_gstin || ''}|${r.date}`
+          )
+        );
+
+        // Carry forward bills not in 2B that don't have a reclaim month and aren't already in next month
+        const toCarryForward2B = billsNotIn2B.filter(b => {
+          if (b.reclaim_month) return false; // Already reclaimed
+          
+          // Check if this record already exists in next month
+          const recordKey = `${b.supplier_name}|${b.supplier_invoice_number || ''}|${b.supplier_gstin || ''}|${b.date}`;
+          return !existingKeys2B.has(recordKey);
+        });
         
-        // Check if this record already exists in next month
-        const recordKey = `${b.supplier_name}|${b.supplier_invoice_number || ''}|${b.supplier_gstin || ''}|${b.date}`;
-        return !existingKeys.has(recordKey);
-      });
-      
-      if (toCarryForward.length === 0) {
-        const reclaimedCount = billsNotIn2B.filter(b => b.reclaim_month).length;
-        const alreadyTransferred = billsNotIn2B.length - reclaimedCount;
-        if (reclaimedCount === billsNotIn2B.length) {
-          toast.info('All bills have been reclaimed. Nothing to carry forward.');
-        } else {
-          toast.info(`All eligible entries already exist in ${nextPeriod}. No duplicates added.`);
+        if (toCarryForward2B.length > 0) {
+          const records2B = toCarryForward2B.map(b => ({
+            client_id: b.client_id,
+            date: b.date,
+            supplier_name: b.supplier_name,
+            supplier_invoice_number: b.supplier_invoice_number,
+            supplier_gstin: b.supplier_gstin,
+            taxable_value: b.taxable_value,
+            input_igst: b.input_igst,
+            input_cgst: b.input_cgst,
+            input_sgst: b.input_sgst,
+            period_month: nextPeriod,
+            reversal_month: b.reversal_month,
+            is_carried_forward: true,
+          }));
+
+          const { error } = await supabase
+            .from('bills_not_in_2b')
+            .insert(records2B);
+          
+          if (error) throw error;
+          totalCarried += records2B.length;
         }
-        return;
+        
+        totalSkipped += billsNotIn2B.filter(b => !b.reclaim_month).length - toCarryForward2B.length;
       }
 
-      const records = toCarryForward.map(b => ({
-        client_id: b.client_id,
-        date: b.date,
-        supplier_name: b.supplier_name,
-        supplier_invoice_number: b.supplier_invoice_number,
-        supplier_gstin: b.supplier_gstin,
-        taxable_value: b.taxable_value,
-        input_igst: b.input_igst,
-        input_cgst: b.input_cgst,
-        input_sgst: b.input_sgst,
-        period_month: nextPeriod,
-        reversal_month: b.reversal_month,
-        is_carried_forward: true,
-      }));
+      // CARRY FORWARD BILLS NOT IN BOOKS
+      if (billsNotInBooks.length > 0) {
+        // Get existing records in next month to check for duplicates
+        const { data: existingNextMonthBooks, error: fetchErrorBooks } = await supabase
+          .from('bills_not_in_books')
+          .select('supplier_name, supplier_invoice_number, supplier_gstin, date')
+          .eq('client_id', selectedClient)
+          .eq('period_month', nextPeriod);
 
-      const { error } = await supabase
-        .from('bills_not_in_2b')
-        .insert(records);
-      
-      if (error) throw error;
-      
-      const skippedCount = billsNotIn2B.filter(b => !b.reclaim_month).length - records.length;
-      if (skippedCount > 0) {
-        toast.success(`Carried forward ${records.length} records to ${nextPeriod}. ${skippedCount} duplicates skipped.`);
+        if (fetchErrorBooks) throw fetchErrorBooks;
+
+        // Create a set of unique keys for existing records in next month
+        const existingKeysBooks = new Set(
+          (existingNextMonthBooks || []).map(r => 
+            `${r.supplier_name}|${r.supplier_invoice_number || ''}|${r.supplier_gstin || ''}|${r.date}`
+          )
+        );
+
+        // Carry forward bills not in books that don't have a book_entry_month and aren't already in next month
+        const toCarryForwardBooks = billsNotInBooks.filter(b => {
+          if (b.book_entry_month) return false; // Already entered in books
+          
+          // Check if this record already exists in next month
+          const recordKey = `${b.supplier_name}|${b.supplier_invoice_number || ''}|${b.supplier_gstin || ''}|${b.date}`;
+          return !existingKeysBooks.has(recordKey);
+        });
+        
+        if (toCarryForwardBooks.length > 0) {
+          const recordsBooks = toCarryForwardBooks.map(b => ({
+            client_id: b.client_id,
+            date: b.date,
+            supplier_name: b.supplier_name,
+            supplier_invoice_number: b.supplier_invoice_number,
+            supplier_gstin: b.supplier_gstin,
+            taxable_value: b.taxable_value,
+            input_igst: b.input_igst,
+            input_cgst: b.input_cgst,
+            input_sgst: b.input_sgst,
+            period_month: nextPeriod,
+            bill_in_2b_month: b.bill_in_2b_month,
+            is_carried_forward: true,
+          }));
+
+          const { error } = await supabase
+            .from('bills_not_in_books')
+            .insert(recordsBooks);
+          
+          if (error) throw error;
+          totalCarried += recordsBooks.length;
+        }
+        
+        totalSkipped += billsNotInBooks.filter(b => !b.book_entry_month).length - toCarryForwardBooks.length;
+      }
+
+      if (totalCarried === 0) {
+        toast.info(`All eligible entries already exist in ${nextPeriod} or have been resolved. No duplicates added.`);
+      } else if (totalSkipped > 0) {
+        toast.success(`Carried forward ${totalCarried} records to ${nextPeriod}. ${totalSkipped} duplicates skipped.`);
       } else {
-        toast.success(`Carried forward ${records.length} records to ${nextPeriod}`);
+        toast.success(`Carried forward ${totalCarried} records to ${nextPeriod}`);
       }
     } catch (error: any) {
       toast.error('Failed to carry forward: ' + error.message);

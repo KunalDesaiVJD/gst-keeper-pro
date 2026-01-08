@@ -230,6 +230,15 @@ const FilingStatusPage: React.FC = () => {
   const handleStatusChange = async (record: FilingRecord, newStatus: FilingStatusType) => {
     const isNewRecord = record.id.startsWith('temp-');
     
+    // Check if user is allowed to change from Filed status
+    // Only superadmin and gst_manager can change FROM Filed to another status
+    if (record.status === 'Filed' && newStatus !== 'Filed') {
+      if (!canUnlockSheets()) {
+        toast.error('Only GST Manager or Superadmin can change a Filed status.');
+        return;
+      }
+    }
+    
     // GSTR-3B dependency check: require GSTR-1 to be filed first
     if (record.return_type === 'GSTR-3B' && newStatus === 'Filed') {
       const gstr1Record = filingRecords.find(
@@ -267,6 +276,9 @@ const FilingStatusPage: React.FC = () => {
         
         if (newStatus === 'Filed') {
           updateData.filed_date = new Date().toISOString().split('T')[0];
+        } else {
+          // If changing from Filed to another status, clear filed_date
+          updateData.filed_date = null;
         }
         
         const { error } = await supabase
