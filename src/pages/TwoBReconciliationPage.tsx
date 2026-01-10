@@ -28,6 +28,7 @@ interface Client {
   id: string;
   name: string;
   gstin: string;
+  registration_date?: string;
 }
 
 interface BillRecord {
@@ -68,30 +69,50 @@ const TwoBReconciliationPage: React.FC = () => {
   const [isLocked, setIsLocked] = useState(false);
   const [versions, setVersions] = useState<TwoBVersion[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Multi-select filter states
+  const [selectedReversalMonths, setSelectedReversalMonths] = useState<string[]>([]);
+  const [selectedReclaimMonths, setSelectedReclaimMonths] = useState<string[]>([]);
+  const [selectedBookEntryMonths, setSelectedBookEntryMonths] = useState<string[]>([]);
+  const [selectedIn2BMonths, setSelectedIn2BMonths] = useState<string[]>([]);
 
   const selectedClientData = clients.find(c => c.id === selectedClient);
 
-  // Generate month options dynamically
-  const generateMonthOptions = () => {
+  // Generate month options dynamically - filtered by selected client's registration date
+  const generateMonthOptions = useMemo(() => {
     const months: { value: string; label: string }[] = [];
     const now = new Date();
-    // Generate 24 months (past 12 and future 12)
-    for (let i = -12; i <= 12; i++) {
-      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const value = `${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
-      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const label = `${monthNames[date.getMonth()]} ${date.getFullYear()}`;
-      months.push({ value, label });
+    
+    // Find registration date from selected client
+    const client = clients.find(c => c.id === selectedClient);
+    let startDate = new Date(now.getFullYear(), now.getMonth() - 12, 1); // Default: 12 months ago
+    
+    if (client?.registration_date) {
+      const regDate = new Date(client.registration_date);
+      startDate = new Date(regDate.getFullYear(), regDate.getMonth(), 1);
     }
+    
+    // Generate months from start date to 12 months in future
+    const futureLimit = new Date(now.getFullYear(), now.getMonth() + 12, 1);
+    let currentDate = new Date(startDate);
+    
+    while (currentDate <= futureLimit) {
+      const value = `${String(currentDate.getMonth() + 1).padStart(2, '0')}/${currentDate.getFullYear()}`;
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const label = `${monthNames[currentDate.getMonth()]} ${currentDate.getFullYear()}`;
+      months.push({ value, label });
+      currentDate.setMonth(currentDate.getMonth() + 1);
+    }
+    
     // Sort in descending order (newest first)
     return months.sort((a, b) => {
       const [aM, aY] = a.value.split('/').map(Number);
       const [bM, bY] = b.value.split('/').map(Number);
       return bY * 12 + bM - (aY * 12 + aM);
     });
-  };
+  }, [clients, selectedClient]);
 
-  const monthOptions = generateMonthOptions();
+  const monthOptions = generateMonthOptions;
 
   // Generate month dropdown options for reversal/reclaim
   const shortMonthOptions = () => {
@@ -120,7 +141,7 @@ const TwoBReconciliationPage: React.FC = () => {
   const fetchClients = useCallback(async () => {
     let query = supabase
       .from('clients')
-      .select('id, name, gstin')
+      .select('id, name, gstin, registration_date')
       .order('name');
     
     // If user is a client, only fetch their own data
@@ -199,6 +220,46 @@ const TwoBReconciliationPage: React.FC = () => {
     setHasUnsavedChanges(false);
   }, [selectedClient, selectedMonth]);
 
+  // Fetch version history
+  const fetchVersions = useCallback(async () => {
+    if (!selectedClient || !selectedMonth) {
+      setVersions([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('twob_versions')
+      .select('*')
+      .eq('client_id', selectedClient)
+      .eq('period_month', selectedMonth)
+      .order('version_number', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching versions:', error);
+      return;
+    }
+
+    if (data && data.length > 0) {
+      // Convert to TwoBVersion format
+      const formattedVersions: TwoBVersion[] = data.map(v => ({
+        id: v.id,
+        clientId: v.client_id,
+        month: v.period_month,
+        periodMonth: v.period_month,
+        tableType: v.table_type as 'Bills_Not_in_2B' | 'Bills_Not_in_Books',
+        versionNumber: v.version_number || 1,
+        billsNotIn2B: (v.version_data as any)?.billsNotIn2B || [],
+        billsNotInBooks: (v.version_data as any)?.billsNotInBooks || [],
+        updatedBy: v.updated_by || 'Unknown',
+        updatedAt: new Date(v.updated_at || Date.now()),
+        isCurrent: v.is_current || false,
+      }));
+      setVersions(formattedVersions);
+    } else {
+      setVersions([]);
+    }
+  }, [selectedClient, selectedMonth]);
+
   useEffect(() => {
     fetchClients();
   }, [fetchClients]);
@@ -206,6 +267,7 @@ const TwoBReconciliationPage: React.FC = () => {
   useEffect(() => {
     if (selectedClient && selectedMonth) {
       fetchBillsData();
+      fetchVersions();
     } else {
       setBillsNotIn2B([]);
       setBillsNotInBooks([]);
@@ -213,8 +275,9 @@ const TwoBReconciliationPage: React.FC = () => {
       setLocalBillsBooks([]);
       setIsLocked(false);
       setHasUnsavedChanges(false);
+      setVersions([]);
     }
-  }, [selectedClient, selectedMonth, fetchBillsData]);
+  }, [selectedClient, selectedMonth, fetchBillsData, fetchVersions]);
 
   // Real-time subscription
   useEffect(() => {
@@ -482,6 +545,33 @@ const TwoBReconciliationPage: React.FC = () => {
     
     setIsSaving(true);
     try {
+      // First, save a version of the current state before making changes
+      const currentVersionNumber = versions.length > 0 ? Math.max(...versions.map(v => v.versionNumber)) + 1 : 1;
+      
+      // Mark all existing versions as not current
+      await supabase
+        .from('twob_versions')
+        .update({ is_current: false })
+        .eq('client_id', selectedClient)
+        .eq('period_month', selectedMonth);
+      
+      // Save new version with current data
+      const versionData = JSON.parse(JSON.stringify({
+        billsNotIn2B: localBills2B.filter(b => !b.id.startsWith('temp-')),
+        billsNotInBooks: localBillsBooks.filter(b => !b.id.startsWith('temp-')),
+      }));
+      
+      await supabase.from('twob_versions').insert([{
+        client_id: selectedClient,
+        period_month: selectedMonth,
+        table_type: 'combined',
+        version_number: currentVersionNumber,
+        version_data: versionData,
+        updated_at: new Date().toISOString(),
+        updated_by: user?.firstName || 'Unknown',
+        is_current: true,
+      }]);
+
       // Delete removed rows
       if (deletedRows2B.length > 0) {
         await supabase.from('bills_not_in_2b').delete().in('id', deletedRows2B);
@@ -535,6 +625,7 @@ const TwoBReconciliationPage: React.FC = () => {
       
       // Refresh data from server
       await fetchBillsData();
+      await fetchVersions();
       
       toast.success('Changes saved successfully');
     } catch (error: any) {
@@ -589,7 +680,7 @@ const TwoBReconciliationPage: React.FC = () => {
       let totalCarried = 0;
       let totalSkipped = 0;
 
-      // CARRY FORWARD BILLS NOT IN 2B
+      // CARRY FORWARD BILLS NOT IN 2B - now carries ALL records regardless of reclaim status
       if (billsNotIn2B.length > 0) {
         // Get existing records in next month to check for duplicates
         const { data: existingNextMonth2B, error: fetchError2B } = await supabase
@@ -607,10 +698,8 @@ const TwoBReconciliationPage: React.FC = () => {
           )
         );
 
-        // Carry forward bills not in 2B that don't have a reclaim month and aren't already in next month
+        // Carry forward ALL bills not in 2B (regardless of reclaim status), skip only duplicates
         const toCarryForward2B = billsNotIn2B.filter(b => {
-          if (b.reclaim_month) return false; // Already reclaimed
-          
           // Check if this record already exists in next month
           const recordKey = `${b.supplier_name}|${b.supplier_invoice_number || ''}|${b.supplier_gstin || ''}|${b.date}`;
           return !existingKeys2B.has(recordKey);
@@ -629,6 +718,7 @@ const TwoBReconciliationPage: React.FC = () => {
             input_sgst: b.input_sgst,
             period_month: nextPeriod,
             reversal_month: b.reversal_month,
+            reclaim_month: b.reclaim_month, // Preserve reclaim month too
             is_carried_forward: true,
           }));
 
@@ -640,10 +730,10 @@ const TwoBReconciliationPage: React.FC = () => {
           totalCarried += records2B.length;
         }
         
-        totalSkipped += billsNotIn2B.filter(b => !b.reclaim_month).length - toCarryForward2B.length;
+        totalSkipped += billsNotIn2B.length - toCarryForward2B.length;
       }
 
-      // CARRY FORWARD BILLS NOT IN BOOKS
+      // CARRY FORWARD BILLS NOT IN BOOKS - now carries ALL records regardless of book_entry status
       if (billsNotInBooks.length > 0) {
         // Get existing records in next month to check for duplicates
         const { data: existingNextMonthBooks, error: fetchErrorBooks } = await supabase
@@ -661,10 +751,8 @@ const TwoBReconciliationPage: React.FC = () => {
           )
         );
 
-        // Carry forward bills not in books that don't have a book_entry_month and aren't already in next month
+        // Carry forward ALL bills not in books (regardless of book_entry status), skip only duplicates
         const toCarryForwardBooks = billsNotInBooks.filter(b => {
-          if (b.book_entry_month) return false; // Already entered in books
-          
           // Check if this record already exists in next month
           const recordKey = `${b.supplier_name}|${b.supplier_invoice_number || ''}|${b.supplier_gstin || ''}|${b.date}`;
           return !existingKeysBooks.has(recordKey);
@@ -682,7 +770,8 @@ const TwoBReconciliationPage: React.FC = () => {
             input_cgst: b.input_cgst,
             input_sgst: b.input_sgst,
             period_month: nextPeriod,
-            bill_in_2b_month: b.bill_in_2b_month,
+            book_entry_month: b.book_entry_month, // Preserve book_entry_month
+            bill_in_2b_month: b.bill_in_2b_month, // Preserve bill_in_2b_month
             is_carried_forward: true,
           }));
 
@@ -694,7 +783,7 @@ const TwoBReconciliationPage: React.FC = () => {
           totalCarried += recordsBooks.length;
         }
         
-        totalSkipped += billsNotInBooks.filter(b => !b.book_entry_month).length - toCarryForwardBooks.length;
+        totalSkipped += billsNotInBooks.length - toCarryForwardBooks.length;
       }
 
       if (totalCarried === 0) {
@@ -709,9 +798,66 @@ const TwoBReconciliationPage: React.FC = () => {
     }
   };
 
-  const handleRestoreVersion = (version: TwoBVersion) => {
-    console.log('Restoring version:', version);
-    toast.info('Version restore functionality coming soon');
+  const handleRestoreVersion = async (version: TwoBVersion) => {
+    if (!selectedClient || isLocked) return;
+    
+    try {
+      // Delete current records
+      await supabase.from('bills_not_in_2b').delete().eq('client_id', selectedClient).eq('period_month', selectedMonth);
+      await supabase.from('bills_not_in_books').delete().eq('client_id', selectedClient).eq('period_month', selectedMonth);
+      
+      // Restore bills not in 2B from version
+      if (version.billsNotIn2B && version.billsNotIn2B.length > 0) {
+        const records2B = version.billsNotIn2B.map((b: any) => ({
+          client_id: selectedClient,
+          date: b.date,
+          supplier_name: b.supplier_name,
+          supplier_invoice_number: b.supplier_invoice_number,
+          supplier_gstin: b.supplier_gstin,
+          taxable_value: b.taxable_value,
+          input_igst: b.input_igst,
+          input_cgst: b.input_cgst,
+          input_sgst: b.input_sgst,
+          period_month: selectedMonth,
+          reversal_month: b.reversal_month,
+          reclaim_month: b.reclaim_month,
+          is_carried_forward: b.is_carried_forward,
+        }));
+        await supabase.from('bills_not_in_2b').insert(records2B);
+      }
+      
+      // Restore bills not in books from version
+      if (version.billsNotInBooks && version.billsNotInBooks.length > 0) {
+        const recordsBooks = version.billsNotInBooks.map((b: any) => ({
+          client_id: selectedClient,
+          date: b.date,
+          supplier_name: b.supplier_name,
+          supplier_invoice_number: b.supplier_invoice_number,
+          supplier_gstin: b.supplier_gstin,
+          taxable_value: b.taxable_value,
+          input_igst: b.input_igst,
+          input_cgst: b.input_cgst,
+          input_sgst: b.input_sgst,
+          period_month: selectedMonth,
+          book_entry_month: b.book_entry_month,
+          bill_in_2b_month: b.bill_in_2b_month,
+          is_carried_forward: b.is_carried_forward,
+        }));
+        await supabase.from('bills_not_in_books').insert(recordsBooks);
+      }
+      
+      // Mark this version as current
+      await supabase.from('twob_versions').update({ is_current: false }).eq('client_id', selectedClient).eq('period_month', selectedMonth);
+      await supabase.from('twob_versions').update({ is_current: true }).eq('id', version.id);
+      
+      await fetchBillsData();
+      await fetchVersions();
+      toast.success(`Restored to version ${version.versionNumber}`);
+      setShowVersionHistory(false);
+    } catch (error: any) {
+      console.error('Error restoring version:', error);
+      toast.error('Failed to restore: ' + error.message);
+    }
   };
 
   // Render editable input for table cells - FIXED: wider inputs for numbers
