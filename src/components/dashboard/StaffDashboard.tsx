@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -52,17 +52,30 @@ const StaffDashboard: React.FC = () => {
   const [showReturnBreakdown, setShowReturnBreakdown] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  const generateMonths = () => {
-    const months: { value: string; label: string }[] = [];
+  const generateMonths = useCallback(() => {
+    const monthsSet = new Set<string>();
     const now = new Date();
-    for (let i = 0; i < 12; i++) {
+    
+    // Add default 24 months (past 12 and future 12)
+    for (let i = -12; i < 24; i++) {
       const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const value = `${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
-      const label = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-      months.push({ value, label });
+      monthsSet.add(value);
     }
-    return months;
-  };
+    
+    // Convert to array and sort descending
+    const months = Array.from(monthsSet).map(value => {
+      const [month, year] = value.split('/').map(Number);
+      const date = new Date(year, month - 1, 1);
+      return {
+        value,
+        label: date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+        sortKey: year * 12 + month
+      };
+    });
+    
+    return months.sort((a, b) => b.sortKey - a.sortKey).map(({ value, label }) => ({ value, label }));
+  }, []);
 
   const months = generateMonths();
 

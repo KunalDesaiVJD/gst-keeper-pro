@@ -204,8 +204,21 @@ const FilingStatusPage: React.FC = () => {
     const returnType = returnTypeMap[selectedTab];
     const records = generateAllFilingRecords(returnType);
     
+    // Apply filters before exporting - IMPORTANT: filters must be respected in PDF
+    const filteredRecords = records.filter(record => {
+      // Client name filter
+      if (clientNameFilter && !record.clientName?.toLowerCase().includes(clientNameFilter.toLowerCase())) {
+        return false;
+      }
+      // Multi-select target date filter
+      if (selectedTargetDates.length > 0 && record.target_date !== null && !selectedTargetDates.includes(record.target_date)) {
+        return false;
+      }
+      return true;
+    });
+    
     // Convert to format expected by PDF export
-    const pdfRecords = records.map((r) => ({
+    const pdfRecords = filteredRecords.map((r) => ({
       id: r.id,
       clientId: r.client_id,
       clientName: r.clientName || '',
