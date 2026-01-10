@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
+import { MultiSelectPopover } from '@/components/ui/multi-select-popover';
 import { 
   Upload, 
   Download, 
@@ -14,7 +15,8 @@ import {
   Lock,
   Trash2,
   Plus,
-  Save
+  Save,
+  Filter
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { format } from 'date-fns';
@@ -310,7 +312,44 @@ const TwoBReconciliationPage: React.FC = () => {
     };
   }, [selectedClient, fetchBillsData]);
 
-  const totals2B = localBills2B.reduce((acc, row) => ({
+  // Filter bills based on selected months
+  const filteredBills2B = useMemo(() => {
+    return localBills2B.filter(row => {
+      // Reversal filter
+      if (selectedReversalMonths.length > 0) {
+        if (!row.reversal_month || !selectedReversalMonths.includes(row.reversal_month)) {
+          return false;
+        }
+      }
+      // Reclaim filter
+      if (selectedReclaimMonths.length > 0) {
+        if (!row.reclaim_month || !selectedReclaimMonths.includes(row.reclaim_month)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [localBills2B, selectedReversalMonths, selectedReclaimMonths]);
+
+  const filteredBillsBooks = useMemo(() => {
+    return localBillsBooks.filter(row => {
+      // Book Entry filter
+      if (selectedBookEntryMonths.length > 0) {
+        if (!row.book_entry_month || !selectedBookEntryMonths.includes(row.book_entry_month)) {
+          return false;
+        }
+      }
+      // In 2B filter
+      if (selectedIn2BMonths.length > 0) {
+        if (!row.bill_in_2b_month || !selectedIn2BMonths.includes(row.bill_in_2b_month)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [localBillsBooks, selectedBookEntryMonths, selectedIn2BMonths]);
+
+  const totals2B = filteredBills2B.reduce((acc, row) => ({
     taxableValue: acc.taxableValue + (row.taxable_value || 0),
     igst: acc.igst + (row.input_igst || 0),
     cgst: acc.cgst + (row.input_cgst || 0),
@@ -319,7 +358,7 @@ const TwoBReconciliationPage: React.FC = () => {
     reclaimCount: acc.reclaimCount + (row.reclaim_month ? 1 : 0),
   }), { taxableValue: 0, igst: 0, cgst: 0, sgst: 0, reversalCount: 0, reclaimCount: 0 });
 
-  const totalsBooks = localBillsBooks.reduce((acc, row) => ({
+  const totalsBooks = filteredBillsBooks.reduce((acc, row) => ({
     taxableValue: acc.taxableValue + (row.taxable_value || 0),
     igst: acc.igst + (row.input_igst || 0),
     cgst: acc.cgst + (row.input_cgst || 0),
@@ -1069,13 +1108,35 @@ const TwoBReconciliationPage: React.FC = () => {
                       <th className="text-right w-28">IGST</th>
                       <th className="text-right w-28">CGST</th>
                       <th className="text-right w-28">SGST</th>
-                      <th className="w-28">Reversal</th>
-                      <th className="w-24">Reclaim</th>
+                      <th className="w-32">
+                        <div className="flex flex-col items-center gap-1">
+                          <span>Reversal</span>
+                          <MultiSelectPopover
+                            options={reversalReclaimMonths}
+                            selectedValues={selectedReversalMonths}
+                            onSelectionChange={setSelectedReversalMonths}
+                            placeholder="Filter"
+                            className="w-24"
+                          />
+                        </div>
+                      </th>
+                      <th className="w-28">
+                        <div className="flex flex-col items-center gap-1">
+                          <span>Reclaim</span>
+                          <MultiSelectPopover
+                            options={reversalReclaimMonths}
+                            selectedValues={selectedReclaimMonths}
+                            onSelectionChange={setSelectedReclaimMonths}
+                            placeholder="Filter"
+                            className="w-24"
+                          />
+                        </div>
+                      </th>
                       {!isLocked && <th className="w-12"></th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {localBills2B.map((row) => (
+                    {filteredBills2B.map((row) => (
                       <tr key={row.id} className={row.is_carried_forward ? 'bg-blue-50 dark:bg-blue-950/20' : ''}>
                         <td>
                           {renderEditableInput(
@@ -1171,10 +1232,12 @@ const TwoBReconciliationPage: React.FC = () => {
                         )}
                       </tr>
                     ))}
-                    {localBills2B.length === 0 && (
+                    {filteredBills2B.length === 0 && (
                       <tr>
                         <td colSpan={isLocked ? 10 : 11} className="text-center py-8 text-muted-foreground">
-                          No records found. Click + button below Date or use "Import Excel" to add data.
+                          {localBills2B.length === 0 
+                            ? 'No records found. Click + button below Date or use "Import Excel" to add data.'
+                            : 'No records match the selected filters.'}
                         </td>
                       </tr>
                     )}
@@ -1228,13 +1291,35 @@ const TwoBReconciliationPage: React.FC = () => {
                       <th className="text-right w-28">IGST</th>
                       <th className="text-right w-28">CGST</th>
                       <th className="text-right w-28">SGST</th>
-                      <th className="w-28">Book Entry</th>
-                      <th className="w-24">In 2B</th>
+                      <th className="w-32">
+                        <div className="flex flex-col items-center gap-1">
+                          <span>Book Entry</span>
+                          <MultiSelectPopover
+                            options={reversalReclaimMonths}
+                            selectedValues={selectedBookEntryMonths}
+                            onSelectionChange={setSelectedBookEntryMonths}
+                            placeholder="Filter"
+                            className="w-24"
+                          />
+                        </div>
+                      </th>
+                      <th className="w-28">
+                        <div className="flex flex-col items-center gap-1">
+                          <span>In 2B</span>
+                          <MultiSelectPopover
+                            options={reversalReclaimMonths}
+                            selectedValues={selectedIn2BMonths}
+                            onSelectionChange={setSelectedIn2BMonths}
+                            placeholder="Filter"
+                            className="w-24"
+                          />
+                        </div>
+                      </th>
                       {!isLocked && <th className="w-12"></th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {localBillsBooks.map((row) => (
+                    {filteredBillsBooks.map((row) => (
                       <tr key={row.id}>
                         <td>
                           {renderEditableInput(
@@ -1325,10 +1410,12 @@ const TwoBReconciliationPage: React.FC = () => {
                         )}
                       </tr>
                     ))}
-                    {localBillsBooks.length === 0 && (
+                    {filteredBillsBooks.length === 0 && (
                       <tr>
                         <td colSpan={isLocked ? 10 : 11} className="text-center py-8 text-muted-foreground">
-                          No records found. Click + button below Date or use "Import Excel" to add data.
+                          {localBillsBooks.length === 0 
+                            ? 'No records found. Click + button below Date or use "Import Excel" to add data.'
+                            : 'No records match the selected filters.'}
                         </td>
                       </tr>
                     )}
