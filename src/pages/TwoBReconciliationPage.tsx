@@ -242,6 +242,23 @@ const TwoBReconciliationPage: React.FC = () => {
     }
 
     if (data && data.length > 0) {
+      // Fetch user names for updated_by UUIDs
+      const userIds = [...new Set(data.map(v => v.updated_by).filter(Boolean))];
+      let userNames: Record<string, string> = {};
+      
+      if (userIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('user_id, first_name')
+          .in('user_id', userIds);
+        
+        if (profiles) {
+          profiles.forEach(p => {
+            userNames[p.user_id] = p.first_name;
+          });
+        }
+      }
+      
       // Convert to TwoBVersion format
       const formattedVersions: TwoBVersion[] = data.map(v => ({
         id: v.id,
@@ -252,7 +269,7 @@ const TwoBReconciliationPage: React.FC = () => {
         versionNumber: v.version_number || 1,
         billsNotIn2B: (v.version_data as any)?.billsNotIn2B || [],
         billsNotInBooks: (v.version_data as any)?.billsNotInBooks || [],
-        updatedBy: v.updated_by || 'Unknown',
+        updatedBy: v.updated_by ? (userNames[v.updated_by] || 'Unknown') : 'Unknown',
         updatedAt: new Date(v.updated_at || Date.now()),
         isCurrent: v.is_current || false,
       }));
@@ -593,7 +610,7 @@ const TwoBReconciliationPage: React.FC = () => {
     
     setIsSaving(true);
     try {
-      // First, save a version of the current state before making changes
+      // First, save a version of the ORIGINAL state (from database) before making changes
       const currentVersionNumber = versions.length > 0 ? Math.max(...versions.map(v => v.versionNumber)) + 1 : 1;
       
       // Mark all existing versions as not current
@@ -603,8 +620,8 @@ const TwoBReconciliationPage: React.FC = () => {
         .eq('client_id', selectedClient)
         .eq('period_month', selectedMonth);
       
-      // Transform local data to version format for storage
-      const versionBills2B = localBills2B.filter(b => !b.id.startsWith('temp-')).map(b => ({
+      // Transform ORIGINAL database data to version format for storage (not local edits)
+      const versionBills2B = billsNotIn2B.map(b => ({
         id: b.id,
         clientId: b.client_id,
         date: b.date,
@@ -625,7 +642,7 @@ const TwoBReconciliationPage: React.FC = () => {
         version: b.version || 1,
       }));
       
-      const versionBillsBooks = localBillsBooks.filter(b => !b.id.startsWith('temp-')).map(b => ({
+      const versionBillsBooks = billsNotInBooks.map(b => ({
         id: b.id,
         clientId: b.client_id,
         date: b.date,
@@ -646,7 +663,7 @@ const TwoBReconciliationPage: React.FC = () => {
         version: b.version || 1,
       }));
       
-      // Save new version with current data
+      // Save new version with ORIGINAL data (before this save operation)
       const versionData = {
         billsNotIn2B: versionBills2B,
         billsNotInBooks: versionBillsBooks,
@@ -659,7 +676,7 @@ const TwoBReconciliationPage: React.FC = () => {
         version_number: currentVersionNumber,
         version_data: versionData,
         updated_at: new Date().toISOString(),
-        updated_by: user?.firstName || 'Unknown',
+        updated_by: user?.userId || null,
         is_current: true,
       }]);
       
