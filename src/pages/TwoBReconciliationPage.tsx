@@ -77,6 +77,9 @@ const TwoBReconciliationPage: React.FC = () => {
   const [selectedReclaimMonths, setSelectedReclaimMonths] = useState<string[]>([]);
   const [selectedBookEntryMonths, setSelectedBookEntryMonths] = useState<string[]>([]);
   const [selectedIn2BMonths, setSelectedIn2BMonths] = useState<string[]>([]);
+  
+  // Negative value error state
+  const [negativeValueError, setNegativeValueError] = useState<string | null>(null);
 
   const selectedClientData = clients.find(c => c.id === selectedClient);
 
@@ -1029,9 +1032,20 @@ const TwoBReconciliationPage: React.FC = () => {
         type={type}
         value={value ?? ''}
         onChange={(e) => {
-          const val = type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value;
-          onChange(val);
+          if (type === 'number') {
+            const numVal = parseFloat(e.target.value) || 0;
+            if (numVal < 0) {
+              setNegativeValueError('Negative values are not allowed in this table.');
+              // Auto-clear error after 3 seconds
+              setTimeout(() => setNegativeValueError(null), 3000);
+              return; // Don't update the value
+            }
+            onChange(numVal);
+          } else {
+            onChange(e.target.value);
+          }
         }}
+        min={type === 'number' ? 0 : undefined}
         className={`h-8 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${type === 'number' ? 'w-28 text-right font-mono' : ''} ${className}`}
       />
     );
@@ -1163,6 +1177,14 @@ const TwoBReconciliationPage: React.FC = () => {
         </Card>
       ) : (
         <>
+          {/* Negative value error message */}
+          {negativeValueError && (
+            <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-3 flex items-center gap-2 text-destructive">
+              <AlertCircle className="h-4 w-4" />
+              <span className="text-sm">{negativeValueError}</span>
+            </div>
+          )}
+
           {/* Lock indicator */}
           {isLocked && (
             <div className="bg-warning/10 border border-warning/20 rounded-lg p-3 flex items-center justify-between text-warning">
