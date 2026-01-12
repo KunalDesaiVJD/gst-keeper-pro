@@ -926,42 +926,42 @@ const TwoBReconciliationPage: React.FC = () => {
       await supabase.from('bills_not_in_2b').delete().eq('client_id', selectedClient).eq('period_month', selectedMonth);
       await supabase.from('bills_not_in_books').delete().eq('client_id', selectedClient).eq('period_month', selectedMonth);
       
-      // Restore bills not in 2B from version
+      // Restore bills not in 2B from version (handle both camelCase and snake_case)
       if (version.billsNotIn2B && version.billsNotIn2B.length > 0) {
         const records2B = version.billsNotIn2B.map((b: any) => ({
           client_id: selectedClient,
           date: b.date,
-          supplier_name: b.supplier_name,
-          supplier_invoice_number: b.supplier_invoice_number,
-          supplier_gstin: b.supplier_gstin,
-          taxable_value: b.taxable_value,
-          input_igst: b.input_igst,
-          input_cgst: b.input_cgst,
-          input_sgst: b.input_sgst,
+          supplier_name: b.supplierName || b.supplier_name,
+          supplier_invoice_number: b.supplierInvoiceNumber || b.supplier_invoice_number,
+          supplier_gstin: b.supplierGstin || b.supplier_gstin,
+          taxable_value: b.taxableValue ?? b.taxable_value ?? 0,
+          input_igst: b.inputIgst ?? b.input_igst ?? 0,
+          input_cgst: b.inputCgst ?? b.input_cgst ?? 0,
+          input_sgst: b.inputSgst ?? b.input_sgst ?? 0,
           period_month: selectedMonth,
-          reversal_month: b.reversal_month,
-          reclaim_month: b.reclaim_month,
-          is_carried_forward: b.is_carried_forward,
+          reversal_month: b.reversalMonth || b.reversal_month || null,
+          reclaim_month: b.reclaimMonth || b.reclaim_month || null,
+          is_carried_forward: b.isCarriedForward ?? b.is_carried_forward ?? false,
         }));
         await supabase.from('bills_not_in_2b').insert(records2B);
       }
       
-      // Restore bills not in books from version
+      // Restore bills not in books from version (handle both camelCase and snake_case)
       if (version.billsNotInBooks && version.billsNotInBooks.length > 0) {
         const recordsBooks = version.billsNotInBooks.map((b: any) => ({
           client_id: selectedClient,
           date: b.date,
-          supplier_name: b.supplier_name,
-          supplier_invoice_number: b.supplier_invoice_number,
-          supplier_gstin: b.supplier_gstin,
-          taxable_value: b.taxable_value,
-          input_igst: b.input_igst,
-          input_cgst: b.input_cgst,
-          input_sgst: b.input_sgst,
+          supplier_name: b.supplierName || b.supplier_name,
+          supplier_invoice_number: b.supplierInvoiceNumber || b.supplier_invoice_number,
+          supplier_gstin: b.supplierGstin || b.supplier_gstin,
+          taxable_value: b.taxableValue ?? b.taxable_value ?? 0,
+          input_igst: b.inputIgst ?? b.input_igst ?? 0,
+          input_cgst: b.inputCgst ?? b.input_cgst ?? 0,
+          input_sgst: b.inputSgst ?? b.input_sgst ?? 0,
           period_month: selectedMonth,
-          book_entry_month: b.book_entry_month,
-          bill_in_2b_month: b.bill_in_2b_month,
-          is_carried_forward: b.is_carried_forward,
+          book_entry_month: b.bookEntryMonth || b.book_entry_month || null,
+          bill_in_2b_month: b.billIn2BMonth || b.bill_in_2b_month || null,
+          is_carried_forward: b.isCarriedForward ?? b.is_carried_forward ?? false,
         }));
         await supabase.from('bills_not_in_books').insert(recordsBooks);
       }
@@ -972,6 +972,7 @@ const TwoBReconciliationPage: React.FC = () => {
       
       await fetchBillsData();
       await fetchVersions();
+      setHasUnsavedChanges(false);
       toast.success(`Restored to version ${version.versionNumber}`);
       setShowVersionHistory(false);
     } catch (error: any) {

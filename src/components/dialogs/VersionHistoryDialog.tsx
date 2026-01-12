@@ -1,13 +1,23 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { History, Download } from 'lucide-react';
+import { History, Download, RotateCcw } from 'lucide-react';
 import { format } from 'date-fns';
 import { TwoBVersion, BillNotIn2B, BillNotInBooks } from '@/types';
 import { toast } from 'sonner';
@@ -30,6 +40,8 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
   clientName,
   month,
 }) => {
+  const [confirmRestore, setConfirmRestore] = useState<TwoBVersion | null>(null);
+
   const handleDownloadVersion = (version: TwoBVersion) => {
     try {
       const workbook = XLSX.utils.book_new();
@@ -121,63 +133,105 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
     }
   };
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <History className="h-5 w-5" />
-            Version History
-          </DialogTitle>
-          <p className="text-sm text-muted-foreground">
-            {clientName} - {month}
-          </p>
-        </DialogHeader>
+  const handleRestoreClick = (version: TwoBVersion) => {
+    setConfirmRestore(version);
+  };
 
-        <div className="mt-4 space-y-3 max-h-96 overflow-y-auto">
-          {versions.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">
-              No version history available. Save changes to create versions.
+  const handleConfirmRestore = () => {
+    if (confirmRestore) {
+      onRestore(confirmRestore);
+      setConfirmRestore(null);
+    }
+  };
+
+  return (
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="h-5 w-5" />
+              Version History
+            </DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              {clientName} - {month}
             </p>
-          ) : (
-            versions.map((version) => (
-              <div
-                key={version.id}
-                className={`flex items-center justify-between p-4 rounded-lg border ${
-                  version.isCurrent ? 'bg-primary/5 border-primary/20' : 'bg-muted/30'
-                }`}
-              >
-                <div className="flex items-center gap-4">
-                  <Badge variant={version.isCurrent ? 'default' : 'outline'}>
-                    v{version.versionNumber}
-                  </Badge>
-                  <div>
-                    <p className="text-sm font-medium">
-                      {format(new Date(version.updatedAt), 'dd-MMM-yyyy HH:mm')} IST
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Updated by: {version.updatedBy}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {(version.billsNotIn2B || []).length} bills in 2B table, {(version.billsNotInBooks || []).length} bills in Books table
-                    </p>
+          </DialogHeader>
+
+          <div className="mt-4 space-y-3 max-h-96 overflow-y-auto">
+            {versions.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">
+                No version history available. Save changes to create versions.
+              </p>
+            ) : (
+              versions.map((version) => (
+                <div
+                  key={version.id}
+                  className={`flex items-center justify-between p-4 rounded-lg border ${
+                    version.isCurrent ? 'bg-primary/5 border-primary/20' : 'bg-muted/30'
+                  }`}
+                >
+                  <div className="flex items-center gap-4">
+                    <Badge variant={version.isCurrent ? 'default' : 'outline'}>
+                      v{version.versionNumber}
+                    </Badge>
+                    <div>
+                      <p className="text-sm font-medium">
+                        {format(new Date(version.updatedAt), 'dd-MMM-yyyy HH:mm')} IST
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Updated by: {version.updatedBy}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {(version.billsNotIn2B || []).length} bills in 2B table, {(version.billsNotInBooks || []).length} bills in Books table
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleRestoreClick(version)}
+                      className="flex items-center gap-1"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Restore
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleDownloadVersion(version)}
+                      className="flex items-center gap-1"
+                    >
+                      <Download className="h-3 w-3" />
+                      Download
+                    </Button>
                   </div>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleDownloadVersion(version)}
-                  className="flex items-center gap-1"
-                >
-                  <Download className="h-3 w-3" />
-                  Download
-                </Button>
-              </div>
-            ))
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!confirmRestore} onOpenChange={() => setConfirmRestore(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restore Version {confirmRestore?.versionNumber}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will replace all current data with the data from version {confirmRestore?.versionNumber}. 
+              This action cannot be undone. Make sure you have saved or downloaded the current data if needed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmRestore}>
+              Restore Version
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 };
 
