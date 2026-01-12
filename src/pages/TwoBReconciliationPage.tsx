@@ -936,12 +936,15 @@ const TwoBReconciliationPage: React.FC = () => {
     }
     
     return (
-      <Select value={value || ''} onValueChange={onChange}>
+      <Select 
+        value={value || '__clear__'} 
+        onValueChange={(val) => onChange(val === '__clear__' ? '' : val)}
+      >
         <SelectTrigger className="h-8 text-sm w-24">
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="">-</SelectItem>
+          <SelectItem value="__clear__">-</SelectItem>
           {reversalReclaimMonths.filter(m => m.value !== '__blank__').map((m) => (
             <SelectItem key={m.value} value={m.value}>
               {m.label}
