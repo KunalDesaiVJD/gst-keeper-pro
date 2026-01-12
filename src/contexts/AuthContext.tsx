@@ -9,7 +9,8 @@ interface UserPermissions {
   manage_employees: boolean;
   unlock_sheets: boolean;
   view_version_history: boolean;
-  manage_clients: boolean;
+  add_edit_clients: boolean;
+  delete_clients: boolean;
   edit_filing_status: boolean;
   export_data: boolean;
 }
@@ -18,7 +19,8 @@ const DEFAULT_PERMISSIONS: UserPermissions = {
   manage_employees: false,
   unlock_sheets: false,
   view_version_history: false,
-  manage_clients: false,
+  add_edit_clients: false,
+  delete_clients: false,
   edit_filing_status: false,
   export_data: false,
 };
@@ -45,7 +47,8 @@ interface AuthContextType {
   canUnlockSheets: () => boolean;
   canViewVersionHistory: () => boolean;
   canResetPasswords: () => boolean;
-  canManageClients: () => boolean;
+  canAddEditClients: () => boolean;
+  canDeleteClients: () => boolean;
   canEditFilingStatus: () => boolean;
   canExportData: () => boolean;
   hasPermission: (permission: keyof UserPermissions) => boolean;
@@ -418,10 +421,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return user?.role === 'superadmin' || user?.role === 'gst_manager';
   }, [user]);
 
-  const canManageClients = useCallback((): boolean => {
+  const canAddEditClients = useCallback((): boolean => {
     if (!user) return false;
     if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
-    return hasPermission('manage_clients');
+    return hasPermission('add_edit_clients');
+  }, [user, hasPermission]);
+
+  const canDeleteClients = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission('delete_clients');
   }, [user, hasPermission]);
 
   const canEditFilingStatus = useCallback((): boolean => {
@@ -451,7 +460,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canUnlockSheets,
         canViewVersionHistory,
         canResetPasswords,
-        canManageClients,
+        canAddEditClients,
+        canDeleteClients,
         canEditFilingStatus,
         canExportData,
         hasPermission,

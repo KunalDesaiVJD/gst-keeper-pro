@@ -28,9 +28,14 @@ const AVAILABLE_PERMISSIONS = [
     description: 'Access version history of 2B running sheets',
   },
   {
-    key: 'manage_clients',
-    label: 'Manage Clients',
-    description: 'Add, edit, and delete client records',
+    key: 'add_edit_clients',
+    label: 'Add/Edit Clients',
+    description: 'Add new clients and edit existing client records',
+  },
+  {
+    key: 'delete_clients',
+    label: 'Delete Clients',
+    description: 'Delete client records from the system',
   },
   {
     key: 'edit_filing_status',

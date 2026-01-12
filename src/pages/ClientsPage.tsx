@@ -17,6 +17,7 @@ import {
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Client {
   id: string;
@@ -30,6 +31,7 @@ interface Client {
 
 const ClientsPage: React.FC = () => {
   const navigate = useNavigate();
+  const { canAddEditClients, canDeleteClients } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -103,11 +105,15 @@ const ClientsPage: React.FC = () => {
           <p className="text-muted-foreground">Manage your client database</p>
         </div>
         <div className="flex items-center gap-2">
-          <BulkAddClientsDialog onSuccess={() => fetchClients()} />
-          <Button onClick={() => navigate('/add-client')} className="flex items-center gap-2">
-            <Plus className="h-4 w-4" />
-            Add Client
-          </Button>
+          {canAddEditClients() && (
+            <>
+              <BulkAddClientsDialog onSuccess={() => fetchClients()} />
+              <Button onClick={() => navigate('/add-client')} className="flex items-center gap-2">
+                <Plus className="h-4 w-4" />
+                Add Client
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -162,18 +168,27 @@ const ClientsPage: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="icon" title="Edit Client">
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    title="Delete Client" 
-                    className="text-destructive hover:text-destructive"
-                    onClick={() => handleDeleteClient(client.id, client.name)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  {canAddEditClients() && (
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      title="Edit Client"
+                      onClick={() => navigate(`/edit-client/${client.id}`)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                  )}
+                  {canDeleteClients() && (
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      title="Delete Client" 
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => handleDeleteClient(client.id, client.name)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
               </div>
             </CardContent>

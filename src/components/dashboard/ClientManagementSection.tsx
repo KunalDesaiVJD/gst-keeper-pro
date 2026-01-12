@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Client {
   id: string;
@@ -28,6 +29,7 @@ interface Client {
 
 const ClientManagementSection: React.FC = () => {
   const navigate = useNavigate();
+  const { canAddEditClients, canDeleteClients } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -94,10 +96,12 @@ const ClientManagementSection: React.FC = () => {
             </CardTitle>
             <CardDescription>{clients.length} clients in database</CardDescription>
           </div>
-          <Button onClick={() => navigate('/add-client')} size="sm" className="flex items-center gap-2">
-            <Plus className="h-4 w-4" />
-            Add Client
-          </Button>
+          {canAddEditClients() && (
+            <Button onClick={() => navigate('/add-client')} size="sm" className="flex items-center gap-2">
+              <Plus className="h-4 w-4" />
+              Add Client
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardContent>
@@ -148,24 +152,34 @@ const ClientManagementSection: React.FC = () => {
                     {client.registration_type}
                   </Badge>
                   <div className="flex items-center gap-1">
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="h-8 w-8" 
-                      title="Edit"
-                      onClick={() => navigate(`/edit-client/${client.id}`)}
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="h-8 w-8 text-destructive hover:text-destructive"
-                      onClick={() => handleDeleteClient(client.id, client.name)}
-                      title="Delete"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                    {canAddEditClients() && (
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-8 w-8" 
+                        title="Edit"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/edit-client/${client.id}`);
+                        }}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                    {canDeleteClients() && (
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-8 w-8 text-destructive hover:text-destructive"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteClient(client.id, client.name);
+                        }}
+                        title="Delete"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               </div>

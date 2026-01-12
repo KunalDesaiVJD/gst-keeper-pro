@@ -116,7 +116,7 @@ const TwoBReconciliationPage: React.FC = () => {
 
   const monthOptions = generateMonthOptions;
 
-  // Generate month dropdown options for reversal/reclaim
+  // Generate month dropdown options for reversal/reclaim with "Blank" option
   const shortMonthOptions = () => {
     const options: { value: string; label: string }[] = [];
     const now = new Date();
@@ -127,7 +127,7 @@ const TwoBReconciliationPage: React.FC = () => {
       const value = `${monthNames[date.getMonth()]} ${yearShort}`;
       options.push({ value, label: value });
     }
-    return options.sort((a, b) => {
+    const sortedOptions = options.sort((a, b) => {
       const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
       const parseDate = (s: string) => {
         const [m, y] = s.split(' ');
@@ -135,6 +135,8 @@ const TwoBReconciliationPage: React.FC = () => {
       };
       return parseDate(b.value) - parseDate(a.value);
     });
+    // Add "Blank" option at the beginning
+    return [{ value: '__blank__', label: '(Blank)' }, ...sortedOptions];
   };
 
   const reversalReclaimMonths = shortMonthOptions();
@@ -329,18 +331,30 @@ const TwoBReconciliationPage: React.FC = () => {
     };
   }, [selectedClient, fetchBillsData]);
 
-  // Filter bills based on selected months
+  // Filter bills based on selected months (with support for "Blank" filter)
   const filteredBills2B = useMemo(() => {
     return localBills2B.filter(row => {
       // Reversal filter
       if (selectedReversalMonths.length > 0) {
-        if (!row.reversal_month || !selectedReversalMonths.includes(row.reversal_month)) {
+        const hasBlankFilter = selectedReversalMonths.includes('__blank__');
+        const otherFilters = selectedReversalMonths.filter(m => m !== '__blank__');
+        
+        const matchesBlank = hasBlankFilter && (!row.reversal_month || row.reversal_month.trim() === '');
+        const matchesMonth = otherFilters.length > 0 && row.reversal_month && otherFilters.includes(row.reversal_month);
+        
+        if (!matchesBlank && !matchesMonth) {
           return false;
         }
       }
       // Reclaim filter
       if (selectedReclaimMonths.length > 0) {
-        if (!row.reclaim_month || !selectedReclaimMonths.includes(row.reclaim_month)) {
+        const hasBlankFilter = selectedReclaimMonths.includes('__blank__');
+        const otherFilters = selectedReclaimMonths.filter(m => m !== '__blank__');
+        
+        const matchesBlank = hasBlankFilter && (!row.reclaim_month || row.reclaim_month.trim() === '');
+        const matchesMonth = otherFilters.length > 0 && row.reclaim_month && otherFilters.includes(row.reclaim_month);
+        
+        if (!matchesBlank && !matchesMonth) {
           return false;
         }
       }
@@ -352,13 +366,25 @@ const TwoBReconciliationPage: React.FC = () => {
     return localBillsBooks.filter(row => {
       // Book Entry filter
       if (selectedBookEntryMonths.length > 0) {
-        if (!row.book_entry_month || !selectedBookEntryMonths.includes(row.book_entry_month)) {
+        const hasBlankFilter = selectedBookEntryMonths.includes('__blank__');
+        const otherFilters = selectedBookEntryMonths.filter(m => m !== '__blank__');
+        
+        const matchesBlank = hasBlankFilter && (!row.book_entry_month || row.book_entry_month.trim() === '');
+        const matchesMonth = otherFilters.length > 0 && row.book_entry_month && otherFilters.includes(row.book_entry_month);
+        
+        if (!matchesBlank && !matchesMonth) {
           return false;
         }
       }
       // In 2B filter
       if (selectedIn2BMonths.length > 0) {
-        if (!row.bill_in_2b_month || !selectedIn2BMonths.includes(row.bill_in_2b_month)) {
+        const hasBlankFilter = selectedIn2BMonths.includes('__blank__');
+        const otherFilters = selectedIn2BMonths.filter(m => m !== '__blank__');
+        
+        const matchesBlank = hasBlankFilter && (!row.bill_in_2b_month || row.bill_in_2b_month.trim() === '');
+        const matchesMonth = otherFilters.length > 0 && row.bill_in_2b_month && otherFilters.includes(row.bill_in_2b_month);
+        
+        if (!matchesBlank && !matchesMonth) {
           return false;
         }
       }
