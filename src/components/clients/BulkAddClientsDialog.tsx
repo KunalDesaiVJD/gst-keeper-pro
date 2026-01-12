@@ -36,9 +36,9 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
       ['Instructions: Fill in the details below. GSTIN must be exactly 15 characters. Registration Type must be: Regular, Composition, Tax Deductor, or ISD.'],
       ['Selected Returns: For Regular - GSTR-1,GSTR-3B,ITC-04 | For Composition - CMP-08 | For Tax Deductor - GSTR-7 | For ISD - GSTR-6'],
       [],
-      ['GSTIN*', 'Client Name*', 'Registration Type*', 'Registration Date (YYYY-MM-DD)', 'Mobile (10 digits)', 'Email', 'Assigned Accountant', 'Target Date (GSTR-1, GSTR-7)', 'Target Date (GSTR-3B, ITC-04)', 'Selected Returns (comma-separated)'],
-      ['24AAQCS2345D1Z5', 'Sample Company Pvt Ltd', 'Regular', '2024-01-15', '9876543210', 'sample@example.com', 'John Doe', '11', '20', 'GSTR-1,GSTR-3B'],
-      ['24BBRCS9876E2Z6', 'Another Business', 'Composition', '2024-02-01', '9123456789', 'another@example.com', 'Jane Smith', '', '15', 'CMP-08'],
+      ['GSTIN*', 'Client Name*', 'Registration Type*', 'Registration Date (DD/MM/YYYY)', 'Mobile (10 digits)', 'Email', 'Assigned Accountant', 'Target Date (GSTR-1, GSTR-7)', 'Target Date (GSTR-3B, ITC-04)', 'Selected Returns (comma-separated)'],
+      ['24AAQCS2345D1Z5', 'Sample Company Pvt Ltd', 'Regular', '15/01/2024', '9876543210', 'sample@example.com', 'John Doe', '11', '20', 'GSTR-1,GSTR-3B'],
+      ['24BBRCS9876E2Z6', 'Another Business', 'Composition', '01/02/2024', '9123456789', 'another@example.com', 'Jane Smith', '', '15', 'CMP-08'],
     ];
 
     const sheet = XLSX.utils.aoa_to_sheet(templateData);
@@ -104,10 +104,25 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
     }
 
     // Registration Date is now optional - validate only if provided
+    // Support both YYYY-MM-DD and DD/MM/YYYY formats
     if (regDate) {
-      const date = new Date(regDate);
-      if (isNaN(date.getTime())) {
-        errors.push('Invalid date format. Use YYYY-MM-DD');
+      let parsedDate: Date | null = null;
+      
+      // Try DD/MM/YYYY format first (user-preferred)
+      const ddmmyyyyRegex = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
+      const ddmmyyyyMatch = regDate.match(ddmmyyyyRegex);
+      if (ddmmyyyyMatch) {
+        const day = parseInt(ddmmyyyyMatch[1], 10);
+        const month = parseInt(ddmmyyyyMatch[2], 10);
+        const year = parseInt(ddmmyyyyMatch[3], 10);
+        parsedDate = new Date(year, month - 1, day);
+      } else {
+        // Try YYYY-MM-DD format
+        parsedDate = new Date(regDate);
+      }
+      
+      if (!parsedDate || isNaN(parsedDate.getTime())) {
+        errors.push('Invalid date format. Use DD/MM/YYYY or YYYY-MM-DD');
       }
     }
 
@@ -149,13 +164,34 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
       selectedReturns = RETURN_TYPES_BY_REGISTRATION[regType as RegistrationType] || [];
     }
 
+    // Parse registration date to YYYY-MM-DD format for storage
+    let parsedRegDate = new Date().toISOString().split('T')[0]; // Default to today
+    if (regDate) {
+      const ddmmyyyyRegex = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
+      const ddmmyyyyMatch = regDate.match(ddmmyyyyRegex);
+      if (ddmmyyyyMatch) {
+        const day = parseInt(ddmmyyyyMatch[1], 10);
+        const month = parseInt(ddmmyyyyMatch[2], 10);
+        const year = parseInt(ddmmyyyyMatch[3], 10);
+        const date = new Date(year, month - 1, day);
+        if (!isNaN(date.getTime())) {
+          parsedRegDate = date.toISOString().split('T')[0];
+        }
+      } else {
+        const date = new Date(regDate);
+        if (!isNaN(date.getTime())) {
+          parsedRegDate = date.toISOString().split('T')[0];
+        }
+      }
+    }
+
     return {
       row: rowIndex + 1,
       data: {
         gstin,
         name,
         registrationType: regType as RegistrationType,
-        registrationDate: regDate || new Date().toISOString().split('T')[0], // Default to today
+        registrationDate: parsedRegDate,
         mobile,
         email,
         accountant,
