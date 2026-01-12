@@ -7,10 +7,11 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { History, RotateCcw } from 'lucide-react';
+import { History, Download } from 'lucide-react';
 import { format } from 'date-fns';
-import { TwoBVersion } from '@/types';
+import { TwoBVersion, BillNotIn2B, BillNotInBooks } from '@/types';
 import { toast } from 'sonner';
+import * as XLSX from 'xlsx';
 
 interface VersionHistoryDialogProps {
   open: boolean;
@@ -29,10 +30,95 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
   clientName,
   month,
 }) => {
-  const handleRestore = (version: TwoBVersion) => {
-    onRestore(version);
-    toast.success(`Restored to version ${version.versionNumber}`);
-    onOpenChange(false);
+  const handleDownloadVersion = (version: TwoBVersion) => {
+    try {
+      const workbook = XLSX.utils.book_new();
+
+      // Sheet 1: Bills Not Available in 2B
+      const billsNotIn2B = version.billsNotIn2B || [];
+      const sheet1Data = [
+        ['Bills Not Available in 2B'],
+        [`Client: ${clientName}`, '', '', '', '', '', '', '', `Month: ${month}`],
+        [`Version: ${version.versionNumber}`, '', '', '', '', '', '', '', `Saved: ${format(new Date(version.updatedAt), 'dd-MMM-yyyy HH:mm')}`],
+        [],
+        ['Date', 'Supplier Name', 'Invoice No.', 'GSTIN', 'Taxable Value', 'IGST', 'CGST', 'SGST', 'Reversal Month', 'Reclaim Month'],
+        ...billsNotIn2B.map((row: BillNotIn2B) => [
+          row.date instanceof Date ? format(row.date, 'dd/MM/yyyy') : String(row.date || ''),
+          row.supplierName || '',
+          row.supplierInvoiceNumber || '',
+          row.supplierGstin || '',
+          row.taxableValue || 0,
+          row.inputIgst || 0,
+          row.inputCgst || 0,
+          row.inputSgst || 0,
+          row.reversalMonth || '',
+          row.reclaimMonth || ''
+        ]),
+        [],
+        ['TOTAL', '', '', '',
+          billsNotIn2B.reduce((sum: number, r: BillNotIn2B) => sum + (r.taxableValue || 0), 0),
+          billsNotIn2B.reduce((sum: number, r: BillNotIn2B) => sum + (r.inputIgst || 0), 0),
+          billsNotIn2B.reduce((sum: number, r: BillNotIn2B) => sum + (r.inputCgst || 0), 0),
+          billsNotIn2B.reduce((sum: number, r: BillNotIn2B) => sum + (r.inputSgst || 0), 0),
+          '', ''
+        ]
+      ];
+
+      const sheet1 = XLSX.utils.aoa_to_sheet(sheet1Data);
+      sheet1['!cols'] = [
+        { wch: 12 }, { wch: 30 }, { wch: 15 }, { wch: 18 },
+        { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
+        { wch: 15 }, { wch: 15 }
+      ];
+      XLSX.utils.book_append_sheet(workbook, sheet1, 'Bills Not in 2B');
+
+      // Sheet 2: Bills Not Available in Books
+      const billsNotInBooks = version.billsNotInBooks || [];
+      const sheet2Data = [
+        ['Bills Not Available in Books'],
+        [`Client: ${clientName}`, '', '', '', '', '', '', '', `Month: ${month}`],
+        [`Version: ${version.versionNumber}`, '', '', '', '', '', '', '', `Saved: ${format(new Date(version.updatedAt), 'dd-MMM-yyyy HH:mm')}`],
+        [],
+        ['Date', 'Supplier Name', 'Invoice No.', 'GSTIN', 'Taxable Value', 'IGST', 'CGST', 'SGST', 'Book Entry Month', 'Bill in 2B Month'],
+        ...billsNotInBooks.map((row: BillNotInBooks) => [
+          row.date instanceof Date ? format(row.date, 'dd/MM/yyyy') : String(row.date || ''),
+          row.supplierName || '',
+          row.supplierInvoiceNumber || '',
+          row.supplierGstin || '',
+          row.taxableValue || 0,
+          row.inputIgst || 0,
+          row.inputCgst || 0,
+          row.inputSgst || 0,
+          row.bookEntryMonth || '',
+          row.billIn2BMonth || ''
+        ]),
+        [],
+        ['TOTAL', '', '', '',
+          billsNotInBooks.reduce((sum: number, r: BillNotInBooks) => sum + (r.taxableValue || 0), 0),
+          billsNotInBooks.reduce((sum: number, r: BillNotInBooks) => sum + (r.inputIgst || 0), 0),
+          billsNotInBooks.reduce((sum: number, r: BillNotInBooks) => sum + (r.inputCgst || 0), 0),
+          billsNotInBooks.reduce((sum: number, r: BillNotInBooks) => sum + (r.inputSgst || 0), 0),
+          '', ''
+        ]
+      ];
+
+      const sheet2 = XLSX.utils.aoa_to_sheet(sheet2Data);
+      sheet2['!cols'] = [
+        { wch: 12 }, { wch: 30 }, { wch: 15 }, { wch: 18 },
+        { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
+        { wch: 15 }, { wch: 15 }
+      ];
+      XLSX.utils.book_append_sheet(workbook, sheet2, 'Bills Not in Books');
+
+      // Download
+      const fileName = `2B_Version_${version.versionNumber}_${clientName.replace(/\s+/g, '_')}_${month.replace('/', '-')}.xlsx`;
+      XLSX.writeFile(workbook, fileName);
+      
+      toast.success(`Downloaded version ${version.versionNumber}`);
+    } catch (error: any) {
+      console.error('Error downloading version:', error);
+      toast.error('Failed to download version');
+    }
   };
 
   return (
@@ -51,7 +137,7 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
         <div className="mt-4 space-y-3 max-h-96 overflow-y-auto">
           {versions.length === 0 ? (
             <p className="text-center text-muted-foreground py-8">
-              No version history available.
+              No version history available. Save changes to create versions.
             </p>
           ) : (
             versions.map((version) => (
@@ -73,26 +159,19 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
                       Updated by: {version.updatedBy}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {version.billsNotIn2B.length} bills in 2B table, {version.billsNotInBooks.length} bills in Books table
+                      {(version.billsNotIn2B || []).length} bills in 2B table, {(version.billsNotInBooks || []).length} bills in Books table
                     </p>
                   </div>
                 </div>
-                {!version.isCurrent && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleRestore(version)}
-                    className="flex items-center gap-1"
-                  >
-                    <RotateCcw className="h-3 w-3" />
-                    Restore
-                  </Button>
-                )}
-                {version.isCurrent && (
-                  <Badge variant="secondary" className="text-xs">
-                    Current
-                  </Badge>
-                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleDownloadVersion(version)}
+                  className="flex items-center gap-1"
+                >
+                  <Download className="h-3 w-3" />
+                  Download
+                </Button>
               </div>
             ))
           )}

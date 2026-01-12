@@ -233,16 +233,28 @@ const ITCSummaryPage: React.FC = () => {
       return;
     }
 
+    // Also check if GSTR-3B is filed for this period - if so, sheet should be locked
+    const { data: filingData } = await supabase
+      .from('filing_status')
+      .select('status, is_locked')
+      .eq('client_id', selectedClient)
+      .eq('period_month', selectedMonth)
+      .eq('return_type', 'GSTR-3B')
+      .maybeSingle();
+
+    const isFiledLocked = filingData?.status === 'Filed' || filingData?.is_locked;
+
     if (data) {
       setItcSummaryId(data.id);
-      setIsLocked(data.is_locked || false);
+      setIsLocked(data.is_locked || isFiledLocked || false);
       const savedData = data.data as unknown as ITCData;
       if (savedData && savedData.section4A) {
         setItcData(savedData);
       }
     } else {
       setItcSummaryId(null);
-      setIsLocked(false);
+      // Even if no ITC summary record exists, lock if GSTR-3B is filed
+      setIsLocked(isFiledLocked || false);
       setItcData(getDefaultITCData());
     }
   }, [selectedClient, selectedMonth]);
