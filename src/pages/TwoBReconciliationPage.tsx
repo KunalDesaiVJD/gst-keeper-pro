@@ -582,6 +582,15 @@ const TwoBReconciliationPage: React.FC = () => {
   const handleSaveAll = async () => {
     if (!selectedClient || isLocked) return;
     
+    // Validate that all rows have supplier names
+    const invalidRows2B = localBills2B.filter(b => !b.supplier_name || b.supplier_name.trim() === '');
+    const invalidRowsBooks = localBillsBooks.filter(b => !b.supplier_name || b.supplier_name.trim() === '');
+    
+    if (invalidRows2B.length > 0 || invalidRowsBooks.length > 0) {
+      toast.error('Supplier name is required for all rows');
+      return;
+    }
+    
     setIsSaving(true);
     try {
       // First, save a version of the current state before making changes
@@ -594,13 +603,56 @@ const TwoBReconciliationPage: React.FC = () => {
         .eq('client_id', selectedClient)
         .eq('period_month', selectedMonth);
       
-      // Save new version with current data
-      const versionData = JSON.parse(JSON.stringify({
-        billsNotIn2B: localBills2B.filter(b => !b.id.startsWith('temp-')),
-        billsNotInBooks: localBillsBooks.filter(b => !b.id.startsWith('temp-')),
+      // Transform local data to version format for storage
+      const versionBills2B = localBills2B.filter(b => !b.id.startsWith('temp-')).map(b => ({
+        id: b.id,
+        clientId: b.client_id,
+        date: b.date,
+        supplierName: b.supplier_name,
+        supplierInvoiceNumber: b.supplier_invoice_number || '',
+        supplierGstin: b.supplier_gstin || '',
+        taxableValue: b.taxable_value || 0,
+        inputIgst: b.input_igst || 0,
+        inputCgst: b.input_cgst || 0,
+        inputSgst: b.input_sgst || 0,
+        reversalMonth: b.reversal_month || '',
+        reclaimMonth: b.reclaim_month || '',
+        periodMonth: b.period_month,
+        isLocked: b.is_locked || false,
+        isCarriedForward: b.is_carried_forward || false,
+        updatedBy: b.updated_by || '',
+        updatedAt: b.updated_at || new Date().toISOString(),
+        version: b.version || 1,
       }));
       
-      await supabase.from('twob_versions').insert([{
+      const versionBillsBooks = localBillsBooks.filter(b => !b.id.startsWith('temp-')).map(b => ({
+        id: b.id,
+        clientId: b.client_id,
+        date: b.date,
+        supplierName: b.supplier_name,
+        supplierInvoiceNumber: b.supplier_invoice_number || '',
+        supplierGstin: b.supplier_gstin || '',
+        taxableValue: b.taxable_value || 0,
+        inputIgst: b.input_igst || 0,
+        inputCgst: b.input_cgst || 0,
+        inputSgst: b.input_sgst || 0,
+        bookEntryMonth: b.book_entry_month || '',
+        billIn2BMonth: b.bill_in_2b_month || '',
+        periodMonth: b.period_month,
+        isLocked: b.is_locked || false,
+        isCarriedForward: b.is_carried_forward || false,
+        updatedBy: b.updated_by || '',
+        updatedAt: b.updated_at || new Date().toISOString(),
+        version: b.version || 1,
+      }));
+      
+      // Save new version with current data
+      const versionData = {
+        billsNotIn2B: versionBills2B,
+        billsNotInBooks: versionBillsBooks,
+      };
+      
+      const { error: versionError } = await supabase.from('twob_versions').insert([{
         client_id: selectedClient,
         period_month: selectedMonth,
         table_type: 'combined',
@@ -610,6 +662,11 @@ const TwoBReconciliationPage: React.FC = () => {
         updated_by: user?.firstName || 'Unknown',
         is_current: true,
       }]);
+      
+      if (versionError) {
+        console.error('Error saving version:', versionError);
+        // Don't fail the save, just log the error
+      }
 
       // Delete removed rows
       if (deletedRows2B.length > 0) {
