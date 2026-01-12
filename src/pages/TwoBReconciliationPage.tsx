@@ -873,16 +873,19 @@ const TwoBReconciliationPage: React.FC = () => {
   };
 
   // Render editable input for table cells - FIXED: wider inputs for numbers
-  // isCarriedForward parameter makes carried forward rows non-editable
+  // isCarriedForward parameter makes carried forward rows non-editable (except Reclaim column)
   const renderEditableInput = (
     value: string | number | null,
     onChange: (value: any) => void,
     type: 'text' | 'number' | 'date' = 'text',
     className: string = '',
-    isCarriedForward: boolean = false
+    isCarriedForward: boolean = false,
+    isReclaimColumn: boolean = false
   ) => {
-    // Carried forward rows are non-editable (display only)
-    if (isLocked || isCarriedForward) {
+    // Carried forward rows are non-editable (display only) - except Reclaim column
+    const shouldBeReadOnly = isLocked || (isCarriedForward && !isReclaimColumn);
+    
+    if (shouldBeReadOnly) {
       if (type === 'date' && value) {
         return <span>{format(new Date(value as string), 'dd/MM/yyyy')}</span>;
       }
@@ -917,14 +920,18 @@ const TwoBReconciliationPage: React.FC = () => {
   };
 
   // Render month dropdown for reversal/reclaim - with carried forward check
+  // isReclaimColumn allows editing the Reclaim column even for carried forward rows
   const renderMonthDropdown = (
     value: string | null | undefined,
     onChange: (value: string) => void,
     placeholder: string,
-    isCarriedForward: boolean = false
+    isCarriedForward: boolean = false,
+    isReclaimColumn: boolean = false
   ) => {
-    // Carried forward rows are non-editable
-    if (isLocked || isCarriedForward) {
+    // Carried forward rows are non-editable - except Reclaim column
+    const shouldBeReadOnly = isLocked || (isCarriedForward && !isReclaimColumn);
+    
+    if (shouldBeReadOnly) {
       return <span className="text-sm">{value || '-'}</span>;
     }
     
@@ -1217,7 +1224,8 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.reclaim_month,
                             (val) => handleUpdate2BField(row.id, 'reclaim_month', val || null),
                             'Rec',
-                            row.is_carried_forward || false
+                            row.is_carried_forward || false,
+                            true // isReclaimColumn - allow editing for carried forward rows
                           )}
                         </td>
                         {!isLocked && !row.is_carried_forward && (
