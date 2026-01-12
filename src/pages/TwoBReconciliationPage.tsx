@@ -663,9 +663,12 @@ const TwoBReconciliationPage: React.FC = () => {
         is_current: true,
       }]);
       
+      let savedVersionNumber: number | null = null;
       if (versionError) {
         console.error('Error saving version:', versionError);
         // Don't fail the save, just log the error
+      } else {
+        savedVersionNumber = currentVersionNumber;
       }
 
       // Delete removed rows
@@ -723,7 +726,11 @@ const TwoBReconciliationPage: React.FC = () => {
       await fetchBillsData();
       await fetchVersions();
       
-      toast.success('Changes saved successfully');
+      if (savedVersionNumber) {
+        toast.success(`Changes saved successfully. Version ${savedVersionNumber} created.`);
+      } else {
+        toast.success('Changes saved successfully');
+      }
     } catch (error: any) {
       console.error('Error saving:', error);
       toast.error('Failed to save: ' + error.message);
