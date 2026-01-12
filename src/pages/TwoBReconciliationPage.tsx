@@ -808,144 +808,6 @@ const TwoBReconciliationPage: React.FC = () => {
     }
   };
 
-  // Carry forward data to next month
-  const handleCarryForward = async () => {
-    if (!selectedClient || (billsNotIn2B.length === 0 && billsNotInBooks.length === 0)) {
-      toast.error('No data to carry forward');
-      return;
-    }
-
-    // Calculate next month
-    const [month, year] = selectedMonth.split('/');
-    let nextMonth = parseInt(month) + 1;
-    let nextYear = parseInt(year);
-    if (nextMonth > 12) {
-      nextMonth = 1;
-      nextYear++;
-    }
-    const nextPeriod = `${String(nextMonth).padStart(2, '0')}/${nextYear}`;
-
-    try {
-      let totalCarried = 0;
-      let totalSkipped = 0;
-
-      // CARRY FORWARD BILLS NOT IN 2B - now carries ALL records regardless of reclaim status
-      if (billsNotIn2B.length > 0) {
-        // Get existing records in next month to check for duplicates
-        const { data: existingNextMonth2B, error: fetchError2B } = await supabase
-          .from('bills_not_in_2b')
-          .select('supplier_name, supplier_invoice_number, supplier_gstin, date')
-          .eq('client_id', selectedClient)
-          .eq('period_month', nextPeriod);
-
-        if (fetchError2B) throw fetchError2B;
-
-        // Create a set of unique keys for existing records in next month
-        const existingKeys2B = new Set(
-          (existingNextMonth2B || []).map(r => 
-            `${r.supplier_name}|${r.supplier_invoice_number || ''}|${r.supplier_gstin || ''}|${r.date}`
-          )
-        );
-
-        // Carry forward ALL bills not in 2B (regardless of reclaim status), skip only duplicates
-        const toCarryForward2B = billsNotIn2B.filter(b => {
-          // Check if this record already exists in next month
-          const recordKey = `${b.supplier_name}|${b.supplier_invoice_number || ''}|${b.supplier_gstin || ''}|${b.date}`;
-          return !existingKeys2B.has(recordKey);
-        });
-        
-        if (toCarryForward2B.length > 0) {
-          const records2B = toCarryForward2B.map(b => ({
-            client_id: b.client_id,
-            date: b.date,
-            supplier_name: b.supplier_name,
-            supplier_invoice_number: b.supplier_invoice_number,
-            supplier_gstin: b.supplier_gstin,
-            taxable_value: b.taxable_value,
-            input_igst: b.input_igst,
-            input_cgst: b.input_cgst,
-            input_sgst: b.input_sgst,
-            period_month: nextPeriod,
-            reversal_month: b.reversal_month,
-            reclaim_month: b.reclaim_month, // Preserve reclaim month too
-            is_carried_forward: true,
-          }));
-
-          const { error } = await supabase
-            .from('bills_not_in_2b')
-            .insert(records2B);
-          
-          if (error) throw error;
-          totalCarried += records2B.length;
-        }
-        
-        totalSkipped += billsNotIn2B.length - toCarryForward2B.length;
-      }
-
-      // CARRY FORWARD BILLS NOT IN BOOKS - now carries ALL records regardless of book_entry status
-      if (billsNotInBooks.length > 0) {
-        // Get existing records in next month to check for duplicates
-        const { data: existingNextMonthBooks, error: fetchErrorBooks } = await supabase
-          .from('bills_not_in_books')
-          .select('supplier_name, supplier_invoice_number, supplier_gstin, date')
-          .eq('client_id', selectedClient)
-          .eq('period_month', nextPeriod);
-
-        if (fetchErrorBooks) throw fetchErrorBooks;
-
-        // Create a set of unique keys for existing records in next month
-        const existingKeysBooks = new Set(
-          (existingNextMonthBooks || []).map(r => 
-            `${r.supplier_name}|${r.supplier_invoice_number || ''}|${r.supplier_gstin || ''}|${r.date}`
-          )
-        );
-
-        // Carry forward ALL bills not in books (regardless of book_entry status), skip only duplicates
-        const toCarryForwardBooks = billsNotInBooks.filter(b => {
-          // Check if this record already exists in next month
-          const recordKey = `${b.supplier_name}|${b.supplier_invoice_number || ''}|${b.supplier_gstin || ''}|${b.date}`;
-          return !existingKeysBooks.has(recordKey);
-        });
-        
-        if (toCarryForwardBooks.length > 0) {
-          const recordsBooks = toCarryForwardBooks.map(b => ({
-            client_id: b.client_id,
-            date: b.date,
-            supplier_name: b.supplier_name,
-            supplier_invoice_number: b.supplier_invoice_number,
-            supplier_gstin: b.supplier_gstin,
-            taxable_value: b.taxable_value,
-            input_igst: b.input_igst,
-            input_cgst: b.input_cgst,
-            input_sgst: b.input_sgst,
-            period_month: nextPeriod,
-            book_entry_month: b.book_entry_month, // Preserve book_entry_month
-            bill_in_2b_month: b.bill_in_2b_month, // Preserve bill_in_2b_month
-            is_carried_forward: true,
-          }));
-
-          const { error } = await supabase
-            .from('bills_not_in_books')
-            .insert(recordsBooks);
-          
-          if (error) throw error;
-          totalCarried += recordsBooks.length;
-        }
-        
-        totalSkipped += billsNotInBooks.length - toCarryForwardBooks.length;
-      }
-
-      if (totalCarried === 0) {
-        toast.info(`All eligible entries already exist in ${nextPeriod} or have been resolved. No duplicates added.`);
-      } else if (totalSkipped > 0) {
-        toast.success(`Carried forward ${totalCarried} records to ${nextPeriod}. ${totalSkipped} duplicates skipped.`);
-      } else {
-        toast.success(`Carried forward ${totalCarried} records to ${nextPeriod}`);
-      }
-    } catch (error: any) {
-      toast.error('Failed to carry forward: ' + error.message);
-    }
-  };
 
   const handleRestoreVersion = async (version: TwoBVersion) => {
     if (!selectedClient || isLocked) return;
@@ -1011,13 +873,16 @@ const TwoBReconciliationPage: React.FC = () => {
   };
 
   // Render editable input for table cells - FIXED: wider inputs for numbers
+  // isCarriedForward parameter makes carried forward rows non-editable
   const renderEditableInput = (
     value: string | number | null,
     onChange: (value: any) => void,
     type: 'text' | 'number' | 'date' = 'text',
-    className: string = ''
+    className: string = '',
+    isCarriedForward: boolean = false
   ) => {
-    if (isLocked) {
+    // Carried forward rows are non-editable (display only)
+    if (isLocked || isCarriedForward) {
       if (type === 'date' && value) {
         return <span>{format(new Date(value as string), 'dd/MM/yyyy')}</span>;
       }
@@ -1051,32 +916,35 @@ const TwoBReconciliationPage: React.FC = () => {
     );
   };
 
-  // Render month dropdown for reversal/reclaim
+  // Render month dropdown for reversal/reclaim - with carried forward check
   const renderMonthDropdown = (
-    value: string | null,
+    value: string | null | undefined,
     onChange: (value: string) => void,
-    placeholder: string = 'Select'
+    placeholder: string,
+    isCarriedForward: boolean = false
   ) => {
-    if (isLocked) {
-      return <span>{value ?? '-'}</span>;
+    // Carried forward rows are non-editable
+    if (isLocked || isCarriedForward) {
+      return <span className="text-sm">{value || '-'}</span>;
     }
     
     return (
-      <Select value={value || 'none'} onValueChange={(v) => onChange(v === 'none' ? '' : v)}>
+      <Select value={value || ''} onValueChange={onChange}>
         <SelectTrigger className="h-8 text-sm w-24">
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="none">-</SelectItem>
-          {reversalReclaimMonths.map((month) => (
-            <SelectItem key={month.value} value={month.value}>
-              {month.label}
+          <SelectItem value="">-</SelectItem>
+          {reversalReclaimMonths.filter(m => m.value !== '__blank__').map((m) => (
+            <SelectItem key={m.value} value={m.value}>
+              {m.label}
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
     );
   };
+
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -1153,15 +1021,6 @@ const TwoBReconciliationPage: React.FC = () => {
               >
                 <History className="h-4 w-4" />
                 View Versions
-              </Button>
-            )}
-            {selectedClient && (billsNotIn2B.length > 0 || billsNotInBooks.length > 0) && !isLocked && (
-              <Button 
-                variant="outline" 
-                className="flex items-center gap-2"
-                onClick={handleCarryForward}
-              >
-                Carry Forward to Next Month
               </Button>
             )}
           </div>
@@ -1272,7 +1131,9 @@ const TwoBReconciliationPage: React.FC = () => {
                           {renderEditableInput(
                             row.date,
                             (val) => handleUpdate2BField(row.id, 'date', val),
-                            'date'
+                            'date',
+                            '',
+                            row.is_carried_forward || false
                           )}
                         </td>
                         <td>
@@ -1281,7 +1142,8 @@ const TwoBReconciliationPage: React.FC = () => {
                               row.supplier_name,
                               (val) => handleUpdate2BField(row.id, 'supplier_name', val),
                               'text',
-                              'min-w-[150px]'
+                              'min-w-[150px]',
+                              row.is_carried_forward || false
                             )}
                             {row.is_carried_forward && (
                               <Badge variant="outline" className="text-xs shrink-0">CF</Badge>
@@ -1291,7 +1153,10 @@ const TwoBReconciliationPage: React.FC = () => {
                         <td>
                           {renderEditableInput(
                             row.supplier_invoice_number,
-                            (val) => handleUpdate2BField(row.id, 'supplier_invoice_number', val)
+                            (val) => handleUpdate2BField(row.id, 'supplier_invoice_number', val),
+                            'text',
+                            '',
+                            row.is_carried_forward || false
                           )}
                         </td>
                         <td>
@@ -1299,7 +1164,8 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.supplier_gstin,
                             (val) => handleUpdate2BField(row.id, 'supplier_gstin', val),
                             'text',
-                            'font-mono text-xs'
+                            'font-mono text-xs',
+                            row.is_carried_forward || false
                           )}
                         </td>
                         <td className="text-right">
@@ -1307,7 +1173,8 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.taxable_value,
                             (val) => handleUpdate2BField(row.id, 'taxable_value', val),
                             'number',
-                            'text-right'
+                            'text-right',
+                            row.is_carried_forward || false
                           )}
                         </td>
                         <td className="text-right">
@@ -1315,7 +1182,8 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.input_igst,
                             (val) => handleUpdate2BField(row.id, 'input_igst', val),
                             'number',
-                            'text-right'
+                            'text-right',
+                            row.is_carried_forward || false
                           )}
                         </td>
                         <td className="text-right">
@@ -1323,7 +1191,8 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.input_cgst,
                             (val) => handleUpdate2BField(row.id, 'input_cgst', val),
                             'number',
-                            'text-right'
+                            'text-right',
+                            row.is_carried_forward || false
                           )}
                         </td>
                         <td className="text-right">
@@ -1331,24 +1200,27 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.input_sgst,
                             (val) => handleUpdate2BField(row.id, 'input_sgst', val),
                             'number',
-                            'text-right'
+                            'text-right',
+                            row.is_carried_forward || false
                           )}
                         </td>
                         <td>
                           {renderMonthDropdown(
                             row.reversal_month,
                             (val) => handleUpdate2BField(row.id, 'reversal_month', val || null),
-                            'Rev'
+                            'Rev',
+                            row.is_carried_forward || false
                           )}
                         </td>
                         <td>
                           {renderMonthDropdown(
                             row.reclaim_month,
                             (val) => handleUpdate2BField(row.id, 'reclaim_month', val || null),
-                            'Rec'
+                            'Rec',
+                            row.is_carried_forward || false
                           )}
                         </td>
-                        {!isLocked && (
+                        {!isLocked && !row.is_carried_forward && (
                           <td>
                             <Button 
                               variant="ghost" 
@@ -1360,6 +1232,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             </Button>
                           </td>
                         )}
+                        {!isLocked && row.is_carried_forward && <td></td>}
                       </tr>
                     ))}
                     {filteredBills2B.length === 0 && (
@@ -1450,26 +1323,37 @@ const TwoBReconciliationPage: React.FC = () => {
                   </thead>
                   <tbody>
                     {filteredBillsBooks.map((row) => (
-                      <tr key={row.id}>
+                      <tr key={row.id} className={row.is_carried_forward ? 'bg-blue-50 dark:bg-blue-950/20' : ''}>
                         <td>
                           {renderEditableInput(
                             row.date,
                             (val) => handleUpdateBooksField(row.id, 'date', val),
-                            'date'
+                            'date',
+                            '',
+                            row.is_carried_forward || false
                           )}
                         </td>
                         <td>
-                          {renderEditableInput(
-                            row.supplier_name,
-                            (val) => handleUpdateBooksField(row.id, 'supplier_name', val),
-                            'text',
-                            'min-w-[150px]'
-                          )}
+                          <div className="flex items-center gap-2">
+                            {renderEditableInput(
+                              row.supplier_name,
+                              (val) => handleUpdateBooksField(row.id, 'supplier_name', val),
+                              'text',
+                              'min-w-[150px]',
+                              row.is_carried_forward || false
+                            )}
+                            {row.is_carried_forward && (
+                              <Badge variant="outline" className="text-xs shrink-0">CF</Badge>
+                            )}
+                          </div>
                         </td>
                         <td>
                           {renderEditableInput(
                             row.supplier_invoice_number,
-                            (val) => handleUpdateBooksField(row.id, 'supplier_invoice_number', val)
+                            (val) => handleUpdateBooksField(row.id, 'supplier_invoice_number', val),
+                            'text',
+                            '',
+                            row.is_carried_forward || false
                           )}
                         </td>
                         <td>
@@ -1477,7 +1361,8 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.supplier_gstin,
                             (val) => handleUpdateBooksField(row.id, 'supplier_gstin', val),
                             'text',
-                            'font-mono text-xs'
+                            'font-mono text-xs',
+                            row.is_carried_forward || false
                           )}
                         </td>
                         <td className="text-right">
@@ -1485,7 +1370,8 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.taxable_value,
                             (val) => handleUpdateBooksField(row.id, 'taxable_value', val),
                             'number',
-                            'text-right'
+                            'text-right',
+                            row.is_carried_forward || false
                           )}
                         </td>
                         <td className="text-right">
@@ -1493,7 +1379,8 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.input_igst,
                             (val) => handleUpdateBooksField(row.id, 'input_igst', val),
                             'number',
-                            'text-right'
+                            'text-right',
+                            row.is_carried_forward || false
                           )}
                         </td>
                         <td className="text-right">
@@ -1501,7 +1388,8 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.input_cgst,
                             (val) => handleUpdateBooksField(row.id, 'input_cgst', val),
                             'number',
-                            'text-right'
+                            'text-right',
+                            row.is_carried_forward || false
                           )}
                         </td>
                         <td className="text-right">
@@ -1509,24 +1397,27 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.input_sgst,
                             (val) => handleUpdateBooksField(row.id, 'input_sgst', val),
                             'number',
-                            'text-right'
+                            'text-right',
+                            row.is_carried_forward || false
                           )}
                         </td>
                         <td>
                           {renderMonthDropdown(
                             row.book_entry_month,
                             (val) => handleUpdateBooksField(row.id, 'book_entry_month', val || null),
-                            'Entry'
+                            'Entry',
+                            row.is_carried_forward || false
                           )}
                         </td>
                         <td>
                           {renderMonthDropdown(
                             row.bill_in_2b_month,
                             (val) => handleUpdateBooksField(row.id, 'bill_in_2b_month', val || null),
-                            'In 2B'
+                            'In 2B',
+                            row.is_carried_forward || false
                           )}
                         </td>
-                        {!isLocked && (
+                        {!isLocked && !row.is_carried_forward && (
                           <td>
                             <Button 
                               variant="ghost" 
@@ -1538,6 +1429,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             </Button>
                           </td>
                         )}
+                        {!isLocked && row.is_carried_forward && <td></td>}
                       </tr>
                     ))}
                     {filteredBillsBooks.length === 0 && (

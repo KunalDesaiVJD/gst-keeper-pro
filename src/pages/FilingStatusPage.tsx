@@ -59,6 +59,129 @@ const FilingStatusPage: React.FC = () => {
 
   const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08'];
 
+  // Carry forward function - transfers all 2B records to next month
+  const carryForwardToNextMonth = async (clientId: string, periodMonth: string) => {
+    // Calculate next month
+    const [month, year] = periodMonth.split('/');
+    let nextMonth = parseInt(month) + 1;
+    let nextYear = parseInt(year);
+    if (nextMonth > 12) {
+      nextMonth = 1;
+      nextYear++;
+    }
+    const nextPeriod = `${String(nextMonth).padStart(2, '0')}/${nextYear}`;
+
+    try {
+      // Fetch current bills not in 2B
+      const { data: billsNotIn2B, error: fetch2BError } = await supabase
+        .from('bills_not_in_2b')
+        .select('*')
+        .eq('client_id', clientId)
+        .eq('period_month', periodMonth);
+
+      if (fetch2BError) throw fetch2BError;
+
+      // Fetch current bills not in books
+      const { data: billsNotInBooks, error: fetchBooksError } = await supabase
+        .from('bills_not_in_books')
+        .select('*')
+        .eq('client_id', clientId)
+        .eq('period_month', periodMonth);
+
+      if (fetchBooksError) throw fetchBooksError;
+
+      let totalCarried = 0;
+
+      // CARRY FORWARD BILLS NOT IN 2B
+      if (billsNotIn2B && billsNotIn2B.length > 0) {
+        // Get existing records in next month to check for duplicates
+        const { data: existingNextMonth2B } = await supabase
+          .from('bills_not_in_2b')
+          .select('supplier_name, supplier_invoice_number, supplier_gstin, date')
+          .eq('client_id', clientId)
+          .eq('period_month', nextPeriod);
+
+        const existingKeys2B = new Set(
+          (existingNextMonth2B || []).map(r => 
+            `${r.supplier_name}|${r.supplier_invoice_number || ''}|${r.supplier_gstin || ''}|${r.date}`
+          )
+        );
+
+        const toCarryForward2B = billsNotIn2B.filter(b => {
+          const recordKey = `${b.supplier_name}|${b.supplier_invoice_number || ''}|${b.supplier_gstin || ''}|${b.date}`;
+          return !existingKeys2B.has(recordKey);
+        });
+
+        if (toCarryForward2B.length > 0) {
+          const records2B = toCarryForward2B.map(b => ({
+            client_id: b.client_id,
+            date: b.date,
+            supplier_name: b.supplier_name,
+            supplier_invoice_number: b.supplier_invoice_number,
+            supplier_gstin: b.supplier_gstin,
+            taxable_value: b.taxable_value,
+            input_igst: b.input_igst,
+            input_cgst: b.input_cgst,
+            input_sgst: b.input_sgst,
+            period_month: nextPeriod,
+            reversal_month: b.reversal_month,
+            reclaim_month: b.reclaim_month,
+            is_carried_forward: true,
+          }));
+
+          await supabase.from('bills_not_in_2b').insert(records2B);
+          totalCarried += records2B.length;
+        }
+      }
+
+      // CARRY FORWARD BILLS NOT IN BOOKS
+      if (billsNotInBooks && billsNotInBooks.length > 0) {
+        const { data: existingNextMonthBooks } = await supabase
+          .from('bills_not_in_books')
+          .select('supplier_name, supplier_invoice_number, supplier_gstin, date')
+          .eq('client_id', clientId)
+          .eq('period_month', nextPeriod);
+
+        const existingKeysBooks = new Set(
+          (existingNextMonthBooks || []).map(r => 
+            `${r.supplier_name}|${r.supplier_invoice_number || ''}|${r.supplier_gstin || ''}|${r.date}`
+          )
+        );
+
+        const toCarryForwardBooks = billsNotInBooks.filter(b => {
+          const recordKey = `${b.supplier_name}|${b.supplier_invoice_number || ''}|${b.supplier_gstin || ''}|${b.date}`;
+          return !existingKeysBooks.has(recordKey);
+        });
+
+        if (toCarryForwardBooks.length > 0) {
+          const recordsBooks = toCarryForwardBooks.map(b => ({
+            client_id: b.client_id,
+            date: b.date,
+            supplier_name: b.supplier_name,
+            supplier_invoice_number: b.supplier_invoice_number,
+            supplier_gstin: b.supplier_gstin,
+            taxable_value: b.taxable_value,
+            input_igst: b.input_igst,
+            input_cgst: b.input_cgst,
+            input_sgst: b.input_sgst,
+            period_month: nextPeriod,
+            book_entry_month: b.book_entry_month,
+            bill_in_2b_month: b.bill_in_2b_month,
+            is_carried_forward: true,
+          }));
+
+          await supabase.from('bills_not_in_books').insert(recordsBooks);
+          totalCarried += recordsBooks.length;
+        }
+      }
+
+      console.log(`Carried forward ${totalCarried} records to ${nextPeriod}`);
+    } catch (error: any) {
+      console.error('Error during carry forward:', error);
+      // Don't throw - we don't want to fail the filing just because carry forward failed
+    }
+  };
+
   // Fetch clients from Supabase
   const fetchClients = useCallback(async () => {
     const { data, error } = await supabase
@@ -302,7 +425,7 @@ const FilingStatusPage: React.FC = () => {
         if (error) throw error;
       }
       
-      // When GSTR-3B is filed, lock the 2B and ITC sheets
+      // When GSTR-3B is filed, lock the 2B and ITC sheets AND carry forward data
       if (newStatus === 'Filed' && record.return_type === 'GSTR-3B') {
         // Lock bills_not_in_2b
         await supabase
@@ -331,7 +454,10 @@ const FilingStatusPage: React.FC = () => {
           .update({ is_locked: true })
           .eq('id', record.id); // Only lock this specific GSTR-3B record
         
-        toast.success('GSTR-3B filed. 2B and ITC sheets are now locked for this period.');
+        // AUTO CARRY FORWARD: Transfer all 2B records to next month
+        await carryForwardToNextMonth(record.client_id, record.period_month);
+        
+        toast.success('GSTR-3B filed. 2B and ITC sheets are now locked and data carried forward to next month.');
       } else if (newStatus === 'Filed') {
         toast.success('Status updated to Filed.');
       } else {
