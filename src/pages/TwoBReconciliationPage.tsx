@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
+import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { MultiSelectPopover } from '@/components/ui/multi-select-popover';
 import { 
   Upload, 
@@ -19,6 +20,7 @@ import {
   Filter
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMonth } from '@/contexts/MonthContext';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { export2BToExcel, import2BFromExcel } from '@/utils/excelExport';
@@ -58,8 +60,8 @@ interface BillRecord {
 
 const TwoBReconciliationPage: React.FC = () => {
   const { canViewVersionHistory, canUnlockSheets, user, isStaffRole } = useAuth();
+  const { selectedMonth, setSelectedMonth } = useMonth();
   const [selectedClient, setSelectedClient] = useState<string>('');
-  const [selectedMonth, setSelectedMonth] = useState<string>('01/2026');
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
   const [billsNotIn2B, setBillsNotIn2B] = useState<BillRecord[]>([]);
@@ -119,17 +121,25 @@ const TwoBReconciliationPage: React.FC = () => {
 
   const monthOptions = generateMonthOptions;
 
-  // Generate month dropdown options for reversal/reclaim with "Blank" option
+  // Generate month dropdown options for reversal/reclaim starting from April 2024
   const shortMonthOptions = () => {
     const options: { value: string; label: string }[] = [];
+    // Start from April 2024
+    const startDate = new Date(2024, 3, 1); // April 2024
     const now = new Date();
-    for (let i = -6; i <= 12; i++) {
-      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    // End at 12 months in the future from now
+    const endDate = new Date(now.getFullYear(), now.getMonth() + 12, 1);
+    
+    let currentDate = new Date(startDate);
+    while (currentDate <= endDate) {
       const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const yearShort = String(date.getFullYear()).slice(-2);
-      const value = `${monthNames[date.getMonth()]} ${yearShort}`;
+      const yearShort = String(currentDate.getFullYear()).slice(-2);
+      const value = `${monthNames[currentDate.getMonth()]} ${yearShort}`;
       options.push({ value, label: value });
+      currentDate.setMonth(currentDate.getMonth() + 1);
     }
+    
+    // Sort descending (newest first)
     const sortedOptions = options.sort((a, b) => {
       const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
       const parseDate = (s: string) => {
@@ -873,17 +883,17 @@ const TwoBReconciliationPage: React.FC = () => {
   };
 
   // Render editable input for table cells - FIXED: wider inputs for numbers
-  // isCarriedForward parameter makes carried forward rows non-editable (except Reclaim column)
+  // isCarriedForward parameter makes carried forward rows non-editable (except columns marked as editable)
   const renderEditableInput = (
     value: string | number | null,
     onChange: (value: any) => void,
     type: 'text' | 'number' | 'date' = 'text',
     className: string = '',
     isCarriedForward: boolean = false,
-    isReclaimColumn: boolean = false
+    isEditableForCF: boolean = false
   ) => {
-    // Carried forward rows are non-editable (display only) - except Reclaim column
-    const shouldBeReadOnly = isLocked || (isCarriedForward && !isReclaimColumn);
+    // Carried forward rows are non-editable (display only) - except columns marked as editable for CF
+    const shouldBeReadOnly = isLocked || (isCarriedForward && !isEditableForCF);
     
     if (shouldBeReadOnly) {
       if (type === 'date' && value) {
@@ -920,16 +930,16 @@ const TwoBReconciliationPage: React.FC = () => {
   };
 
   // Render month dropdown for reversal/reclaim - with carried forward check
-  // isReclaimColumn allows editing the Reclaim column even for carried forward rows
+  // isEditableForCF allows editing certain columns (Reclaim, Book Entry, In 2B) even for carried forward rows
   const renderMonthDropdown = (
     value: string | null | undefined,
     onChange: (value: string) => void,
     placeholder: string,
     isCarriedForward: boolean = false,
-    isReclaimColumn: boolean = false
+    isEditableForCF: boolean = false
   ) => {
-    // Carried forward rows are non-editable - except Reclaim column
-    const shouldBeReadOnly = isLocked || (isCarriedForward && !isReclaimColumn);
+    // Carried forward rows are non-editable - except columns marked as editable for CF (Reclaim, Book Entry, In 2B)
+    const shouldBeReadOnly = isLocked || (isCarriedForward && !isEditableForCF);
     
     if (shouldBeReadOnly) {
       return <span className="text-sm">{value || '-'}</span>;
@@ -1009,19 +1019,13 @@ const TwoBReconciliationPage: React.FC = () => {
                 disabled={!isStaffRole() && clients.length <= 1}
               />
             </div>
-            <div className="w-40">
-              <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select Month" />
-                </SelectTrigger>
-                <SelectContent>
-                  {monthOptions.map((month) => (
-                    <SelectItem key={month.value} value={month.value}>
-                      {month.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="w-48">
+              <SearchableMonthSelect
+                options={monthOptions}
+                value={selectedMonth}
+                onValueChange={setSelectedMonth}
+                placeholder="Select Month"
+              />
             </div>
             {canViewVersionHistory() && selectedClient && (
               <Button 
@@ -1228,7 +1232,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             (val) => handleUpdate2BField(row.id, 'reclaim_month', val || null),
                             'Rec',
                             row.is_carried_forward || false,
-                            true // isReclaimColumn - allow editing for carried forward rows
+                            true // isEditableForCF - allow editing Reclaim column for carried forward rows
                           )}
                         </td>
                         {!isLocked && !row.is_carried_forward && (
@@ -1417,7 +1421,8 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.book_entry_month,
                             (val) => handleUpdateBooksField(row.id, 'book_entry_month', val || null),
                             'Entry',
-                            row.is_carried_forward || false
+                            row.is_carried_forward || false,
+                            true // isEditableForCF - allow editing Book Entry column for carried forward rows
                           )}
                         </td>
                         <td>
@@ -1425,7 +1430,8 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.bill_in_2b_month,
                             (val) => handleUpdateBooksField(row.id, 'bill_in_2b_month', val || null),
                             'In 2B',
-                            row.is_carried_forward || false
+                            row.is_carried_forward || false,
+                            true // isEditableForCF - allow editing In 2B column for carried forward rows
                           )}
                         </td>
                         {!isLocked && !row.is_carried_forward && (

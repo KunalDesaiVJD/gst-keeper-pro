@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { MonthProvider } from "@/contexts/MonthContext";
 import MainLayout from "@/components/layout/MainLayout";
 import LoginPage from "@/pages/LoginPage";
 import DashboardPage from "@/pages/DashboardPage";
@@ -27,26 +28,28 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
-          <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/" element={<Navigate to="/login" replace />} />
-            
-            {/* Protected Routes */}
-            <Route element={<MainLayout />}>
-              <Route path="/dashboard" element={<DashboardPage />} />
-              <Route path="/add-client" element={<AddClientPage />} />
-              <Route path="/edit-client/:clientId" element={<EditClientPage />} />
-              <Route path="/clients" element={<ClientsPage />} />
-              <Route path="/2b-reconciliation" element={<TwoBReconciliationPage />} />
-              <Route path="/itc-summary" element={<ITCSummaryPage />} />
-              <Route path="/filing-status" element={<FilingStatusPage />} />
-              <Route path="/manage-employees" element={<ManageEmployeesPage />} />
-              <Route path="/user-control" element={<UserControlPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-            </Route>
-            
-            <Route path="*" element={<NotFound />} />
-          </Routes>
+          <MonthProvider>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/" element={<Navigate to="/login" replace />} />
+              
+              {/* Protected Routes */}
+              <Route element={<MainLayout />}>
+                <Route path="/dashboard" element={<DashboardPage />} />
+                <Route path="/add-client" element={<AddClientPage />} />
+                <Route path="/edit-client/:clientId" element={<EditClientPage />} />
+                <Route path="/clients" element={<ClientsPage />} />
+                <Route path="/2b-reconciliation" element={<TwoBReconciliationPage />} />
+                <Route path="/itc-summary" element={<ITCSummaryPage />} />
+                <Route path="/filing-status" element={<FilingStatusPage />} />
+                <Route path="/manage-employees" element={<ManageEmployeesPage />} />
+                <Route path="/user-control" element={<UserControlPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+              </Route>
+              
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </MonthProvider>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>

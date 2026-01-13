@@ -103,28 +103,7 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
       errors.push(`Invalid registration type. Must be: ${validRegTypes.join(', ')}`);
     }
 
-    // Registration Date is now optional - validate only if provided
-    // Support both YYYY-MM-DD and DD/MM/YYYY formats
-    if (regDate) {
-      let parsedDate: Date | null = null;
-      
-      // Try DD/MM/YYYY format first (user-preferred)
-      const ddmmyyyyRegex = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
-      const ddmmyyyyMatch = regDate.match(ddmmyyyyRegex);
-      if (ddmmyyyyMatch) {
-        const day = parseInt(ddmmyyyyMatch[1], 10);
-        const month = parseInt(ddmmyyyyMatch[2], 10);
-        const year = parseInt(ddmmyyyyMatch[3], 10);
-        parsedDate = new Date(year, month - 1, day);
-      } else {
-        // Try YYYY-MM-DD format
-        parsedDate = new Date(regDate);
-      }
-      
-      if (!parsedDate || isNaN(parsedDate.getTime())) {
-        errors.push('Invalid date format. Use DD/MM/YYYY or YYYY-MM-DD');
-      }
-    }
+    // Registration Date - no validation, just parse if provided
 
     // Validate Mobile
     if (mobile && !/^[0-9]{10}$/.test(mobile)) {
