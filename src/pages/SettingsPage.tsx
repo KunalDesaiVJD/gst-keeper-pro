@@ -186,27 +186,30 @@ const SettingsPage: React.FC = () => {
     try {
       const employee = employees.find(e => e.user_id === selectedEmployee);
       if (employee) {
-        // Note: In a real production app, you'd use a server-side function to reset passwords
-        // For now, we update the is_first_login flag
-        await supabase
-          .from('user_roles')
-          .update({ is_first_login: false })
-          .eq('user_id', selectedEmployee);
-          
-        // Update password in profiles table for the fallback login
-        await supabase
-          .from('profiles')
-          .update({ password: employeeNewPassword })
-          .eq('user_id', selectedEmployee);
+        // Use the SECURITY DEFINER function to reset password
+        const { error } = await supabase.rpc('reset_employee_password', {
+          target_user_id: selectedEmployee,
+          new_password: employeeNewPassword,
+        });
+
+        if (error) {
+          console.error('Error resetting password:', error);
+          toast({
+            title: 'Error',
+            description: error.message || 'Failed to reset password.',
+            variant: 'destructive',
+          });
+          return;
+        }
+
+        toast({
+          title: 'Password Reset',
+          description: `Password has been reset for ${employee.first_name}. They can now login with the new password.`,
+        });
+
+        setSelectedEmployee('');
+        setEmployeeNewPassword('');
       }
-
-      toast({
-        title: 'Password Reset',
-        description: `Password has been reset for ${employee?.first_name}. They can now login with the new password.`,
-      });
-
-      setSelectedEmployee('');
-      setEmployeeNewPassword('');
     } catch (error) {
       console.error('Error resetting password:', error);
       toast({

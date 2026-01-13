@@ -77,18 +77,24 @@ const PasswordResetRequestsSection: React.FC = () => {
       return;
     }
 
+    if (newPassword.length < 8) {
+      toast({
+        title: 'Invalid Password',
+        description: 'Password must be at least 8 characters long.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      // Update the password in profiles table
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({ password: newPassword })
-        .eq('user_id', selectedRequest.user_id);
+      // Use the SECURITY DEFINER function to reset password
+      const { error: passwordError } = await supabase.rpc('reset_employee_password', {
+        target_user_id: selectedRequest.user_id,
+        new_password: newPassword,
+      });
 
-      if (profileError) throw profileError;
-
-      // Update mock passwords for immediate login
-      mockPasswords[selectedRequest.requested_by_name] = newPassword;
+      if (passwordError) throw passwordError;
 
       // Mark request as resolved
       const { error: requestError } = await supabase
@@ -101,12 +107,6 @@ const PasswordResetRequestsSection: React.FC = () => {
         .eq('id', selectedRequest.id);
 
       if (requestError) throw requestError;
-
-      // Reset first login flag so they can login directly
-      await supabase
-        .from('user_roles')
-        .update({ is_first_login: false })
-        .eq('user_id', selectedRequest.user_id);
 
       toast({
         title: 'Password Reset',

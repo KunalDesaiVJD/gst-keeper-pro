@@ -487,6 +487,10 @@ export type Database = {
         Returns: boolean
       }
       is_staff: { Args: { _user_id: string }; Returns: boolean }
+      reset_employee_password: {
+        Args: { new_password: string; target_user_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
       app_role: "superadmin" | "gst_manager" | "employee" | "client"
