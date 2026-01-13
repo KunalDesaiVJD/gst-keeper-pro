@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMonth } from '@/contexts/MonthContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { 
   AlertTriangle, 
   CheckCircle2, 
@@ -22,6 +23,7 @@ import ClientManagementSection from './ClientManagementSection';
 import UserManagementSection from './UserManagementSection';
 import PasswordResetRequestsSection from './PasswordResetRequestsSection';
 import { ReturnType } from '@/types';
+import { useState } from 'react';
 
 interface DashboardMetrics {
   totalClients: number;
@@ -41,7 +43,7 @@ interface ReturnMetrics {
 const StaffDashboard: React.FC = () => {
   const { user, canManageEmployees } = useAuth();
   const navigate = useNavigate();
-  const [selectedMonth, setSelectedMonth] = useState<string>('01/2026');
+  const { selectedMonth, setSelectedMonth } = useMonth();
   const [metrics, setMetrics] = useState<DashboardMetrics>({
     totalClients: 0,
     pendingFilings: 0,
@@ -249,18 +251,14 @@ const StaffDashboard: React.FC = () => {
         </div>
         <div className="flex items-center gap-2">
           <Calendar className="h-5 w-5 text-muted-foreground" />
-          <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-            <SelectTrigger className="w-48">
-              <SelectValue placeholder="Select Month" />
-            </SelectTrigger>
-            <SelectContent>
-              {months.map((month) => (
-                <SelectItem key={month.value} value={month.value}>
-                  {month.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="w-48">
+            <SearchableMonthSelect
+              options={months}
+              value={selectedMonth}
+              onValueChange={setSelectedMonth}
+              placeholder="Select Month"
+            />
+          </div>
         </div>
       </div>
 

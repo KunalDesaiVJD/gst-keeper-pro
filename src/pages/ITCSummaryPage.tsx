@@ -2,11 +2,12 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
+import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Badge } from '@/components/ui/badge';
 import { Lock, AlertCircle, Unlock, Save, Download } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMonth } from '@/contexts/MonthContext';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
@@ -72,8 +73,8 @@ interface ReversalTotals {
 
 const ITCSummaryPage: React.FC = () => {
   const { canUnlockSheets, user, isStaffRole } = useAuth();
+  const { selectedMonth, setSelectedMonth } = useMonth();
   const [selectedClient, setSelectedClient] = useState<string>('');
-  const [selectedMonth, setSelectedMonth] = useState<string>('01/2026');
   const [isLocked, setIsLocked] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -85,6 +86,28 @@ const ITCSummaryPage: React.FC = () => {
   const [itcData, setItcData] = useState<ITCData>(getDefaultITCData());
 
   const selectedClientData = clients.find(c => c.id === selectedClient);
+
+  // Generate month options for dropdown
+  const monthOptions = useMemo(() => {
+    const months: { value: string; label: string }[] = [];
+    const now = new Date();
+    
+    // Generate 24 months (12 past + 12 future)
+    for (let i = -12; i <= 12; i++) {
+      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const value = `${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const label = `${monthNames[date.getMonth()]} ${date.getFullYear()}`;
+      months.push({ value, label });
+    }
+    
+    // Sort descending
+    return months.sort((a, b) => {
+      const [aM, aY] = a.value.split('/').map(Number);
+      const [bM, bY] = b.value.split('/').map(Number);
+      return bY * 12 + bM - (aY * 12 + aM);
+    });
+  }, []);
 
   // Fetch clients from Supabase - filtered for client role
   useEffect(() => {
@@ -574,19 +597,13 @@ const ITCSummaryPage: React.FC = () => {
                 disabled={!isStaffRole() && clients.length <= 1}
               />
             </div>
-            <div className="w-40">
-              <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select Month" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="02/2026">Feb 2026</SelectItem>
-                  <SelectItem value="01/2026">Jan 2026</SelectItem>
-                  <SelectItem value="12/2025">Dec 2025</SelectItem>
-                  <SelectItem value="11/2025">Nov 2025</SelectItem>
-                  <SelectItem value="10/2025">Oct 2025</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="w-48">
+              <SearchableMonthSelect
+                options={monthOptions}
+                value={selectedMonth}
+                onValueChange={setSelectedMonth}
+                placeholder="Select Month"
+              />
             </div>
           </div>
         </CardContent>
