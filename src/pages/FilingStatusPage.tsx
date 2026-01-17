@@ -56,7 +56,7 @@ const FilingStatusPage: React.FC = () => {
   // Filter states
   const [clientNameFilter, setClientNameFilter] = useState<string>('');
   const [selectedTargetDates, setSelectedTargetDates] = useState<number[]>([]);
-
+  const [selectedStatuses, setSelectedStatuses] = useState<FilingStatusType[]>([]);
   const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08'];
 
   // Carry forward function - transfers all 2B records to next month
@@ -337,6 +337,10 @@ const FilingStatusPage: React.FC = () => {
       if (selectedTargetDates.length > 0 && record.target_date !== null && !selectedTargetDates.includes(record.target_date)) {
         return false;
       }
+      // Multi-select status filter
+      if (selectedStatuses.length > 0 && !selectedStatuses.includes(record.status)) {
+        return false;
+      }
       return true;
     });
     
@@ -560,6 +564,10 @@ const FilingStatusPage: React.FC = () => {
       if (selectedTargetDates.length > 0 && record.target_date !== null && !selectedTargetDates.includes(record.target_date)) {
         return false;
       }
+      // Multi-select status filter
+      if (selectedStatuses.length > 0 && !selectedStatuses.includes(record.status)) {
+        return false;
+      }
       return true;
     });
   };
@@ -572,6 +580,18 @@ const FilingStatusPage: React.FC = () => {
         : [...prev, date]
     );
   };
+
+  // Toggle status selection
+  const toggleStatus = (status: FilingStatusType) => {
+    setSelectedStatuses(prev => 
+      prev.includes(status) 
+        ? prev.filter(s => s !== status)
+        : [...prev, status]
+    );
+  };
+
+  // All available statuses
+  const allStatuses: FilingStatusType[] = ['Prepared', 'Data Pending', 'Mismatch in Data', 'Not Verified', 'Filed'];
 
   // Get unique target dates for filter dropdown
   const getUniqueTargetDates = (): number[] => {
@@ -588,6 +608,9 @@ const FilingStatusPage: React.FC = () => {
     const filteredRecords = applyFilters(records);
     const [editingRemarks, setEditingRemarks] = useState<Record<string, string>>({});
     
+    // Get unique target dates for this return type
+    const uniqueTargetDates = Array.from(new Set(records.filter(r => r.target_date !== null).map(r => r.target_date!))).sort((a, b) => a - b);
+    
     return (
       <div className="overflow-x-auto">
         <table className="gst-table">
@@ -599,8 +622,98 @@ const FilingStatusPage: React.FC = () => {
               <th>Frequency</th>
               <th>Contact</th>
               <th>Email</th>
-              <th>Status</th>
-              <th className="w-20">Target</th>
+              <th>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
+                      Status
+                      <ChevronDown className="h-3 w-3" />
+                      {selectedStatuses.length > 0 && (
+                        <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                          {selectedStatuses.length}
+                        </Badge>
+                      )}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-48 p-2 bg-background border" align="start">
+                    <div className="space-y-1">
+                      <div className="text-xs font-medium text-muted-foreground mb-2">Filter by Status</div>
+                      {allStatuses.map((status) => (
+                        <div key={status} className="flex items-center space-x-2 p-1 hover:bg-muted rounded">
+                          <Checkbox
+                            id={`status-${status}`}
+                            checked={selectedStatuses.includes(status)}
+                            onCheckedChange={() => toggleStatus(status)}
+                          />
+                          <label 
+                            htmlFor={`status-${status}`} 
+                            className="text-xs cursor-pointer flex-1"
+                          >
+                            {status}
+                          </label>
+                        </div>
+                      ))}
+                      {selectedStatuses.length > 0 && (
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="w-full mt-2 h-6 text-xs"
+                          onClick={() => setSelectedStatuses([])}
+                        >
+                          Clear
+                        </Button>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </th>
+              <th className="w-20">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
+                      Target
+                      <ChevronDown className="h-3 w-3" />
+                      {selectedTargetDates.length > 0 && (
+                        <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                          {selectedTargetDates.length}
+                        </Badge>
+                      )}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-40 p-2 bg-background border" align="start">
+                    <div className="space-y-1">
+                      <div className="text-xs font-medium text-muted-foreground mb-2">Filter by Target Date</div>
+                      <div className="max-h-48 overflow-y-auto space-y-1">
+                        {uniqueTargetDates.map((date) => (
+                          <div key={date} className="flex items-center space-x-2 p-1 hover:bg-muted rounded">
+                            <Checkbox
+                              id={`target-${date}`}
+                              checked={selectedTargetDates.includes(date)}
+                              onCheckedChange={() => toggleTargetDate(date)}
+                            />
+                            <label 
+                              htmlFor={`target-${date}`} 
+                              className="text-xs cursor-pointer flex-1"
+                            >
+                              Day {date}
+                            </label>
+                          </div>
+                        ))}
+                      </div>
+                      {selectedTargetDates.length > 0 && (
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="w-full mt-2 h-6 text-xs"
+                          onClick={() => setSelectedTargetDates([])}
+                        >
+                          Clear
+                        </Button>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </th>
               <th className="w-28">Filed Date</th>
               <th className="w-40">Remarks</th>
               {canUnlockSheets() && <th className="w-16">Unlock</th>}
@@ -795,60 +908,17 @@ const FilingStatusPage: React.FC = () => {
               />
             </div>
 
-            {/* Multi-Select Target Date Filter */}
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className="w-44 justify-between">
-                  {selectedTargetDates.length === 0 
-                    ? 'All Target Dates' 
-                    : `${selectedTargetDates.length} Date${selectedTargetDates.length > 1 ? 's' : ''} Selected`}
-                  <ChevronDown className="ml-2 h-4 w-4 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-56 p-3 bg-background border" align="start">
-                <div className="space-y-2">
-                  <div className="font-medium text-sm mb-2">Select Target Dates</div>
-                  <div className="max-h-48 overflow-y-auto space-y-1">
-                    {getUniqueTargetDates().map((date) => (
-                      <div key={date} className="flex items-center space-x-2 p-1 hover:bg-muted rounded">
-                        <Checkbox
-                          id={`date-${date}`}
-                          checked={selectedTargetDates.includes(date)}
-                          onCheckedChange={() => toggleTargetDate(date)}
-                        />
-                        <label 
-                          htmlFor={`date-${date}`} 
-                          className="text-sm cursor-pointer flex-1"
-                        >
-                          Day {date}
-                        </label>
-                      </div>
-                    ))}
-                  </div>
-                  {selectedTargetDates.length > 0 && (
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      className="w-full mt-2"
-                      onClick={() => setSelectedTargetDates([])}
-                    >
-                      Clear Selection
-                    </Button>
-                  )}
-                </div>
-              </PopoverContent>
-            </Popover>
-
-            {(clientNameFilter || selectedTargetDates.length > 0) && (
+            {(clientNameFilter || selectedTargetDates.length > 0 || selectedStatuses.length > 0) && (
               <Button 
                 variant="ghost" 
                 size="sm"
                 onClick={() => {
                   setClientNameFilter('');
                   setSelectedTargetDates([]);
+                  setSelectedStatuses([]);
                 }}
               >
-                Clear Filters
+                Clear All Filters
               </Button>
             )}
           </div>
