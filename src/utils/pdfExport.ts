@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { FilingStatusRecord } from '@/types';
+import logoSmall from '@/assets/logo-small.png';
 
 export const exportFilingStatusToPDF = (
   records: FilingStatusRecord[],
@@ -9,18 +10,17 @@ export const exportFilingStatusToPDF = (
 ) => {
   const doc = new jsPDF('l', 'mm', 'a4'); // Landscape
 
-  // Title
-  doc.setFontSize(18);
-  doc.setFont('helvetica', 'bold');
-  doc.text('V.J. Desai & Co.', 148, 15, { align: 'center' });
+  // Add logo image at the center
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const logoWidth = 60; // Adjust width as needed
+  const logoHeight = 20; // Adjust height as needed
+  const logoX = (pageWidth - logoWidth) / 2;
   
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Chartered Accountants', 148, 22, { align: 'center' });
+  doc.addImage(logoSmall, 'PNG', logoX, 8, logoWidth, logoHeight);
 
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
-  doc.text(`${returnType} Filing Status - ${month}`, 148, 32, { align: 'center' });
+  doc.text(`${returnType} Filing Status - ${month}`, 148, 35, { align: 'center' });
 
   // Table
   const tableData = records.map((record, idx) => [
@@ -35,7 +35,7 @@ export const exportFilingStatusToPDF = (
   ]);
 
   autoTable(doc, {
-    startY: 40,
+    startY: 42,
     head: [['Sr.', 'Client Name', 'Accountant', 'Frequency', 'Status', 'Target', 'Filed Date', 'Remarks']],
     body: tableData,
     headStyles: {
@@ -60,14 +60,14 @@ export const exportFilingStatusToPDF = (
       6: { cellWidth: 25 },
       7: { cellWidth: 'auto' },
     },
-    margin: { top: 40, left: 10, right: 10 },
+    margin: { top: 42, left: 10, right: 10 },
   });
 
   // Summary - Updated for new status types
   const filed = records.filter(r => r.status === 'Filed').length;
   const pending = records.filter(r => r.status === 'Prepared' || r.status === 'Data Pending' || r.status === 'Mismatch in Data' || r.status === 'Not Verified').length;
   
-  const finalY = (doc as any).lastAutoTable.finalY || 40;
+  const finalY = (doc as any).lastAutoTable.finalY || 42;
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
   doc.text(`Total Clients: ${records.length}  |  Filed: ${filed}  |  Pending: ${pending}`, 14, finalY + 10);

@@ -1266,8 +1266,8 @@ const TwoBReconciliationPage: React.FC = () => {
                       <td className="text-right">{totals2B.igst.toLocaleString('en-IN')}</td>
                       <td className="text-right">{totals2B.cgst.toLocaleString('en-IN')}</td>
                       <td className="text-right">{totals2B.sgst.toLocaleString('en-IN')}</td>
-                      <td className="text-center">{totals2B.reversalCount}</td>
-                      <td className="text-center">{totals2B.reclaimCount}</td>
+                      <td></td>
+                      <td></td>
                       {!isLocked && <td></td>}
                     </tr>
                   </tbody>
@@ -1465,8 +1465,8 @@ const TwoBReconciliationPage: React.FC = () => {
                       <td className="text-right">{totalsBooks.igst.toLocaleString('en-IN')}</td>
                       <td className="text-right">{totalsBooks.cgst.toLocaleString('en-IN')}</td>
                       <td className="text-right">{totalsBooks.sgst.toLocaleString('en-IN')}</td>
-                      <td className="text-center">{totalsBooks.bookEntryCount}</td>
-                      <td className="text-center">{totalsBooks.in2BCount}</td>
+                      <td></td>
+                      <td></td>
                       {!isLocked && <td></td>}
                     </tr>
                   </tbody>
