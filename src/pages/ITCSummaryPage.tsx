@@ -369,7 +369,7 @@ const ITCSummaryPage: React.FC = () => {
     };
   }, [selectedClient, selectedMonth]);
 
-  // Handle cell value change
+  // Handle cell value change with CGST/SGST sync
   const handleCellChange = (section: keyof ITCData, rowIndex: number, field: 'igst' | 'cgst' | 'sgst', value: string) => {
     if (isLocked) return;
 
@@ -378,7 +378,17 @@ const ITCSummaryPage: React.FC = () => {
     setItcData(prev => {
       const newData = { ...prev };
       const newSection = [...newData[section]];
+      
+      // Update the changed field
       newSection[rowIndex] = { ...newSection[rowIndex], [field]: numValue };
+      
+      // Auto-sync CGST and SGST: when one changes, update the other to match
+      if (field === 'cgst') {
+        newSection[rowIndex] = { ...newSection[rowIndex], sgst: numValue };
+      } else if (field === 'sgst') {
+        newSection[rowIndex] = { ...newSection[rowIndex], cgst: numValue };
+      }
+      
       newData[section] = newSection;
 
       // Auto-link 4(d)(1) and 4(d) 1.1 to 4(a) 5.4 value
