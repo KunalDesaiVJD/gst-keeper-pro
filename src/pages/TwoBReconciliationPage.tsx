@@ -536,22 +536,42 @@ const TwoBReconciliationPage: React.FC = () => {
   };
 
   // Local editing handlers for Bills Not in 2B (update local state only)
+  // With CGST/SGST auto-sync
   const handleUpdate2BField = (id: string, field: string, value: any) => {
     if (isLocked) return;
     
-    setLocalBills2B(prev => prev.map(b => 
-      b.id === id ? { ...b, [field]: value } : b
-    ));
+    setLocalBills2B(prev => prev.map(b => {
+      if (b.id !== id) return b;
+      
+      // Auto-sync CGST and SGST
+      if (field === 'input_cgst') {
+        return { ...b, input_cgst: value, input_sgst: value };
+      } else if (field === 'input_sgst') {
+        return { ...b, input_cgst: value, input_sgst: value };
+      }
+      
+      return { ...b, [field]: value };
+    }));
     setHasUnsavedChanges(true);
   };
 
   // Local editing handlers for Bills Not in Books (update local state only)
+  // With CGST/SGST auto-sync
   const handleUpdateBooksField = (id: string, field: string, value: any) => {
     if (isLocked) return;
     
-    setLocalBillsBooks(prev => prev.map(b => 
-      b.id === id ? { ...b, [field]: value } : b
-    ));
+    setLocalBillsBooks(prev => prev.map(b => {
+      if (b.id !== id) return b;
+      
+      // Auto-sync CGST and SGST
+      if (field === 'input_cgst') {
+        return { ...b, input_cgst: value, input_sgst: value };
+      } else if (field === 'input_sgst') {
+        return { ...b, input_cgst: value, input_sgst: value };
+      }
+      
+      return { ...b, [field]: value };
+    }));
     setHasUnsavedChanges(true);
   };
 
