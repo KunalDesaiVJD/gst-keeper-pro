@@ -81,6 +81,7 @@ const ITCSummaryPage: React.FC = () => {
   const [itcSummaryId, setItcSummaryId] = useState<string | null>(null);
   const [reversalFromReco, setReversalFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [reclaimFromReco, setReclaimFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
+  const [negativeValueError, setNegativeValueError] = useState<string | null>(null);
 
   // Editable ITC data state
   const [itcData, setItcData] = useState<ITCData>(getDefaultITCData());
@@ -537,8 +538,17 @@ const ITCSummaryPage: React.FC = () => {
         <Input
           type="number"
           value={row[field]}
-          onChange={(e) => handleCellChange(section, rowIndex, field, e.target.value)}
-          className="w-24 text-right h-8 text-sm"
+          onChange={(e) => {
+            const numVal = parseFloat(e.target.value) || 0;
+            if (numVal < 0) {
+              setNegativeValueError('Negative values are not allowed in ITC Summary.');
+              setTimeout(() => setNegativeValueError(null), 3000);
+              return;
+            }
+            handleCellChange(section, rowIndex, field, e.target.value);
+          }}
+          min={0}
+          className="w-24 text-right h-8 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
         />
       );
     }
@@ -628,6 +638,14 @@ const ITCSummaryPage: React.FC = () => {
         </Card>
       ) : (
         <>
+          {/* Negative value error message */}
+          {negativeValueError && (
+            <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-3 flex items-center gap-2 text-destructive">
+              <AlertCircle className="h-4 w-4" />
+              <span className="text-sm">{negativeValueError}</span>
+            </div>
+          )}
+
           {/* Summary Boxes */}
           <div className="grid grid-cols-2 gap-4 max-w-md">
             <Card className="bg-success/5 border-success/20">
