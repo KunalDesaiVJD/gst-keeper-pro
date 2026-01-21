@@ -57,8 +57,20 @@ const Sidebar: React.FC = () => {
         icon: <FileText className="h-5 w-5" />,
       },
       {
+        label: 'Suspended Reco',
+        path: '/suspended-reco',
+        icon: <FileText className="h-5 w-5" />,
+        roles: ['superadmin', 'gst_manager', 'employee'],
+      },
+      {
         label: 'ITC Summary',
         path: '/itc-summary',
+        icon: <Calculator className="h-5 w-5" />,
+        roles: ['superadmin', 'gst_manager', 'employee'],
+      },
+      {
+        label: 'RCM Summary',
+        path: '/rcm-summary',
         icon: <Calculator className="h-5 w-5" />,
         roles: ['superadmin', 'gst_manager', 'employee'],
       },

@@ -42,6 +42,8 @@ const EditClientPage: React.FC = () => {
     cancellationDate: '',
     defaultTargetDate: '', // Target Date (GSTR-1, GSTR-7)
     otherTargetDate: '', // Target Date (GSTR-3B, ITC-04)
+    gstUserId: '', // GST Portal User ID
+    gstPassword: '', // GST Portal Password
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -91,6 +93,8 @@ const EditClientPage: React.FC = () => {
         cancellationDate: (data as any).cancellation_date || '',
         defaultTargetDate: defaultTarget,
         otherTargetDate: otherTarget,
+        gstUserId: (data as any).gst_user_id || '',
+        gstPassword: (data as any).gst_password || '',
       });
       setIsLoading(false);
     };
@@ -197,6 +201,8 @@ const EditClientPage: React.FC = () => {
           assigned_accountant: formData.assignedAccountant || null,
           selected_returns: formData.selectedReturns,
           cancellation_date: formData.cancellationDate || null,
+          gst_user_id: formData.gstUserId || null,
+          gst_password: formData.gstPassword || null,
         })
         .eq('id', clientId);
 
@@ -461,6 +467,35 @@ const EditClientPage: React.FC = () => {
                   className={errors.email ? 'border-destructive' : ''}
                 />
                 {errors.email && <p className="text-sm text-destructive">{errors.email}</p>}
+              </div>
+            </div>
+
+            {/* GST Portal Credentials */}
+            <div className="border rounded-lg p-4 space-y-4 bg-muted/30">
+              <div>
+                <h4 className="font-medium text-sm">GST Portal Credentials</h4>
+                <p className="text-xs text-muted-foreground">Optional. Enter the client's GST portal login details.</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="gstUserId">GST User ID</Label>
+                  <Input
+                    id="gstUserId"
+                    value={formData.gstUserId}
+                    onChange={(e) => setFormData(prev => ({ ...prev, gstUserId: e.target.value }))}
+                    placeholder="Enter GST portal User ID"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="gstPassword">GST Password</Label>
+                  <Input
+                    id="gstPassword"
+                    type="password"
+                    value={formData.gstPassword}
+                    onChange={(e) => setFormData(prev => ({ ...prev, gstPassword: e.target.value }))}
+                    placeholder="Enter GST portal Password"
+                  />
+                </div>
               </div>
             </div>
 

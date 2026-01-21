@@ -164,6 +164,8 @@ export type Database = {
           created_at: string | null
           created_by: string | null
           email: string | null
+          gst_password: string | null
+          gst_user_id: string | null
           gstin: string
           id: string
           mobile: string | null
@@ -180,6 +182,8 @@ export type Database = {
           created_at?: string | null
           created_by?: string | null
           email?: string | null
+          gst_password?: string | null
+          gst_user_id?: string | null
           gstin: string
           id?: string
           mobile?: string | null
@@ -196,6 +200,8 @@ export type Database = {
           created_at?: string | null
           created_by?: string | null
           email?: string | null
+          gst_password?: string | null
+          gst_user_id?: string | null
           gstin?: string
           id?: string
           mobile?: string | null

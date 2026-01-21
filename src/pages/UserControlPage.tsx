@@ -47,6 +47,11 @@ const AVAILABLE_PERMISSIONS = [
     label: 'Export Data',
     description: 'Export data to Excel and PDF formats',
   },
+  {
+    key: 'delete_2b_rows',
+    label: 'Delete 2B Rows',
+    description: 'Delete rows from 2B Reconciliation tables',
+  },
 ];
 
 interface Employee {
