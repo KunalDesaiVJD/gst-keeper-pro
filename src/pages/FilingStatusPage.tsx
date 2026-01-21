@@ -13,6 +13,7 @@ import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import GSTPortalLink from '@/components/clients/GSTPortalLink';
 
 interface Client {
   id: string;
@@ -716,6 +717,7 @@ const FilingStatusPage: React.FC = () => {
               </th>
               <th className="w-28">Filed Date</th>
               <th className="w-40">Remarks</th>
+              <th className="w-16">GST</th>
               {canUnlockSheets() && <th className="w-16">Unlock</th>}
             </tr>
           </thead>
@@ -775,6 +777,9 @@ const FilingStatusPage: React.FC = () => {
                     disabled={record.is_locked && !canUnlockSheets()}
                   />
                 </td>
+                <td className="text-center">
+                  <GSTPortalLink clientId={record.client_id} clientName={record.clientName} />
+                </td>
                 {canUnlockSheets() && (
                   <td className="text-center">
                     {record.is_locked && (
@@ -794,7 +799,7 @@ const FilingStatusPage: React.FC = () => {
             ))}
             {filteredRecords.length === 0 && (
               <tr>
-                <td colSpan={canUnlockSheets() ? 11 : 10} className="text-center py-8 text-muted-foreground">
+                <td colSpan={canUnlockSheets() ? 12 : 11} className="text-center py-8 text-muted-foreground">
                   {records.length === 0 
                     ? `No clients have ${returnType} selected.`
                     : 'No records match your filters.'}

@@ -59,7 +59,7 @@ interface BillRecord {
 }
 
 const TwoBReconciliationPage: React.FC = () => {
-  const { canViewVersionHistory, canUnlockSheets, user, isStaffRole } = useAuth();
+  const { canViewVersionHistory, canUnlockSheets, canDelete2BRows, user, isStaffRole } = useAuth();
   const { selectedMonth, setSelectedMonth } = useMonth();
   const [selectedClient, setSelectedClient] = useState<string>('');
   const [showVersionHistory, setShowVersionHistory] = useState(false);
@@ -1255,7 +1255,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             true // isEditableForCF - allow editing Reclaim column for carried forward rows
                           )}
                         </td>
-                        {!isLocked && !row.is_carried_forward && (
+                        {!isLocked && canDelete2BRows() && !row.is_carried_forward && (
                           <td>
                             <Button 
                               variant="ghost" 
@@ -1267,7 +1267,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             </Button>
                           </td>
                         )}
-                        {!isLocked && row.is_carried_forward && <td></td>}
+                        {!isLocked && (!canDelete2BRows() || row.is_carried_forward) && <td></td>}
                       </tr>
                     ))}
                     {filteredBills2B.length === 0 && (
@@ -1454,10 +1454,10 @@ const TwoBReconciliationPage: React.FC = () => {
                             true // isEditableForCF - allow editing In 2B column for carried forward rows
                           )}
                         </td>
-                        {!isLocked && !row.is_carried_forward && (
+                        {!isLocked && canDelete2BRows() && !row.is_carried_forward && (
                           <td>
                             <Button 
-                              variant="ghost" 
+                              variant="ghost"
                               size="sm" 
                               onClick={() => handleDeleteRowBooks(row.id)}
                               className="h-7 w-7 p-0 text-destructive"
@@ -1466,7 +1466,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             </Button>
                           </td>
                         )}
-                        {!isLocked && row.is_carried_forward && <td></td>}
+                        {!isLocked && (!canDelete2BRows() || row.is_carried_forward) && <td></td>}
                       </tr>
                     ))}
                     {filteredBillsBooks.length === 0 && (

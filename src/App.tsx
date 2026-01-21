@@ -12,7 +12,9 @@ import AddClientPage from "@/pages/AddClientPage";
 import EditClientPage from "@/pages/EditClientPage";
 import ClientsPage from "@/pages/ClientsPage";
 import TwoBReconciliationPage from "@/pages/TwoBReconciliationPage";
+import SuspendedRecoPage from "@/pages/SuspendedRecoPage";
 import ITCSummaryPage from "@/pages/ITCSummaryPage";
+import RCMSummaryPage from "@/pages/RCMSummaryPage";
 import FilingStatusPage from "@/pages/FilingStatusPage";
 import ManageEmployeesPage from "@/pages/ManageEmployeesPage";
 import UserControlPage from "@/pages/UserControlPage";
@@ -40,7 +42,9 @@ const App = () => (
                 <Route path="/edit-client/:clientId" element={<EditClientPage />} />
                 <Route path="/clients" element={<ClientsPage />} />
                 <Route path="/2b-reconciliation" element={<TwoBReconciliationPage />} />
+                <Route path="/suspended-reco" element={<SuspendedRecoPage />} />
                 <Route path="/itc-summary" element={<ITCSummaryPage />} />
+                <Route path="/rcm-summary" element={<RCMSummaryPage />} />
                 <Route path="/filing-status" element={<FilingStatusPage />} />
                 <Route path="/manage-employees" element={<ManageEmployeesPage />} />
                 <Route path="/user-control" element={<UserControlPage />} />

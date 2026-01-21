@@ -13,6 +13,7 @@ interface UserPermissions {
   delete_clients: boolean;
   edit_filing_status: boolean;
   export_data: boolean;
+  delete_2b_rows: boolean;
 }
 
 const DEFAULT_PERMISSIONS: UserPermissions = {
@@ -23,6 +24,7 @@ const DEFAULT_PERMISSIONS: UserPermissions = {
   delete_clients: false,
   edit_filing_status: false,
   export_data: false,
+  delete_2b_rows: false,
 };
 
 interface AppUser {
@@ -51,6 +53,7 @@ interface AuthContextType {
   canDeleteClients: () => boolean;
   canEditFilingStatus: () => boolean;
   canExportData: () => boolean;
+  canDelete2BRows: () => boolean;
   hasPermission: (permission: keyof UserPermissions) => boolean;
 }
 
@@ -445,6 +448,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return hasPermission('export_data');
   }, [user, hasPermission]);
 
+  const canDelete2BRows = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission('delete_2b_rows');
+  }, [user, hasPermission]);
+
   return (
     <AuthContext.Provider
       value={{
@@ -464,6 +473,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canDeleteClients,
         canEditFilingStatus,
         canExportData,
+        canDelete2BRows,
         hasPermission,
       }}
     >

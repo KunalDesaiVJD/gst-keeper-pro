@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { exportITCSummaryToPDF } from '@/utils/itcPdfExport';
+import GSTPortalLink from '@/components/clients/GSTPortalLink';
 
 interface ITCRow {
   srNo: string;
@@ -625,6 +626,12 @@ const ITCSummaryPage: React.FC = () => {
                 placeholder="Select Month"
               />
             </div>
+            {selectedClient && (
+              <GSTPortalLink 
+                clientId={selectedClient} 
+                clientName={selectedClientData?.name} 
+              />
+            )}
           </div>
         </CardContent>
       </Card>
