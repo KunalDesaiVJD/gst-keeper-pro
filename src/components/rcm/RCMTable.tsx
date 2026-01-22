@@ -26,19 +26,17 @@ interface RCMMaster {
   supply_type: string;
 }
 
+interface RCMMonthlyData {
+  [month: string]: number;
+}
+
 interface RCMDataRow {
   id?: string;
+  master_id?: string;
   particulars: string;
   rate: string;
   supply_type: string;
-  taxable_value: number;
-  cgst_2_5: number;
-  cgst_9: number;
-  sgst_2_5: number;
-  sgst_9: number;
-  igst_5: number;
-  igst_18: number;
-  month: string;
+  monthlyValues: RCMMonthlyData;
   isNew?: boolean;
 }
 
@@ -51,39 +49,8 @@ interface RCMTableProps {
   isStaff: boolean;
 }
 
-const calculateGST = (
-  taxableValue: number,
-  rate: string,
-  supplyType: string
-): Partial<RCMDataRow> => {
-  const baseRate = rate.includes('18') ? 18 : 5;
-  const isInterstate = supplyType === 'interstate';
-
-  if (isInterstate) {
-    return {
-      cgst_2_5: 0,
-      cgst_9: 0,
-      sgst_2_5: 0,
-      sgst_9: 0,
-      igst_5: baseRate === 5 ? taxableValue * 0.05 : 0,
-      igst_18: baseRate === 18 ? taxableValue * 0.18 : 0,
-    };
-  } else {
-    const halfRate = baseRate / 2;
-    const gstAmount = (taxableValue * halfRate) / 100;
-    return {
-      cgst_2_5: baseRate === 5 ? gstAmount : 0,
-      cgst_9: baseRate === 18 ? gstAmount : 0,
-      sgst_2_5: baseRate === 5 ? gstAmount : 0,
-      sgst_9: baseRate === 18 ? gstAmount : 0,
-      igst_5: 0,
-      igst_18: 0,
-    };
-  }
-};
-
 const formatNumber = (num: number): string => {
-  if (num === 0) return '-';
+  if (num === 0 || !num) return '-';
   return num.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 };
 
@@ -100,56 +67,39 @@ const RCMTable: React.FC<RCMTableProps> = ({
     if (!master) return;
 
     const newData = [...data];
-    const taxableValue = newData[index].taxable_value || 0;
-    const gstValues = calculateGST(taxableValue, master.rate, master.supply_type);
-
     newData[index] = {
       ...newData[index],
+      master_id: master.id,
       particulars: master.expense_name,
       rate: master.rate,
       supply_type: master.supply_type,
-      ...gstValues,
     };
     onDataChange(newData);
   };
 
-  const handleTaxableChange = (index: number, value: string) => {
+  const handleMonthValueChange = (index: number, month: string, value: string) => {
     const numValue = parseFloat(value) || 0;
     const newData = [...data];
-    const row = newData[index];
-    const gstValues = calculateGST(numValue, row.rate, row.supply_type);
-
     newData[index] = {
-      ...row,
-      taxable_value: numValue,
-      ...gstValues,
+      ...newData[index],
+      monthlyValues: {
+        ...newData[index].monthlyValues,
+        [month]: numValue,
+      },
     };
-    onDataChange(newData);
-  };
-
-  const handleMonthChange = (index: number, month: string) => {
-    const newData = [...data];
-    newData[index] = { ...newData[index], month };
     onDataChange(newData);
   };
 
   const handleAddRow = () => {
     const defaultMaster = masters[0];
-    const defaultMonth = months[0] || '';
     onDataChange([
       ...data,
       {
+        master_id: defaultMaster?.id,
         particulars: defaultMaster?.expense_name || '',
         rate: defaultMaster?.rate || '5%',
         supply_type: defaultMaster?.supply_type || 'intrastate',
-        taxable_value: 0,
-        cgst_2_5: 0,
-        cgst_9: 0,
-        sgst_2_5: 0,
-        sgst_9: 0,
-        igst_5: 0,
-        igst_18: 0,
-        month: defaultMonth,
+        monthlyValues: {},
         isNew: true,
       },
     ]);
@@ -160,66 +110,50 @@ const RCMTable: React.FC<RCMTableProps> = ({
     onDataChange(newData);
   };
 
-  // Calculate totals
-  const totals = data.reduce(
-    (acc, row) => ({
-      taxable_value: acc.taxable_value + (row.taxable_value || 0),
-      cgst_2_5: acc.cgst_2_5 + (row.cgst_2_5 || 0),
-      cgst_9: acc.cgst_9 + (row.cgst_9 || 0),
-      sgst_2_5: acc.sgst_2_5 + (row.sgst_2_5 || 0),
-      sgst_9: acc.sgst_9 + (row.sgst_9 || 0),
-      igst_5: acc.igst_5 + (row.igst_5 || 0),
-      igst_18: acc.igst_18 + (row.igst_18 || 0),
-    }),
-    {
-      taxable_value: 0,
-      cgst_2_5: 0,
-      cgst_9: 0,
-      sgst_2_5: 0,
-      sgst_9: 0,
-      igst_5: 0,
-      igst_18: 0,
-    }
-  );
+  // Calculate row total
+  const getRowTotal = (row: RCMDataRow): number => {
+    return Object.values(row.monthlyValues).reduce((sum, val) => sum + (val || 0), 0);
+  };
 
-  const totalCGST = totals.cgst_2_5 + totals.cgst_9;
-  const totalSGST = totals.sgst_2_5 + totals.sgst_9;
-  const totalIGST = totals.igst_5 + totals.igst_18;
+  // Calculate column totals
+  const getMonthTotal = (month: string): number => {
+    return data.reduce((sum, row) => sum + (row.monthlyValues[month] || 0), 0);
+  };
+
+  const getGrandTotal = (): number => {
+    return data.reduce((sum, row) => sum + getRowTotal(row), 0);
+  };
 
   return (
     <div className="space-y-4">
       <ScrollArea className="w-full">
-        <div className="min-w-[1200px]">
+        <div className="min-w-[1400px]">
           <Table>
             <TableHeader>
-              <TableRow className="bg-primary/10">
-                <TableHead className="w-12 text-center font-bold">Sr.</TableHead>
-                <TableHead className="w-48 font-bold">Particulars</TableHead>
-                <TableHead className="w-24 font-bold">Month</TableHead>
-                <TableHead className="w-32 text-right font-bold">Taxable</TableHead>
-                <TableHead className="w-24 text-center font-bold">Rate</TableHead>
-                <TableHead className="w-28 text-right font-bold">CGST 2.5%</TableHead>
-                <TableHead className="w-28 text-right font-bold">CGST 9%</TableHead>
-                <TableHead className="w-28 text-right font-bold">SGST 2.5%</TableHead>
-                <TableHead className="w-28 text-right font-bold">SGST 9%</TableHead>
-                <TableHead className="w-28 text-right font-bold">IGST 5%</TableHead>
-                <TableHead className="w-28 text-right font-bold">IGST 18%</TableHead>
+              <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
+                <TableHead className="w-48 font-bold text-white border border-[#2E5A6B]">Particulars</TableHead>
+                <TableHead className="w-24 font-bold text-white text-center border border-[#2E5A6B]">RATE</TableHead>
+                {months.map((month) => (
+                  <TableHead key={month} className="w-20 font-bold text-white text-center border border-[#2E5A6B]">
+                    {month}
+                  </TableHead>
+                ))}
+                <TableHead className="w-24 font-bold text-white text-center border border-[#2E5A6B]">TOTAL</TableHead>
                 {isStaff && !isLocked && (
-                  <TableHead className="w-16 text-center font-bold">Action</TableHead>
+                  <TableHead className="w-12 text-center font-bold text-white border border-[#2E5A6B]"></TableHead>
                 )}
               </TableRow>
             </TableHeader>
             <TableBody>
               {data.map((row, index) => (
                 <TableRow key={row.id || `new-${index}`} className="hover:bg-muted/50">
-                  <TableCell className="text-center font-medium">{index + 1}</TableCell>
-                  <TableCell>
+                  <TableCell className="border border-border">
                     {isStaff && !isLocked ? (
                       <Select
-                        value={masters.find((m) => m.expense_name === row.particulars)?.id || ''}
+                        value={row.master_id || masters.find((m) => m.expense_name === row.particulars)?.id || ''}
                         onValueChange={(val) => handleParticularsChange(index, val)}
                       >
-                        <SelectTrigger className="h-8">
+                        <SelectTrigger className="h-8 border-0 shadow-none">
                           <SelectValue placeholder="Select expense" />
                         </SelectTrigger>
                         <SelectContent>
@@ -234,55 +168,31 @@ const RCMTable: React.FC<RCMTableProps> = ({
                       <span>{row.particulars}</span>
                     )}
                   </TableCell>
-                  <TableCell>
-                    {isStaff && !isLocked ? (
-                      <Select
-                        value={row.month}
-                        onValueChange={(val) => handleMonthChange(index, val)}
-                      >
-                        <SelectTrigger className="h-8">
-                          <SelectValue placeholder="Month" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {months.map((m) => (
-                            <SelectItem key={m} value={m}>
-                              {m}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <span>{row.month}</span>
-                    )}
+                  <TableCell className="text-center border border-border font-medium">
+                    {row.rate}
                   </TableCell>
-                  <TableCell>
-                    {isStaff && !isLocked ? (
-                      <Input
-                        type="number"
-                        value={row.taxable_value || ''}
-                        onChange={(e) => handleTaxableChange(index, e.target.value)}
-                        className="h-8 text-right [&::-webkit-inner-spin-button]:appearance-none"
-                        min="0"
-                      />
-                    ) : (
-                      <span className="block text-right">
-                        {formatNumber(row.taxable_value)}
-                      </span>
-                    )}
+                  {months.map((month) => (
+                    <TableCell key={month} className="p-0 border border-border">
+                      {isStaff && !isLocked ? (
+                        <Input
+                          type="number"
+                          value={row.monthlyValues[month] || ''}
+                          onChange={(e) => handleMonthValueChange(index, month, e.target.value)}
+                          className="h-8 text-right border-0 shadow-none rounded-none [&::-webkit-inner-spin-button]:appearance-none"
+                          min="0"
+                        />
+                      ) : (
+                        <span className="block text-right px-2">
+                          {formatNumber(row.monthlyValues[month] || 0)}
+                        </span>
+                      )}
+                    </TableCell>
+                  ))}
+                  <TableCell className="text-right font-medium border border-border bg-muted/30">
+                    {formatNumber(getRowTotal(row))}
                   </TableCell>
-                  <TableCell className="text-center">
-                    <span className="text-xs">
-                      {row.rate} {row.supply_type === 'interstate' ? 'Inter' : 'Intra'}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-right">{formatNumber(row.cgst_2_5)}</TableCell>
-                  <TableCell className="text-right">{formatNumber(row.cgst_9)}</TableCell>
-                  <TableCell className="text-right">{formatNumber(row.sgst_2_5)}</TableCell>
-                  <TableCell className="text-right">{formatNumber(row.sgst_9)}</TableCell>
-                  <TableCell className="text-right">{formatNumber(row.igst_5)}</TableCell>
-                  <TableCell className="text-right">{formatNumber(row.igst_18)}</TableCell>
                   {isStaff && !isLocked && (
-                    <TableCell className="text-center">
+                    <TableCell className="text-center border border-border">
                       <Button
                         variant="ghost"
                         size="sm"
@@ -297,50 +207,18 @@ const RCMTable: React.FC<RCMTableProps> = ({
               ))}
 
               {/* Totals Row */}
-              <TableRow className="bg-primary/10 font-bold border-t-2">
-                <TableCell className="text-center">-</TableCell>
-                <TableCell>TOTAL</TableCell>
-                <TableCell>-</TableCell>
-                <TableCell className="text-right">{formatNumber(totals.taxable_value)}</TableCell>
-                <TableCell>-</TableCell>
-                <TableCell className="text-right">{formatNumber(totals.cgst_2_5)}</TableCell>
-                <TableCell className="text-right">{formatNumber(totals.cgst_9)}</TableCell>
-                <TableCell className="text-right">{formatNumber(totals.sgst_2_5)}</TableCell>
-                <TableCell className="text-right">{formatNumber(totals.sgst_9)}</TableCell>
-                <TableCell className="text-right">{formatNumber(totals.igst_5)}</TableCell>
-                <TableCell className="text-right">{formatNumber(totals.igst_18)}</TableCell>
-                {isStaff && !isLocked && <TableCell />}
-              </TableRow>
-
-              {/* Summary Rows */}
-              <TableRow className="bg-muted/30">
-                <TableCell colSpan={5} className="text-right font-medium">
-                  TOTAL (CGST)
+              <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4] font-bold">
+                <TableCell className="text-center text-white border border-[#2E5A6B]">TOTAL</TableCell>
+                <TableCell className="text-center text-white border border-[#2E5A6B]">-</TableCell>
+                {months.map((month) => (
+                  <TableCell key={month} className="text-right text-white border border-[#2E5A6B]">
+                    {formatNumber(getMonthTotal(month))}
+                  </TableCell>
+                ))}
+                <TableCell className="text-right text-white border border-[#2E5A6B]">
+                  {formatNumber(getGrandTotal())}
                 </TableCell>
-                <TableCell colSpan={2} className="text-right font-bold text-primary">
-                  {formatNumber(totalCGST)}
-                </TableCell>
-                <TableCell colSpan={isStaff && !isLocked ? 5 : 4} />
-              </TableRow>
-              <TableRow className="bg-muted/30">
-                <TableCell colSpan={5} className="text-right font-medium">
-                  TOTAL (SGST)
-                </TableCell>
-                <TableCell colSpan={2} />
-                <TableCell colSpan={2} className="text-right font-bold text-primary">
-                  {formatNumber(totalSGST)}
-                </TableCell>
-                <TableCell colSpan={isStaff && !isLocked ? 3 : 2} />
-              </TableRow>
-              <TableRow className="bg-muted/30">
-                <TableCell colSpan={5} className="text-right font-medium">
-                  TOTAL (IGST)
-                </TableCell>
-                <TableCell colSpan={4} />
-                <TableCell colSpan={2} className="text-right font-bold text-primary">
-                  {formatNumber(totalIGST)}
-                </TableCell>
-                {isStaff && !isLocked && <TableCell />}
+                {isStaff && !isLocked && <TableCell className="border border-[#2E5A6B]" />}
               </TableRow>
             </TableBody>
           </Table>

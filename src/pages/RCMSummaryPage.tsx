@@ -9,7 +9,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { Calculator, Plus, Download, Upload, FileSpreadsheet, FileText, Save, Loader2, Lock } from 'lucide-react';
+import { Calculator, Plus, Upload, FileSpreadsheet, FileText, Save, Loader2, Lock } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
@@ -32,19 +32,17 @@ interface RCMMaster {
   supply_type: string;
 }
 
+interface RCMMonthlyData {
+  [month: string]: number;
+}
+
 interface RCMDataRow {
   id?: string;
+  master_id?: string;
   particulars: string;
   rate: string;
   supply_type: string;
-  taxable_value: number;
-  cgst_2_5: number;
-  cgst_9: number;
-  sgst_2_5: number;
-  sgst_9: number;
-  igst_5: number;
-  igst_18: number;
-  month: string;
+  monthlyValues: RCMMonthlyData;
   isNew?: boolean;
 }
 
@@ -52,9 +50,7 @@ const MONTHS_ORDER = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'D
 
 const generateFinancialYears = (): string[] => {
   const currentYear = new Date().getFullYear();
-  const currentMonth = new Date().getMonth(); // 0-indexed
-  
-  // If before April, current FY is previous year
+  const currentMonth = new Date().getMonth();
   const currentFY = currentMonth < 3 ? currentYear - 1 : currentYear;
   
   const years: string[] = [];
@@ -128,7 +124,6 @@ const RCMSummaryPage: React.FC = () => {
 
       setClients(data || []);
 
-      // Auto-select if client user and only one client
       if (!isStaff && data && data.length === 1) {
         setSelectedClient(data[0].id);
       }
@@ -162,7 +157,7 @@ const RCMSummaryPage: React.FC = () => {
     fetchMasters();
   }, [fetchMasters]);
 
-  // Fetch RCM data for selected client and FY
+  // Fetch RCM data for selected client and FY - grouped by particulars with monthly values
   const fetchData = useCallback(async () => {
     if (!selectedClient || !financialYear) return;
 
@@ -177,21 +172,28 @@ const RCMSummaryPage: React.FC = () => {
 
       if (error) throw error;
 
-      const formattedData: RCMDataRow[] = (rcmData || []).map((row) => ({
-        id: row.id,
-        particulars: row.particulars,
-        rate: row.rate,
-        supply_type: row.supply_type,
-        taxable_value: Number(row.taxable_value) || 0,
-        cgst_2_5: Number(row.cgst_2_5) || 0,
-        cgst_9: Number(row.cgst_9) || 0,
-        sgst_2_5: Number(row.sgst_2_5) || 0,
-        sgst_9: Number(row.sgst_9) || 0,
-        igst_5: Number(row.igst_5) || 0,
-        igst_18: Number(row.igst_18) || 0,
-        month: row.month,
-      }));
+      // Group data by particulars - each row has monthly values
+      const groupedData: { [key: string]: RCMDataRow } = {};
 
+      (rcmData || []).forEach((row) => {
+        const key = row.particulars;
+        if (!groupedData[key]) {
+          groupedData[key] = {
+            id: row.id,
+            master_id: row.master_id || undefined,
+            particulars: row.particulars,
+            rate: row.rate,
+            supply_type: row.supply_type,
+            monthlyValues: {},
+          };
+        }
+        // Store the taxable value for each month
+        if (row.month && row.taxable_value) {
+          groupedData[key].monthlyValues[row.month] = Number(row.taxable_value) || 0;
+        }
+      });
+
+      const formattedData = Object.values(groupedData);
       setData(formattedData);
       setOriginalData(JSON.parse(JSON.stringify(formattedData)));
       setIsLocked(rcmData?.some((r) => r.is_locked) || false);
@@ -217,6 +219,34 @@ const RCMSummaryPage: React.FC = () => {
     setData(newData);
   };
 
+  // GST calculation helper
+  const calculateGST = (taxableValue: number, rate: string, supplyType: string) => {
+    const baseRate = rate.includes('18') ? 18 : 5;
+    const isInterstate = supplyType === 'interstate';
+
+    if (isInterstate) {
+      return {
+        cgst_2_5: 0,
+        cgst_9: 0,
+        sgst_2_5: 0,
+        sgst_9: 0,
+        igst_5: baseRate === 5 ? taxableValue * 0.05 : 0,
+        igst_18: baseRate === 18 ? taxableValue * 0.18 : 0,
+      };
+    } else {
+      const halfRate = baseRate / 2;
+      const gstAmount = (taxableValue * halfRate) / 100;
+      return {
+        cgst_2_5: baseRate === 5 ? gstAmount : 0,
+        cgst_9: baseRate === 18 ? gstAmount : 0,
+        sgst_2_5: baseRate === 5 ? gstAmount : 0,
+        sgst_9: baseRate === 18 ? gstAmount : 0,
+        igst_5: 0,
+        igst_18: 0,
+      };
+    }
+  };
+
   const handleSave = async () => {
     if (!selectedClient || !financialYear) {
       toast.error('Please select a client and financial year');
@@ -225,53 +255,43 @@ const RCMSummaryPage: React.FC = () => {
 
     setIsSaving(true);
     try {
-      // Get existing IDs
-      const existingIds = originalData.map((r) => r.id).filter(Boolean);
-      const currentIds = data.map((r) => r.id).filter(Boolean);
+      // Delete all existing data for this client/FY and re-insert
+      const { error: deleteError } = await supabase
+        .from('rcm_data')
+        .delete()
+        .eq('client_id', selectedClient)
+        .eq('financial_year', financialYear);
 
-      // Delete removed rows
-      const deletedIds = existingIds.filter((id) => !currentIds.includes(id));
-      if (deletedIds.length > 0) {
-        const { error: deleteError } = await supabase
-          .from('rcm_data')
-          .delete()
-          .in('id', deletedIds);
+      if (deleteError) throw deleteError;
 
-        if (deleteError) throw deleteError;
+      // Insert new data - one row per particulars/month combination
+      const insertData: any[] = [];
+
+      for (const row of data) {
+        for (const month of months) {
+          const taxableValue = row.monthlyValues[month] || 0;
+          if (taxableValue > 0) {
+            const gstValues = calculateGST(taxableValue, row.rate, row.supply_type);
+            insertData.push({
+              client_id: selectedClient,
+              financial_year: financialYear,
+              month: month,
+              particulars: row.particulars,
+              rate: row.rate,
+              supply_type: row.supply_type,
+              master_id: row.master_id,
+              taxable_value: taxableValue,
+              ...gstValues,
+              updated_by: user?.id,
+              updated_at: new Date().toISOString(),
+            });
+          }
+        }
       }
 
-      // Upsert data
-      for (const row of data) {
-        const payload = {
-          client_id: selectedClient,
-          financial_year: financialYear,
-          month: row.month,
-          particulars: row.particulars,
-          rate: row.rate,
-          supply_type: row.supply_type,
-          taxable_value: row.taxable_value,
-          cgst_2_5: row.cgst_2_5,
-          cgst_9: row.cgst_9,
-          sgst_2_5: row.sgst_2_5,
-          sgst_9: row.sgst_9,
-          igst_5: row.igst_5,
-          igst_18: row.igst_18,
-          updated_by: user?.id,
-          updated_at: new Date().toISOString(),
-        };
-
-        if (row.id && !row.isNew) {
-          const { error } = await supabase
-            .from('rcm_data')
-            .update(payload)
-            .eq('id', row.id);
-
-          if (error) throw error;
-        } else {
-          const { error } = await supabase.from('rcm_data').insert(payload);
-
-          if (error) throw error;
-        }
+      if (insertData.length > 0) {
+        const { error: insertError } = await supabase.from('rcm_data').insert(insertData);
+        if (insertError) throw insertError;
       }
 
       toast.success('RCM data saved successfully');
@@ -284,20 +304,20 @@ const RCMSummaryPage: React.FC = () => {
   };
 
   const handleExportExcel = () => {
-    if (!selectedClientData || data.length === 0) {
-      toast.error('No data to export');
+    if (!selectedClientData) {
+      toast.error('Please select a client');
       return;
     }
-    exportRCMToExcel(selectedClientData.name, financialYear, data);
+    exportRCMToExcel(selectedClientData.name, financialYear, data, months);
     toast.success('Excel exported successfully');
   };
 
   const handleExportPDF = () => {
-    if (!selectedClientData || data.length === 0) {
-      toast.error('No data to export');
+    if (!selectedClientData) {
+      toast.error('Please select a client');
       return;
     }
-    exportRCMToPDF(selectedClientData.name, selectedClientData.gstin, financialYear, data);
+    exportRCMToPDF(selectedClientData.name, selectedClientData.gstin, financialYear, data, months);
     toast.success('PDF exported successfully');
   };
 
@@ -306,14 +326,13 @@ const RCMSummaryPage: React.FC = () => {
     if (!file) return;
 
     try {
-      const importedData = await importRCMFromExcel(file, months);
-      setData([...data, ...importedData]);
+      const importedData = await importRCMFromExcel(file, months, masters);
+      setData((prevData) => [...prevData, ...importedData]);
       toast.success(`Imported ${importedData.length} rows`);
     } catch (error: any) {
       toast.error(error.message || 'Failed to import Excel');
     }
 
-    // Reset file input
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -344,37 +363,24 @@ const RCMSummaryPage: React.FC = () => {
       <Card>
         <CardContent className="p-4">
           <div className="flex flex-wrap items-center gap-4">
-            {/* Client Dropdown */}
-            <div className="flex-1 min-w-[200px] max-w-xs">
-              <SearchableSelect
-                options={clients.map((c) => ({
-                  value: c.id,
-                  label: c.name,
-                  sublabel: c.gstin,
-                }))}
-                value={selectedClient}
-                onValueChange={setSelectedClient}
-                placeholder="Search Client..."
-                searchPlaceholder="Type to search clients..."
-                emptyText="No clients found."
-                disabled={!isStaff && clients.length <= 1}
-              />
-            </div>
-
-            {/* Financial Year Dropdown */}
-            <div className="w-40">
-              <Select value={financialYear} onValueChange={setFinancialYear}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Financial Year" />
-                </SelectTrigger>
-                <SelectContent>
-                  {financialYears.map((fy) => (
-                    <SelectItem key={fy} value={fy}>
-                      FY {fy}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            {/* Client Label and Dropdown */}
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-foreground whitespace-nowrap">Name of Client :</span>
+              <div className="min-w-[250px]">
+                <SearchableSelect
+                  options={clients.map((c) => ({
+                    value: c.id,
+                    label: c.name,
+                    sublabel: c.gstin,
+                  }))}
+                  value={selectedClient}
+                  onValueChange={setSelectedClient}
+                  placeholder="Search Client..."
+                  searchPlaceholder="Type to search clients..."
+                  emptyText="No clients found."
+                  disabled={!isStaff && clients.length <= 1}
+                />
+              </div>
             </div>
 
             {/* GST Portal Link */}
@@ -385,14 +391,30 @@ const RCMSummaryPage: React.FC = () => {
               />
             )}
 
-            {/* Action Buttons */}
+            {/* Action Buttons - Right side */}
             <div className="flex items-center gap-2 ml-auto">
               {isStaff && !isLocked && (
                 <Button variant="outline" size="sm" onClick={() => setShowAddMaster(true)}>
                   <Plus className="h-4 w-4 mr-1" />
-                  Add Master
+                  ADD MASTER
                 </Button>
               )}
+
+              {/* Financial Year Dropdown */}
+              <div className="w-36">
+                <Select value={financialYear} onValueChange={setFinancialYear}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Financial Year" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {financialYears.map((fy) => (
+                      <SelectItem key={fy} value={fy}>
+                        {fy}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
               <input
                 type="file"
@@ -413,12 +435,12 @@ const RCMSummaryPage: React.FC = () => {
                 </Button>
               )}
 
-              <Button variant="outline" size="sm" onClick={handleExportExcel} disabled={data.length === 0}>
+              <Button variant="outline" size="sm" onClick={handleExportExcel}>
                 <FileSpreadsheet className="h-4 w-4 mr-1" />
                 Excel
               </Button>
 
-              <Button variant="outline" size="sm" onClick={handleExportPDF} disabled={data.length === 0}>
+              <Button variant="outline" size="sm" onClick={handleExportPDF}>
                 <FileText className="h-4 w-4 mr-1" />
                 PDF
               </Button>
