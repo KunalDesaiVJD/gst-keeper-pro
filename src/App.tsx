@@ -15,6 +15,7 @@ import TwoBReconciliationPage from "@/pages/TwoBReconciliationPage";
 import SuspendedRecoPage from "@/pages/SuspendedRecoPage";
 import ITCSummaryPage from "@/pages/ITCSummaryPage";
 import RCMSummaryPage from "@/pages/RCMSummaryPage";
+import ManageMastersPage from "@/pages/ManageMastersPage";
 import FilingStatusPage from "@/pages/FilingStatusPage";
 import ManageEmployeesPage from "@/pages/ManageEmployeesPage";
 import UserControlPage from "@/pages/UserControlPage";
@@ -45,6 +46,7 @@ const App = () => (
                 <Route path="/suspended-reco" element={<SuspendedRecoPage />} />
                 <Route path="/itc-summary" element={<ITCSummaryPage />} />
                 <Route path="/rcm-summary" element={<RCMSummaryPage />} />
+                <Route path="/manage-masters" element={<ManageMastersPage />} />
                 <Route path="/filing-status" element={<FilingStatusPage />} />
                 <Route path="/manage-employees" element={<ManageEmployeesPage />} />
                 <Route path="/user-control" element={<UserControlPage />} />
