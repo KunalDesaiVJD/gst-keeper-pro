@@ -1,220 +1,159 @@
 import * as XLSX from 'xlsx';
 
+interface RCMMonthlyData {
+  [month: string]: number;
+}
+
 interface RCMDataRow {
+  id?: string;
+  master_id?: string;
   particulars: string;
   rate: string;
   supply_type: string;
-  taxable_value: number;
-  cgst_2_5: number;
-  cgst_9: number;
-  sgst_2_5: number;
-  sgst_9: number;
-  igst_5: number;
-  igst_18: number;
-  month: string;
+  monthlyValues: RCMMonthlyData;
+  isNew?: boolean;
 }
 
-const MONTHS_ORDER = [
-  'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep',
-  'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'
-];
+interface RCMMaster {
+  id: string;
+  expense_name: string;
+  rate: string;
+  supply_type: string;
+}
 
 export const exportRCMToExcel = (
   clientName: string,
   financialYear: string,
-  data: RCMDataRow[]
+  data: RCMDataRow[],
+  months: string[]
 ): void => {
-  // Group data by particulars for the summary view
-  const groupedByParticulars = data.reduce((acc, row) => {
-    if (!acc[row.particulars]) {
-      acc[row.particulars] = {
-        particulars: row.particulars,
-        rate: row.rate,
-        months: {} as Record<string, number>,
-        total: 0,
-      };
-    }
-    acc[row.particulars].months[row.month] = (acc[row.particulars].months[row.month] || 0) + row.taxable_value;
-    acc[row.particulars].total += row.taxable_value;
-    return acc;
-  }, {} as Record<string, { particulars: string; rate: string; months: Record<string, number>; total: number }>);
+  // Create workbook and worksheet
+  const wb = XLSX.utils.book_new();
 
-  // Generate month columns based on financial year
-  const [startYear, endYear] = financialYear.split('-').map((y) => parseInt(y));
-  const fullStartYear = startYear < 100 ? 2000 + startYear : startYear;
-  const fullEndYear = endYear < 100 ? 2000 + endYear : endYear;
-  
-  const monthColumns = MONTHS_ORDER.map((m, idx) => {
-    const year = idx < 9 ? fullStartYear : fullEndYear;
-    return `${m}-${String(year).slice(-2)}`;
+  // Prepare header row
+  const headers = ['Particulars', 'RATE', ...months, 'TOTAL'];
+
+  // Prepare data rows
+  const rows = data.map((row) => {
+    const rowTotal = Object.values(row.monthlyValues).reduce((sum, val) => sum + (val || 0), 0);
+    return [
+      row.particulars,
+      row.rate,
+      ...months.map((m) => row.monthlyValues[m] || ''),
+      rowTotal || '',
+    ];
   });
 
-  // Create header rows
-  const wsData: any[][] = [
-    ['', '', '', '', '', '', '', '', '', '', '', '', 'ADD MASTER', 'FINANCIAL YEAR', financialYear],
-    [],
+  // Calculate totals
+  const totals: (string | number)[] = ['TOTAL', '-'];
+  months.forEach((month) => {
+    const monthTotal = data.reduce((sum, row) => sum + (row.monthlyValues[month] || 0), 0);
+    totals.push(monthTotal || '-');
+  });
+  const grandTotal = data.reduce((sum, row) => {
+    return sum + Object.values(row.monthlyValues).reduce((s, v) => s + (v || 0), 0);
+  }, 0);
+  totals.push(grandTotal || '-');
+
+  // Combine all rows
+  const wsData = [
     [`Name of Client : ${clientName}`],
     [],
-    ['Particulars', 'RATE', ...monthColumns, 'TOTAL'],
+    headers,
+    ...rows,
+    totals,
   ];
 
-  // Add data rows
-  Object.values(groupedByParticulars).forEach((row) => {
-    const monthValues = monthColumns.map((m) => row.months[m] || '-');
-    wsData.push([row.particulars, row.rate, ...monthValues, row.total || '-']);
-  });
-
-  // Add total row
-  const totals = monthColumns.map((m) =>
-    Object.values(groupedByParticulars).reduce(
-      (sum, row) => sum + (row.months[m] || 0),
-      0
-    ) || '-'
-  );
-  const grandTotal = Object.values(groupedByParticulars).reduce(
-    (sum, row) => sum + row.total,
-    0
-  );
-  wsData.push(['TOTAL', '', ...totals, grandTotal || '-']);
-
-  // Add blank row
-  wsData.push([]);
-
-  // Calculate GST totals by month
-  const gstTotals = {
-    cgst_2_5: {} as Record<string, number>,
-    sgst_2_5: {} as Record<string, number>,
-    cgst_9: {} as Record<string, number>,
-    sgst_9: {} as Record<string, number>,
-    igst_5: {} as Record<string, number>,
-    igst_18: {} as Record<string, number>,
-  };
-
-  data.forEach((row) => {
-    gstTotals.cgst_2_5[row.month] = (gstTotals.cgst_2_5[row.month] || 0) + row.cgst_2_5;
-    gstTotals.sgst_2_5[row.month] = (gstTotals.sgst_2_5[row.month] || 0) + row.sgst_2_5;
-    gstTotals.cgst_9[row.month] = (gstTotals.cgst_9[row.month] || 0) + row.cgst_9;
-    gstTotals.sgst_9[row.month] = (gstTotals.sgst_9[row.month] || 0) + row.sgst_9;
-    gstTotals.igst_5[row.month] = (gstTotals.igst_5[row.month] || 0) + row.igst_5;
-    gstTotals.igst_18[row.month] = (gstTotals.igst_18[row.month] || 0) + row.igst_18;
-  });
-
-  // Add GST summary rows
-  const gstRows = [
-    ['', 'CGST 2.5%', ...monthColumns.map((m) => gstTotals.cgst_2_5[m] || '-')],
-    ['', 'SGST 2.5%', ...monthColumns.map((m) => gstTotals.sgst_2_5[m] || '-')],
-    ['', 'CGST 9%', ...monthColumns.map((m) => gstTotals.cgst_9[m] || '-')],
-    ['', 'SGST 9%', ...monthColumns.map((m) => gstTotals.sgst_9[m] || '-')],
-    ['', 'IGST 5%', ...monthColumns.map((m) => gstTotals.igst_5[m] || '-')],
-    ['', 'IGST 18%', ...monthColumns.map((m) => gstTotals.igst_18[m] || '-')],
-    [],
-    [
-      '',
-      'TOTAL (CGST)',
-      ...monthColumns.map((m) => (gstTotals.cgst_2_5[m] || 0) + (gstTotals.cgst_9[m] || 0) || '-'),
-    ],
-    [
-      '',
-      'TOTAL (SGST)',
-      ...monthColumns.map((m) => (gstTotals.sgst_2_5[m] || 0) + (gstTotals.sgst_9[m] || 0) || '-'),
-    ],
-    [
-      '',
-      'TOTAL (IGST)',
-      ...monthColumns.map((m) => (gstTotals.igst_5[m] || 0) + (gstTotals.igst_18[m] || 0) || '-'),
-    ],
-  ];
-
-  wsData.push(...gstRows);
-
-  // Create workbook
   const ws = XLSX.utils.aoa_to_sheet(wsData);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'RCM Summary');
 
   // Set column widths
   ws['!cols'] = [
     { wch: 25 }, // Particulars
-    { wch: 12 }, // Rate
-    ...monthColumns.map(() => ({ wch: 10 })),
-    { wch: 12 }, // Total
+    { wch: 12 }, // RATE
+    ...months.map(() => ({ wch: 10 })), // Month columns
+    { wch: 12 }, // TOTAL
   ];
 
-  // Save file
-  const fileName = `RCM_${clientName.replace(/[^a-zA-Z0-9]/g, '_')}_${financialYear}.xlsx`;
-  XLSX.writeFile(wb, fileName);
+  XLSX.utils.book_append_sheet(wb, ws, 'RCM Summary');
+
+  // Download
+  XLSX.writeFile(wb, `RCM_WORKING_${financialYear}.xlsx`);
 };
 
-export const importRCMFromExcel = (
+export const importRCMFromExcel = async (
   file: File,
-  months: string[]
+  months: string[],
+  masters: RCMMaster[]
 ): Promise<RCMDataRow[]> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
+
     reader.onload = (e) => {
       try {
         const data = new Uint8Array(e.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: 'array' });
-        const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
 
-        const rows: RCMDataRow[] = [];
+        // Find header row (row with "Particulars")
         let headerRowIndex = -1;
-
-        // Find header row
         for (let i = 0; i < jsonData.length; i++) {
-          if (jsonData[i][0] === 'Particulars' && jsonData[i][1] === 'RATE') {
+          if (jsonData[i] && jsonData[i][0]?.toString().toLowerCase().includes('particulars')) {
             headerRowIndex = i;
             break;
           }
         }
 
         if (headerRowIndex === -1) {
-          throw new Error('Invalid Excel format - header row not found');
+          throw new Error('Could not find header row with "Particulars"');
         }
 
-        const headers = jsonData[headerRowIndex] as string[];
-        const monthColumns = headers.slice(2, -1); // Skip Particulars, RATE, and TOTAL
+        const headerRow = jsonData[headerRowIndex];
+        const importedRows: RCMDataRow[] = [];
 
-        // Parse data rows
+        // Process data rows
         for (let i = headerRowIndex + 1; i < jsonData.length; i++) {
           const row = jsonData[i];
-          if (!row[0] || row[0] === 'TOTAL' || row[0] === '') break;
+          if (!row || !row[0] || row[0].toString().toLowerCase() === 'total') continue;
 
-          const particulars = row[0] as string;
-          const rate = (row[1] as string) || '5%';
-          const supplyType = rate.includes('18') ? 'intrastate' : 'intrastate';
+          const particulars = row[0]?.toString().trim();
+          const rate = row[1]?.toString().trim() || '5%';
 
-          // Create a row for each month with taxable value
-          monthColumns.forEach((monthCol, idx) => {
-            const taxableValue = parseFloat(row[idx + 2]) || 0;
-            if (taxableValue > 0 && months.includes(monthCol)) {
-              const baseRate = rate.includes('18') ? 18 : 5;
-              const halfRate = baseRate / 2;
-              const gstAmount = (taxableValue * halfRate) / 100;
+          // Find matching master
+          const master = masters.find(
+            (m) => m.expense_name.toLowerCase() === particulars.toLowerCase()
+          );
 
-              rows.push({
-                particulars,
-                rate,
-                supply_type: supplyType,
-                taxable_value: taxableValue,
-                cgst_2_5: baseRate === 5 ? gstAmount : 0,
-                cgst_9: baseRate === 18 ? gstAmount : 0,
-                sgst_2_5: baseRate === 5 ? gstAmount : 0,
-                sgst_9: baseRate === 18 ? gstAmount : 0,
-                igst_5: 0,
-                igst_18: 0,
-                month: monthCol,
-              });
+          // Build monthly values
+          const monthlyValues: RCMMonthlyData = {};
+          for (let j = 2; j < headerRow.length - 1; j++) {
+            const monthHeader = headerRow[j]?.toString().trim();
+            const matchedMonth = months.find((m) => m === monthHeader);
+            if (matchedMonth && row[j]) {
+              const value = parseFloat(row[j]) || 0;
+              if (value > 0) {
+                monthlyValues[matchedMonth] = value;
+              }
             }
+          }
+
+          importedRows.push({
+            master_id: master?.id,
+            particulars: particulars,
+            rate: master?.rate || rate,
+            supply_type: master?.supply_type || 'intrastate',
+            monthlyValues,
+            isNew: true,
           });
         }
 
-        resolve(rows);
-      } catch (error) {
-        reject(error);
+        resolve(importedRows);
+      } catch (error: any) {
+        reject(new Error(error.message || 'Failed to parse Excel file'));
       }
     };
+
     reader.onerror = () => reject(new Error('Failed to read file'));
     reader.readAsArrayBuffer(file);
   });

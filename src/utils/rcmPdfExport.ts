@@ -1,186 +1,121 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import logoSmall from '@/assets/logo-small.png';
+
+interface RCMMonthlyData {
+  [month: string]: number;
+}
 
 interface RCMDataRow {
+  id?: string;
+  master_id?: string;
   particulars: string;
   rate: string;
   supply_type: string;
-  taxable_value: number;
-  cgst_2_5: number;
-  cgst_9: number;
-  sgst_2_5: number;
-  sgst_9: number;
-  igst_5: number;
-  igst_18: number;
-  month: string;
+  monthlyValues: RCMMonthlyData;
+  isNew?: boolean;
 }
 
 const formatNumber = (num: number): string => {
-  if (num === 0) return '-';
+  if (!num || num === 0) return '-';
   return num.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 };
 
 export const exportRCMToPDF = (
   clientName: string,
-  clientGstin: string,
+  gstin: string,
   financialYear: string,
-  data: RCMDataRow[]
+  data: RCMDataRow[],
+  months: string[]
 ): void => {
-  const doc = new jsPDF('l', 'mm', 'a4'); // Landscape for wide table
-  const pageWidth = doc.internal.pageSize.getWidth();
-
-  // Add logo
-  try {
-    doc.addImage(logoSmall, 'PNG', 14, 10, 30, 12);
-  } catch (e) {
-    console.log('Logo not loaded');
-  }
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
   // Header
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.text('RCM Summary Report', pageWidth / 2, 18, { align: 'center' });
+  doc.text('RCM Summary', 148.5, 15, { align: 'center' });
 
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Client: ${clientName}`, 14, 30);
-  doc.text(`GSTIN: ${clientGstin}`, 14, 36);
-  doc.text(`Financial Year: ${financialYear}`, pageWidth - 14, 30, { align: 'right' });
-  doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, pageWidth - 14, 36, { align: 'right' });
+  doc.text(`Client: ${clientName}`, 14, 25);
+  doc.text(`GSTIN: ${gstin}`, 14, 30);
+  doc.text(`Financial Year: ${financialYear}`, 14, 35);
+  doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, 250, 25);
 
-  // Calculate totals
-  const totals = data.reduce(
-    (acc, row) => ({
-      taxable_value: acc.taxable_value + (row.taxable_value || 0),
-      cgst_2_5: acc.cgst_2_5 + (row.cgst_2_5 || 0),
-      cgst_9: acc.cgst_9 + (row.cgst_9 || 0),
-      sgst_2_5: acc.sgst_2_5 + (row.sgst_2_5 || 0),
-      sgst_9: acc.sgst_9 + (row.sgst_9 || 0),
-      igst_5: acc.igst_5 + (row.igst_5 || 0),
-      igst_18: acc.igst_18 + (row.igst_18 || 0),
-    }),
-    {
-      taxable_value: 0,
-      cgst_2_5: 0,
-      cgst_9: 0,
-      sgst_2_5: 0,
-      sgst_9: 0,
-      igst_5: 0,
-      igst_18: 0,
-    }
-  );
+  // Table headers
+  const headers = ['Particulars', 'RATE', ...months, 'TOTAL'];
 
-  // Prepare table data
-  const tableData = data.map((row, index) => [
-    index + 1,
-    row.particulars,
-    row.month,
-    formatNumber(row.taxable_value),
-    `${row.rate} ${row.supply_type === 'interstate' ? 'Inter' : 'Intra'}`,
-    formatNumber(row.cgst_2_5),
-    formatNumber(row.cgst_9),
-    formatNumber(row.sgst_2_5),
-    formatNumber(row.sgst_9),
-    formatNumber(row.igst_5),
-    formatNumber(row.igst_18),
-  ]);
+  // Table data
+  const tableData = data.map((row) => {
+    const rowTotal = Object.values(row.monthlyValues).reduce((sum, val) => sum + (val || 0), 0);
+    return [
+      row.particulars,
+      row.rate,
+      ...months.map((m) => formatNumber(row.monthlyValues[m] || 0)),
+      formatNumber(rowTotal),
+    ];
+  });
 
-  // Add totals row
-  tableData.push([
-    '',
-    'TOTAL',
-    '',
-    formatNumber(totals.taxable_value),
-    '',
-    formatNumber(totals.cgst_2_5),
-    formatNumber(totals.cgst_9),
-    formatNumber(totals.sgst_2_5),
-    formatNumber(totals.sgst_9),
-    formatNumber(totals.igst_5),
-    formatNumber(totals.igst_18),
-  ]);
+  // Totals row
+  const totalsRow = ['TOTAL', '-'];
+  months.forEach((month) => {
+    const monthTotal = data.reduce((sum, row) => sum + (row.monthlyValues[month] || 0), 0);
+    totalsRow.push(formatNumber(monthTotal));
+  });
+  const grandTotal = data.reduce((sum, row) => {
+    return sum + Object.values(row.monthlyValues).reduce((s, v) => s + (v || 0), 0);
+  }, 0);
+  totalsRow.push(formatNumber(grandTotal));
 
+  tableData.push(totalsRow);
+
+  // Generate table
   autoTable(doc, {
-    startY: 42,
-    head: [
-      [
-        'Sr.',
-        'Particulars',
-        'Month',
-        'Taxable',
-        'Rate',
-        'CGST 2.5%',
-        'CGST 9%',
-        'SGST 2.5%',
-        'SGST 9%',
-        'IGST 5%',
-        'IGST 18%',
-      ],
-    ],
+    head: [headers],
     body: tableData,
-    theme: 'grid',
+    startY: 42,
+    styles: {
+      fontSize: 7,
+      cellPadding: 1.5,
+      overflow: 'linebreak',
+    },
     headStyles: {
-      fillColor: [30, 58, 138],
+      fillColor: [74, 144, 164],
       textColor: 255,
       fontStyle: 'bold',
-      fontSize: 8,
       halign: 'center',
     },
-    bodyStyles: {
-      fontSize: 8,
-    },
     columnStyles: {
-      0: { halign: 'center', cellWidth: 12 },
-      1: { cellWidth: 45 },
-      2: { halign: 'center', cellWidth: 20 },
-      3: { halign: 'right', cellWidth: 25 },
-      4: { halign: 'center', cellWidth: 25 },
-      5: { halign: 'right', cellWidth: 22 },
-      6: { halign: 'right', cellWidth: 22 },
-      7: { halign: 'right', cellWidth: 22 },
-      8: { halign: 'right', cellWidth: 22 },
-      9: { halign: 'right', cellWidth: 22 },
-      10: { halign: 'right', cellWidth: 22 },
+      0: { cellWidth: 35, halign: 'left' },
+      1: { cellWidth: 15, halign: 'center' },
     },
     didParseCell: (data) => {
-      // Style totals row
+      // Style the totals row
       if (data.row.index === tableData.length - 1) {
+        data.cell.styles.fillColor = [74, 144, 164];
+        data.cell.styles.textColor = 255;
         data.cell.styles.fontStyle = 'bold';
-        data.cell.styles.fillColor = [240, 240, 240];
+      }
+      // Right-align numeric columns
+      if (data.column.index >= 2) {
+        data.cell.styles.halign = 'right';
       }
     },
   });
 
-  // Add summary section
-  const finalY = (doc as any).lastAutoTable.finalY + 10;
-  const totalCGST = totals.cgst_2_5 + totals.cgst_9;
-  const totalSGST = totals.sgst_2_5 + totals.sgst_9;
-  const totalIGST = totals.igst_5 + totals.igst_18;
-
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Summary:', 14, finalY);
-
-  doc.setFont('helvetica', 'normal');
-  doc.text(`Total CGST: ₹${formatNumber(totalCGST)}`, 14, finalY + 6);
-  doc.text(`Total SGST: ₹${formatNumber(totalSGST)}`, 80, finalY + 6);
-  doc.text(`Total IGST: ₹${formatNumber(totalIGST)}`, 146, finalY + 6);
-  doc.text(
-    `Grand Total GST: ₹${formatNumber(totalCGST + totalSGST + totalIGST)}`,
-    212,
-    finalY + 6
-  );
-
   // Footer
-  const pageHeight = doc.internal.pageSize.getHeight();
-  doc.setFontSize(8);
-  doc.setTextColor(128);
-  doc.text('Generated by V.J. Desai & Co. GST Management System', pageWidth / 2, pageHeight - 10, {
-    align: 'center',
-  });
+  const pageCount = doc.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(8);
+    doc.setTextColor(128);
+    doc.text(
+      `Page ${i} of ${pageCount}`,
+      doc.internal.pageSize.width / 2,
+      doc.internal.pageSize.height - 10,
+      { align: 'center' }
+    );
+  }
 
-  // Save
-  const fileName = `RCM_Summary_${clientName.replace(/[^a-zA-Z0-9]/g, '_')}_${financialYear}.pdf`;
-  doc.save(fileName);
+  // Download
+  doc.save(`RCM_Summary_${clientName.replace(/[^a-zA-Z0-9]/g, '_')}_${financialYear}.pdf`);
 };
