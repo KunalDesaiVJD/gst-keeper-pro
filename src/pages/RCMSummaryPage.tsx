@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -9,13 +9,14 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { Calculator, Plus, Upload, FileSpreadsheet, FileText, Save, Loader2, Lock } from 'lucide-react';
+import { Calculator, Plus, FileSpreadsheet, FileText, Save, Loader2, Lock, Settings, Unlock } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { useNavigate } from 'react-router-dom';
 import RCMTable from '@/components/rcm/RCMTable';
 import AddMasterDialog from '@/components/rcm/AddMasterDialog';
-import { exportRCMToExcel, importRCMFromExcel } from '@/utils/rcmExcelExport';
+import { exportRCMToExcel } from '@/utils/rcmExcelExport';
 import { exportRCMToPDF } from '@/utils/rcmPdfExport';
 import GSTPortalLink from '@/components/clients/GSTPortalLink';
 
@@ -46,6 +47,11 @@ interface RCMDataRow {
   isNew?: boolean;
 }
 
+interface LockedMonth {
+  month: string;
+  is_locked: boolean;
+}
+
 const MONTHS_ORDER = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
 
 const generateFinancialYears = (): string[] => {
@@ -73,8 +79,24 @@ const generateMonthsForFY = (financialYear: string): string[] => {
   });
 };
 
+// Convert month format "Apr-25" to "04/2025" for filing_status
+const convertToFilingMonth = (month: string): string => {
+  const monthMap: { [key: string]: string } = {
+    'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04',
+    'May': '05', 'Jun': '06', 'Jul': '07', 'Aug': '08',
+    'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12'
+  };
+  
+  const [monthName, yearShort] = month.split('-');
+  const monthNum = monthMap[monthName] || '01';
+  const fullYear = parseInt(yearShort) < 50 ? 2000 + parseInt(yearShort) : 1900 + parseInt(yearShort);
+  
+  return `${monthNum}/${fullYear}`;
+};
+
 const RCMSummaryPage: React.FC = () => {
-  const { user, isStaffRole } = useAuth();
+  const { user, isStaffRole, canUnlockSheets } = useAuth();
+  const navigate = useNavigate();
   const [clients, setClients] = useState<Client[]>([]);
   const [selectedClient, setSelectedClient] = useState<string>('');
   const [selectedClientData, setSelectedClientData] = useState<Client | null>(null);
@@ -87,11 +109,14 @@ const RCMSummaryPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
-  const [isLocked, setIsLocked] = useState(false);
+  const [lockedMonths, setLockedMonths] = useState<Set<string>>(new Set());
   const [showAddMaster, setShowAddMaster] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isStaff = isStaffRole();
+  const canUnlock = canUnlockSheets();
+
+  // Check if all months are locked
+  const allMonthsLocked = months.length > 0 && months.every(m => lockedMonths.has(m));
 
   // Set default financial year
   useEffect(() => {
@@ -157,6 +182,45 @@ const RCMSummaryPage: React.FC = () => {
     fetchMasters();
   }, [fetchMasters]);
 
+  // Fetch locked months from filing_status (when GSTR-3B is Filed)
+  const fetchLockedMonths = useCallback(async () => {
+    if (!selectedClient || !months.length) return;
+
+    const filingMonths = months.map(m => convertToFilingMonth(m));
+    
+    const { data: filingData, error } = await supabase
+      .from('filing_status')
+      .select('period_month, status')
+      .eq('client_id', selectedClient)
+      .eq('return_type', 'GSTR-3B')
+      .in('period_month', filingMonths);
+
+    if (error) {
+      console.error('Error fetching filing status:', error);
+      return;
+    }
+
+    // Create a set of locked months (where GSTR-3B is Filed)
+    const locked = new Set<string>();
+    (filingData || []).forEach(filing => {
+      if (filing.status === 'Filed') {
+        // Convert back from "04/2025" to "Apr-25"
+        const [monthNum, year] = filing.period_month.split('/');
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const monthName = monthNames[parseInt(monthNum) - 1];
+        const shortYear = year.slice(-2);
+        const formattedMonth = `${monthName}-${shortYear}`;
+        locked.add(formattedMonth);
+      }
+    });
+
+    setLockedMonths(locked);
+  }, [selectedClient, months]);
+
+  useEffect(() => {
+    fetchLockedMonths();
+  }, [fetchLockedMonths]);
+
   // Fetch RCM data for selected client and FY - grouped by particulars with monthly values
   const fetchData = useCallback(async () => {
     if (!selectedClient || !financialYear) return;
@@ -196,7 +260,6 @@ const RCMSummaryPage: React.FC = () => {
       const formattedData = Object.values(groupedData);
       setData(formattedData);
       setOriginalData(JSON.parse(JSON.stringify(formattedData)));
-      setIsLocked(rcmData?.some((r) => r.is_locked) || false);
       setHasChanges(false);
     } catch (error: any) {
       toast.error(error.message || 'Failed to fetch RCM data');
@@ -272,6 +335,7 @@ const RCMSummaryPage: React.FC = () => {
           const taxableValue = row.monthlyValues[month] || 0;
           if (taxableValue > 0) {
             const gstValues = calculateGST(taxableValue, row.rate, row.supply_type);
+            const isMonthLocked = lockedMonths.has(month);
             insertData.push({
               client_id: selectedClient,
               financial_year: financialYear,
@@ -281,6 +345,7 @@ const RCMSummaryPage: React.FC = () => {
               supply_type: row.supply_type,
               master_id: row.master_id,
               taxable_value: taxableValue,
+              is_locked: isMonthLocked,
               ...gstValues,
               updated_by: user?.id,
               updated_at: new Date().toISOString(),
@@ -303,6 +368,38 @@ const RCMSummaryPage: React.FC = () => {
     }
   };
 
+  const handleUnlockMonth = async (month: string) => {
+    if (!canUnlock) {
+      toast.error('You do not have permission to unlock months');
+      return;
+    }
+
+    const filingMonth = convertToFilingMonth(month);
+
+    try {
+      // Update the filing_status to not be Filed (reset to Prepared)
+      const { error } = await supabase
+        .from('rcm_data')
+        .update({ is_locked: false })
+        .eq('client_id', selectedClient)
+        .eq('financial_year', financialYear)
+        .eq('month', month);
+
+      if (error) throw error;
+
+      // Remove from lockedMonths set
+      setLockedMonths(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(month);
+        return newSet;
+      });
+
+      toast.success(`${month} unlocked successfully`);
+    } catch (error: any) {
+      toast.error('Failed to unlock month: ' + error.message);
+    }
+  };
+
   const handleExportExcel = () => {
     if (!selectedClientData) {
       toast.error('Please select a client');
@@ -321,23 +418,6 @@ const RCMSummaryPage: React.FC = () => {
     toast.success('PDF exported successfully');
   };
 
-  const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const importedData = await importRCMFromExcel(file, months, masters);
-      setData((prevData) => [...prevData, ...importedData]);
-      toast.success(`Imported ${importedData.length} rows`);
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to import Excel');
-    }
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
-
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
@@ -351,10 +431,10 @@ const RCMSummaryPage: React.FC = () => {
             <p className="text-muted-foreground">Reverse Charge Mechanism Summary</p>
           </div>
         </div>
-        {isLocked && (
+        {allMonthsLocked && (
           <div className="flex items-center gap-2 text-warning bg-warning/10 px-3 py-1.5 rounded-lg">
             <Lock className="h-4 w-4" />
-            <span className="text-sm font-medium">Period Locked</span>
+            <span className="text-sm font-medium">All Periods Locked</span>
           </div>
         )}
       </div>
@@ -393,7 +473,14 @@ const RCMSummaryPage: React.FC = () => {
 
             {/* Action Buttons - Right side */}
             <div className="flex items-center gap-2 ml-auto">
-              {isStaff && !isLocked && (
+              {isStaff && (
+                <Button variant="outline" size="sm" onClick={() => navigate('/manage-masters')}>
+                  <Settings className="h-4 w-4 mr-1" />
+                  Manage Masters
+                </Button>
+              )}
+
+              {isStaff && !allMonthsLocked && (
                 <Button variant="outline" size="sm" onClick={() => setShowAddMaster(true)}>
                   <Plus className="h-4 w-4 mr-1" />
                   ADD MASTER
@@ -416,25 +503,6 @@ const RCMSummaryPage: React.FC = () => {
                 </Select>
               </div>
 
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleImportExcel}
-                accept=".xlsx,.xls"
-                className="hidden"
-              />
-              
-              {isStaff && !isLocked && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Upload className="h-4 w-4 mr-1" />
-                  Import
-                </Button>
-              )}
-
               <Button variant="outline" size="sm" onClick={handleExportExcel}>
                 <FileSpreadsheet className="h-4 w-4 mr-1" />
                 Excel
@@ -449,6 +517,36 @@ const RCMSummaryPage: React.FC = () => {
         </CardContent>
       </Card>
 
+      {/* Locked Months Indicator */}
+      {lockedMonths.size > 0 && !allMonthsLocked && (
+        <Card>
+          <CardContent className="p-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-medium text-muted-foreground flex items-center gap-1">
+                <Lock className="h-3.5 w-3.5" />
+                Locked Months:
+              </span>
+              {Array.from(lockedMonths).map((month) => (
+                <div key={month} className="flex items-center gap-1 bg-warning/10 text-warning px-2 py-1 rounded text-xs font-medium">
+                  <Lock className="h-3 w-3" />
+                  {month}
+                  {canUnlock && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-4 w-4 p-0 ml-1 hover:bg-warning/20"
+                      onClick={() => handleUnlockMonth(month)}
+                    >
+                      <Unlock className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Main Table Card */}
       <Card>
         <CardHeader className="pb-4">
@@ -458,7 +556,7 @@ const RCMSummaryPage: React.FC = () => {
                 ? `${selectedClientData.name} - FY ${financialYear}`
                 : 'Select a client to view RCM data'}
             </span>
-            {hasChanges && isStaff && !isLocked && (
+            {hasChanges && isStaff && !allMonthsLocked && (
               <Button onClick={handleSave} disabled={isSaving} size="sm">
                 {isSaving ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -488,8 +586,9 @@ const RCMSummaryPage: React.FC = () => {
               data={data}
               masters={masters}
               months={months}
+              lockedMonths={lockedMonths}
               onDataChange={handleDataChange}
-              isLocked={isLocked}
+              isLocked={allMonthsLocked}
               isStaff={isStaff}
             />
           )}

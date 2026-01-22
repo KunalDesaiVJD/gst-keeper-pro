@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { Trash2, Plus } from 'lucide-react';
+import { Trash2, Plus, Lock } from 'lucide-react';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 interface RCMMaster {
@@ -44,6 +44,7 @@ interface RCMTableProps {
   data: RCMDataRow[];
   masters: RCMMaster[];
   months: string[];
+  lockedMonths?: Set<string>;
   onDataChange: (data: RCMDataRow[]) => void;
   isLocked?: boolean;
   isStaff: boolean;
@@ -58,6 +59,7 @@ const RCMTable: React.FC<RCMTableProps> = ({
   data,
   masters,
   months,
+  lockedMonths = new Set(),
   onDataChange,
   isLocked = false,
   isStaff,
@@ -78,6 +80,9 @@ const RCMTable: React.FC<RCMTableProps> = ({
   };
 
   const handleMonthValueChange = (index: number, month: string, value: string) => {
+    // Check if month is locked
+    if (lockedMonths.has(month)) return;
+
     const numValue = parseFloat(value) || 0;
     const newData = [...data];
     newData[index] = {
@@ -187,6 +192,10 @@ const RCMTable: React.FC<RCMTableProps> = ({
     return months.reduce((sum, month) => sum + getTotalIGSTForMonth(month), 0);
   };
 
+  const isMonthLocked = (month: string): boolean => {
+    return lockedMonths.has(month);
+  };
+
   return (
     <div className="space-y-4">
       <ScrollArea className="w-full">
@@ -198,7 +207,10 @@ const RCMTable: React.FC<RCMTableProps> = ({
                 <TableHead className="w-24 font-bold text-white text-center border border-[#2E5A6B]">RATE</TableHead>
                 {months.map((month) => (
                   <TableHead key={month} className="w-20 font-bold text-white text-center border border-[#2E5A6B]">
-                    {month}
+                    <div className="flex items-center justify-center gap-1">
+                      {month}
+                      {isMonthLocked(month) && <Lock className="h-3 w-3" />}
+                    </div>
                   </TableHead>
                 ))}
                 <TableHead className="w-24 font-bold text-white text-center border border-[#2E5A6B]">TOTAL</TableHead>
@@ -234,23 +246,29 @@ const RCMTable: React.FC<RCMTableProps> = ({
                   <TableCell className="text-center border border-border font-medium">
                     {row.rate}
                   </TableCell>
-                  {months.map((month) => (
-                    <TableCell key={month} className="p-0 border border-border">
-                      {isStaff && !isLocked ? (
-                        <Input
-                          type="number"
-                          value={row.monthlyValues[month] || ''}
-                          onChange={(e) => handleMonthValueChange(index, month, e.target.value)}
-                          className="h-8 text-right border-0 shadow-none rounded-none [&::-webkit-inner-spin-button]:appearance-none"
-                          min="0"
-                        />
-                      ) : (
-                        <span className="block text-right px-2">
-                          {formatNumber(row.monthlyValues[month] || 0)}
-                        </span>
-                      )}
-                    </TableCell>
-                  ))}
+                  {months.map((month) => {
+                    const monthIsLocked = isMonthLocked(month);
+                    return (
+                      <TableCell 
+                        key={month} 
+                        className={`p-0 border border-border ${monthIsLocked ? 'bg-muted/50' : ''}`}
+                      >
+                        {isStaff && !isLocked && !monthIsLocked ? (
+                          <Input
+                            type="number"
+                            value={row.monthlyValues[month] || ''}
+                            onChange={(e) => handleMonthValueChange(index, month, e.target.value)}
+                            className="h-8 text-right border-0 shadow-none rounded-none [&::-webkit-inner-spin-button]:appearance-none"
+                            min="0"
+                          />
+                        ) : (
+                          <span className="block text-right px-2">
+                            {formatNumber(row.monthlyValues[month] || 0)}
+                          </span>
+                        )}
+                      </TableCell>
+                    );
+                  })}
                   <TableCell className="text-right font-medium border border-border bg-muted/30">
                     {formatNumber(getRowTotal(row))}
                   </TableCell>

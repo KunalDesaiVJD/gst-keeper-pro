@@ -82,6 +82,7 @@ const ITCSummaryPage: React.FC = () => {
   const [itcSummaryId, setItcSummaryId] = useState<string | null>(null);
   const [reversalFromReco, setReversalFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [reclaimFromReco, setReclaimFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
+  const [rcmTotals, setRcmTotals] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [negativeValueError, setNegativeValueError] = useState<string | null>(null);
 
   // Editable ITC data state
@@ -284,18 +285,68 @@ const ITCSummaryPage: React.FC = () => {
     }
   }, [selectedClient, selectedMonth]);
 
+  // Fetch RCM totals for selected client and month
+  const fetchRCMTotals = useCallback(async () => {
+    if (!selectedClient || !selectedMonth) {
+      setRcmTotals({ igst: 0, cgst: 0, sgst: 0 });
+      return;
+    }
+
+    // Convert selectedMonth "04/2025" to RCM month format "Apr-25"
+    const [monthNum, year] = selectedMonth.split('/');
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthName = monthNames[parseInt(monthNum) - 1];
+    const rcmMonth = `${monthName}-${year.slice(-2)}`;
+
+    const { data: rcmData, error } = await supabase
+      .from('rcm_data')
+      .select('cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18')
+      .eq('client_id', selectedClient)
+      .eq('month', rcmMonth);
+
+    if (error) {
+      console.error('Error fetching RCM data:', error);
+      return;
+    }
+
+    if (rcmData && rcmData.length > 0) {
+      const totals = rcmData.reduce((acc, row) => ({
+        igst: acc.igst + (Number(row.igst_5) || 0) + (Number(row.igst_18) || 0),
+        cgst: acc.cgst + (Number(row.cgst_2_5) || 0) + (Number(row.cgst_9) || 0),
+        sgst: acc.sgst + (Number(row.sgst_2_5) || 0) + (Number(row.sgst_9) || 0),
+      }), { igst: 0, cgst: 0, sgst: 0 });
+
+      console.log('RCM totals for', rcmMonth, ':', totals);
+      setRcmTotals(totals);
+    } else {
+      setRcmTotals({ igst: 0, cgst: 0, sgst: 0 });
+    }
+  }, [selectedClient, selectedMonth]);
+
   useEffect(() => {
     fetchITCSummary();
     fetchRecoData();
-  }, [fetchITCSummary, fetchRecoData]);
+    fetchRCMTotals();
+  }, [fetchITCSummary, fetchRecoData, fetchRCMTotals]);
 
-  // Update auto-linked rows when reversal/reclaim data changes from 2B Reco
+  // Update auto-linked rows when reversal/reclaim/RCM data changes
   useEffect(() => {
     setItcData(prev => {
       const newData = { ...prev };
       
-      // Update Section 4A, row 5.4 (Reclaim of ITC Reversed for Previous months) with reclaim data
+      // Update Section 4A rows
       newData.section4A = prev.section4A.map(row => {
+        // Row (3) RCM ITC - auto-linked from RCM Summary
+        if (row.srNo === '(3)') {
+          return { 
+            ...row, 
+            igst: rcmTotals.igst, 
+            cgst: rcmTotals.cgst, 
+            sgst: rcmTotals.sgst,
+            isAutoLinked: true
+          };
+        }
+        // Row 5.4 - reclaim data
         if (row.srNo === '5.4') {
           return { 
             ...row, 
@@ -335,7 +386,7 @@ const ITCSummaryPage: React.FC = () => {
       
       return newData;
     });
-  }, [reversalFromReco, reclaimFromReco]);
+  }, [reversalFromReco, reclaimFromReco, rcmTotals]);
 
   // Real-time subscription
   useEffect(() => {
