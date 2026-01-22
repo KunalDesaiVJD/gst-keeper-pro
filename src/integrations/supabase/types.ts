@@ -364,6 +364,114 @@ export type Database = {
         }
         Relationships: []
       }
+      rcm_data: {
+        Row: {
+          cgst_2_5: number | null
+          cgst_9: number | null
+          client_id: string
+          financial_year: string
+          id: string
+          igst_18: number | null
+          igst_5: number | null
+          is_locked: boolean | null
+          master_id: string | null
+          month: string
+          particulars: string
+          rate: string
+          sgst_2_5: number | null
+          sgst_9: number | null
+          supply_type: string
+          taxable_value: number | null
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          cgst_2_5?: number | null
+          cgst_9?: number | null
+          client_id: string
+          financial_year: string
+          id?: string
+          igst_18?: number | null
+          igst_5?: number | null
+          is_locked?: boolean | null
+          master_id?: string | null
+          month: string
+          particulars: string
+          rate: string
+          sgst_2_5?: number | null
+          sgst_9?: number | null
+          supply_type?: string
+          taxable_value?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          cgst_2_5?: number | null
+          cgst_9?: number | null
+          client_id?: string
+          financial_year?: string
+          id?: string
+          igst_18?: number | null
+          igst_5?: number | null
+          is_locked?: boolean | null
+          master_id?: string | null
+          month?: string
+          particulars?: string
+          rate?: string
+          sgst_2_5?: number | null
+          sgst_9?: number | null
+          supply_type?: string
+          taxable_value?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rcm_data_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "rcm_data_master_id_fkey"
+            columns: ["master_id"]
+            isOneToOne: false
+            referencedRelation: "rcm_masters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      rcm_masters: {
+        Row: {
+          created_at: string | null
+          expense_name: string
+          id: string
+          is_active: boolean | null
+          rate: string
+          supply_type: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          expense_name: string
+          id?: string
+          is_active?: boolean | null
+          rate: string
+          supply_type?: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          expense_name?: string
+          id?: string
+          is_active?: boolean | null
+          rate?: string
+          supply_type?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       twob_versions: {
         Row: {
           client_id: string
