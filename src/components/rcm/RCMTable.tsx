@@ -124,6 +124,69 @@ const RCMTable: React.FC<RCMTableProps> = ({
     return data.reduce((sum, row) => sum + getRowTotal(row), 0);
   };
 
+  // GST Calculation functions
+  const getGSTForMonth = (month: string, gstType: 'cgst_2_5' | 'sgst_2_5' | 'cgst_9' | 'sgst_9' | 'igst_5' | 'igst_18'): number => {
+    return data.reduce((sum, row) => {
+      const taxableValue = row.monthlyValues[month] || 0;
+      const rate = row.rate;
+      const supplyType = row.supply_type;
+      
+      if (taxableValue === 0) return sum;
+      
+      // Intrastate 5% -> CGST 2.5% + SGST 2.5%
+      if (supplyType === 'intrastate' && rate === '5%') {
+        if (gstType === 'cgst_2_5') return sum + (taxableValue * 0.025);
+        if (gstType === 'sgst_2_5') return sum + (taxableValue * 0.025);
+      }
+      
+      // Intrastate 18% -> CGST 9% + SGST 9%
+      if (supplyType === 'intrastate' && rate === '18%') {
+        if (gstType === 'cgst_9') return sum + (taxableValue * 0.09);
+        if (gstType === 'sgst_9') return sum + (taxableValue * 0.09);
+      }
+      
+      // Interstate 5% -> IGST 5%
+      if (supplyType === 'interstate' && rate === '5%') {
+        if (gstType === 'igst_5') return sum + (taxableValue * 0.05);
+      }
+      
+      // Interstate 18% -> IGST 18%
+      if (supplyType === 'interstate' && rate === '18%') {
+        if (gstType === 'igst_18') return sum + (taxableValue * 0.18);
+      }
+      
+      return sum;
+    }, 0);
+  };
+
+  const getGSTTotal = (gstType: 'cgst_2_5' | 'sgst_2_5' | 'cgst_9' | 'sgst_9' | 'igst_5' | 'igst_18'): number => {
+    return months.reduce((sum, month) => sum + getGSTForMonth(month, gstType), 0);
+  };
+
+  const getTotalCGSTForMonth = (month: string): number => {
+    return getGSTForMonth(month, 'cgst_2_5') + getGSTForMonth(month, 'cgst_9');
+  };
+
+  const getTotalSGSTForMonth = (month: string): number => {
+    return getGSTForMonth(month, 'sgst_2_5') + getGSTForMonth(month, 'sgst_9');
+  };
+
+  const getTotalIGSTForMonth = (month: string): number => {
+    return getGSTForMonth(month, 'igst_5') + getGSTForMonth(month, 'igst_18');
+  };
+
+  const getGrandTotalCGST = (): number => {
+    return months.reduce((sum, month) => sum + getTotalCGSTForMonth(month), 0);
+  };
+
+  const getGrandTotalSGST = (): number => {
+    return months.reduce((sum, month) => sum + getTotalSGSTForMonth(month), 0);
+  };
+
+  const getGrandTotalIGST = (): number => {
+    return months.reduce((sum, month) => sum + getTotalIGSTForMonth(month), 0);
+  };
+
   return (
     <div className="space-y-4">
       <ScrollArea className="w-full">
@@ -219,6 +282,152 @@ const RCMTable: React.FC<RCMTableProps> = ({
                   {formatNumber(getGrandTotal())}
                 </TableCell>
                 {isStaff && !isLocked && <TableCell className="border border-[#2E5A6B]" />}
+              </TableRow>
+
+              {/* Empty Row for spacing */}
+              <TableRow className="h-4 hover:bg-transparent">
+                <TableCell colSpan={months.length + 4} className="border-0"></TableCell>
+              </TableRow>
+
+              {/* GST Summary Rows */}
+              {/* CGST 2.5% */}
+              <TableRow className="hover:bg-muted/50">
+                <TableCell className="font-medium border border-border">CGST 2.5%</TableCell>
+                <TableCell className="text-center border border-border">-</TableCell>
+                {months.map((month) => (
+                  <TableCell key={month} className="text-right border border-border">
+                    {formatNumber(getGSTForMonth(month, 'cgst_2_5'))}
+                  </TableCell>
+                ))}
+                <TableCell className="text-right font-medium border border-border bg-muted/30">
+                  {formatNumber(getGSTTotal('cgst_2_5'))}
+                </TableCell>
+                {isStaff && !isLocked && <TableCell className="border border-border" />}
+              </TableRow>
+
+              {/* SGST 2.5% */}
+              <TableRow className="hover:bg-muted/50">
+                <TableCell className="font-medium border border-border">SGST 2.5%</TableCell>
+                <TableCell className="text-center border border-border">-</TableCell>
+                {months.map((month) => (
+                  <TableCell key={month} className="text-right border border-border">
+                    {formatNumber(getGSTForMonth(month, 'sgst_2_5'))}
+                  </TableCell>
+                ))}
+                <TableCell className="text-right font-medium border border-border bg-muted/30">
+                  {formatNumber(getGSTTotal('sgst_2_5'))}
+                </TableCell>
+                {isStaff && !isLocked && <TableCell className="border border-border" />}
+              </TableRow>
+
+              {/* CGST 9% */}
+              <TableRow className="hover:bg-muted/50">
+                <TableCell className="font-medium border border-border">CGST 9%</TableCell>
+                <TableCell className="text-center border border-border">-</TableCell>
+                {months.map((month) => (
+                  <TableCell key={month} className="text-right border border-border">
+                    {formatNumber(getGSTForMonth(month, 'cgst_9'))}
+                  </TableCell>
+                ))}
+                <TableCell className="text-right font-medium border border-border bg-muted/30">
+                  {formatNumber(getGSTTotal('cgst_9'))}
+                </TableCell>
+                {isStaff && !isLocked && <TableCell className="border border-border" />}
+              </TableRow>
+
+              {/* SGST 9% */}
+              <TableRow className="hover:bg-muted/50">
+                <TableCell className="font-medium border border-border">SGST 9%</TableCell>
+                <TableCell className="text-center border border-border">-</TableCell>
+                {months.map((month) => (
+                  <TableCell key={month} className="text-right border border-border">
+                    {formatNumber(getGSTForMonth(month, 'sgst_9'))}
+                  </TableCell>
+                ))}
+                <TableCell className="text-right font-medium border border-border bg-muted/30">
+                  {formatNumber(getGSTTotal('sgst_9'))}
+                </TableCell>
+                {isStaff && !isLocked && <TableCell className="border border-border" />}
+              </TableRow>
+
+              {/* IGST 18% */}
+              <TableRow className="hover:bg-muted/50">
+                <TableCell className="font-medium border border-border">IGST 18%</TableCell>
+                <TableCell className="text-center border border-border">-</TableCell>
+                {months.map((month) => (
+                  <TableCell key={month} className="text-right border border-border">
+                    {formatNumber(getGSTForMonth(month, 'igst_18'))}
+                  </TableCell>
+                ))}
+                <TableCell className="text-right font-medium border border-border bg-muted/30">
+                  {formatNumber(getGSTTotal('igst_18'))}
+                </TableCell>
+                {isStaff && !isLocked && <TableCell className="border border-border" />}
+              </TableRow>
+
+              {/* IGST 5% */}
+              <TableRow className="hover:bg-muted/50">
+                <TableCell className="font-medium border border-border">IGST 5%</TableCell>
+                <TableCell className="text-center border border-border">-</TableCell>
+                {months.map((month) => (
+                  <TableCell key={month} className="text-right border border-border">
+                    {formatNumber(getGSTForMonth(month, 'igst_5'))}
+                  </TableCell>
+                ))}
+                <TableCell className="text-right font-medium border border-border bg-muted/30">
+                  {formatNumber(getGSTTotal('igst_5'))}
+                </TableCell>
+                {isStaff && !isLocked && <TableCell className="border border-border" />}
+              </TableRow>
+
+              {/* Empty Row for spacing */}
+              <TableRow className="h-4 hover:bg-transparent">
+                <TableCell colSpan={months.length + 4} className="border-0"></TableCell>
+              </TableRow>
+
+              {/* TOTAL (CGST) */}
+              <TableRow className="bg-emerald-100 hover:bg-emerald-100 font-bold">
+                <TableCell className="font-bold border border-border">TOTAL (CGST)</TableCell>
+                <TableCell className="text-center border border-border">-</TableCell>
+                {months.map((month) => (
+                  <TableCell key={month} className="text-right border border-border">
+                    {formatNumber(getTotalCGSTForMonth(month))}
+                  </TableCell>
+                ))}
+                <TableCell className="text-right font-bold border border-border">
+                  {formatNumber(getGrandTotalCGST())}
+                </TableCell>
+                {isStaff && !isLocked && <TableCell className="border border-border" />}
+              </TableRow>
+
+              {/* TOTAL (SGST) */}
+              <TableRow className="bg-emerald-100 hover:bg-emerald-100 font-bold">
+                <TableCell className="font-bold border border-border">TOTAL (SGST)</TableCell>
+                <TableCell className="text-center border border-border">-</TableCell>
+                {months.map((month) => (
+                  <TableCell key={month} className="text-right border border-border">
+                    {formatNumber(getTotalSGSTForMonth(month))}
+                  </TableCell>
+                ))}
+                <TableCell className="text-right font-bold border border-border">
+                  {formatNumber(getGrandTotalSGST())}
+                </TableCell>
+                {isStaff && !isLocked && <TableCell className="border border-border" />}
+              </TableRow>
+
+              {/* TOTAL (IGST) */}
+              <TableRow className="bg-emerald-100 hover:bg-emerald-100 font-bold">
+                <TableCell className="font-bold border border-border">TOTAL (IGST)</TableCell>
+                <TableCell className="text-center border border-border">-</TableCell>
+                {months.map((month) => (
+                  <TableCell key={month} className="text-right border border-border">
+                    {formatNumber(getTotalIGSTForMonth(month))}
+                  </TableCell>
+                ))}
+                <TableCell className="text-right font-bold border border-border">
+                  {formatNumber(getGrandTotalIGST())}
+                </TableCell>
+                {isStaff && !isLocked && <TableCell className="border border-border" />}
               </TableRow>
             </TableBody>
           </Table>
