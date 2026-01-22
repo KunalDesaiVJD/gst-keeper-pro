@@ -1,0 +1,186 @@
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import logoSmall from '@/assets/logo-small.png';
+
+interface RCMDataRow {
+  particulars: string;
+  rate: string;
+  supply_type: string;
+  taxable_value: number;
+  cgst_2_5: number;
+  cgst_9: number;
+  sgst_2_5: number;
+  sgst_9: number;
+  igst_5: number;
+  igst_18: number;
+  month: string;
+}
+
+const formatNumber = (num: number): string => {
+  if (num === 0) return '-';
+  return num.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+};
+
+export const exportRCMToPDF = (
+  clientName: string,
+  clientGstin: string,
+  financialYear: string,
+  data: RCMDataRow[]
+): void => {
+  const doc = new jsPDF('l', 'mm', 'a4'); // Landscape for wide table
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  // Add logo
+  try {
+    doc.addImage(logoSmall, 'PNG', 14, 10, 30, 12);
+  } catch (e) {
+    console.log('Logo not loaded');
+  }
+
+  // Header
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text('RCM Summary Report', pageWidth / 2, 18, { align: 'center' });
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Client: ${clientName}`, 14, 30);
+  doc.text(`GSTIN: ${clientGstin}`, 14, 36);
+  doc.text(`Financial Year: ${financialYear}`, pageWidth - 14, 30, { align: 'right' });
+  doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, pageWidth - 14, 36, { align: 'right' });
+
+  // Calculate totals
+  const totals = data.reduce(
+    (acc, row) => ({
+      taxable_value: acc.taxable_value + (row.taxable_value || 0),
+      cgst_2_5: acc.cgst_2_5 + (row.cgst_2_5 || 0),
+      cgst_9: acc.cgst_9 + (row.cgst_9 || 0),
+      sgst_2_5: acc.sgst_2_5 + (row.sgst_2_5 || 0),
+      sgst_9: acc.sgst_9 + (row.sgst_9 || 0),
+      igst_5: acc.igst_5 + (row.igst_5 || 0),
+      igst_18: acc.igst_18 + (row.igst_18 || 0),
+    }),
+    {
+      taxable_value: 0,
+      cgst_2_5: 0,
+      cgst_9: 0,
+      sgst_2_5: 0,
+      sgst_9: 0,
+      igst_5: 0,
+      igst_18: 0,
+    }
+  );
+
+  // Prepare table data
+  const tableData = data.map((row, index) => [
+    index + 1,
+    row.particulars,
+    row.month,
+    formatNumber(row.taxable_value),
+    `${row.rate} ${row.supply_type === 'interstate' ? 'Inter' : 'Intra'}`,
+    formatNumber(row.cgst_2_5),
+    formatNumber(row.cgst_9),
+    formatNumber(row.sgst_2_5),
+    formatNumber(row.sgst_9),
+    formatNumber(row.igst_5),
+    formatNumber(row.igst_18),
+  ]);
+
+  // Add totals row
+  tableData.push([
+    '',
+    'TOTAL',
+    '',
+    formatNumber(totals.taxable_value),
+    '',
+    formatNumber(totals.cgst_2_5),
+    formatNumber(totals.cgst_9),
+    formatNumber(totals.sgst_2_5),
+    formatNumber(totals.sgst_9),
+    formatNumber(totals.igst_5),
+    formatNumber(totals.igst_18),
+  ]);
+
+  autoTable(doc, {
+    startY: 42,
+    head: [
+      [
+        'Sr.',
+        'Particulars',
+        'Month',
+        'Taxable',
+        'Rate',
+        'CGST 2.5%',
+        'CGST 9%',
+        'SGST 2.5%',
+        'SGST 9%',
+        'IGST 5%',
+        'IGST 18%',
+      ],
+    ],
+    body: tableData,
+    theme: 'grid',
+    headStyles: {
+      fillColor: [30, 58, 138],
+      textColor: 255,
+      fontStyle: 'bold',
+      fontSize: 8,
+      halign: 'center',
+    },
+    bodyStyles: {
+      fontSize: 8,
+    },
+    columnStyles: {
+      0: { halign: 'center', cellWidth: 12 },
+      1: { cellWidth: 45 },
+      2: { halign: 'center', cellWidth: 20 },
+      3: { halign: 'right', cellWidth: 25 },
+      4: { halign: 'center', cellWidth: 25 },
+      5: { halign: 'right', cellWidth: 22 },
+      6: { halign: 'right', cellWidth: 22 },
+      7: { halign: 'right', cellWidth: 22 },
+      8: { halign: 'right', cellWidth: 22 },
+      9: { halign: 'right', cellWidth: 22 },
+      10: { halign: 'right', cellWidth: 22 },
+    },
+    didParseCell: (data) => {
+      // Style totals row
+      if (data.row.index === tableData.length - 1) {
+        data.cell.styles.fontStyle = 'bold';
+        data.cell.styles.fillColor = [240, 240, 240];
+      }
+    },
+  });
+
+  // Add summary section
+  const finalY = (doc as any).lastAutoTable.finalY + 10;
+  const totalCGST = totals.cgst_2_5 + totals.cgst_9;
+  const totalSGST = totals.sgst_2_5 + totals.sgst_9;
+  const totalIGST = totals.igst_5 + totals.igst_18;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Summary:', 14, finalY);
+
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Total CGST: ₹${formatNumber(totalCGST)}`, 14, finalY + 6);
+  doc.text(`Total SGST: ₹${formatNumber(totalSGST)}`, 80, finalY + 6);
+  doc.text(`Total IGST: ₹${formatNumber(totalIGST)}`, 146, finalY + 6);
+  doc.text(
+    `Grand Total GST: ₹${formatNumber(totalCGST + totalSGST + totalIGST)}`,
+    212,
+    finalY + 6
+  );
+
+  // Footer
+  const pageHeight = doc.internal.pageSize.getHeight();
+  doc.setFontSize(8);
+  doc.setTextColor(128);
+  doc.text('Generated by V.J. Desai & Co. GST Management System', pageWidth / 2, pageHeight - 10, {
+    align: 'center',
+  });
+
+  // Save
+  const fileName = `RCM_Summary_${clientName.replace(/[^a-zA-Z0-9]/g, '_')}_${financialYear}.pdf`;
+  doc.save(fileName);
+};
