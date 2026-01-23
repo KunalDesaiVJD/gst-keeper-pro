@@ -441,67 +441,76 @@ const FilingStatusPage: React.FC = () => {
     }
     
     // NEW VALIDATION: Check if previous month's GSTR-1 and GSTR-3B are filed before filing current month GSTR-1
+    // This validation only applies from April 2025 onwards
     if ((record.return_type === 'GSTR-1' || record.return_type === 'GSTR-1 (IFF)') && newStatus === 'Filed') {
       // Calculate previous month
       const [monthStr, yearStr] = selectedMonth.split('/');
-      let prevMonth = parseInt(monthStr) - 1;
-      let prevYear = parseInt(yearStr);
-      if (prevMonth < 1) {
-        prevMonth = 12;
-        prevYear--;
-      }
-      const prevPeriod = `${String(prevMonth).padStart(2, '0')}/${prevYear}`;
+      const currentMonth = parseInt(monthStr);
+      const currentYear = parseInt(yearStr);
       
-      // For IFF clients, use GSTR-1 (IFF) and GSTR-3B (Q), otherwise use GSTR-1 and GSTR-3B
-      const prevGstr1Type = record.return_type === 'GSTR-1 (IFF)' ? 'GSTR-1 (IFF)' : 'GSTR-1';
-      const prevGstr3bType = record.return_type === 'GSTR-1 (IFF)' ? 'GSTR-3B (Q)' : 'GSTR-3B';
+      // Skip validation for periods before April 2025 (i.e., March 2025 and earlier)
+      const isBeforeApril2025 = currentYear < 2025 || (currentYear === 2025 && currentMonth < 4);
       
-      // Check previous month's GSTR-1 filed status
-      const { data: prevGstr1Data } = await supabase
-        .from('filing_status')
-        .select('status')
-        .eq('client_id', record.client_id)
-        .eq('period_month', prevPeriod)
-        .eq('return_type', prevGstr1Type)
-        .maybeSingle();
-      
-      // Check previous month's GSTR-3B filed status
-      const { data: prevGstr3bData } = await supabase
-        .from('filing_status')
-        .select('status')
-        .eq('client_id', record.client_id)
-        .eq('period_month', prevPeriod)
-        .eq('return_type', prevGstr3bType)
-        .maybeSingle();
-      
-      // Determine if previous month is the first month of client registration
-      const client = clients.find(c => c.id === record.client_id);
-      let isFirstMonth = false;
-      if (client) {
-        const regDate = new Date(client.registration_date);
-        const regMonth = regDate.getMonth() + 1;
-        const regYear = regDate.getFullYear();
-        const regPeriod = `${String(regMonth).padStart(2, '0')}/${regYear}`;
-        isFirstMonth = (selectedMonth === regPeriod);
-      }
-      
-      // Skip validation for first month of registration
-      if (!isFirstMonth) {
-        if (!prevGstr1Data || prevGstr1Data.status !== 'Filed') {
-          toast.error(`Cannot file ${record.return_type}: Previous month's ${prevGstr1Type} (${prevPeriod}) must be filed first.`);
-          return;
+      if (!isBeforeApril2025) {
+        let prevMonth = currentMonth - 1;
+        let prevYear = currentYear;
+        if (prevMonth < 1) {
+          prevMonth = 12;
+          prevYear--;
+        }
+        const prevPeriod = `${String(prevMonth).padStart(2, '0')}/${prevYear}`;
+        
+        // For IFF clients, use GSTR-1 (IFF) and GSTR-3B (Q), otherwise use GSTR-1 and GSTR-3B
+        const prevGstr1Type = record.return_type === 'GSTR-1 (IFF)' ? 'GSTR-1 (IFF)' : 'GSTR-1';
+        const prevGstr3bType = record.return_type === 'GSTR-1 (IFF)' ? 'GSTR-3B (Q)' : 'GSTR-3B';
+        
+        // Check previous month's GSTR-1 filed status
+        const { data: prevGstr1Data } = await supabase
+          .from('filing_status')
+          .select('status')
+          .eq('client_id', record.client_id)
+          .eq('period_month', prevPeriod)
+          .eq('return_type', prevGstr1Type)
+          .maybeSingle();
+        
+        // Check previous month's GSTR-3B filed status
+        const { data: prevGstr3bData } = await supabase
+          .from('filing_status')
+          .select('status')
+          .eq('client_id', record.client_id)
+          .eq('period_month', prevPeriod)
+          .eq('return_type', prevGstr3bType)
+          .maybeSingle();
+        
+        // Determine if previous month is the first month of client registration
+        const client = clients.find(c => c.id === record.client_id);
+        let isFirstMonth = false;
+        if (client) {
+          const regDate = new Date(client.registration_date);
+          const regMonth = regDate.getMonth() + 1;
+          const regYear = regDate.getFullYear();
+          const regPeriod = `${String(regMonth).padStart(2, '0')}/${regYear}`;
+          isFirstMonth = (selectedMonth === regPeriod);
         }
         
-        // For GSTR-3B (Q), only check in quarter-end months
-        const isQuarterEndPrev = isQuarterEndMonth(prevMonth);
-        const isClientQuarterly = client && (client.registration_type === 'IFF' || client.registration_type === 'Composition');
-        
-        // Check GSTR-3B only if previous month is quarter-end for quarterly clients, or always for regular clients
-        const shouldCheckGstr3b = !isClientQuarterly || isQuarterEndPrev;
-        
-        if (shouldCheckGstr3b && (!prevGstr3bData || prevGstr3bData.status !== 'Filed')) {
-          toast.error(`Cannot file ${record.return_type}: Previous month's ${prevGstr3bType} (${prevPeriod}) must be filed first.`);
-          return;
+        // Skip validation for first month of registration
+        if (!isFirstMonth) {
+          if (!prevGstr1Data || prevGstr1Data.status !== 'Filed') {
+            toast.error(`Cannot file ${record.return_type}: Previous month's ${prevGstr1Type} (${prevPeriod}) must be filed first.`);
+            return;
+          }
+          
+          // For GSTR-3B (Q), only check in quarter-end months
+          const isQuarterEndPrev = isQuarterEndMonth(prevMonth);
+          const isClientQuarterly = client && (client.registration_type === 'IFF' || client.registration_type === 'Composition');
+          
+          // Check GSTR-3B only if previous month is quarter-end for quarterly clients, or always for regular clients
+          const shouldCheckGstr3b = !isClientQuarterly || isQuarterEndPrev;
+          
+          if (shouldCheckGstr3b && (!prevGstr3bData || prevGstr3bData.status !== 'Filed')) {
+            toast.error(`Cannot file ${record.return_type}: Previous month's ${prevGstr3bType} (${prevPeriod}) must be filed first.`);
+            return;
+          }
         }
       }
     }
