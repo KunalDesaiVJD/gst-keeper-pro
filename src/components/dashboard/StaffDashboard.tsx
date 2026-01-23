@@ -84,10 +84,10 @@ const StaffDashboard: React.FC = () => {
   const fetchMetrics = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Fetch clients with their selected returns and registration dates
+      // Fetch clients with their selected returns, registration dates, and registration_type
       const { data: clientData, count: clientCount } = await supabase
         .from('clients')
-        .select('id, selected_returns, registration_date, cancellation_date', { count: 'exact' });
+        .select('id, selected_returns, registration_date, cancellation_date, registration_type', { count: 'exact' });
 
       // Fetch filing status for the selected month
       const { data: filingData } = await supabase
@@ -136,7 +136,8 @@ const StaffDashboard: React.FC = () => {
 
       // Calculate return-wise metrics using visible clients
       // Get all return types, but filter quarterly ones based on month
-      const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08', 'GSTR-1 (IFF)', 'GSTR-3B (Q)'];
+      // Don't include GSTR-1 (IFF) and GSTR-3B (Q) as separate tabs - they're merged with GSTR-1 and GSTR-3B
+      const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08'];
       
       // Parse current month to check if it's quarter end
       const [monthStr] = selectedMonth.split('/');
@@ -145,22 +146,61 @@ const StaffDashboard: React.FC = () => {
       
       const returnMetricsData: ReturnMetrics[] = allReturnTypes
         .filter(rt => {
-          // Filter out quarterly returns if not in quarter end month
+          // Filter out quarterly returns (CMP-08) if not in quarter end month
           if (QUARTERLY_RETURN_TYPES.includes(rt) && !isQuarterEnd) {
             return false;
           }
           return true;
         })
         .map(rt => {
-        // Count visible clients with this return type selected
-        const clientsWithReturn = visibleClients.filter(c => 
-          (c.selected_returns || []).includes(rt)
-        );
+        // For GSTR-1, include both GSTR-1 and GSTR-1 (IFF) clients
+        // For GSTR-3B, include both GSTR-3B and GSTR-3B (Q) clients (only in quarter-end months for IFF/Composition)
+        let clientsWithReturn: typeof visibleClients = [];
+        
+        if (rt === 'GSTR-1') {
+          // Include clients with GSTR-1 or GSTR-1 (IFF)
+          clientsWithReturn = visibleClients.filter(c => 
+            (c.selected_returns || []).includes('GSTR-1') || 
+            (c.selected_returns || []).includes('GSTR-1 (IFF)')
+          );
+        } else if (rt === 'GSTR-3B') {
+          // Include clients with GSTR-3B
+          // Also include GSTR-3B (Q) clients only in quarter-end months
+          clientsWithReturn = visibleClients.filter(c => {
+            const hasGSTR3B = (c.selected_returns || []).includes('GSTR-3B');
+            const hasGSTR3BQ = (c.selected_returns || []).includes('GSTR-3B (Q)');
+            const isQuarterlyClient = c.registration_type === 'IFF' || c.registration_type === 'Composition';
+            
+            if (hasGSTR3B && !isQuarterlyClient) return true;
+            if (hasGSTR3BQ && isQuarterlyClient && isQuarterEnd) return true;
+            return false;
+          });
+        } else {
+          // For other returns, check if client has this return type selected
+          // For quarterly returns (CMP-08), only count Composition clients
+          clientsWithReturn = visibleClients.filter(c => {
+            if (!((c.selected_returns || []).includes(rt))) return false;
+            
+            // For CMP-08, only count in quarter-end months (already filtered above) for Composition clients
+            if (rt === 'CMP-08') {
+              return c.registration_type === 'Composition';
+            }
+            
+            return true;
+          });
+        }
         
         const clientsWithReturnCount = clientsWithReturn.length;
 
-        // Count filings for this return type
-        const returnFilings = filingData?.filter(f => f.return_type === rt) || [];
+        // Count filings for this return type (including merged types)
+        let returnFilings: typeof filingData = [];
+        if (rt === 'GSTR-1') {
+          returnFilings = filingData?.filter(f => f.return_type === 'GSTR-1' || f.return_type === 'GSTR-1 (IFF)') || [];
+        } else if (rt === 'GSTR-3B') {
+          returnFilings = filingData?.filter(f => f.return_type === 'GSTR-3B' || f.return_type === 'GSTR-3B (Q)') || [];
+        } else {
+          returnFilings = filingData?.filter(f => f.return_type === rt) || [];
+        }
         const filed = returnFilings.filter(f => f.status === 'Filed').length;
         
         // Pending = clients with return - filed (since not all have filing records yet)
