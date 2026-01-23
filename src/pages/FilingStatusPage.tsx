@@ -755,8 +755,11 @@ const FilingStatusPage: React.FC = () => {
                 </td>
                 <td>{record.accountantName}</td>
                 <td>
-                  <Badge variant="outline" className="text-xs">
-                    {record.filingFrequency}
+                  <Badge 
+                    variant={record.filingFrequency === 'Quarterly' ? 'default' : 'outline'} 
+                    className={`text-xs ${record.filingFrequency === 'Quarterly' ? 'bg-amber-500 hover:bg-amber-600 text-white' : ''}`}
+                  >
+                    {record.filingFrequency === 'Quarterly' ? 'Q' : 'M'}
                   </Badge>
                 </td>
                 <td>{record.contactNumber}</td>

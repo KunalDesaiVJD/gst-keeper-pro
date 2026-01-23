@@ -135,7 +135,7 @@ const AddClientPage: React.FC = () => {
         .insert([{
           gstin: formData.gstin,
           name: formData.name,
-          registration_type: formData.registrationType as 'Regular' | 'Composition' | 'Tax Deductor' | 'ISD',
+          registration_type: formData.registrationType as 'Regular' | 'Composition' | 'Tax Deductor' | 'ISD' | 'IFF',
           registration_date: effectiveRegDate,
           mobile: formData.mobile || null,
           email: formData.email || null,
