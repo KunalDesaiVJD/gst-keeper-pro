@@ -126,17 +126,23 @@ const SuspendedRecoPage: React.FC = () => {
         setPortalIgst(0);
       }
 
-      // Fetch books data from bills_not_in_2b where reclaim_month is blank/null
-      // This represents the total of blanks in reclaim column
+      // Fetch books data from bills_not_in_2b where BOTH reversal_month AND reclaim_month are blank/null
+      // This represents only rows where both columns are blank
       const { data: booksData } = await supabase
         .from('bills_not_in_2b')
-        .select('input_cgst, input_sgst, input_igst')
+        .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
         .eq('client_id', selectedClient)
-        .eq('period_month', selectedMonth)
-        .or('reclaim_month.is.null,reclaim_month.eq.');
+        .eq('period_month', selectedMonth);
       
       if (booksData && booksData.length > 0) {
-        const totals = booksData.reduce((acc, row) => ({
+        // Filter to only include rows where BOTH reversal AND reclaim are blank
+        const filteredData = booksData.filter(row => {
+          const reversalBlank = row.reversal_month === null || row.reversal_month === '';
+          const reclaimBlank = row.reclaim_month === null || row.reclaim_month === '';
+          return reversalBlank && reclaimBlank;
+        });
+        
+        const totals = filteredData.reduce((acc, row) => ({
           cgst: acc.cgst + (Number(row.input_cgst) || 0),
           sgst: acc.sgst + (Number(row.input_sgst) || 0),
           igst: acc.igst + (Number(row.input_igst) || 0),

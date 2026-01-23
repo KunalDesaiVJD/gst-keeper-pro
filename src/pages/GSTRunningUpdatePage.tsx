@@ -38,7 +38,7 @@ interface GSTUpdate {
 }
 
 const RETURN_OPTIONS = ['GSTR-1', 'GSTR-3B', 'GSTR-7', 'GSTR-1 & 3B'];
-const UPDATE_TYPE_OPTIONS = ['Claim ITC', 'Reversal ITC', 'Liability', 'RCM'];
+const UPDATE_TYPE_OPTIONS = ['Claim ITC', 'Reversal ITC', 'Liability', 'RCM', 'Reclaim', 'Reclaim (Expense out)'];
 
 const GSTRunningUpdatePage: React.FC = () => {
   const { user, isStaffRole } = useAuth();
@@ -344,9 +344,9 @@ const GSTRunningUpdatePage: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Type:</span>
+              <span className="text-sm font-medium">Correction Type:</span>
               <Select value={filterUpdateType || '__all__'} onValueChange={(val) => setFilterUpdateType(val === '__all__' ? '' : val)}>
-                <SelectTrigger className="w-36">
+                <SelectTrigger className="w-44">
                   <SelectValue placeholder="All" />
                 </SelectTrigger>
                 <SelectContent>
@@ -392,9 +392,10 @@ const GSTRunningUpdatePage: React.FC = () => {
                     <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
                       <TableHead className="font-bold text-white border border-[#2E5A6B] w-12">Sr.No.</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] w-40">CLIENT</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] w-24">Effect Month</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] w-28">Update Effect Month</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] w-28">Update in GSTR</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] w-28">Type</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] w-36">Correction Type</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] w-32">Instructions By</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] w-48">Matter Brief</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] text-right w-24">Taxable Value</TableHead>
@@ -402,8 +403,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                       <TableHead className="font-bold text-white border border-[#2E5A6B] text-right w-20">SGST</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] text-right w-20">IGST</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] text-right w-20">Interest</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] w-24">Effect Month</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] w-32">Remarks</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] min-w-[150px]">Remarks</TableHead>
                       {isStaff && <TableHead className="font-bold text-white border border-[#2E5A6B] w-12"></TableHead>}
                     </TableRow>
                   </TableHeader>
@@ -423,6 +423,18 @@ const GSTRunningUpdatePage: React.FC = () => {
                               />
                             ) : (
                               <span className="px-2">{update.client_name}</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="p-0 border border-border">
+                            {isStaff ? (
+                              <SearchableMonthSelect
+                                options={monthOptions}
+                                value={update.effect_month}
+                                onValueChange={(val) => handleFieldChange(originalIndex, 'effect_month', val)}
+                                placeholder="Select..."
+                              />
+                            ) : (
+                              <span className="px-2">{update.effect_month}</span>
                             )}
                           </TableCell>
                           <TableCell className="p-0 border border-border">
@@ -462,7 +474,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                                 value={update.update_type}
                                 onValueChange={(val) => handleFieldChange(originalIndex, 'update_type', val)}
                               >
-                                <SelectTrigger className="border-0 shadow-none">
+                                <SelectTrigger className="border-0 shadow-none w-full">
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -536,23 +548,11 @@ const GSTRunningUpdatePage: React.FC = () => {
                               disabled={!isStaff}
                             />
                           </TableCell>
-                          <TableCell className="p-0 border border-border">
-                            {isStaff ? (
-                              <SearchableMonthSelect
-                                options={monthOptions}
-                                value={update.effect_month}
-                                onValueChange={(val) => handleFieldChange(originalIndex, 'effect_month', val)}
-                                placeholder="Select..."
-                              />
-                            ) : (
-                              <span className="px-2">{update.effect_month}</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="p-0 border border-border">
-                            <Input
+                          <TableCell className="p-0 border border-border min-w-[150px]">
+                            <textarea
                               value={update.remarks}
                               onChange={(e) => handleFieldChange(originalIndex, 'remarks', e.target.value)}
-                              className="h-8 border-0 shadow-none"
+                              className="w-full min-h-[32px] max-h-[80px] text-xs px-2 py-1 border-0 shadow-none bg-transparent resize-y"
                               disabled={!isStaff}
                             />
                           </TableCell>

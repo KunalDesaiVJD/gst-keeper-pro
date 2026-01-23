@@ -2,10 +2,11 @@ import React from 'react';
 import { Outlet, Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import Sidebar from './Sidebar';
+import QuickActionsButton from './QuickActionsButton';
 import { Loader2 } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, isStaffRole } = useAuth();
 
   if (isLoading) {
     return (
@@ -28,6 +29,8 @@ const MainLayout: React.FC = () => {
       <main className="ml-64 min-h-screen p-6">
         <Outlet />
       </main>
+      {/* Quick actions floating button - only for staff */}
+      {isStaffRole() && <QuickActionsButton />}
     </div>
   );
 };
