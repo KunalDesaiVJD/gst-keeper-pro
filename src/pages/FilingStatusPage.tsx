@@ -441,24 +441,25 @@ const FilingStatusPage: React.FC = () => {
     }
     
     // NEW VALIDATION: Check if previous month's GSTR-1 and GSTR-3B are filed before filing current month GSTR-1
-    // This validation only applies from April 2025 onwards
+    // This validation only applies when previous month is April 2025 or later
     if ((record.return_type === 'GSTR-1' || record.return_type === 'GSTR-1 (IFF)') && newStatus === 'Filed') {
       // Calculate previous month
       const [monthStr, yearStr] = selectedMonth.split('/');
       const currentMonth = parseInt(monthStr);
       const currentYear = parseInt(yearStr);
       
-      // Skip validation for periods before April 2025 (i.e., March 2025 and earlier)
-      const isBeforeApril2025 = currentYear < 2025 || (currentYear === 2025 && currentMonth < 4);
+      let prevMonth = currentMonth - 1;
+      let prevYear = currentYear;
+      if (prevMonth < 1) {
+        prevMonth = 12;
+        prevYear--;
+      }
+      const prevPeriod = `${String(prevMonth).padStart(2, '0')}/${prevYear}`;
       
-      if (!isBeforeApril2025) {
-        let prevMonth = currentMonth - 1;
-        let prevYear = currentYear;
-        if (prevMonth < 1) {
-          prevMonth = 12;
-          prevYear--;
-        }
-        const prevPeriod = `${String(prevMonth).padStart(2, '0')}/${prevYear}`;
+      // Skip validation if previous month is before April 2025 (March 2025 or earlier)
+      const isPrevBeforeApril2025 = prevYear < 2025 || (prevYear === 2025 && prevMonth < 4);
+      
+      if (!isPrevBeforeApril2025) {
         
         // For IFF clients, use GSTR-1 (IFF) and GSTR-3B (Q), otherwise use GSTR-1 and GSTR-3B
         const prevGstr1Type = record.return_type === 'GSTR-1 (IFF)' ? 'GSTR-1 (IFF)' : 'GSTR-1';
