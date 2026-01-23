@@ -325,6 +325,7 @@ const EditClientPage: React.FC = () => {
                   <SelectItem value="Composition">Composition</SelectItem>
                   <SelectItem value="Tax Deductor">Tax Deductor</SelectItem>
                   <SelectItem value="ISD">ISD (Input Service Distributor)</SelectItem>
+                  <SelectItem value="IFF">IFF (Invoice Furnishing Facility)</SelectItem>
                 </SelectContent>
               </Select>
               {errors.registrationType && <p className="text-sm text-destructive">{errors.registrationType}</p>}

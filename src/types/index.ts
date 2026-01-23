@@ -1,11 +1,11 @@
 // User Roles
 export type UserRole = 'superadmin' | 'gst_manager' | 'employee' | 'client';
 
-// Registration Types - ISD added for GSTR-6
-export type RegistrationType = 'Regular' | 'Composition' | 'Tax Deductor' | 'ISD';
+// Registration Types - ISD added for GSTR-6, IFF for quarterly filing
+export type RegistrationType = 'Regular' | 'Composition' | 'Tax Deductor' | 'ISD' | 'IFF';
 
-// Return Types
-export type ReturnType = 'GSTR-1' | 'GSTR-3B' | 'ITC-04' | 'GSTR-6' | 'GSTR-7' | 'CMP-08';
+// Return Types - Including IFF specific returns
+export type ReturnType = 'GSTR-1' | 'GSTR-3B' | 'ITC-04' | 'GSTR-6' | 'GSTR-7' | 'CMP-08' | 'GSTR-1 (IFF)' | 'GSTR-3B (Q)';
 
 // Filing Status - Updated to include new options (maintaining backwards compatibility)
 export type FilingStatusType = 
@@ -179,9 +179,27 @@ export interface AuthState {
 
 // Return type availability based on registration type
 // GSTR-6 moved from Regular to ISD
+// IFF has GSTR-1 (IFF) monthly and GSTR-3B (Q) quarterly
 export const RETURN_TYPES_BY_REGISTRATION: Record<RegistrationType, ReturnType[]> = {
   'Regular': ['GSTR-1', 'GSTR-3B', 'ITC-04'],
   'Composition': ['CMP-08'],
   'Tax Deductor': ['GSTR-7'],
   'ISD': ['GSTR-6'],
+  'IFF': ['GSTR-1 (IFF)', 'GSTR-3B (Q)'],
+};
+
+// Quarterly return types - these appear only in last month of quarter (Jun, Sep, Dec, Mar)
+export const QUARTERLY_RETURN_TYPES: ReturnType[] = ['CMP-08', 'GSTR-3B (Q)', 'ITC-04'];
+
+// Helper to check if a month is end of quarter (Jun, Sep, Dec, Mar)
+export const isQuarterEndMonth = (month: number): boolean => {
+  return [3, 6, 9, 12].includes(month); // March, June, September, December
+};
+
+// Helper to get quarter end month for a given month
+export const getQuarterEndMonth = (month: number): number => {
+  if (month <= 3) return 3;
+  if (month <= 6) return 6;
+  if (month <= 9) return 9;
+  return 12;
 };

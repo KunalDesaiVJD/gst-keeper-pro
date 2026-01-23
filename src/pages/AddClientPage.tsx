@@ -8,7 +8,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ArrowLeft, Save } from 'lucide-react';
 import { toast } from 'sonner';
-import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
+import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION, QUARTERLY_RETURN_TYPES, isQuarterEndMonth } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
 import { mockPasswords } from '@/data/mockData';
 import ClientCredentialsSection from '@/components/clients/ClientCredentialsSection';
@@ -161,13 +161,20 @@ const AddClientPage: React.FC = () => {
         let currentDate = new Date(regDate.getFullYear(), regDate.getMonth(), 1);
         while (currentDate <= now) {
           const periodMonth = `${String(currentDate.getMonth() + 1).padStart(2, '0')}/${currentDate.getFullYear()}`;
+          const currentMonthNum = currentDate.getMonth() + 1;
           
           for (const returnType of formData.selectedReturns) {
+            // Check if this is a quarterly return - only create for quarter end months
+            const isQuarterlyReturn = QUARTERLY_RETURN_TYPES.includes(returnType);
+            if (isQuarterlyReturn && !isQuarterEndMonth(currentMonthNum)) {
+              continue; // Skip non-quarter-end months for quarterly returns
+            }
+            
             // Determine target date based on return type and user input
             let targetDate: number | null = null;
-            if (returnType === 'GSTR-1' || returnType === 'GSTR-7' || returnType === 'GSTR-6') {
+            if (returnType === 'GSTR-1' || returnType === 'GSTR-7' || returnType === 'GSTR-6' || returnType === 'GSTR-1 (IFF)') {
               targetDate = formData.defaultTargetDate ? parseInt(formData.defaultTargetDate) : null;
-            } else if (returnType === 'GSTR-3B' || returnType === 'ITC-04' || returnType === 'CMP-08') {
+            } else if (returnType === 'GSTR-3B' || returnType === 'ITC-04' || returnType === 'CMP-08' || returnType === 'GSTR-3B (Q)') {
               targetDate = formData.otherTargetDate ? parseInt(formData.otherTargetDate) : null;
             }
             
@@ -284,6 +291,7 @@ const AddClientPage: React.FC = () => {
                   <SelectItem value="Composition">Composition</SelectItem>
                   <SelectItem value="Tax Deductor">Tax Deductor</SelectItem>
                   <SelectItem value="ISD">ISD (Input Service Distributor)</SelectItem>
+                  <SelectItem value="IFF">IFF (Invoice Furnishing Facility)</SelectItem>
                 </SelectContent>
               </Select>
               {errors.registrationType && <p className="text-sm text-destructive">{errors.registrationType}</p>}
@@ -319,6 +327,7 @@ const AddClientPage: React.FC = () => {
                   {formData.registrationType === 'Composition' && 'Composition dealers file CMP-08 quarterly'}
                   {formData.registrationType === 'Tax Deductor' && 'Tax Deductors file GSTR-7 monthly'}
                   {formData.registrationType === 'ISD' && 'Input Service Distributors file GSTR-6 monthly'}
+                  {formData.registrationType === 'IFF' && 'IFF: GSTR-1 (IFF) monthly, GSTR-3B (Q) quarterly (last month of quarter)'}
                 </p>
               </div>
             )}
