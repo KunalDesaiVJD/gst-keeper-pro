@@ -191,17 +191,18 @@ const RCMSummaryPage: React.FC = () => {
     fetchMasters();
   }, [fetchMasters]);
 
-  // Fetch locked months from filing_status (when GSTR-3B is Filed)
+  // Fetch locked months from filing_status (when GSTR-3B or GSTR-3B (Q) is Filed)
   const fetchLockedMonths = useCallback(async () => {
     if (!selectedClient || !months.length) return;
 
     const filingMonths = months.map(m => convertToFilingMonth(m));
     
+    // Check for both GSTR-3B and GSTR-3B (Q)
     const { data: filingData, error } = await supabase
       .from('filing_status')
-      .select('period_month, status')
+      .select('period_month, status, return_type')
       .eq('client_id', selectedClient)
-      .eq('return_type', 'GSTR-3B')
+      .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)'])
       .in('period_month', filingMonths);
 
     if (error) {
@@ -209,7 +210,7 @@ const RCMSummaryPage: React.FC = () => {
       return;
     }
 
-    // Create a set of locked months (where GSTR-3B is Filed)
+    // Create a set of locked months (where GSTR-3B or GSTR-3B (Q) is Filed)
     const locked = new Set<string>();
     (filingData || []).forEach(filing => {
       if (filing.status === 'Filed') {

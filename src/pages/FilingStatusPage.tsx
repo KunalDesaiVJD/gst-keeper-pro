@@ -278,7 +278,7 @@ const FilingStatusPage: React.FC = () => {
     return isQuarterEndMonth(month);
   };
 
-  // Generate filing records for display - with option to merge GSTR-1 (IFF) into GSTR-1
+  // Generate filing records for display - with option to merge GSTR-1 (IFF) into GSTR-1 and GSTR-3B (Q) into GSTR-3B
   const generateAllFilingRecords = (returnType: ReturnType): FilingRecord[] => {
     const records: FilingRecord[] = [];
     
@@ -288,9 +288,20 @@ const FilingStatusPage: React.FC = () => {
     }
     
     // For GSTR-1 tab, also include GSTR-1 (IFF) clients
-    const returnTypesToCheck: ReturnType[] = returnType === 'GSTR-1' 
-      ? ['GSTR-1', 'GSTR-1 (IFF)'] 
-      : [returnType];
+    // For GSTR-3B tab, also include GSTR-3B (Q) clients (only in quarter-end months for IFF/Composition)
+    let returnTypesToCheck: ReturnType[];
+    if (returnType === 'GSTR-1') {
+      returnTypesToCheck = ['GSTR-1', 'GSTR-1 (IFF)'];
+    } else if (returnType === 'GSTR-3B') {
+      returnTypesToCheck = ['GSTR-3B', 'GSTR-3B (Q)'];
+    } else {
+      returnTypesToCheck = [returnType];
+    }
+    
+    // Check if current month is quarter-end for GSTR-3B (Q) logic
+    const [monthStr] = selectedMonth.split('/');
+    const currentMonthNum = parseInt(monthStr);
+    const isQuarterEnd = isQuarterEndMonth(currentMonthNum);
     
     clients.forEach(client => {
       // Check if client should be visible for the selected month
@@ -299,15 +310,25 @@ const FilingStatusPage: React.FC = () => {
       }
       
       const selectedReturns = client.selected_returns || [];
+      const isQuarterlyClient = client.registration_type === 'IFF' || client.registration_type === 'Composition';
       
       // Check if client has any of the return types we're looking for
       for (const rt of returnTypesToCheck) {
         if (selectedReturns.includes(rt)) {
+          // For GSTR-3B (Q), only include in quarter-end months for IFF/Composition clients
+          if (rt === 'GSTR-3B (Q)' && (!isQuarterEnd || !isQuarterlyClient)) {
+            continue;
+          }
+          // For regular GSTR-3B, skip if client is IFF/Composition (they use GSTR-3B (Q))
+          if (rt === 'GSTR-3B' && isQuarterlyClient) {
+            continue;
+          }
+          
           const existingRecord = filingRecords.find(
             f => f.client_id === client.id && f.return_type === rt
           );
           
-          // Determine filing frequency - show "IFF" for IFF clients
+          // Determine filing frequency
           let filingFrequency: string;
           if (client.registration_type === 'IFF' && (rt === 'GSTR-1 (IFF)' || returnType === 'GSTR-1')) {
             filingFrequency = 'IFF';
@@ -347,7 +368,7 @@ const FilingStatusPage: React.FC = () => {
               filingFrequency,
             });
           }
-          break; // Don't add the same client twice if they have both GSTR-1 and GSTR-1 (IFF)
+          break; // Don't add the same client twice if they have both GSTR-1 and GSTR-1 (IFF) or GSTR-3B and GSTR-3B (Q)
         }
       }
     });
@@ -363,8 +384,6 @@ const FilingStatusPage: React.FC = () => {
       'gstr6': 'GSTR-6',
       'gstr7': 'GSTR-7',
       'cmp08': 'CMP-08',
-      'gstr1iff': 'GSTR-1 (IFF)',
-      'gstr3bq': 'GSTR-3B (Q)',
     };
     const returnType = returnTypeMap[selectedTab];
     const records = generateAllFilingRecords(returnType);
@@ -422,15 +441,18 @@ const FilingStatusPage: React.FC = () => {
     }
     
     // GSTR-3B dependency check: require GSTR-1 to be filed first
-    if (record.return_type === 'GSTR-3B' && newStatus === 'Filed') {
+    // Also applies to GSTR-3B (Q)
+    if ((record.return_type === 'GSTR-3B' || record.return_type === 'GSTR-3B (Q)') && newStatus === 'Filed') {
+      // For GSTR-3B (Q), check for GSTR-1 (IFF) filed status
+      const gstr1ReturnType = record.return_type === 'GSTR-3B (Q)' ? 'GSTR-1 (IFF)' : 'GSTR-1';
       const gstr1Record = filingRecords.find(
         f => f.client_id === record.client_id && 
-             f.return_type === 'GSTR-1' && 
+             f.return_type === gstr1ReturnType && 
              f.period_month === record.period_month
       );
       
       if (!gstr1Record || gstr1Record.status !== 'Filed') {
-        toast.error('Cannot file GSTR-3B: GSTR-1 must be filed first for this period.');
+        toast.error(`Cannot file ${record.return_type}: ${gstr1ReturnType} must be filed first for this period.`);
         return;
       }
     }
@@ -442,7 +464,7 @@ const FilingStatusPage: React.FC = () => {
           .from('filing_status')
           .insert([{
             client_id: record.client_id,
-            return_type: record.return_type as 'GSTR-1' | 'GSTR-3B' | 'ITC-04' | 'GSTR-6' | 'GSTR-7' | 'CMP-08',
+            return_type: record.return_type as 'GSTR-1' | 'GSTR-3B' | 'ITC-04' | 'GSTR-6' | 'GSTR-7' | 'CMP-08' | 'GSTR-1 (IFF)' | 'GSTR-3B (Q)',
             period_month: selectedMonth,
             status: newStatus,
             target_date: record.target_date,
@@ -471,8 +493,8 @@ const FilingStatusPage: React.FC = () => {
         if (error) throw error;
       }
       
-      // When GSTR-3B is filed, lock the 2B and ITC sheets AND carry forward data
-      if (newStatus === 'Filed' && record.return_type === 'GSTR-3B') {
+      // When GSTR-3B or GSTR-3B (Q) is filed, lock the 2B and ITC sheets AND carry forward data
+      if (newStatus === 'Filed' && (record.return_type === 'GSTR-3B' || record.return_type === 'GSTR-3B (Q)')) {
         // Lock bills_not_in_2b
         await supabase
           .from('bills_not_in_2b')
@@ -494,16 +516,16 @@ const FilingStatusPage: React.FC = () => {
           .eq('client_id', record.client_id)
           .eq('period_month', record.period_month);
         
-        // Mark ONLY GSTR-3B filing status as locked (not GSTR-1 or other returns)
+        // Mark ONLY this GSTR-3B/GSTR-3B (Q) filing status as locked (not GSTR-1 or other returns)
         await supabase
           .from('filing_status')
           .update({ is_locked: true })
-          .eq('id', record.id); // Only lock this specific GSTR-3B record
+          .eq('id', record.id); // Only lock this specific record
         
         // AUTO CARRY FORWARD: Transfer all 2B records to next month
         await carryForwardToNextMonth(record.client_id, record.period_month);
         
-        toast.success('GSTR-3B filed. 2B and ITC sheets are now locked and data carried forward to next month.');
+        toast.success(`${record.return_type} filed. 2B and ITC sheets are now locked and data carried forward to next month.`);
       } else if (newStatus === 'Filed') {
         toast.success('Status updated to Filed.');
       } else {
@@ -979,14 +1001,13 @@ const FilingStatusPage: React.FC = () => {
       <Card>
         <CardContent className="p-4">
           <Tabs value={selectedTab} onValueChange={setSelectedTab}>
-            <TabsList className="grid grid-cols-7 w-full mb-4">
+            <TabsList className="grid grid-cols-6 w-full mb-4">
               <TabsTrigger value="gstr1">GSTR-1</TabsTrigger>
               <TabsTrigger value="gstr3b">GSTR-3B</TabsTrigger>
               <TabsTrigger value="itc04">ITC-04</TabsTrigger>
               <TabsTrigger value="gstr6">GSTR-6</TabsTrigger>
               <TabsTrigger value="gstr7">GSTR-7</TabsTrigger>
               <TabsTrigger value="cmp08">CMP-08</TabsTrigger>
-              <TabsTrigger value="gstr3bq">GSTR-3B (Q)</TabsTrigger>
             </TabsList>
 
             <TabsContent value="gstr1">
@@ -1006,9 +1027,6 @@ const FilingStatusPage: React.FC = () => {
             </TabsContent>
             <TabsContent value="cmp08">
               <FilingTable records={generateAllFilingRecords('CMP-08')} returnType="CMP-08" />
-            </TabsContent>
-            <TabsContent value="gstr3bq">
-              <FilingTable records={generateAllFilingRecords('GSTR-3B (Q)')} returnType="GSTR-3B (Q)" />
             </TabsContent>
           </Tabs>
         </CardContent>

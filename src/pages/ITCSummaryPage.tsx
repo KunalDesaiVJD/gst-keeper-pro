@@ -271,16 +271,17 @@ const ITCSummaryPage: React.FC = () => {
       return;
     }
 
-    // Also check if GSTR-3B is filed for this period - if so, sheet should be locked
+    // Also check if GSTR-3B or GSTR-3B (Q) is filed for this period - if so, sheet should be locked
+    // Check for both GSTR-3B and GSTR-3B (Q) based on client registration type
     const { data: filingData } = await supabase
       .from('filing_status')
-      .select('status, is_locked')
+      .select('status, is_locked, return_type')
       .eq('client_id', selectedClient)
       .eq('period_month', selectedMonth)
-      .eq('return_type', 'GSTR-3B')
-      .maybeSingle();
+      .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']);
 
-    const isFiledLocked = filingData?.status === 'Filed' || filingData?.is_locked;
+    // Check if either GSTR-3B or GSTR-3B (Q) is filed
+    const isFiledLocked = filingData?.some(f => f.status === 'Filed' || f.is_locked) || false;
 
     if (data) {
       setItcSummaryId(data.id);
