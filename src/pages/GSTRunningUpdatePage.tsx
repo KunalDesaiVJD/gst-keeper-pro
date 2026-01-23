@@ -330,12 +330,12 @@ const GSTRunningUpdatePage: React.FC = () => {
 
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium">Return:</span>
-              <Select value={filterReturn} onValueChange={setFilterReturn}>
+              <Select value={filterReturn || '__all__'} onValueChange={(val) => setFilterReturn(val === '__all__' ? '' : val)}>
                 <SelectTrigger className="w-32">
                   <SelectValue placeholder="All" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All</SelectItem>
+                  <SelectItem value="__all__">All</SelectItem>
                   {RETURN_OPTIONS.map(opt => (
                     <SelectItem key={opt} value={opt}>{opt}</SelectItem>
                   ))}
@@ -345,12 +345,12 @@ const GSTRunningUpdatePage: React.FC = () => {
 
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium">Type:</span>
-              <Select value={filterUpdateType} onValueChange={setFilterUpdateType}>
+              <Select value={filterUpdateType || '__all__'} onValueChange={(val) => setFilterUpdateType(val === '__all__' ? '' : val)}>
                 <SelectTrigger className="w-36">
                   <SelectValue placeholder="All" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All</SelectItem>
+                  <SelectItem value="__all__">All</SelectItem>
                   {UPDATE_TYPE_OPTIONS.map(opt => (
                     <SelectItem key={opt} value={opt}>{opt}</SelectItem>
                   ))}
