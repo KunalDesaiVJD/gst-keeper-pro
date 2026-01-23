@@ -96,14 +96,14 @@ const RCMTable: React.FC<RCMTableProps> = ({
   };
 
   const handleAddRow = () => {
-    const defaultMaster = masters[0];
+    // Add a blank row by default
     onDataChange([
       ...data,
       {
-        master_id: defaultMaster?.id,
-        particulars: defaultMaster?.expense_name || '',
-        rate: defaultMaster?.rate || '5%',
-        supply_type: defaultMaster?.supply_type || 'intrastate',
+        master_id: undefined,
+        particulars: '',
+        rate: '5%',
+        supply_type: 'intrastate',
         monthlyValues: {},
         isNew: true,
       },

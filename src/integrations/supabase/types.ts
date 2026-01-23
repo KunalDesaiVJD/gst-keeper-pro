@@ -725,7 +725,12 @@ export type Database = {
         | "Filed"
         | "Prepared Pending"
         | "Data Received"
-      registration_type: "Regular" | "Composition" | "Tax Deductor" | "ISD"
+      registration_type:
+        | "Regular"
+        | "Composition"
+        | "Tax Deductor"
+        | "ISD"
+        | "IFF"
       return_type:
         | "GSTR-1"
         | "GSTR-3B"
@@ -733,6 +738,8 @@ export type Database = {
         | "GSTR-6"
         | "GSTR-7"
         | "CMP-08"
+        | "GSTR-1 (IFF)"
+        | "GSTR-3B (Q)"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -870,7 +877,13 @@ export const Constants = {
         "Prepared Pending",
         "Data Received",
       ],
-      registration_type: ["Regular", "Composition", "Tax Deductor", "ISD"],
+      registration_type: [
+        "Regular",
+        "Composition",
+        "Tax Deductor",
+        "ISD",
+        "IFF",
+      ],
       return_type: [
         "GSTR-1",
         "GSTR-3B",
@@ -878,6 +891,8 @@ export const Constants = {
         "GSTR-6",
         "GSTR-7",
         "CMP-08",
+        "GSTR-1 (IFF)",
+        "GSTR-3B (Q)",
       ],
     },
   },

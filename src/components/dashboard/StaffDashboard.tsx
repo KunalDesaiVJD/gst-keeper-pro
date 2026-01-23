@@ -22,7 +22,7 @@ import { supabase } from '@/integrations/supabase/client';
 import ClientManagementSection from './ClientManagementSection';
 import UserManagementSection from './UserManagementSection';
 import PasswordResetRequestsSection from './PasswordResetRequestsSection';
-import { ReturnType } from '@/types';
+import { ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth } from '@/types';
 import { useState } from 'react';
 
 interface DashboardMetrics {
@@ -135,8 +135,23 @@ const StaffDashboard: React.FC = () => {
       });
 
       // Calculate return-wise metrics using visible clients
-      const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08'];
-      const returnMetricsData: ReturnMetrics[] = allReturnTypes.map(rt => {
+      // Get all return types, but filter quarterly ones based on month
+      const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08', 'GSTR-1 (IFF)', 'GSTR-3B (Q)'];
+      
+      // Parse current month to check if it's quarter end
+      const [monthStr] = selectedMonth.split('/');
+      const currentMonthNum = parseInt(monthStr);
+      const isQuarterEnd = isQuarterEndMonth(currentMonthNum);
+      
+      const returnMetricsData: ReturnMetrics[] = allReturnTypes
+        .filter(rt => {
+          // Filter out quarterly returns if not in quarter end month
+          if (QUARTERLY_RETURN_TYPES.includes(rt) && !isQuarterEnd) {
+            return false;
+          }
+          return true;
+        })
+        .map(rt => {
         // Count visible clients with this return type selected
         const clientsWithReturn = visibleClients.filter(c => 
           (c.selected_returns || []).includes(rt)
