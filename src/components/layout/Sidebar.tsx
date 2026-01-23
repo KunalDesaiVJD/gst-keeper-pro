@@ -9,6 +9,7 @@ import {
   LogOut,
   ChevronRight,
   ChevronDown,
+  ChevronLeft,
   Shield,
   Settings,
   FileSpreadsheet
@@ -25,7 +26,12 @@ interface NavItem {
   children?: NavItem[];
 }
 
-const Sidebar: React.FC = () => {
+interface SidebarProps {
+  isMinimized?: boolean;
+  onToggleMinimize?: () => void;
+}
+
+const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize }) => {
   const { user, logout, canManageEmployees, isStaffRole } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -132,8 +138,86 @@ const Sidebar: React.FC = () => {
     return children.some(child => location.pathname === child.path);
   };
 
+  if (isMinimized) {
+    return (
+      <aside className="fixed left-0 top-0 h-screen w-14 bg-sidebar text-sidebar-foreground flex flex-col shadow-sidebar z-50 transition-all duration-300">
+        {/* Minimized header with expand button */}
+        <div className="p-2 border-b border-sidebar-border flex flex-col items-center gap-2">
+          <div className="h-10 w-10 bg-white rounded-lg flex items-center justify-center p-1">
+            <img src={logo} alt="VJ Desai" className="h-full w-auto object-contain" />
+          </div>
+          <button
+            onClick={onToggleMinimize}
+            className="p-1.5 rounded-lg text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground transition-colors"
+            title="Expand sidebar"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Minimized nav - icons only */}
+        <nav className="flex-1 py-4 px-2 space-y-2 overflow-y-auto">
+          {filteredNavItems.map((item) => {
+            if (item.children) {
+              return item.children.map((child) => (
+                <NavLink
+                  key={child.path}
+                  to={child.path}
+                  className={({ isActive }) =>
+                    cn(
+                      'flex items-center justify-center p-2 rounded-lg transition-all duration-200',
+                      isActive
+                        ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                        : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground'
+                    )
+                  }
+                  title={child.label}
+                >
+                  {child.icon}
+                </NavLink>
+              ));
+            }
+            return (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                className={({ isActive }) =>
+                  cn(
+                    'flex items-center justify-center p-2 rounded-lg transition-all duration-200',
+                    isActive
+                      ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                      : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground'
+                  )
+                }
+                title={item.label}
+              >
+                {item.icon}
+              </NavLink>
+            );
+          })}
+        </nav>
+
+        {/* Minimized user section */}
+        <div className="border-t border-sidebar-border p-2 flex flex-col items-center gap-2">
+          <div className="h-8 w-8 rounded-full bg-sidebar-accent flex items-center justify-center">
+            <span className="text-xs font-semibold text-sidebar-accent-foreground">
+              {user?.firstName.charAt(0).toUpperCase()}
+            </span>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="p-2 rounded-lg text-destructive hover:bg-destructive/10 transition-colors"
+            title="Logout"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
+        </div>
+      </aside>
+    );
+  }
+
   return (
-    <aside className="fixed left-0 top-0 h-screen w-64 bg-sidebar text-sidebar-foreground flex flex-col shadow-sidebar z-50">
+    <aside className="fixed left-0 top-0 h-screen w-64 bg-sidebar text-sidebar-foreground flex flex-col shadow-sidebar z-50 transition-all duration-300">
       {/* Logo Section with Settings and User Control icons */}
       <div className="p-4 border-b border-sidebar-border">
         <div className="flex items-center justify-between">
@@ -149,8 +233,17 @@ const Sidebar: React.FC = () => {
             </div>
           </div>
           
-          {/* Icon buttons for Settings and User Control */}
+          {/* Icon buttons for Settings, User Control, and Minimize */}
           <div className="flex items-center gap-1">
+            {onToggleMinimize && (
+              <button
+                onClick={onToggleMinimize}
+                className="p-2 rounded-lg text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground transition-colors"
+                title="Minimize sidebar"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+            )}
             {canManageEmployees() && (
               <NavLink
                 to="/user-control"

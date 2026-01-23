@@ -58,7 +58,7 @@ const GSTRunningUpdatePage: React.FC = () => {
 
   const isStaff = isStaffRole();
 
-  // Generate month options
+  // Generate month options with blank option for effect month
   const monthOptions = useMemo(() => {
     const months: { value: string; label: string }[] = [];
     const now = new Date();
@@ -83,6 +83,11 @@ const GSTRunningUpdatePage: React.FC = () => {
       return parseDate(b.value) - parseDate(a.value);
     });
   }, []);
+
+  // Month options with blank option for effect_month
+  const effectMonthOptions = useMemo(() => {
+    return [{ value: '__blank__', label: '(Blank)' }, ...monthOptions];
+  }, [monthOptions]);
 
   // Fetch clients
   const fetchClients = useCallback(async () => {
@@ -428,13 +433,13 @@ const GSTRunningUpdatePage: React.FC = () => {
                           <TableCell className="p-0 border border-border">
                             {isStaff ? (
                               <SearchableMonthSelect
-                                options={monthOptions}
-                                value={update.effect_month}
-                                onValueChange={(val) => handleFieldChange(originalIndex, 'effect_month', val)}
+                                options={effectMonthOptions}
+                                value={update.effect_month === '' ? '__blank__' : update.effect_month}
+                                onValueChange={(val) => handleFieldChange(originalIndex, 'effect_month', val === '__blank__' ? '' : val)}
                                 placeholder="Select..."
                               />
                             ) : (
-                              <span className="px-2">{update.effect_month}</span>
+                              <span className="px-2">{update.effect_month || '(Blank)'}</span>
                             )}
                           </TableCell>
                           <TableCell className="p-0 border border-border">
