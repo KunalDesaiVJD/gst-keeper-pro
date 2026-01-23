@@ -127,8 +127,8 @@ const SuspendedRecoPage: React.FC = () => {
       }
 
       // Fetch books data from bills_not_in_2b 
-      // Original rule: Include all records in "As per Books"
-      // Exception: Exclude rows where BOTH reversal_month AND reclaim_month are blank
+      // RULE: Sum of values where RECLAIM is blank
+      // EXCEPTION: If BOTH reversal AND reclaim are blank, exclude that row
       const { data: booksData } = await supabase
         .from('bills_not_in_2b')
         .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
@@ -136,13 +136,15 @@ const SuspendedRecoPage: React.FC = () => {
         .eq('period_month', selectedMonth);
       
       if (booksData && booksData.length > 0) {
-        // Filter OUT rows where BOTH reversal AND reclaim are blank (exception rule)
-        // Include rows where at least one of reversal or reclaim has a value
+        // Filter logic:
+        // 1. Reclaim must be blank (include only blank reclaim rows)
+        // 2. EXCEPTION: If BOTH reversal AND reclaim are blank, exclude that row
+        // So: Include rows where Reclaim is blank AND Reversal is NOT blank
         const filteredData = booksData.filter(row => {
           const reversalBlank = row.reversal_month === null || row.reversal_month === '';
           const reclaimBlank = row.reclaim_month === null || row.reclaim_month === '';
-          // Exclude if BOTH are blank - this is the exception
-          return !(reversalBlank && reclaimBlank);
+          // Include only if: Reclaim is blank AND Reversal is NOT blank
+          return reclaimBlank && !reversalBlank;
         });
         
         const totals = filteredData.reduce((acc, row) => ({
