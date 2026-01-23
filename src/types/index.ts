@@ -7,12 +7,14 @@ export type RegistrationType = 'Regular' | 'Composition' | 'Tax Deductor' | 'ISD
 // Return Types
 export type ReturnType = 'GSTR-1' | 'GSTR-3B' | 'ITC-04' | 'GSTR-6' | 'GSTR-7' | 'CMP-08';
 
-// Filing Status - Updated to 5 options
+// Filing Status - Updated to include new options (maintaining backwards compatibility)
 export type FilingStatusType = 
   | 'Prepared' 
+  | 'Prepared Pending'
   | 'Data Pending' 
+  | 'Data Received'
   | 'Mismatch in Data' 
-  | 'Not Verified' 
+  | 'Not Verified' // Legacy - kept for backwards compatibility
   | 'Filed';
 
 // User interface

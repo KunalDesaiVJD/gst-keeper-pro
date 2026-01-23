@@ -80,6 +80,12 @@ const Sidebar: React.FC = () => {
         icon: <ClipboardList className="h-5 w-5" />,
         roles: ['superadmin', 'gst_manager', 'employee'],
       },
+      {
+        label: 'GST Running Update',
+        path: '/gst-running-update',
+        icon: <FileText className="h-5 w-5" />,
+        roles: ['superadmin', 'gst_manager', 'employee'],
+      },
     ];
 
     // Add Superadmin-only items (removed Manage Employees - now in Dashboard)

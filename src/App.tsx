@@ -17,6 +17,7 @@ import ITCSummaryPage from "@/pages/ITCSummaryPage";
 import RCMSummaryPage from "@/pages/RCMSummaryPage";
 import ManageMastersPage from "@/pages/ManageMastersPage";
 import FilingStatusPage from "@/pages/FilingStatusPage";
+import GSTRunningUpdatePage from "@/pages/GSTRunningUpdatePage";
 import ManageEmployeesPage from "@/pages/ManageEmployeesPage";
 import UserControlPage from "@/pages/UserControlPage";
 import SettingsPage from "@/pages/SettingsPage";
@@ -48,6 +49,7 @@ const App = () => (
                 <Route path="/rcm-summary" element={<RCMSummaryPage />} />
                 <Route path="/manage-masters" element={<ManageMastersPage />} />
                 <Route path="/filing-status" element={<FilingStatusPage />} />
+                <Route path="/gst-running-update" element={<GSTRunningUpdatePage />} />
                 <Route path="/manage-employees" element={<ManageEmployeesPage />} />
                 <Route path="/user-control" element={<UserControlPage />} />
                 <Route path="/settings" element={<SettingsPage />} />

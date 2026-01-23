@@ -592,7 +592,7 @@ const FilingStatusPage: React.FC = () => {
   };
 
   // All available statuses
-  const allStatuses: FilingStatusType[] = ['Prepared', 'Data Pending', 'Mismatch in Data', 'Not Verified', 'Filed'];
+  const allStatuses: FilingStatusType[] = ['Prepared', 'Prepared Pending', 'Data Pending', 'Data Received', 'Mismatch in Data', 'Filed'];
 
   // Get unique target dates for filter dropdown
   const getUniqueTargetDates = (): number[] => {
@@ -748,9 +748,10 @@ const FilingStatusPage: React.FC = () => {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="Prepared">Prepared</SelectItem>
+                      <SelectItem value="Prepared Pending">Prepared Pending</SelectItem>
                       <SelectItem value="Data Pending">Data Pending</SelectItem>
+                      <SelectItem value="Data Received">Data Received</SelectItem>
                       <SelectItem value="Mismatch in Data">Mismatch in Data</SelectItem>
-                      <SelectItem value="Not Verified">Not Verified</SelectItem>
                       <SelectItem value="Filed">Filed</SelectItem>
                     </SelectContent>
                   </Select>
