@@ -148,7 +148,7 @@ export const mockFilingStatus: FilingStatusRecord[] = [
     otpDscPerson: 'Dinesh Padshala',
     contactNumber: '34',
     clientEmail: 'account@accuratepms.in',
-    status: 'Not Verified',
+    status: 'Prepared Pending',
     targetDate: 11,
     remarks: '',
     month: '01/2026',
@@ -223,7 +223,7 @@ export const calculateDashboardMetrics = (month?: string): DashboardMetrics => {
   const monthFilings = mockFilingStatus.filter(f => f.month === currentMonth);
   
   const pendingFilings = monthFilings.filter(
-    f => f.status === 'Prepared' || f.status === 'Data Pending' || f.status === 'Mismatch in Data' || f.status === 'Not Verified'
+    f => f.status === 'Prepared' || f.status === 'Prepared Pending' || f.status === 'Data Pending' || f.status === 'Data Received' || f.status === 'Mismatch in Data'
   ).length;
   
   const filedThisMonth = monthFilings.filter(

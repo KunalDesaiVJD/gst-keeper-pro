@@ -480,12 +480,7 @@ const RCMSummaryPage: React.FC = () => {
                 </Button>
               )}
 
-              {isStaff && !allMonthsLocked && (
-                <Button variant="outline" size="sm" onClick={() => setShowAddMaster(true)}>
-                  <Plus className="h-4 w-4 mr-1" />
-                  ADD MASTER
-                </Button>
-              )}
+              {/* Add Master button removed - now in Manage Masters page */}
 
               {/* Financial Year Dropdown */}
               <div className="w-36">

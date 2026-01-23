@@ -263,6 +263,74 @@ export type Database = {
           },
         ]
       }
+      gst_running_updates: {
+        Row: {
+          cgst: number | null
+          client_id: string
+          created_at: string | null
+          effect_month: string | null
+          id: string
+          igst: number | null
+          interest: number | null
+          matter_brief: string | null
+          remarks: string | null
+          sgst: number | null
+          taxable_value: number | null
+          update_effect_month: string
+          update_in_return: string
+          update_instructions_by: string | null
+          update_type: string
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          cgst?: number | null
+          client_id: string
+          created_at?: string | null
+          effect_month?: string | null
+          id?: string
+          igst?: number | null
+          interest?: number | null
+          matter_brief?: string | null
+          remarks?: string | null
+          sgst?: number | null
+          taxable_value?: number | null
+          update_effect_month: string
+          update_in_return: string
+          update_instructions_by?: string | null
+          update_type: string
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          cgst?: number | null
+          client_id?: string
+          created_at?: string | null
+          effect_month?: string | null
+          id?: string
+          igst?: number | null
+          interest?: number | null
+          matter_brief?: string | null
+          remarks?: string | null
+          sgst?: number | null
+          taxable_value?: number | null
+          update_effect_month?: string
+          update_in_return?: string
+          update_instructions_by?: string | null
+          update_type?: string
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gst_running_updates_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       itc_summaries: {
         Row: {
           client_id: string
@@ -472,6 +540,47 @@ export type Database = {
         }
         Relationships: []
       }
+      suspended_reco: {
+        Row: {
+          client_id: string
+          id: string
+          period_month: string
+          portal_cgst: number | null
+          portal_igst: number | null
+          portal_sgst: number | null
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          client_id: string
+          id?: string
+          period_month: string
+          portal_cgst?: number | null
+          portal_igst?: number | null
+          portal_sgst?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          client_id?: string
+          id?: string
+          period_month?: string
+          portal_cgst?: number | null
+          portal_igst?: number | null
+          portal_sgst?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "suspended_reco_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       twob_versions: {
         Row: {
           client_id: string
@@ -614,6 +723,8 @@ export type Database = {
         | "Mismatch in Data"
         | "Not Verified"
         | "Filed"
+        | "Prepared Pending"
+        | "Data Received"
       registration_type: "Regular" | "Composition" | "Tax Deductor" | "ISD"
       return_type:
         | "GSTR-1"
@@ -756,6 +867,8 @@ export const Constants = {
         "Mismatch in Data",
         "Not Verified",
         "Filed",
+        "Prepared Pending",
+        "Data Received",
       ],
       registration_type: ["Regular", "Composition", "Tax Deductor", "ISD"],
       return_type: [

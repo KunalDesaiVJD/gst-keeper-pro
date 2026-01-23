@@ -203,7 +203,22 @@ const RCMTable: React.FC<RCMTableProps> = ({
           <Table>
             <TableHeader>
               <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
-                <TableHead className="w-48 font-bold text-white border border-[#2E5A6B]">Particulars</TableHead>
+                <TableHead className="w-48 font-bold text-white border border-[#2E5A6B]">
+                  <div className="flex flex-col">
+                    <span>Particulars</span>
+                    {isStaff && !isLocked && (
+                      <Button
+                        onClick={handleAddRow}
+                        variant="ghost"
+                        size="sm"
+                        className="mt-1 h-6 text-xs text-white hover:bg-white/20 p-1"
+                      >
+                        <Plus className="h-3 w-3 mr-1" />
+                        Add Row
+                      </Button>
+                    )}
+                  </div>
+                </TableHead>
                 <TableHead className="w-24 font-bold text-white text-center border border-[#2E5A6B]">RATE</TableHead>
                 {months.map((month) => (
                   <TableHead key={month} className="w-20 font-bold text-white text-center border border-[#2E5A6B]">
@@ -453,12 +468,6 @@ const RCMTable: React.FC<RCMTableProps> = ({
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
 
-      {isStaff && !isLocked && (
-        <Button onClick={handleAddRow} variant="outline" className="w-full">
-          <Plus className="mr-2 h-4 w-4" />
-          Add Row
-        </Button>
-      )}
     </div>
   );
 };

@@ -65,7 +65,7 @@ export const exportFilingStatusToPDF = (
 
   // Summary - Updated for new status types
   const filed = records.filter(r => r.status === 'Filed').length;
-  const pending = records.filter(r => r.status === 'Prepared' || r.status === 'Data Pending' || r.status === 'Mismatch in Data' || r.status === 'Not Verified').length;
+  const pending = records.filter(r => r.status === 'Prepared' || r.status === 'Prepared Pending' || r.status === 'Data Pending' || r.status === 'Data Received' || r.status === 'Mismatch in Data').length;
   
   const finalY = (doc as any).lastAutoTable.finalY || 42;
   doc.setFontSize(10);
