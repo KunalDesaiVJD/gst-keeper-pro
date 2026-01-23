@@ -10,9 +10,6 @@ import {
   AlertTriangle, 
   CheckCircle2, 
   Clock,
-  FileText,
-  Calculator,
-  ClipboardList,
   Calendar,
   Building2,
   ChevronDown,
@@ -53,6 +50,7 @@ const StaffDashboard: React.FC = () => {
   const [returnMetrics, setReturnMetrics] = useState<ReturnMetrics[]>([]);
   const [showReturnBreakdown, setShowReturnBreakdown] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isClientSectionMinimized, setIsClientSectionMinimized] = useState(false);
 
   const generateMonths = useCallback(() => {
     const monthsSet = new Set<string>();
@@ -277,25 +275,6 @@ const StaffDashboard: React.FC = () => {
     },
   ];
 
-
-  const quickActions = [
-    {
-      label: '2B Reconciliation',
-      icon: <FileText className="h-4 w-4" />,
-      onClick: () => navigate('/2b-reconciliation'),
-    },
-    {
-      label: 'ITC Summary',
-      icon: <Calculator className="h-4 w-4" />,
-      onClick: () => navigate('/itc-summary'),
-    },
-    {
-      label: 'Filing Status',
-      icon: <ClipboardList className="h-4 w-4" />,
-      onClick: () => navigate('/filing-status'),
-    },
-  ];
-
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header with Month Selector */}
@@ -317,35 +296,30 @@ const StaffDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Quick Actions - Moved to top */}
-      <Card>
-        <CardContent className="p-6">
-          <h2 className="text-lg font-heading font-semibold mb-4">Quick Actions</h2>
-          <div className="flex flex-wrap gap-3">
-            {quickActions.map((action, index) => (
-              <Button
-                key={index}
-                onClick={action.onClick}
-                className="quick-action-btn"
-              >
-                {action.icon}
-                {action.label}
-              </Button>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
 
       {/* Password Reset Requests Section - All Staff can see */}
       <PasswordResetRequestsSection />
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2">
-            <Building2 className="h-5 w-5 text-primary" />
-            Client Management
-          </CardTitle>
-          <CardDescription>Overview of client filings and status</CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Building2 className="h-5 w-5 text-primary" />
+                Client Management
+              </CardTitle>
+              <CardDescription>Overview of client filings and status</CardDescription>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setIsClientSectionMinimized(!isClientSectionMinimized)}
+            >
+              {isClientSectionMinimized ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+              {isClientSectionMinimized ? 'Expand' : 'Minimize'}
+            </Button>
+          </div>
         </CardHeader>
+        {!isClientSectionMinimized && (
         <CardContent className="pt-4">
           {/* Client Metric Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
@@ -415,6 +389,7 @@ const StaffDashboard: React.FC = () => {
             </div>
           )}
         </CardContent>
+        )}
       </Card>
 
       {/* User Management Section - Superadmin Only */}

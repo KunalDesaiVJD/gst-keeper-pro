@@ -455,6 +455,55 @@ const FilingStatusPage: React.FC = () => {
         toast.error(`Cannot file ${record.return_type}: ${gstr1ReturnType} must be filed first for this period.`);
         return;
       }
+      
+      // Check Suspended Reco difference: if difference is not zero, cannot file GSTR-3B
+      try {
+        // Fetch suspended_reco data
+        const { data: suspendedData } = await supabase
+          .from('suspended_reco')
+          .select('portal_cgst, portal_sgst, portal_igst')
+          .eq('client_id', record.client_id)
+          .eq('period_month', selectedMonth)
+          .maybeSingle();
+        
+        // Fetch books data from bills_not_in_2b where BOTH reversal AND reclaim are blank
+        const { data: booksData } = await supabase
+          .from('bills_not_in_2b')
+          .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
+          .eq('client_id', record.client_id)
+          .eq('period_month', selectedMonth);
+        
+        if (suspendedData || (booksData && booksData.length > 0)) {
+          const portalCgst = Number(suspendedData?.portal_cgst) || 0;
+          const portalSgst = Number(suspendedData?.portal_sgst) || 0;
+          const portalIgst = Number(suspendedData?.portal_igst) || 0;
+          const portalTotal = portalCgst + portalSgst + portalIgst;
+          
+          // Filter books data to only include rows where BOTH reversal AND reclaim are blank
+          const filteredBooksData = (booksData || []).filter(row => {
+            const reversalBlank = row.reversal_month === null || row.reversal_month === '';
+            const reclaimBlank = row.reclaim_month === null || row.reclaim_month === '';
+            return reversalBlank && reclaimBlank;
+          });
+          
+          const booksTotals = filteredBooksData.reduce((acc, row) => ({
+            cgst: acc.cgst + (Number(row.input_cgst) || 0),
+            sgst: acc.sgst + (Number(row.input_sgst) || 0),
+            igst: acc.igst + (Number(row.input_igst) || 0),
+          }), { cgst: 0, sgst: 0, igst: 0 });
+          
+          const booksTotal = booksTotals.cgst + booksTotals.sgst + booksTotals.igst;
+          const difference = portalTotal - booksTotal;
+          
+          if (difference !== 0) {
+            toast.error(`Cannot file ${record.return_type}: Suspended Reconciliation difference must be zero. Current difference: ${difference.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`);
+            return;
+          }
+        }
+      } catch (error: any) {
+        console.error('Error checking suspended reco:', error);
+        // Continue with filing if there's an error fetching suspended reco data
+      }
     }
     
     try {
@@ -579,38 +628,53 @@ const FilingStatusPage: React.FC = () => {
     if (record.id.startsWith('temp-')) return;
     
     try {
-      // Change status back to Prepared and unlock
+      // When unlocking, unlock ALL related sheets and change status to 'Prepared Pending'
+      // This affects: Filing Status (GSTR-3B/GSTR-3B (Q)), 2B Reconciliation, ITC Summary, RCM Summary
+      
+      // Change status back to 'Prepared Pending' and unlock for GSTR-3B/GSTR-3B (Q)
       const { error } = await supabase
         .from('filing_status')
         .update({
-          status: 'Prepared',
+          status: 'Prepared Pending',
           is_locked: false,
           filed_date: null,
         })
-        .eq('id', record.id);
+        .eq('client_id', record.client_id)
+        .eq('period_month', record.period_month)
+        .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']);
       
       if (error) throw error;
       
-      // Also unlock related 2B and ITC data
+      // Also unlock ALL related sheets for the same client and period
+      // Unlock bills_not_in_2b
       await supabase
         .from('bills_not_in_2b')
         .update({ is_locked: false })
         .eq('client_id', record.client_id)
         .eq('period_month', record.period_month);
       
+      // Unlock bills_not_in_books
       await supabase
         .from('bills_not_in_books')
         .update({ is_locked: false })
         .eq('client_id', record.client_id)
         .eq('period_month', record.period_month);
       
+      // Unlock ITC summaries
       await supabase
         .from('itc_summaries')
         .update({ is_locked: false })
         .eq('client_id', record.client_id)
         .eq('period_month', record.period_month);
       
-      toast.success('Sheet unlocked. Status changed to Prepared.');
+      // Unlock RCM data
+      await supabase
+        .from('rcm_data')
+        .update({ is_locked: false })
+        .eq('client_id', record.client_id)
+        .eq('month', record.period_month);
+      
+      toast.success('All sheets unlocked. GSTR-3B status changed to Prepared Pending.');
       fetchFilingRecords();
     } catch (error: any) {
       toast.error('Failed to unlock: ' + error.message);
@@ -779,7 +843,7 @@ const FilingStatusPage: React.FC = () => {
                 </Popover>
               </th>
               <th className="w-28">Filed Date</th>
-              <th className="w-40">Remarks</th>
+              <th className="min-w-[200px]">Remarks</th>
               <th className="w-16">GST</th>
               {canUnlockSheets() && <th className="w-16">Unlock</th>}
             </tr>
@@ -829,8 +893,8 @@ const FilingStatusPage: React.FC = () => {
                     : '-'
                   }
                 </td>
-                <td>
-                  <Input
+                <td className="min-w-[200px]">
+                  <textarea
                     value={editingRemarks[record.id] ?? record.remarks ?? ''}
                     onChange={(e) => setEditingRemarks(prev => ({ ...prev, [record.id]: e.target.value }))}
                     onBlur={() => {
@@ -840,7 +904,7 @@ const FilingStatusPage: React.FC = () => {
                       }
                     }}
                     placeholder="Add remarks..."
-                    className="h-7 text-xs"
+                    className="w-full min-h-[28px] max-h-[80px] text-xs px-2 py-1 rounded border border-input bg-background resize-y"
                     disabled={record.is_locked && !canUnlockSheets()}
                   />
                 </td>
