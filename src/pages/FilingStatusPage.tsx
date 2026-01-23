@@ -698,6 +698,16 @@ const FilingStatusPage: React.FC = () => {
       // When unlocking, unlock ALL related sheets and change status to 'Prepared Pending'
       // This affects: Filing Status (GSTR-3B/GSTR-3B (Q)), 2B Reconciliation, ITC Summary, RCM Summary
       
+      // Calculate next month for deleting carried forward records
+      const [month, year] = record.period_month.split('/');
+      let nextMonth = parseInt(month) + 1;
+      let nextYear = parseInt(year);
+      if (nextMonth > 12) {
+        nextMonth = 1;
+        nextYear++;
+      }
+      const nextPeriod = `${String(nextMonth).padStart(2, '0')}/${nextYear}`;
+      
       // Change status back to 'Prepared Pending' and unlock for GSTR-3B/GSTR-3B (Q)
       const { error } = await supabase
         .from('filing_status')
@@ -741,7 +751,23 @@ const FilingStatusPage: React.FC = () => {
         .eq('client_id', record.client_id)
         .eq('month', record.period_month);
       
-      toast.success('All sheets unlocked. GSTR-3B status changed to Prepared Pending.');
+      // DELETE CARRIED FORWARD RECORDS FROM NEXT MONTH
+      // This allows the system to re-create them when GSTR-3B is filed again with updated data
+      await supabase
+        .from('bills_not_in_2b')
+        .delete()
+        .eq('client_id', record.client_id)
+        .eq('period_month', nextPeriod)
+        .eq('is_carried_forward', true);
+      
+      await supabase
+        .from('bills_not_in_books')
+        .delete()
+        .eq('client_id', record.client_id)
+        .eq('period_month', nextPeriod)
+        .eq('is_carried_forward', true);
+      
+      toast.success('All sheets unlocked. GSTR-3B status changed to Prepared Pending. Carried forward records cleared from next month.');
       fetchFilingRecords();
     } catch (error: any) {
       toast.error('Failed to unlock: ' + error.message);
