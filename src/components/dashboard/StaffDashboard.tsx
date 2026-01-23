@@ -50,7 +50,6 @@ const StaffDashboard: React.FC = () => {
   const [returnMetrics, setReturnMetrics] = useState<ReturnMetrics[]>([]);
   const [showReturnBreakdown, setShowReturnBreakdown] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [isClientSectionMinimized, setIsClientSectionMinimized] = useState(false);
 
   const generateMonths = useCallback(() => {
     const monthsSet = new Set<string>();
@@ -301,25 +300,14 @@ const StaffDashboard: React.FC = () => {
       <PasswordResetRequestsSection />
       <Card>
         <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <Building2 className="h-5 w-5 text-primary" />
-                Client Management
-              </CardTitle>
-              <CardDescription>Overview of client filings and status</CardDescription>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setIsClientSectionMinimized(!isClientSectionMinimized)}
-            >
-              {isClientSectionMinimized ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-              {isClientSectionMinimized ? 'Expand' : 'Minimize'}
-            </Button>
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Building2 className="h-5 w-5 text-primary" />
+              Client Management
+            </CardTitle>
+            <CardDescription>Overview of client filings and status</CardDescription>
           </div>
         </CardHeader>
-        {!isClientSectionMinimized && (
         <CardContent className="pt-4">
           {/* Client Metric Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
@@ -389,7 +377,6 @@ const StaffDashboard: React.FC = () => {
             </div>
           )}
         </CardContent>
-        )}
       </Card>
 
       {/* User Management Section - Superadmin Only */}

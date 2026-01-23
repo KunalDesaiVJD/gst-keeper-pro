@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Outlet, Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import Sidebar from './Sidebar';
@@ -7,6 +7,7 @@ import { Loader2 } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
   const { isAuthenticated, isLoading, isStaffRole } = useAuth();
+  const [isSidebarMinimized, setIsSidebarMinimized] = useState(false);
 
   if (isLoading) {
     return (
@@ -25,8 +26,11 @@ const MainLayout: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      <Sidebar />
-      <main className="ml-64 min-h-screen p-6">
+      <Sidebar 
+        isMinimized={isSidebarMinimized} 
+        onToggleMinimize={() => setIsSidebarMinimized(!isSidebarMinimized)} 
+      />
+      <main className={`min-h-screen p-6 transition-all duration-300 ${isSidebarMinimized ? 'ml-14' : 'ml-64'}`}>
         <Outlet />
       </main>
       {/* Quick actions floating button - only for staff */}

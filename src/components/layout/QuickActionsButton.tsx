@@ -54,7 +54,7 @@ const QuickActionsButton: React.FC = () => {
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-50">
+    <div className="fixed bottom-6 right-10 z-50">
       {/* Action items */}
       <div
         className={cn(
