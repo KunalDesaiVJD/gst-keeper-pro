@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import React from 'react';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { 
   LayoutDashboard, 
@@ -8,7 +8,6 @@ import {
   ClipboardList, 
   LogOut,
   ChevronRight,
-  ChevronDown,
   ChevronLeft,
   Shield,
   Settings,
@@ -16,14 +15,12 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 
 interface NavItem {
   label: string;
   path: string;
   icon: React.ReactNode;
   roles?: ('superadmin' | 'gst_manager' | 'employee' | 'client')[];
-  children?: NavItem[];
 }
 
 interface SidebarProps {
@@ -34,10 +31,6 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize }) => {
   const { user, logout, canManageEmployees, isStaffRole } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
-  const [is2BRCMOpen, setIs2BRCMOpen] = useState(
-    ['/2b-reconciliation', '/suspended-reco', '/rcm-summary'].includes(location.pathname)
-  );
 
   // Base nav items - different for client vs staff
   const getNavItems = (): NavItem[] => {
@@ -57,7 +50,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
       ];
     }
 
-    // Staff navigation
+    // Staff navigation - 2B and RCM is now a single page with tabs
     const items: NavItem[] = [
       {
         label: 'Dashboard',
@@ -66,26 +59,9 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
       },
       {
         label: '2B and RCM',
-        path: '/2b-rcm-group',
+        path: '/2b-and-rcm',
         icon: <FileText className="h-5 w-5" />,
         roles: ['superadmin', 'gst_manager', 'employee'],
-        children: [
-          {
-            label: '2B Reconciliation',
-            path: '/2b-reconciliation',
-            icon: <FileText className="h-4 w-4" />,
-          },
-          {
-            label: 'Suspended Reco',
-            path: '/suspended-reco',
-            icon: <FileText className="h-4 w-4" />,
-          },
-          {
-            label: 'RCM Summary',
-            path: '/rcm-summary',
-            icon: <Calculator className="h-4 w-4" />,
-          },
-        ],
       },
       {
         label: 'ITC Summary',
@@ -132,12 +108,6 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
     }
   };
 
-  // Check if any child route is active
-  const isGroupActive = (children?: NavItem[]) => {
-    if (!children) return false;
-    return children.some(child => location.pathname === child.path);
-  };
-
   if (isMinimized) {
     return (
       <aside className="fixed left-0 top-0 h-screen w-14 bg-sidebar text-sidebar-foreground flex flex-col shadow-sidebar z-50 transition-all duration-300">
@@ -157,44 +127,23 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
 
         {/* Minimized nav - icons only */}
         <nav className="flex-1 py-4 px-2 space-y-2 overflow-y-auto">
-          {filteredNavItems.map((item) => {
-            if (item.children) {
-              return item.children.map((child) => (
-                <NavLink
-                  key={child.path}
-                  to={child.path}
-                  className={({ isActive }) =>
-                    cn(
-                      'flex items-center justify-center p-2 rounded-lg transition-all duration-200',
-                      isActive
-                        ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                        : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground'
-                    )
-                  }
-                  title={child.label}
-                >
-                  {child.icon}
-                </NavLink>
-              ));
-            }
-            return (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                className={({ isActive }) =>
-                  cn(
-                    'flex items-center justify-center p-2 rounded-lg transition-all duration-200',
-                    isActive
-                      ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                      : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground'
-                  )
-                }
-                title={item.label}
-              >
-                {item.icon}
-              </NavLink>
-            );
-          })}
+          {filteredNavItems.map((item) => (
+            <NavLink
+              key={item.path}
+              to={item.path}
+              className={({ isActive }) =>
+                cn(
+                  'flex items-center justify-center p-2 rounded-lg transition-all duration-200',
+                  isActive
+                    ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                    : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground'
+                )
+              }
+              title={item.label}
+            >
+              {item.icon}
+            </NavLink>
+          ))}
         </nav>
 
         {/* Minimized user section */}
@@ -282,75 +231,24 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
 
       {/* Navigation */}
       <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
-        {filteredNavItems.map((item) => {
-          // If item has children, render as collapsible group
-          if (item.children) {
-            const isActive = isGroupActive(item.children);
-            return (
-              <Collapsible
-                key={item.path}
-                open={is2BRCMOpen || isActive}
-                onOpenChange={setIs2BRCMOpen}
-              >
-                <CollapsibleTrigger
-                  className={cn(
-                    'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 w-full',
-                    isActive
-                      ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                      : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground'
-                  )}
-                >
-                  {item.icon}
-                  <span>{item.label}</span>
-                  {is2BRCMOpen || isActive ? (
-                    <ChevronDown className="h-4 w-4 ml-auto" />
-                  ) : (
-                    <ChevronRight className="h-4 w-4 ml-auto" />
-                  )}
-                </CollapsibleTrigger>
-                <CollapsibleContent className="pl-4 pt-1 space-y-1">
-                  {item.children.map((child) => (
-                    <NavLink
-                      key={child.path}
-                      to={child.path}
-                      className={({ isActive }) =>
-                        cn(
-                          'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200',
-                          isActive
-                            ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                            : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground'
-                        )
-                      }
-                    >
-                      {child.icon}
-                      <span>{child.label}</span>
-                    </NavLink>
-                  ))}
-                </CollapsibleContent>
-              </Collapsible>
-            );
-          }
-
-          // Regular nav item
-          return (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              className={({ isActive }) =>
-                cn(
-                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200',
-                  isActive
-                    ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                    : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground'
-                )
-              }
-            >
-              {item.icon}
-              <span>{item.label}</span>
-              <ChevronRight className="h-4 w-4 ml-auto opacity-50" />
-            </NavLink>
-          );
-        })}
+        {filteredNavItems.map((item) => (
+          <NavLink
+            key={item.path}
+            to={item.path}
+            className={({ isActive }) =>
+              cn(
+                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200',
+                isActive
+                  ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                  : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground'
+              )
+            }
+          >
+            {item.icon}
+            <span>{item.label}</span>
+            <ChevronRight className="h-4 w-4 ml-auto opacity-50" />
+          </NavLink>
+        ))}
       </nav>
 
       {/* User Section */}

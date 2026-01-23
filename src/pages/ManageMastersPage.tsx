@@ -52,7 +52,7 @@ interface RCMMaster {
 
 const ManageMastersPage: React.FC = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, canManageRCMMasters } = useAuth();
   const [masters, setMasters] = useState<RCMMaster[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -65,6 +65,9 @@ const ManageMastersPage: React.FC = () => {
   const [expenseName, setExpenseName] = useState('');
   const [rate, setRate] = useState<string>('5%');
   const [supplyType, setSupplyType] = useState<string>('intrastate');
+
+  // Check if user has permission
+  const hasPermission = canManageRCMMasters();
 
   const fetchMasters = useCallback(async () => {
     setIsLoading(true);
@@ -211,10 +214,12 @@ const ManageMastersPage: React.FC = () => {
             <p className="text-muted-foreground">Add, edit, or delete expense masters</p>
           </div>
         </div>
-        <Button onClick={() => setShowAddDialog(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Add Master
-        </Button>
+        {hasPermission && (
+          <Button onClick={() => setShowAddDialog(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Add Master
+          </Button>
+        )}
       </div>
 
       {/* Active Masters */}
@@ -246,24 +251,26 @@ const ManageMastersPage: React.FC = () => {
                     <TableCell>{master.rate}</TableCell>
                     <TableCell className="capitalize">{master.supply_type}</TableCell>
                     <TableCell>
-                      <div className="flex items-center justify-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => openEditDialog(master)}
-                          className="h-8 w-8"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => openDeleteDialog(master)}
-                          className="h-8 w-8 text-destructive hover:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+                      {hasPermission && (
+                        <div className="flex items-center justify-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openEditDialog(master)}
+                            className="h-8 w-8"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openDeleteDialog(master)}
+                            className="h-8 w-8 text-destructive hover:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

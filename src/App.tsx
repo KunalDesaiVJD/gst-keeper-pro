@@ -12,6 +12,7 @@ import AddClientPage from "@/pages/AddClientPage";
 import EditClientPage from "@/pages/EditClientPage";
 import ClientsPage from "@/pages/ClientsPage";
 import TwoBReconciliationPage from "@/pages/TwoBReconciliationPage";
+import TwoBAndRCMPage from "@/pages/TwoBAndRCMPage";
 import SuspendedRecoPage from "@/pages/SuspendedRecoPage";
 import ITCSummaryPage from "@/pages/ITCSummaryPage";
 import RCMSummaryPage from "@/pages/RCMSummaryPage";
@@ -44,6 +45,7 @@ const App = () => (
                 <Route path="/edit-client/:clientId" element={<EditClientPage />} />
                 <Route path="/clients" element={<ClientsPage />} />
                 <Route path="/2b-reconciliation" element={<TwoBReconciliationPage />} />
+                <Route path="/2b-and-rcm" element={<TwoBAndRCMPage />} />
                 <Route path="/suspended-reco" element={<SuspendedRecoPage />} />
                 <Route path="/itc-summary" element={<ITCSummaryPage />} />
                 <Route path="/rcm-summary" element={<RCMSummaryPage />} />
