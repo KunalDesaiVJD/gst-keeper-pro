@@ -24,6 +24,7 @@ interface Client {
   id: string;
   name: string;
   gstin: string;
+  registration_type?: string;
 }
 
 interface RCMMaster {
@@ -53,6 +54,7 @@ interface LockedMonth {
 }
 
 const MONTHS_ORDER = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
+const QUARTER_END_MONTHS = ['Jun', 'Sep', 'Dec', 'Mar']; // Q1 ends Jun, Q2 ends Sep, Q3 ends Dec, Q4 ends Mar
 
 const generateFinancialYears = (): string[] => {
   const currentYear = new Date().getFullYear();
@@ -68,12 +70,16 @@ const generateFinancialYears = (): string[] => {
   return years;
 };
 
-const generateMonthsForFY = (financialYear: string): string[] => {
+const generateMonthsForFY = (financialYear: string, isQuarterlyClient: boolean = false): string[] => {
   const [startYear] = financialYear.split('-').map((y) => parseInt(y));
   const fullStartYear = startYear < 100 ? 2000 + startYear : startYear;
   const endYear = fullStartYear + 1;
   
-  return MONTHS_ORDER.map((m, idx) => {
+  const monthsToUse = isQuarterlyClient ? QUARTER_END_MONTHS : MONTHS_ORDER;
+  
+  return monthsToUse.map((m) => {
+    // Determine year based on month position in FY
+    const idx = MONTHS_ORDER.indexOf(m);
     const year = idx < 9 ? fullStartYear : endYear;
     return `${m}-${String(year).slice(-2)}`;
   });
@@ -127,19 +133,22 @@ const RCMSummaryPage: React.FC = () => {
     setFinancialYear(defaultFY);
   }, []);
 
-  // Update months when FY changes
+  // Check if client requires quarterly months only (IFF or Composition)
+  const isQuarterlyClient = selectedClientData?.registration_type === 'IFF' || selectedClientData?.registration_type === 'Composition';
+
+  // Update months when FY or client changes
   useEffect(() => {
     if (financialYear) {
-      setMonths(generateMonthsForFY(financialYear));
+      setMonths(generateMonthsForFY(financialYear, isQuarterlyClient));
     }
-  }, [financialYear]);
+  }, [financialYear, isQuarterlyClient]);
 
   // Fetch clients
   useEffect(() => {
     const fetchClients = async () => {
       const { data, error } = await supabase
         .from('clients')
-        .select('id, name, gstin')
+        .select('id, name, gstin, registration_type')
         .order('name');
 
       if (error) {

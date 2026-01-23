@@ -25,7 +25,7 @@ import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { export2BToExcel, import2BFromExcel } from '@/utils/excelExport';
 import VersionHistoryDialog from '@/components/dialogs/VersionHistoryDialog';
-import { TwoBVersion, BillNotIn2B } from '@/types';
+import { TwoBVersion, BillNotIn2B, isQuarterEndMonth } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
 
 interface Client {
@@ -33,6 +33,7 @@ interface Client {
   name: string;
   gstin: string;
   registration_date?: string;
+  registration_type?: string;
 }
 
 interface BillRecord {
@@ -85,7 +86,10 @@ const TwoBReconciliationPage: React.FC = () => {
 
   const selectedClientData = clients.find(c => c.id === selectedClient);
 
-  // Generate month options dynamically - filtered by selected client's registration date
+  // Check if client requires quarterly months only (IFF or Composition)
+  const isQuarterlyClient = selectedClientData?.registration_type === 'IFF' || selectedClientData?.registration_type === 'Composition';
+
+  // Generate month options dynamically - filtered by selected client's registration date and quarterly logic
   const generateMonthOptions = useMemo(() => {
     const months: { value: string; label: string }[] = [];
     const now = new Date();
@@ -104,7 +108,15 @@ const TwoBReconciliationPage: React.FC = () => {
     let currentDate = new Date(startDate);
     
     while (currentDate <= futureLimit) {
-      const value = `${String(currentDate.getMonth() + 1).padStart(2, '0')}/${currentDate.getFullYear()}`;
+      const monthNum = currentDate.getMonth() + 1;
+      
+      // Skip non-quarter-end months for IFF/Composition clients
+      if (isQuarterlyClient && !isQuarterEndMonth(monthNum)) {
+        currentDate.setMonth(currentDate.getMonth() + 1);
+        continue;
+      }
+      
+      const value = `${String(monthNum).padStart(2, '0')}/${currentDate.getFullYear()}`;
       const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
       const label = `${monthNames[currentDate.getMonth()]} ${currentDate.getFullYear()}`;
       months.push({ value, label });
@@ -117,7 +129,7 @@ const TwoBReconciliationPage: React.FC = () => {
       const [bM, bY] = b.value.split('/').map(Number);
       return bY * 12 + bM - (aY * 12 + aM);
     });
-  }, [clients, selectedClient]);
+  }, [clients, selectedClient, isQuarterlyClient]);
 
   const monthOptions = generateMonthOptions;
 
@@ -158,7 +170,7 @@ const TwoBReconciliationPage: React.FC = () => {
   const fetchClients = useCallback(async () => {
     let query = supabase
       .from('clients')
-      .select('id, name, gstin, registration_date')
+      .select('id, name, gstin, registration_date, registration_type')
       .order('name');
     
     // If user is a client, only fetch their own data
