@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Badge } from '@/components/ui/badge';
+import { isQuarterEndMonth } from '@/types';
 import { Lock, AlertCircle, Unlock, Save, Download } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -36,6 +37,7 @@ interface Client {
   id: string;
   name: string;
   gstin: string;
+  registration_type?: string;
 }
 
 const getDefaultITCData = (): ITCData => ({
@@ -90,7 +92,10 @@ const ITCSummaryPage: React.FC = () => {
 
   const selectedClientData = clients.find(c => c.id === selectedClient);
 
-  // Generate month options for dropdown
+  // Check if client requires quarterly months only (IFF or Composition)
+  const isQuarterlyClient = selectedClientData?.registration_type === 'IFF' || selectedClientData?.registration_type === 'Composition';
+
+  // Generate month options for dropdown - filter for quarterly clients
   const monthOptions = useMemo(() => {
     const months: { value: string; label: string }[] = [];
     const now = new Date();
@@ -98,7 +103,14 @@ const ITCSummaryPage: React.FC = () => {
     // Generate 24 months (12 past + 12 future)
     for (let i = -12; i <= 12; i++) {
       const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const value = `${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
+      const monthNum = date.getMonth() + 1;
+      
+      // Skip non-quarter-end months for IFF/Composition clients
+      if (isQuarterlyClient && !isQuarterEndMonth(monthNum)) {
+        continue;
+      }
+      
+      const value = `${String(monthNum).padStart(2, '0')}/${date.getFullYear()}`;
       const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
       const label = `${monthNames[date.getMonth()]} ${date.getFullYear()}`;
       months.push({ value, label });
@@ -110,7 +122,7 @@ const ITCSummaryPage: React.FC = () => {
       const [bM, bY] = b.value.split('/').map(Number);
       return bY * 12 + bM - (aY * 12 + aM);
     });
-  }, []);
+  }, [isQuarterlyClient]);
 
   // Fetch clients from Supabase - filtered for client role
   useEffect(() => {
@@ -118,7 +130,7 @@ const ITCSummaryPage: React.FC = () => {
       console.log('Fetching clients from Supabase...');
       let query = supabase
         .from('clients')
-        .select('id, name, gstin')
+        .select('id, name, gstin, registration_type')
         .order('name');
       
       // If user is a client, only fetch their own data

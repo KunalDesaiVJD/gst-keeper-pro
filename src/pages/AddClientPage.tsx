@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ArrowLeft, Save } from 'lucide-react';
 import { toast } from 'sonner';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { AlertCircle, Loader2 } from 'lucide-react';
 import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION, QUARTERLY_RETURN_TYPES, isQuarterEndMonth } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
 import { mockPasswords } from '@/data/mockData';
@@ -37,6 +39,39 @@ const AddClientPage: React.FC = () => {
   const [clientCredentials, setClientCredentials] = useState<{ userId: string; password: string } | null>(null);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [gstinWarning, setGstinWarning] = useState<string | null>(null);
+  const [isCheckingGstin, setIsCheckingGstin] = useState(false);
+
+  // Check for duplicate GSTIN
+  const checkDuplicateGstin = async (gstin: string) => {
+    if (gstin.length !== 15) {
+      setGstinWarning(null);
+      return;
+    }
+    
+    setIsCheckingGstin(true);
+    try {
+      const { data, error } = await supabase
+        .from('clients')
+        .select('id, name')
+        .eq('gstin', gstin)
+        .maybeSingle();
+      
+      if (error) {
+        console.error('Error checking GSTIN:', error);
+        setGstinWarning(null);
+      } else if (data) {
+        setGstinWarning(`This GSTIN already exists for client: ${data.name}`);
+      } else {
+        setGstinWarning(null);
+      }
+    } catch (err) {
+      console.error('Error checking GSTIN:', err);
+      setGstinWarning(null);
+    } finally {
+      setIsCheckingGstin(false);
+    }
+  };
 
   // Get available returns based on registration type
   const availableReturns = useMemo(() => {
@@ -238,15 +273,32 @@ const AddClientPage: React.FC = () => {
             {/* GSTIN */}
             <div className="space-y-2">
               <Label htmlFor="gstin">GSTIN *</Label>
-              <Input
-                id="gstin"
-                value={formData.gstin}
-                onChange={(e) => setFormData(prev => ({ ...prev, gstin: e.target.value.toUpperCase() }))}
-                placeholder="e.g., 24AAQCS2345D1Z5"
-                maxLength={15}
-                className={errors.gstin ? 'border-destructive' : ''}
-              />
+              <div className="relative">
+                <Input
+                  id="gstin"
+                  value={formData.gstin}
+                  onChange={(e) => {
+                    const newGstin = e.target.value.toUpperCase();
+                    setFormData(prev => ({ ...prev, gstin: newGstin }));
+                    checkDuplicateGstin(newGstin);
+                  }}
+                  placeholder="e.g., 24AAQCS2345D1Z5"
+                  maxLength={15}
+                  className={errors.gstin || gstinWarning ? 'border-destructive' : ''}
+                />
+                {isCheckingGstin && (
+                  <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
+                )}
+              </div>
               {errors.gstin && <p className="text-sm text-destructive">{errors.gstin}</p>}
+              {gstinWarning && (
+                <Alert variant="destructive" className="py-2">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription className="text-sm">
+                    {gstinWarning}
+                  </AlertDescription>
+                </Alert>
+              )}
             </div>
 
             {/* Client Name */}

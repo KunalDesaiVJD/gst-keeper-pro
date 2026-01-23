@@ -278,7 +278,7 @@ const FilingStatusPage: React.FC = () => {
     return isQuarterEndMonth(month);
   };
 
-  // Generate filing records for display
+  // Generate filing records for display - with option to merge GSTR-1 (IFF) into GSTR-1
   const generateAllFilingRecords = (returnType: ReturnType): FilingRecord[] => {
     const records: FilingRecord[] = [];
     
@@ -287,6 +287,11 @@ const FilingStatusPage: React.FC = () => {
       return []; // Don't show quarterly returns in non-quarter-end months
     }
     
+    // For GSTR-1 tab, also include GSTR-1 (IFF) clients
+    const returnTypesToCheck: ReturnType[] = returnType === 'GSTR-1' 
+      ? ['GSTR-1', 'GSTR-1 (IFF)'] 
+      : [returnType];
+    
     clients.forEach(client => {
       // Check if client should be visible for the selected month
       if (!isClientVisibleForMonth(client, selectedMonth)) {
@@ -294,43 +299,55 @@ const FilingStatusPage: React.FC = () => {
       }
       
       const selectedReturns = client.selected_returns || [];
-      if (selectedReturns.includes(returnType)) {
-        const existingRecord = filingRecords.find(
-          f => f.client_id === client.id && f.return_type === returnType
-        );
-        
-        // Determine filing frequency
-        const isQuarterly = QUARTERLY_RETURN_TYPES.includes(returnType) || 
-          client.registration_type === 'Composition' ||
-          (client.registration_type === 'IFF' && returnType === 'GSTR-3B (Q)');
-        
-        if (existingRecord) {
-          records.push({
-            ...existingRecord,
-            clientName: client.name,
-            clientEmail: client.email || '-',
-            contactNumber: client.mobile || '-',
-            accountantName: client.assigned_accountant || '-',
-            filingFrequency: isQuarterly ? 'Quarterly' : 'Monthly',
-          });
-        } else {
-          // Create new record with 'Data Pending' as default status
-          records.push({
-            id: `temp-${client.id}-${returnType}`,
-            client_id: client.id,
-            return_type: returnType,
-            period_month: selectedMonth,
-            status: 'Data Pending',
-            target_date: returnType === 'GSTR-1' || returnType === 'GSTR-1 (IFF)' ? 11 : returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)' ? 20 : 25,
-            filed_date: null,
-            remarks: null,
-            is_locked: false,
-            clientName: client.name,
-            clientEmail: client.email || '-',
-            contactNumber: client.mobile || '-',
-            accountantName: client.assigned_accountant || '-',
-            filingFrequency: isQuarterly ? 'Quarterly' : 'Monthly',
-          });
+      
+      // Check if client has any of the return types we're looking for
+      for (const rt of returnTypesToCheck) {
+        if (selectedReturns.includes(rt)) {
+          const existingRecord = filingRecords.find(
+            f => f.client_id === client.id && f.return_type === rt
+          );
+          
+          // Determine filing frequency - show "IFF" for IFF clients
+          let filingFrequency: string;
+          if (client.registration_type === 'IFF' && (rt === 'GSTR-1 (IFF)' || returnType === 'GSTR-1')) {
+            filingFrequency = 'IFF';
+          } else if (QUARTERLY_RETURN_TYPES.includes(rt) || 
+            client.registration_type === 'Composition' ||
+            (client.registration_type === 'IFF' && rt === 'GSTR-3B (Q)')) {
+            filingFrequency = 'Quarterly';
+          } else {
+            filingFrequency = 'Monthly';
+          }
+          
+          if (existingRecord) {
+            records.push({
+              ...existingRecord,
+              clientName: client.name,
+              clientEmail: client.email || '-',
+              contactNumber: client.mobile || '-',
+              accountantName: client.assigned_accountant || '-',
+              filingFrequency,
+            });
+          } else {
+            // Create new record with 'Data Pending' as default status
+            records.push({
+              id: `temp-${client.id}-${rt}`,
+              client_id: client.id,
+              return_type: rt,
+              period_month: selectedMonth,
+              status: 'Data Pending',
+              target_date: rt === 'GSTR-1' || rt === 'GSTR-1 (IFF)' ? 11 : rt === 'GSTR-3B' || rt === 'GSTR-3B (Q)' ? 20 : 25,
+              filed_date: null,
+              remarks: null,
+              is_locked: false,
+              clientName: client.name,
+              clientEmail: client.email || '-',
+              contactNumber: client.mobile || '-',
+              accountantName: client.assigned_accountant || '-',
+              filingFrequency,
+            });
+          }
+          break; // Don't add the same client twice if they have both GSTR-1 and GSTR-1 (IFF)
         }
       }
     });
@@ -756,10 +773,10 @@ const FilingStatusPage: React.FC = () => {
                 <td>{record.accountantName}</td>
                 <td>
                   <Badge 
-                    variant={record.filingFrequency === 'Quarterly' ? 'default' : 'outline'} 
-                    className={`text-xs ${record.filingFrequency === 'Quarterly' ? 'bg-amber-500 hover:bg-amber-600 text-white' : ''}`}
+                    variant={record.filingFrequency === 'Quarterly' || record.filingFrequency === 'IFF' ? 'default' : 'outline'} 
+                    className={`text-xs ${record.filingFrequency === 'Quarterly' ? 'bg-amber-500 hover:bg-amber-600 text-white' : record.filingFrequency === 'IFF' ? 'bg-blue-500 hover:bg-blue-600 text-white' : ''}`}
                   >
-                    {record.filingFrequency === 'Quarterly' ? 'Q' : 'M'}
+                    {record.filingFrequency === 'Quarterly' ? 'Q' : record.filingFrequency === 'IFF' ? 'IFF' : 'M'}
                   </Badge>
                 </td>
                 <td>{record.contactNumber}</td>
@@ -962,14 +979,13 @@ const FilingStatusPage: React.FC = () => {
       <Card>
         <CardContent className="p-4">
           <Tabs value={selectedTab} onValueChange={setSelectedTab}>
-            <TabsList className="grid grid-cols-8 w-full mb-4">
+            <TabsList className="grid grid-cols-7 w-full mb-4">
               <TabsTrigger value="gstr1">GSTR-1</TabsTrigger>
               <TabsTrigger value="gstr3b">GSTR-3B</TabsTrigger>
               <TabsTrigger value="itc04">ITC-04</TabsTrigger>
               <TabsTrigger value="gstr6">GSTR-6</TabsTrigger>
               <TabsTrigger value="gstr7">GSTR-7</TabsTrigger>
               <TabsTrigger value="cmp08">CMP-08</TabsTrigger>
-              <TabsTrigger value="gstr1iff">GSTR-1 (IFF)</TabsTrigger>
               <TabsTrigger value="gstr3bq">GSTR-3B (Q)</TabsTrigger>
             </TabsList>
 
@@ -990,9 +1006,6 @@ const FilingStatusPage: React.FC = () => {
             </TabsContent>
             <TabsContent value="cmp08">
               <FilingTable records={generateAllFilingRecords('CMP-08')} returnType="CMP-08" />
-            </TabsContent>
-            <TabsContent value="gstr1iff">
-              <FilingTable records={generateAllFilingRecords('GSTR-1 (IFF)')} returnType="GSTR-1 (IFF)" />
             </TabsContent>
             <TabsContent value="gstr3bq">
               <FilingTable records={generateAllFilingRecords('GSTR-3B (Q)')} returnType="GSTR-3B (Q)" />
