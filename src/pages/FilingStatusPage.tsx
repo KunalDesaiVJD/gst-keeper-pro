@@ -440,6 +440,72 @@ const FilingStatusPage: React.FC = () => {
       }
     }
     
+    // NEW VALIDATION: Check if previous month's GSTR-1 and GSTR-3B are filed before filing current month GSTR-1
+    if ((record.return_type === 'GSTR-1' || record.return_type === 'GSTR-1 (IFF)') && newStatus === 'Filed') {
+      // Calculate previous month
+      const [monthStr, yearStr] = selectedMonth.split('/');
+      let prevMonth = parseInt(monthStr) - 1;
+      let prevYear = parseInt(yearStr);
+      if (prevMonth < 1) {
+        prevMonth = 12;
+        prevYear--;
+      }
+      const prevPeriod = `${String(prevMonth).padStart(2, '0')}/${prevYear}`;
+      
+      // For IFF clients, use GSTR-1 (IFF) and GSTR-3B (Q), otherwise use GSTR-1 and GSTR-3B
+      const prevGstr1Type = record.return_type === 'GSTR-1 (IFF)' ? 'GSTR-1 (IFF)' : 'GSTR-1';
+      const prevGstr3bType = record.return_type === 'GSTR-1 (IFF)' ? 'GSTR-3B (Q)' : 'GSTR-3B';
+      
+      // Check previous month's GSTR-1 filed status
+      const { data: prevGstr1Data } = await supabase
+        .from('filing_status')
+        .select('status')
+        .eq('client_id', record.client_id)
+        .eq('period_month', prevPeriod)
+        .eq('return_type', prevGstr1Type)
+        .maybeSingle();
+      
+      // Check previous month's GSTR-3B filed status
+      const { data: prevGstr3bData } = await supabase
+        .from('filing_status')
+        .select('status')
+        .eq('client_id', record.client_id)
+        .eq('period_month', prevPeriod)
+        .eq('return_type', prevGstr3bType)
+        .maybeSingle();
+      
+      // Determine if previous month is the first month of client registration
+      const client = clients.find(c => c.id === record.client_id);
+      let isFirstMonth = false;
+      if (client) {
+        const regDate = new Date(client.registration_date);
+        const regMonth = regDate.getMonth() + 1;
+        const regYear = regDate.getFullYear();
+        const regPeriod = `${String(regMonth).padStart(2, '0')}/${regYear}`;
+        isFirstMonth = (selectedMonth === regPeriod);
+      }
+      
+      // Skip validation for first month of registration
+      if (!isFirstMonth) {
+        if (!prevGstr1Data || prevGstr1Data.status !== 'Filed') {
+          toast.error(`Cannot file ${record.return_type}: Previous month's ${prevGstr1Type} (${prevPeriod}) must be filed first.`);
+          return;
+        }
+        
+        // For GSTR-3B (Q), only check in quarter-end months
+        const isQuarterEndPrev = isQuarterEndMonth(prevMonth);
+        const isClientQuarterly = client && (client.registration_type === 'IFF' || client.registration_type === 'Composition');
+        
+        // Check GSTR-3B only if previous month is quarter-end for quarterly clients, or always for regular clients
+        const shouldCheckGstr3b = !isClientQuarterly || isQuarterEndPrev;
+        
+        if (shouldCheckGstr3b && (!prevGstr3bData || prevGstr3bData.status !== 'Filed')) {
+          toast.error(`Cannot file ${record.return_type}: Previous month's ${prevGstr3bType} (${prevPeriod}) must be filed first.`);
+          return;
+        }
+      }
+    }
+    
     // GSTR-3B dependency check: require GSTR-1 to be filed first
     // Also applies to GSTR-3B (Q)
     if ((record.return_type === 'GSTR-3B' || record.return_type === 'GSTR-3B (Q)') && newStatus === 'Filed') {
@@ -466,7 +532,8 @@ const FilingStatusPage: React.FC = () => {
           .eq('period_month', selectedMonth)
           .maybeSingle();
         
-        // Fetch books data from bills_not_in_2b where BOTH reversal AND reclaim are blank
+        // Fetch books data from bills_not_in_2b
+        // RULE: Include rows where Reclaim is blank AND Reversal is NOT blank
         const { data: booksData } = await supabase
           .from('bills_not_in_2b')
           .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
@@ -479,11 +546,11 @@ const FilingStatusPage: React.FC = () => {
           const portalIgst = Number(suspendedData?.portal_igst) || 0;
           const portalTotal = portalCgst + portalSgst + portalIgst;
           
-          // Filter books data to only include rows where BOTH reversal AND reclaim are blank
+          // Filter books data: Include rows where Reclaim is blank AND Reversal is NOT blank
           const filteredBooksData = (booksData || []).filter(row => {
             const reversalBlank = row.reversal_month === null || row.reversal_month === '';
             const reclaimBlank = row.reclaim_month === null || row.reclaim_month === '';
-            return reversalBlank && reclaimBlank;
+            return reclaimBlank && !reversalBlank;
           });
           
           const booksTotals = filteredBooksData.reduce((acc, row) => ({

@@ -54,12 +54,12 @@ const QuickActionsButton: React.FC = () => {
   };
 
   return (
-    <div className="fixed bottom-6 right-10 z-50">
-      {/* Action items */}
+    <div className="fixed bottom-6 right-6 z-50 flex items-end gap-3">
+      {/* Action items - positioned to the left of the button */}
       <div
         className={cn(
-          'flex flex-col gap-2 mb-3 transition-all duration-300',
-          isOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'
+          'flex flex-col gap-2 transition-all duration-300',
+          isOpen ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-full pointer-events-none'
         )}
       >
         {quickActions.map((action, index) => (
@@ -80,11 +80,11 @@ const QuickActionsButton: React.FC = () => {
         ))}
       </div>
 
-      {/* Main floating button */}
+      {/* Main floating button - at the far right */}
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
-          'h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center transition-all duration-300 hover:bg-primary/90 hover:scale-105',
+          'h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center transition-all duration-300 hover:bg-primary/90 hover:scale-105 flex-shrink-0',
           isOpen && 'rotate-45 bg-destructive hover:bg-destructive/90'
         )}
       >
