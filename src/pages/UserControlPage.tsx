@@ -52,6 +52,11 @@ const AVAILABLE_PERMISSIONS = [
     label: 'Delete 2B Rows',
     description: 'Delete rows from 2B Reconciliation tables',
   },
+  {
+    key: 'manage_rcm_masters',
+    label: 'Manage RCM Masters',
+    description: 'Add, edit, and delete RCM expense masters',
+  },
 ];
 
 interface Employee {
