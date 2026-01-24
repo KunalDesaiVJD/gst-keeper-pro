@@ -205,6 +205,8 @@ const UserControlPage: React.FC = () => {
   };
 
   const handleSave = async () => {
+    console.log('handleSave called - selectedEmployee:', selectedEmployee, 'permissions:', Array.from(permissions));
+    
     if (!selectedEmployee) {
       toast({
         title: 'Error',
@@ -216,12 +218,14 @@ const UserControlPage: React.FC = () => {
 
     setSaving(true);
     try {
+      console.log('Deleting existing permissions for user:', selectedEmployee);
       // Delete existing permissions for this user
-      const { error: deleteError } = await supabase
+      const { error: deleteError, count: deleteCount } = await supabase
         .from('user_permissions')
         .delete()
         .eq('user_id', selectedEmployee);
 
+      console.log('Delete result - error:', deleteError, 'count:', deleteCount);
       if (deleteError) throw deleteError;
 
       // Insert new permissions
@@ -232,10 +236,13 @@ const UserControlPage: React.FC = () => {
           granted_by: user?.userId || null,
         }));
 
-        const { error: insertError } = await supabase
+        console.log('Inserting permissions:', permissionsToInsert);
+        const { error: insertError, data: insertData } = await supabase
           .from('user_permissions')
-          .insert(permissionsToInsert);
+          .insert(permissionsToInsert)
+          .select();
 
+        console.log('Insert result - error:', insertError, 'data:', insertData);
         if (insertError) throw insertError;
       }
 
@@ -243,11 +250,11 @@ const UserControlPage: React.FC = () => {
         title: 'Success',
         description: 'Permissions updated successfully',
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving permissions:', error);
       toast({
         title: 'Error',
-        description: 'Failed to save permissions',
+        description: error?.message || 'Failed to save permissions',
         variant: 'destructive',
       });
     } finally {

@@ -54,47 +54,59 @@ const QuickActionsButton: React.FC = () => {
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 flex items-end gap-3">
-      {/* Action items - positioned to the left of the button */}
-      <div
-        className={cn(
-          'flex flex-col gap-2 transition-all duration-300',
-          isOpen ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-full pointer-events-none'
-        )}
-      >
-        {quickActions.map((action, index) => (
-          <button
-            key={action.path}
-            onClick={() => handleActionClick(action.path)}
-            className={cn(
-              'flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg shadow-lg hover:bg-primary/90 transition-all duration-200 whitespace-nowrap',
-              isOpen ? 'translate-x-0' : 'translate-x-full'
-            )}
-            style={{
-              transitionDelay: isOpen ? `${index * 50}ms` : '0ms',
-            }}
-          >
-            {action.icon}
-            <span className="text-sm font-medium">{action.label}</span>
-          </button>
-        ))}
-      </div>
+    <>
+      {/* Backdrop overlay when menu is open - closes menu on click */}
+      {isOpen && (
+        <div 
+          className="fixed inset-0 z-40" 
+          onClick={() => setIsOpen(false)}
+        />
+      )}
+      
+      {/* Floating button container - only size of actual content */}
+      <div className="fixed bottom-6 right-6 z-50 flex items-end gap-3 pointer-events-none">
+        {/* Action items - positioned to the left of the button */}
+        <div
+          className={cn(
+            'flex flex-col gap-2 transition-all duration-300',
+            isOpen ? 'opacity-100 translate-x-0 pointer-events-auto' : 'opacity-0 translate-x-full pointer-events-none'
+          )}
+        >
+          {quickActions.map((action, index) => (
+            <button
+              key={action.path}
+              onClick={() => handleActionClick(action.path)}
+              className={cn(
+                'flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg shadow-lg hover:bg-primary/90 transition-all duration-200 whitespace-nowrap',
+                isOpen ? 'translate-x-0' : 'translate-x-full'
+              )}
+              style={{
+                transitionDelay: isOpen ? `${index * 50}ms` : '0ms',
+              }}
+            >
+              {action.icon}
+              <span className="text-sm font-medium">{action.label}</span>
+            </button>
+          ))}
+        </div>
 
-      {/* Main floating button - at the far right */}
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className={cn(
-          'h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center transition-all duration-300 hover:bg-primary/90 hover:scale-105 flex-shrink-0',
-          isOpen && 'rotate-45 bg-destructive hover:bg-destructive/90'
-        )}
-      >
-        {isOpen ? (
-          <X className="h-6 w-6" />
-        ) : (
-          <Zap className="h-6 w-6" />
-        )}
-      </button>
-    </div>
+        {/* Main floating button - at the far right */}
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          className={cn(
+            'h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center transition-all duration-300 hover:bg-primary/90 hover:scale-105 flex-shrink-0 pointer-events-auto',
+            isOpen && 'rotate-45 bg-destructive hover:bg-destructive/90'
+          )}
+        >
+          {isOpen ? (
+            <X className="h-6 w-6" />
+          ) : (
+            <Zap className="h-6 w-6" />
+          )}
+        </button>
+      </div>
+    </>
+  
   );
 };
 
