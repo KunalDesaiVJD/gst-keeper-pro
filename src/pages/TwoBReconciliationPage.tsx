@@ -197,6 +197,9 @@ const TwoBReconciliationPage: React.FC = () => {
   const fetchBillsData = useCallback(async () => {
     if (!selectedClient || !selectedMonth) return;
 
+    // Reset lock state first
+    let lockState = false;
+
     // Fetch bills not in 2B
     const { data: notIn2B, error: error2B } = await supabase
       .from('bills_not_in_2b')
@@ -210,8 +213,8 @@ const TwoBReconciliationPage: React.FC = () => {
     } else {
       setBillsNotIn2B(notIn2B || []);
       setLocalBills2B(notIn2B || []);
-      if (notIn2B && notIn2B.length > 0) {
-        setIsLocked(notIn2B[0].is_locked || false);
+      if (notIn2B && notIn2B.length > 0 && notIn2B[0].is_locked) {
+        lockState = true;
       }
     }
 
@@ -228,24 +231,27 @@ const TwoBReconciliationPage: React.FC = () => {
     } else {
       setBillsNotInBooks(notInBooks || []);
       setLocalBillsBooks(notInBooks || []);
-      if (notInBooks && notInBooks.length > 0 && !isLocked) {
-        setIsLocked(notInBooks[0].is_locked || false);
+      if (notInBooks && notInBooks.length > 0 && notInBooks[0].is_locked) {
+        lockState = true;
       }
     }
 
-    // Check filing status for lock
+    // Check filing status for lock (GSTR-3B Filed)
     const { data: filingData } = await supabase
       .from('filing_status')
       .select('is_locked')
       .eq('client_id', selectedClient)
       .eq('period_month', selectedMonth)
+      .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)'])
       .eq('status', 'Filed')
       .maybeSingle();
     
     if (filingData?.is_locked) {
-      setIsLocked(true);
+      lockState = true;
     }
 
+    // Set the final lock state
+    setIsLocked(lockState);
     setHasUnsavedChanges(false);
   }, [selectedClient, selectedMonth]);
 

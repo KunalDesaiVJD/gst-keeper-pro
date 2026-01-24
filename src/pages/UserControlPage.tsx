@@ -229,7 +229,7 @@ const UserControlPage: React.FC = () => {
         const permissionsToInsert = Array.from(permissions).map(key => ({
           user_id: selectedEmployee,
           permission_key: key,
-          granted_by: user?.id || null,
+          granted_by: user?.userId || null,
         }));
 
         const { error: insertError } = await supabase
