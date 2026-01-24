@@ -108,7 +108,14 @@ const FilingStatusPage: React.FC = () => {
           )
         );
 
+        // Filter bills to carry forward:
+        // 1. Skip if already exists in next month (duplicate check)
+        // 2. Skip if reclaim_month is filled (bill has been reclaimed, no need to carry forward)
         const toCarryForward2B = billsNotIn2B.filter(b => {
+          // Skip bills that have reclaim_month filled - they are resolved
+          if (b.reclaim_month && b.reclaim_month.trim() !== '') {
+            return false;
+          }
           const recordKey = `${b.supplier_name}|${b.supplier_invoice_number || ''}|${b.supplier_gstin || ''}|${b.date}`;
           return !existingKeys2B.has(recordKey);
         });
@@ -149,7 +156,16 @@ const FilingStatusPage: React.FC = () => {
           )
         );
 
+        // Filter bills to carry forward:
+        // 1. Skip if already exists in next month (duplicate check)
+        // 2. Skip if both book_entry_month and bill_in_2b_month are filled (bill is resolved)
         const toCarryForwardBooks = billsNotInBooks.filter(b => {
+          // Skip bills that have BOTH book_entry_month and bill_in_2b_month filled - they are fully resolved
+          const hasBookEntry = b.book_entry_month && b.book_entry_month.trim() !== '';
+          const hasIn2B = b.bill_in_2b_month && b.bill_in_2b_month.trim() !== '';
+          if (hasBookEntry && hasIn2B) {
+            return false;
+          }
           const recordKey = `${b.supplier_name}|${b.supplier_invoice_number || ''}|${b.supplier_gstin || ''}|${b.date}`;
           return !existingKeysBooks.has(recordKey);
         });
