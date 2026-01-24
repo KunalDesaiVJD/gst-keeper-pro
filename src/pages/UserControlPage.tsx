@@ -233,7 +233,7 @@ const UserControlPage: React.FC = () => {
         const permissionsToInsert = Array.from(permissions).map(key => ({
           user_id: selectedEmployee,
           permission_key: key,
-          granted_by: user?.userId || null,
+          granted_by: user?.id || null, // Use user.id (UUID) not userId (display name)
         }));
 
         console.log('Inserting permissions:', permissionsToInsert);
