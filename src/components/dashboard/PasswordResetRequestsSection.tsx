@@ -88,13 +88,23 @@ const PasswordResetRequestsSection: React.FC = () => {
 
     setIsSubmitting(true);
     try {
-      // Use the SECURITY DEFINER function to reset password
-      const { error: passwordError } = await supabase.rpc('reset_employee_password', {
+      // First try to reset as employee password
+      const { error: employeeError } = await supabase.rpc('reset_employee_password', {
         target_user_id: selectedRequest.user_id,
         new_password: newPassword,
       });
 
-      if (passwordError) throw passwordError;
+      // If employee reset fails, try client reset
+      if (employeeError) {
+        const { error: clientError } = await supabase.rpc('reset_client_password', {
+          target_client_id: selectedRequest.user_id,
+          new_password: newPassword,
+        });
+
+        if (clientError) {
+          throw new Error('Failed to reset password. User not found as employee or client.');
+        }
+      }
 
       // Mark request as resolved
       const { error: requestError } = await supabase

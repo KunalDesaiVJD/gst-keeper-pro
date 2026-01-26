@@ -160,6 +160,7 @@ export type Database = {
         Row: {
           assigned_accountant: string | null
           cancellation_date: string | null
+          client_password: string | null
           client_user_id: string | null
           created_at: string | null
           created_by: string | null
@@ -168,6 +169,7 @@ export type Database = {
           gst_user_id: string | null
           gstin: string
           id: string
+          is_first_login: boolean | null
           mobile: string | null
           name: string
           registration_date: string
@@ -178,6 +180,7 @@ export type Database = {
         Insert: {
           assigned_accountant?: string | null
           cancellation_date?: string | null
+          client_password?: string | null
           client_user_id?: string | null
           created_at?: string | null
           created_by?: string | null
@@ -186,6 +189,7 @@ export type Database = {
           gst_user_id?: string | null
           gstin: string
           id?: string
+          is_first_login?: boolean | null
           mobile?: string | null
           name: string
           registration_date: string
@@ -196,6 +200,7 @@ export type Database = {
         Update: {
           assigned_accountant?: string | null
           cancellation_date?: string | null
+          client_password?: string | null
           client_user_id?: string | null
           created_at?: string | null
           created_by?: string | null
@@ -204,6 +209,7 @@ export type Database = {
           gst_user_id?: string | null
           gstin?: string
           id?: string
+          is_first_login?: boolean | null
           mobile?: string | null
           name?: string
           registration_date?: string
@@ -675,6 +681,16 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      authenticate_client: {
+        Args: { identifier: string; pass: string }
+        Returns: {
+          client_email: string
+          client_id: string
+          client_name: string
+          gstin: string
+          is_first_login: boolean
+        }[]
+      }
       authenticate_staff: {
         Args: { identifier: string; pass: string }
         Returns: {
@@ -684,6 +700,10 @@ export type Database = {
           role: Database["public"]["Enums"]["app_role"]
           user_id: string
         }[]
+      }
+      complete_client_first_login: {
+        Args: { new_password: string; target_client_id: string }
+        Returns: undefined
       }
       complete_first_login: {
         Args: { new_password: string; target_user_id: string }
@@ -710,6 +730,10 @@ export type Database = {
         Returns: boolean
       }
       is_staff: { Args: { _user_id: string }; Returns: boolean }
+      reset_client_password: {
+        Args: { new_password: string; target_client_id: string }
+        Returns: boolean
+      }
       reset_employee_password: {
         Args: { new_password: string; target_user_id: string }
         Returns: boolean

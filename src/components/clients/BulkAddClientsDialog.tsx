@@ -256,6 +256,8 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
             assigned_accountant: data.accountant || null,
             selected_returns: data.selectedReturns,
             client_user_id: userId,
+            client_password: data.gstin, // Set initial password to GSTIN
+            is_first_login: true, // Force password change on first login
           }])
           .select()
           .single();

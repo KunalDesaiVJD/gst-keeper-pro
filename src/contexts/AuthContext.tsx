@@ -255,29 +255,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: true, isFirstLogin: false };
       }
 
+      // Try client authentication using GSTIN or client_user_id
       if (!identifier.includes('@')) {
-        const { data: client } = await supabase
-          .from('clients')
-          .select('id, name, email, client_user_id')
-          .ilike('client_user_id', identifier)
-          .maybeSingle();
-        
-        if (client) {
-          if (password !== client.client_user_id) {
+        const { data: clientData, error: clientError } = await supabase.rpc('authenticate_client', {
+          identifier: identifier,
+          pass: password
+        });
+
+        if (clientError) {
+          console.error('Client auth error:', clientError);
+        }
+
+        if (clientData && clientData.length > 0) {
+          const client = clientData[0];
+          
+          // Check if first login - need to change password
+          if (client.is_first_login && password === client.gstin) {
+            setPendingFirstLogin({ userId: client.client_id, firstName: client.client_name });
             toast({
-              title: 'Login Failed',
-              description: 'Invalid password.',
-              variant: 'destructive',
+              title: 'Password Change Required',
+              description: 'Please set a new password to continue.',
             });
-            return { success: false };
+            return { success: true, isFirstLogin: true };
           }
 
           const clientUser: AppUser = {
-            id: client.id,
-            email: client.email || '',
-            firstName: client.name,
+            id: client.client_id,
+            email: client.client_email || '',
+            firstName: client.client_name,
             role: 'client',
-            userId: client.client_user_id,
+            userId: client.gstin,
             permissions: { ...DEFAULT_PERMISSIONS },
           };
 
@@ -316,20 +323,66 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     try {
-      const { error: updateError } = await supabase.rpc('complete_first_login', {
+      // First try to complete as staff login
+      const { error: staffError } = await supabase.rpc('complete_first_login', {
         target_user_id: pendingFirstLogin.userId,
         new_password: newPassword
       });
 
-      if (updateError) {
-        toast({
-          title: 'Error',
-          description: 'Failed to update password: ' + updateError.message,
-          variant: 'destructive',
+      // If staff completion fails, try client completion
+      if (staffError) {
+        const { error: clientError } = await supabase.rpc('complete_client_first_login', {
+          target_client_id: pendingFirstLogin.userId,
+          new_password: newPassword
         });
-        return false;
+
+        if (clientError) {
+          toast({
+            title: 'Error',
+            description: 'Failed to update password.',
+            variant: 'destructive',
+          });
+          return false;
+        }
+
+        // Fetch client data after password change
+        const { data: clientData } = await supabase
+          .from('clients')
+          .select('id, name, email, gstin')
+          .eq('id', pendingFirstLogin.userId)
+          .single();
+
+        if (!clientData) {
+          toast({
+            title: 'Error',
+            description: 'Failed to complete login.',
+            variant: 'destructive',
+          });
+          return false;
+        }
+
+        const clientUser: AppUser = {
+          id: clientData.id,
+          email: clientData.email || '',
+          firstName: clientData.name,
+          role: 'client',
+          userId: clientData.gstin,
+          permissions: { ...DEFAULT_PERMISSIONS },
+        };
+
+        localStorage.setItem(FALLBACK_AUTH_KEY, JSON.stringify(clientUser));
+        setUser(clientUser);
+        setPendingFirstLogin(null);
+
+        toast({
+          title: 'Password Set Successfully',
+          description: `Welcome, ${clientUser.firstName}!`,
+        });
+
+        return true;
       }
 
+      // Staff login completion
       const { data: userData, error: snapshotError } = await supabase.rpc('get_user_snapshot', {
         target_user_id: pendingFirstLogin.userId
       });

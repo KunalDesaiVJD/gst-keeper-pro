@@ -10,6 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import logo from '@/assets/logo.png';
 import ChangePasswordDialog from '@/components/auth/ChangePasswordDialog';
 import ForgotPasswordDialog from '@/components/auth/ForgotPasswordDialog';
+import ClientForgotPasswordDialog from '@/components/auth/ClientForgotPasswordDialog';
 
 const LoginPage: React.FC = () => {
   const [userId, setUserId] = useState('');
@@ -156,9 +157,14 @@ const LoginPage: React.FC = () => {
               </Button>
             </form>
             
-            {/* Forgot Password - Only for Employees/GST Managers (not Clients or Superadmin) */}
-            <div className="mt-6 text-center">
-              <ForgotPasswordDialog />
+            {/* Forgot Password Links */}
+            <div className="mt-6 text-center space-y-2">
+              <div>
+                <ForgotPasswordDialog />
+              </div>
+              <div>
+                <ClientForgotPasswordDialog />
+              </div>
             </div>
             
             {/* Development notice */}
@@ -166,7 +172,7 @@ const LoginPage: React.FC = () => {
               <div className="mt-6 p-4 bg-amber-500/10 rounded-lg border border-amber-500/30">
                 <p className="text-xs font-medium text-amber-600 mb-1">⚠️ Development Environment</p>
                 <p className="text-xs text-muted-foreground">
-                  Staff: Use name + "2026". Clients: Use PAN as both ID and password.
+                  Staff: Use name + "2026". Clients: Use GSTIN as both User ID and Password.
                   First login requires password change.
                 </p>
               </div>

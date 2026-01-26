@@ -32,8 +32,9 @@ const ChangePasswordDialog: React.FC<ChangePasswordDialogProps> = ({
     if (password.length < 8) {
       return 'Password must be at least 8 characters long';
     }
-    if (password === '2026') {
-      return 'Cannot use the default password';
+    // Disallow common default passwords
+    if (password === '2026' || password.match(/^[A-Z]{2}[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[0-9A-Z]{1}[0-9A-Z]{1}$/)) {
+      return 'Cannot use the default password or GSTIN as your new password';
     }
     return null;
   };
