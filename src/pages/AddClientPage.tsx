@@ -180,6 +180,8 @@ const AddClientPage: React.FC = () => {
           cancellation_date: formData.cancellationDate || null,
           gst_user_id: formData.gstUserId || null,
           gst_password: formData.gstPassword || null,
+          client_password: formData.gstin, // Set initial password to GSTIN
+          is_first_login: true, // Force password change on first login
         }])
         .select()
         .single();
