@@ -323,20 +323,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     try {
-      // First try to complete as staff login
-      const { error: staffError } = await supabase.rpc('complete_first_login', {
-        target_user_id: pendingFirstLogin.userId,
-        new_password: newPassword
-      });
+      // Check if this is a client by looking up the client first
+      const { data: clientCheck } = await supabase
+        .from('clients')
+        .select('id, name, email, gstin')
+        .eq('id', pendingFirstLogin.userId)
+        .maybeSingle();
 
-      // If staff completion fails, try client completion
-      if (staffError) {
+      if (clientCheck) {
+        // This is a client - use client completion function
         const { error: clientError } = await supabase.rpc('complete_client_first_login', {
           target_client_id: pendingFirstLogin.userId,
           new_password: newPassword
         });
 
         if (clientError) {
+          console.error('Client first login error:', clientError);
           toast({
             title: 'Error',
             description: 'Failed to update password.',
@@ -345,28 +347,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return false;
         }
 
-        // Fetch client data after password change
-        const { data: clientData } = await supabase
-          .from('clients')
-          .select('id, name, email, gstin')
-          .eq('id', pendingFirstLogin.userId)
-          .single();
-
-        if (!clientData) {
-          toast({
-            title: 'Error',
-            description: 'Failed to complete login.',
-            variant: 'destructive',
-          });
-          return false;
-        }
-
         const clientUser: AppUser = {
-          id: clientData.id,
-          email: clientData.email || '',
-          firstName: clientData.name,
+          id: clientCheck.id,
+          email: clientCheck.email || '',
+          firstName: clientCheck.name,
           role: 'client',
-          userId: clientData.gstin,
+          userId: clientCheck.gstin,
           permissions: { ...DEFAULT_PERMISSIONS },
         };
 
@@ -382,7 +368,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return true;
       }
 
-      // Staff login completion
+      // This is a staff user - use staff completion function
+      const { error: staffError } = await supabase.rpc('complete_first_login', {
+        target_user_id: pendingFirstLogin.userId,
+        new_password: newPassword
+      });
+
+      if (staffError) {
+        console.error('Staff first login error:', staffError);
+        toast({
+          title: 'Error',
+          description: 'Failed to update password.',
+          variant: 'destructive',
+        });
+        return false;
+      }
+
+      // Staff login completion - fetch user data
       const { data: userData, error: snapshotError } = await supabase.rpc('get_user_snapshot', {
         target_user_id: pendingFirstLogin.userId
       });
