@@ -586,10 +586,15 @@ const FilingStatusPage: React.FC = () => {
           }), { cgst: 0, sgst: 0, igst: 0 });
           
           const booksTotal = booksTotals.cgst + booksTotals.sgst + booksTotals.igst;
-          const difference = portalTotal - booksTotal;
+          // Round to 2 decimal places to handle floating-point precision issues
+          let difference = Math.round((portalTotal - booksTotal) * 100) / 100;
+          // Normalize -0 to 0
+          if (difference === 0 || Object.is(difference, -0)) difference = 0;
           
-          if (difference !== 0) {
-            toast.error(`Cannot file ${record.return_type}: Suspended Reconciliation difference must be zero. Current difference: ${difference.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`);
+          // Allow differences up to 1 for rounding errors
+          if (Math.abs(difference) > 1) {
+            const displayDiff = difference === 0 ? '0' : difference.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+            toast.error(`Cannot file ${record.return_type}: Suspended Reconciliation difference must be within ₹1. Current difference: ${displayDiff}`);
             return;
           }
         }
