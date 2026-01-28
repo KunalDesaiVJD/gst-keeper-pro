@@ -51,7 +51,8 @@ interface RCMTableProps {
 }
 
 const formatNumber = (num: number): string => {
-  if (num === 0 || !num) return '-';
+  // Handle -0 and 0 cases
+  if (num === 0 || Object.is(num, -0) || !num) return '-';
   return num.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 };
 
