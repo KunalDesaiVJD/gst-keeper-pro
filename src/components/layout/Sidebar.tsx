@@ -35,7 +35,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
   // Base nav items - different for client vs staff
   const getNavItems = (): NavItem[] => {
     if (!isStaffRole()) {
-      // Client only sees Dashboard and 2B Reconciliation
+      // Client sees Dashboard, 2B and RCM, and ITC Summary
       return [
         {
           label: 'Dashboard',
@@ -43,9 +43,14 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
           icon: <LayoutDashboard className="h-5 w-5" />,
         },
         {
-          label: '2B Reconciliation',
-          path: '/2b-reconciliation',
+          label: '2B and RCM',
+          path: '/2b-and-rcm',
           icon: <FileText className="h-5 w-5" />,
+        },
+        {
+          label: 'ITC Summary',
+          path: '/itc-summary',
+          icon: <Calculator className="h-5 w-5" />,
         },
       ];
     }

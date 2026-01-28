@@ -9,6 +9,7 @@ import { isQuarterEndMonth } from '@/types';
 import { Lock, AlertCircle, Unlock, Save, Download } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
+import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
@@ -77,7 +78,9 @@ interface ReversalTotals {
 const ITCSummaryPage: React.FC = () => {
   const { canUnlockSheets, user, isStaffRole } = useAuth();
   const { selectedMonth, setSelectedMonth } = useMonth();
-  const [selectedClient, setSelectedClient] = useState<string>('');
+  const { selectedClientId, setSelectedClientId } = useClient();
+  const selectedClient = selectedClientId;
+  const setSelectedClient = setSelectedClientId;
   const [isLocked, setIsLocked] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -133,9 +136,9 @@ const ITCSummaryPage: React.FC = () => {
         .select('id, name, gstin, registration_type')
         .order('name');
       
-      // If user is a client, only fetch their own data
+      // If user is a client, match by their client id (user.id is client's id for client login)
       if (user && !isStaffRole()) {
-        query = query.eq('client_user_id', user.userId);
+        query = query.eq('id', user.id);
       }
       
       const { data, error } = await query;
@@ -149,7 +152,7 @@ const ITCSummaryPage: React.FC = () => {
       setClients(data || []);
       
       // Auto-select if client user and only one client
-      if (!isStaffRole() && data && data.length === 1) {
+      if (!isStaffRole() && data && data.length > 0 && !selectedClient) {
         setSelectedClient(data[0].id);
       }
     };
@@ -595,6 +598,12 @@ const ITCSummaryPage: React.FC = () => {
   const totalReversal = itcData.section4B
     .reduce((acc, r) => acc + r.igst + r.cgst + r.sgst, 0);
 
+  const formatNumber = (num: number): string => {
+    // Handle -0 case by converting to 0
+    if (num === 0 || Object.is(num, -0)) return '0';
+    return num.toLocaleString('en-IN');
+  };
+
   const renderEditableCell = (section: keyof ITCData, rowIndex: number, row: ITCRow, field: 'igst' | 'cgst' | 'sgst') => {
     const canEdit = row.editable && !isLocked && !row.isAutoLinked;
     
@@ -617,7 +626,7 @@ const ITCSummaryPage: React.FC = () => {
         />
       );
     }
-    return <span>{row[field].toLocaleString('en-IN')}</span>;
+    return <span>{formatNumber(row[field])}</span>;
   };
 
   const handleExportPDF = () => {

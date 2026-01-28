@@ -12,6 +12,7 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Calculator, Plus, FileSpreadsheet, FileText, Save, Loader2, Lock, Settings, Unlock } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import RCMTable from '@/components/rcm/RCMTable';
@@ -102,9 +103,11 @@ const convertToFilingMonth = (month: string): string => {
 
 const RCMSummaryPage: React.FC = () => {
   const { user, isStaffRole, canUnlockSheets } = useAuth();
+  const { selectedClientId, setSelectedClientId } = useClient();
   const navigate = useNavigate();
   const [clients, setClients] = useState<Client[]>([]);
-  const [selectedClient, setSelectedClient] = useState<string>('');
+  const selectedClient = selectedClientId;
+  const setSelectedClient = setSelectedClientId;
   const [selectedClientData, setSelectedClientData] = useState<Client | null>(null);
   const [financialYear, setFinancialYear] = useState<string>('');
   const [financialYears] = useState<string[]>(generateFinancialYears());
@@ -146,10 +149,17 @@ const RCMSummaryPage: React.FC = () => {
   // Fetch clients
   useEffect(() => {
     const fetchClients = async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('clients')
         .select('id, name, gstin, registration_type')
         .order('name');
+      
+      // For client users, match by their client id
+      if (user && !isStaff) {
+        query = query.eq('id', user.id);
+      }
+
+      const { data, error } = await query;
 
       if (error) {
         toast.error('Failed to fetch clients');
@@ -158,12 +168,12 @@ const RCMSummaryPage: React.FC = () => {
 
       setClients(data || []);
 
-      if (!isStaff && data && data.length === 1) {
+      if (!isStaff && data && data.length > 0 && !selectedClient) {
         setSelectedClient(data[0].id);
       }
     };
     fetchClients();
-  }, [isStaff]);
+  }, [isStaff, user, selectedClient, setSelectedClient]);
 
   // Update selected client data
   useEffect(() => {
