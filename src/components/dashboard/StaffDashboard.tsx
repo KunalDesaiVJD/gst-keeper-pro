@@ -22,6 +22,18 @@ import PasswordResetRequestsSection from './PasswordResetRequestsSection';
 import { ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth } from '@/types';
 import { useState } from 'react';
 
+// Due date constants for each return type
+const RETURN_DUE_DATES: Record<string, number> = {
+  'GSTR-1': 11,
+  'GSTR-7': 10,
+  'GSTR-6': 13,
+  'GSTR-1 (IFF)': 13,
+  'GSTR-3B': 20,
+  'GSTR-3B (Q)': 22,
+  'ITC-04': 25,
+  'CMP-08': 18,
+};
+
 interface DashboardMetrics {
   totalClients: number;
   pendingFilings: number;
@@ -114,14 +126,18 @@ const StaffDashboard: React.FC = () => {
       // Filter clients visible for this month
       const visibleClients = clientData?.filter(isClientVisibleForMonth) || [];
 
-      const pendingStatuses = ['Prepared', 'Data Pending', 'Mismatch in Data', 'Not Verified'];
+      const pendingStatuses = ['Prepared', 'Data Pending', 'Mismatch in Data', 'Not Verified', 'Prepared Pending', 'Data Received'];
       const pendingFilings = filingData?.filter(f => pendingStatuses.includes(f.status || ''))?.length || 0;
       const filedThisMonth = filingData?.filter(f => f.status === 'Filed')?.length || 0;
       
+      // Calculate late filings based on return type-specific due dates
+      // A filing is "late" if it's Filed AND filed_date day > due date for that return type
       const lateFilings = filingData?.filter(f => {
-        if (f.status !== 'Filed' || !f.filed_date || !f.target_date) return false;
+        if (f.status !== 'Filed' || !f.filed_date) return false;
         const filedDay = new Date(f.filed_date).getDate();
-        return filedDay > f.target_date;
+        // Get the due date for this return type, fallback to target_date or 11
+        const dueDate = RETURN_DUE_DATES[f.return_type] || f.target_date || 11;
+        return filedDay > dueDate;
       })?.length || 0;
 
       setMetrics({

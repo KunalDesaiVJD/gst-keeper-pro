@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -12,8 +13,21 @@ import { FilingStatusType, ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMonth } from '@/contexts/MonthContext';
 import { supabase } from '@/integrations/supabase/client';
 import GSTPortalLink from '@/components/clients/GSTPortalLink';
+
+// Due date constants for each return type
+const RETURN_DUE_DATES: Record<string, number> = {
+  'GSTR-1': 11,
+  'GSTR-7': 10,
+  'GSTR-6': 13,
+  'GSTR-1 (IFF)': 13,
+  'GSTR-3B': 20,
+  'GSTR-3B (Q)': 22,
+  'ITC-04': 25,
+  'CMP-08': 18,
+};
 
 interface Client {
   id: string;
@@ -48,16 +62,42 @@ interface FilingRecord {
 
 const FilingStatusPage: React.FC = () => {
   const { canUnlockSheets, isStaffRole, user } = useAuth();
-  const [selectedMonth, setSelectedMonth] = useState<string>('01/2026');
+  const { selectedMonth: contextMonth, setSelectedMonth: setContextMonth } = useMonth();
+  const [searchParams] = useSearchParams();
+  const [selectedMonth, setSelectedMonth] = useState<string>(contextMonth);
   const [selectedTab, setSelectedTab] = useState<string>('gstr1');
   const [clients, setClients] = useState<Client[]>([]);
   const [filingRecords, setFilingRecords] = useState<FilingRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [lateFilingsFilter, setLateFilingsFilter] = useState<boolean>(false);
   
   // Filter states
   const [clientNameFilter, setClientNameFilter] = useState<string>('');
   const [selectedTargetDates, setSelectedTargetDates] = useState<number[]>([]);
   const [selectedStatuses, setSelectedStatuses] = useState<FilingStatusType[]>([]);
+  
+  // Sync with MonthContext when page loads
+  useEffect(() => {
+    // Get filter parameter from URL
+    const filterParam = searchParams.get('filter');
+    if (filterParam === 'late') {
+      setLateFilingsFilter(true);
+    } else if (filterParam === 'pending') {
+      setSelectedStatuses(['Prepared', 'Data Pending', 'Mismatch in Data', 'Not Verified', 'Prepared Pending', 'Data Received']);
+    } else if (filterParam === 'filed') {
+      setSelectedStatuses(['Filed']);
+    }
+    
+    // Initialize month from context
+    setSelectedMonth(contextMonth);
+  }, [contextMonth, searchParams]);
+  
+  // Update context when local month changes
+  useEffect(() => {
+    if (selectedMonth !== contextMonth) {
+      setContextMonth(selectedMonth);
+    }
+  }, [selectedMonth, contextMonth, setContextMonth]);
   const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08', 'GSTR-1 (IFF)', 'GSTR-3B (Q)'];
 
   // Carry forward function - transfers all 2B records to next month
@@ -143,6 +183,7 @@ const FilingStatusPage: React.FC = () => {
       }
 
       // CARRY FORWARD BILLS NOT IN BOOKS
+      // Carry forward ALL records similar to Bills Not in 2B (only skip if BOTH fields are filled)
       if (billsNotInBooks && billsNotInBooks.length > 0) {
         const { data: existingNextMonthBooks } = await supabase
           .from('bills_not_in_books')
@@ -158,11 +199,13 @@ const FilingStatusPage: React.FC = () => {
 
         // Filter bills to carry forward:
         // 1. Skip if already exists in next month (duplicate check)
-        // 2. Skip if both book_entry_month and bill_in_2b_month are filled (bill is resolved)
+        // 2. Skip ONLY if BOTH book_entry_month AND bill_in_2b_month are filled (bill is fully resolved)
+        // This matches the behavior of Bills Not in 2B carry-forward logic
         const toCarryForwardBooks = billsNotInBooks.filter(b => {
           // Skip bills that have BOTH book_entry_month and bill_in_2b_month filled - they are fully resolved
           const hasBookEntry = b.book_entry_month && b.book_entry_month.trim() !== '';
           const hasIn2B = b.bill_in_2b_month && b.bill_in_2b_month.trim() !== '';
+          // Only skip if BOTH are filled - if only one is filled, still carry forward
           if (hasBookEntry && hasIn2B) {
             return false;
           }
@@ -819,6 +862,18 @@ const FilingStatusPage: React.FC = () => {
       // Multi-select status filter
       if (selectedStatuses.length > 0 && !selectedStatuses.includes(record.status)) {
         return false;
+      }
+      // Late filings filter - show only filings that were filed after due date
+      if (lateFilingsFilter) {
+        if (record.status !== 'Filed' || !record.filed_date) {
+          return false;
+        }
+        const filedDay = new Date(record.filed_date).getDate();
+        // Get the due date for this return type
+        const dueDate = RETURN_DUE_DATES[record.return_type] || record.target_date || 11;
+        if (filedDay <= dueDate) {
+          return false;
+        }
       }
       return true;
     });
