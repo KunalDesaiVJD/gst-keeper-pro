@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
+import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
 import GSTPortalLink from '@/components/clients/GSTPortalLink';
 
@@ -19,17 +20,11 @@ interface Client {
   registration_date?: string;
 }
 
-interface SuspendedRecoData {
-  portal_cgst: number;
-  portal_sgst: number;
-  portal_igst: number;
-}
-
 const SuspendedRecoPage: React.FC = () => {
   const { user, isStaffRole } = useAuth();
   const { selectedMonth, setSelectedMonth } = useMonth();
+  const { selectedClientId, setSelectedClientId } = useClient();
   const [clients, setClients] = useState<Client[]>([]);
-  const [selectedClient, setSelectedClient] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   
@@ -43,7 +38,7 @@ const SuspendedRecoPage: React.FC = () => {
   const [booksSgst, setBooksSgst] = useState<number>(0);
   const [booksIgst, setBooksIgst] = useState<number>(0);
 
-  const selectedClientData = clients.find(c => c.id === selectedClient);
+  const selectedClientData = clients.find(c => c.id === selectedClientId);
   const isStaff = isStaffRole();
 
   // Generate month options
@@ -52,7 +47,7 @@ const SuspendedRecoPage: React.FC = () => {
     const now = new Date();
     
     // Find registration date from selected client
-    const client = clients.find(c => c.id === selectedClient);
+    const client = clients.find(c => c.id === selectedClientId);
     let startDate = new Date(now.getFullYear(), now.getMonth() - 12, 1);
     
     if (client?.registration_date) {
@@ -76,17 +71,20 @@ const SuspendedRecoPage: React.FC = () => {
       const [bM, bY] = b.value.split('/').map(Number);
       return bY * 12 + bM - (aY * 12 + aM);
     });
-  }, [clients, selectedClient]);
+  }, [clients, selectedClientId]);
 
-  // Fetch clients
+  // Fetch clients - fix for client login: match by id for clients, show all for staff
   const fetchClients = useCallback(async () => {
     let query = supabase
       .from('clients')
       .select('id, name, gstin, registration_date')
       .order('name');
     
+    // For client users, we need to match their client record
+    // The user.id for clients IS the client table's id
     if (user && !isStaff) {
-      query = query.eq('client_user_id', user.userId);
+      // Try to match by client id (user.id is client's id for client login)
+      query = query.eq('id', user.id);
     }
     
     const { data, error } = await query;
@@ -97,14 +95,15 @@ const SuspendedRecoPage: React.FC = () => {
     }
     setClients(data || []);
     
-    if (!isStaff && data && data.length === 1) {
-      setSelectedClient(data[0].id);
+    // Auto-select for client users
+    if (!isStaff && data && data.length > 0 && !selectedClientId) {
+      setSelectedClientId(data[0].id);
     }
-  }, [user, isStaff]);
+  }, [user, isStaff, selectedClientId, setSelectedClientId]);
 
   // Fetch suspended reco data
   const fetchData = useCallback(async () => {
-    if (!selectedClient || !selectedMonth) return;
+    if (!selectedClientId || !selectedMonth) return;
 
     setIsLoading(true);
     try {
@@ -112,7 +111,7 @@ const SuspendedRecoPage: React.FC = () => {
       const { data: suspendedData } = await supabase
         .from('suspended_reco')
         .select('*')
-        .eq('client_id', selectedClient)
+        .eq('client_id', selectedClientId)
         .eq('period_month', selectedMonth)
         .maybeSingle();
       
@@ -132,7 +131,7 @@ const SuspendedRecoPage: React.FC = () => {
       const { data: booksData } = await supabase
         .from('bills_not_in_2b')
         .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
-        .eq('client_id', selectedClient)
+        .eq('client_id', selectedClientId)
         .eq('period_month', selectedMonth);
       
       if (booksData && booksData.length > 0) {
@@ -166,20 +165,20 @@ const SuspendedRecoPage: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedClient, selectedMonth]);
+  }, [selectedClientId, selectedMonth]);
 
   useEffect(() => {
     fetchClients();
   }, [fetchClients]);
 
   useEffect(() => {
-    if (selectedClient && selectedMonth) {
+    if (selectedClientId && selectedMonth) {
       fetchData();
     }
-  }, [selectedClient, selectedMonth, fetchData]);
+  }, [selectedClientId, selectedMonth, fetchData]);
 
   const handleSave = async () => {
-    if (!selectedClient || !selectedMonth) {
+    if (!selectedClientId || !selectedMonth) {
       toast.error('Please select a client and month');
       return;
     }
@@ -189,7 +188,7 @@ const SuspendedRecoPage: React.FC = () => {
       const { error } = await supabase
         .from('suspended_reco')
         .upsert({
-          client_id: selectedClient,
+          client_id: selectedClientId,
           period_month: selectedMonth,
           portal_cgst: portalCgst,
           portal_sgst: portalSgst,
@@ -218,7 +217,8 @@ const SuspendedRecoPage: React.FC = () => {
   const diffTotal = portalTotal - booksTotal;
 
   const formatNumber = (num: number): string => {
-    if (num === 0) return '0';
+    // Handle -0 case by converting to 0
+    if (num === 0 || Object.is(num, -0)) return '0';
     return num.toLocaleString('en-IN', { maximumFractionDigits: 2 });
   };
 
@@ -250,8 +250,8 @@ const SuspendedRecoPage: React.FC = () => {
                     label: c.name,
                     sublabel: c.gstin,
                   }))}
-                  value={selectedClient}
-                  onValueChange={setSelectedClient}
+                  value={selectedClientId}
+                  onValueChange={setSelectedClientId}
                   placeholder="Select Client..."
                   searchPlaceholder="Type to search clients..."
                   emptyText="No clients found."
@@ -272,12 +272,12 @@ const SuspendedRecoPage: React.FC = () => {
               </div>
             </div>
 
-            {selectedClient && (
-              <GSTPortalLink clientId={selectedClient} clientName={selectedClientData?.name} />
+            {selectedClientId && (
+              <GSTPortalLink clientId={selectedClientId} clientName={selectedClientData?.name} />
             )}
 
             {isStaff && (
-              <Button onClick={handleSave} disabled={isSaving || !selectedClient} className="ml-auto">
+              <Button onClick={handleSave} disabled={isSaving || !selectedClientId} className="ml-auto">
                 {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
                 Save Changes
               </Button>
@@ -296,12 +296,12 @@ const SuspendedRecoPage: React.FC = () => {
           ) : (
             <Table>
               <TableHeader>
-                <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
-                  <TableHead className="font-bold text-white border border-[#2E5A6B] w-48">PARTICULARS</TableHead>
-                  <TableHead className="font-bold text-white text-center border border-[#2E5A6B]">CGST</TableHead>
-                  <TableHead className="font-bold text-white text-center border border-[#2E5A6B]">SGST</TableHead>
-                  <TableHead className="font-bold text-white text-center border border-[#2E5A6B]">IGST</TableHead>
-                  <TableHead className="font-bold text-white text-center border border-[#2E5A6B]">TOTAL</TableHead>
+                <TableRow className="bg-primary hover:bg-primary">
+                  <TableHead className="font-bold text-primary-foreground border border-primary w-48">PARTICULARS</TableHead>
+                  <TableHead className="font-bold text-primary-foreground text-center border border-primary">CGST</TableHead>
+                  <TableHead className="font-bold text-primary-foreground text-center border border-primary">SGST</TableHead>
+                  <TableHead className="font-bold text-primary-foreground text-center border border-primary">IGST</TableHead>
+                  <TableHead className="font-bold text-primary-foreground text-center border border-primary">TOTAL</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -360,13 +360,13 @@ const SuspendedRecoPage: React.FC = () => {
                 {/* As Per Books Row - Auto-linked */}
                 <TableRow>
                   <TableCell className="font-medium border border-border">AS PER BOOKS</TableCell>
-                  <TableCell className="text-right border border-border bg-blue-50">
+                  <TableCell className="text-right border border-border bg-accent/50">
                     {formatNumber(booksCgst)}
                   </TableCell>
-                  <TableCell className="text-right border border-border bg-blue-50">
+                  <TableCell className="text-right border border-border bg-accent/50">
                     {formatNumber(booksSgst)}
                   </TableCell>
-                  <TableCell className="text-right border border-border bg-blue-50">
+                  <TableCell className="text-right border border-border bg-accent/50">
                     {formatNumber(booksIgst)}
                   </TableCell>
                   <TableCell className="text-right font-medium border border-border bg-muted/30">
@@ -380,7 +380,7 @@ const SuspendedRecoPage: React.FC = () => {
                 </TableRow>
 
                 {/* Difference Row */}
-                <TableRow className="bg-amber-50 hover:bg-amber-50">
+                <TableRow className="bg-warning/10 hover:bg-warning/10">
                   <TableCell className="font-bold border border-border">DIFFERENCE</TableCell>
                   <TableCell className={`text-right font-medium border border-border ${diffCgst !== 0 ? 'text-destructive' : ''}`}>
                     {formatNumber(diffCgst)}
@@ -399,7 +399,7 @@ const SuspendedRecoPage: React.FC = () => {
             </Table>
           )}
 
-          {!selectedClient && (
+          {!selectedClientId && (
             <div className="text-center py-8 text-muted-foreground">
               Please select a client to view suspended reconciliation data.
             </div>
