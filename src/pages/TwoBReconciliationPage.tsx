@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
+import { useClient } from '@/contexts/ClientContext';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { export2BToExcel, import2BFromExcel } from '@/utils/excelExport';
@@ -62,7 +63,7 @@ interface BillRecord {
 const TwoBReconciliationPage: React.FC = () => {
   const { canViewVersionHistory, canUnlockSheets, canDelete2BRows, user, isStaffRole } = useAuth();
   const { selectedMonth, setSelectedMonth } = useMonth();
-  const [selectedClient, setSelectedClient] = useState<string>('');
+  const { selectedClientId, setSelectedClientId } = useClient();
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
   const [billsNotIn2B, setBillsNotIn2B] = useState<BillRecord[]>([]);
@@ -84,7 +85,7 @@ const TwoBReconciliationPage: React.FC = () => {
   // Negative value error state
   const [negativeValueError, setNegativeValueError] = useState<string | null>(null);
 
-  const selectedClientData = clients.find(c => c.id === selectedClient);
+  const selectedClientData = clients.find(c => c.id === selectedClientId);
 
   // Check if client requires quarterly months only (IFF or Composition)
   const isQuarterlyClient = selectedClientData?.registration_type === 'IFF' || selectedClientData?.registration_type === 'Composition';
@@ -95,7 +96,7 @@ const TwoBReconciliationPage: React.FC = () => {
     const now = new Date();
     
     // Find registration date from selected client
-    const client = clients.find(c => c.id === selectedClient);
+    const client = clients.find(c => c.id === selectedClientId);
     let startDate = new Date(now.getFullYear(), now.getMonth() - 12, 1); // Default: 12 months ago
     
     if (client?.registration_date) {
@@ -129,7 +130,7 @@ const TwoBReconciliationPage: React.FC = () => {
       const [bM, bY] = b.value.split('/').map(Number);
       return bY * 12 + bM - (aY * 12 + aM);
     });
-  }, [clients, selectedClient, isQuarterlyClient]);
+  }, [clients, selectedClientId, isQuarterlyClient]);
 
   const monthOptions = generateMonthOptions;
 
@@ -173,10 +174,10 @@ const TwoBReconciliationPage: React.FC = () => {
       .select('id, name, gstin, registration_date, registration_type')
       .order('name');
     
-    // If user is a client, only fetch their own data
+    // If user is a client, fetch only their client record by matching client id
     if (user && !isStaffRole()) {
-      // Client users should only see their own client record
-      query = query.eq('client_user_id', user.userId);
+      // For client users, user.id IS the client table's id
+      query = query.eq('id', user.id);
     }
     
     const { data, error } = await query;
@@ -188,14 +189,14 @@ const TwoBReconciliationPage: React.FC = () => {
     setClients(data || []);
     
     // Auto-select if client user and only one client
-    if (!isStaffRole() && data && data.length === 1) {
-      setSelectedClient(data[0].id);
+    if (!isStaffRole() && data && data.length > 0 && !selectedClientId) {
+      setSelectedClientId(data[0].id);
     }
-  }, [user, isStaffRole]);
+  }, [user, isStaffRole, selectedClientId, setSelectedClientId]);
 
   // Fetch bills data
   const fetchBillsData = useCallback(async () => {
-    if (!selectedClient || !selectedMonth) return;
+    if (!selectedClientId || !selectedMonth) return;
 
     // Reset lock state first
     let lockState = false;
@@ -204,7 +205,7 @@ const TwoBReconciliationPage: React.FC = () => {
     const { data: notIn2B, error: error2B } = await supabase
       .from('bills_not_in_2b')
       .select('*')
-      .eq('client_id', selectedClient)
+      .eq('client_id', selectedClientId)
       .eq('period_month', selectedMonth)
       .order('date');
     
@@ -222,7 +223,7 @@ const TwoBReconciliationPage: React.FC = () => {
     const { data: notInBooks, error: errorBooks } = await supabase
       .from('bills_not_in_books')
       .select('*')
-      .eq('client_id', selectedClient)
+      .eq('client_id', selectedClientId)
       .eq('period_month', selectedMonth)
       .order('date');
     
@@ -240,7 +241,7 @@ const TwoBReconciliationPage: React.FC = () => {
     const { data: filingData } = await supabase
       .from('filing_status')
       .select('is_locked')
-      .eq('client_id', selectedClient)
+      .eq('client_id', selectedClientId)
       .eq('period_month', selectedMonth)
       .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)'])
       .eq('status', 'Filed')
@@ -253,11 +254,11 @@ const TwoBReconciliationPage: React.FC = () => {
     // Set the final lock state
     setIsLocked(lockState);
     setHasUnsavedChanges(false);
-  }, [selectedClient, selectedMonth]);
+  }, [selectedClientId, selectedMonth]);
 
   // Fetch version history
   const fetchVersions = useCallback(async () => {
-    if (!selectedClient || !selectedMonth) {
+    if (!selectedClientId || !selectedMonth) {
       setVersions([]);
       return;
     }
@@ -265,7 +266,7 @@ const TwoBReconciliationPage: React.FC = () => {
     const { data, error } = await supabase
       .from('twob_versions')
       .select('*')
-      .eq('client_id', selectedClient)
+      .eq('client_id', selectedClientId)
       .eq('period_month', selectedMonth)
       .order('version_number', { ascending: false });
 
@@ -310,14 +311,14 @@ const TwoBReconciliationPage: React.FC = () => {
     } else {
       setVersions([]);
     }
-  }, [selectedClient, selectedMonth]);
+  }, [selectedClientId, selectedMonth]);
 
   useEffect(() => {
     fetchClients();
   }, [fetchClients]);
 
   useEffect(() => {
-    if (selectedClient && selectedMonth) {
+    if (selectedClientId && selectedMonth) {
       fetchBillsData();
       fetchVersions();
     } else {
@@ -329,11 +330,11 @@ const TwoBReconciliationPage: React.FC = () => {
       setHasUnsavedChanges(false);
       setVersions([]);
     }
-  }, [selectedClient, selectedMonth, fetchBillsData, fetchVersions]);
+  }, [selectedClientId, selectedMonth, fetchBillsData, fetchVersions]);
 
   // Real-time subscription
   useEffect(() => {
-    if (!selectedClient) return;
+    if (!selectedClientId) return;
 
     const channel = supabase
       .channel('2b-reconciliation-changes')
@@ -341,7 +342,7 @@ const TwoBReconciliationPage: React.FC = () => {
         event: '*', 
         schema: 'public', 
         table: 'bills_not_in_2b',
-        filter: `client_id=eq.${selectedClient}`
+        filter: `client_id=eq.${selectedClientId}`
       }, () => {
         fetchBillsData();
         toast.info('2B data updated by another user');
@@ -350,7 +351,7 @@ const TwoBReconciliationPage: React.FC = () => {
         event: '*', 
         schema: 'public', 
         table: 'bills_not_in_books',
-        filter: `client_id=eq.${selectedClient}`
+        filter: `client_id=eq.${selectedClientId}`
       }, () => {
         fetchBillsData();
         toast.info('2B data updated by another user');
@@ -360,7 +361,7 @@ const TwoBReconciliationPage: React.FC = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [selectedClient, fetchBillsData]);
+  }, [selectedClientId, fetchBillsData]);
 
   // Filter bills based on selected months (with support for "Blank" filter)
   const filteredBills2B = useMemo(() => {
@@ -480,7 +481,7 @@ const TwoBReconciliationPage: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!selectedClient) {
+    if (!selectedClientId) {
       toast.error('Please select a client first');
       return;
     }
@@ -496,7 +497,7 @@ const TwoBReconciliationPage: React.FC = () => {
       // Insert bills not in 2B
       if (data.billsNotIn2B.length > 0) {
         const records = data.billsNotIn2B.map(b => ({
-          client_id: selectedClient,
+          client_id: selectedClientId,
           date: b.date.toISOString().split('T')[0],
           supplier_name: b.supplierName,
           supplier_invoice_number: b.supplierInvoiceNumber,
@@ -520,7 +521,7 @@ const TwoBReconciliationPage: React.FC = () => {
       // Insert bills not in books
       if (data.billsNotInBooks.length > 0) {
         const records = data.billsNotInBooks.map(b => ({
-          client_id: selectedClient,
+          client_id: selectedClientId,
           date: b.date.toISOString().split('T')[0],
           supplier_name: b.supplierName,
           supplier_invoice_number: b.supplierInvoiceNumber,
@@ -619,12 +620,12 @@ const TwoBReconciliationPage: React.FC = () => {
 
   // Add new row handlers (local only with temp ID)
   const handleAddRow2B = () => {
-    if (!selectedClient || isLocked) return;
+    if (!selectedClientId || isLocked) return;
     
     const tempId = `temp-${Date.now()}`;
     setLocalBills2B(prev => [...prev, {
       id: tempId,
-      client_id: selectedClient,
+      client_id: selectedClientId,
       date: new Date().toISOString().split('T')[0],
       supplier_name: '',
       supplier_invoice_number: null,
@@ -646,12 +647,12 @@ const TwoBReconciliationPage: React.FC = () => {
   };
 
   const handleAddRowBooks = () => {
-    if (!selectedClient || isLocked) return;
+    if (!selectedClientId || isLocked) return;
     
     const tempId = `temp-${Date.now()}`;
     setLocalBillsBooks(prev => [...prev, {
       id: tempId,
-      client_id: selectedClient,
+      client_id: selectedClientId,
       date: new Date().toISOString().split('T')[0],
       supplier_name: '',
       supplier_invoice_number: null,
@@ -674,7 +675,7 @@ const TwoBReconciliationPage: React.FC = () => {
 
   // Save all changes to database
   const handleSaveAll = async () => {
-    if (!selectedClient || isLocked) return;
+    if (!selectedClientId || isLocked) return;
     
     // Validate that all rows have supplier names
     const invalidRows2B = localBills2B.filter(b => !b.supplier_name || b.supplier_name.trim() === '');
@@ -694,9 +695,9 @@ const TwoBReconciliationPage: React.FC = () => {
       await supabase
         .from('twob_versions')
         .update({ is_current: false })
-        .eq('client_id', selectedClient)
+        .eq('client_id', selectedClientId)
         .eq('period_month', selectedMonth);
-      
+
       // Transform ORIGINAL database data to version format for storage (not local edits)
       const versionBills2B = billsNotIn2B.map(b => ({
         id: b.id,
@@ -747,7 +748,7 @@ const TwoBReconciliationPage: React.FC = () => {
       };
       
       const { error: versionError } = await supabase.from('twob_versions').insert([{
-        client_id: selectedClient,
+        client_id: selectedClientId,
         period_month: selectedMonth,
         table_type: 'combined',
         version_number: currentVersionNumber,
@@ -834,19 +835,19 @@ const TwoBReconciliationPage: React.FC = () => {
   };
 
   const handleUnlockSheet = async () => {
-    if (!selectedClient) return;
+    if (!selectedClientId) return;
     
     try {
       await supabase
         .from('bills_not_in_2b')
         .update({ is_locked: false })
-        .eq('client_id', selectedClient)
+        .eq('client_id', selectedClientId)
         .eq('period_month', selectedMonth);
       
       await supabase
         .from('bills_not_in_books')
         .update({ is_locked: false })
-        .eq('client_id', selectedClient)
+        .eq('client_id', selectedClientId)
         .eq('period_month', selectedMonth);
       
       setIsLocked(false);
@@ -858,17 +859,17 @@ const TwoBReconciliationPage: React.FC = () => {
 
 
   const handleRestoreVersion = async (version: TwoBVersion) => {
-    if (!selectedClient || isLocked) return;
+    if (!selectedClientId || isLocked) return;
     
     try {
       // Delete current records
-      await supabase.from('bills_not_in_2b').delete().eq('client_id', selectedClient).eq('period_month', selectedMonth);
-      await supabase.from('bills_not_in_books').delete().eq('client_id', selectedClient).eq('period_month', selectedMonth);
+      await supabase.from('bills_not_in_2b').delete().eq('client_id', selectedClientId).eq('period_month', selectedMonth);
+      await supabase.from('bills_not_in_books').delete().eq('client_id', selectedClientId).eq('period_month', selectedMonth);
       
       // Restore bills not in 2B from version (handle both camelCase and snake_case)
       if (version.billsNotIn2B && version.billsNotIn2B.length > 0) {
         const records2B = version.billsNotIn2B.map((b: any) => ({
-          client_id: selectedClient,
+          client_id: selectedClientId,
           date: b.date,
           supplier_name: b.supplierName || b.supplier_name,
           supplier_invoice_number: b.supplierInvoiceNumber || b.supplier_invoice_number,
@@ -888,7 +889,7 @@ const TwoBReconciliationPage: React.FC = () => {
       // Restore bills not in books from version (handle both camelCase and snake_case)
       if (version.billsNotInBooks && version.billsNotInBooks.length > 0) {
         const recordsBooks = version.billsNotInBooks.map((b: any) => ({
-          client_id: selectedClient,
+          client_id: selectedClientId,
           date: b.date,
           supplier_name: b.supplierName || b.supplier_name,
           supplier_invoice_number: b.supplierInvoiceNumber || b.supplier_invoice_number,
@@ -906,7 +907,7 @@ const TwoBReconciliationPage: React.FC = () => {
       }
       
       // Mark this version as current
-      await supabase.from('twob_versions').update({ is_current: false }).eq('client_id', selectedClient).eq('period_month', selectedMonth);
+      await supabase.from('twob_versions').update({ is_current: false }).eq('client_id', selectedClientId).eq('period_month', selectedMonth);
       await supabase.from('twob_versions').update({ is_current: true }).eq('id', version.id);
       
       await fetchBillsData();
@@ -1013,7 +1014,7 @@ const TwoBReconciliationPage: React.FC = () => {
           <p className="text-muted-foreground">Manage bills not available in 2B or Books</p>
         </div>
         <div className="flex items-center gap-2">
-          {selectedClient && !isLocked && (
+          {selectedClientId && !isLocked && (
             <Button 
               onClick={handleSaveAll} 
               disabled={isSaving || !hasUnsavedChanges}
@@ -1049,8 +1050,8 @@ const TwoBReconciliationPage: React.FC = () => {
             <div className="flex-1 max-w-xs">
               <SearchableSelect
                 options={clients.map(c => ({ value: c.id, label: c.name, sublabel: c.gstin }))}
-                value={selectedClient}
-                onValueChange={setSelectedClient}
+                value={selectedClientId}
+                onValueChange={setSelectedClientId}
                 placeholder="Search Client..."
                 searchPlaceholder="Type to search clients..."
                 emptyText="No clients found."
@@ -1065,7 +1066,7 @@ const TwoBReconciliationPage: React.FC = () => {
                 placeholder="Select Month"
               />
             </div>
-            {canViewVersionHistory() && selectedClient && (
+            {canViewVersionHistory() && selectedClientId && (
               <Button 
                 variant="outline" 
                 className="flex items-center gap-2"
@@ -1079,7 +1080,7 @@ const TwoBReconciliationPage: React.FC = () => {
         </CardContent>
       </Card>
 
-      {!selectedClient ? (
+      {!selectedClientId ? (
         <Card>
           <CardContent className="p-12 text-center">
             <AlertCircle className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
