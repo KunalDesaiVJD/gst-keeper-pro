@@ -208,9 +208,13 @@ const SuspendedRecoPage: React.FC = () => {
     }
   };
 
-  // Helper to normalize -0 to 0
+  // Helper to normalize -0 to 0 and handle very small numbers that round to zero
   const normalizeZero = (num: number): number => {
-    return Object.is(num, -0) ? 0 : num;
+    if (Object.is(num, -0)) return 0;
+    // Round to 2 decimal places and check if it becomes 0
+    const rounded = Math.round(num * 100) / 100;
+    if (rounded === 0 || Object.is(rounded, -0)) return 0;
+    return rounded;
   };
 
   // Calculate totals and difference
@@ -222,10 +226,13 @@ const SuspendedRecoPage: React.FC = () => {
   const diffTotal = normalizeZero(portalTotal - booksTotal);
 
   const formatNumber = (num: number): string => {
-    // Handle -0 case by converting to 0
-    const normalized = Object.is(num, -0) ? 0 : num;
-    if (normalized === 0) return '0';
-    return normalized.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    // Handle -0 case and very small numbers
+    if (num === 0 || Object.is(num, -0)) return '0';
+    const rounded = Math.round(num * 100) / 100;
+    if (rounded === 0 || Object.is(rounded, -0)) return '0';
+    const formatted = rounded.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    // Final safety check - replace "-0" string if it appears
+    return formatted === '-0' ? '0' : formatted;
   };
 
   return (
