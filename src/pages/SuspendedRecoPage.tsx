@@ -208,18 +208,24 @@ const SuspendedRecoPage: React.FC = () => {
     }
   };
 
+  // Helper to normalize -0 to 0
+  const normalizeZero = (num: number): number => {
+    return Object.is(num, -0) ? 0 : num;
+  };
+
   // Calculate totals and difference
   const portalTotal = portalCgst + portalSgst + portalIgst;
   const booksTotal = booksCgst + booksSgst + booksIgst;
-  const diffCgst = portalCgst - booksCgst;
-  const diffSgst = portalSgst - booksSgst;
-  const diffIgst = portalIgst - booksIgst;
-  const diffTotal = portalTotal - booksTotal;
+  const diffCgst = normalizeZero(portalCgst - booksCgst);
+  const diffSgst = normalizeZero(portalSgst - booksSgst);
+  const diffIgst = normalizeZero(portalIgst - booksIgst);
+  const diffTotal = normalizeZero(portalTotal - booksTotal);
 
   const formatNumber = (num: number): string => {
     // Handle -0 case by converting to 0
-    if (num === 0 || Object.is(num, -0)) return '0';
-    return num.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    const normalized = Object.is(num, -0) ? 0 : num;
+    if (normalized === 0) return '0';
+    return normalized.toLocaleString('en-IN', { maximumFractionDigits: 2 });
   };
 
   return (
