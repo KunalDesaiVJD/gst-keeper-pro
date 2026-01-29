@@ -186,46 +186,34 @@ const FilingStatusPage: React.FC = () => {
       // Carry forward ALL records regardless of book_entry_month or bill_in_2b_month status
       // This matches user requirement to carry forward everything to next month
       if (billsNotInBooks && billsNotInBooks.length > 0) {
-        const { data: existingNextMonthBooks } = await supabase
+        // Delete existing CF records in next month first to avoid duplicates
+        // This ensures we always sync the latest state from current month
+        await supabase
           .from('bills_not_in_books')
-          .select('supplier_name, supplier_invoice_number, supplier_gstin, date')
+          .delete()
           .eq('client_id', clientId)
-          .eq('period_month', nextPeriod);
+          .eq('period_month', nextPeriod)
+          .eq('is_carried_forward', true);
 
-        const existingKeysBooks = new Set(
-          (existingNextMonthBooks || []).map(r => 
-            `${r.supplier_name}|${r.supplier_invoice_number || ''}|${r.supplier_gstin || ''}|${r.date}`
-          )
-        );
+        // Now insert ALL records from current month as CF records in next month
+        const recordsBooks = billsNotInBooks.map(b => ({
+          client_id: b.client_id,
+          date: b.date,
+          supplier_name: b.supplier_name,
+          supplier_invoice_number: b.supplier_invoice_number,
+          supplier_gstin: b.supplier_gstin,
+          taxable_value: b.taxable_value,
+          input_igst: b.input_igst,
+          input_cgst: b.input_cgst,
+          input_sgst: b.input_sgst,
+          period_month: nextPeriod,
+          book_entry_month: b.book_entry_month,
+          bill_in_2b_month: b.bill_in_2b_month,
+          is_carried_forward: true,
+        }));
 
-        // Filter bills to carry forward:
-        // Only skip if already exists in next month (duplicate check)
-        // ALL records are carried forward regardless of book_entry_month/bill_in_2b_month status
-        const toCarryForwardBooks = billsNotInBooks.filter(b => {
-          const recordKey = `${b.supplier_name}|${b.supplier_invoice_number || ''}|${b.supplier_gstin || ''}|${b.date}`;
-          return !existingKeysBooks.has(recordKey);
-        });
-
-        if (toCarryForwardBooks.length > 0) {
-          const recordsBooks = toCarryForwardBooks.map(b => ({
-            client_id: b.client_id,
-            date: b.date,
-            supplier_name: b.supplier_name,
-            supplier_invoice_number: b.supplier_invoice_number,
-            supplier_gstin: b.supplier_gstin,
-            taxable_value: b.taxable_value,
-            input_igst: b.input_igst,
-            input_cgst: b.input_cgst,
-            input_sgst: b.input_sgst,
-            period_month: nextPeriod,
-            book_entry_month: b.book_entry_month,
-            bill_in_2b_month: b.bill_in_2b_month,
-            is_carried_forward: true,
-          }));
-
-          await supabase.from('bills_not_in_books').insert(recordsBooks);
-          totalCarried += recordsBooks.length;
-        }
+        await supabase.from('bills_not_in_books').insert(recordsBooks);
+        totalCarried += recordsBooks.length;
       }
 
       console.log(`Carried forward ${totalCarried} records to ${nextPeriod}`);
