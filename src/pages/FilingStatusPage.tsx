@@ -183,7 +183,8 @@ const FilingStatusPage: React.FC = () => {
       }
 
       // CARRY FORWARD BILLS NOT IN BOOKS
-      // Carry forward ALL records similar to Bills Not in 2B (only skip if BOTH fields are filled)
+      // Carry forward ALL records regardless of book_entry_month or bill_in_2b_month status
+      // This matches user requirement to carry forward everything to next month
       if (billsNotInBooks && billsNotInBooks.length > 0) {
         const { data: existingNextMonthBooks } = await supabase
           .from('bills_not_in_books')
@@ -198,17 +199,9 @@ const FilingStatusPage: React.FC = () => {
         );
 
         // Filter bills to carry forward:
-        // 1. Skip if already exists in next month (duplicate check)
-        // 2. Skip ONLY if BOTH book_entry_month AND bill_in_2b_month are filled (bill is fully resolved)
-        // This matches the behavior of Bills Not in 2B carry-forward logic
+        // Only skip if already exists in next month (duplicate check)
+        // ALL records are carried forward regardless of book_entry_month/bill_in_2b_month status
         const toCarryForwardBooks = billsNotInBooks.filter(b => {
-          // Skip bills that have BOTH book_entry_month and bill_in_2b_month filled - they are fully resolved
-          const hasBookEntry = b.book_entry_month && b.book_entry_month.trim() !== '';
-          const hasIn2B = b.bill_in_2b_month && b.bill_in_2b_month.trim() !== '';
-          // Only skip if BOTH are filled - if only one is filled, still carry forward
-          if (hasBookEntry && hasIn2B) {
-            return false;
-          }
           const recordKey = `${b.supplier_name}|${b.supplier_invoice_number || ''}|${b.supplier_gstin || ''}|${b.date}`;
           return !existingKeysBooks.has(recordKey);
         });
