@@ -82,6 +82,10 @@ const TwoBReconciliationPage: React.FC = () => {
   const [selectedBookEntryMonths, setSelectedBookEntryMonths] = useState<string[]>([]);
   const [selectedIn2BMonths, setSelectedIn2BMonths] = useState<string[]>([]);
   
+  // CF filter states - to filter only carried-forward records
+  const [showOnlyCF2B, setShowOnlyCF2B] = useState(false);
+  const [showOnlyCFBooks, setShowOnlyCFBooks] = useState(false);
+  
   // Negative value error state
   const [negativeValueError, setNegativeValueError] = useState<string | null>(null);
 
@@ -366,6 +370,10 @@ const TwoBReconciliationPage: React.FC = () => {
   // Filter bills based on selected months (with support for "Blank" filter)
   const filteredBills2B = useMemo(() => {
     return localBills2B.filter(row => {
+      // CF filter - show only carried forward records
+      if (showOnlyCF2B && !row.is_carried_forward) {
+        return false;
+      }
       // Reversal filter
       if (selectedReversalMonths.length > 0) {
         const hasBlankFilter = selectedReversalMonths.includes('__blank__');
@@ -392,10 +400,14 @@ const TwoBReconciliationPage: React.FC = () => {
       }
       return true;
     });
-  }, [localBills2B, selectedReversalMonths, selectedReclaimMonths]);
+  }, [localBills2B, selectedReversalMonths, selectedReclaimMonths, showOnlyCF2B]);
 
   const filteredBillsBooks = useMemo(() => {
     return localBillsBooks.filter(row => {
+      // CF filter - show only carried forward records
+      if (showOnlyCFBooks && !row.is_carried_forward) {
+        return false;
+      }
       // Book Entry filter
       if (selectedBookEntryMonths.length > 0) {
         const hasBlankFilter = selectedBookEntryMonths.includes('__blank__');
@@ -422,7 +434,7 @@ const TwoBReconciliationPage: React.FC = () => {
       }
       return true;
     });
-  }, [localBillsBooks, selectedBookEntryMonths, selectedIn2BMonths]);
+  }, [localBillsBooks, selectedBookEntryMonths, selectedIn2BMonths, showOnlyCFBooks]);
 
   const totals2B = filteredBills2B.reduce((acc, row) => ({
     taxableValue: acc.taxableValue + (row.taxable_value || 0),
@@ -1116,11 +1128,22 @@ const TwoBReconciliationPage: React.FC = () => {
           {/* Table 1: Bills Not Available in 2B */}
           <Card>
             <CardHeader>
-              <div>
-                <CardTitle className="text-lg">Bills Not Available in 2B</CardTitle>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Client: {selectedClientData?.name} | Edit cells directly to modify data
-                </p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg">Bills Not Available in 2B</CardTitle>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Client: {selectedClientData?.name} | Edit cells directly to modify data
+                  </p>
+                </div>
+                <Button
+                  variant={showOnlyCF2B ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setShowOnlyCF2B(!showOnlyCF2B)}
+                  className="gap-1"
+                >
+                  <Filter className="h-3 w-3" />
+                  {showOnlyCF2B ? "Show All" : "Show CF Only"}
+                </Button>
               </div>
             </CardHeader>
             <CardContent>
@@ -1319,8 +1342,21 @@ const TwoBReconciliationPage: React.FC = () => {
           {/* Table 2: Bills Not Available in Books */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg">Bills Not Available in Books</CardTitle>
-              <p className="text-sm text-muted-foreground">Edit cells directly to modify data</p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg">Bills Not Available in Books</CardTitle>
+                  <p className="text-sm text-muted-foreground">Edit cells directly to modify data</p>
+                </div>
+                <Button
+                  variant={showOnlyCFBooks ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setShowOnlyCFBooks(!showOnlyCFBooks)}
+                  className="gap-1"
+                >
+                  <Filter className="h-3 w-3" />
+                  {showOnlyCFBooks ? "Show All" : "Show CF Only"}
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
