@@ -134,52 +134,37 @@ const FilingStatusPage: React.FC = () => {
       let totalCarried = 0;
 
       // CARRY FORWARD BILLS NOT IN 2B
+      // Carry forward ALL records regardless of reclaim_month status
+      // This ensures totals match between months
       if (billsNotIn2B && billsNotIn2B.length > 0) {
-        // Get existing records in next month to check for duplicates
-        const { data: existingNextMonth2B } = await supabase
+        // Delete existing CF records in next month first to avoid duplicates
+        // This ensures we always sync the latest state from current month
+        await supabase
           .from('bills_not_in_2b')
-          .select('supplier_name, supplier_invoice_number, supplier_gstin, date')
+          .delete()
           .eq('client_id', clientId)
-          .eq('period_month', nextPeriod);
+          .eq('period_month', nextPeriod)
+          .eq('is_carried_forward', true);
 
-        const existingKeys2B = new Set(
-          (existingNextMonth2B || []).map(r => 
-            `${r.supplier_name}|${r.supplier_invoice_number || ''}|${r.supplier_gstin || ''}|${r.date}`
-          )
-        );
+        // Now insert ALL records from current month as CF records in next month
+        const records2B = billsNotIn2B.map(b => ({
+          client_id: b.client_id,
+          date: b.date,
+          supplier_name: b.supplier_name,
+          supplier_invoice_number: b.supplier_invoice_number,
+          supplier_gstin: b.supplier_gstin,
+          taxable_value: b.taxable_value,
+          input_igst: b.input_igst,
+          input_cgst: b.input_cgst,
+          input_sgst: b.input_sgst,
+          period_month: nextPeriod,
+          reversal_month: b.reversal_month,
+          reclaim_month: b.reclaim_month,
+          is_carried_forward: true,
+        }));
 
-        // Filter bills to carry forward:
-        // 1. Skip if already exists in next month (duplicate check)
-        // 2. Skip if reclaim_month is filled (bill has been reclaimed, no need to carry forward)
-        const toCarryForward2B = billsNotIn2B.filter(b => {
-          // Skip bills that have reclaim_month filled - they are resolved
-          if (b.reclaim_month && b.reclaim_month.trim() !== '') {
-            return false;
-          }
-          const recordKey = `${b.supplier_name}|${b.supplier_invoice_number || ''}|${b.supplier_gstin || ''}|${b.date}`;
-          return !existingKeys2B.has(recordKey);
-        });
-
-        if (toCarryForward2B.length > 0) {
-          const records2B = toCarryForward2B.map(b => ({
-            client_id: b.client_id,
-            date: b.date,
-            supplier_name: b.supplier_name,
-            supplier_invoice_number: b.supplier_invoice_number,
-            supplier_gstin: b.supplier_gstin,
-            taxable_value: b.taxable_value,
-            input_igst: b.input_igst,
-            input_cgst: b.input_cgst,
-            input_sgst: b.input_sgst,
-            period_month: nextPeriod,
-            reversal_month: b.reversal_month,
-            reclaim_month: b.reclaim_month,
-            is_carried_forward: true,
-          }));
-
-          await supabase.from('bills_not_in_2b').insert(records2B);
-          totalCarried += records2B.length;
-        }
+        await supabase.from('bills_not_in_2b').insert(records2B);
+        totalCarried += records2B.length;
       }
 
       // CARRY FORWARD BILLS NOT IN BOOKS
