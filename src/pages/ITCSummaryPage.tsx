@@ -6,7 +6,7 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Badge } from '@/components/ui/badge';
 import { isQuarterEndMonth } from '@/types';
-import { Lock, AlertCircle, Unlock, Save, Download } from 'lucide-react';
+import { Lock, AlertCircle, Save, Download } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
@@ -212,11 +212,13 @@ const ITCSummaryPage: React.FC = () => {
     const patterns = getMonthPatterns(selectedMonth);
 
     // Fetch all bills with reversal_month for this client
+    // IMPORTANT: Exclude carried-forward records to prevent double-counting
     const { data: reversalBills, error: reversalError } = await supabase
       .from('bills_not_in_2b')
-      .select('input_igst, input_cgst, input_sgst, reversal_month')
+      .select('input_igst, input_cgst, input_sgst, reversal_month, is_carried_forward')
       .eq('client_id', selectedClient)
-      .not('reversal_month', 'is', null);
+      .not('reversal_month', 'is', null)
+      .or('is_carried_forward.is.null,is_carried_forward.eq.false');
     
     if (reversalError) {
       console.error('Error fetching reversal data:', reversalError);
@@ -235,11 +237,13 @@ const ITCSummaryPage: React.FC = () => {
     }
 
     // Fetch all bills with reclaim_month for this client
+    // IMPORTANT: Exclude carried-forward records to prevent double-counting
     const { data: reclaimBills, error: reclaimError } = await supabase
       .from('bills_not_in_2b')
-      .select('input_igst, input_cgst, input_sgst, reclaim_month')
+      .select('input_igst, input_cgst, input_sgst, reclaim_month, is_carried_forward')
       .eq('client_id', selectedClient)
-      .not('reclaim_month', 'is', null);
+      .not('reclaim_month', 'is', null)
+      .or('is_carried_forward.is.null,is_carried_forward.eq.false');
     
     if (reclaimError) {
       console.error('Error fetching reclaim data:', reclaimError);
@@ -742,21 +746,11 @@ const ITCSummaryPage: React.FC = () => {
             </Card>
           </div>
 
-          {/* Unlock Button for Superadmin/GST Manager */}
-          {canUnlockSheets() && isLocked && (
-            <div className="flex justify-end">
-              <Button variant="outline" size="sm" className="flex items-center gap-2" onClick={handleUnlock}>
-                <Unlock className="h-4 w-4" />
-                Unlock ITC Summary Sheet
-              </Button>
-            </div>
-          )}
-
-          {/* Lock indicator */}
+          {/* Lock indicator - No unlock button here, only on Filing Status page */}
           {isLocked && (
             <div className="bg-warning/10 border border-warning/20 rounded-lg p-3 flex items-center gap-2 text-warning">
               <Lock className="h-4 w-4" />
-              <span className="text-sm">This sheet is locked because the return has been filed. Only Superadmin or GST Manager can unlock.</span>
+              <span className="text-sm">This sheet is locked because the return has been filed.</span>
             </div>
           )}
 
