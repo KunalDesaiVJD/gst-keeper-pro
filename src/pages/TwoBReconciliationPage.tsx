@@ -11,7 +11,6 @@ import {
   Upload, 
   Download, 
   History,
-  Unlock,
   AlertCircle,
   Lock,
   Trash2,
@@ -1109,19 +1108,11 @@ const TwoBReconciliationPage: React.FC = () => {
             </div>
           )}
 
-          {/* Lock indicator */}
+          {/* Lock indicator - No unlock button here, only on Filing Status page */}
           {isLocked && (
-            <div className="bg-warning/10 border border-warning/20 rounded-lg p-3 flex items-center justify-between text-warning">
-              <div className="flex items-center gap-2">
-                <Lock className="h-4 w-4" />
-                <span className="text-sm">This sheet is locked because the return has been filed.</span>
-              </div>
-              {canUnlockSheets() && (
-                <Button variant="outline" size="sm" onClick={handleUnlockSheet}>
-                  <Unlock className="h-4 w-4 mr-1" />
-                  Unlock
-                </Button>
-              )}
+            <div className="bg-warning/10 border border-warning/20 rounded-lg p-3 flex items-center gap-2 text-warning">
+              <Lock className="h-4 w-4" />
+              <span className="text-sm">This sheet is locked because the return has been filed.</span>
             </div>
           )}
 
