@@ -74,7 +74,7 @@ const getDefaultITCData = (): ITCData => ({
 });
 
 // Partial ITC Data structure for Builder clients with PARTIAL_ITC
-const getPartialITCData = (commercialArea: number, residentialArea: number): ITCData => ({
+const getPartialITCData = (): ITCData => ({
   section4A: [
     { srNo: '(1)', particular: 'Import of Goods', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
     { srNo: '(2)', particular: 'Import of Services', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
@@ -88,10 +88,14 @@ const getPartialITCData = (commercialArea: number, residentialArea: number): ITC
     { srNo: '5.5', particular: 'Reclaim of ITC Reversed due to 180 days rule', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
   ],
   section4B: [
-    { srNo: '(1)', particular: 'Calculation of Ineligible ITC under Rule - 38, 42 & 43, and Section 17(5)', igst: 0, cgst: 0, sgst: 0, editable: true, isHeader: true, reasons: '' },
-    { srNo: '', particular: 'i) On ITC as per 4A', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    // Row (1) - Editable: user enters the main value, sub-rows are calculated from it
+    { srNo: '(1)', particular: 'Calculation of Ineligible ITC under Rule - 38, 42 & 43, and Section 17(5)', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    // i) On ITC as per 4A = Total 4A × (Residential Area / Total Area) - auto calculated
+    { srNo: '', particular: 'i) On ITC as per 4A', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
+    // ii) Previous Month Adjustment - editable
     { srNo: '', particular: 'ii) Previous Month Adjustment', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
-    { srNo: '', particular: 'ii) On Other reversal', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    // ii) On Other reversal = (1) main value - i) - ii) - auto calculated
+    { srNo: '', particular: 'ii) On Other reversal', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
     { srNo: '(2)', particular: 'Others', igst: 0, cgst: 0, sgst: 0, isHeader: true, reasons: '' },
     { srNo: '', particular: 'ITC Reversal for the current month as per 2B RECO', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
     { srNo: '', particular: 'ITC Reversal for the previous months, if any.', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
@@ -101,10 +105,6 @@ const getPartialITCData = (commercialArea: number, residentialArea: number): ITC
     { srNo: '1.1', particular: 'Reclaim of ITC Reversed for the Previous months', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
     { srNo: '1.2', particular: 'Reclaim of ITC Reversed due to 180 days rule', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
     { srNo: '(2)', particular: 'Ineligible ITC under section 16(4) & ITC restricted due to PoS rules *', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
-    // Area breakdown rows - values come from client data (non-editable)
-    { srNo: '', particular: 'Commercial Area', igst: 0, cgst: commercialArea, sgst: 0, reasons: '' },
-    { srNo: '', particular: 'Residential Area', igst: 0, cgst: residentialArea, sgst: 0, reasons: '' },
-    { srNo: '', particular: 'Total', igst: 0, cgst: commercialArea + residentialArea, sgst: 0, reasons: '' },
   ],
 });
 
@@ -352,7 +352,7 @@ const ITCSummaryPage: React.FC = () => {
       setIsLocked(isFiledLocked || false);
       // Use appropriate ITC structure based on client type
       if (isPartial) {
-        setItcData(getPartialITCData(commArea, resArea));
+        setItcData(getPartialITCData());
       } else {
         setItcData(getDefaultITCData());
       }
@@ -462,6 +462,75 @@ const ITCSummaryPage: React.FC = () => {
       return newData;
     });
   }, [reversalFromReco, reclaimFromReco, rcmTotals]);
+
+  // Calculate Partial ITC formula values (used in rendering)
+  const partialITCCalculatedValues = useMemo(() => {
+    if (!isPartialITCClient) return null;
+    
+    const totalArea = commercialArea + residentialArea;
+    if (totalArea === 0) return null;
+
+    // Calculate Total 4A first
+    const rows1To4Values = itcData.section4A.slice(0, 4).reduce((acc, row) => ({
+      igst: acc.igst + row.igst,
+      cgst: acc.cgst + row.cgst,
+      sgst: acc.sgst + row.sgst,
+    }), { igst: 0, cgst: 0, sgst: 0 });
+
+    const total5Values = {
+      igst: (itcData.section4A.find(r => r.srNo === '5.1')?.igst || 0)
+          + (itcData.section4A.find(r => r.srNo === '5.2')?.igst || 0)
+          - (itcData.section4A.find(r => r.srNo === '5.3')?.igst || 0)
+          + (itcData.section4A.find(r => r.srNo === '5.4')?.igst || 0)
+          + (itcData.section4A.find(r => r.srNo === '5.5')?.igst || 0),
+      cgst: (itcData.section4A.find(r => r.srNo === '5.1')?.cgst || 0)
+          + (itcData.section4A.find(r => r.srNo === '5.2')?.cgst || 0)
+          - (itcData.section4A.find(r => r.srNo === '5.3')?.cgst || 0)
+          + (itcData.section4A.find(r => r.srNo === '5.4')?.cgst || 0)
+          + (itcData.section4A.find(r => r.srNo === '5.5')?.cgst || 0),
+      sgst: (itcData.section4A.find(r => r.srNo === '5.1')?.sgst || 0)
+          + (itcData.section4A.find(r => r.srNo === '5.2')?.sgst || 0)
+          - (itcData.section4A.find(r => r.srNo === '5.3')?.sgst || 0)
+          + (itcData.section4A.find(r => r.srNo === '5.4')?.sgst || 0)
+          + (itcData.section4A.find(r => r.srNo === '5.5')?.sgst || 0),
+    };
+
+    const total4AValues = {
+      igst: rows1To4Values.igst + total5Values.igst,
+      cgst: rows1To4Values.cgst + total5Values.cgst,
+      sgst: rows1To4Values.sgst + total5Values.sgst,
+    };
+
+    // Residential ratio for ineligible ITC calculation
+    const residentialRatio = residentialArea / totalArea;
+
+    // i) On ITC as per 4A = Total 4A × (Residential Area / Total Area)
+    const onITCAsPerA = {
+      igst: Math.round((total4AValues.igst * residentialRatio) * 100) / 100,
+      cgst: Math.round((total4AValues.cgst * residentialRatio) * 100) / 100,
+      sgst: Math.round((total4AValues.sgst * residentialRatio) * 100) / 100,
+    };
+
+    // Get (1) main value (editable by user)
+    const main1Row = itcData.section4B.find(r => r.srNo === '(1)' && r.particular.includes('Calculation of Ineligible ITC'));
+    const main1Val = main1Row || { igst: 0, cgst: 0, sgst: 0 };
+
+    // Get Previous Month Adjustment values (editable row)
+    const prevMonthAdjRow = itcData.section4B.find(r => r.particular.includes('Previous Month Adjustment'));
+    const prevMonthAdj = prevMonthAdjRow || { igst: 0, cgst: 0, sgst: 0 };
+
+    // ii) On Other reversal = (1) main - On ITC as per 4A - Previous Month Adjustment
+    const onOtherReversal = {
+      igst: Math.round((main1Val.igst - onITCAsPerA.igst - prevMonthAdj.igst) * 100) / 100,
+      cgst: Math.round((main1Val.cgst - onITCAsPerA.cgst - prevMonthAdj.cgst) * 100) / 100,
+      sgst: Math.round((main1Val.sgst - onITCAsPerA.sgst - prevMonthAdj.sgst) * 100) / 100,
+    };
+
+    return {
+      onITCAsPerA,
+      onOtherReversal,
+    };
+  }, [isPartialITCClient, commercialArea, residentialArea, itcData.section4A, itcData.section4B]);
 
   // Real-time subscription
   useEffect(() => {
@@ -636,14 +705,31 @@ const ITCSummaryPage: React.FC = () => {
     sgst: rows1To4.sgst + total5.sgst,
   };
 
-  // Total 4B = sum of all 4B rows (excluding header rows)
-  const total4B = itcData.section4B
-    .filter(row => !row.isHeader)
-    .reduce((acc, row) => ({
-      igst: acc.igst + row.igst,
-      cgst: acc.cgst + row.cgst,
-      sgst: acc.sgst + row.sgst,
-    }), { igst: 0, cgst: 0, sgst: 0 });
+  // Total 4B calculation differs for Partial ITC clients
+  // For Partial ITC: Total 4B = (1) main row + (2) Others rows (excluding sub-rows of (1))
+  const total4B = useMemo(() => {
+    if (isPartialITCClient) {
+      // For Partial ITC: (1) main + Others section (2B RECO + previous months)
+      const row1Main = itcData.section4B.find(r => r.srNo === '(1)' && r.particular.includes('Calculation of Ineligible ITC'));
+      const reversalRow = itcData.section4B.find(r => r.particular.includes('ITC Reversal for') && r.particular.includes('current month as per 2B RECO'));
+      const prevMonthsRow = itcData.section4B.find(r => r.particular.includes('ITC Reversal for') && r.particular.includes('previous months, if any'));
+      
+      return {
+        igst: (row1Main?.igst || 0) + (reversalRow?.igst || 0) + (prevMonthsRow?.igst || 0),
+        cgst: (row1Main?.cgst || 0) + (reversalRow?.cgst || 0) + (prevMonthsRow?.cgst || 0),
+        sgst: (row1Main?.sgst || 0) + (reversalRow?.sgst || 0) + (prevMonthsRow?.sgst || 0),
+      };
+    } else {
+      // For regular clients: sum all non-header rows
+      return itcData.section4B
+        .filter(row => !row.isHeader)
+        .reduce((acc, row) => ({
+          igst: acc.igst + row.igst,
+          cgst: acc.cgst + row.cgst,
+          sgst: acc.sgst + row.sgst,
+        }), { igst: 0, cgst: 0, sgst: 0 });
+    }
+  }, [itcData.section4B, isPartialITCClient]);
 
   // Net ITC (4C) = 4A - 4B
   const net4C = {
@@ -656,9 +742,23 @@ const ITCSummaryPage: React.FC = () => {
     .filter(r => r.srNo === '5.4' || r.srNo === '5.5')
     .reduce((acc, r) => acc + r.igst + r.cgst + r.sgst, 0);
 
-  const totalReversal = itcData.section4B
-    .filter(r => !r.isHeader)
-    .reduce((acc, r) => acc + r.igst + r.cgst + r.sgst, 0);
+  // Total Reversal for Partial ITC also needs special handling
+  const totalReversal = useMemo(() => {
+    if (isPartialITCClient) {
+      const row1Main = itcData.section4B.find(r => r.srNo === '(1)' && r.particular.includes('Calculation of Ineligible ITC'));
+      const reversalRow = itcData.section4B.find(r => r.particular.includes('ITC Reversal for') && r.particular.includes('current month as per 2B RECO'));
+      const prevMonthsRow = itcData.section4B.find(r => r.particular.includes('ITC Reversal for') && r.particular.includes('previous months, if any'));
+      
+      const sum = (row1Main?.igst || 0) + (row1Main?.cgst || 0) + (row1Main?.sgst || 0) +
+                  (reversalRow?.igst || 0) + (reversalRow?.cgst || 0) + (reversalRow?.sgst || 0) +
+                  (prevMonthsRow?.igst || 0) + (prevMonthsRow?.cgst || 0) + (prevMonthsRow?.sgst || 0);
+      return sum;
+    } else {
+      return itcData.section4B
+        .filter(r => !r.isHeader)
+        .reduce((acc, r) => acc + r.igst + r.cgst + r.sgst, 0);
+    }
+  }, [itcData.section4B, isPartialITCClient]);
 
   const formatNumber = (num: number): string => {
     // Handle -0 case by converting to 0
@@ -917,6 +1017,99 @@ const ITCSummaryPage: React.FC = () => {
                           </tr>
                         );
                       }
+
+                      // For Partial ITC: Use calculated values for auto-calculated rows
+                      if (isPartialITCClient && partialITCCalculatedValues) {
+                        // i) On ITC as per 4A - auto-calculated
+                        if (row.particular === 'i) On ITC as per 4A') {
+                          const vals = partialITCCalculatedValues.onITCAsPerA;
+                          return (
+                            <tr key={`4b-${idx}`} className="cell-locked">
+                              <td>{row.srNo}</td>
+                              <td className="flex items-center gap-2">
+                                {row.particular}
+                                <Badge variant="outline" className="text-xs flex items-center gap-1">
+                                  <Lock className="h-3 w-3" />
+                                  Auto-calculated
+                                </Badge>
+                              </td>
+                              <td className="text-right">{formatNumber(vals.igst)}</td>
+                              <td className="text-right">{formatNumber(vals.cgst)}</td>
+                              <td className="text-right">{formatNumber(vals.sgst)}</td>
+                              <td className="text-right font-medium">
+                                {formatNumber(vals.igst + vals.cgst + vals.sgst)}
+                              </td>
+                              <td>
+                                <Input
+                                  type="text"
+                                  value={row.reasons || ''}
+                                  onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
+                                  placeholder="Reason..."
+                                  className="h-8 text-sm"
+                                  disabled={isLocked}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        }
+                        // ii) On Other reversal - auto-calculated
+                        if (row.particular === 'ii) On Other reversal') {
+                          const vals = partialITCCalculatedValues.onOtherReversal;
+                          return (
+                            <tr key={`4b-${idx}`} className="cell-locked">
+                              <td>{row.srNo}</td>
+                              <td className="flex items-center gap-2">
+                                {row.particular}
+                                <Badge variant="outline" className="text-xs flex items-center gap-1">
+                                  <Lock className="h-3 w-3" />
+                                  Auto-calculated
+                                </Badge>
+                              </td>
+                              <td className="text-right">{formatNumber(vals.igst)}</td>
+                              <td className="text-right">{formatNumber(vals.cgst)}</td>
+                              <td className="text-right">{formatNumber(vals.sgst)}</td>
+                              <td className="text-right font-medium">
+                                {formatNumber(vals.igst + vals.cgst + vals.sgst)}
+                              </td>
+                              <td>
+                                <Input
+                                  type="text"
+                                  value={row.reasons || ''}
+                                  onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
+                                  placeholder="Reason..."
+                                  className="h-8 text-sm"
+                                  disabled={isLocked}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        }
+                        // (1) main row - make editable for Partial ITC
+                        if (row.srNo === '(1)' && row.particular.includes('Calculation of Ineligible ITC')) {
+                          return (
+                            <tr key={`4b-${idx}`}>
+                              <td>{row.srNo}</td>
+                              <td>{row.particular}</td>
+                              <td className="text-right">{renderEditableCell('section4B', idx, row, 'igst')}</td>
+                              <td className="text-right">{renderEditableCell('section4B', idx, row, 'cgst')}</td>
+                              <td className="text-right">{renderEditableCell('section4B', idx, row, 'sgst')}</td>
+                              <td className="text-right font-medium">
+                                {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
+                              </td>
+                              <td>
+                                <Input
+                                  type="text"
+                                  value={row.reasons || ''}
+                                  onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
+                                  placeholder="Reason..."
+                                  className="h-8 text-sm"
+                                  disabled={isLocked}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        }
+                      }
                       
                       return (
                         <tr key={`4b-${idx}`} className={row.isAutoLinked ? 'cell-locked' : ''}>
@@ -978,60 +1171,67 @@ const ITCSummaryPage: React.FC = () => {
                     <tr className="bg-primary/5">
                       <td colSpan={7} className="font-semibold">4 (D) Other Details</td>
                     </tr>
-                    {itcData.section4D.map((row, idx) => {
-                      // Special handling for Commercial/Residential Area rows (for Partial ITC clients)
-                      const isAreaRow = row.particular === 'Commercial Area' || 
-                                        row.particular === 'Residential Area' || 
-                                        row.particular === 'Total';
-                      
-                      if (isAreaRow) {
-                        return (
-                          <tr key={`4d-${idx}`} className="bg-muted/20">
-                            <td></td>
-                            <td className="pl-8">{row.particular}</td>
-                            <td className="text-right">-</td>
-                            <td className="text-right">{row.cgst.toLocaleString('en-IN')}</td>
-                            <td className="text-right">-</td>
-                            <td className="text-right">{row.cgst.toLocaleString('en-IN')}</td>
-                            <td></td>
-                          </tr>
-                        );
-                      }
-                      
-                      return (
-                        <tr key={`4d-${idx}`} className={row.isAutoLinked ? 'cell-locked' : ''}>
-                          <td>{row.srNo}</td>
-                          <td className="flex items-center gap-2">
-                            {row.particular}
-                            {row.isAutoLinked && (
-                              <Badge variant="outline" className="text-xs flex items-center gap-1">
-                                <Lock className="h-3 w-3" />
-                                Auto-linked
-                              </Badge>
-                            )}
-                          </td>
-                          <td className="text-right">{renderEditableCell('section4D', idx, row, 'igst')}</td>
-                          <td className="text-right">{renderEditableCell('section4D', idx, row, 'cgst')}</td>
-                          <td className="text-right">{renderEditableCell('section4D', idx, row, 'sgst')}</td>
-                          <td className="text-right font-medium">
-                            {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
-                          </td>
-                          <td>
-                            <Input
-                              type="text"
-                              value={row.reasons || ''}
-                              onChange={(e) => handleReasonsChange('section4D', idx, e.target.value)}
-                              placeholder="Reason..."
-                              className="h-8 text-sm"
-                              disabled={isLocked}
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {itcData.section4D.map((row, idx) => (
+                      <tr key={`4d-${idx}`} className={row.isAutoLinked ? 'cell-locked' : ''}>
+                        <td>{row.srNo}</td>
+                        <td className="flex items-center gap-2">
+                          {row.particular}
+                          {row.isAutoLinked && (
+                            <Badge variant="outline" className="text-xs flex items-center gap-1">
+                              <Lock className="h-3 w-3" />
+                              Auto-linked
+                            </Badge>
+                          )}
+                        </td>
+                        <td className="text-right">{renderEditableCell('section4D', idx, row, 'igst')}</td>
+                        <td className="text-right">{renderEditableCell('section4D', idx, row, 'cgst')}</td>
+                        <td className="text-right">{renderEditableCell('section4D', idx, row, 'sgst')}</td>
+                        <td className="text-right font-medium">
+                          {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
+                        </td>
+                        <td>
+                          <Input
+                            type="text"
+                            value={row.reasons || ''}
+                            onChange={(e) => handleReasonsChange('section4D', idx, e.target.value)}
+                            placeholder="Reason..."
+                            className="h-8 text-sm"
+                            disabled={isLocked}
+                          />
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
+
+              {/* Area Breakdown Table for Partial ITC Clients */}
+              {isPartialITCClient && (
+                <div className="mt-6 flex justify-end">
+                  <table className="border-collapse border border-border">
+                    <tbody>
+                      <tr className="bg-muted/30">
+                        <td className="border border-border px-4 py-2 font-medium">Commercial Area</td>
+                        <td className="border border-border px-4 py-2 text-right text-primary font-medium">
+                          {commercialArea.toLocaleString('en-IN')}
+                        </td>
+                      </tr>
+                      <tr className="bg-muted/30">
+                        <td className="border border-border px-4 py-2 font-medium">Residential Area</td>
+                        <td className="border border-border px-4 py-2 text-right text-primary font-medium">
+                          {residentialArea.toLocaleString('en-IN')}
+                        </td>
+                      </tr>
+                      <tr className="bg-muted/50 font-semibold">
+                        <td className="border border-border px-4 py-2">Total</td>
+                        <td className="border border-border px-4 py-2 text-right text-primary">
+                          {(commercialArea + residentialArea).toLocaleString('en-IN')}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </CardContent>
           </Card>
         </>
