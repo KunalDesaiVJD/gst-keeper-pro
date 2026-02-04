@@ -404,14 +404,18 @@ const ITCSummaryPage: React.FC = () => {
   }, [fetchITCSummary, fetchRecoData, fetchRCMTotals]);
 
   // Update auto-linked rows when reversal/reclaim/RCM data changes
+  // Update auto-linked rows when reversal/reclaim/RCM data changes
   useEffect(() => {
+    console.log('Auto-linking RCM totals:', rcmTotals);
+    
     setItcData(prev => {
       const newData = { ...prev };
       
       // Update Section 4A rows
       newData.section4A = prev.section4A.map(row => {
-        // Row (3) RCM ITC - auto-linked from RCM Summary
-        if (row.srNo === '(3)') {
+        // Row (3) RCM ITC - auto-linked from RCM Summary for ALL client types
+        if (row.srNo === '(3)' && row.particular.includes('RCM')) {
+          console.log('Updating RCM row with:', rcmTotals);
           return { 
             ...row, 
             igst: rcmTotals.igst, 
@@ -515,15 +519,12 @@ const ITCSummaryPage: React.FC = () => {
     const main1Row = itcData.section4B.find(r => r.srNo === '(1)' && r.particular.includes('Calculation of Ineligible ITC'));
     const main1Val = main1Row || { igst: 0, cgst: 0, sgst: 0 };
 
-    // Get Previous Month Adjustment values (editable row)
-    const prevMonthAdjRow = itcData.section4B.find(r => r.particular.includes('Previous Month Adjustment'));
-    const prevMonthAdj = prevMonthAdjRow || { igst: 0, cgst: 0, sgst: 0 };
-
-    // ii) On Other reversal = (1) main - On ITC as per 4A - Previous Month Adjustment
+    // ii) On Other reversal = (1) main value - i) On ITC as per 4A
+    // Per Excel: Row 27 shows On Other reversal = (1) - i)
     const onOtherReversal = {
-      igst: Math.round((main1Val.igst - onITCAsPerA.igst - prevMonthAdj.igst) * 100) / 100,
-      cgst: Math.round((main1Val.cgst - onITCAsPerA.cgst - prevMonthAdj.cgst) * 100) / 100,
-      sgst: Math.round((main1Val.sgst - onITCAsPerA.sgst - prevMonthAdj.sgst) * 100) / 100,
+      igst: Math.round((main1Val.igst - onITCAsPerA.igst) * 100) / 100,
+      cgst: Math.round((main1Val.cgst - onITCAsPerA.cgst) * 100) / 100,
+      sgst: Math.round((main1Val.sgst - onITCAsPerA.sgst) * 100) / 100,
     };
 
     return {
