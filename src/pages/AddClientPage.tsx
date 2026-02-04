@@ -34,6 +34,11 @@ const AddClientPage: React.FC = () => {
     cancellationDate: '', // Optional
     gstUserId: '', // GST Portal User ID
     gstPassword: '', // GST Portal Password
+    // Builder bifurcation for Regular type
+    regularSubType: '' as '' | 'Builder' | 'Normal',
+    builderItcType: '' as '' | 'NO_ITC' | 'CLAIM_ITC' | 'PARTIAL_ITC',
+    commercialArea: '',
+    residentialArea: '',
   });
 
   const [clientCredentials, setClientCredentials] = useState<{ userId: string; password: string } | null>(null);
@@ -85,6 +90,11 @@ const AddClientPage: React.FC = () => {
       ...prev,
       registrationType: value,
       selectedReturns: [], // Reset returns when type changes
+      // Reset builder-related fields when registration type changes
+      regularSubType: value === 'Regular' ? prev.regularSubType : '',
+      builderItcType: value === 'Regular' ? prev.builderItcType : '',
+      commercialArea: '',
+      residentialArea: '',
     }));
   };
 
@@ -109,7 +119,8 @@ const AddClientPage: React.FC = () => {
       newErrors.gstin = 'GSTIN is required';
     } else if (formData.gstin.length !== 15) {
       newErrors.gstin = 'GSTIN must be exactly 15 characters';
-    } else if (!validateGSTIN(formData.gstin)) {
+    } else if (formData.registrationType !== 'Tax Deductor' && !validateGSTIN(formData.gstin)) {
+      // Skip GSTIN format validation for Tax Deductor
       newErrors.gstin = 'Invalid GSTIN format';
     }
 
@@ -141,6 +152,24 @@ const AddClientPage: React.FC = () => {
 
     if (formData.selectedReturns.length === 0) {
       newErrors.returns = 'Select at least one return type';
+    }
+
+    // Validate builder fields for Regular type
+    if (formData.registrationType === 'Regular' && !formData.regularSubType) {
+      newErrors.regularSubType = 'Please select Builder or Normal';
+    }
+
+    if (formData.regularSubType === 'Builder' && !formData.builderItcType) {
+      newErrors.builderItcType = 'Please select ITC type';
+    }
+
+    if (formData.builderItcType === 'PARTIAL_ITC') {
+      if (!formData.commercialArea || parseFloat(formData.commercialArea) === 0) {
+        newErrors.commercialArea = 'Commercial area is required for Partial ITC';
+      }
+      if (!formData.residentialArea || parseFloat(formData.residentialArea) === 0) {
+        newErrors.residentialArea = 'Residential area is required for Partial ITC';
+      }
     }
 
     setErrors(newErrors);
@@ -182,6 +211,11 @@ const AddClientPage: React.FC = () => {
           gst_password: formData.gstPassword || null,
           client_password: formData.gstin, // Set initial password to GSTIN
           is_first_login: true, // Force password change on first login
+          // Builder bifurcation fields
+          regular_sub_type: formData.registrationType === 'Regular' ? formData.regularSubType : null,
+          builder_itc_type: formData.regularSubType === 'Builder' ? formData.builderItcType : null,
+          commercial_area: formData.builderItcType === 'PARTIAL_ITC' ? parseFloat(formData.commercialArea) || 0 : 0,
+          residential_area: formData.builderItcType === 'PARTIAL_ITC' ? parseFloat(formData.residentialArea) || 0 : 0,
         }])
         .select()
         .single();
@@ -350,6 +384,132 @@ const AddClientPage: React.FC = () => {
               </Select>
               {errors.registrationType && <p className="text-sm text-destructive">{errors.registrationType}</p>}
             </div>
+
+            {/* Builder/Normal Sub-Type for Regular Registration */}
+            {formData.registrationType === 'Regular' && (
+              <div className="space-y-4 border rounded-lg p-4 bg-muted/30">
+                <div className="space-y-2">
+                  <Label>Regular Type *</Label>
+                  <div className="flex gap-4">
+                    <div
+                      className={`flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                        formData.regularSubType === 'Builder' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                      }`}
+                      onClick={() => setFormData(prev => ({
+                        ...prev,
+                        regularSubType: 'Builder',
+                        builderItcType: '',
+                        commercialArea: '',
+                        residentialArea: ''
+                      }))}
+                    >
+                      <Checkbox checked={formData.regularSubType === 'Builder'} />
+                      <Label className="cursor-pointer font-normal">Builder</Label>
+                    </div>
+                    <div
+                      className={`flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                        formData.regularSubType === 'Normal' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                      }`}
+                      onClick={() => setFormData(prev => ({
+                        ...prev,
+                        regularSubType: 'Normal',
+                        builderItcType: '',
+                        commercialArea: '',
+                        residentialArea: ''
+                      }))}
+                    >
+                      <Checkbox checked={formData.regularSubType === 'Normal'} />
+                      <Label className="cursor-pointer font-normal">Normal</Label>
+                    </div>
+                  </div>
+                  {errors.regularSubType && <p className="text-sm text-destructive">{errors.regularSubType}</p>}
+                </div>
+
+                {/* Builder ITC Type Options */}
+                {formData.regularSubType === 'Builder' && (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label>ITC Type *</Label>
+                      <div className="flex gap-4 flex-wrap">
+                        <div
+                          className={`flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                            formData.builderItcType === 'NO_ITC' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                          }`}
+                          onClick={() => setFormData(prev => ({
+                            ...prev,
+                            builderItcType: 'NO_ITC',
+                            commercialArea: '',
+                            residentialArea: ''
+                          }))}
+                        >
+                          <Checkbox checked={formData.builderItcType === 'NO_ITC'} />
+                          <Label className="cursor-pointer font-normal">NO ITC</Label>
+                        </div>
+                        <div
+                          className={`flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                            formData.builderItcType === 'CLAIM_ITC' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                          }`}
+                          onClick={() => setFormData(prev => ({
+                            ...prev,
+                            builderItcType: 'CLAIM_ITC',
+                            commercialArea: '',
+                            residentialArea: ''
+                          }))}
+                        >
+                          <Checkbox checked={formData.builderItcType === 'CLAIM_ITC'} />
+                          <Label className="cursor-pointer font-normal">CLAIM ITC</Label>
+                        </div>
+                        <div
+                          className={`flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                            formData.builderItcType === 'PARTIAL_ITC' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                          }`}
+                          onClick={() => setFormData(prev => ({ ...prev, builderItcType: 'PARTIAL_ITC' }))}
+                        >
+                          <Checkbox checked={formData.builderItcType === 'PARTIAL_ITC'} />
+                          <Label className="cursor-pointer font-normal">PARTIAL ITC</Label>
+                        </div>
+                      </div>
+                      {errors.builderItcType && <p className="text-sm text-destructive">{errors.builderItcType}</p>}
+                    </div>
+
+                    {/* Commercial and Residential Area for Partial ITC */}
+                    {formData.builderItcType === 'PARTIAL_ITC' && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="commercialArea">Commercial Area *</Label>
+                          <Input
+                            id="commercialArea"
+                            type="number"
+                            step="0.01"
+                            value={formData.commercialArea}
+                            onChange={(e) => setFormData(prev => ({ ...prev, commercialArea: e.target.value }))}
+                            placeholder="e.g., 7863.59"
+                            className={`[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${errors.commercialArea ? 'border-destructive' : ''}`}
+                          />
+                          {errors.commercialArea && <p className="text-sm text-destructive">{errors.commercialArea}</p>}
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="residentialArea">Residential Area *</Label>
+                          <Input
+                            id="residentialArea"
+                            type="number"
+                            step="0.01"
+                            value={formData.residentialArea}
+                            onChange={(e) => setFormData(prev => ({ ...prev, residentialArea: e.target.value }))}
+                            placeholder="e.g., 18928.52"
+                            className={`[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${errors.residentialArea ? 'border-destructive' : ''}`}
+                          />
+                          {errors.residentialArea && <p className="text-sm text-destructive">{errors.residentialArea}</p>}
+                        </div>
+                        <p className="text-xs text-muted-foreground md:col-span-2">
+                          These values will appear in the ITC Summary for ineligible ITC calculation under Rule 38, 42 & 43.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Return Types - Conditional based on Registration Type */}
             {formData.registrationType && (
