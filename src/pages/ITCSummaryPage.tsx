@@ -39,6 +39,10 @@ interface Client {
   name: string;
   gstin: string;
   registration_type?: string;
+  regular_sub_type?: string | null;
+  builder_itc_type?: string | null;
+  commercial_area?: number | null;
+  residential_area?: number | null;
 }
 
 const getDefaultITCData = (): ITCData => ({
@@ -69,6 +73,41 @@ const getDefaultITCData = (): ITCData => ({
   ],
 });
 
+// Partial ITC Data structure for Builder clients with PARTIAL_ITC
+const getPartialITCData = (commercialArea: number, residentialArea: number): ITCData => ({
+  section4A: [
+    { srNo: '(1)', particular: 'Import of Goods', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '(2)', particular: 'Import of Services', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '(3)', particular: 'RCM ITC', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
+    { srNo: '(4)', particular: 'Inward Supplies from ISD', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '(5)', particular: 'All other ITC', igst: 0, cgst: 0, sgst: 0, isHeader: true, reasons: '' },
+    { srNo: '5.1', particular: 'ITC for the Month', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '5.2', particular: 'ITC wrongly adjusted', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '5.3', particular: 'Debit Note', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '5.4', particular: 'Reclaim of ITC Reversed for the Previous months', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
+    { srNo: '5.5', particular: 'Reclaim of ITC Reversed due to 180 days rule', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+  ],
+  section4B: [
+    { srNo: '(1)', particular: 'Calculation of Ineligible ITC under Rule - 38, 42 & 43, and Section 17(5)', igst: 0, cgst: 0, sgst: 0, editable: true, isHeader: true, reasons: '' },
+    { srNo: '', particular: 'i) On ITC as per 4A', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '', particular: 'ii) Previous Month Adjustment', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '', particular: 'ii) On Other reversal', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '(2)', particular: 'Others', igst: 0, cgst: 0, sgst: 0, isHeader: true, reasons: '' },
+    { srNo: '', particular: 'ITC Reversal for the current month as per 2B RECO', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
+    { srNo: '', particular: 'ITC Reversal for the previous months, if any.', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+  ],
+  section4D: [
+    { srNo: '(1)', particular: 'ITC reclaimed which was reversed under Table 4(B)(2) in earlier tax period *', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
+    { srNo: '1.1', particular: 'Reclaim of ITC Reversed for the Previous months', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
+    { srNo: '1.2', particular: 'Reclaim of ITC Reversed due to 180 days rule', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '(2)', particular: 'Ineligible ITC under section 16(4) & ITC restricted due to PoS rules *', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    // Area breakdown rows - values come from client data (non-editable)
+    { srNo: '', particular: 'Commercial Area', igst: 0, cgst: commercialArea, sgst: 0, reasons: '' },
+    { srNo: '', particular: 'Residential Area', igst: 0, cgst: residentialArea, sgst: 0, reasons: '' },
+    { srNo: '', particular: 'Total', igst: 0, cgst: commercialArea + residentialArea, sgst: 0, reasons: '' },
+  ],
+});
+
 interface ReversalTotals {
   igst: number;
   cgst: number;
@@ -94,6 +133,11 @@ const ITCSummaryPage: React.FC = () => {
   const [itcData, setItcData] = useState<ITCData>(getDefaultITCData());
 
   const selectedClientData = clients.find(c => c.id === selectedClient);
+
+  // Check if client is a Partial ITC Builder client
+  const isPartialITCClient = selectedClientData?.builder_itc_type === 'PARTIAL_ITC';
+  const commercialArea = selectedClientData?.commercial_area || 0;
+  const residentialArea = selectedClientData?.residential_area || 0;
 
   // Check if client requires quarterly months only (IFF or Composition)
   const isQuarterlyClient = selectedClientData?.registration_type === 'IFF' || selectedClientData?.registration_type === 'Composition';
@@ -133,7 +177,7 @@ const ITCSummaryPage: React.FC = () => {
       console.log('Fetching clients from Supabase...');
       let query = supabase
         .from('clients')
-        .select('id, name, gstin, registration_type')
+        .select('id, name, gstin, registration_type, regular_sub_type, builder_itc_type, commercial_area, residential_area')
         .order('name');
       
       // If user is a client, match by their client id (user.id is client's id for client login)
@@ -265,6 +309,12 @@ const ITCSummaryPage: React.FC = () => {
   const fetchITCSummary = useCallback(async () => {
     if (!selectedClient || !selectedMonth) return;
 
+    // Get client data to check for Partial ITC type
+    const clientData = clients.find(c => c.id === selectedClient);
+    const isPartial = clientData?.builder_itc_type === 'PARTIAL_ITC';
+    const commArea = clientData?.commercial_area || 0;
+    const resArea = clientData?.residential_area || 0;
+
     const { data, error } = await supabase
       .from('itc_summaries')
       .select('*')
@@ -300,9 +350,14 @@ const ITCSummaryPage: React.FC = () => {
       setItcSummaryId(null);
       // Even if no ITC summary record exists, lock if GSTR-3B is filed
       setIsLocked(isFiledLocked || false);
-      setItcData(getDefaultITCData());
+      // Use appropriate ITC structure based on client type
+      if (isPartial) {
+        setItcData(getPartialITCData(commArea, resArea));
+      } else {
+        setItcData(getDefaultITCData());
+      }
     }
-  }, [selectedClient, selectedMonth]);
+  }, [selectedClient, selectedMonth, clients]);
 
   // Fetch RCM totals for selected client and month
   const fetchRCMTotals = useCallback(async () => {
@@ -378,8 +433,9 @@ const ITCSummaryPage: React.FC = () => {
       });
       
       // Update Section 4B row "ITC Reversal for current month as per 2B RECO" with reversal data
+      // Match both regular and Partial ITC versions of the text
       newData.section4B = prev.section4B.map(row => {
-        if (row.particular === 'ITC Reversal for current month as per 2B RECO') {
+        if (row.particular.includes('ITC Reversal for') && row.particular.includes('current month as per 2B RECO')) {
           return { 
             ...row, 
             igst: reversalFromReco.igst, 
@@ -580,12 +636,14 @@ const ITCSummaryPage: React.FC = () => {
     sgst: rows1To4.sgst + total5.sgst,
   };
 
-  // Total 4B = sum of all 4B rows
-  const total4B = itcData.section4B.reduce((acc, row) => ({
-    igst: acc.igst + row.igst,
-    cgst: acc.cgst + row.cgst,
-    sgst: acc.sgst + row.sgst,
-  }), { igst: 0, cgst: 0, sgst: 0 });
+  // Total 4B = sum of all 4B rows (excluding header rows)
+  const total4B = itcData.section4B
+    .filter(row => !row.isHeader)
+    .reduce((acc, row) => ({
+      igst: acc.igst + row.igst,
+      cgst: acc.cgst + row.cgst,
+      sgst: acc.sgst + row.sgst,
+    }), { igst: 0, cgst: 0, sgst: 0 });
 
   // Net ITC (4C) = 4A - 4B
   const net4C = {
@@ -599,6 +657,7 @@ const ITCSummaryPage: React.FC = () => {
     .reduce((acc, r) => acc + r.igst + r.cgst + r.sgst, 0);
 
   const totalReversal = itcData.section4B
+    .filter(r => !r.isHeader)
     .reduce((acc, r) => acc + r.igst + r.cgst + r.sgst, 0);
 
   const formatNumber = (num: number): string => {
@@ -848,36 +907,48 @@ const ITCSummaryPage: React.FC = () => {
                     <tr className="bg-primary/5">
                       <td colSpan={7} className="font-semibold">4 (B) ITC Reversed</td>
                     </tr>
-                    {itcData.section4B.map((row, idx) => (
-                      <tr key={`4b-${idx}`} className={row.isAutoLinked ? 'cell-locked' : ''}>
-                        <td>{row.srNo}</td>
-                        <td className="flex items-center gap-2">
-                          {row.particular}
-                          {row.isAutoLinked && (
-                            <Badge variant="outline" className="text-xs flex items-center gap-1">
-                              <Lock className="h-3 w-3" />
-                              Auto-linked
-                            </Badge>
-                          )}
-                        </td>
-                        <td className="text-right">{renderEditableCell('section4B', idx, row, 'igst')}</td>
-                        <td className="text-right">{renderEditableCell('section4B', idx, row, 'cgst')}</td>
-                        <td className="text-right">{renderEditableCell('section4B', idx, row, 'sgst')}</td>
-                        <td className="text-right font-medium">
-                          {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
-                        </td>
-                        <td>
-                          <Input
-                            type="text"
-                            value={row.reasons || ''}
-                            onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
-                            placeholder="Reason..."
-                            className="h-8 text-sm"
-                            disabled={isLocked}
-                          />
-                        </td>
-                      </tr>
-                    ))}
+                    {itcData.section4B.map((row, idx) => {
+                      // Handle header rows differently (for Partial ITC structure)
+                      if (row.isHeader) {
+                        return (
+                          <tr key={`4b-${idx}`} className="bg-muted/20 font-medium">
+                            <td>{row.srNo}</td>
+                            <td colSpan={6}>{row.particular}</td>
+                          </tr>
+                        );
+                      }
+                      
+                      return (
+                        <tr key={`4b-${idx}`} className={row.isAutoLinked ? 'cell-locked' : ''}>
+                          <td>{row.srNo}</td>
+                          <td className="flex items-center gap-2">
+                            {row.particular}
+                            {row.isAutoLinked && (
+                              <Badge variant="outline" className="text-xs flex items-center gap-1">
+                                <Lock className="h-3 w-3" />
+                                Auto-linked
+                              </Badge>
+                            )}
+                          </td>
+                          <td className="text-right">{renderEditableCell('section4B', idx, row, 'igst')}</td>
+                          <td className="text-right">{renderEditableCell('section4B', idx, row, 'cgst')}</td>
+                          <td className="text-right">{renderEditableCell('section4B', idx, row, 'sgst')}</td>
+                          <td className="text-right font-medium">
+                            {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
+                          </td>
+                          <td>
+                            <Input
+                              type="text"
+                              value={row.reasons || ''}
+                              onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
+                              placeholder="Reason..."
+                              className="h-8 text-sm"
+                              disabled={isLocked}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
                     <tr className="bg-muted/50 font-semibold">
                       <td></td>
                       <td>Total (4B)</td>
@@ -907,36 +978,57 @@ const ITCSummaryPage: React.FC = () => {
                     <tr className="bg-primary/5">
                       <td colSpan={7} className="font-semibold">4 (D) Other Details</td>
                     </tr>
-                    {itcData.section4D.map((row, idx) => (
-                      <tr key={`4d-${idx}`} className={row.isAutoLinked ? 'cell-locked' : ''}>
-                        <td>{row.srNo}</td>
-                        <td className="flex items-center gap-2">
-                          {row.particular}
-                          {row.isAutoLinked && (
-                            <Badge variant="outline" className="text-xs flex items-center gap-1">
-                              <Lock className="h-3 w-3" />
-                              Auto-linked
-                            </Badge>
-                          )}
-                        </td>
-                        <td className="text-right">{renderEditableCell('section4D', idx, row, 'igst')}</td>
-                        <td className="text-right">{renderEditableCell('section4D', idx, row, 'cgst')}</td>
-                        <td className="text-right">{renderEditableCell('section4D', idx, row, 'sgst')}</td>
-                        <td className="text-right font-medium">
-                          {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
-                        </td>
-                        <td>
-                          <Input
-                            type="text"
-                            value={row.reasons || ''}
-                            onChange={(e) => handleReasonsChange('section4D', idx, e.target.value)}
-                            placeholder="Reason..."
-                            className="h-8 text-sm"
-                            disabled={isLocked}
-                          />
-                        </td>
-                      </tr>
-                    ))}
+                    {itcData.section4D.map((row, idx) => {
+                      // Special handling for Commercial/Residential Area rows (for Partial ITC clients)
+                      const isAreaRow = row.particular === 'Commercial Area' || 
+                                        row.particular === 'Residential Area' || 
+                                        row.particular === 'Total';
+                      
+                      if (isAreaRow) {
+                        return (
+                          <tr key={`4d-${idx}`} className="bg-muted/20">
+                            <td></td>
+                            <td className="pl-8">{row.particular}</td>
+                            <td className="text-right">-</td>
+                            <td className="text-right">{row.cgst.toLocaleString('en-IN')}</td>
+                            <td className="text-right">-</td>
+                            <td className="text-right">{row.cgst.toLocaleString('en-IN')}</td>
+                            <td></td>
+                          </tr>
+                        );
+                      }
+                      
+                      return (
+                        <tr key={`4d-${idx}`} className={row.isAutoLinked ? 'cell-locked' : ''}>
+                          <td>{row.srNo}</td>
+                          <td className="flex items-center gap-2">
+                            {row.particular}
+                            {row.isAutoLinked && (
+                              <Badge variant="outline" className="text-xs flex items-center gap-1">
+                                <Lock className="h-3 w-3" />
+                                Auto-linked
+                              </Badge>
+                            )}
+                          </td>
+                          <td className="text-right">{renderEditableCell('section4D', idx, row, 'igst')}</td>
+                          <td className="text-right">{renderEditableCell('section4D', idx, row, 'cgst')}</td>
+                          <td className="text-right">{renderEditableCell('section4D', idx, row, 'sgst')}</td>
+                          <td className="text-right font-medium">
+                            {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
+                          </td>
+                          <td>
+                            <Input
+                              type="text"
+                              value={row.reasons || ''}
+                              onChange={(e) => handleReasonsChange('section4D', idx, e.target.value)}
+                              placeholder="Reason..."
+                              className="h-8 text-sm"
+                              disabled={isLocked}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

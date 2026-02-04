@@ -159,9 +159,11 @@ export type Database = {
       clients: {
         Row: {
           assigned_accountant: string | null
+          builder_itc_type: string | null
           cancellation_date: string | null
           client_password: string | null
           client_user_id: string | null
+          commercial_area: number | null
           created_at: string | null
           created_by: string | null
           email: string | null
@@ -174,14 +176,18 @@ export type Database = {
           name: string
           registration_date: string
           registration_type: Database["public"]["Enums"]["registration_type"]
+          regular_sub_type: string | null
+          residential_area: number | null
           selected_returns: Database["public"]["Enums"]["return_type"][] | null
           updated_at: string | null
         }
         Insert: {
           assigned_accountant?: string | null
+          builder_itc_type?: string | null
           cancellation_date?: string | null
           client_password?: string | null
           client_user_id?: string | null
+          commercial_area?: number | null
           created_at?: string | null
           created_by?: string | null
           email?: string | null
@@ -194,14 +200,18 @@ export type Database = {
           name: string
           registration_date: string
           registration_type?: Database["public"]["Enums"]["registration_type"]
+          regular_sub_type?: string | null
+          residential_area?: number | null
           selected_returns?: Database["public"]["Enums"]["return_type"][] | null
           updated_at?: string | null
         }
         Update: {
           assigned_accountant?: string | null
+          builder_itc_type?: string | null
           cancellation_date?: string | null
           client_password?: string | null
           client_user_id?: string | null
+          commercial_area?: number | null
           created_at?: string | null
           created_by?: string | null
           email?: string | null
@@ -214,6 +224,8 @@ export type Database = {
           name?: string
           registration_date?: string
           registration_type?: Database["public"]["Enums"]["registration_type"]
+          regular_sub_type?: string | null
+          residential_area?: number | null
           selected_returns?: Database["public"]["Enums"]["return_type"][] | null
           updated_at?: string | null
         }
