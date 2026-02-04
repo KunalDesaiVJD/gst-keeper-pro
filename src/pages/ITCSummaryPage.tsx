@@ -74,6 +74,12 @@ const getDefaultITCData = (): ITCData => ({
 });
 
 // Partial ITC Data structure for Builder clients with PARTIAL_ITC
+// FORMULAS as per Excel:
+// - 4(B)(1) = SUM(i + ii + iii) - AUTO-CALCULATED
+// - i) On ITC as per 4A = Total 4A × (Residential / Total Area) - AUTO-CALCULATED
+// - ii) Previous Month Adjustment - EDITABLE
+// - iii) On Other reversal - EDITABLE (user enters this value)
+// - 4(B)(2) = SUM of sub-rows - AUTO-CALCULATED
 const getPartialITCData = (): ITCData => ({
   section4A: [
     { srNo: '(1)', particular: 'Import of Goods', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
@@ -88,15 +94,16 @@ const getPartialITCData = (): ITCData => ({
     { srNo: '5.5', particular: 'Reclaim of ITC Reversed due to 180 days rule', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
   ],
   section4B: [
-    // Row (1) - EDITABLE - user enters the main value
-    { srNo: '(1)', particular: 'Calculation of Ineligible ITC under Rule - 38, 42 & 43, and Section 17(5)', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    // Row (1) = SUM(i + ii + iii) - AUTO-CALCULATED (not editable)
+    { srNo: '(1)', particular: 'Calculation of Ineligible ITC under Rule - 38, 42 & 43, and Section 17(5)', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
     // i) On ITC as per 4A = Total 4A × (Residential Area / Total Area) - AUTO-CALCULATED
     { srNo: '', particular: 'i) On ITC as per 4A', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
-    // ii) Previous Month Adjustment - editable
+    // ii) Previous Month Adjustment - EDITABLE
     { srNo: '', particular: 'ii) Previous Month Adjustment', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
-    // ii) On Other reversal = Row (1) - i) On ITC as per 4A - ii) Previous Month - AUTO-CALCULATED
-    { srNo: '', particular: 'ii) On Other reversal', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
-    { srNo: '(2)', particular: 'Others', igst: 0, cgst: 0, sgst: 0, isHeader: true, reasons: '' },
+    // iii) On Other reversal - EDITABLE (user enters this value)
+    { srNo: '', particular: 'iii) On Other reversal', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    // Row (2) = SUM of sub-rows - AUTO-CALCULATED (isHeader marks it as a total row)
+    { srNo: '(2)', particular: 'Others', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
     { srNo: '', particular: 'ITC Reversal for the current month as per 2B RECO', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
     { srNo: '', particular: 'ITC Reversal for the previous months, if any.', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
   ],
@@ -472,6 +479,12 @@ const ITCSummaryPage: React.FC = () => {
   }, [reversalFromReco, reclaimFromReco, rcmTotals, dataLoadVersion]);
 
   // Calculate Partial ITC formula values (used in rendering)
+  // FORMULAS as per Excel:
+  // - 4(B)(1) = i) + ii) + iii) - AUTO-CALCULATED SUM
+  // - i) On ITC as per 4A = Total 4A × (Residential / Total Area) - AUTO-CALCULATED
+  // - ii) Previous Month Adjustment - EDITABLE
+  // - iii) On Other reversal - EDITABLE
+  // - 4(B)(2) = SUM of sub-rows - AUTO-CALCULATED
   const partialITCCalculatedValues = useMemo(() => {
     if (!isPartialITCClient) return null;
     
@@ -519,7 +532,7 @@ const ITCSummaryPage: React.FC = () => {
       sgst: Math.round((total4AValues.sgst * residentialRatio) * 100) / 100,
     };
 
-    // Get ii) Previous Month Adjustment values (editable row)
+    // ii) Previous Month Adjustment - EDITABLE (get from data)
     const prevMonthAdjRow = itcData.section4B.find(r => r.particular.includes('Previous Month Adjustment'));
     const prevMonthAdj = {
       igst: prevMonthAdjRow?.igst || 0,
@@ -527,34 +540,46 @@ const ITCSummaryPage: React.FC = () => {
       sgst: prevMonthAdjRow?.sgst || 0,
     };
 
-    // Get Row (1) value - this is the EDITABLE main row entered by user
-    const main1Row = itcData.section4B.find(r => r.srNo === '(1)' && r.particular.includes('Ineligible ITC'));
-    const main1Value = {
-      igst: main1Row?.igst || 0,
-      cgst: main1Row?.cgst || 0,
-      sgst: main1Row?.sgst || 0,
+    // iii) On Other reversal - EDITABLE (get from data)
+    const onOtherReversalRow = itcData.section4B.find(r => r.particular.includes('On Other reversal'));
+    const onOtherReversal = {
+      igst: onOtherReversalRow?.igst || 0,
+      cgst: onOtherReversalRow?.cgst || 0,
+      sgst: onOtherReversalRow?.sgst || 0,
     };
 
-    // ii) On Other reversal = Row (1) - i) On ITC as per 4A - ii) Previous Month Adjustment - AUTO-CALCULATED
-    const onOtherReversal = {
-      igst: Math.round((main1Value.igst - onITCAsPerA.igst - prevMonthAdj.igst) * 100) / 100,
-      cgst: Math.round((main1Value.cgst - onITCAsPerA.cgst - prevMonthAdj.cgst) * 100) / 100,
-      sgst: Math.round((main1Value.sgst - onITCAsPerA.sgst - prevMonthAdj.sgst) * 100) / 100,
+    // 4(B)(1) = SUM(i + ii + iii) - AUTO-CALCULATED
+    const main1Calculated = {
+      igst: Math.round((onITCAsPerA.igst + prevMonthAdj.igst + onOtherReversal.igst) * 100) / 100,
+      cgst: Math.round((onITCAsPerA.cgst + prevMonthAdj.cgst + onOtherReversal.cgst) * 100) / 100,
+      sgst: Math.round((onITCAsPerA.sgst + prevMonthAdj.sgst + onOtherReversal.sgst) * 100) / 100,
+    };
+
+    // 4(B)(2) = SUM of sub-rows (ITC Reversal current month + previous months) - AUTO-CALCULATED
+    const recoReversalRow = itcData.section4B.find(r => r.particular.includes('current month as per 2B RECO'));
+    const prevMonthsReversalRow = itcData.section4B.find(r => r.particular.includes('previous months, if any'));
+    
+    const row2Calculated = {
+      igst: (recoReversalRow?.igst || 0) + (prevMonthsReversalRow?.igst || 0),
+      cgst: (recoReversalRow?.cgst || 0) + (prevMonthsReversalRow?.cgst || 0),
+      sgst: (recoReversalRow?.sgst || 0) + (prevMonthsReversalRow?.sgst || 0),
     };
 
     console.log('Partial ITC Calculations:', {
       total4AValues,
       residentialRatio,
       onITCAsPerA,
-      main1Value,
       prevMonthAdj,
       onOtherReversal,
+      main1Calculated,
+      row2Calculated,
     });
 
     return {
       onITCAsPerA,
       onOtherReversal,
-      main1Value,
+      main1Calculated,
+      row2Calculated,
     };
   }, [isPartialITCClient, commercialArea, residentialArea, itcData.section4A, itcData.section4B]);
 
@@ -732,18 +757,17 @@ const ITCSummaryPage: React.FC = () => {
   };
 
   // Total 4B calculation differs for Partial ITC clients
-  // For Partial ITC: Total 4B = (1) main row + (2) Others rows (excluding sub-rows of (1))
+  // For Partial ITC: Total 4B = (1) calculated + (2) calculated
   const total4B = useMemo(() => {
-    if (isPartialITCClient) {
-      // For Partial ITC: (1) main + Others section (2B RECO + previous months)
-      const row1Main = itcData.section4B.find(r => r.srNo === '(1)' && r.particular.includes('Calculation of Ineligible ITC'));
-      const reversalRow = itcData.section4B.find(r => r.particular.includes('ITC Reversal for') && r.particular.includes('current month as per 2B RECO'));
-      const prevMonthsRow = itcData.section4B.find(r => r.particular.includes('ITC Reversal for') && r.particular.includes('previous months, if any'));
+    if (isPartialITCClient && partialITCCalculatedValues) {
+      // Use auto-calculated values for (1) and (2)
+      const row1Vals = partialITCCalculatedValues.main1Calculated;
+      const row2Vals = partialITCCalculatedValues.row2Calculated;
       
       return {
-        igst: (row1Main?.igst || 0) + (reversalRow?.igst || 0) + (prevMonthsRow?.igst || 0),
-        cgst: (row1Main?.cgst || 0) + (reversalRow?.cgst || 0) + (prevMonthsRow?.cgst || 0),
-        sgst: (row1Main?.sgst || 0) + (reversalRow?.sgst || 0) + (prevMonthsRow?.sgst || 0),
+        igst: row1Vals.igst + row2Vals.igst,
+        cgst: row1Vals.cgst + row2Vals.cgst,
+        sgst: row1Vals.sgst + row2Vals.sgst,
       };
     } else {
       // For regular clients: sum all non-header rows
@@ -755,7 +779,7 @@ const ITCSummaryPage: React.FC = () => {
           sgst: acc.sgst + row.sgst,
         }), { igst: 0, cgst: 0, sgst: 0 });
     }
-  }, [itcData.section4B, isPartialITCClient]);
+  }, [itcData.section4B, isPartialITCClient, partialITCCalculatedValues]);
 
   // Net ITC (4C) = 4A - 4B
   const net4C = {
@@ -770,21 +794,19 @@ const ITCSummaryPage: React.FC = () => {
 
   // Total Reversal for Partial ITC also needs special handling
   const totalReversal = useMemo(() => {
-    if (isPartialITCClient) {
-      const row1Main = itcData.section4B.find(r => r.srNo === '(1)' && r.particular.includes('Calculation of Ineligible ITC'));
-      const reversalRow = itcData.section4B.find(r => r.particular.includes('ITC Reversal for') && r.particular.includes('current month as per 2B RECO'));
-      const prevMonthsRow = itcData.section4B.find(r => r.particular.includes('ITC Reversal for') && r.particular.includes('previous months, if any'));
+    if (isPartialITCClient && partialITCCalculatedValues) {
+      // Use auto-calculated values
+      const row1Vals = partialITCCalculatedValues.main1Calculated;
+      const row2Vals = partialITCCalculatedValues.row2Calculated;
       
-      const sum = (row1Main?.igst || 0) + (row1Main?.cgst || 0) + (row1Main?.sgst || 0) +
-                  (reversalRow?.igst || 0) + (reversalRow?.cgst || 0) + (reversalRow?.sgst || 0) +
-                  (prevMonthsRow?.igst || 0) + (prevMonthsRow?.cgst || 0) + (prevMonthsRow?.sgst || 0);
-      return sum;
+      return (row1Vals.igst + row1Vals.cgst + row1Vals.sgst) +
+             (row2Vals.igst + row2Vals.cgst + row2Vals.sgst);
     } else {
       return itcData.section4B
         .filter(r => !r.isHeader)
         .reduce((acc, r) => acc + r.igst + r.cgst + r.sgst, 0);
     }
-  }, [itcData.section4B, isPartialITCClient]);
+  }, [itcData.section4B, isPartialITCClient, partialITCCalculatedValues]);
 
   const formatNumber = (num: number): string => {
     // Handle -0 case by converting to 0
@@ -795,6 +817,9 @@ const ITCSummaryPage: React.FC = () => {
   const renderEditableCell = (section: keyof ITCData, rowIndex: number, row: ITCRow, field: 'igst' | 'cgst' | 'sgst') => {
     const canEdit = row.editable && !isLocked && !row.isAutoLinked;
     
+    // Allow negative values for "On Other reversal" row (as per Excel sheet it can be negative like -1,271.69)
+    const allowNegative = row.particular.includes('On Other reversal');
+    
     if (canEdit) {
       return (
         <Input
@@ -802,14 +827,14 @@ const ITCSummaryPage: React.FC = () => {
           value={row[field]}
           onChange={(e) => {
             const numVal = parseFloat(e.target.value) || 0;
-            if (numVal < 0) {
+            if (!allowNegative && numVal < 0) {
               setNegativeValueError('Negative values are not allowed in ITC Summary.');
               setTimeout(() => setNegativeValueError(null), 3000);
               return;
             }
             handleCellChange(section, rowIndex, field, e.target.value);
           }}
-          min={0}
+          min={allowNegative ? undefined : 0}
           className="w-24 text-right h-8 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
         />
       );
@@ -1046,6 +1071,38 @@ const ITCSummaryPage: React.FC = () => {
 
                       // For Partial ITC: Use calculated values for auto-calculated rows
                       if (isPartialITCClient && partialITCCalculatedValues) {
+                        // (1) main row - AUTO-CALCULATED = SUM(i + ii + iii)
+                        if (row.srNo === '(1)' && row.particular.includes('Calculation of Ineligible ITC')) {
+                          const vals = partialITCCalculatedValues.main1Calculated;
+                          return (
+                            <tr key={`4b-${idx}`} className="cell-locked">
+                              <td>{row.srNo}</td>
+                              <td className="flex items-center gap-2">
+                                {row.particular}
+                                <Badge variant="outline" className="text-xs flex items-center gap-1">
+                                  <Lock className="h-3 w-3" />
+                                  Auto-calculated
+                                </Badge>
+                              </td>
+                              <td className="text-right">{formatNumber(vals.igst)}</td>
+                              <td className="text-right">{formatNumber(vals.cgst)}</td>
+                              <td className="text-right">{formatNumber(vals.sgst)}</td>
+                              <td className="text-right font-medium">
+                                {formatNumber(vals.igst + vals.cgst + vals.sgst)}
+                              </td>
+                              <td>
+                                <Input
+                                  type="text"
+                                  value={row.reasons || ''}
+                                  onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
+                                  placeholder="Reason..."
+                                  className="h-8 text-sm"
+                                  disabled={isLocked}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        }
                         // i) On ITC as per 4A - auto-calculated
                         if (row.particular === 'i) On ITC as per 4A') {
                           const vals = partialITCCalculatedValues.onITCAsPerA;
@@ -1078,8 +1135,8 @@ const ITCSummaryPage: React.FC = () => {
                             </tr>
                           );
                         }
-                        // ii) On Other reversal - EDITABLE (balancing figure)
-                        if (row.particular === 'ii) On Other reversal') {
+                        // iii) On Other reversal - EDITABLE (user enters this value)
+                        if (row.particular.includes('On Other reversal')) {
                           return (
                             <tr key={`4b-${idx}`}>
                               <td>{row.srNo}</td>
@@ -1103,36 +1160,9 @@ const ITCSummaryPage: React.FC = () => {
                             </tr>
                           );
                         }
-                        // (1) main row - EDITABLE for Partial ITC
-                        if (row.srNo === '(1)' && row.particular.includes('Calculation of Ineligible ITC')) {
-                          return (
-                            <tr key={`4b-${idx}`}>
-                              <td>{row.srNo}</td>
-                              <td className="flex items-center gap-2">
-                                {row.particular}
-                              </td>
-                              <td className="text-right">{renderEditableCell('section4B', idx, row, 'igst')}</td>
-                              <td className="text-right">{renderEditableCell('section4B', idx, row, 'cgst')}</td>
-                              <td className="text-right">{renderEditableCell('section4B', idx, row, 'sgst')}</td>
-                              <td className="text-right font-medium">
-                                {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
-                              </td>
-                              <td>
-                                <Input
-                                  type="text"
-                                  value={row.reasons || ''}
-                                  onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
-                                  placeholder="Reason..."
-                                  className="h-8 text-sm"
-                                  disabled={isLocked}
-                                />
-                              </td>
-                            </tr>
-                          );
-                        }
-                        // ii) On Other reversal - AUTO-CALCULATED for Partial ITC
-                        if (row.particular.includes('On Other reversal')) {
-                          const vals = partialITCCalculatedValues.onOtherReversal;
+                        // (2) Others row - AUTO-CALCULATED = SUM of sub-rows
+                        if (row.srNo === '(2)' && row.particular === 'Others') {
+                          const vals = partialITCCalculatedValues.row2Calculated;
                           return (
                             <tr key={`4b-${idx}`} className="cell-locked">
                               <td>{row.srNo}</td>
