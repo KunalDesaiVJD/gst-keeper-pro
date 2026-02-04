@@ -100,8 +100,8 @@ const getPartialITCData = (): ITCData => ({
     { srNo: '', particular: 'i) On ITC as per 4A', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
     // ii) Previous Month Adjustment - EDITABLE
     { srNo: '', particular: 'ii) Previous Month Adjustment', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
-    // iii) On Other reversal - EDITABLE (user enters this value)
-    { srNo: '', particular: 'iii) On Other reversal', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    // iii) On Other reversal = -Total(4B)(2) × (Residential / Total Area) - AUTO-CALCULATED
+    { srNo: '', particular: 'iii) On Other reversal', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
     // Row (2) = SUM of sub-rows - AUTO-CALCULATED (isHeader marks it as a total row)
     { srNo: '(2)', particular: 'Others', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
     { srNo: '', particular: 'ITC Reversal for the current month as per 2B RECO', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
@@ -483,7 +483,7 @@ const ITCSummaryPage: React.FC = () => {
   // - 4(B)(1) = i) + ii) + iii) - AUTO-CALCULATED SUM
   // - i) On ITC as per 4A = Total 4A × (Residential / Total Area) - AUTO-CALCULATED
   // - ii) Previous Month Adjustment - EDITABLE
-  // - iii) On Other reversal - EDITABLE
+  // - iii) On Other reversal = -Total(4B)(2) × (Residential / Total Area) - AUTO-CALCULATED
   // - 4(B)(2) = SUM of sub-rows - AUTO-CALCULATED
   const partialITCCalculatedValues = useMemo(() => {
     if (!isPartialITCClient) return null;
@@ -540,22 +540,7 @@ const ITCSummaryPage: React.FC = () => {
       sgst: prevMonthAdjRow?.sgst || 0,
     };
 
-    // iii) On Other reversal - EDITABLE (get from data)
-    const onOtherReversalRow = itcData.section4B.find(r => r.particular.includes('On Other reversal'));
-    const onOtherReversal = {
-      igst: onOtherReversalRow?.igst || 0,
-      cgst: onOtherReversalRow?.cgst || 0,
-      sgst: onOtherReversalRow?.sgst || 0,
-    };
-
-    // 4(B)(1) = SUM(i + ii + iii) - AUTO-CALCULATED
-    const main1Calculated = {
-      igst: Math.round((onITCAsPerA.igst + prevMonthAdj.igst + onOtherReversal.igst) * 100) / 100,
-      cgst: Math.round((onITCAsPerA.cgst + prevMonthAdj.cgst + onOtherReversal.cgst) * 100) / 100,
-      sgst: Math.round((onITCAsPerA.sgst + prevMonthAdj.sgst + onOtherReversal.sgst) * 100) / 100,
-    };
-
-    // 4(B)(2) = SUM of sub-rows (ITC Reversal current month + previous months) - AUTO-CALCULATED
+    // Calculate 4(B)(2) first = SUM of sub-rows (ITC Reversal current month + previous months)
     const recoReversalRow = itcData.section4B.find(r => r.particular.includes('current month as per 2B RECO'));
     const prevMonthsReversalRow = itcData.section4B.find(r => r.particular.includes('previous months, if any'));
     
@@ -565,14 +550,29 @@ const ITCSummaryPage: React.FC = () => {
       sgst: (recoReversalRow?.sgst || 0) + (prevMonthsReversalRow?.sgst || 0),
     };
 
+    // iii) On Other reversal = -Total(4B)(2) × (Residential / Total Area) - AUTO-CALCULATED
+    // This is NEGATIVE of (row 2 × residential ratio)
+    const onOtherReversal = {
+      igst: Math.round((-row2Calculated.igst * residentialRatio) * 100) / 100,
+      cgst: Math.round((-row2Calculated.cgst * residentialRatio) * 100) / 100,
+      sgst: Math.round((-row2Calculated.sgst * residentialRatio) * 100) / 100,
+    };
+
+    // 4(B)(1) = SUM(i + ii + iii) - AUTO-CALCULATED
+    const main1Calculated = {
+      igst: Math.round((onITCAsPerA.igst + prevMonthAdj.igst + onOtherReversal.igst) * 100) / 100,
+      cgst: Math.round((onITCAsPerA.cgst + prevMonthAdj.cgst + onOtherReversal.cgst) * 100) / 100,
+      sgst: Math.round((onITCAsPerA.sgst + prevMonthAdj.sgst + onOtherReversal.sgst) * 100) / 100,
+    };
+
     console.log('Partial ITC Calculations:', {
       total4AValues,
       residentialRatio,
       onITCAsPerA,
       prevMonthAdj,
+      row2Calculated,
       onOtherReversal,
       main1Calculated,
-      row2Calculated,
     });
 
     return {
@@ -817,9 +817,6 @@ const ITCSummaryPage: React.FC = () => {
   const renderEditableCell = (section: keyof ITCData, rowIndex: number, row: ITCRow, field: 'igst' | 'cgst' | 'sgst') => {
     const canEdit = row.editable && !isLocked && !row.isAutoLinked;
     
-    // Allow negative values for "On Other reversal" row (as per Excel sheet it can be negative like -1,271.69)
-    const allowNegative = row.particular.includes('On Other reversal');
-    
     if (canEdit) {
       return (
         <Input
@@ -827,14 +824,14 @@ const ITCSummaryPage: React.FC = () => {
           value={row[field]}
           onChange={(e) => {
             const numVal = parseFloat(e.target.value) || 0;
-            if (!allowNegative && numVal < 0) {
+            if (numVal < 0) {
               setNegativeValueError('Negative values are not allowed in ITC Summary.');
               setTimeout(() => setNegativeValueError(null), 3000);
               return;
             }
             handleCellChange(section, rowIndex, field, e.target.value);
           }}
-          min={allowNegative ? undefined : 0}
+          min={0}
           className="w-24 text-right h-8 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
         />
       );
@@ -1135,17 +1132,24 @@ const ITCSummaryPage: React.FC = () => {
                             </tr>
                           );
                         }
-                        // iii) On Other reversal - EDITABLE (user enters this value)
+                        // iii) On Other reversal = -Total(4B)(2) × (Residential / Total Area) - AUTO-CALCULATED
                         if (row.particular.includes('On Other reversal')) {
+                          const vals = partialITCCalculatedValues.onOtherReversal;
                           return (
-                            <tr key={`4b-${idx}`}>
+                            <tr key={`4b-${idx}`} className="cell-locked">
                               <td>{row.srNo}</td>
-                              <td>{row.particular}</td>
-                              <td className="text-right">{renderEditableCell('section4B', idx, row, 'igst')}</td>
-                              <td className="text-right">{renderEditableCell('section4B', idx, row, 'cgst')}</td>
-                              <td className="text-right">{renderEditableCell('section4B', idx, row, 'sgst')}</td>
+                              <td className="flex items-center gap-2">
+                                {row.particular}
+                                <Badge variant="outline" className="text-xs flex items-center gap-1">
+                                  <Lock className="h-3 w-3" />
+                                  Auto-calculated
+                                </Badge>
+                              </td>
+                              <td className="text-right">{formatNumber(vals.igst)}</td>
+                              <td className="text-right">{formatNumber(vals.cgst)}</td>
+                              <td className="text-right">{formatNumber(vals.sgst)}</td>
                               <td className="text-right font-medium">
-                                {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
+                                {formatNumber(vals.igst + vals.cgst + vals.sgst)}
                               </td>
                               <td>
                                 <Input
