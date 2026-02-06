@@ -52,12 +52,16 @@ interface FilingRecord {
   filed_date: string | null;
   remarks: string | null;
   is_locked: boolean | null;
+  updated_by: string | null;
+  updated_at: string | null;
   // Joined client data
   clientName?: string;
   clientEmail?: string;
   contactNumber?: string;
   accountantName?: string;
   filingFrequency?: string;
+  updatedByName?: string;
+  updatedByRole?: string;
 }
 
 const FilingStatusPage: React.FC = () => {
@@ -223,7 +227,7 @@ const FilingStatusPage: React.FC = () => {
     setClients(data || []);
   }, []);
 
-  // Fetch filing status records
+  // Fetch filing status records with user info for audit display
   const fetchFilingRecords = useCallback(async () => {
     const { data, error } = await supabase
       .from('filing_status')
@@ -234,7 +238,41 @@ const FilingStatusPage: React.FC = () => {
       console.error('Error fetching filing records:', error);
       return;
     }
-    setFilingRecords(data || []);
+    
+    // Fetch user names for updated_by UUIDs
+    const userIds = [...new Set((data || []).map(r => r.updated_by).filter(Boolean))] as string[];
+    let userInfo: Record<string, { name: string; role: string }> = {};
+    
+    if (userIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('user_id, first_name')
+        .in('user_id', userIds);
+      
+      const { data: roles } = await supabase
+        .from('user_roles')
+        .select('user_id, role')
+        .in('user_id', userIds);
+      
+      if (profiles) {
+        profiles.forEach(p => {
+          const roleData = roles?.find(r => r.user_id === p.user_id);
+          userInfo[p.user_id] = { 
+            name: p.first_name, 
+            role: roleData?.role || 'staff' 
+          };
+        });
+      }
+    }
+    
+    // Enrich records with user info
+    const enrichedRecords = (data || []).map(r => ({
+      ...r,
+      updatedByName: r.updated_by ? (userInfo[r.updated_by]?.name || 'Unknown') : undefined,
+      updatedByRole: r.updated_by ? (userInfo[r.updated_by]?.role || '') : undefined,
+    }));
+    
+    setFilingRecords(enrichedRecords);
   }, [selectedMonth]);
 
   useEffect(() => {
@@ -386,6 +424,8 @@ const FilingStatusPage: React.FC = () => {
               filed_date: null,
               remarks: null,
               is_locked: false,
+              updated_by: null,
+              updated_at: null,
               clientName: client.name,
               clientEmail: client.email || '-',
               contactNumber: client.mobile || '-',
@@ -615,7 +655,7 @@ const FilingStatusPage: React.FC = () => {
     
     try {
       if (isNewRecord) {
-        // Insert new record
+        // Insert new record with audit info
         const { error } = await supabase
           .from('filing_status')
           .insert([{
@@ -625,13 +665,17 @@ const FilingStatusPage: React.FC = () => {
             status: newStatus,
             target_date: record.target_date,
             filed_date: newStatus === 'Filed' ? new Date().toISOString().split('T')[0] : null,
+            updated_by: user?.id || null,
+            updated_at: new Date().toISOString(),
           }]);
         
         if (error) throw error;
       } else {
-        // Update existing record
+        // Update existing record with audit info
         const updateData: Record<string, unknown> = {
           status: newStatus,
+          updated_by: user?.id || null,
+          updated_at: new Date().toISOString(),
         };
         
         if (newStatus === 'Filed') {
@@ -755,6 +799,8 @@ const FilingStatusPage: React.FC = () => {
           status: 'Prepared Pending',
           is_locked: false,
           filed_date: null,
+          updated_by: user?.id || null,
+          updated_at: new Date().toISOString(),
         })
         .eq('client_id', record.client_id)
         .eq('period_month', record.period_month)
@@ -1033,10 +1079,19 @@ const FilingStatusPage: React.FC = () => {
                 </td>
                 <td className="text-center font-mono text-sm">{record.target_date}</td>
                 <td>
-                  {record.filed_date 
-                    ? new Date(record.filed_date).toLocaleDateString('en-IN')
-                    : '-'
-                  }
+                  <div className="flex flex-col">
+                    <span>
+                      {record.filed_date 
+                        ? new Date(record.filed_date).toLocaleDateString('en-IN')
+                        : '-'
+                      }
+                    </span>
+                    {record.status === 'Filed' && record.updatedByName && record.updated_at && (
+                      <span className="text-[10px] text-muted-foreground mt-0.5">
+                        by {record.updatedByName} ({record.updatedByRole}) on {new Date(record.updated_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="min-w-[200px]">
                   <textarea
