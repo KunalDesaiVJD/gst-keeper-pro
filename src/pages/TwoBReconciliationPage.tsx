@@ -27,6 +27,7 @@ import { export2BToExcel, import2BFromExcel } from '@/utils/excelExport';
 import VersionHistoryDialog from '@/components/dialogs/VersionHistoryDialog';
 import { TwoBVersion, BillNotIn2B, isQuarterEndMonth } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
 
 interface Client {
   id: string;
@@ -59,6 +60,15 @@ interface BillRecord {
   updated_by: string | null;
 }
 
+// Audit info for last saved
+interface LastSavedInfo {
+  savedBy: string;
+  savedByRole: string;
+  savedAt: Date;
+  versionNumber: number;
+  actionType: 'SAVE' | 'RESTORE';
+}
+
 const TwoBReconciliationPage: React.FC = () => {
   const { canViewVersionHistory, canUnlockSheets, canDelete2BRows, user, isStaffRole } = useAuth();
   const { selectedMonth, setSelectedMonth } = useMonth();
@@ -73,6 +83,7 @@ const TwoBReconciliationPage: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [versions, setVersions] = useState<TwoBVersion[]>([]);
+  const [lastSavedInfo, setLastSavedInfo] = useState<LastSavedInfo | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Multi-select filter states
@@ -87,7 +98,6 @@ const TwoBReconciliationPage: React.FC = () => {
   
   // Negative value error state
   const [negativeValueError, setNegativeValueError] = useState<string | null>(null);
-
   const selectedClientData = clients.find(c => c.id === selectedClientId);
 
   // Check if client requires quarterly months only (IFF or Composition)
@@ -263,6 +273,7 @@ const TwoBReconciliationPage: React.FC = () => {
   const fetchVersions = useCallback(async () => {
     if (!selectedClientId || !selectedMonth) {
       setVersions([]);
+      setLastSavedInfo(null);
       return;
     }
 
@@ -279,9 +290,9 @@ const TwoBReconciliationPage: React.FC = () => {
     }
 
     if (data && data.length > 0) {
-      // Fetch user names for updated_by UUIDs
+      // Fetch user names and roles for updated_by UUIDs
       const userIds = [...new Set(data.map(v => v.updated_by).filter(Boolean))];
-      let userNames: Record<string, string> = {};
+      let userInfo: Record<string, { name: string; role: string }> = {};
       
       if (userIds.length > 0) {
         const { data: profiles } = await supabase
@@ -289,9 +300,18 @@ const TwoBReconciliationPage: React.FC = () => {
           .select('user_id, first_name')
           .in('user_id', userIds);
         
+        const { data: roles } = await supabase
+          .from('user_roles')
+          .select('user_id, role')
+          .in('user_id', userIds);
+        
         if (profiles) {
           profiles.forEach(p => {
-            userNames[p.user_id] = p.first_name;
+            const roleData = roles?.find(r => r.user_id === p.user_id);
+            userInfo[p.user_id] = { 
+              name: p.first_name, 
+              role: roleData?.role || 'staff' 
+            };
           });
         }
       }
@@ -306,13 +326,29 @@ const TwoBReconciliationPage: React.FC = () => {
         versionNumber: v.version_number || 1,
         billsNotIn2B: (v.version_data as any)?.billsNotIn2B || [],
         billsNotInBooks: (v.version_data as any)?.billsNotInBooks || [],
-        updatedBy: v.updated_by ? (userNames[v.updated_by] || 'Unknown') : 'Unknown',
+        updatedBy: v.updated_by ? (userInfo[v.updated_by]?.name || 'Unknown') : 'Unknown',
+        updatedByRole: v.updated_by ? (userInfo[v.updated_by]?.role || '') : '',
         updatedAt: new Date(v.updated_at || Date.now()),
         isCurrent: v.is_current || false,
+        actionType: (v as any).action_type || 'SAVE',
+        restoredFromVersionId: (v as any).restored_from_version_id || undefined,
       }));
       setVersions(formattedVersions);
+      
+      // Set last saved info from the most recent version
+      const latestVersion = formattedVersions[0];
+      if (latestVersion) {
+        setLastSavedInfo({
+          savedBy: latestVersion.updatedBy,
+          savedByRole: latestVersion.updatedByRole || '',
+          savedAt: latestVersion.updatedAt,
+          versionNumber: latestVersion.versionNumber,
+          actionType: latestVersion.actionType || 'SAVE',
+        });
+      }
     } else {
       setVersions([]);
+      setLastSavedInfo(null);
     }
   }, [selectedClientId, selectedMonth]);
 
@@ -332,6 +368,7 @@ const TwoBReconciliationPage: React.FC = () => {
       setIsLocked(false);
       setHasUnsavedChanges(false);
       setVersions([]);
+      setLastSavedInfo(null);
     }
   }, [selectedClientId, selectedMonth, fetchBillsData, fetchVersions]);
 
@@ -699,7 +736,7 @@ const TwoBReconciliationPage: React.FC = () => {
     
     setIsSaving(true);
     try {
-      // First, save a version of the ORIGINAL state (from database) before making changes
+      // Get next version number
       const currentVersionNumber = versions.length > 0 ? Math.max(...versions.map(v => v.versionNumber)) + 1 : 1;
       
       // Mark all existing versions as not current
@@ -709,8 +746,69 @@ const TwoBReconciliationPage: React.FC = () => {
         .eq('client_id', selectedClientId)
         .eq('period_month', selectedMonth);
 
-      // Transform ORIGINAL database data to version format for storage (not local edits)
-      const versionBills2B = billsNotIn2B.map(b => ({
+      // First, apply database changes (inserts/updates/deletes)
+      // Delete removed rows
+      if (deletedRows2B.length > 0) {
+        await supabase.from('bills_not_in_2b').delete().in('id', deletedRows2B);
+      }
+      if (deletedRowsBooks.length > 0) {
+        await supabase.from('bills_not_in_books').delete().in('id', deletedRowsBooks);
+      }
+
+      // Process bills not in 2B
+      const savedBills2B: BillRecord[] = [];
+      for (const bill of localBills2B) {
+        if (bill.id.startsWith('temp-')) {
+          // Insert new record
+          const { id, ...billData } = bill;
+          const { data: inserted } = await supabase.from('bills_not_in_2b').insert([billData]).select().single();
+          if (inserted) {
+            savedBills2B.push(inserted);
+          } else {
+            savedBills2B.push(bill);
+          }
+        } else {
+          // Update existing record
+          const original = billsNotIn2B.find(b => b.id === bill.id);
+          if (original && JSON.stringify(original) !== JSON.stringify(bill)) {
+            const { id, ...updates } = bill;
+            await supabase
+              .from('bills_not_in_2b')
+              .update({ ...updates, updated_at: new Date().toISOString() })
+              .eq('id', id);
+          }
+          savedBills2B.push(bill);
+        }
+      }
+
+      // Process bills not in books
+      const savedBillsBooks: BillRecord[] = [];
+      for (const bill of localBillsBooks) {
+        if (bill.id.startsWith('temp-')) {
+          // Insert new record
+          const { id, ...billData } = bill;
+          const { data: inserted } = await supabase.from('bills_not_in_books').insert([billData]).select().single();
+          if (inserted) {
+            savedBillsBooks.push(inserted);
+          } else {
+            savedBillsBooks.push(bill);
+          }
+        } else {
+          // Update existing record
+          const original = billsNotInBooks.find(b => b.id === bill.id);
+          if (original && JSON.stringify(original) !== JSON.stringify(bill)) {
+            const { id, ...updates } = bill;
+            await supabase
+              .from('bills_not_in_books')
+              .update({ ...updates, updated_at: new Date().toISOString() })
+              .eq('id', id);
+          }
+          savedBillsBooks.push(bill);
+        }
+      }
+
+      // Transform CURRENT (saved) data to version format for storage
+      const versionBills2B = savedBills2B.map(b => ({
         id: b.id,
         clientId: b.client_id,
         date: b.date,
@@ -731,7 +829,7 @@ const TwoBReconciliationPage: React.FC = () => {
         version: b.version || 1,
       }));
       
-      const versionBillsBooks = billsNotInBooks.map(b => ({
+      const versionBillsBooks = savedBillsBooks.map(b => ({
         id: b.id,
         clientId: b.client_id,
         date: b.date,
@@ -752,7 +850,7 @@ const TwoBReconciliationPage: React.FC = () => {
         version: b.version || 1,
       }));
       
-      // Save new version with ORIGINAL data (before this save operation)
+      // Save new version with CURRENT data (after this save operation)
       const versionData = {
         billsNotIn2B: versionBills2B,
         billsNotInBooks: versionBillsBooks,
@@ -767,6 +865,7 @@ const TwoBReconciliationPage: React.FC = () => {
         updated_at: new Date().toISOString(),
         updated_by: user?.userId || null,
         is_current: true,
+        action_type: 'SAVE',
       }]);
       
       let savedVersionNumber: number | null = null;
@@ -775,52 +874,6 @@ const TwoBReconciliationPage: React.FC = () => {
         // Don't fail the save, just log the error
       } else {
         savedVersionNumber = currentVersionNumber;
-      }
-
-      // Delete removed rows
-      if (deletedRows2B.length > 0) {
-        await supabase.from('bills_not_in_2b').delete().in('id', deletedRows2B);
-      }
-      if (deletedRowsBooks.length > 0) {
-        await supabase.from('bills_not_in_books').delete().in('id', deletedRowsBooks);
-      }
-
-      // Process bills not in 2B
-      for (const bill of localBills2B) {
-        if (bill.id.startsWith('temp-')) {
-          // Insert new record
-          const { id, ...billData } = bill;
-          await supabase.from('bills_not_in_2b').insert([billData]);
-        } else {
-          // Update existing record
-          const original = billsNotIn2B.find(b => b.id === bill.id);
-          if (original && JSON.stringify(original) !== JSON.stringify(bill)) {
-            const { id, ...updates } = bill;
-            await supabase
-              .from('bills_not_in_2b')
-              .update({ ...updates, updated_at: new Date().toISOString() })
-              .eq('id', id);
-          }
-        }
-      }
-
-      // Process bills not in books
-      for (const bill of localBillsBooks) {
-        if (bill.id.startsWith('temp-')) {
-          // Insert new record
-          const { id, ...billData } = bill;
-          await supabase.from('bills_not_in_books').insert([billData]);
-        } else {
-          // Update existing record
-          const original = billsNotInBooks.find(b => b.id === bill.id);
-          if (original && JSON.stringify(original) !== JSON.stringify(bill)) {
-            const { id, ...updates } = bill;
-            await supabase
-              .from('bills_not_in_books')
-              .update({ ...updates, updated_at: new Date().toISOString() })
-              .eq('id', id);
-          }
-        }
       }
 
       // Reset tracking
@@ -873,6 +926,12 @@ const TwoBReconciliationPage: React.FC = () => {
     if (!selectedClientId || isLocked) return;
     
     try {
+      // Get next version number for the RESTORE action
+      const newVersionNumber = versions.length > 0 ? Math.max(...versions.map(v => v.versionNumber)) + 1 : 1;
+      
+      // Mark all existing versions as not current
+      await supabase.from('twob_versions').update({ is_current: false }).eq('client_id', selectedClientId).eq('period_month', selectedMonth);
+      
       // Delete current records
       await supabase.from('bills_not_in_2b').delete().eq('client_id', selectedClientId).eq('period_month', selectedMonth);
       await supabase.from('bills_not_in_books').delete().eq('client_id', selectedClientId).eq('period_month', selectedMonth);
@@ -917,14 +976,29 @@ const TwoBReconciliationPage: React.FC = () => {
         await supabase.from('bills_not_in_books').insert(recordsBooks);
       }
       
-      // Mark this version as current
-      await supabase.from('twob_versions').update({ is_current: false }).eq('client_id', selectedClientId).eq('period_month', selectedMonth);
-      await supabase.from('twob_versions').update({ is_current: true }).eq('id', version.id);
+      // Create a new RESTORE version entry with the restored data
+      const versionData = {
+        billsNotIn2B: version.billsNotIn2B || [],
+        billsNotInBooks: version.billsNotInBooks || [],
+      };
+      
+      await supabase.from('twob_versions').insert([{
+        client_id: selectedClientId,
+        period_month: selectedMonth,
+        table_type: 'combined',
+        version_number: newVersionNumber,
+        version_data: JSON.parse(JSON.stringify(versionData)) as Json,
+        updated_at: new Date().toISOString(),
+        updated_by: user?.userId || null,
+        is_current: true,
+        action_type: 'RESTORE',
+        restored_from_version_id: version.id,
+      }]);
       
       await fetchBillsData();
       await fetchVersions();
       setHasUnsavedChanges(false);
-      toast.success(`Restored to version ${version.versionNumber}`);
+      toast.success(`Restored to version ${version.versionNumber}. New version ${newVersionNumber} created.`);
       setShowVersionHistory(false);
     } catch (error: any) {
       console.error('Error restoring version:', error);
@@ -1023,6 +1097,17 @@ const TwoBReconciliationPage: React.FC = () => {
         <div>
           <h1 className="text-2xl font-heading font-bold text-foreground">2B Reconciliation</h1>
           <p className="text-muted-foreground">Manage bills not available in 2B or Books</p>
+          {/* Last saved audit label */}
+          {lastSavedInfo && selectedClientId && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Last {lastSavedInfo.actionType === 'RESTORE' ? 'restored' : 'saved'} by{' '}
+              <span className="font-medium text-foreground">{lastSavedInfo.savedBy}</span>
+              {lastSavedInfo.savedByRole && (
+                <span className="text-muted-foreground"> ({lastSavedInfo.savedByRole})</span>
+              )}
+              {' '}on {format(lastSavedInfo.savedAt, 'dd-MMM-yyyy HH:mm')} • v{lastSavedInfo.versionNumber}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {selectedClientId && !isLocked && (

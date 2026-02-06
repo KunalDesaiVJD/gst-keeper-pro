@@ -17,11 +17,12 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { History, Download, RotateCcw } from 'lucide-react';
+import { History, Download, RotateCcw, Save, RefreshCcw } from 'lucide-react';
 import { format } from 'date-fns';
 import { TwoBVersion, BillNotIn2B, BillNotInBooks } from '@/types';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface VersionHistoryDialogProps {
   open: boolean;
@@ -40,7 +41,11 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
   clientName,
   month,
 }) => {
+  const { user } = useAuth();
   const [confirmRestore, setConfirmRestore] = useState<TwoBVersion | null>(null);
+
+  // Only superadmin can restore versions
+  const canRestore = user?.role === 'superadmin';
 
   const handleDownloadVersion = (version: TwoBVersion) => {
     try {
@@ -52,6 +57,7 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
         ['Bills Not Available in 2B'],
         [`Client: ${clientName}`, '', '', '', '', '', '', '', `Month: ${month}`],
         [`Version: ${version.versionNumber}`, '', '', '', '', '', '', '', `Saved: ${format(new Date(version.updatedAt), 'dd-MMM-yyyy HH:mm')}`],
+        [`Action: ${version.actionType || 'SAVE'}`, '', '', '', '', '', '', '', `By: ${version.updatedBy}`],
         [],
         ['Date', 'Supplier Name', 'Invoice No.', 'GSTIN', 'Taxable Value', 'IGST', 'CGST', 'SGST', 'Reversal Month', 'Reclaim Month'],
         ...billsNotIn2B.map((row: BillNotIn2B) => [
@@ -90,6 +96,7 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
         ['Bills Not Available in Books'],
         [`Client: ${clientName}`, '', '', '', '', '', '', '', `Month: ${month}`],
         [`Version: ${version.versionNumber}`, '', '', '', '', '', '', '', `Saved: ${format(new Date(version.updatedAt), 'dd-MMM-yyyy HH:mm')}`],
+        [`Action: ${version.actionType || 'SAVE'}`, '', '', '', '', '', '', '', `By: ${version.updatedBy}`],
         [],
         ['Date', 'Supplier Name', 'Invoice No.', 'GSTIN', 'Taxable Value', 'IGST', 'CGST', 'SGST', 'Book Entry Month', 'Bill in 2B Month'],
         ...billsNotInBooks.map((row: BillNotInBooks) => [
@@ -144,6 +151,20 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
     }
   };
 
+  const getActionIcon = (actionType?: string) => {
+    if (actionType === 'RESTORE') {
+      return <RefreshCcw className="h-3 w-3" />;
+    }
+    return <Save className="h-3 w-3" />;
+  };
+
+  const getActionColor = (actionType?: string) => {
+    if (actionType === 'RESTORE') {
+      return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400';
+    }
+    return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
+  };
+
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -176,27 +197,40 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
                       v{version.versionNumber}
                     </Badge>
                     <div>
-                      <p className="text-sm font-medium">
-                        {format(new Date(version.updatedAt), 'dd-MMM-yyyy HH:mm')} IST
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium">
+                          {format(new Date(version.updatedAt), 'dd-MMM-yyyy HH:mm')} IST
+                        </p>
+                        <Badge className={`text-xs flex items-center gap-1 ${getActionColor(version.actionType)}`}>
+                          {getActionIcon(version.actionType)}
+                          {version.actionType || 'SAVE'}
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        By: {version.updatedBy} {version.updatedByRole ? `(${version.updatedByRole})` : ''}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        Updated by: {version.updatedBy}
+                        {(version.billsNotIn2B || []).length} bills in 2B, {(version.billsNotInBooks || []).length} in Books
                       </p>
-                      <p className="text-xs text-muted-foreground">
-                        {(version.billsNotIn2B || []).length} bills in 2B table, {(version.billsNotInBooks || []).length} bills in Books table
-                      </p>
+                      {version.actionType === 'RESTORE' && version.restoredFromVersionId && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400">
+                          Restored from earlier version
+                        </p>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleRestoreClick(version)}
-                      className="flex items-center gap-1"
-                    >
-                      <RotateCcw className="h-3 w-3" />
-                      Restore
-                    </Button>
+                    {canRestore && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleRestoreClick(version)}
+                        className="flex items-center gap-1"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                        Restore
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
                       size="sm"
@@ -211,6 +245,12 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
               ))
             )}
           </div>
+
+          {!canRestore && versions.length > 0 && (
+            <p className="text-xs text-muted-foreground text-center mt-4">
+              Only Superadmin can restore previous versions.
+            </p>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -220,7 +260,8 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
             <AlertDialogTitle>Restore Version {confirmRestore?.versionNumber}?</AlertDialogTitle>
             <AlertDialogDescription>
               This will replace all current data with the data from version {confirmRestore?.versionNumber}. 
-              This action cannot be undone. Make sure you have saved or downloaded the current data if needed.
+              A new version snapshot will be created to track this restore action.
+              Make sure you have saved or downloaded the current data if needed.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

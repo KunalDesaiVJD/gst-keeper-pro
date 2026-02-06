@@ -101,9 +101,12 @@ export interface TwoBVersion {
   billsNotInBooks: BillNotInBooks[];
   versionData?: (BillNotIn2B | BillNotInBooks)[];
   updatedBy: string;
+  updatedByRole?: string;
   updatedAt: Date;
   isCurrent: boolean;
   isCurrentVersion?: boolean;
+  actionType?: 'SAVE' | 'RESTORE';
+  restoredFromVersionId?: string;
 }
 
 // ITC Summary Row
