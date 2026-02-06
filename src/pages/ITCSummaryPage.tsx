@@ -790,12 +790,51 @@ const ITCSummaryPage: React.FC = () => {
 
   const handleDownloadVersion = (version: GenericVersion) => {
     try {
+      const versionData = version.versionData as ITCData;
+      if (!versionData) {
+        toast.error('Invalid version data');
+        return;
+      }
+
       const workbook = XLSX.utils.book_new();
-      const sheetData = [['ITC Summary - Version ' + version.versionNumber], [`Client: ${selectedClientData?.name}`, `Month: ${selectedMonth}`], [`Saved: ${new Date(version.updatedAt).toLocaleString()}`, `By: ${version.updatedBy}`]];
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(sheetData), 'ITC Summary');
+      const sheetData: any[][] = [
+        ['ITC Summary - Version ' + version.versionNumber],
+        [`Client: ${selectedClientData?.name}`, '', '', `Month: ${selectedMonth}`],
+        [`Saved: ${new Date(version.updatedAt).toLocaleString()}`, '', '', `By: ${version.updatedBy}`],
+        [],
+        ['Sr. No.', 'Particulars', 'IGST', 'CGST', 'SGST', 'Reasons'],
+      ];
+
+      const addSection = (label: string, rows: ITCRow[]) => {
+        sheetData.push([label]);
+        for (const row of (rows || [])) {
+          sheetData.push([
+            row.srNo || '',
+            row.particular || '',
+            row.igst || 0,
+            row.cgst || 0,
+            row.sgst || 0,
+            row.reasons || '',
+          ]);
+        }
+        sheetData.push([]);
+      };
+
+      addSection('Section 4A - ITC Available', versionData.section4A);
+      addSection('Section 4B - ITC Reversed', versionData.section4B);
+      addSection('Section 4D - Ineligible ITC', versionData.section4D);
+
+      const sheet = XLSX.utils.aoa_to_sheet(sheetData);
+      sheet['!cols'] = [
+        { wch: 10 }, { wch: 45 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 30 }
+      ];
+      XLSX.utils.book_append_sheet(workbook, sheet, 'ITC Summary');
       XLSX.writeFile(workbook, `ITC_Version_${version.versionNumber}_${selectedClientData?.name?.replace(/\s+/g, '_')}_${selectedMonth.replace('/', '-')}.xlsx`);
       toast.success(`Downloaded version ${version.versionNumber}`);
-    } catch (error) { toast.error('Failed to download version'); }
+    } catch (error) {
+      console.error('Error downloading version:', error);
+      toast.error('Failed to download version');
+    }
   };
 
   // Calculate Total (5) = 5.1 + 5.2 - 5.3 + 5.4 + 5.5
