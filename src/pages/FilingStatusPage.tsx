@@ -498,7 +498,8 @@ const FilingStatusPage: React.FC = () => {
     
     // Check if user is allowed to change from Filed status
     // Only superadmin and gst_manager can change FROM Filed to another status
-    if (record.status === 'Filed' && newStatus !== 'Filed') {
+    const wasFiledBefore = record.status === 'Filed';
+    if (wasFiledBefore && newStatus !== 'Filed') {
       if (!canUnlockSheets()) {
         toast.error('Only GST Manager or Superadmin can change a Filed status.');
         return;
@@ -728,6 +729,11 @@ const FilingStatusPage: React.FC = () => {
         toast.success(`${record.return_type} filed. 2B and ITC sheets are now locked and data carried forward to next month.`);
       } else if (newStatus === 'Filed') {
         toast.success('Status updated to Filed.');
+      } else if (wasFiledBefore) {
+        const changedBy = user?.firstName || 'Unknown';
+        const changedRole = user?.role || '';
+        const changedOn = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ', ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+        toast.info(`Status changed from Filed to ${newStatus} by ${changedBy} (${changedRole}) on ${changedOn}`, { duration: 6000 });
       } else {
         toast.success('Status updated successfully');
       }
@@ -1086,9 +1092,9 @@ const FilingStatusPage: React.FC = () => {
                         : '-'
                       }
                     </span>
-                    {record.status === 'Filed' && record.updatedByName && record.updated_at && (
-                      <span className="text-[10px] text-muted-foreground mt-0.5">
-                        by {record.updatedByName} ({record.updatedByRole}) on {new Date(record.updated_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    {record.updatedByName && record.updated_at && (
+                      <span className={`text-[10px] mt-0.5 ${record.status === 'Filed' ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400'}`}>
+                        {record.status !== 'Filed' && record.filed_date === null ? 'Status changed' : 'by'} {record.updatedByName} ({record.updatedByRole}) on {new Date(record.updated_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                       </span>
                     )}
                   </div>
