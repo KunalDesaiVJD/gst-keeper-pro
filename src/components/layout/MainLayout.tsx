@@ -3,6 +3,7 @@ import { Outlet, Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import Sidebar from './Sidebar';
 import QuickActionsButton from './QuickActionsButton';
+import ChatWidget from '@/components/chat/ChatWidget';
 import { Loader2 } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
@@ -35,6 +36,7 @@ const MainLayout: React.FC = () => {
       </main>
       {/* Quick actions floating button - only for staff */}
       {isStaffRole() && <QuickActionsButton />}
+      <ChatWidget />
     </div>
   );
 };

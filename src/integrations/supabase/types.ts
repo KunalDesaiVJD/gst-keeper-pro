@@ -156,6 +156,48 @@ export type Database = {
           },
         ]
       }
+      chat_messages: {
+        Row: {
+          created_at: string
+          id: string
+          mentions: string[] | null
+          message: string
+          sender_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          mentions?: string[] | null
+          message: string
+          sender_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          mentions?: string[] | null
+          message?: string
+          sender_id?: string
+        }
+        Relationships: []
+      }
+      chat_read_status: {
+        Row: {
+          id: string
+          last_read_at: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          last_read_at?: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          last_read_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       clients: {
         Row: {
           assigned_accountant: string | null
