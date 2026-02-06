@@ -6,7 +6,7 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Badge } from '@/components/ui/badge';
 import { isQuarterEndMonth } from '@/types';
-import { Lock, AlertCircle, Save, Download } from 'lucide-react';
+import { Lock, AlertCircle, Save, Download, History } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
@@ -15,6 +15,8 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { exportITCSummaryToPDF } from '@/utils/itcPdfExport';
 import GSTPortalLink from '@/components/clients/GSTPortalLink';
+import GenericVersionHistoryDialog, { GenericVersion } from '@/components/dialogs/GenericVersionHistoryDialog';
+import * as XLSX from 'xlsx';
 
 interface ITCRow {
   srNo: string;
@@ -135,7 +137,11 @@ const ITCSummaryPage: React.FC = () => {
   const [reclaimFromReco, setReclaimFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [rcmTotals, setRcmTotals] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [negativeValueError, setNegativeValueError] = useState<string | null>(null);
-  const [dataLoadVersion, setDataLoadVersion] = useState(0); // Trigger for auto-link refresh
+  const [dataLoadVersion, setDataLoadVersion] = useState(0);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [versions, setVersions] = useState<GenericVersion[]>([]);
+
+  const canViewVersions = user?.role === 'superadmin' || user?.role === 'gst_manager';
 
   // Editable ITC data state
   const [itcData, setItcData] = useState<ITCData>(getDefaultITCData());
@@ -698,6 +704,15 @@ const ITCSummaryPage: React.FC = () => {
         setItcSummaryId(data.id);
       }
 
+      // Save version snapshot
+      try {
+        const { data: maxV } = await supabase.from('itc_versions').select('version_number').eq('client_id', selectedClient).eq('period_month', selectedMonth).order('version_number', { ascending: false }).limit(1);
+        const nextV = (maxV?.[0]?.version_number || 0) + 1;
+        await supabase.from('itc_versions').update({ is_current: false }).eq('client_id', selectedClient).eq('period_month', selectedMonth);
+        await supabase.from('itc_versions').insert([{ client_id: selectedClient, period_month: selectedMonth, version_number: nextV, version_data: JSON.parse(JSON.stringify(itcData)), updated_by: user?.id, is_current: true, action_type: 'SAVE' }]);
+        fetchVersions();
+      } catch (vErr) { console.error('Error saving ITC version:', vErr); }
+
       toast.success('ITC Summary saved successfully');
     } catch (error: any) {
       console.error('Error saving ITC summary:', error);
@@ -722,6 +737,65 @@ const ITCSummaryPage: React.FC = () => {
     } catch (error: any) {
       toast.error('Failed to unlock: ' + error.message);
     }
+  };
+
+  // Fetch ITC versions
+  const fetchVersions = useCallback(async () => {
+    if (!selectedClient || !selectedMonth) {
+      setVersions([]);
+      return;
+    }
+    try {
+      const { data: versionsData } = await supabase
+        .from('itc_versions')
+        .select('*')
+        .eq('client_id', selectedClient)
+        .eq('period_month', selectedMonth)
+        .order('version_number', { ascending: false });
+
+      const userIds = [...new Set((versionsData || []).map(v => v.updated_by).filter(Boolean))];
+      let userMap: Record<string, { name: string; role: string }> = {};
+      if (userIds.length > 0) {
+        const { data: profiles } = await supabase.from('profiles').select('user_id, first_name').in('user_id', userIds);
+        const { data: roles } = await supabase.from('user_roles').select('user_id, role').in('user_id', userIds);
+        (profiles || []).forEach(p => { userMap[p.user_id] = { name: p.first_name, role: '' }; });
+        (roles || []).forEach(r => { if (userMap[r.user_id]) userMap[r.user_id].role = r.role; });
+      }
+      setVersions((versionsData || []).map(v => ({
+        id: v.id, versionNumber: v.version_number || 1, versionData: v.version_data,
+        updatedBy: userMap[v.updated_by]?.name || 'Unknown', updatedByRole: userMap[v.updated_by]?.role || '',
+        updatedAt: v.updated_at, isCurrent: v.is_current || false, actionType: v.action_type || 'SAVE',
+        restoredFromVersionId: v.restored_from_version_id,
+      })));
+    } catch (error) { console.error('Error fetching ITC versions:', error); }
+  }, [selectedClient, selectedMonth]);
+
+  useEffect(() => { if (selectedClient && selectedMonth) fetchVersions(); }, [selectedClient, selectedMonth, fetchVersions]);
+
+  const handleRestoreVersion = async (version: GenericVersion) => {
+    if (!selectedClient || !selectedMonth) return;
+    try {
+      const versionData = version.versionData as ITCData;
+      setItcData(versionData);
+      // Save as RESTORE
+      const { data: maxV } = await supabase.from('itc_versions').select('version_number').eq('client_id', selectedClient).eq('period_month', selectedMonth).order('version_number', { ascending: false }).limit(1);
+      const nextV = (maxV?.[0]?.version_number || 0) + 1;
+      await supabase.from('itc_versions').update({ is_current: false }).eq('client_id', selectedClient).eq('period_month', selectedMonth);
+      await supabase.from('itc_versions').insert([{ client_id: selectedClient, period_month: selectedMonth, version_number: nextV, version_data: JSON.parse(JSON.stringify(versionData)), updated_by: user?.id, is_current: true, action_type: 'RESTORE', restored_from_version_id: version.id }]);
+      toast.success(`Restored to version ${version.versionNumber}`);
+      fetchVersions();
+      setShowVersionHistory(false);
+    } catch (error) { toast.error('Failed to restore version'); }
+  };
+
+  const handleDownloadVersion = (version: GenericVersion) => {
+    try {
+      const workbook = XLSX.utils.book_new();
+      const sheetData = [['ITC Summary - Version ' + version.versionNumber], [`Client: ${selectedClientData?.name}`, `Month: ${selectedMonth}`], [`Saved: ${new Date(version.updatedAt).toLocaleString()}`, `By: ${version.updatedBy}`]];
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(sheetData), 'ITC Summary');
+      XLSX.writeFile(workbook, `ITC_Version_${version.versionNumber}_${selectedClientData?.name?.replace(/\s+/g, '_')}_${selectedMonth.replace('/', '-')}.xlsx`);
+      toast.success(`Downloaded version ${version.versionNumber}`);
+    } catch (error) { toast.error('Failed to download version'); }
   };
 
   // Calculate Total (5) = 5.1 + 5.2 - 5.3 + 5.4 + 5.5
@@ -915,9 +989,28 @@ const ITCSummaryPage: React.FC = () => {
                 clientName={selectedClientData?.name} 
               />
             )}
+            {canViewVersions && selectedClient && (
+              <Button variant="outline" size="sm" onClick={() => setShowVersionHistory(true)}>
+                <History className="h-4 w-4 mr-1" />
+                View Versions
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
+
+      {/* Version History Dialog */}
+      <GenericVersionHistoryDialog
+        open={showVersionHistory}
+        onOpenChange={setShowVersionHistory}
+        versions={versions}
+        onRestore={handleRestoreVersion}
+        onDownload={handleDownloadVersion}
+        onVersionDeleted={fetchVersions}
+        title="Version History"
+        subtitle={`${selectedClientData?.name || ''} - ${selectedMonth}`}
+        tableName="itc_versions"
+      />
 
       {!selectedClient ? (
         <Card>

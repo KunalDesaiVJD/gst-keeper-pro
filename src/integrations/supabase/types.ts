@@ -390,6 +390,45 @@ export type Database = {
           },
         ]
       }
+      itc_versions: {
+        Row: {
+          action_type: string | null
+          client_id: string
+          id: string
+          is_current: boolean | null
+          period_month: string
+          restored_from_version_id: string | null
+          updated_at: string | null
+          updated_by: string | null
+          version_data: Json | null
+          version_number: number | null
+        }
+        Insert: {
+          action_type?: string | null
+          client_id: string
+          id?: string
+          is_current?: boolean | null
+          period_month: string
+          restored_from_version_id?: string | null
+          updated_at?: string | null
+          updated_by?: string | null
+          version_data?: Json | null
+          version_number?: number | null
+        }
+        Update: {
+          action_type?: string | null
+          client_id?: string
+          id?: string
+          is_current?: boolean | null
+          period_month?: string
+          restored_from_version_id?: string | null
+          updated_at?: string | null
+          updated_by?: string | null
+          version_data?: Json | null
+          version_number?: number | null
+        }
+        Relationships: []
+      }
       password_reset_requests: {
         Row: {
           id: string
@@ -558,6 +597,45 @@ export type Database = {
         }
         Relationships: []
       }
+      rcm_versions: {
+        Row: {
+          action_type: string | null
+          client_id: string
+          financial_year: string
+          id: string
+          is_current: boolean | null
+          restored_from_version_id: string | null
+          updated_at: string | null
+          updated_by: string | null
+          version_data: Json | null
+          version_number: number | null
+        }
+        Insert: {
+          action_type?: string | null
+          client_id: string
+          financial_year: string
+          id?: string
+          is_current?: boolean | null
+          restored_from_version_id?: string | null
+          updated_at?: string | null
+          updated_by?: string | null
+          version_data?: Json | null
+          version_number?: number | null
+        }
+        Update: {
+          action_type?: string | null
+          client_id?: string
+          financial_year?: string
+          id?: string
+          is_current?: boolean | null
+          restored_from_version_id?: string | null
+          updated_at?: string | null
+          updated_by?: string | null
+          version_data?: Json | null
+          version_number?: number | null
+        }
+        Relationships: []
+      }
       suspended_reco: {
         Row: {
           client_id: string
@@ -645,13 +723,6 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "twob_versions_restored_from_version_id_fkey"
-            columns: ["restored_from_version_id"]
-            isOneToOne: false
-            referencedRelation: "twob_versions"
             referencedColumns: ["id"]
           },
         ]

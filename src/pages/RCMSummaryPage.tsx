@@ -9,7 +9,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { Calculator, Plus, FileSpreadsheet, FileText, Save, Loader2, Lock, Settings, Unlock } from 'lucide-react';
+import { Calculator, Plus, FileSpreadsheet, FileText, Save, Loader2, Lock, Settings, Unlock, History } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClient } from '@/contexts/ClientContext';
@@ -20,6 +20,8 @@ import AddMasterDialog from '@/components/rcm/AddMasterDialog';
 import { exportRCMToExcel } from '@/utils/rcmExcelExport';
 import { exportRCMToPDF } from '@/utils/rcmPdfExport';
 import GSTPortalLink from '@/components/clients/GSTPortalLink';
+import GenericVersionHistoryDialog, { GenericVersion } from '@/components/dialogs/GenericVersionHistoryDialog';
+import * as XLSX from 'xlsx';
 
 interface Client {
   id: string;
@@ -120,9 +122,12 @@ const RCMSummaryPage: React.FC = () => {
   const [hasChanges, setHasChanges] = useState(false);
   const [lockedMonths, setLockedMonths] = useState<Set<string>>(new Set());
   const [showAddMaster, setShowAddMaster] = useState(false);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [versions, setVersions] = useState<GenericVersion[]>([]);
 
   const isStaff = isStaffRole();
   const canUnlock = canUnlockSheets();
+  const canViewVersions = user?.role === 'superadmin' || user?.role === 'gst_manager';
 
   // Check if all months are locked
   const allMonthsLocked = months.length > 0 && months.every(m => lockedMonths.has(m));
@@ -292,6 +297,72 @@ const RCMSummaryPage: React.FC = () => {
     fetchData();
   }, [fetchData]);
 
+  // Fetch versions for RCM Summary
+  const fetchVersions = useCallback(async () => {
+    if (!selectedClient || !financialYear) {
+      setVersions([]);
+      return;
+    }
+
+    try {
+      const { data: versionsData, error } = await supabase
+        .from('rcm_versions')
+        .select('*')
+        .eq('client_id', selectedClient)
+        .eq('financial_year', financialYear)
+        .order('version_number', { ascending: false });
+
+      if (error) throw error;
+
+      // Fetch user names for audit trail
+      const userIds = [...new Set((versionsData || []).map(v => v.updated_by).filter(Boolean))];
+      let userMap: Record<string, { name: string; role: string }> = {};
+      
+      if (userIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('user_id, first_name')
+          .in('user_id', userIds);
+        
+        const { data: roles } = await supabase
+          .from('user_roles')
+          .select('user_id, role')
+          .in('user_id', userIds);
+
+        (profiles || []).forEach(p => {
+          userMap[p.user_id] = { name: p.first_name, role: '' };
+        });
+        (roles || []).forEach(r => {
+          if (userMap[r.user_id]) {
+            userMap[r.user_id].role = r.role;
+          }
+        });
+      }
+
+      const formattedVersions: GenericVersion[] = (versionsData || []).map(v => ({
+        id: v.id,
+        versionNumber: v.version_number || 1,
+        versionData: v.version_data,
+        updatedBy: userMap[v.updated_by]?.name || 'Unknown',
+        updatedByRole: userMap[v.updated_by]?.role || '',
+        updatedAt: v.updated_at,
+        isCurrent: v.is_current || false,
+        actionType: v.action_type || 'SAVE',
+        restoredFromVersionId: v.restored_from_version_id,
+      }));
+
+      setVersions(formattedVersions);
+    } catch (error) {
+      console.error('Error fetching RCM versions:', error);
+    }
+  }, [selectedClient, financialYear]);
+
+  useEffect(() => {
+    if (selectedClient && financialYear) {
+      fetchVersions();
+    }
+  }, [selectedClient, financialYear, fetchVersions]);
+
   // Track changes
   useEffect(() => {
     const hasDataChanged = JSON.stringify(data) !== JSON.stringify(originalData);
@@ -379,6 +450,43 @@ const RCMSummaryPage: React.FC = () => {
         if (insertError) throw insertError;
       }
 
+      // Save version snapshot
+      try {
+        // Get current max version
+        const { data: maxVersionData } = await supabase
+          .from('rcm_versions')
+          .select('version_number')
+          .eq('client_id', selectedClient)
+          .eq('financial_year', financialYear)
+          .order('version_number', { ascending: false })
+          .limit(1);
+
+        const nextVersion = (maxVersionData?.[0]?.version_number || 0) + 1;
+
+        // Mark all existing versions as not current
+        await supabase
+          .from('rcm_versions')
+          .update({ is_current: false })
+          .eq('client_id', selectedClient)
+          .eq('financial_year', financialYear);
+
+        // Insert new version
+        await supabase.from('rcm_versions').insert([{
+          client_id: selectedClient,
+          financial_year: financialYear,
+          version_number: nextVersion,
+          version_data: JSON.parse(JSON.stringify({ rcmData: data })),
+          updated_by: user?.id,
+          updated_at: new Date().toISOString(),
+          is_current: true,
+          action_type: 'SAVE',
+        }]);
+
+        fetchVersions();
+      } catch (versionError) {
+        console.error('Error saving version:', versionError);
+      }
+
       toast.success('RCM data saved successfully');
       fetchData();
     } catch (error: any) {
@@ -436,6 +544,134 @@ const RCMSummaryPage: React.FC = () => {
     }
     exportRCMToPDF(selectedClientData.name, selectedClientData.gstin, financialYear, data, months);
     toast.success('PDF exported successfully');
+  };
+
+  // Version restore handler
+  const handleRestoreVersion = async (version: GenericVersion) => {
+    if (!selectedClient || !financialYear) return;
+
+    try {
+      const versionData = version.versionData as { rcmData: RCMDataRow[] };
+      if (!versionData?.rcmData) {
+        toast.error('Invalid version data');
+        return;
+      }
+
+      // Delete existing data
+      await supabase
+        .from('rcm_data')
+        .delete()
+        .eq('client_id', selectedClient)
+        .eq('financial_year', financialYear);
+
+      // Insert restored data
+      const insertData: any[] = [];
+      for (const row of versionData.rcmData) {
+        for (const month of months) {
+          const taxableValue = row.monthlyValues[month] || 0;
+          if (taxableValue > 0) {
+            const gstValues = calculateGST(taxableValue, row.rate, row.supply_type);
+            insertData.push({
+              client_id: selectedClient,
+              financial_year: financialYear,
+              month: month,
+              particulars: row.particulars,
+              rate: row.rate,
+              supply_type: row.supply_type,
+              master_id: row.master_id,
+              taxable_value: taxableValue,
+              ...gstValues,
+              updated_by: user?.id,
+              updated_at: new Date().toISOString(),
+            });
+          }
+        }
+      }
+
+      if (insertData.length > 0) {
+        await supabase.from('rcm_data').insert(insertData);
+      }
+
+      // Save restore version snapshot
+      const { data: maxVersionData } = await supabase
+        .from('rcm_versions')
+        .select('version_number')
+        .eq('client_id', selectedClient)
+        .eq('financial_year', financialYear)
+        .order('version_number', { ascending: false })
+        .limit(1);
+
+      const nextVersion = (maxVersionData?.[0]?.version_number || 0) + 1;
+
+      await supabase
+        .from('rcm_versions')
+        .update({ is_current: false })
+        .eq('client_id', selectedClient)
+        .eq('financial_year', financialYear);
+
+      await supabase.from('rcm_versions').insert([{
+        client_id: selectedClient,
+        financial_year: financialYear,
+        version_number: nextVersion,
+        version_data: JSON.parse(JSON.stringify(versionData)),
+        updated_by: user?.id,
+        updated_at: new Date().toISOString(),
+        is_current: true,
+        action_type: 'RESTORE',
+        restored_from_version_id: version.id,
+      }]);
+
+      toast.success(`Restored to version ${version.versionNumber}`);
+      fetchData();
+      fetchVersions();
+      setShowVersionHistory(false);
+    } catch (error: any) {
+      console.error('Error restoring version:', error);
+      toast.error('Failed to restore version');
+    }
+  };
+
+  // Version download handler
+  const handleDownloadVersion = (version: GenericVersion) => {
+    try {
+      const versionData = version.versionData as { rcmData: RCMDataRow[] };
+      if (!versionData?.rcmData) {
+        toast.error('Invalid version data');
+        return;
+      }
+
+      const workbook = XLSX.utils.book_new();
+      
+      // Create sheet data
+      const sheetData = [
+        [`RCM Summary - Version ${version.versionNumber}`],
+        [`Client: ${selectedClientData?.name || ''}`, '', '', '', `FY: ${financialYear}`],
+        [`Saved: ${new Date(version.updatedAt).toLocaleString()}`, '', '', '', `By: ${version.updatedBy}`],
+        [],
+        ['Particulars', 'Rate', ...months, 'Total'],
+      ];
+
+      for (const row of versionData.rcmData) {
+        const total = Object.values(row.monthlyValues).reduce((sum, val) => sum + (val || 0), 0);
+        sheetData.push([
+          row.particulars,
+          row.rate,
+          ...months.map(m => row.monthlyValues[m] || 0),
+          total,
+        ] as any);
+      }
+
+      const sheet = XLSX.utils.aoa_to_sheet(sheetData);
+      XLSX.utils.book_append_sheet(workbook, sheet, 'RCM Data');
+
+      const fileName = `RCM_Version_${version.versionNumber}_${selectedClientData?.name?.replace(/\s+/g, '_')}_${financialYear}.xlsx`;
+      XLSX.writeFile(workbook, fileName);
+      
+      toast.success(`Downloaded version ${version.versionNumber}`);
+    } catch (error) {
+      console.error('Error downloading version:', error);
+      toast.error('Failed to download version');
+    }
   };
 
   return (
@@ -527,6 +763,13 @@ const RCMSummaryPage: React.FC = () => {
                 <FileText className="h-4 w-4 mr-1" />
                 PDF
               </Button>
+
+              {canViewVersions && selectedClient && (
+                <Button variant="outline" size="sm" onClick={() => setShowVersionHistory(true)}>
+                  <History className="h-4 w-4 mr-1" />
+                  View Versions
+                </Button>
+              )}
             </div>
           </div>
         </CardContent>
@@ -615,6 +858,19 @@ const RCMSummaryPage: React.FC = () => {
         open={showAddMaster}
         onOpenChange={setShowAddMaster}
         onMasterAdded={fetchMasters}
+      />
+
+      {/* Version History Dialog */}
+      <GenericVersionHistoryDialog
+        open={showVersionHistory}
+        onOpenChange={setShowVersionHistory}
+        versions={versions}
+        onRestore={handleRestoreVersion}
+        onDownload={handleDownloadVersion}
+        onVersionDeleted={fetchVersions}
+        title="Version History"
+        subtitle={`${selectedClientData?.name || ''} - FY ${financialYear}`}
+        tableName="rcm_versions"
       />
     </div>
   );
