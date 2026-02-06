@@ -1636,6 +1636,7 @@ const TwoBReconciliationPage: React.FC = () => {
         onOpenChange={setShowVersionHistory}
         versions={versions}
         onRestore={handleRestoreVersion}
+        onVersionDeleted={fetchVersions}
         clientName={selectedClientData?.name || ''}
         month={selectedMonth}
       />
