@@ -601,10 +601,12 @@ export type Database = {
       }
       twob_versions: {
         Row: {
+          action_type: string | null
           client_id: string
           id: string
           is_current: boolean | null
           period_month: string
+          restored_from_version_id: string | null
           table_type: string
           updated_at: string | null
           updated_by: string | null
@@ -612,10 +614,12 @@ export type Database = {
           version_number: number | null
         }
         Insert: {
+          action_type?: string | null
           client_id: string
           id?: string
           is_current?: boolean | null
           period_month: string
+          restored_from_version_id?: string | null
           table_type: string
           updated_at?: string | null
           updated_by?: string | null
@@ -623,10 +627,12 @@ export type Database = {
           version_number?: number | null
         }
         Update: {
+          action_type?: string | null
           client_id?: string
           id?: string
           is_current?: boolean | null
           period_month?: string
+          restored_from_version_id?: string | null
           table_type?: string
           updated_at?: string | null
           updated_by?: string | null
@@ -639,6 +645,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "twob_versions_restored_from_version_id_fkey"
+            columns: ["restored_from_version_id"]
+            isOneToOne: false
+            referencedRelation: "twob_versions"
             referencedColumns: ["id"]
           },
         ]
