@@ -863,7 +863,7 @@ const TwoBReconciliationPage: React.FC = () => {
         version_number: currentVersionNumber,
         version_data: versionData,
         updated_at: new Date().toISOString(),
-        updated_by: user?.userId || null,
+        updated_by: user?.id || null,
         is_current: true,
         action_type: 'SAVE',
       }]);
@@ -989,7 +989,7 @@ const TwoBReconciliationPage: React.FC = () => {
         version_number: newVersionNumber,
         version_data: JSON.parse(JSON.stringify(versionData)) as Json,
         updated_at: new Date().toISOString(),
-        updated_by: user?.userId || null,
+        updated_by: user?.id || null,
         is_current: true,
         action_type: 'RESTORE',
         restored_from_version_id: version.id,
