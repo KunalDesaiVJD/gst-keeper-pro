@@ -17,18 +17,20 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { History, Download, RotateCcw, Save, RefreshCcw } from 'lucide-react';
+import { History, Download, RotateCcw, Save, RefreshCcw, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { TwoBVersion, BillNotIn2B, BillNotInBooks } from '@/types';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 
 interface VersionHistoryDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   versions: TwoBVersion[];
   onRestore: (version: TwoBVersion) => void;
+  onVersionDeleted?: () => void;
   clientName: string;
   month: string;
 }
@@ -38,14 +40,18 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
   onOpenChange,
   versions,
   onRestore,
+  onVersionDeleted,
   clientName,
   month,
 }) => {
   const { user } = useAuth();
   const [confirmRestore, setConfirmRestore] = useState<TwoBVersion | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<TwoBVersion | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
-  // Only superadmin can restore versions
+  // Only superadmin can restore versions and delete versions
   const canRestore = user?.role === 'superadmin';
+  const canDelete = user?.role === 'superadmin';
 
   const handleDownloadVersion = (version: TwoBVersion) => {
     try {
@@ -151,6 +157,33 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
     }
   };
 
+  const handleDeleteClick = (version: TwoBVersion) => {
+    setConfirmDelete(version);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!confirmDelete) return;
+    
+    setIsDeleting(true);
+    try {
+      const { error } = await supabase
+        .from('twob_versions')
+        .delete()
+        .eq('id', confirmDelete.id);
+
+      if (error) throw error;
+
+      toast.success(`Version ${confirmDelete.versionNumber} deleted successfully`);
+      setConfirmDelete(null);
+      onVersionDeleted?.();
+    } catch (error: any) {
+      console.error('Error deleting version:', error);
+      toast.error('Failed to delete version');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const getActionIcon = (actionType?: string) => {
     if (actionType === 'RESTORE') {
       return <RefreshCcw className="h-3 w-3" />;
@@ -220,6 +253,16 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    {canDelete && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDeleteClick(version)}
+                        className="flex items-center gap-1 text-destructive hover:text-destructive hover:bg-destructive/10"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    )}
                     {canRestore && (
                       <Button
                         variant="outline"
@@ -268,6 +311,28 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleConfirmRestore}>
               Restore Version
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!confirmDelete} onOpenChange={() => setConfirmDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Version {confirmDelete?.versionNumber}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete version {confirmDelete?.versionNumber}. 
+              This action cannot be undone. Make sure you have downloaded this version if needed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleConfirmDelete}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? 'Deleting...' : 'Delete Version'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
