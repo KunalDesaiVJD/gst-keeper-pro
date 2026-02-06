@@ -1223,9 +1223,9 @@ const TwoBReconciliationPage: React.FC = () => {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="overflow-x-auto">
+              <div className="overflow-auto max-h-[75vh] relative">
                 <table className="gst-table">
-                  <thead>
+                  <thead className="sticky top-0 z-10">
                     <tr>
                       <th className="w-28">
                         <div className="flex flex-col items-center gap-1">
@@ -1435,9 +1435,9 @@ const TwoBReconciliationPage: React.FC = () => {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="overflow-x-auto">
+              <div className="overflow-auto max-h-[75vh] relative">
                 <table className="gst-table">
-                  <thead>
+                  <thead className="sticky top-0 z-10">
                     <tr>
                       <th className="w-28">
                         <div className="flex flex-col items-center gap-1">
