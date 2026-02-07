@@ -9,7 +9,9 @@ const MonthContext = createContext<MonthContextType | undefined>(undefined);
 
 export const MonthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const now = new Date();
-  const defaultMonth = `${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
+  // Default to previous month (Return Period) - GST returns filed in current month are for previous month
+  const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const defaultMonth = `${String(prevMonth.getMonth() + 1).padStart(2, '0')}/${prevMonth.getFullYear()}`;
   const [selectedMonth, setSelectedMonthState] = useState<string>(defaultMonth);
 
   const setSelectedMonth = useCallback((month: string) => {

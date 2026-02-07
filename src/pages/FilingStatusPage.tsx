@@ -17,7 +17,7 @@ import { useMonth } from '@/contexts/MonthContext';
 import { supabase } from '@/integrations/supabase/client';
 import GSTPortalLink from '@/components/clients/GSTPortalLink';
 import ClientHoverDetails from '@/components/filing/ClientHoverDetails';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+
 
 // Due date constants for each return type
 const RETURN_DUE_DATES: Record<string, number> = {
@@ -74,6 +74,7 @@ const FilingStatusPage: React.FC = () => {
   const [selectedTab, setSelectedTab] = useState<string>('gstr1');
   const [clients, setClients] = useState<Client[]>([]);
   const [filingRecords, setFilingRecords] = useState<FilingRecord[]>([]);
+  const [targetDateLookup, setTargetDateLookup] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [lateFilingsFilter, setLateFilingsFilter] = useState<boolean>(false);
   
@@ -284,14 +285,33 @@ const FilingStatusPage: React.FC = () => {
     setFilingRecords(enrichedRecords);
   }, [selectedMonth]);
 
+  // Fetch target dates from all months for consistency
+  const fetchTargetDates = useCallback(async () => {
+    const { data } = await supabase
+      .from('filing_status')
+      .select('client_id, return_type, target_date')
+      .not('target_date', 'is', null);
+    
+    if (data) {
+      const lookup: Record<string, number> = {};
+      data.forEach(r => {
+        const key = `${r.client_id}__${r.return_type}`;
+        if (!(key in lookup)) {
+          lookup[key] = r.target_date!;
+        }
+      });
+      setTargetDateLookup(lookup);
+    }
+  }, []);
+
   useEffect(() => {
     const loadData = async () => {
       setIsLoading(true);
-      await Promise.all([fetchClients(), fetchFilingRecords()]);
+      await Promise.all([fetchClients(), fetchFilingRecords(), fetchTargetDates()]);
       setIsLoading(false);
     };
     loadData();
-  }, [fetchClients, fetchFilingRecords]);
+  }, [fetchClients, fetchFilingRecords, fetchTargetDates]);
 
   // Real-time subscription
   useEffect(() => {
@@ -430,11 +450,9 @@ const FilingStatusPage: React.FC = () => {
               period_month: selectedMonth,
               status: 'Data Pending',
               target_date: (() => {
-                // Look up existing target date from any month for this client+return type
-                const existingRecord = filingRecords.find(
-                  f => f.client_id === client.id && f.return_type === rt && f.target_date !== null
-                );
-                if (existingRecord?.target_date) return existingRecord.target_date;
+                // Look up existing target date from cross-month lookup
+                const lookupKey = `${client.id}__${rt}`;
+                if (targetDateLookup[lookupKey]) return targetDateLookup[lookupKey];
                 // Fallback defaults
                 return rt === 'GSTR-1' || rt === 'GSTR-1 (IFF)' ? 11 : rt === 'GSTR-3B' || rt === 'GSTR-3B (Q)' ? 20 : 25;
               })(),
@@ -1105,34 +1123,29 @@ const FilingStatusPage: React.FC = () => {
                 </td>
                 <td className="text-center font-mono text-sm">{record.target_date}</td>
                 <td>
-                  <div className="flex items-start gap-1">
-                    <div className="flex flex-col">
-                      <span>
-                        {record.filed_date 
-                          ? new Date(record.filed_date).toLocaleDateString('en-IN')
-                          : '-'
-                        }
-                      </span>
-                      {record.updatedByName && record.updated_at && (
-                        <span className={`text-[10px] mt-0.5 ${record.status === 'Filed' ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400'}`}>
-                          {record.status !== 'Filed' && record.filed_date === null ? 'Status changed' : 'by'} {record.updatedByName} ({record.updatedByRole}) on {new Date(record.updated_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      )}
-                    </div>
+                  <div className="flex items-center gap-1">
+                    <span>
+                      {record.filed_date 
+                        ? new Date(record.filed_date).toLocaleDateString('en-IN')
+                        : '-'
+                      }
+                    </span>
                     {record.updatedByName && record.updated_at && (
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button className="shrink-0 mt-0.5">
-                              <Info className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent side="left" className="max-w-[220px] text-xs">
-                            <p>Status changed by <strong>{record.updatedByName}</strong> ({record.updatedByRole})</p>
-                            <p>on {new Date(record.updated_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })}, {new Date(record.updated_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button className="shrink-0">
+                            <Info className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent side="left" className="w-[220px] p-3 text-xs">
+                          <p className={record.status !== 'Filed' ? 'text-amber-600 dark:text-amber-400' : ''}>
+                            Status changed by <strong>{record.updatedByName}</strong> ({record.updatedByRole})
+                          </p>
+                          <p className={record.status !== 'Filed' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}>
+                            on {new Date(record.updated_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })}, {new Date(record.updated_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                          </p>
+                        </PopoverContent>
+                      </Popover>
                     )}
                   </div>
                 </td>
