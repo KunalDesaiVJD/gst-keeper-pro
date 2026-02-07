@@ -384,12 +384,17 @@ const TwoBReconciliationPage: React.FC = () => {
       return;
     }
 
+    // Convert selectedMonth (MM/YYYY) to RCM month format (Mon-YY)
+    const [mm, yyyy] = selectedMonth.split('/');
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const rcmMonthKey = `${monthNames[parseInt(mm) - 1]}-${yyyy.slice(-2)}`;
+
     // Fetch RCM data
     const { data: rcmData } = await supabase
       .from('rcm_data')
       .select('igst_5, igst_18, cgst_2_5, cgst_9, sgst_2_5, sgst_9')
       .eq('client_id', selectedClientId)
-      .eq('month', selectedMonth);
+      .eq('month', rcmMonthKey);
 
     const rcm = (rcmData || []).reduce((acc, r) => ({
       igst: acc.igst + (r.igst_5 || 0) + (r.igst_18 || 0),

@@ -304,13 +304,16 @@ const StaffDashboard: React.FC = () => {
         </div>
         <div className="flex items-center gap-2">
           <Calendar className="h-5 w-5 text-muted-foreground" />
-          <div className="w-48">
-            <SearchableMonthSelect
-              options={months}
-              value={selectedMonth}
-              onValueChange={setSelectedMonth}
-              placeholder="Select Month"
-            />
+          <div>
+            <p className="text-[10px] text-muted-foreground mb-0.5">Return Period</p>
+            <div className="w-48">
+              <SearchableMonthSelect
+                options={months}
+                value={selectedMonth}
+                onValueChange={setSelectedMonth}
+                placeholder="Select Month"
+              />
+            </div>
           </div>
         </div>
       </div>
