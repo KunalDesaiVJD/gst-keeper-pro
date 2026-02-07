@@ -275,7 +275,7 @@ const GSTRunningUpdatePage: React.FC = () => {
             <FileSpreadsheet className="h-6 w-6 text-primary" />
           </div>
           <div>
-            <h1 className="text-2xl font-heading font-bold text-foreground">GST Running Update Sheet</h1>
+            <h1 className="text-2xl font-heading font-bold text-foreground">GST Update Sheet</h1>
             <p className="text-muted-foreground">Track GST updates and changes</p>
           </div>
         </div>
@@ -310,7 +310,7 @@ const GSTRunningUpdatePage: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Effect Month:</span>
+              <span className="text-sm font-medium">Mistake Month:</span>
               <div className="w-32">
                 <SearchableMonthSelect
                   options={monthOptions}
@@ -397,7 +397,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                     <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
                       <TableHead className="font-bold text-white border border-[#2E5A6B] w-12">Sr.No.</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] w-40">CLIENT</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] w-24">Effect Month</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] w-24">Mistake Month</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] w-28">Update Effect Month</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] w-28">Update in GSTR</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] w-36">Correction Type</TableHead>
