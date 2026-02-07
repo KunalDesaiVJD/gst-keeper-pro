@@ -682,6 +682,9 @@ export type Database = {
         Row: {
           client_id: string
           id: string
+          opening_cgst: number | null
+          opening_igst: number | null
+          opening_sgst: number | null
           period_month: string
           portal_cgst: number | null
           portal_igst: number | null
@@ -692,6 +695,9 @@ export type Database = {
         Insert: {
           client_id: string
           id?: string
+          opening_cgst?: number | null
+          opening_igst?: number | null
+          opening_sgst?: number | null
           period_month: string
           portal_cgst?: number | null
           portal_igst?: number | null
@@ -702,6 +708,9 @@ export type Database = {
         Update: {
           client_id?: string
           id?: string
+          opening_cgst?: number | null
+          opening_igst?: number | null
+          opening_sgst?: number | null
           period_month?: string
           portal_cgst?: number | null
           portal_igst?: number | null
