@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send } from 'lucide-react';
+import { Send, Paperclip } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
 
 interface MentionUser {
   id: string;
@@ -120,6 +121,15 @@ const MentionInput: React.FC<MentionInputProps> = ({ onSend, users }) => {
         </div>
       )}
       <div className="flex items-end gap-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="shrink-0 h-9 w-9 rounded-full text-muted-foreground hover:text-foreground"
+          onClick={() => toast.info('Media upload coming soon!')}
+          title="Attach file"
+        >
+          <Paperclip className="h-4 w-4" />
+        </Button>
         <textarea
           ref={inputRef}
           value={text}

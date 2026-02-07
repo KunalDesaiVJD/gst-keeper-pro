@@ -6,7 +6,7 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Badge } from '@/components/ui/badge';
 import { isQuarterEndMonth } from '@/types';
-import { Lock, AlertCircle, Save, Download, History } from 'lucide-react';
+import { Lock, AlertCircle, Save, Download, History, AlertTriangle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
@@ -62,10 +62,10 @@ const getDefaultITCData = (): ITCData => ({
   ],
   section4B: [
     { srNo: '(1)', particular: 'ITC Reversal under Rule 38, 42 & 43, and Section 17(5)', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
-    { srNo: '(2)', particular: 'Others', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
-    { srNo: '', particular: 'ITC Reversal for current month as per 2B RECO', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
-    { srNo: '', particular: 'ITC Reversal for previous months, if any', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
-    { srNo: '', particular: 'ITC Reversal due to 180 days Analysis', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '(2)', particular: 'Others', igst: 0, cgst: 0, sgst: 0, isHeader: true, reasons: '' },
+    { srNo: '4(B)(2)(i)', particular: 'ITC Reversal for current month as per 2B RECO', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
+    { srNo: '4(B)(2)(ii)', particular: 'ITC Reversal for previous months, if any', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '4(B)(2)(iii)', particular: 'ITC Reversal due to 180 days Analysis', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
   ],
   section4D: [
     { srNo: '(1)', particular: 'ITC reclaimed which was reversed under Table 4(B)(2) in earlier tax period', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
@@ -140,6 +140,7 @@ const ITCSummaryPage: React.FC = () => {
   const [dataLoadVersion, setDataLoadVersion] = useState(0);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [versions, setVersions] = useState<GenericVersion[]>([]);
+  const [gstUpdateCount, setGstUpdateCount] = useState(0);
 
   const canViewVersions = user?.role === 'superadmin' || user?.role === 'gst_manager';
 
@@ -415,11 +416,38 @@ const ITCSummaryPage: React.FC = () => {
     }
   }, [selectedClient, selectedMonth]);
 
+  // Fetch GST Update Sheet entries for reminder banner
+  const fetchGSTUpdateReminder = useCallback(async () => {
+    if (!selectedClient || !selectedMonth) {
+      setGstUpdateCount(0);
+      return;
+    }
+
+    // Convert selectedMonth "01/2026" to GST Update format "Jan-26"
+    const [monthNum, year] = selectedMonth.split('/');
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthName = monthNames[parseInt(monthNum) - 1];
+    const gstMonth = `${monthName}-${year.slice(-2)}`;
+
+    const { count, error } = await supabase
+      .from('gst_running_updates')
+      .select('*', { count: 'exact', head: true })
+      .eq('client_id', selectedClient)
+      .eq('update_effect_month', gstMonth);
+
+    if (!error && count) {
+      setGstUpdateCount(count);
+    } else {
+      setGstUpdateCount(0);
+    }
+  }, [selectedClient, selectedMonth]);
+
   useEffect(() => {
     fetchITCSummary();
     fetchRecoData();
     fetchRCMTotals();
-  }, [fetchITCSummary, fetchRecoData, fetchRCMTotals]);
+    fetchGSTUpdateReminder();
+  }, [fetchITCSummary, fetchRecoData, fetchRCMTotals, fetchGSTUpdateReminder]);
 
   // Update auto-linked rows when reversal/reclaim/RCM data changes OR when data is loaded
   useEffect(() => {
@@ -1068,21 +1096,45 @@ const ITCSummaryPage: React.FC = () => {
             </div>
           )}
 
+          {/* GST Update Sheet Reminder Banner */}
+          {gstUpdateCount > 0 && (
+            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700 rounded-lg p-3 flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+              <span className="text-sm text-amber-800 dark:text-amber-300">
+                ⚠️ An effect is written on GST Update Sheet. Make sure that effect is given. <span className="text-xs text-amber-600 dark:text-amber-500">(Entries found: {gstUpdateCount})</span>
+              </span>
+            </div>
+          )}
+
           {/* Summary Boxes */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Card className="bg-success/5 border-success/20">
-              <CardContent className="p-4 text-center">
-                <p className="text-sm text-muted-foreground">RECLAIMED</p>
-                <p className="text-2xl font-bold text-success">₹{totalReclaimed.toLocaleString('en-IN')}</p>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            {/* 1. Total ITC Excl RCM */}
+            <Card className="bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800">
+              <CardContent className="p-4">
+                <h4 className="text-sm font-semibold text-muted-foreground mb-1">Total ITC Excl RCM</h4>
+                <p className="text-[9px] text-muted-foreground mb-1">Total(5) − (5.4 + 5.5 + 4A{'{3}'})</p>
+                <div className="grid grid-cols-4 gap-1 text-xs">
+                  {(() => {
+                    const r54 = itcData.section4A.find(r => r.srNo === '5.4') || { igst: 0, cgst: 0, sgst: 0 };
+                    const r55 = itcData.section4A.find(r => r.srNo === '5.5') || { igst: 0, cgst: 0, sgst: 0 };
+                    const r3 = itcData.section4A.find(r => r.srNo === '(3)') || { igst: 0, cgst: 0, sgst: 0 };
+                    const exclIgst = total5.igst - (r54.igst + r55.igst + r3.igst);
+                    const exclCgst = total5.cgst - (r54.cgst + r55.cgst + r3.cgst);
+                    const exclSgst = total5.sgst - (r54.sgst + r55.sgst + r3.sgst);
+                    return (
+                      <>
+                        <div><span className="text-muted-foreground">IGST</span><p className="font-semibold text-sm">{exclIgst.toLocaleString('en-IN')}</p></div>
+                        <div><span className="text-muted-foreground">CGST</span><p className="font-semibold text-sm">{exclCgst.toLocaleString('en-IN')}</p></div>
+                        <div><span className="text-muted-foreground">SGST</span><p className="font-semibold text-sm">{exclSgst.toLocaleString('en-IN')}</p></div>
+                        <div><span className="text-muted-foreground">Total</span><p className="font-bold text-sm text-primary">{(exclIgst + exclCgst + exclSgst).toLocaleString('en-IN')}</p></div>
+                      </>
+                    );
+                  })()}
+                </div>
               </CardContent>
             </Card>
-            <Card className="bg-destructive/5 border-destructive/20">
-              <CardContent className="p-4 text-center">
-                <p className="text-sm text-muted-foreground">REVERSAL</p>
-                <p className="text-2xl font-bold text-destructive">₹{totalReversal.toLocaleString('en-IN')}</p>
-              </CardContent>
-            </Card>
-            <Card>
+            {/* 2. RCM ITC */}
+            <Card className="bg-purple-50 dark:bg-purple-950/30 border-purple-200 dark:border-purple-800">
               <CardContent className="p-4">
                 <h4 className="text-sm font-semibold text-muted-foreground mb-2">RCM ITC</h4>
                 <div className="grid grid-cols-4 gap-1 text-xs">
@@ -1105,28 +1157,26 @@ const ITCSummaryPage: React.FC = () => {
                 </div>
               </CardContent>
             </Card>
-            <Card>
-              <CardContent className="p-4">
-                <h4 className="text-sm font-semibold text-muted-foreground mb-1">Total ITC Excl RCM</h4>
-                <p className="text-[9px] text-muted-foreground mb-1">Total(5) − (5.4 + 5.5 + 4A{'{3}'})</p>
-                <div className="grid grid-cols-4 gap-1 text-xs">
-                  {(() => {
-                    const r54 = itcData.section4A.find(r => r.srNo === '5.4') || { igst: 0, cgst: 0, sgst: 0 };
-                    const r55 = itcData.section4A.find(r => r.srNo === '5.5') || { igst: 0, cgst: 0, sgst: 0 };
-                    const r3 = itcData.section4A.find(r => r.srNo === '(3)') || { igst: 0, cgst: 0, sgst: 0 };
-                    const exclIgst = total5.igst - (r54.igst + r55.igst + r3.igst);
-                    const exclCgst = total5.cgst - (r54.cgst + r55.cgst + r3.cgst);
-                    const exclSgst = total5.sgst - (r54.sgst + r55.sgst + r3.sgst);
-                    return (
-                      <>
-                        <div><span className="text-muted-foreground">IGST</span><p className="font-semibold text-sm">{exclIgst.toLocaleString('en-IN')}</p></div>
-                        <div><span className="text-muted-foreground">CGST</span><p className="font-semibold text-sm">{exclCgst.toLocaleString('en-IN')}</p></div>
-                        <div><span className="text-muted-foreground">SGST</span><p className="font-semibold text-sm">{exclSgst.toLocaleString('en-IN')}</p></div>
-                        <div><span className="text-muted-foreground">Total</span><p className="font-bold text-sm text-primary">{(exclIgst + exclCgst + exclSgst).toLocaleString('en-IN')}</p></div>
-                      </>
-                    );
-                  })()}
-                </div>
+            {/* 3. RECLAIMED */}
+            <Card className="bg-success/5 border-success/20">
+              <CardContent className="p-4 text-center">
+                <p className="text-sm text-muted-foreground">RECLAIMED</p>
+                <p className="text-2xl font-bold text-success">₹{totalReclaimed.toLocaleString('en-IN')}</p>
+              </CardContent>
+            </Card>
+            {/* 4. REVERSAL */}
+            <Card className="bg-destructive/5 border-destructive/20">
+              <CardContent className="p-4 text-center">
+                <p className="text-sm text-muted-foreground">REVERSAL</p>
+                <p className="text-2xl font-bold text-destructive">₹{totalReversal.toLocaleString('en-IN')}</p>
+              </CardContent>
+            </Card>
+            {/* 5. NET ITC = 4(C) */}
+            <Card className="bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800">
+              <CardContent className="p-4 text-center">
+                <p className="text-sm text-muted-foreground">NET ITC</p>
+                <p className="text-[9px] text-muted-foreground">4(C) = 4A − 4B</p>
+                <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">₹{(net4C.igst + net4C.cgst + net4C.sgst).toLocaleString('en-IN')}</p>
               </CardContent>
             </Card>
           </div>

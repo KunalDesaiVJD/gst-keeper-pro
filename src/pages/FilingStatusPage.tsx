@@ -1152,19 +1152,26 @@ const FilingStatusPage: React.FC = () => {
                   </div>
                 </td>
                 <td className="min-w-[200px]">
-                  <textarea
-                    value={editingRemarks[record.id] ?? record.remarks ?? ''}
-                    onChange={(e) => setEditingRemarks(prev => ({ ...prev, [record.id]: e.target.value }))}
-                    onBlur={() => {
-                      const newRemarks = editingRemarks[record.id];
-                      if (newRemarks !== undefined && newRemarks !== record.remarks) {
-                        handleRemarksChange(record, newRemarks);
-                      }
-                    }}
-                    placeholder="Add remarks..."
-                    className="w-full min-h-[28px] max-h-[80px] text-xs px-2 py-1 rounded border border-input bg-background resize-y"
-                    disabled={record.is_locked && !canUnlockSheets()}
-                  />
+                  <div className="flex items-start gap-1">
+                    <Checkbox
+                      checked={!!(record.remarks && record.remarks.trim().length > 0)}
+                      disabled
+                      className="mt-1.5 shrink-0"
+                    />
+                    <textarea
+                      value={editingRemarks[record.id] ?? record.remarks ?? ''}
+                      onChange={(e) => setEditingRemarks(prev => ({ ...prev, [record.id]: e.target.value }))}
+                      onBlur={() => {
+                        const newRemarks = editingRemarks[record.id];
+                        if (newRemarks !== undefined && newRemarks !== record.remarks) {
+                          handleRemarksChange(record, newRemarks);
+                        }
+                      }}
+                      placeholder="Add remarks..."
+                      className="w-full min-h-[28px] max-h-[80px] text-xs px-2 py-1 rounded border border-input bg-background resize-y"
+                      disabled={record.is_locked && !canUnlockSheets()}
+                    />
+                  </div>
                 </td>
                 <td className="text-center">
                   <GSTPortalLink clientId={record.client_id} clientName={record.clientName} />
