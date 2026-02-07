@@ -59,6 +59,7 @@ const GSTRunningUpdatePage: React.FC = () => {
   const [filterUpdateType, setFilterUpdateType] = useState<string>('');
 
   const isStaff = isStaffRole();
+  const canDeleteGSTRows = user?.role === 'superadmin' || user?.role === 'gst_manager';
 
   // Generate month options with blank option for effect month
   const monthOptions = useMemo(() => {
@@ -434,7 +435,8 @@ const GSTRunningUpdatePage: React.FC = () => {
                       <TableHead className="font-bold text-white border border-[#2E5A6B] text-right w-20">IGST</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] text-right w-20">Interest</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] min-w-[150px]">Remarks</TableHead>
-                      {isStaff && <TableHead className="font-bold text-white border border-[#2E5A6B] w-12"></TableHead>}
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] w-10 text-center">✓</TableHead>
+                      {canDeleteGSTRows && <TableHead className="font-bold text-white border border-[#2E5A6B] w-12"></TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -579,22 +581,21 @@ const GSTRunningUpdatePage: React.FC = () => {
                             />
                           </TableCell>
                           <TableCell className="p-0 border border-border min-w-[150px]">
-                            <div className="flex items-start gap-1 px-1 py-1">
-                              <Checkbox
-                                checked={update.remarks_checked}
-                                onCheckedChange={(checked) => handleFieldChange(originalIndex, 'remarks_checked', !!checked)}
-                                disabled={!isStaff}
-                                className="mt-1.5 shrink-0"
-                              />
-                              <textarea
-                                value={update.remarks}
-                                onChange={(e) => handleFieldChange(originalIndex, 'remarks', e.target.value)}
-                                className="w-full min-h-[32px] max-h-[80px] text-xs px-2 py-1 border-0 shadow-none bg-transparent resize-y"
-                                disabled={!isStaff}
-                              />
-                            </div>
+                            <textarea
+                              value={update.remarks}
+                              onChange={(e) => handleFieldChange(originalIndex, 'remarks', e.target.value)}
+                              className="w-full min-h-[32px] max-h-[80px] text-xs px-2 py-1 border-0 shadow-none bg-transparent resize-y"
+                              disabled={!isStaff}
+                            />
                           </TableCell>
-                          {isStaff && (
+                          <TableCell className="border border-border text-center">
+                            <Checkbox
+                              checked={update.remarks_checked}
+                              onCheckedChange={(checked) => handleFieldChange(originalIndex, 'remarks_checked', !!checked)}
+                              disabled={!isStaff}
+                            />
+                          </TableCell>
+                          {canDeleteGSTRows && (
                             <TableCell className="border border-border text-center">
                               <Button
                                 variant="ghost"
@@ -611,7 +612,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                     })}
                     {filteredUpdates.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={isStaff ? 15 : 14} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={canDeleteGSTRows ? 16 : 15} className="text-center py-8 text-muted-foreground">
                           No records found. {isStaff && 'Click "Add Row" to create a new entry.'}
                         </TableCell>
                       </TableRow>
