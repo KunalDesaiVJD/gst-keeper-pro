@@ -31,7 +31,27 @@ const roleBadgeClass = (role: string) => {
   }
 };
 
-const renderMessageWithMentions = (message: string, allUsers: { id: string; name: string }[]) => {
+const renderMessageWithMentions = (message: string, allUsers: { id: string; name: string }[], isOwn: boolean) => {
+  // Check if message is an image attachment (markdown image syntax)
+  const imgMatch = message.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+  if (imgMatch) {
+    return (
+      <a href={imgMatch[2]} target="_blank" rel="noopener noreferrer">
+        <img src={imgMatch[2]} alt={imgMatch[1]} className="max-w-[240px] max-h-[200px] rounded-lg object-cover" />
+      </a>
+    );
+  }
+
+  // Check if message is a file attachment (markdown link syntax)
+  const fileMatch = message.match(/^\[📎 ([^\]]*)\]\(([^)]+)\)$/);
+  if (fileMatch) {
+    return (
+      <a href={fileMatch[2]} target="_blank" rel="noopener noreferrer" className={`underline text-sm ${isOwn ? 'text-primary-foreground' : 'text-primary'}`}>
+        📎 {fileMatch[1]}
+      </a>
+    );
+  }
+
   // Match @Name patterns
   const parts = message.split(/(@\w+(?:\s\w+)?)/g);
   return parts.map((part, i) => {
@@ -79,9 +99,9 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
             </span>
           </div>
         )}
-        <p className="text-sm whitespace-pre-wrap break-words">
-          {renderMessageWithMentions(message, allUsers)}
-        </p>
+        <div className="text-sm whitespace-pre-wrap break-words">
+          {renderMessageWithMentions(message, allUsers, isOwn)}
+        </div>
         <p className={`text-[10px] mt-1 ${isOwn ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
           {format(new Date(createdAt), 'dd MMM, HH:mm')}
         </p>

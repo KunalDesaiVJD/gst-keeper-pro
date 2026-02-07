@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Paperclip } from 'lucide-react';
+import { Send, Paperclip, Image, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
+import { supabase } from '@/integrations/supabase/client';
 
 interface MentionUser {
   id: string;
@@ -29,7 +30,9 @@ const MentionInput: React.FC<MentionInputProps> = ({ onSend, users }) => {
   const [mentionFilter, setMentionFilter] = useState('');
   const [mentionIds, setMentionIds] = useState<string[]>([]);
   const [selectedIdx, setSelectedIdx] = useState(0);
+  const [isUploading, setIsUploading] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const filteredUsers = users.filter(u =>
     u.name.toLowerCase().includes(mentionFilter.toLowerCase())
@@ -99,6 +102,47 @@ const MentionInput: React.FC<MentionInputProps> = ({ onSend, users }) => {
     setMentionIds([]);
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (file.size > maxSize) {
+      toast.error('File size must be under 5MB');
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+
+      const { data, error } = await supabase.storage
+        .from('chat-attachments')
+        .upload(fileName, file);
+
+      if (error) throw error;
+
+      const { data: urlData } = supabase.storage
+        .from('chat-attachments')
+        .getPublicUrl(fileName);
+
+      const isImage = file.type.startsWith('image/');
+      const attachmentText = isImage
+        ? `![${file.name}](${urlData.publicUrl})`
+        : `[📎 ${file.name}](${urlData.publicUrl})`;
+
+      onSend(attachmentText, []);
+      toast.success('File sent!');
+    } catch (err: any) {
+      console.error('Upload error:', err);
+      toast.error('Failed to upload file');
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   return (
     <div className="relative border-t bg-background px-3 py-2">
       {showMentions && filteredUsers.length > 0 && (
@@ -120,15 +164,23 @@ const MentionInput: React.FC<MentionInputProps> = ({ onSend, users }) => {
           ))}
         </div>
       )}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileUpload}
+        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
+        className="hidden"
+      />
       <div className="flex items-end gap-2">
         <Button
           variant="ghost"
           size="icon"
           className="shrink-0 h-9 w-9 rounded-full text-muted-foreground hover:text-foreground"
-          onClick={() => toast.info('Media upload coming soon!')}
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isUploading}
           title="Attach file"
         >
-          <Paperclip className="h-4 w-4" />
+          {isUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
         </Button>
         <textarea
           ref={inputRef}

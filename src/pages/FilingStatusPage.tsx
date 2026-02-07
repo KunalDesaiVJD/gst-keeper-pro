@@ -1153,11 +1153,6 @@ const FilingStatusPage: React.FC = () => {
                 </td>
                 <td className="min-w-[200px]">
                   <div className="flex items-start gap-1">
-                    <Checkbox
-                      checked={!!(record.remarks && record.remarks.trim().length > 0)}
-                      disabled
-                      className="mt-1.5 shrink-0"
-                    />
                     <textarea
                       value={editingRemarks[record.id] ?? record.remarks ?? ''}
                       onChange={(e) => setEditingRemarks(prev => ({ ...prev, [record.id]: e.target.value }))}
