@@ -117,6 +117,28 @@ const getPartialITCData = (): ITCData => ({
   ],
 });
 
+// Re-apply structural flags (isHeader, isAutoLinked, editable) to loaded data
+// This prevents flags from being lost when data is saved/loaded from DB
+const applyStructuralFlags = (loaded: ITCData, template: ITCData): ITCData => {
+  const applyFlags = (loadedRows: ITCRow[], templateRows: ITCRow[]): ITCRow[] => {
+    return loadedRows.map((row, idx) => {
+      const tmpl = templateRows[idx];
+      if (!tmpl) return row;
+      return {
+        ...row,
+        isHeader: tmpl.isHeader,
+        isAutoLinked: tmpl.isAutoLinked,
+        editable: tmpl.editable,
+      };
+    });
+  };
+  return {
+    section4A: applyFlags(loaded.section4A || [], template.section4A),
+    section4B: applyFlags(loaded.section4B || [], template.section4B),
+    section4D: applyFlags(loaded.section4D || [], template.section4D),
+  };
+};
+
 interface ReversalTotals {
   igst: number;
   cgst: number;
@@ -359,7 +381,9 @@ const ITCSummaryPage: React.FC = () => {
       setIsLocked(data.is_locked || isFiledLocked || false);
       const savedData = data.data as unknown as ITCData;
       if (savedData && savedData.section4A) {
-        setItcData(savedData);
+        // Re-apply structural flags that may have been lost during save/load
+        const template = isPartial ? getPartialITCData() : getDefaultITCData();
+        setItcData(applyStructuralFlags(savedData, template));
         // Increment version to trigger auto-link effect after data loads
         setDataLoadVersion(v => v + 1);
       }
@@ -638,7 +662,8 @@ const ITCSummaryPage: React.FC = () => {
             setItcSummaryId(newData.id);
             setIsLocked(newData.is_locked || false);
             if (newData.data && newData.data.section4A) {
-              setItcData(newData.data as ITCData);
+              const template = isPartialITCClient ? getPartialITCData() : getDefaultITCData();
+              setItcData(applyStructuralFlags(newData.data as ITCData, template));
               toast.info('ITC Summary updated by another user');
             }
           }
