@@ -976,7 +976,9 @@ const FilingStatusPage: React.FC = () => {
     const uniqueTargetDates = Array.from(new Set(records.filter(r => r.target_date !== null).map(r => r.target_date!))).sort((a, b) => a - b);
     
     return (
-      <div className="overflow-auto max-h-[75vh] relative" style={{ overflowX: 'auto', overflowY: 'auto' }}>
+      <div className="relative">
+        <div className="overflow-x-auto">
+          <div className="overflow-y-auto max-h-[75vh]">
         <table className="gst-table">
           <thead className="sticky top-0 z-10">
             <tr>
@@ -1195,6 +1197,8 @@ const FilingStatusPage: React.FC = () => {
             )}
           </tbody>
         </table>
+          </div>
+        </div>
       </div>
     );
   };

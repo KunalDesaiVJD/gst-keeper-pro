@@ -1069,7 +1069,7 @@ const ITCSummaryPage: React.FC = () => {
           )}
 
           {/* Summary Boxes */}
-          <div className="grid grid-cols-2 gap-4 max-w-md">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <Card className="bg-success/5 border-success/20">
               <CardContent className="p-4 text-center">
                 <p className="text-sm text-muted-foreground">RECLAIMED</p>
@@ -1080,6 +1080,53 @@ const ITCSummaryPage: React.FC = () => {
               <CardContent className="p-4 text-center">
                 <p className="text-sm text-muted-foreground">REVERSAL</p>
                 <p className="text-2xl font-bold text-destructive">₹{totalReversal.toLocaleString('en-IN')}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <h4 className="text-sm font-semibold text-muted-foreground mb-2">RCM ITC</h4>
+                <div className="grid grid-cols-4 gap-1 text-xs">
+                  <div>
+                    <span className="text-muted-foreground">IGST</span>
+                    <p className="font-semibold text-sm">{rcmTotals.igst.toLocaleString('en-IN')}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">CGST</span>
+                    <p className="font-semibold text-sm">{rcmTotals.cgst.toLocaleString('en-IN')}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">SGST</span>
+                    <p className="font-semibold text-sm">{rcmTotals.sgst.toLocaleString('en-IN')}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Total</span>
+                    <p className="font-bold text-sm text-primary">{(rcmTotals.igst + rcmTotals.cgst + rcmTotals.sgst).toLocaleString('en-IN')}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <h4 className="text-sm font-semibold text-muted-foreground mb-1">Total ITC Excl RCM</h4>
+                <p className="text-[9px] text-muted-foreground mb-1">Total(5) − (5.4 + 5.5 + 4A{'{3}'})</p>
+                <div className="grid grid-cols-4 gap-1 text-xs">
+                  {(() => {
+                    const r54 = itcData.section4A.find(r => r.srNo === '5.4') || { igst: 0, cgst: 0, sgst: 0 };
+                    const r55 = itcData.section4A.find(r => r.srNo === '5.5') || { igst: 0, cgst: 0, sgst: 0 };
+                    const r3 = itcData.section4A.find(r => r.srNo === '(3)') || { igst: 0, cgst: 0, sgst: 0 };
+                    const exclIgst = total5.igst - (r54.igst + r55.igst + r3.igst);
+                    const exclCgst = total5.cgst - (r54.cgst + r55.cgst + r3.cgst);
+                    const exclSgst = total5.sgst - (r54.sgst + r55.sgst + r3.sgst);
+                    return (
+                      <>
+                        <div><span className="text-muted-foreground">IGST</span><p className="font-semibold text-sm">{exclIgst.toLocaleString('en-IN')}</p></div>
+                        <div><span className="text-muted-foreground">CGST</span><p className="font-semibold text-sm">{exclCgst.toLocaleString('en-IN')}</p></div>
+                        <div><span className="text-muted-foreground">SGST</span><p className="font-semibold text-sm">{exclSgst.toLocaleString('en-IN')}</p></div>
+                        <div><span className="text-muted-foreground">Total</span><p className="font-bold text-sm text-primary">{(exclIgst + exclCgst + exclSgst).toLocaleString('en-IN')}</p></div>
+                      </>
+                    );
+                  })()}
+                </div>
               </CardContent>
             </Card>
           </div>

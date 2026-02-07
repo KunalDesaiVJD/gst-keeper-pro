@@ -403,7 +403,13 @@ const AddClientPage: React.FC = () => {
                         residentialArea: ''
                       }))}
                     >
-                      <Checkbox checked={formData.regularSubType === 'Builder'} />
+                      <Checkbox checked={formData.regularSubType === 'Builder'} onCheckedChange={() => setFormData(prev => ({
+                        ...prev,
+                        regularSubType: 'Builder',
+                        builderItcType: '',
+                        commercialArea: '',
+                        residentialArea: ''
+                      }))} />
                       <Label className="cursor-pointer font-normal">Builder</Label>
                     </div>
                     <div
@@ -418,7 +424,13 @@ const AddClientPage: React.FC = () => {
                         residentialArea: ''
                       }))}
                     >
-                      <Checkbox checked={formData.regularSubType === 'Normal'} />
+                      <Checkbox checked={formData.regularSubType === 'Normal'} onCheckedChange={() => setFormData(prev => ({
+                        ...prev,
+                        regularSubType: 'Normal',
+                        builderItcType: '',
+                        commercialArea: '',
+                        residentialArea: ''
+                      }))} />
                       <Label className="cursor-pointer font-normal">Normal</Label>
                     </div>
                   </div>
@@ -442,7 +454,12 @@ const AddClientPage: React.FC = () => {
                             residentialArea: ''
                           }))}
                         >
-                          <Checkbox checked={formData.builderItcType === 'NO_ITC'} />
+                          <Checkbox checked={formData.builderItcType === 'NO_ITC'} onCheckedChange={() => setFormData(prev => ({
+                            ...prev,
+                            builderItcType: 'NO_ITC',
+                            commercialArea: '',
+                            residentialArea: ''
+                          }))} />
                           <Label className="cursor-pointer font-normal">NO ITC</Label>
                         </div>
                         <div
@@ -456,7 +473,12 @@ const AddClientPage: React.FC = () => {
                             residentialArea: ''
                           }))}
                         >
-                          <Checkbox checked={formData.builderItcType === 'CLAIM_ITC'} />
+                          <Checkbox checked={formData.builderItcType === 'CLAIM_ITC'} onCheckedChange={() => setFormData(prev => ({
+                            ...prev,
+                            builderItcType: 'CLAIM_ITC',
+                            commercialArea: '',
+                            residentialArea: ''
+                          }))} />
                           <Label className="cursor-pointer font-normal">CLAIM ITC</Label>
                         </div>
                         <div
@@ -465,7 +487,7 @@ const AddClientPage: React.FC = () => {
                           }`}
                           onClick={() => setFormData(prev => ({ ...prev, builderItcType: 'PARTIAL_ITC' }))}
                         >
-                          <Checkbox checked={formData.builderItcType === 'PARTIAL_ITC'} />
+                          <Checkbox checked={formData.builderItcType === 'PARTIAL_ITC'} onCheckedChange={() => setFormData(prev => ({ ...prev, builderItcType: 'PARTIAL_ITC' }))} />
                           <Label className="cursor-pointer font-normal">PARTIAL ITC</Label>
                         </div>
                       </div>
