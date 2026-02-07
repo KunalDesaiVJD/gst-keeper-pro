@@ -705,6 +705,32 @@ const ITCSummaryPage: React.FC = () => {
   const handleSave = async () => {
     if (!selectedClient || !selectedMonth) return;
 
+    // Check if GST Update Sheet entries exist for this client/month and all have remarks_checked
+    try {
+      // Convert selectedMonth "01/2026" to GST Update format "Jan-26"
+      const [monthNum, year] = selectedMonth.split('/');
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const monthName = monthNames[parseInt(monthNum) - 1];
+      const gstMonth = `${monthName}-${year.slice(-2)}`;
+
+      const { data: gstEntries, error: gstError } = await supabase
+        .from('gst_running_updates')
+        .select('id, remarks, update_effect_month')
+        .eq('client_id', selectedClient)
+        .eq('update_effect_month', gstMonth);
+
+      if (!gstError && gstEntries && gstEntries.length > 0) {
+        // Check if any entry has no remarks or is missing the tick
+        const uncheckedEntries = gstEntries.filter(e => !e.remarks || !e.remarks.trim());
+        if (uncheckedEntries.length > 0) {
+          toast.error('Cannot save ITC Summary: GST Update Sheet entries exist for this month. Please ensure all entries have remarks filled and checkbox ticked on the GST Update Sheet first.');
+          return;
+        }
+      }
+    } catch (checkErr) {
+      console.error('Error checking GST updates:', checkErr);
+    }
+
     setIsSaving(true);
     try {
       const payload = {
