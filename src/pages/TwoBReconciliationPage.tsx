@@ -98,6 +98,10 @@ const TwoBReconciliationPage: React.FC = () => {
   
   // Negative value error state
   const [negativeValueError, setNegativeValueError] = useState<string | null>(null);
+  
+  // RCM ITC and Total ITC summary states
+  const [rcmItcTotal, setRcmItcTotal] = useState({ igst: 0, cgst: 0, sgst: 0, total: 0 });
+  const [totalItcExclRcm, setTotalItcExclRcm] = useState({ igst: 0, cgst: 0, sgst: 0, total: 0 });
   const selectedClientData = clients.find(c => c.id === selectedClientId);
 
   // Check if client requires quarterly months only (IFF or Composition)
@@ -372,7 +376,71 @@ const TwoBReconciliationPage: React.FC = () => {
     }
   }, [selectedClientId, selectedMonth, fetchBillsData, fetchVersions]);
 
-  // Real-time subscription
+  // Fetch RCM ITC and ITC Summary data for summary boxes
+  const fetchItcSummaryData = useCallback(async () => {
+    if (!selectedClientId || !selectedMonth) {
+      setRcmItcTotal({ igst: 0, cgst: 0, sgst: 0, total: 0 });
+      setTotalItcExclRcm({ igst: 0, cgst: 0, sgst: 0, total: 0 });
+      return;
+    }
+
+    // Fetch RCM data
+    const { data: rcmData } = await supabase
+      .from('rcm_data')
+      .select('igst_5, igst_18, cgst_2_5, cgst_9, sgst_2_5, sgst_9')
+      .eq('client_id', selectedClientId)
+      .eq('month', selectedMonth);
+
+    const rcm = (rcmData || []).reduce((acc, r) => ({
+      igst: acc.igst + (r.igst_5 || 0) + (r.igst_18 || 0),
+      cgst: acc.cgst + (r.cgst_2_5 || 0) + (r.cgst_9 || 0),
+      sgst: acc.sgst + (r.sgst_2_5 || 0) + (r.sgst_9 || 0),
+    }), { igst: 0, cgst: 0, sgst: 0 });
+    const rcmTotal = { ...rcm, total: rcm.igst + rcm.cgst + rcm.sgst };
+    setRcmItcTotal(rcmTotal);
+
+    // Fetch ITC Summary data
+    const { data: itcData } = await supabase
+      .from('itc_summaries')
+      .select('data')
+      .eq('client_id', selectedClientId)
+      .eq('period_month', selectedMonth)
+      .maybeSingle();
+
+    if (itcData?.data) {
+      const d = itcData.data as any;
+      const section4A = d.section4A || [];
+      
+      // Total (5) = 5.1 + 5.2 - 5.3 + 5.4 + 5.5
+      const getRow = (srNo: string) => section4A.find((r: any) => r.srNo === srNo) || { igst: 0, cgst: 0, sgst: 0 };
+      const r51 = getRow('5.1'), r52 = getRow('5.2'), r53 = getRow('5.3'), r54 = getRow('5.4'), r55 = getRow('5.5');
+      const r3 = getRow('3'); // 4A row 3
+      
+      const total5igst = (r51.igst || 0) + (r52.igst || 0) - (r53.igst || 0) + (r54.igst || 0) + (r55.igst || 0);
+      const total5cgst = (r51.cgst || 0) + (r52.cgst || 0) - (r53.cgst || 0) + (r54.cgst || 0) + (r55.cgst || 0);
+      const total5sgst = (r51.sgst || 0) + (r52.sgst || 0) - (r53.sgst || 0) + (r54.sgst || 0) + (r55.sgst || 0);
+      
+      // Total ITC Excluding RCM = Total(5) - (5.4 + 5.5 + 4A{3})
+      const exclIgst = total5igst - ((r54.igst || 0) + (r55.igst || 0) + (r3.igst || 0));
+      const exclCgst = total5cgst - ((r54.cgst || 0) + (r55.cgst || 0) + (r3.cgst || 0));
+      const exclSgst = total5sgst - ((r54.sgst || 0) + (r55.sgst || 0) + (r3.sgst || 0));
+      
+      setTotalItcExclRcm({
+        igst: exclIgst,
+        cgst: exclCgst,
+        sgst: exclSgst,
+        total: exclIgst + exclCgst + exclSgst,
+      });
+    } else {
+      setTotalItcExclRcm({ igst: 0, cgst: 0, sgst: 0, total: 0 });
+    }
+  }, [selectedClientId, selectedMonth]);
+
+  useEffect(() => {
+    fetchItcSummaryData();
+  }, [fetchItcSummaryData]);
+
+
   useEffect(() => {
     if (!selectedClientId) return;
 
@@ -1223,7 +1291,7 @@ const TwoBReconciliationPage: React.FC = () => {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="overflow-auto max-h-[75vh] relative">
+              <div className="overflow-auto max-h-[75vh] relative" style={{ overflowX: 'auto', overflowY: 'auto' }}>
                 <table className="gst-table">
                   <thead className="sticky top-0 z-10">
                     <tr>
@@ -1435,7 +1503,7 @@ const TwoBReconciliationPage: React.FC = () => {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="overflow-auto max-h-[75vh] relative">
+              <div className="overflow-auto max-h-[75vh] relative" style={{ overflowX: 'auto', overflowY: 'auto' }}>
                 <table className="gst-table">
                   <thead className="sticky top-0 z-10">
                     <tr>
@@ -1627,6 +1695,57 @@ const TwoBReconciliationPage: React.FC = () => {
               </div>
             </CardContent>
           </Card>
+
+          {/* RCM ITC & Total ITC Excluding RCM Summary Boxes */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card>
+              <CardContent className="p-4">
+                <h4 className="text-sm font-semibold text-muted-foreground mb-3">RCM ITC</h4>
+                <div className="grid grid-cols-4 gap-2 text-sm">
+                  <div>
+                    <span className="text-xs text-muted-foreground">IGST</span>
+                    <p className="font-semibold">{rcmItcTotal.igst.toLocaleString('en-IN')}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground">CGST</span>
+                    <p className="font-semibold">{rcmItcTotal.cgst.toLocaleString('en-IN')}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground">SGST</span>
+                    <p className="font-semibold">{rcmItcTotal.sgst.toLocaleString('en-IN')}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground">Total</span>
+                    <p className="font-bold text-primary">{rcmItcTotal.total.toLocaleString('en-IN')}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <h4 className="text-sm font-semibold text-muted-foreground mb-3">Total ITC Excluding RCM</h4>
+                <p className="text-[10px] text-muted-foreground mb-2">Total(5) − (5.4 + 5.5 + 4A{'{3}'})</p>
+                <div className="grid grid-cols-4 gap-2 text-sm">
+                  <div>
+                    <span className="text-xs text-muted-foreground">IGST</span>
+                    <p className="font-semibold">{totalItcExclRcm.igst.toLocaleString('en-IN')}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground">CGST</span>
+                    <p className="font-semibold">{totalItcExclRcm.cgst.toLocaleString('en-IN')}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground">SGST</span>
+                    <p className="font-semibold">{totalItcExclRcm.sgst.toLocaleString('en-IN')}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground">Total</span>
+                    <p className="font-bold text-primary">{totalItcExclRcm.total.toLocaleString('en-IN')}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </>
       )}
 
