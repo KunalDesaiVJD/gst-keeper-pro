@@ -35,6 +35,7 @@ interface GSTUpdate {
   interest: number;
   effect_month: string;
   remarks: string;
+  remarks_checked: boolean;
   isNew?: boolean;
 }
 
@@ -131,6 +132,7 @@ const GSTRunningUpdatePage: React.FC = () => {
         interest: Number(d.interest) || 0,
         effect_month: d.effect_month || '',
         remarks: d.remarks || '',
+        remarks_checked: !!(d.remarks && d.remarks.trim().length > 0),
       }));
 
       setUpdates(formattedData);
@@ -170,6 +172,7 @@ const GSTRunningUpdatePage: React.FC = () => {
         interest: 0,
         effect_month: '',
         remarks: '',
+        remarks_checked: false,
         isNew: true,
       },
     ]);
@@ -199,6 +202,27 @@ const GSTRunningUpdatePage: React.FC = () => {
 
   const handleSave = async () => {
     if (!isStaff) return;
+
+    // Validate: if checkbox is ticked, remarks must be filled; if remarks filled, checkbox must be ticked
+    const invalidRows = updates.filter(u => {
+      if (u.remarks_checked && (!u.remarks || !u.remarks.trim())) return true;
+      return false;
+    });
+
+    const uncheckedWithRemarks = updates.filter(u => {
+      if (!u.remarks_checked && u.remarks && u.remarks.trim().length > 0) return true;
+      return false;
+    });
+
+    if (invalidRows.length > 0) {
+      toast.error('Some rows have the checkbox ticked but no remarks written. Please fill in remarks.');
+      return;
+    }
+
+    if (uncheckedWithRemarks.length > 0) {
+      toast.error('Some rows have remarks but the checkbox is not ticked. Please tick the checkbox to confirm.');
+      return;
+    }
 
     setIsSaving(true);
     try {
@@ -557,8 +581,9 @@ const GSTRunningUpdatePage: React.FC = () => {
                           <TableCell className="p-0 border border-border min-w-[150px]">
                             <div className="flex items-start gap-1 px-1 py-1">
                               <Checkbox
-                                checked={!!(update.remarks && update.remarks.trim().length > 0)}
-                                disabled
+                                checked={update.remarks_checked}
+                                onCheckedChange={(checked) => handleFieldChange(originalIndex, 'remarks_checked', !!checked)}
+                                disabled={!isStaff}
                                 className="mt-1.5 shrink-0"
                               />
                               <textarea
