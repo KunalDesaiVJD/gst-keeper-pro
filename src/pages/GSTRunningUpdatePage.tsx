@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { Checkbox } from '@/components/ui/checkbox';
 import { FileSpreadsheet, Plus, Save, Loader2, Trash2 } from 'lucide-react';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
@@ -554,12 +555,19 @@ const GSTRunningUpdatePage: React.FC = () => {
                             />
                           </TableCell>
                           <TableCell className="p-0 border border-border min-w-[150px]">
-                            <textarea
-                              value={update.remarks}
-                              onChange={(e) => handleFieldChange(originalIndex, 'remarks', e.target.value)}
-                              className="w-full min-h-[32px] max-h-[80px] text-xs px-2 py-1 border-0 shadow-none bg-transparent resize-y"
-                              disabled={!isStaff}
-                            />
+                            <div className="flex items-start gap-1 px-1 py-1">
+                              <Checkbox
+                                checked={!!(update.remarks && update.remarks.trim().length > 0)}
+                                disabled
+                                className="mt-1.5 shrink-0"
+                              />
+                              <textarea
+                                value={update.remarks}
+                                onChange={(e) => handleFieldChange(originalIndex, 'remarks', e.target.value)}
+                                className="w-full min-h-[32px] max-h-[80px] text-xs px-2 py-1 border-0 shadow-none bg-transparent resize-y"
+                                disabled={!isStaff}
+                              />
+                            </div>
                           </TableCell>
                           {isStaff && (
                             <TableCell className="border border-border text-center">
