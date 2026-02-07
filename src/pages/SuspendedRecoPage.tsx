@@ -28,7 +28,12 @@ const SuspendedRecoPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   
-  // Portal values (editable)
+  // Opening balance portal values (editable)
+  const [openingCgst, setOpeningCgst] = useState<number>(0);
+  const [openingSgst, setOpeningSgst] = useState<number>(0);
+  const [openingIgst, setOpeningIgst] = useState<number>(0);
+  
+  // Current total portal values (editable) - previously "AS PER PORTAL"
   const [portalCgst, setPortalCgst] = useState<number>(0);
   const [portalSgst, setPortalSgst] = useState<number>(0);
   const [portalIgst, setPortalIgst] = useState<number>(0);
@@ -46,7 +51,6 @@ const SuspendedRecoPage: React.FC = () => {
     const months: { value: string; label: string }[] = [];
     const now = new Date();
     
-    // Find registration date from selected client
     const client = clients.find(c => c.id === selectedClientId);
     let startDate = new Date(now.getFullYear(), now.getMonth() - 12, 1);
     
@@ -73,17 +77,14 @@ const SuspendedRecoPage: React.FC = () => {
     });
   }, [clients, selectedClientId]);
 
-  // Fetch clients - fix for client login: match by id for clients, show all for staff
+  // Fetch clients
   const fetchClients = useCallback(async () => {
     let query = supabase
       .from('clients')
       .select('id, name, gstin, registration_date')
       .order('name');
     
-    // For client users, we need to match their client record
-    // The user.id for clients IS the client table's id
     if (user && !isStaff) {
-      // Try to match by client id (user.id is client's id for client login)
       query = query.eq('id', user.id);
     }
     
@@ -95,7 +96,6 @@ const SuspendedRecoPage: React.FC = () => {
     }
     setClients(data || []);
     
-    // Auto-select for client users
     if (!isStaff && data && data.length > 0 && !selectedClientId) {
       setSelectedClientId(data[0].id);
     }
@@ -116,18 +116,22 @@ const SuspendedRecoPage: React.FC = () => {
         .maybeSingle();
       
       if (suspendedData) {
+        setOpeningCgst(Number((suspendedData as any).opening_cgst) || 0);
+        setOpeningSgst(Number((suspendedData as any).opening_sgst) || 0);
+        setOpeningIgst(Number((suspendedData as any).opening_igst) || 0);
         setPortalCgst(Number(suspendedData.portal_cgst) || 0);
         setPortalSgst(Number(suspendedData.portal_sgst) || 0);
         setPortalIgst(Number(suspendedData.portal_igst) || 0);
       } else {
+        setOpeningCgst(0);
+        setOpeningSgst(0);
+        setOpeningIgst(0);
         setPortalCgst(0);
         setPortalSgst(0);
         setPortalIgst(0);
       }
 
       // Fetch books data from bills_not_in_2b 
-      // RULE: Sum of values where RECLAIM is blank
-      // EXCEPTION: If BOTH reversal AND reclaim are blank, exclude that row
       const { data: booksData } = await supabase
         .from('bills_not_in_2b')
         .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
@@ -135,14 +139,9 @@ const SuspendedRecoPage: React.FC = () => {
         .eq('period_month', selectedMonth);
       
       if (booksData && booksData.length > 0) {
-        // Filter logic:
-        // 1. Reclaim must be blank (include only blank reclaim rows)
-        // 2. EXCEPTION: If BOTH reversal AND reclaim are blank, exclude that row
-        // So: Include rows where Reclaim is blank AND Reversal is NOT blank
         const filteredData = booksData.filter(row => {
           const reversalBlank = row.reversal_month === null || row.reversal_month === '';
           const reclaimBlank = row.reclaim_month === null || row.reclaim_month === '';
-          // Include only if: Reclaim is blank AND Reversal is NOT blank
           return reclaimBlank && !reversalBlank;
         });
         
@@ -190,12 +189,15 @@ const SuspendedRecoPage: React.FC = () => {
         .upsert({
           client_id: selectedClientId,
           period_month: selectedMonth,
+          opening_cgst: openingCgst,
+          opening_sgst: openingSgst,
+          opening_igst: openingIgst,
           portal_cgst: portalCgst,
           portal_sgst: portalSgst,
           portal_igst: portalIgst,
           updated_by: user?.id,
           updated_at: new Date().toISOString(),
-        }, {
+        } as any, {
           onConflict: 'client_id,period_month'
         });
 
@@ -208,31 +210,43 @@ const SuspendedRecoPage: React.FC = () => {
     }
   };
 
-  // Helper to normalize -0 to 0 and handle very small numbers that round to zero
   const normalizeZero = (num: number): number => {
     if (Object.is(num, -0)) return 0;
-    // Round to 2 decimal places and check if it becomes 0
     const rounded = Math.round(num * 100) / 100;
     if (rounded === 0 || Object.is(rounded, -0)) return 0;
     return rounded;
   };
 
-  // Calculate totals and difference
+  // New formula: Difference = Opening Balance + Current Total - As Per Books
+  const openingTotal = openingCgst + openingSgst + openingIgst;
   const portalTotal = portalCgst + portalSgst + portalIgst;
   const booksTotal = booksCgst + booksSgst + booksIgst;
-  const diffCgst = normalizeZero(portalCgst - booksCgst);
-  const diffSgst = normalizeZero(portalSgst - booksSgst);
-  const diffIgst = normalizeZero(portalIgst - booksIgst);
-  const diffTotal = normalizeZero(portalTotal - booksTotal);
+  const diffCgst = normalizeZero(openingCgst + portalCgst - booksCgst);
+  const diffSgst = normalizeZero(openingSgst + portalSgst - booksSgst);
+  const diffIgst = normalizeZero(openingIgst + portalIgst - booksIgst);
+  const diffTotal = normalizeZero(openingTotal + portalTotal - booksTotal);
 
   const formatNumber = (num: number): string => {
-    // Handle -0 case and very small numbers
     if (num === 0 || Object.is(num, -0)) return '0';
     const rounded = Math.round(num * 100) / 100;
     if (rounded === 0 || Object.is(rounded, -0)) return '0';
     const formatted = rounded.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-    // Final safety check - replace "-0" string if it appears
     return formatted === '-0' ? '0' : formatted;
+  };
+
+  const renderEditableCell = (value: number, onChange: (val: number) => void) => {
+    if (!isStaff) {
+      return <span className="block text-right px-3">{formatNumber(value)}</span>;
+    }
+    return (
+      <Input
+        type="number"
+        value={value || ''}
+        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+        className="h-10 text-right border-0 shadow-none rounded-none"
+        min="0"
+      />
+    );
   };
 
   return (
@@ -318,48 +332,23 @@ const SuspendedRecoPage: React.FC = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {/* As Per Portal Row - Editable */}
+                {/* Opening Balance As Per Portal - Editable */}
                 <TableRow>
-                  <TableCell className="font-medium border border-border">AS PER PORTAL</TableCell>
-                  <TableCell className="p-0 border border-border">
-                    {isStaff ? (
-                      <Input
-                        type="number"
-                        value={portalCgst || ''}
-                        onChange={(e) => setPortalCgst(parseFloat(e.target.value) || 0)}
-                        className="h-10 text-right border-0 shadow-none rounded-none"
-                        min="0"
-                      />
-                    ) : (
-                      <span className="block text-right px-3">{formatNumber(portalCgst)}</span>
-                    )}
+                  <TableCell className="font-medium border border-border">OPENING BALANCE AS PER PORTAL</TableCell>
+                  <TableCell className="p-0 border border-border">{renderEditableCell(openingCgst, setOpeningCgst)}</TableCell>
+                  <TableCell className="p-0 border border-border">{renderEditableCell(openingSgst, setOpeningSgst)}</TableCell>
+                  <TableCell className="p-0 border border-border">{renderEditableCell(openingIgst, setOpeningIgst)}</TableCell>
+                  <TableCell className="text-right font-medium border border-border bg-muted/30">
+                    {formatNumber(openingTotal)}
                   </TableCell>
-                  <TableCell className="p-0 border border-border">
-                    {isStaff ? (
-                      <Input
-                        type="number"
-                        value={portalSgst || ''}
-                        onChange={(e) => setPortalSgst(parseFloat(e.target.value) || 0)}
-                        className="h-10 text-right border-0 shadow-none rounded-none"
-                        min="0"
-                      />
-                    ) : (
-                      <span className="block text-right px-3">{formatNumber(portalSgst)}</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="p-0 border border-border">
-                    {isStaff ? (
-                      <Input
-                        type="number"
-                        value={portalIgst || ''}
-                        onChange={(e) => setPortalIgst(parseFloat(e.target.value) || 0)}
-                        className="h-10 text-right border-0 shadow-none rounded-none"
-                        min="0"
-                      />
-                    ) : (
-                      <span className="block text-right px-3">{formatNumber(portalIgst)}</span>
-                    )}
-                  </TableCell>
+                </TableRow>
+
+                {/* Current Total As Per Portal - Editable */}
+                <TableRow>
+                  <TableCell className="font-medium border border-border">CURRENT TOTAL AS PER PORTAL</TableCell>
+                  <TableCell className="p-0 border border-border">{renderEditableCell(portalCgst, setPortalCgst)}</TableCell>
+                  <TableCell className="p-0 border border-border">{renderEditableCell(portalSgst, setPortalSgst)}</TableCell>
+                  <TableCell className="p-0 border border-border">{renderEditableCell(portalIgst, setPortalIgst)}</TableCell>
                   <TableCell className="text-right font-medium border border-border bg-muted/30">
                     {formatNumber(portalTotal)}
                   </TableCell>
@@ -392,7 +381,7 @@ const SuspendedRecoPage: React.FC = () => {
                   <TableCell colSpan={5} className="border-0 p-0"></TableCell>
                 </TableRow>
 
-                {/* Difference Row */}
+                {/* Difference Row: Opening + Current - Books */}
                 <TableRow className="bg-warning/10 hover:bg-warning/10">
                   <TableCell className="font-bold border border-border">DIFFERENCE</TableCell>
                   <TableCell className={`text-right font-medium border border-border ${diffCgst !== 0 ? 'text-destructive' : ''}`}>

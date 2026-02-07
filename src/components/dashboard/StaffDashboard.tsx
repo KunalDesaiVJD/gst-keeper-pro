@@ -13,12 +13,14 @@ import {
   Calendar,
   Building2,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Target
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import ClientManagementSection from './ClientManagementSection';
 import UserManagementSection from './UserManagementSection';
 import PasswordResetRequestsSection from './PasswordResetRequestsSection';
+import TargetDueAlertDialog from './TargetDueAlertDialog';
 import { ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth } from '@/types';
 import { useState } from 'react';
 
@@ -37,7 +39,7 @@ const RETURN_DUE_DATES: Record<string, number> = {
 interface DashboardMetrics {
   totalClients: number;
   pendingFilings: number;
-  lateFilings: number;
+  targetDueToday: number;
   filedThisMonth: number;
 }
 
@@ -48,6 +50,12 @@ interface ReturnMetrics {
   filed: number;
 }
 
+interface ReturnBreakdown {
+  returnType: string;
+  count: number;
+}
+
+const SESSION_ALERT_KEY = 'target_due_alert_shown';
 
 const StaffDashboard: React.FC = () => {
   const { user, canManageEmployees } = useAuth();
@@ -56,25 +64,27 @@ const StaffDashboard: React.FC = () => {
   const [metrics, setMetrics] = useState<DashboardMetrics>({
     totalClients: 0,
     pendingFilings: 0,
-    lateFilings: 0,
+    targetDueToday: 0,
     filedThisMonth: 0,
   });
   const [returnMetrics, setReturnMetrics] = useState<ReturnMetrics[]>([]);
   const [showReturnBreakdown, setShowReturnBreakdown] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  
+  // Target Due Today alert state
+  const [showDueAlert, setShowDueAlert] = useState(false);
+  const [dueBreakdown, setDueBreakdown] = useState<ReturnBreakdown[]>([]);
 
   const generateMonths = useCallback(() => {
     const monthsSet = new Set<string>();
     const now = new Date();
     
-    // Add default 24 months (past 12 and future 12)
     for (let i = -12; i < 24; i++) {
       const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const value = `${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
       monthsSet.add(value);
     }
     
-    // Convert to array and sort descending
     const months = Array.from(monthsSet).map(value => {
       const [month, year] = value.split('/').map(Number);
       const date = new Date(year, month - 1, 1);
@@ -93,119 +103,112 @@ const StaffDashboard: React.FC = () => {
   const fetchMetrics = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Fetch clients with their selected returns, registration dates, and registration_type
       const { data: clientData, count: clientCount } = await supabase
         .from('clients')
         .select('id, selected_returns, registration_date, cancellation_date, registration_type', { count: 'exact' });
 
-      // Fetch filing status for the selected month
       const { data: filingData } = await supabase
         .from('filing_status')
         .select('status, filed_date, target_date, return_type, client_id')
         .eq('period_month', selectedMonth);
 
-      // Helper to check if client is visible for the selected month
       const isClientVisibleForMonth = (client: any): boolean => {
         const [monthStr, yearStr] = selectedMonth.split('/');
         const periodDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1);
-        
         const regDate = new Date(client.registration_date);
         const regMonth = new Date(regDate.getFullYear(), regDate.getMonth(), 1);
-        
         if (periodDate < regMonth) return false;
-        
         if (client.cancellation_date) {
           const cancelDate = new Date(client.cancellation_date);
           const cancelMonth = new Date(cancelDate.getFullYear(), cancelDate.getMonth(), 1);
           if (periodDate > cancelMonth) return false;
         }
-        
         return true;
       };
 
-      // Filter clients visible for this month
       const visibleClients = clientData?.filter(isClientVisibleForMonth) || [];
 
       const pendingStatuses = ['Prepared', 'Data Pending', 'Mismatch in Data', 'Not Verified', 'Prepared Pending', 'Data Received'];
       const pendingFilings = filingData?.filter(f => pendingStatuses.includes(f.status || ''))?.length || 0;
       const filedThisMonth = filingData?.filter(f => f.status === 'Filed')?.length || 0;
       
-      // Calculate late filings based on return type-specific due dates
-      // A filing is "late" if it's Filed AND filed_date day > due date for that return type
-      const lateFilings = filingData?.filter(f => {
-        if (f.status !== 'Filed' || !f.filed_date) return false;
-        const filedDay = new Date(f.filed_date).getDate();
-        // Get the due date for this return type, fallback to target_date or 11
-        const dueDate = RETURN_DUE_DATES[f.return_type] || f.target_date || 11;
-        return filedDay > dueDate;
-      })?.length || 0;
+      // Calculate Target Due Today: target_date = today's day AND status != Filed
+      const todayDate = new Date().getDate();
+      const targetDueToday = filingData?.filter(f => 
+        f.target_date === todayDate && f.status !== 'Filed'
+      )?.length || 0;
+
+      // Calculate return-wise breakdown for today's due
+      const todayDueFilings = filingData?.filter(f => 
+        f.target_date === todayDate && f.status !== 'Filed'
+      ) || [];
+      
+      const breakdownMap = new Map<string, number>();
+      todayDueFilings.forEach(f => {
+        // Merge IFF into GSTR-1 and GSTR-3B(Q) into GSTR-3B for display
+        let displayType = f.return_type;
+        if (f.return_type === 'GSTR-1 (IFF)') displayType = 'GSTR-1';
+        if (f.return_type === 'GSTR-3B (Q)') displayType = 'GSTR-3B';
+        breakdownMap.set(displayType, (breakdownMap.get(displayType) || 0) + 1);
+      });
+      
+      const breakdown: ReturnBreakdown[] = Array.from(breakdownMap.entries()).map(([returnType, count]) => ({
+        returnType,
+        count,
+      }));
+      setDueBreakdown(breakdown);
 
       setMetrics({
         totalClients: visibleClients.length,
         pendingFilings,
-        lateFilings,
+        targetDueToday,
         filedThisMonth,
       });
 
-      // Calculate return-wise metrics using visible clients
-      // Get all return types, but filter quarterly ones based on month
-      // Don't include GSTR-1 (IFF) and GSTR-3B (Q) as separate tabs - they're merged with GSTR-1 and GSTR-3B
+      // Show alert once per session if there are due filings today
+      if (targetDueToday > 0 && !sessionStorage.getItem(SESSION_ALERT_KEY)) {
+        setShowDueAlert(true);
+        sessionStorage.setItem(SESSION_ALERT_KEY, 'true');
+      }
+
+      // Calculate return-wise metrics
       const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08'];
-      
-      // Parse current month to check if it's quarter end
       const [monthStr] = selectedMonth.split('/');
       const currentMonthNum = parseInt(monthStr);
       const isQuarterEnd = isQuarterEndMonth(currentMonthNum);
       
       const returnMetricsData: ReturnMetrics[] = allReturnTypes
         .filter(rt => {
-          // Filter out quarterly returns (CMP-08) if not in quarter end month
-          if (QUARTERLY_RETURN_TYPES.includes(rt) && !isQuarterEnd) {
-            return false;
-          }
+          if (QUARTERLY_RETURN_TYPES.includes(rt) && !isQuarterEnd) return false;
           return true;
         })
         .map(rt => {
-        // For GSTR-1, include both GSTR-1 and GSTR-1 (IFF) clients
-        // For GSTR-3B, include both GSTR-3B and GSTR-3B (Q) clients (only in quarter-end months for IFF/Composition)
         let clientsWithReturn: typeof visibleClients = [];
         
         if (rt === 'GSTR-1') {
-          // Include clients with GSTR-1 or GSTR-1 (IFF)
           clientsWithReturn = visibleClients.filter(c => 
             (c.selected_returns || []).includes('GSTR-1') || 
             (c.selected_returns || []).includes('GSTR-1 (IFF)')
           );
         } else if (rt === 'GSTR-3B') {
-          // Include clients with GSTR-3B
-          // Also include GSTR-3B (Q) clients only in quarter-end months
           clientsWithReturn = visibleClients.filter(c => {
             const hasGSTR3B = (c.selected_returns || []).includes('GSTR-3B');
             const hasGSTR3BQ = (c.selected_returns || []).includes('GSTR-3B (Q)');
             const isQuarterlyClient = c.registration_type === 'IFF' || c.registration_type === 'Composition';
-            
             if (hasGSTR3B && !isQuarterlyClient) return true;
             if (hasGSTR3BQ && isQuarterlyClient && isQuarterEnd) return true;
             return false;
           });
         } else {
-          // For other returns, check if client has this return type selected
-          // For quarterly returns (CMP-08), only count Composition clients
           clientsWithReturn = visibleClients.filter(c => {
             if (!((c.selected_returns || []).includes(rt))) return false;
-            
-            // For CMP-08, only count in quarter-end months (already filtered above) for Composition clients
-            if (rt === 'CMP-08') {
-              return c.registration_type === 'Composition';
-            }
-            
+            if (rt === 'CMP-08') return c.registration_type === 'Composition';
             return true;
           });
         }
         
         const clientsWithReturnCount = clientsWithReturn.length;
 
-        // Count filings for this return type (including merged types)
         let returnFilings: typeof filingData = [];
         if (rt === 'GSTR-1') {
           returnFilings = filingData?.filter(f => f.return_type === 'GSTR-1' || f.return_type === 'GSTR-1 (IFF)') || [];
@@ -215,8 +218,6 @@ const StaffDashboard: React.FC = () => {
           returnFilings = filingData?.filter(f => f.return_type === rt) || [];
         }
         const filed = returnFilings.filter(f => f.status === 'Filed').length;
-        
-        // Pending = clients with return - filed (since not all have filing records yet)
         const pending = clientsWithReturnCount - filed;
 
         return {
@@ -225,10 +226,9 @@ const StaffDashboard: React.FC = () => {
           pending: pending > 0 ? pending : 0,
           filed,
         };
-      }).filter(rm => rm.totalClients > 0); // Only show returns with clients
+      }).filter(rm => rm.totalClients > 0);
 
       setReturnMetrics(returnMetricsData);
-      // User metrics are now handled by UserManagementSection component
     } catch (error) {
       console.error('Error fetching metrics:', error);
     } finally {
@@ -243,21 +243,17 @@ const StaffDashboard: React.FC = () => {
   useEffect(() => {
     const channel = supabase
       .channel('dashboard-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => {
-        fetchMetrics();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'filing_status' }, () => {
-        fetchMetrics();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_roles' }, () => {
-        fetchMetrics();
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => fetchMetrics())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'filing_status' }, () => fetchMetrics())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_roles' }, () => fetchMetrics())
       .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [fetchMetrics]);
+
+  const handleTargetDueClick = () => {
+    const todayDate = new Date().getDate();
+    navigate(`/filing-status?filter=target_due_today&targetDate=${todayDate}`);
+  };
 
   const clientMetricCards = [
     {
@@ -275,10 +271,10 @@ const StaffDashboard: React.FC = () => {
       bgColor: 'bg-warning/5',
     },
     {
-      label: 'Late Filings',
-      value: metrics.lateFilings,
-      icon: <Clock className="h-8 w-8 text-destructive" />,
-      onClick: () => navigate('/filing-status?filter=late'),
+      label: 'Target Due Today',
+      value: metrics.targetDueToday,
+      icon: <Target className="h-8 w-8 text-destructive" />,
+      onClick: handleTargetDueClick,
       bgColor: 'bg-destructive/5',
     },
     {
@@ -292,6 +288,14 @@ const StaffDashboard: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-fade-in">
+      {/* Target Due Today Alert */}
+      <TargetDueAlertDialog
+        open={showDueAlert}
+        onOpenChange={setShowDueAlert}
+        totalCount={metrics.targetDueToday}
+        breakdown={dueBreakdown}
+      />
+
       {/* Header with Month Selector */}
       <div className="flex items-center justify-between">
         <div>
@@ -311,8 +315,6 @@ const StaffDashboard: React.FC = () => {
         </div>
       </div>
 
-
-      {/* Password Reset Requests Section - All Staff can see */}
       <PasswordResetRequestsSection />
       <Card>
         <CardHeader className="pb-2">
@@ -325,7 +327,6 @@ const StaffDashboard: React.FC = () => {
           </div>
         </CardHeader>
         <CardContent className="pt-4">
-          {/* Client Metric Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
             {clientMetricCards.map((card, index) => (
               <Card 
@@ -350,7 +351,6 @@ const StaffDashboard: React.FC = () => {
             ))}
           </div>
 
-          {/* Return-wise Breakdown Toggle */}
           <Button
             variant="ghost"
             size="sm"
@@ -361,7 +361,6 @@ const StaffDashboard: React.FC = () => {
             {showReturnBreakdown ? 'Hide' : 'Show'} Return-wise Breakdown
           </Button>
 
-          {/* Return-wise Breakdown */}
           {showReturnBreakdown && returnMetrics.length > 0 && (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -376,16 +375,10 @@ const StaffDashboard: React.FC = () => {
                 <tbody>
                   {returnMetrics.map((rm) => (
                     <tr key={rm.returnType} className="border-b hover:bg-muted/30">
-                      <td className="p-2">
-                        <Badge variant="outline">{rm.returnType}</Badge>
-                      </td>
+                      <td className="p-2"><Badge variant="outline">{rm.returnType}</Badge></td>
                       <td className="text-center p-2">{rm.totalClients}</td>
-                      <td className="text-center p-2">
-                        <span className="text-warning font-medium">{rm.pending}</span>
-                      </td>
-                      <td className="text-center p-2">
-                        <span className="text-success font-medium">{rm.filed}</span>
-                      </td>
+                      <td className="text-center p-2"><span className="text-warning font-medium">{rm.pending}</span></td>
+                      <td className="text-center p-2"><span className="text-success font-medium">{rm.filed}</span></td>
                     </tr>
                   ))}
                 </tbody>
@@ -395,10 +388,7 @@ const StaffDashboard: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* User Management Section - Superadmin Only */}
       {canManageEmployees() && <UserManagementSection />}
-
-      {/* Client Management Detail Section */}
       <ClientManagementSection />
     </div>
   );

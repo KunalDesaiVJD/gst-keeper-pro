@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Download, FileText, Lock, Unlock, Search, Filter, ChevronDown } from 'lucide-react';
+import { Download, FileText, Lock, Unlock, Search, Filter, ChevronDown, Info } from 'lucide-react';
 import { FilingStatusType, ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth } from '@/types';
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
@@ -16,6 +16,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { supabase } from '@/integrations/supabase/client';
 import GSTPortalLink from '@/components/clients/GSTPortalLink';
+import ClientHoverDetails from '@/components/filing/ClientHoverDetails';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 // Due date constants for each return type
 const RETURN_DUE_DATES: Record<string, number> = {
@@ -90,6 +92,13 @@ const FilingStatusPage: React.FC = () => {
       setSelectedStatuses(['Prepared', 'Data Pending', 'Mismatch in Data', 'Not Verified', 'Prepared Pending', 'Data Received']);
     } else if (filterParam === 'filed') {
       setSelectedStatuses(['Filed']);
+    } else if (filterParam === 'target_due_today') {
+      const targetDateParam = searchParams.get('targetDate');
+      if (targetDateParam) {
+        setSelectedTargetDates([parseInt(targetDateParam)]);
+      }
+      // Show all non-filed statuses
+      setSelectedStatuses(['Prepared', 'Data Pending', 'Mismatch in Data', 'Not Verified', 'Prepared Pending', 'Data Received']);
     }
     
     // Initialize month from context
@@ -420,7 +429,15 @@ const FilingStatusPage: React.FC = () => {
               return_type: rt,
               period_month: selectedMonth,
               status: 'Data Pending',
-              target_date: rt === 'GSTR-1' || rt === 'GSTR-1 (IFF)' ? 11 : rt === 'GSTR-3B' || rt === 'GSTR-3B (Q)' ? 20 : 25,
+              target_date: (() => {
+                // Look up existing target date from any month for this client+return type
+                const existingRecord = filingRecords.find(
+                  f => f.client_id === client.id && f.return_type === rt && f.target_date !== null
+                );
+                if (existingRecord?.target_date) return existingRecord.target_date;
+                // Fallback defaults
+                return rt === 'GSTR-1' || rt === 'GSTR-1 (IFF)' ? 11 : rt === 'GSTR-3B' || rt === 'GSTR-3B (Q)' ? 20 : 25;
+              })(),
               filed_date: null,
               remarks: null,
               is_locked: false,
@@ -603,7 +620,7 @@ const FilingStatusPage: React.FC = () => {
         // Fetch suspended_reco data
         const { data: suspendedData } = await supabase
           .from('suspended_reco')
-          .select('portal_cgst, portal_sgst, portal_igst')
+          .select('*')
           .eq('client_id', record.client_id)
           .eq('period_month', selectedMonth)
           .maybeSingle();
@@ -617,10 +634,14 @@ const FilingStatusPage: React.FC = () => {
           .eq('period_month', selectedMonth);
         
         if (suspendedData || (booksData && booksData.length > 0)) {
+          // New formula: Opening Balance + Current Total - Books
+          const openingCgst = Number((suspendedData as any)?.opening_cgst) || 0;
+          const openingSgst = Number((suspendedData as any)?.opening_sgst) || 0;
+          const openingIgst = Number((suspendedData as any)?.opening_igst) || 0;
           const portalCgst = Number(suspendedData?.portal_cgst) || 0;
           const portalSgst = Number(suspendedData?.portal_sgst) || 0;
           const portalIgst = Number(suspendedData?.portal_igst) || 0;
-          const portalTotal = portalCgst + portalSgst + portalIgst;
+          const portalTotal = (openingCgst + openingSgst + openingIgst) + (portalCgst + portalSgst + portalIgst);
           
           // Filter books data: Include rows where Reclaim is blank AND Reversal is NOT blank
           const filteredBooksData = (booksData || []).filter(row => {
@@ -943,10 +964,7 @@ const FilingStatusPage: React.FC = () => {
             <tr>
               <th className="w-12">No.</th>
               <th>Client Name</th>
-              <th>Accountant</th>
               <th>Frequency</th>
-              <th>Contact</th>
-              <th>Email</th>
               <th>
                 <Popover>
                   <PopoverTrigger asChild>
@@ -1049,11 +1067,15 @@ const FilingStatusPage: React.FC = () => {
             {filteredRecords.map((record, idx) => (
               <tr key={record.id} className={record.is_locked ? 'bg-muted/30' : ''}>
                 <td>{idx + 1}</td>
-                <td className="font-medium">
-                  {record.clientName}
-                  {record.is_locked && <Lock className="h-3 w-3 inline ml-2 text-muted-foreground" />}
+                <td>
+                  <ClientHoverDetails
+                    clientName={record.clientName || ''}
+                    accountant={record.accountantName || '-'}
+                    contact={record.contactNumber || '-'}
+                    email={record.clientEmail || '-'}
+                    lockIcon={record.is_locked ? <Lock className="h-3 w-3 inline ml-2 text-muted-foreground" /> : undefined}
+                  />
                 </td>
-                <td>{record.accountantName}</td>
                 <td>
                   <Badge 
                     variant={record.filingFrequency === 'Quarterly' || record.filingFrequency === 'IFF' ? 'default' : 'outline'} 
@@ -1062,8 +1084,6 @@ const FilingStatusPage: React.FC = () => {
                     {record.filingFrequency === 'Quarterly' ? 'Q' : record.filingFrequency === 'IFF' ? 'IFF' : 'M'}
                   </Badge>
                 </td>
-                <td>{record.contactNumber}</td>
-                <td className="text-xs">{record.clientEmail}</td>
                 <td>
                   <Select 
                     value={record.status} 
@@ -1085,17 +1105,34 @@ const FilingStatusPage: React.FC = () => {
                 </td>
                 <td className="text-center font-mono text-sm">{record.target_date}</td>
                 <td>
-                  <div className="flex flex-col">
-                    <span>
-                      {record.filed_date 
-                        ? new Date(record.filed_date).toLocaleDateString('en-IN')
-                        : '-'
-                      }
-                    </span>
-                    {record.updatedByName && record.updated_at && (
-                      <span className={`text-[10px] mt-0.5 ${record.status === 'Filed' ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400'}`}>
-                        {record.status !== 'Filed' && record.filed_date === null ? 'Status changed' : 'by'} {record.updatedByName} ({record.updatedByRole}) on {new Date(record.updated_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  <div className="flex items-start gap-1">
+                    <div className="flex flex-col">
+                      <span>
+                        {record.filed_date 
+                          ? new Date(record.filed_date).toLocaleDateString('en-IN')
+                          : '-'
+                        }
                       </span>
+                      {record.updatedByName && record.updated_at && (
+                        <span className={`text-[10px] mt-0.5 ${record.status === 'Filed' ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400'}`}>
+                          {record.status !== 'Filed' && record.filed_date === null ? 'Status changed' : 'by'} {record.updatedByName} ({record.updatedByRole}) on {new Date(record.updated_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      )}
+                    </div>
+                    {record.updatedByName && record.updated_at && (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button className="shrink-0 mt-0.5">
+                              <Info className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="left" className="max-w-[220px] text-xs">
+                            <p>Status changed by <strong>{record.updatedByName}</strong> ({record.updatedByRole})</p>
+                            <p>on {new Date(record.updated_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })}, {new Date(record.updated_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     )}
                   </div>
                 </td>
@@ -1136,7 +1173,7 @@ const FilingStatusPage: React.FC = () => {
             ))}
             {filteredRecords.length === 0 && (
               <tr>
-                <td colSpan={canUnlockSheets() ? 12 : 11} className="text-center py-8 text-muted-foreground">
+                <td colSpan={canUnlockSheets() ? 9 : 8} className="text-center py-8 text-muted-foreground">
                   {records.length === 0 
                     ? `No clients have ${returnType} selected.`
                     : 'No records match your filters.'}
