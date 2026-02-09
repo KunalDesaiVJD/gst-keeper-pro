@@ -17,13 +17,14 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { History, Download, RotateCcw, Save, RefreshCcw, Trash2 } from 'lucide-react';
+import { History, Download, RotateCcw, Save, RefreshCcw, Trash2, Eye } from 'lucide-react';
 import { format } from 'date-fns';
 import { TwoBVersion, BillNotIn2B, BillNotInBooks } from '@/types';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface VersionHistoryDialogProps {
   open: boolean;
@@ -48,6 +49,7 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
   const [confirmRestore, setConfirmRestore] = useState<TwoBVersion | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<TwoBVersion | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [viewingVersion, setViewingVersion] = useState<TwoBVersion | null>(null);
 
   // Only superadmin can restore versions and delete versions
   const canRestore = user?.role === 'superadmin';
@@ -263,6 +265,15 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
                         <Trash2 className="h-3 w-3" />
                       </Button>
                     )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setViewingVersion(version)}
+                      className="flex items-center gap-1"
+                    >
+                      <Eye className="h-3 w-3" />
+                      View
+                    </Button>
                     {canRestore && (
                       <Button
                         variant="outline"
@@ -337,6 +348,104 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Version View Modal */}
+      {viewingVersion && (
+        <Dialog open onOpenChange={() => setViewingVersion(null)}>
+          <DialogContent className="max-w-4xl max-h-[80vh]">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Eye className="h-5 w-5" />
+                Version {viewingVersion.versionNumber} Preview
+              </DialogTitle>
+              <p className="text-sm text-muted-foreground">
+                Saved by {viewingVersion.updatedBy} {viewingVersion.updatedByRole ? `(${viewingVersion.updatedByRole})` : ''} on{' '}
+                {format(new Date(viewingVersion.updatedAt), 'dd-MMM-yyyy HH:mm')} IST
+              </p>
+            </DialogHeader>
+            <ScrollArea className="max-h-[60vh]">
+              <div className="pr-4 space-y-4">
+                {/* Bills Not in 2B */}
+                <div>
+                  <h4 className="font-semibold text-sm mb-2">Bills Not Available in 2B ({(viewingVersion.billsNotIn2B || []).length} rows)</h4>
+                  <div className="overflow-x-auto border rounded">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-muted/50">
+                          <th className="px-2 py-1 text-left border-b">Date</th>
+                          <th className="px-2 py-1 text-left border-b">Supplier</th>
+                          <th className="px-2 py-1 text-left border-b">Invoice</th>
+                          <th className="px-2 py-1 text-left border-b">GSTIN</th>
+                          <th className="px-2 py-1 text-right border-b">Taxable</th>
+                          <th className="px-2 py-1 text-right border-b">IGST</th>
+                          <th className="px-2 py-1 text-right border-b">CGST</th>
+                          <th className="px-2 py-1 text-right border-b">SGST</th>
+                          <th className="px-2 py-1 text-left border-b">Rev. Month</th>
+                          <th className="px-2 py-1 text-left border-b">Recl. Month</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(viewingVersion.billsNotIn2B || []).map((row: BillNotIn2B, i: number) => (
+                          <tr key={i}>
+                            <td className="px-2 py-1 border-b">{String(row.date || '')}</td>
+                            <td className="px-2 py-1 border-b">{row.supplierName}</td>
+                            <td className="px-2 py-1 border-b">{row.supplierInvoiceNumber || ''}</td>
+                            <td className="px-2 py-1 border-b">{row.supplierGstin || ''}</td>
+                            <td className="px-2 py-1 border-b text-right">{(row.taxableValue || 0).toLocaleString('en-IN')}</td>
+                            <td className="px-2 py-1 border-b text-right">{(row.inputIgst || 0).toLocaleString('en-IN')}</td>
+                            <td className="px-2 py-1 border-b text-right">{(row.inputCgst || 0).toLocaleString('en-IN')}</td>
+                            <td className="px-2 py-1 border-b text-right">{(row.inputSgst || 0).toLocaleString('en-IN')}</td>
+                            <td className="px-2 py-1 border-b">{row.reversalMonth || ''}</td>
+                            <td className="px-2 py-1 border-b">{row.reclaimMonth || ''}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                {/* Bills Not in Books */}
+                <div>
+                  <h4 className="font-semibold text-sm mb-2">Bills Not Available in Books ({(viewingVersion.billsNotInBooks || []).length} rows)</h4>
+                  <div className="overflow-x-auto border rounded">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-muted/50">
+                          <th className="px-2 py-1 text-left border-b">Date</th>
+                          <th className="px-2 py-1 text-left border-b">Supplier</th>
+                          <th className="px-2 py-1 text-left border-b">Invoice</th>
+                          <th className="px-2 py-1 text-left border-b">GSTIN</th>
+                          <th className="px-2 py-1 text-right border-b">Taxable</th>
+                          <th className="px-2 py-1 text-right border-b">IGST</th>
+                          <th className="px-2 py-1 text-right border-b">CGST</th>
+                          <th className="px-2 py-1 text-right border-b">SGST</th>
+                          <th className="px-2 py-1 text-left border-b">Book Entry</th>
+                          <th className="px-2 py-1 text-left border-b">Bill in 2B</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(viewingVersion.billsNotInBooks || []).map((row: BillNotInBooks, i: number) => (
+                          <tr key={i}>
+                            <td className="px-2 py-1 border-b">{String(row.date || '')}</td>
+                            <td className="px-2 py-1 border-b">{row.supplierName}</td>
+                            <td className="px-2 py-1 border-b">{row.supplierInvoiceNumber || ''}</td>
+                            <td className="px-2 py-1 border-b">{row.supplierGstin || ''}</td>
+                            <td className="px-2 py-1 border-b text-right">{(row.taxableValue || 0).toLocaleString('en-IN')}</td>
+                            <td className="px-2 py-1 border-b text-right">{(row.inputIgst || 0).toLocaleString('en-IN')}</td>
+                            <td className="px-2 py-1 border-b text-right">{(row.inputCgst || 0).toLocaleString('en-IN')}</td>
+                            <td className="px-2 py-1 border-b text-right">{(row.inputSgst || 0).toLocaleString('en-IN')}</td>
+                            <td className="px-2 py-1 border-b">{row.bookEntryMonth || ''}</td>
+                            <td className="px-2 py-1 border-b">{row.billIn2BMonth || ''}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </ScrollArea>
+          </DialogContent>
+        </Dialog>
+      )}
     </>
   );
 };

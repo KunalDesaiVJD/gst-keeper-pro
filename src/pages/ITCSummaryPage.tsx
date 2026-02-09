@@ -187,9 +187,11 @@ const ITCSummaryPage: React.FC = () => {
     const months: { value: string; label: string }[] = [];
     const now = new Date();
     
-    // Generate 24 months (12 past + 12 future)
-    for (let i = -12; i <= 12; i++) {
-      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    // Future limit: +2 months from today
+    const maxFutureMonths = 2;
+    
+    for (let i = -12; i <= maxFutureMonths; i++) {
+      const date = new Date(now.getFullYear(), now.getMonth() + i, 1);
       const monthNum = date.getMonth() + 1;
       
       // Skip non-quarter-end months for IFF/Composition clients
@@ -1158,7 +1160,7 @@ const ITCSummaryPage: React.FC = () => {
         versions={versions}
         onRestore={handleRestoreVersion}
         onDownload={handleDownloadVersion}
-        onView={handleDownloadVersion}
+        onView={undefined}
         onVersionDeleted={fetchVersions}
         title="Version History"
         subtitle={`${selectedClientData?.name || ''} - ${selectedMonth}`}
@@ -1308,6 +1310,12 @@ const ITCSummaryPage: React.FC = () => {
                     </tr>
                     {itcData.section4A.map((row, idx) => (
                       <React.Fragment key={`4a-${idx}`}>
+                        {row.isHeader ? (
+                          <tr className="bg-muted/20 font-medium">
+                            <td>{row.srNo}</td>
+                            <td colSpan={6}>{row.particular}</td>
+                          </tr>
+                        ) : (
                         <tr className={row.isAutoLinked ? 'cell-locked' : ''}>
                           <td>{row.srNo}</td>
                           <td className="flex items-center gap-2">
@@ -1326,18 +1334,17 @@ const ITCSummaryPage: React.FC = () => {
                             {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
                           </td>
                           <td>
-                            {!row.isHeader && (
-                              <Input
-                                type="text"
-                                value={row.reasons || ''}
-                                onChange={(e) => handleReasonsChange('section4A', idx, e.target.value)}
-                                placeholder="Reason..."
-                                className="h-8 text-sm"
-                                disabled={isLocked}
-                              />
-                            )}
+                            <Input
+                              type="text"
+                              value={row.reasons || ''}
+                              onChange={(e) => handleReasonsChange('section4A', idx, e.target.value)}
+                              placeholder="Reason..."
+                              className="h-8 text-sm"
+                              disabled={isLocked}
+                            />
                           </td>
                         </tr>
+                        )}
                         {/* Insert Total (5) row after row 5.5 */}
                         {row.srNo === '5.5' && (
                           <tr className="bg-muted/30 font-medium">
