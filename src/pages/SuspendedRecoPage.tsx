@@ -47,10 +47,11 @@ const SuspendedRecoPage: React.FC = () => {
   const selectedClientData = clients.find(c => c.id === selectedClientId);
   const isStaff = isStaffRole();
 
-  // Generate month options
+  // Generate month options - limited to +2 months future (aligned with dashboard)
   const generateMonthOptions = useMemo(() => {
     const months: { value: string; label: string }[] = [];
     const now = new Date();
+    const maxFutureMonths = 2;
     
     const client = clients.find(c => c.id === selectedClientId);
     let startDate = new Date(now.getFullYear(), now.getMonth() - 12, 1);
@@ -60,7 +61,7 @@ const SuspendedRecoPage: React.FC = () => {
       startDate = new Date(regDate.getFullYear(), regDate.getMonth(), 1);
     }
     
-    const futureLimit = new Date(now.getFullYear(), now.getMonth() + 12, 1);
+    const futureLimit = new Date(now.getFullYear(), now.getMonth() + maxFutureMonths, 1);
     let currentDate = new Date(startDate);
     
     while (currentDate <= futureLimit) {

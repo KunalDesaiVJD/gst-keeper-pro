@@ -110,6 +110,9 @@ const TwoBReconciliationPage: React.FC = () => {
     const months: { value: string; label: string }[] = [];
     const now = new Date();
     
+    // Future limit: +2 months from today (aligned with GST filing logic)
+    const maxFutureMonths = 2;
+    
     // Find registration date from selected client
     const client = clients.find(c => c.id === selectedClientId);
     let startDate = new Date(now.getFullYear(), now.getMonth() - 12, 1); // Default: 12 months ago
@@ -119,8 +122,7 @@ const TwoBReconciliationPage: React.FC = () => {
       startDate = new Date(regDate.getFullYear(), regDate.getMonth(), 1);
     }
     
-    // Generate months from start date to 12 months in future
-    const futureLimit = new Date(now.getFullYear(), now.getMonth() + 12, 1);
+    const futureLimit = new Date(now.getFullYear(), now.getMonth() + maxFutureMonths, 1);
     let currentDate = new Date(startDate);
     
     while (currentDate <= futureLimit) {
@@ -149,38 +151,21 @@ const TwoBReconciliationPage: React.FC = () => {
 
   const monthOptions = generateMonthOptions;
 
-  // Generate month dropdown options for reversal/reclaim starting from April 2024
-  const shortMonthOptions = () => {
-    const options: { value: string; label: string }[] = [];
-    // Start from April 2024
-    const startDate = new Date(2024, 3, 1); // April 2024
-    const now = new Date();
-    // End at 12 months in the future from now
-    const endDate = new Date(now.getFullYear(), now.getMonth() + 12, 1);
+  // Generate month dropdown options for reversal/reclaim - restricted to selected return period only
+  const reversalReclaimMonths = useMemo(() => {
+    if (!selectedMonth) return [{ value: '__blank__', label: '(Blank)' }];
     
-    let currentDate = new Date(startDate);
-    while (currentDate <= endDate) {
-      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const yearShort = String(currentDate.getFullYear()).slice(-2);
-      const value = `${monthNames[currentDate.getMonth()]} ${yearShort}`;
-      options.push({ value, label: value });
-      currentDate.setMonth(currentDate.getMonth() + 1);
-    }
+    const [monthNum, year] = selectedMonth.split('/');
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthName = monthNames[parseInt(monthNum) - 1];
+    const yearShort = year.slice(-2);
+    const value = `${monthName} ${yearShort}`;
     
-    // Sort descending (newest first)
-    const sortedOptions = options.sort((a, b) => {
-      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const parseDate = (s: string) => {
-        const [m, y] = s.split(' ');
-        return (2000 + parseInt(y)) * 12 + monthNames.indexOf(m);
-      };
-      return parseDate(b.value) - parseDate(a.value);
-    });
-    // Add "Blank" option at the beginning
-    return [{ value: '__blank__', label: '(Blank)' }, ...sortedOptions];
-  };
-
-  const reversalReclaimMonths = shortMonthOptions();
+    return [
+      { value: '__blank__', label: '(Blank)' },
+      { value, label: value },
+    ];
+  }, [selectedMonth]);
 
   // Fetch clients - filtered for client role
   const fetchClients = useCallback(async () => {
