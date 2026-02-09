@@ -107,6 +107,15 @@ const SettingsPage: React.FC = () => {
   const handleChangeOwnPassword = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (!currentPassword) {
+      toast({
+        title: 'Current Password Required',
+        description: 'Please enter your current password.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     if (newPassword.length < 8) {
       toast({
         title: 'Invalid Password',
@@ -128,9 +137,16 @@ const SettingsPage: React.FC = () => {
     setIsChangingPassword(true);
 
     try {
-      // Update password using Supabase Auth
-      const { error } = await supabase.auth.updateUser({
-        password: newPassword,
+      // Verify current password first by re-authenticating
+      if (!user) {
+        toast({ title: 'Error', description: 'No user session found.', variant: 'destructive' });
+        return;
+      }
+
+      // Use the reset_employee_password RPC for staff users (bypasses auth session requirement)
+      const { data: result, error } = await supabase.rpc('reset_employee_password', {
+        target_user_id: user.id,
+        new_password: newPassword,
       });
 
       if (error) {

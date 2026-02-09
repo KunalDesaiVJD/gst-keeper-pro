@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { History, Download, RotateCcw, Save, RefreshCcw, Trash2 } from 'lucide-react';
+import { History, Download, RotateCcw, Save, RefreshCcw, Trash2, Eye } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -41,6 +41,7 @@ interface GenericVersionHistoryDialogProps {
   versions: GenericVersion[];
   onRestore: (version: GenericVersion) => void;
   onDownload: (version: GenericVersion) => void;
+  onView?: (version: GenericVersion) => void;
   onVersionDeleted?: () => void;
   title: string;
   subtitle: string;
@@ -53,6 +54,7 @@ const GenericVersionHistoryDialog: React.FC<GenericVersionHistoryDialogProps> = 
   versions,
   onRestore,
   onDownload,
+  onView,
   onVersionDeleted,
   title,
   subtitle,
@@ -179,6 +181,17 @@ const GenericVersionHistoryDialog: React.FC<GenericVersionHistoryDialogProps> = 
                         className="flex items-center gap-1 text-destructive hover:text-destructive hover:bg-destructive/10"
                       >
                         <Trash2 className="h-3 w-3" />
+                      </Button>
+                    )}
+                    {onView && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onView(version)}
+                        className="flex items-center gap-1"
+                      >
+                        <Eye className="h-3 w-3" />
+                        View
                       </Button>
                     )}
                     {canRestore && (

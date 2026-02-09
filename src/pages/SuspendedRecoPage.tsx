@@ -28,7 +28,7 @@ const SuspendedRecoPage: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  
+  const [lastSavedBy, setLastSavedBy] = useState<{ name: string; role: string; time: string } | null>(null);
   // Opening balance portal values (editable)
   const [openingCgst, setOpeningCgst] = useState<number>(0);
   const [openingSgst, setOpeningSgst] = useState<number>(0);
@@ -120,10 +120,26 @@ const SuspendedRecoPage: React.FC = () => {
         setOpeningCgst(Number((suspendedData as any).opening_cgst) || 0);
         setOpeningSgst(Number((suspendedData as any).opening_sgst) || 0);
         setOpeningIgst(Number((suspendedData as any).opening_igst) || 0);
+        
+        // Fetch last saved by info
+        const updatedBy = (suspendedData as any).updated_by;
+        const updatedAt = (suspendedData as any).updated_at;
+        if (updatedBy) {
+          const { data: profile } = await supabase.from('profiles').select('first_name').eq('user_id', updatedBy).maybeSingle();
+          const { data: roleData } = await supabase.from('user_roles').select('role').eq('user_id', updatedBy).maybeSingle();
+          setLastSavedBy({
+            name: profile?.first_name || 'Unknown',
+            role: roleData?.role || '',
+            time: updatedAt || '',
+          });
+        } else {
+          setLastSavedBy(null);
+        }
       } else {
         setOpeningCgst(0);
         setOpeningSgst(0);
         setOpeningIgst(0);
+        setLastSavedBy(null);
       }
 
       // Fetch ITC Summary data to auto-calculate "Current Total"
@@ -280,9 +296,18 @@ const SuspendedRecoPage: React.FC = () => {
           <div className="p-2 bg-primary/10 rounded-lg">
             <FileText className="h-6 w-6 text-primary" />
           </div>
-          <div>
+           <div>
             <h1 className="text-2xl font-heading font-bold text-foreground">Suspended Reconciliation</h1>
             <p className="text-muted-foreground">Compare portal figures with books data</p>
+            {lastSavedBy && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
+                {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
+                {lastSavedBy.time && (
+                  <> on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</>
+                )}
+              </p>
+            )}
           </div>
         </div>
       </div>

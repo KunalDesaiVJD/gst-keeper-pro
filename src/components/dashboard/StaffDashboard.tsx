@@ -171,62 +171,105 @@ const StaffDashboard: React.FC = () => {
         sessionStorage.setItem(SESSION_ALERT_KEY, 'true');
       }
 
-      // Calculate return-wise metrics
+      // Calculate return-wise metrics with IFF/Normal bifurcation for GSTR-1 and GSTR-3B
       const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08'];
       const [monthStr] = selectedMonth.split('/');
       const currentMonthNum = parseInt(monthStr);
       const isQuarterEnd = isQuarterEndMonth(currentMonthNum);
       
-      const returnMetricsData: ReturnMetrics[] = allReturnTypes
-        .filter(rt => {
-          if (QUARTERLY_RETURN_TYPES.includes(rt) && !isQuarterEnd) return false;
-          return true;
-        })
-        .map(rt => {
-        let clientsWithReturn: typeof visibleClients = [];
+      const returnMetricsData: ReturnMetrics[] = [];
+      
+      for (const rt of allReturnTypes) {
+        if (QUARTERLY_RETURN_TYPES.includes(rt) && !isQuarterEnd) continue;
         
         if (rt === 'GSTR-1') {
-          clientsWithReturn = visibleClients.filter(c => 
-            (c.selected_returns || []).includes('GSTR-1') || 
+          // Normal GSTR-1 clients
+          const normalClients = visibleClients.filter(c => 
+            (c.selected_returns || []).includes('GSTR-1') && c.registration_type !== 'IFF'
+          );
+          const normalFilings = filingData?.filter(f => f.return_type === 'GSTR-1') || [];
+          const normalFiled = normalFilings.filter(f => f.status === 'Filed').length;
+          
+          if (normalClients.length > 0) {
+            returnMetricsData.push({
+              returnType: 'GSTR-1' as ReturnType,
+              totalClients: normalClients.length,
+              pending: Math.max(0, normalClients.length - normalFiled),
+              filed: normalFiled,
+            });
+          }
+          
+          // IFF clients
+          const iffClients = visibleClients.filter(c => 
             (c.selected_returns || []).includes('GSTR-1 (IFF)')
           );
+          if (iffClients.length > 0 && isQuarterEnd) {
+            const iffFilings = filingData?.filter(f => f.return_type === 'GSTR-1 (IFF)') || [];
+            const iffFiled = iffFilings.filter(f => f.status === 'Filed').length;
+            returnMetricsData.push({
+              returnType: 'GSTR-1 (IFF)' as ReturnType,
+              totalClients: iffClients.length,
+              pending: Math.max(0, iffClients.length - iffFiled),
+              filed: iffFiled,
+            });
+          }
         } else if (rt === 'GSTR-3B') {
-          clientsWithReturn = visibleClients.filter(c => {
+          // Normal GSTR-3B clients
+          const normalClients = visibleClients.filter(c => {
             const hasGSTR3B = (c.selected_returns || []).includes('GSTR-3B');
-            const hasGSTR3BQ = (c.selected_returns || []).includes('GSTR-3B (Q)');
             const isQuarterlyClient = c.registration_type === 'IFF' || c.registration_type === 'Composition';
-            if (hasGSTR3B && !isQuarterlyClient) return true;
-            if (hasGSTR3BQ && isQuarterlyClient && isQuarterEnd) return true;
-            return false;
+            return hasGSTR3B && !isQuarterlyClient;
           });
+          const normalFilings = filingData?.filter(f => f.return_type === 'GSTR-3B') || [];
+          const normalFiled = normalFilings.filter(f => f.status === 'Filed').length;
+          
+          if (normalClients.length > 0) {
+            returnMetricsData.push({
+              returnType: 'GSTR-3B' as ReturnType,
+              totalClients: normalClients.length,
+              pending: Math.max(0, normalClients.length - normalFiled),
+              filed: normalFiled,
+            });
+          }
+          
+          // Quarterly GSTR-3B (Q) clients
+          if (isQuarterEnd) {
+            const qClients = visibleClients.filter(c => {
+              const hasGSTR3BQ = (c.selected_returns || []).includes('GSTR-3B (Q)');
+              const isQuarterlyClient = c.registration_type === 'IFF' || c.registration_type === 'Composition';
+              return hasGSTR3BQ && isQuarterlyClient;
+            });
+            if (qClients.length > 0) {
+              const qFilings = filingData?.filter(f => f.return_type === 'GSTR-3B (Q)') || [];
+              const qFiled = qFilings.filter(f => f.status === 'Filed').length;
+              returnMetricsData.push({
+                returnType: 'GSTR-3B (Q)' as ReturnType,
+                totalClients: qClients.length,
+                pending: Math.max(0, qClients.length - qFiled),
+                filed: qFiled,
+              });
+            }
+          }
         } else {
-          clientsWithReturn = visibleClients.filter(c => {
+          const clientsWithReturn = visibleClients.filter(c => {
             if (!((c.selected_returns || []).includes(rt))) return false;
             if (rt === 'CMP-08') return c.registration_type === 'Composition';
             return true;
           });
-        }
-        
-        const clientsWithReturnCount = clientsWithReturn.length;
+          
+          const returnFilings = filingData?.filter(f => f.return_type === rt) || [];
+          const filed = returnFilings.filter(f => f.status === 'Filed').length;
 
-        let returnFilings: typeof filingData = [];
-        if (rt === 'GSTR-1') {
-          returnFilings = filingData?.filter(f => f.return_type === 'GSTR-1' || f.return_type === 'GSTR-1 (IFF)') || [];
-        } else if (rt === 'GSTR-3B') {
-          returnFilings = filingData?.filter(f => f.return_type === 'GSTR-3B' || f.return_type === 'GSTR-3B (Q)') || [];
-        } else {
-          returnFilings = filingData?.filter(f => f.return_type === rt) || [];
+          if (clientsWithReturn.length > 0) {
+            returnMetricsData.push({
+              returnType: rt,
+              totalClients: clientsWithReturn.length,
+              pending: Math.max(0, clientsWithReturn.length - filed),
+              filed,
+            });
+          }
         }
-        const filed = returnFilings.filter(f => f.status === 'Filed').length;
-        const pending = clientsWithReturnCount - filed;
-
-        return {
-          returnType: rt,
-          totalClients: clientsWithReturnCount,
-          pending: pending > 0 ? pending : 0,
-          filed,
-        };
-      }).filter(rm => rm.totalClients > 0);
+      }
 
       setReturnMetrics(returnMetricsData);
     } catch (error) {
