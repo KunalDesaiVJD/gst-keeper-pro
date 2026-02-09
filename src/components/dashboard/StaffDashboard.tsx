@@ -79,8 +79,11 @@ const StaffDashboard: React.FC = () => {
     const monthsSet = new Set<string>();
     const now = new Date();
     
-    for (let i = -12; i < 24; i++) {
-      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    // Future limit: +2 months from today (GST filing logic)
+    const maxFutureMonths = 2;
+    
+    for (let i = -12; i <= maxFutureMonths; i++) {
+      const date = new Date(now.getFullYear(), now.getMonth() + i, 1);
       const value = `${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
       monthsSet.add(value);
     }

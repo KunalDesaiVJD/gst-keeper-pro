@@ -17,11 +17,12 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { History, Download, RotateCcw, Save, RefreshCcw, Trash2, Eye } from 'lucide-react';
+import { History, Download, RotateCcw, Save, RefreshCcw, Trash2, Eye, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
 export interface GenericVersion {
   id: string;
@@ -48,6 +49,101 @@ interface GenericVersionHistoryDialogProps {
   tableName: 'rcm_versions' | 'itc_versions' | 'gst_update_versions';
 }
 
+// Helper to render version data as a readable table in a modal
+const VersionDataViewer: React.FC<{ version: GenericVersion; onClose: () => void }> = ({ version, onClose }) => {
+  const data = version.versionData;
+
+  const renderTable = (rows: any[], title: string) => {
+    if (!rows || rows.length === 0) return null;
+    // Get all keys from first row
+    const keys = Object.keys(rows[0]).filter(k => !['isHeader', 'isAutoLinked', 'editable'].includes(k));
+    return (
+      <div className="mb-4">
+        <h4 className="font-semibold text-sm mb-2">{title}</h4>
+        <div className="overflow-x-auto border rounded">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-muted/50">
+                {keys.map(k => (
+                  <th key={k} className="px-2 py-1 text-left border-b font-medium capitalize">
+                    {k.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').trim()}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row: any, i: number) => (
+                <tr key={i} className={row.isHeader ? 'bg-muted/30 font-semibold' : ''}>
+                  {keys.map(k => (
+                    <td key={k} className="px-2 py-1 border-b">
+                      {typeof row[k] === 'number' ? row[k].toLocaleString('en-IN') : String(row[k] ?? '')}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  const renderContent = () => {
+    if (!data) return <p className="text-muted-foreground text-sm">No data available for this version.</p>;
+
+    // ITC Summary format
+    if (data.section4A || data.section4B || data.section4D) {
+      return (
+        <>
+          {data.section4A && renderTable(data.section4A, '4(A) ITC Available')}
+          {data.section4B && renderTable(data.section4B, '4(B) ITC Reversed')}
+          {data.section4D && renderTable(data.section4D, '4(D) Other Details')}
+        </>
+      );
+    }
+
+    // RCM format (array of rows)
+    if (Array.isArray(data)) {
+      return renderTable(data, 'RCM Data');
+    }
+
+    // GST Update format (array or object)
+    if (data.updates && Array.isArray(data.updates)) {
+      return renderTable(data.updates, 'GST Updates');
+    }
+
+    // Fallback: render as JSON
+    return (
+      <pre className="text-xs bg-muted/30 p-3 rounded overflow-auto max-h-96">
+        {JSON.stringify(data, null, 2)}
+      </pre>
+    );
+  };
+
+  return (
+    <Dialog open onOpenChange={() => onClose()}>
+      <DialogContent className="max-w-4xl max-h-[80vh]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Eye className="h-5 w-5" />
+            Version {version.versionNumber} Preview
+          </DialogTitle>
+          <p className="text-sm text-muted-foreground">
+            Saved by {version.updatedBy} {version.updatedByRole ? `(${version.updatedByRole})` : ''} on{' '}
+            {format(new Date(version.updatedAt), 'dd-MMM-yyyy HH:mm')} IST
+            {version.actionType === 'RESTORE' && ' • Restored from earlier version'}
+          </p>
+        </DialogHeader>
+        <ScrollArea className="max-h-[60vh]">
+          <div className="pr-4">
+            {renderContent()}
+          </div>
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 const GenericVersionHistoryDialog: React.FC<GenericVersionHistoryDialogProps> = ({
   open,
   onOpenChange,
@@ -64,6 +160,7 @@ const GenericVersionHistoryDialog: React.FC<GenericVersionHistoryDialogProps> = 
   const [confirmRestore, setConfirmRestore] = useState<GenericVersion | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<GenericVersion | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [viewingVersion, setViewingVersion] = useState<GenericVersion | null>(null);
 
   // Only superadmin can restore and delete versions
   const canRestore = user?.role === 'superadmin';
@@ -183,17 +280,15 @@ const GenericVersionHistoryDialog: React.FC<GenericVersionHistoryDialogProps> = 
                         <Trash2 className="h-3 w-3" />
                       </Button>
                     )}
-                    {onView && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onView(version)}
-                        className="flex items-center gap-1"
-                      >
-                        <Eye className="h-3 w-3" />
-                        View
-                      </Button>
-                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setViewingVersion(version)}
+                      className="flex items-center gap-1"
+                    >
+                      <Eye className="h-3 w-3" />
+                      View
+                    </Button>
                     {canRestore && (
                       <Button
                         variant="outline"
@@ -227,6 +322,11 @@ const GenericVersionHistoryDialog: React.FC<GenericVersionHistoryDialogProps> = 
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Version Data Viewer Modal */}
+      {viewingVersion && (
+        <VersionDataViewer version={viewingVersion} onClose={() => setViewingVersion(null)} />
+      )}
 
       <AlertDialog open={!!confirmRestore} onOpenChange={() => setConfirmRestore(null)}>
         <AlertDialogContent>
