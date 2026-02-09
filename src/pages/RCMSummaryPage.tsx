@@ -124,6 +124,7 @@ const RCMSummaryPage: React.FC = () => {
   const [showAddMaster, setShowAddMaster] = useState(false);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [versions, setVersions] = useState<GenericVersion[]>([]);
+  const [lastSavedBy, setLastSavedBy] = useState<{ name: string; role: string; time: string; version: number } | null>(null);
 
   const isStaff = isStaffRole();
   const canUnlock = canUnlockSheets();
@@ -352,6 +353,19 @@ const RCMSummaryPage: React.FC = () => {
       }));
 
       setVersions(formattedVersions);
+      
+      // Set last saved by from latest version
+      if (formattedVersions.length > 0) {
+        const latest = formattedVersions[0];
+        setLastSavedBy({
+          name: latest.updatedBy,
+          role: latest.updatedByRole || '',
+          time: latest.updatedAt,
+          version: latest.versionNumber,
+        });
+      } else {
+        setLastSavedBy(null);
+      }
     } catch (error) {
       console.error('Error fetching RCM versions:', error);
     }
@@ -685,6 +699,14 @@ const RCMSummaryPage: React.FC = () => {
           <div>
             <h1 className="text-2xl font-heading font-bold text-foreground">RCM Summary</h1>
             <p className="text-muted-foreground">Reverse Charge Mechanism Summary</p>
+            {lastSavedBy && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
+                {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
+                {' '}on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                {' '}• v{lastSavedBy.version}
+              </p>
+            )}
           </div>
         </div>
         {allMonthsLocked && (
@@ -867,6 +889,7 @@ const RCMSummaryPage: React.FC = () => {
         versions={versions}
         onRestore={handleRestoreVersion}
         onDownload={handleDownloadVersion}
+        onView={handleDownloadVersion}
         onVersionDeleted={fetchVersions}
         title="Version History"
         subtitle={`${selectedClientData?.name || ''} - FY ${financialYear}`}

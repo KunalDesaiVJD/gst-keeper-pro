@@ -55,6 +55,7 @@ const GSTRunningUpdatePage: React.FC = () => {
   const [hasChanges, setHasChanges] = useState(false);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [versions, setVersions] = useState<GenericVersion[]>([]);
+  const [lastSavedBy, setLastSavedBy] = useState<{ name: string; role: string; time: string; version: number } | null>(null);
 
   // Filter states
   const [filterClient, setFilterClient] = useState<string>('');
@@ -175,12 +176,26 @@ const GSTRunningUpdatePage: React.FC = () => {
         (profiles || []).forEach(p => { userMap[p.user_id] = { name: p.first_name, role: '' }; });
         (roles || []).forEach(r => { if (userMap[r.user_id]) userMap[r.user_id].role = r.role; });
       }
-      setVersions(data.map(v => ({
+      const formatted = data.map(v => ({
         id: v.id, versionNumber: v.version_number || 1, versionData: v.version_data,
         updatedBy: userMap[v.updated_by]?.name || 'Unknown', updatedByRole: userMap[v.updated_by]?.role || '',
         updatedAt: v.updated_at, isCurrent: v.is_current || false, actionType: v.action_type || 'SAVE',
         restoredFromVersionId: v.restored_from_version_id,
-      })));
+      }));
+      setVersions(formatted);
+      
+      // Set last saved by from latest version
+      if (formatted.length > 0) {
+        const latest = formatted[0];
+        setLastSavedBy({
+          name: latest.updatedBy,
+          role: latest.updatedByRole || '',
+          time: latest.updatedAt,
+          version: latest.versionNumber,
+        });
+      } else {
+        setLastSavedBy(null);
+      }
     } catch (error) { console.error('Error fetching GST update versions:', error); }
   }, []);
 
@@ -348,6 +363,14 @@ const GSTRunningUpdatePage: React.FC = () => {
           <div>
             <h1 className="text-2xl font-heading font-bold text-foreground">GST Update Sheet</h1>
             <p className="text-muted-foreground">Track GST updates and changes</p>
+            {lastSavedBy && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
+                {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
+                {' '}on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                {' '}• v{lastSavedBy.version}
+              </p>
+            )}
           </div>
         </div>
         {canEdit && (
@@ -497,6 +520,26 @@ const GSTRunningUpdatePage: React.FC = () => {
             XLSX.writeFile(workbook, `GST_Update_Version_${version.versionNumber}.xlsx`);
             toast.success(`Downloaded version ${version.versionNumber}`);
           } catch (error) { toast.error('Failed to download version'); }
+        }}
+        onView={(version) => {
+          try {
+            const versionData = version.versionData as GSTUpdate[];
+            if (!versionData) { toast.error('Invalid version data'); return; }
+            const workbook = XLSX.utils.book_new();
+            const sheetData: any[][] = [
+              ['GST Update Sheet - Version ' + version.versionNumber],
+              [`Saved: ${new Date(version.updatedAt).toLocaleString()}`, '', `By: ${version.updatedBy}`],
+              [],
+              ['Sr.', 'Client', 'Mistake Month', 'Update Effect Month', 'Return', 'Type', 'Instructions By', 'Matter Brief', 'Taxable', 'CGST', 'SGST', 'IGST', 'Interest', 'Remarks', '✓'],
+            ];
+            (versionData || []).forEach((r: any, idx: number) => {
+              sheetData.push([idx+1, r.client_name||'', r.effect_month||'', r.update_effect_month||'', r.update_in_return||'', r.update_type||'', r.update_instructions_by||'', r.matter_brief||'', r.taxable_value||0, r.cgst||0, r.sgst||0, r.igst||0, r.interest||0, r.remarks||'', r.remarks_checked?'✓':'']);
+            });
+            const sheet = XLSX.utils.aoa_to_sheet(sheetData);
+            XLSX.utils.book_append_sheet(workbook, sheet, 'GST Updates');
+            XLSX.writeFile(workbook, `GST_Update_View_Version_${version.versionNumber}.xlsx`);
+            toast.success(`Viewing version ${version.versionNumber} - downloaded as Excel`);
+          } catch (error) { toast.error('Failed to view version'); }
         }}
         onVersionDeleted={fetchVersions}
         title="GST Update Sheet Version History"

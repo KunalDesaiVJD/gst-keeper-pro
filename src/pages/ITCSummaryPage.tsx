@@ -58,7 +58,7 @@ const getDefaultITCData = (): ITCData => ({
     { srNo: '5.2', particular: 'ITC for Previous Month, if any', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
     { srNo: '5.3', particular: 'Debit Note', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
     { srNo: '5.4', particular: 'Reclaim of ITC Reversed for Previous months', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
-    { srNo: '5.5', particular: 'Reclaim of ITC Reversed due to 180 days rule', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '5.5', particular: 'Reclaim of ITC Reversed due to 180 days rule/Others', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
   ],
   section4B: [
     { srNo: '(1)', particular: 'ITC Reversal under Rule 38, 42 & 43, and Section 17(5)', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
@@ -70,7 +70,7 @@ const getDefaultITCData = (): ITCData => ({
   section4D: [
     { srNo: '(1)', particular: 'ITC reclaimed which was reversed under Table 4(B)(2) in earlier tax period', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
     { srNo: '1.1', particular: 'Reclaim of ITC Reversed for Previous months', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
-    { srNo: '1.2', particular: 'Reclaim of ITC Reversed due to 180 days rule', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '1.2', particular: 'Reclaim of ITC Reversed due to 180 days rule/Others', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
     { srNo: '(2)', particular: 'Ineligible ITC under section 16(4) & ITC restricted due to PoS rules', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
   ],
 });
@@ -93,7 +93,7 @@ const getPartialITCData = (): ITCData => ({
     { srNo: '5.2', particular: 'ITC wrongly adjusted', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
     { srNo: '5.3', particular: 'Debit Note', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
     { srNo: '5.4', particular: 'Reclaim of ITC Reversed for the Previous months', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
-    { srNo: '5.5', particular: 'Reclaim of ITC Reversed due to 180 days rule', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '5.5', particular: 'Reclaim of ITC Reversed due to 180 days rule/Others', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
   ],
   section4B: [
     // Row (1) = SUM(i + ii + iii) - AUTO-CALCULATED (not editable)
@@ -112,7 +112,7 @@ const getPartialITCData = (): ITCData => ({
   section4D: [
     { srNo: '(1)', particular: 'ITC reclaimed which was reversed under Table 4(B)(2) in earlier tax period *', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
     { srNo: '1.1', particular: 'Reclaim of ITC Reversed for the Previous months', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
-    { srNo: '1.2', particular: 'Reclaim of ITC Reversed due to 180 days rule', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '1.2', particular: 'Reclaim of ITC Reversed due to 180 days rule/Others', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
     { srNo: '(2)', particular: 'Ineligible ITC under section 16(4) & ITC restricted due to PoS rules *', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
   ],
 });
@@ -163,6 +163,7 @@ const ITCSummaryPage: React.FC = () => {
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [versions, setVersions] = useState<GenericVersion[]>([]);
   const [gstUpdateCount, setGstUpdateCount] = useState(0);
+  const [lastSavedBy, setLastSavedBy] = useState<{ name: string; role: string; time: string; version: number } | null>(null);
 
   const canViewVersions = user?.role === 'superadmin' || user?.role === 'gst_manager';
 
@@ -830,6 +831,7 @@ const ITCSummaryPage: React.FC = () => {
   const fetchVersions = useCallback(async () => {
     if (!selectedClient || !selectedMonth) {
       setVersions([]);
+      setLastSavedBy(null);
       return;
     }
     try {
@@ -848,12 +850,26 @@ const ITCSummaryPage: React.FC = () => {
         (profiles || []).forEach(p => { userMap[p.user_id] = { name: p.first_name, role: '' }; });
         (roles || []).forEach(r => { if (userMap[r.user_id]) userMap[r.user_id].role = r.role; });
       }
-      setVersions((versionsData || []).map(v => ({
+      const formatted = (versionsData || []).map(v => ({
         id: v.id, versionNumber: v.version_number || 1, versionData: v.version_data,
         updatedBy: userMap[v.updated_by]?.name || 'Unknown', updatedByRole: userMap[v.updated_by]?.role || '',
         updatedAt: v.updated_at, isCurrent: v.is_current || false, actionType: v.action_type || 'SAVE',
         restoredFromVersionId: v.restored_from_version_id,
-      })));
+      }));
+      setVersions(formatted);
+      
+      // Set last saved by from latest version
+      if (formatted.length > 0) {
+        const latest = formatted[0];
+        setLastSavedBy({
+          name: latest.updatedBy,
+          role: latest.updatedByRole || '',
+          time: latest.updatedAt,
+          version: latest.versionNumber,
+        });
+      } else {
+        setLastSavedBy(null);
+      }
     } catch (error) { console.error('Error fetching ITC versions:', error); }
   }, [selectedClient, selectedMonth]);
 
@@ -1069,6 +1085,14 @@ const ITCSummaryPage: React.FC = () => {
         <div>
           <h1 className="text-2xl font-heading font-bold text-foreground">ITC Summary</h1>
           <p className="text-muted-foreground">Input Tax Credit summary for the month</p>
+          {lastSavedBy && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
+              {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
+              {' '}on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+              {' '}• v{lastSavedBy.version}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {selectedClient && (
@@ -1132,6 +1156,7 @@ const ITCSummaryPage: React.FC = () => {
         versions={versions}
         onRestore={handleRestoreVersion}
         onDownload={handleDownloadVersion}
+        onView={handleDownloadVersion}
         onVersionDeleted={fetchVersions}
         title="Version History"
         subtitle={`${selectedClientData?.name || ''} - ${selectedMonth}`}
