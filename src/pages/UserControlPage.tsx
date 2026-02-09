@@ -57,6 +57,11 @@ const AVAILABLE_PERMISSIONS = [
     label: 'Manage RCM Masters',
     description: 'Add, edit, and delete RCM expense masters',
   },
+  {
+    key: 'edit_update_sheet',
+    label: 'Edit Update Sheet',
+    description: 'Edit entries on the GST Update Sheet',
+  },
 ];
 
 interface Employee {

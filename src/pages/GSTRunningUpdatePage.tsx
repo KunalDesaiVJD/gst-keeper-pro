@@ -6,12 +6,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Checkbox } from '@/components/ui/checkbox';
-import { FileSpreadsheet, Plus, Save, Loader2, Trash2 } from 'lucide-react';
+import { FileSpreadsheet, Plus, Save, Loader2, Trash2, Download, History } from 'lucide-react';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { exportGSTUpdateToPDF } from '@/utils/gstUpdatePdfExport';
+import GenericVersionHistoryDialog, { GenericVersion } from '@/components/dialogs/GenericVersionHistoryDialog';
+import * as XLSX from 'xlsx';
 
 interface Client {
   id: string;
@@ -43,13 +46,15 @@ const RETURN_OPTIONS = ['GSTR-1', 'GSTR-3B', 'GSTR-7', 'GSTR-1 & 3B'];
 const UPDATE_TYPE_OPTIONS = ['Claim ITC', 'Reversal ITC', 'Liability', 'RCM', 'Reclaim', 'Reclaim (Expense out)'];
 
 const GSTRunningUpdatePage: React.FC = () => {
-  const { user, isStaffRole } = useAuth();
+  const { user, isStaffRole, canEditUpdateSheet } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
   const [updates, setUpdates] = useState<GSTUpdate[]>([]);
   const [originalUpdates, setOriginalUpdates] = useState<GSTUpdate[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [versions, setVersions] = useState<GenericVersion[]>([]);
 
   // Filter states
   const [filterClient, setFilterClient] = useState<string>('');
@@ -59,7 +64,9 @@ const GSTRunningUpdatePage: React.FC = () => {
   const [filterUpdateType, setFilterUpdateType] = useState<string>('');
 
   const isStaff = isStaffRole();
+  const canEdit = canEditUpdateSheet();
   const canDeleteGSTRows = user?.role === 'superadmin' || user?.role === 'gst_manager';
+  const canViewVersions = user?.role === 'superadmin' || user?.role === 'gst_manager';
 
   // Generate month options with blank option for effect month
   const monthOptions = useMemo(() => {
@@ -150,6 +157,35 @@ const GSTRunningUpdatePage: React.FC = () => {
     fetchUpdates();
   }, [fetchClients, fetchUpdates]);
 
+  // Fetch version history
+  const fetchVersions = useCallback(async () => {
+    try {
+      const { data } = await supabase
+        .from('gst_update_versions')
+        .select('*')
+        .order('version_number', { ascending: false });
+      
+      if (!data || data.length === 0) { setVersions([]); return; }
+
+      const userIds = [...new Set(data.map(v => v.updated_by).filter(Boolean))];
+      let userMap: Record<string, { name: string; role: string }> = {};
+      if (userIds.length > 0) {
+        const { data: profiles } = await supabase.from('profiles').select('user_id, first_name').in('user_id', userIds);
+        const { data: roles } = await supabase.from('user_roles').select('user_id, role').in('user_id', userIds);
+        (profiles || []).forEach(p => { userMap[p.user_id] = { name: p.first_name, role: '' }; });
+        (roles || []).forEach(r => { if (userMap[r.user_id]) userMap[r.user_id].role = r.role; });
+      }
+      setVersions(data.map(v => ({
+        id: v.id, versionNumber: v.version_number || 1, versionData: v.version_data,
+        updatedBy: userMap[v.updated_by]?.name || 'Unknown', updatedByRole: userMap[v.updated_by]?.role || '',
+        updatedAt: v.updated_at, isCurrent: v.is_current || false, actionType: v.action_type || 'SAVE',
+        restoredFromVersionId: v.restored_from_version_id,
+      })));
+    } catch (error) { console.error('Error fetching GST update versions:', error); }
+  }, []);
+
+  useEffect(() => { fetchVersions(); }, [fetchVersions]);
+
   useEffect(() => {
     setHasChanges(JSON.stringify(updates) !== JSON.stringify(originalUpdates));
   }, [updates, originalUpdates]);
@@ -202,7 +238,7 @@ const GSTRunningUpdatePage: React.FC = () => {
   };
 
   const handleSave = async () => {
-    if (!isStaff) return;
+    if (!canEdit) return;
 
     // Validate: if checkbox is ticked, remarks must be filled; if remarks filled, checkbox must be ticked
     const invalidRows = updates.filter(u => {
@@ -266,6 +302,15 @@ const GSTRunningUpdatePage: React.FC = () => {
         }
       }
 
+      // Save version snapshot
+      try {
+        const { data: maxV } = await supabase.from('gst_update_versions').select('version_number').order('version_number', { ascending: false }).limit(1);
+        const nextV = (maxV?.[0]?.version_number || 0) + 1;
+        await supabase.from('gst_update_versions').update({ is_current: false });
+        await supabase.from('gst_update_versions').insert([{ version_number: nextV, version_data: JSON.parse(JSON.stringify(updates)), updated_by: user?.id, is_current: true, action_type: 'SAVE' }]);
+        fetchVersions();
+      } catch (vErr) { console.error('Error saving GST update version:', vErr); }
+
       toast.success('Changes saved successfully');
       fetchUpdates();
     } catch (error: any) {
@@ -305,8 +350,25 @@ const GSTRunningUpdatePage: React.FC = () => {
             <p className="text-muted-foreground">Track GST updates and changes</p>
           </div>
         </div>
-        {isStaff && (
+        {canEdit && (
           <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => {
+              exportGSTUpdateToPDF(filteredUpdates, {
+                client: filterClient ? clients.find(c => c.id === filterClient)?.name : undefined,
+                updateEffectMonth: filterUpdateEffectMonth || undefined,
+                effectMonth: filterEffectMonth || undefined,
+              });
+              toast.success('PDF exported successfully');
+            }}>
+              <Download className="h-4 w-4 mr-2" />
+              Export PDF
+            </Button>
+            {canViewVersions && (
+              <Button variant="outline" onClick={() => setShowVersionHistory(true)}>
+                <History className="h-4 w-4 mr-2" />
+                View Versions
+              </Button>
+            )}
             <Button onClick={handleAddRow} variant="outline">
               <Plus className="h-4 w-4 mr-2" />
               Add Row

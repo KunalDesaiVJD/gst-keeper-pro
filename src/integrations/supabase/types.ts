@@ -391,6 +391,45 @@ export type Database = {
           },
         ]
       }
+      gst_update_versions: {
+        Row: {
+          action_type: string | null
+          client_id: string
+          filter_context: Json | null
+          id: string
+          is_current: boolean | null
+          restored_from_version_id: string | null
+          updated_at: string | null
+          updated_by: string | null
+          version_data: Json | null
+          version_number: number | null
+        }
+        Insert: {
+          action_type?: string | null
+          client_id: string
+          filter_context?: Json | null
+          id?: string
+          is_current?: boolean | null
+          restored_from_version_id?: string | null
+          updated_at?: string | null
+          updated_by?: string | null
+          version_data?: Json | null
+          version_number?: number | null
+        }
+        Update: {
+          action_type?: string | null
+          client_id?: string
+          filter_context?: Json | null
+          id?: string
+          is_current?: boolean | null
+          restored_from_version_id?: string | null
+          updated_at?: string | null
+          updated_by?: string | null
+          version_data?: Json | null
+          version_number?: number | null
+        }
+        Relationships: []
+      }
       itc_summaries: {
         Row: {
           client_id: string

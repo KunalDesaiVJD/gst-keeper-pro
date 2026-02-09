@@ -1374,20 +1374,20 @@ const TwoBReconciliationPage: React.FC = () => {
                             true // isEditableForCF - allow editing Reclaim column for carried forward rows
                           )}
                         </td>
-                        {!isLocked && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin') && (
+                        {!isLocked && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && (
                           <td>
                             <Button 
                               variant="ghost" 
                               size="sm" 
                               onClick={() => handleDeleteRow2B(row.id)}
                               className="h-7 w-7 p-0 text-destructive"
-                              title={row.is_carried_forward ? 'Delete carried forward row (Superadmin only)' : 'Delete row'}
+                              title={row.is_carried_forward ? 'Delete carried forward row' : 'Delete row'}
                             >
                               <Trash2 className="h-3 w-3" />
                             </Button>
                           </td>
                         )}
-                        {!isLocked && (!canDelete2BRows() || (row.is_carried_forward && user?.role !== 'superadmin')) && <td></td>}
+                        {!isLocked && (!canDelete2BRows() || (row.is_carried_forward && user?.role !== 'superadmin' && user?.role !== 'gst_manager')) && <td></td>}
                       </tr>
                     ))}
                     {filteredBills2B.length === 0 && (
@@ -1587,20 +1587,20 @@ const TwoBReconciliationPage: React.FC = () => {
                             true // isEditableForCF - allow editing In 2B column for carried forward rows
                           )}
                         </td>
-                        {!isLocked && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin') && (
+                        {!isLocked && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && (
                           <td>
                             <Button 
                               variant="ghost"
                               size="sm" 
                               onClick={() => handleDeleteRowBooks(row.id)}
                               className="h-7 w-7 p-0 text-destructive"
-                              title={row.is_carried_forward ? 'Delete carried forward row (Superadmin only)' : 'Delete row'}
+                              title={row.is_carried_forward ? 'Delete carried forward row' : 'Delete row'}
                             >
                               <Trash2 className="h-3 w-3" />
                             </Button>
                           </td>
                         )}
-                        {!isLocked && (!canDelete2BRows() || (row.is_carried_forward && user?.role !== 'superadmin')) && <td></td>}
+                        {!isLocked && (!canDelete2BRows() || (row.is_carried_forward && user?.role !== 'superadmin' && user?.role !== 'gst_manager')) && <td></td>}
                       </tr>
                     ))}
                     {filteredBillsBooks.length === 0 && (

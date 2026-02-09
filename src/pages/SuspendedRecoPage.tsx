@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, Save, Loader2 } from 'lucide-react';
+import { FileText, Save, Loader2, Download } from 'lucide-react';
+import { exportSuspendedRecoToExcel } from '@/utils/suspendedRecoExcelExport';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -325,6 +326,24 @@ const SuspendedRecoPage: React.FC = () => {
               <GSTPortalLink clientId={selectedClientId} clientName={selectedClientData?.name} />
             )}
 
+            {selectedClientId && (
+              <Button variant="outline" onClick={() => {
+                if (!selectedClientData) return;
+                exportSuspendedRecoToExcel({
+                  clientName: selectedClientData.name,
+                  clientGstin: selectedClientData.gstin,
+                  month: selectedMonth,
+                  openingCgst, openingSgst, openingIgst,
+                  portalCgst, portalSgst, portalIgst,
+                  booksCgst, booksSgst, booksIgst,
+                  diffCgst, diffSgst, diffIgst,
+                });
+                toast.success('Excel exported successfully');
+              }}>
+                <Download className="h-4 w-4 mr-2" />
+                Export Excel
+              </Button>
+            )}
             {isStaff && (
               <Button onClick={handleSave} disabled={isSaving || !selectedClientId} className="ml-auto">
                 {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
@@ -386,7 +405,7 @@ const SuspendedRecoPage: React.FC = () => {
 
                 {/* As Per Books Row - Auto-linked */}
                 <TableRow>
-                  <TableCell className="font-medium border border-border">AS PER BOOKS</TableCell>
+                  <TableCell className="font-medium border border-border">CLOSING BALANCE AS PER BOOKS</TableCell>
                   <TableCell className="text-right border border-border bg-accent/50">
                     {formatNumber(booksCgst)}
                   </TableCell>
