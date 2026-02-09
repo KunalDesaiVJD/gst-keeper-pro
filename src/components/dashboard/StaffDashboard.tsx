@@ -252,7 +252,7 @@ const StaffDashboard: React.FC = () => {
 
   const handleTargetDueClick = () => {
     const todayDate = new Date().getDate();
-    navigate(`/filing-status?filter=target_due_today&targetDate=${todayDate}`);
+    navigate(`/filing-status?filter=target_due_today&targetDate=${todayDate}&includeOverdue=true`);
   };
 
   const clientMetricCards = [

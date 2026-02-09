@@ -95,7 +95,13 @@ const FilingStatusPage: React.FC = () => {
       setSelectedStatuses(['Filed']);
     } else if (filterParam === 'target_due_today') {
       const targetDateParam = searchParams.get('targetDate');
-      if (targetDateParam) {
+      const includeOverdue = searchParams.get('includeOverdue') === 'true';
+      if (targetDateParam && includeOverdue) {
+        // Select all target dates from 1 to today's date
+        const todayDate = parseInt(targetDateParam);
+        const dates = Array.from({ length: todayDate }, (_, i) => i + 1);
+        setSelectedTargetDates(dates);
+      } else if (targetDateParam) {
         setSelectedTargetDates([parseInt(targetDateParam)]);
       }
       // Show all non-filed statuses
