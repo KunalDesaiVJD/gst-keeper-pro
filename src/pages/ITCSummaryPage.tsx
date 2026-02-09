@@ -126,6 +126,8 @@ const applyStructuralFlags = (loaded: ITCData, template: ITCData): ITCData => {
       if (!tmpl) return row;
       return {
         ...row,
+        srNo: tmpl.srNo,
+        particular: tmpl.particular,
         isHeader: tmpl.isHeader,
         isAutoLinked: tmpl.isAutoLinked,
         editable: tmpl.editable,
