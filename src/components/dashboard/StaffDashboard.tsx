@@ -132,15 +132,15 @@ const StaffDashboard: React.FC = () => {
       const pendingFilings = filingData?.filter(f => pendingStatuses.includes(f.status || ''))?.length || 0;
       const filedThisMonth = filingData?.filter(f => f.status === 'Filed')?.length || 0;
       
-      // Calculate Target Due Today: target_date = today's day AND status != Filed
+      // Calculate Target Due Today: target_date <= today's day AND status != Filed (includes overdue)
       const todayDate = new Date().getDate();
       const targetDueToday = filingData?.filter(f => 
-        f.target_date === todayDate && f.status !== 'Filed'
+        f.target_date !== null && f.target_date <= todayDate && f.status !== 'Filed'
       )?.length || 0;
 
-      // Calculate return-wise breakdown for today's due
+      // Calculate return-wise breakdown for due targets (today + overdue)
       const todayDueFilings = filingData?.filter(f => 
-        f.target_date === todayDate && f.status !== 'Filed'
+        f.target_date !== null && f.target_date <= todayDate && f.status !== 'Filed'
       ) || [];
       
       const breakdownMap = new Map<string, number>();
@@ -271,7 +271,7 @@ const StaffDashboard: React.FC = () => {
       bgColor: 'bg-warning/5',
     },
     {
-      label: 'Target Due Today',
+      label: 'Target Due / Overdue',
       value: metrics.targetDueToday,
       icon: <Target className="h-8 w-8 text-destructive" />,
       onClick: handleTargetDueClick,
