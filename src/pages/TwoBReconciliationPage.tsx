@@ -151,21 +151,33 @@ const TwoBReconciliationPage: React.FC = () => {
 
   const monthOptions = generateMonthOptions;
 
-  // Generate month dropdown options for reversal/reclaim - restricted to selected return period only
+  // Generate month dropdown options for reversal/reclaim - from April 2024, future limited to +2 months
+  // Shows all historical months so existing saved data is preserved (prospective restriction only)
   const reversalReclaimMonths = useMemo(() => {
-    if (!selectedMonth) return [{ value: '__blank__', label: '(Blank)' }];
+    const options: { value: string; label: string }[] = [];
+    const startDate = new Date(2024, 3, 1); // April 2024
+    const now = new Date();
+    const endDate = new Date(now.getFullYear(), now.getMonth() + 2, 1); // +2 months future limit
     
-    const [monthNum, year] = selectedMonth.split('/');
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const monthName = monthNames[parseInt(monthNum) - 1];
-    const yearShort = year.slice(-2);
-    const value = `${monthName} ${yearShort}`;
+    let currentDate = new Date(startDate);
+    while (currentDate <= endDate) {
+      const yearShort = String(currentDate.getFullYear()).slice(-2);
+      const value = `${monthNames[currentDate.getMonth()]} ${yearShort}`;
+      options.push({ value, label: value });
+      currentDate.setMonth(currentDate.getMonth() + 1);
+    }
     
-    return [
-      { value: '__blank__', label: '(Blank)' },
-      { value, label: value },
-    ];
-  }, [selectedMonth]);
+    // Sort descending (newest first)
+    const sorted = options.sort((a, b) => {
+      const parseDate = (s: string) => {
+        const [m, y] = s.split(' ');
+        return (2000 + parseInt(y)) * 12 + monthNames.indexOf(m);
+      };
+      return parseDate(b.value) - parseDate(a.value);
+    });
+    return [{ value: '__blank__', label: '(Blank)' }, ...sorted];
+  }, []);
 
   // Fetch clients - filtered for client role
   const fetchClients = useCallback(async () => {
