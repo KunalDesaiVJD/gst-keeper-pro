@@ -394,7 +394,7 @@ export type Database = {
       gst_update_versions: {
         Row: {
           action_type: string | null
-          client_id: string
+          client_id: string | null
           filter_context: Json | null
           id: string
           is_current: boolean | null
@@ -406,7 +406,7 @@ export type Database = {
         }
         Insert: {
           action_type?: string | null
-          client_id: string
+          client_id?: string | null
           filter_context?: Json | null
           id?: string
           is_current?: boolean | null
@@ -418,7 +418,7 @@ export type Database = {
         }
         Update: {
           action_type?: string | null
-          client_id?: string
+          client_id?: string | null
           filter_context?: Json | null
           id?: string
           is_current?: boolean | null

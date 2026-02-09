@@ -63,9 +63,9 @@ const getDefaultITCData = (): ITCData => ({
   section4B: [
     { srNo: '(1)', particular: 'ITC Reversal under Rule 38, 42 & 43, and Section 17(5)', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
     { srNo: '(2)', particular: 'Others', igst: 0, cgst: 0, sgst: 0, isHeader: true, reasons: '' },
-    { srNo: '4(B)(2)(i)', particular: 'ITC Reversal for current month as per 2B RECO', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
-    { srNo: '4(B)(2)(ii)', particular: 'ITC Reversal for previous months, if any', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
-    { srNo: '4(B)(2)(iii)', particular: 'ITC Reversal due to 180 days Analysis', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '(i)', particular: 'ITC Reversal for current month as per 2B RECO', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
+    { srNo: '(ii)', particular: 'ITC Reversal for previous months, if any', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '(iii)', particular: 'ITC Reversal due to 180 days Analysis', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
   ],
   section4D: [
     { srNo: '(1)', particular: 'ITC reclaimed which was reversed under Table 4(B)(2) in earlier tax period', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
@@ -729,6 +729,14 @@ const ITCSummaryPage: React.FC = () => {
   // Save to database
   const handleSave = async () => {
     if (!selectedClient || !selectedMonth) return;
+
+    // Validate reasons - minimum 40 characters if any text is entered
+    const allRows = [...itcData.section4A, ...itcData.section4B, ...itcData.section4D];
+    const invalidReasons = allRows.filter(r => r.reasons && r.reasons.trim().length > 0 && r.reasons.trim().length < 40);
+    if (invalidReasons.length > 0) {
+      toast.error('Reasons must be at least 40 characters long. Please update the reasons column.');
+      return;
+    }
 
     // Check if GST Update Sheet entries exist for this client/month and all have remarks_checked
     try {

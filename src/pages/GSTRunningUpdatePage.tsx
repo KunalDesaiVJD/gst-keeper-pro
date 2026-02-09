@@ -306,8 +306,8 @@ const GSTRunningUpdatePage: React.FC = () => {
       try {
         const { data: maxV } = await supabase.from('gst_update_versions').select('version_number').order('version_number', { ascending: false }).limit(1);
         const nextV = (maxV?.[0]?.version_number || 0) + 1;
-        await supabase.from('gst_update_versions').update({ is_current: false });
-        await supabase.from('gst_update_versions').insert([{ version_number: nextV, version_data: JSON.parse(JSON.stringify(updates)), updated_by: user?.id, is_current: true, action_type: 'SAVE' }]);
+        await supabase.from('gst_update_versions').update({ is_current: false } as any);
+        await supabase.from('gst_update_versions').insert([{ version_number: nextV, version_data: JSON.parse(JSON.stringify(updates)), updated_by: user?.id, is_current: true, action_type: 'SAVE' } as any]);
         fetchVersions();
       } catch (vErr) { console.error('Error saving GST update version:', vErr); }
 
@@ -470,6 +470,40 @@ const GSTRunningUpdatePage: React.FC = () => {
         </CardContent>
       </Card>
 
+      {/* Version History Dialog */}
+      <GenericVersionHistoryDialog
+        open={showVersionHistory}
+        onOpenChange={setShowVersionHistory}
+        versions={versions}
+        onRestore={async (version) => {
+          toast.info('Restore not supported for GST Update Sheet');
+        }}
+        onDownload={(version) => {
+          try {
+            const versionData = version.versionData as GSTUpdate[];
+            if (!versionData) { toast.error('Invalid version data'); return; }
+            const workbook = XLSX.utils.book_new();
+            const sheetData: any[][] = [
+              ['GST Update Sheet - Version ' + version.versionNumber],
+              [`Saved: ${new Date(version.updatedAt).toLocaleString()}`, '', `By: ${version.updatedBy}`],
+              [],
+              ['Sr.', 'Client', 'Mistake Month', 'Update Effect Month', 'Return', 'Type', 'Instructions By', 'Matter Brief', 'Taxable', 'CGST', 'SGST', 'IGST', 'Interest', 'Remarks', '✓'],
+            ];
+            (versionData || []).forEach((r: any, idx: number) => {
+              sheetData.push([idx+1, r.client_name||'', r.effect_month||'', r.update_effect_month||'', r.update_in_return||'', r.update_type||'', r.update_instructions_by||'', r.matter_brief||'', r.taxable_value||0, r.cgst||0, r.sgst||0, r.igst||0, r.interest||0, r.remarks||'', r.remarks_checked?'✓':'']);
+            });
+            const sheet = XLSX.utils.aoa_to_sheet(sheetData);
+            XLSX.utils.book_append_sheet(workbook, sheet, 'GST Updates');
+            XLSX.writeFile(workbook, `GST_Update_Version_${version.versionNumber}.xlsx`);
+            toast.success(`Downloaded version ${version.versionNumber}`);
+          } catch (error) { toast.error('Failed to download version'); }
+        }}
+        onVersionDeleted={fetchVersions}
+        title="GST Update Sheet Version History"
+        subtitle="All versions"
+        tableName="gst_update_versions"
+      />
+
       {/* Data Table */}
       <Card>
         <CardContent className="p-4">
@@ -508,7 +542,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                         <TableRow key={update.id || `new-${index}`}>
                           <TableCell className="border border-border text-center">{index + 1}</TableCell>
                           <TableCell className="p-0 border border-border">
-                            {isStaff ? (
+                            {canEdit ? (
                               <SearchableSelect
                                 options={clients.map(c => ({ value: c.id, label: c.name }))}
                                 value={update.client_id}
@@ -520,7 +554,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                             )}
                           </TableCell>
                           <TableCell className="p-0 border border-border">
-                            {isStaff ? (
+                            {canEdit ? (
                               <SearchableMonthSelect
                                 options={effectMonthOptions}
                                 value={update.effect_month === '' ? '__blank__' : update.effect_month}
@@ -532,7 +566,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                             )}
                           </TableCell>
                           <TableCell className="p-0 border border-border">
-                            {isStaff ? (
+                            {canEdit ? (
                               <SearchableMonthSelect
                                 options={monthOptions}
                                 value={update.update_effect_month}
@@ -544,7 +578,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                             )}
                           </TableCell>
                           <TableCell className="p-0 border border-border">
-                            {isStaff ? (
+                            {canEdit ? (
                               <Select
                                 value={update.update_in_return}
                                 onValueChange={(val) => handleFieldChange(originalIndex, 'update_in_return', val)}
@@ -563,7 +597,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                             )}
                           </TableCell>
                           <TableCell className="p-0 border border-border">
-                            {isStaff ? (
+                            {canEdit ? (
                               <Select
                                 value={update.update_type}
                                 onValueChange={(val) => handleFieldChange(originalIndex, 'update_type', val)}
@@ -586,7 +620,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                               value={update.update_instructions_by}
                               onChange={(e) => handleFieldChange(originalIndex, 'update_instructions_by', e.target.value)}
                               className="h-8 border-0 shadow-none"
-                              disabled={!isStaff}
+                              disabled={!canEdit}
                             />
                           </TableCell>
                           <TableCell className="p-0 border border-border">
@@ -594,7 +628,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                               value={update.matter_brief}
                               onChange={(e) => handleFieldChange(originalIndex, 'matter_brief', e.target.value)}
                               className="h-8 border-0 shadow-none"
-                              disabled={!isStaff}
+                              disabled={!canEdit}
                             />
                           </TableCell>
                           <TableCell className="p-0 border border-border">
@@ -603,7 +637,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                               value={update.taxable_value || ''}
                               onChange={(e) => handleFieldChange(originalIndex, 'taxable_value', parseFloat(e.target.value) || 0)}
                               className="h-8 text-right border-0 shadow-none"
-                              disabled={!isStaff}
+                              disabled={!canEdit}
                             />
                           </TableCell>
                           <TableCell className="p-0 border border-border">
@@ -612,7 +646,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                               value={update.cgst || ''}
                               onChange={(e) => handleFieldChange(originalIndex, 'cgst', parseFloat(e.target.value) || 0)}
                               className="h-8 text-right border-0 shadow-none"
-                              disabled={!isStaff}
+                              disabled={!canEdit}
                             />
                           </TableCell>
                           <TableCell className="p-0 border border-border">
@@ -621,7 +655,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                               value={update.sgst || ''}
                               onChange={(e) => handleFieldChange(originalIndex, 'sgst', parseFloat(e.target.value) || 0)}
                               className="h-8 text-right border-0 shadow-none"
-                              disabled={!isStaff}
+                              disabled={!canEdit}
                             />
                           </TableCell>
                           <TableCell className="p-0 border border-border">
@@ -630,7 +664,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                               value={update.igst || ''}
                               onChange={(e) => handleFieldChange(originalIndex, 'igst', parseFloat(e.target.value) || 0)}
                               className="h-8 text-right border-0 shadow-none"
-                              disabled={!isStaff}
+                              disabled={!canEdit}
                             />
                           </TableCell>
                           <TableCell className="p-0 border border-border">
@@ -639,7 +673,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                               value={update.interest || ''}
                               onChange={(e) => handleFieldChange(originalIndex, 'interest', parseFloat(e.target.value) || 0)}
                               className="h-8 text-right border-0 shadow-none"
-                              disabled={!isStaff}
+                              disabled={!canEdit}
                             />
                           </TableCell>
                           <TableCell className="p-0 border border-border min-w-[150px]">
@@ -647,14 +681,14 @@ const GSTRunningUpdatePage: React.FC = () => {
                               value={update.remarks}
                               onChange={(e) => handleFieldChange(originalIndex, 'remarks', e.target.value)}
                               className="w-full min-h-[32px] max-h-[80px] text-xs px-2 py-1 border-0 shadow-none bg-transparent resize-y"
-                              disabled={!isStaff}
+                              disabled={!canEdit}
                             />
                           </TableCell>
                           <TableCell className="border border-border text-center">
                             <Checkbox
                               checked={update.remarks_checked}
                               onCheckedChange={(checked) => handleFieldChange(originalIndex, 'remarks_checked', !!checked)}
-                              disabled={!isStaff}
+                              disabled={!canEdit}
                             />
                           </TableCell>
                           {canDeleteGSTRows && (

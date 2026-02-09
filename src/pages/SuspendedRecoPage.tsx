@@ -142,8 +142,8 @@ const SuspendedRecoPage: React.FC = () => {
 
         const row54 = section4A.find((r: any) => r.srNo === '5.4') || { igst: 0, cgst: 0, sgst: 0 };
         const row55 = section4A.find((r: any) => r.srNo === '5.5') || { igst: 0, cgst: 0, sgst: 0 };
-        const row4B2i = section4B.find((r: any) => r.srNo === '4(B)(2)(i)' || (r.particular && r.particular.includes('ITC Reversal for current month as per 2B RECO'))) || { igst: 0, cgst: 0, sgst: 0 };
-        const row4B2ii = section4B.find((r: any) => r.srNo === '4(B)(2)(ii)' || (r.particular && r.particular.includes('ITC Reversal for previous months'))) || { igst: 0, cgst: 0, sgst: 0 };
+        const row4B2i = section4B.find((r: any) => r.srNo === '(i)' || r.srNo === '4(B)(2)(i)' || (r.particular && r.particular.includes('ITC Reversal for current month as per 2B RECO'))) || { igst: 0, cgst: 0, sgst: 0 };
+        const row4B2ii = section4B.find((r: any) => r.srNo === '(ii)' || r.srNo === '4(B)(2)(ii)' || (r.particular && r.particular.includes('ITC Reversal for previous months'))) || { igst: 0, cgst: 0, sgst: 0 };
 
         setPortalCgst((Number(row54.cgst) || 0) + (Number(row55.cgst) || 0) - (Number(row4B2i.cgst) || 0) - (Number(row4B2ii.cgst) || 0));
         setPortalSgst((Number(row54.sgst) || 0) + (Number(row55.sgst) || 0) - (Number(row4B2i.sgst) || 0) - (Number(row4B2ii.sgst) || 0));

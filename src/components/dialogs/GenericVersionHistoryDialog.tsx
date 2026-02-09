@@ -44,7 +44,7 @@ interface GenericVersionHistoryDialogProps {
   onVersionDeleted?: () => void;
   title: string;
   subtitle: string;
-  tableName: 'rcm_versions' | 'itc_versions';
+  tableName: 'rcm_versions' | 'itc_versions' | 'gst_update_versions';
 }
 
 const GenericVersionHistoryDialog: React.FC<GenericVersionHistoryDialogProps> = ({

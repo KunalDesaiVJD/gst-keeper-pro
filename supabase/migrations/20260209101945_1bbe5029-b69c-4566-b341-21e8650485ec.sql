@@ -1,0 +1,1 @@
+ALTER TABLE public.gst_update_versions ALTER COLUMN client_id DROP NOT NULL;
