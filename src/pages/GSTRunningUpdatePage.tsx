@@ -288,9 +288,16 @@ const GSTRunningUpdatePage: React.FC = () => {
         await supabase.from('gst_running_updates').delete().in('id', toDelete);
       }
 
+      // Validate all rows have required fields before saving
+      const invalidRows = updates.filter((u, idx) => !u.client_id || !u.update_effect_month);
+      if (invalidRows.length > 0) {
+        toast.error('Some rows are missing required fields (Client or Update Effect Month). Please fill them before saving.');
+        setIsSaving(false);
+        return;
+      }
+
       // Upsert all records
       for (const update of updates) {
-        if (!update.client_id || !update.update_effect_month) continue;
 
         const data = {
           client_id: update.client_id,
@@ -329,7 +336,7 @@ const GSTRunningUpdatePage: React.FC = () => {
       try {
         const { data: maxV } = await supabase.from('gst_update_versions').select('version_number').order('version_number', { ascending: false }).limit(1);
         const nextV = (maxV?.[0]?.version_number || 0) + 1;
-        await supabase.from('gst_update_versions').update({ is_current: false } as any);
+        await supabase.from('gst_update_versions').update({ is_current: false } as any).eq('is_current', true);
         await supabase.from('gst_update_versions').insert([{ version_number: nextV, version_data: JSON.parse(JSON.stringify(updates)), updated_by: user?.id, is_current: true, action_type: 'SAVE' } as any]);
         fetchVersions();
       } catch (vErr) { console.error('Error saving GST update version:', vErr); }
