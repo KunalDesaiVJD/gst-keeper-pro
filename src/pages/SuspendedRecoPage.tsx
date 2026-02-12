@@ -34,7 +34,7 @@ const SuspendedRecoPage: React.FC = () => {
   const [openingSgst, setOpeningSgst] = useState<number>(0);
   const [openingIgst, setOpeningIgst] = useState<number>(0);
   
-  // Current total - auto-calculated from ITC Summary: (5.4 + 5.5) - (4B2i + 4B2ii)
+  // Current total - auto-calculated from ITC Summary: (4B2i + 4B2ii) - (5.4 + 5.5)
   const [portalCgst, setPortalCgst] = useState<number>(0);
   const [portalSgst, setPortalSgst] = useState<number>(0);
   const [portalIgst, setPortalIgst] = useState<number>(0);
@@ -144,7 +144,7 @@ const SuspendedRecoPage: React.FC = () => {
       }
 
       // Fetch ITC Summary data to auto-calculate "Current Total"
-      // Formula: (5.4 + 5.5) - (4(B)(2)(i) + 4(B)(2)(ii))
+      // Formula: (4(B)(2)(i) + 4(B)(2)(ii)) - (5.4 + 5.5)
       const { data: itcData } = await supabase
         .from('itc_summaries')
         .select('data')
@@ -162,9 +162,9 @@ const SuspendedRecoPage: React.FC = () => {
         const row4B2i = section4B.find((r: any) => r.srNo === '(i)' || r.srNo === '4(B)(2)(i)' || (r.particular && r.particular.includes('ITC Reversal for current month as per 2B RECO'))) || { igst: 0, cgst: 0, sgst: 0 };
         const row4B2ii = section4B.find((r: any) => r.srNo === '(ii)' || r.srNo === '4(B)(2)(ii)' || (r.particular && r.particular.includes('ITC Reversal for previous months'))) || { igst: 0, cgst: 0, sgst: 0 };
 
-        setPortalCgst((Number(row54.cgst) || 0) + (Number(row55.cgst) || 0) - (Number(row4B2i.cgst) || 0) - (Number(row4B2ii.cgst) || 0));
-        setPortalSgst((Number(row54.sgst) || 0) + (Number(row55.sgst) || 0) - (Number(row4B2i.sgst) || 0) - (Number(row4B2ii.sgst) || 0));
-        setPortalIgst((Number(row54.igst) || 0) + (Number(row55.igst) || 0) - (Number(row4B2i.igst) || 0) - (Number(row4B2ii.igst) || 0));
+        setPortalCgst((Number(row4B2i.cgst) || 0) + (Number(row4B2ii.cgst) || 0) - (Number(row54.cgst) || 0) - (Number(row55.cgst) || 0));
+        setPortalSgst((Number(row4B2i.sgst) || 0) + (Number(row4B2ii.sgst) || 0) - (Number(row54.sgst) || 0) - (Number(row55.sgst) || 0));
+        setPortalIgst((Number(row4B2i.igst) || 0) + (Number(row4B2ii.igst) || 0) - (Number(row54.igst) || 0) - (Number(row55.igst) || 0));
       } else {
         setPortalCgst(0);
         setPortalSgst(0);
@@ -414,7 +414,7 @@ const SuspendedRecoPage: React.FC = () => {
                 <TableRow>
                   <TableCell className="font-medium border border-border">
                     CURRENT TOTAL AS PER SUSPENDED RECO
-                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">(5.4 + 5.5) − (4B(2)(i) + 4B(2)(ii))</p>
+                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">(4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5)</p>
                   </TableCell>
                   <TableCell className="text-right border border-border bg-accent/50">{formatNumber(portalCgst)}</TableCell>
                   <TableCell className="text-right border border-border bg-accent/50">{formatNumber(portalSgst)}</TableCell>
