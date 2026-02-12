@@ -311,9 +311,17 @@ const GSTRunningUpdatePage: React.FC = () => {
         };
 
         if (update.id && !update.isNew) {
-          await supabase.from('gst_running_updates').update(data).eq('id', update.id);
+          const { error: updateError } = await supabase.from('gst_running_updates').update(data).eq('id', update.id);
+          if (updateError) {
+            console.error('Error updating row:', updateError);
+            throw updateError;
+          }
         } else {
-          await supabase.from('gst_running_updates').insert(data);
+          const { error: insertError } = await supabase.from('gst_running_updates').insert(data);
+          if (insertError) {
+            console.error('Error inserting row:', insertError);
+            throw insertError;
+          }
         }
       }
 
