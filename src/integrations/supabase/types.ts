@@ -430,6 +430,47 @@ export type Database = {
         }
         Relationships: []
       }
+      gstr1_data: {
+        Row: {
+          client_id: string
+          file_name: string | null
+          id: string
+          imported_at: string
+          imported_by: string | null
+          period_month: string
+          raw_json: Json
+          updated_at: string | null
+        }
+        Insert: {
+          client_id: string
+          file_name?: string | null
+          id?: string
+          imported_at?: string
+          imported_by?: string | null
+          period_month: string
+          raw_json?: Json
+          updated_at?: string | null
+        }
+        Update: {
+          client_id?: string
+          file_name?: string | null
+          id?: string
+          imported_at?: string
+          imported_by?: string | null
+          period_month?: string
+          raw_json?: Json
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gstr1_data_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       itc_summaries: {
         Row: {
           client_id: string

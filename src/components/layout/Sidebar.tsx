@@ -11,7 +11,8 @@ import {
   ChevronLeft,
   Shield,
   Settings,
-  FileSpreadsheet
+  FileSpreadsheet,
+  FileJson
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
@@ -35,7 +36,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
   // Base nav items - different for client vs staff
   const getNavItems = (): NavItem[] => {
     if (!isStaffRole()) {
-      // Client sees Dashboard, 2B and RCM, and ITC Summary
+      // Client sees Dashboard, 2B and RCM, ITC Summary, and GSTR-1 Data
       return [
         {
           label: 'Dashboard',
@@ -51,6 +52,11 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
           label: 'ITC Summary',
           path: '/itc-summary',
           icon: <Calculator className="h-5 w-5" />,
+        },
+        {
+          label: 'GSTR-1 Data',
+          path: '/gstr1-data',
+          icon: <FileJson className="h-5 w-5" />,
         },
       ];
     }
@@ -84,6 +90,12 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
         label: 'GST Update Sheet',
         path: '/gst-running-update',
         icon: <FileSpreadsheet className="h-5 w-5" />,
+        roles: ['superadmin', 'gst_manager', 'employee'],
+      },
+      {
+        label: 'GSTR-1 Data',
+        path: '/gstr1-data',
+        icon: <FileJson className="h-5 w-5" />,
         roles: ['superadmin', 'gst_manager', 'employee'],
       },
     ];
