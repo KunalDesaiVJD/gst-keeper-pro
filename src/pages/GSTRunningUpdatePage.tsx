@@ -582,11 +582,11 @@ const GSTRunningUpdatePage: React.FC = () => {
                       <TableHead className="font-bold text-white border border-[#2E5A6B] w-28">Update in GSTR</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] w-36">Correction Type</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] w-32">Instructions By</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] w-48">Matter Brief</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] min-w-[200px]">Matter Brief</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] text-right w-24">Taxable Value</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right w-20">CGST</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right w-20">SGST</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right w-20">IGST</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right min-w-[80px]">CGST</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right min-w-[80px]">SGST</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right min-w-[80px]">IGST</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] text-right w-20">Interest</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] min-w-[150px]">Remarks</TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] w-10 text-center">✓</TableHead>
