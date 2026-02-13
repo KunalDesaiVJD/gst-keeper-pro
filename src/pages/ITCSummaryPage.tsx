@@ -297,14 +297,15 @@ const ITCSummaryPage: React.FC = () => {
 
     const patterns = getMonthPatterns(selectedMonth);
 
-    // Fetch all bills with reversal_month for this client
-    // IMPORTANT: Exclude carried-forward records to prevent double-counting
+    // Fetch bills with reversal_month for this client in the selected period
+    // We filter by period_month to avoid double-counting across months
+    // (CF records in THIS period are the only copy that matters)
     const { data: reversalBills, error: reversalError } = await supabase
       .from('bills_not_in_2b')
       .select('input_igst, input_cgst, input_sgst, reversal_month, is_carried_forward')
       .eq('client_id', selectedClient)
-      .not('reversal_month', 'is', null)
-      .or('is_carried_forward.is.null,is_carried_forward.eq.false');
+      .eq('period_month', selectedMonth)
+      .not('reversal_month', 'is', null);
     
     if (reversalError) {
       console.error('Error fetching reversal data:', reversalError);
@@ -322,15 +323,15 @@ const ITCSummaryPage: React.FC = () => {
       setReversalFromReco(totals);
     }
 
-    // Fetch all bills with reclaim_month for this client
-    // IMPORTANT: Exclude carried-forward records to prevent double-counting
-    // CF records are copies of originals - counting both would double the reclaim values
+    // Fetch bills with reclaim_month for this client in the selected period
+    // We filter by period_month so each record is counted exactly once
+    // (the record lives in the period it belongs to, whether original or CF)
     const { data: reclaimBills, error: reclaimError } = await supabase
       .from('bills_not_in_2b')
       .select('input_igst, input_cgst, input_sgst, reclaim_month, is_carried_forward')
       .eq('client_id', selectedClient)
-      .not('reclaim_month', 'is', null)
-      .or('is_carried_forward.is.null,is_carried_forward.eq.false');
+      .eq('period_month', selectedMonth)
+      .not('reclaim_month', 'is', null);
     
     if (reclaimError) {
       console.error('Error fetching reclaim data:', reclaimError);
