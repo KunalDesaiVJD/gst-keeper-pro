@@ -390,8 +390,8 @@ const GSTR1DataPage: React.FC = () => {
             <FileJson className="h-6 w-6 text-primary" />
           </div>
           <div>
-            <h1 className="text-2xl font-heading font-bold text-foreground">GSTR-1 Data</h1>
-            <p className="text-muted-foreground">Import and view GSTR-1 JSON data client-wise & month-wise</p>
+            <h1 className="text-2xl font-heading font-bold text-foreground">GSTR-01</h1>
+            <p className="text-muted-foreground">Import and view GSTR-01 JSON data client-wise & month-wise</p>
           </div>
         </div>
         {isStaff && (

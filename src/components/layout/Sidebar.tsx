@@ -54,7 +54,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
           icon: <Calculator className="h-5 w-5" />,
         },
         {
-          label: 'GSTR-1 Data',
+          label: 'GSTR-01',
           path: '/gstr1-data',
           icon: <FileJson className="h-5 w-5" />,
         },
@@ -93,7 +93,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
         roles: ['superadmin', 'gst_manager', 'employee'],
       },
       {
-        label: 'GSTR-1 Data',
+        label: 'GSTR-01',
         path: '/gstr1-data',
         icon: <FileJson className="h-5 w-5" />,
         roles: ['superadmin', 'gst_manager', 'employee'],
