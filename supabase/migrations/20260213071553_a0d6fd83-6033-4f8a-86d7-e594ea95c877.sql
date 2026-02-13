@@ -1,0 +1,2 @@
+ALTER TABLE public.gst_running_updates DROP CONSTRAINT gst_running_updates_update_type_check;
+ALTER TABLE public.gst_running_updates ADD CONSTRAINT gst_running_updates_update_type_check CHECK (update_type = ANY (ARRAY['Claim ITC'::text, 'Reversal ITC'::text, 'Liability'::text, 'RCM'::text, 'Reclaim'::text, 'Reclaim (Expense out)'::text]));
