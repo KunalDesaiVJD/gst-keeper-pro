@@ -570,27 +570,45 @@ const GSTRunningUpdatePage: React.FC = () => {
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : (
-            <ScrollArea className="w-full">
+             <ScrollArea className="w-full">
               <div className="min-w-[1600px]">
-                <Table>
+                <Table className="table-fixed">
+                  <colgroup>
+                    <col style={{ width: '48px' }} />
+                    <col style={{ width: '160px', minWidth: '120px' }} />
+                    <col style={{ width: '96px', minWidth: '80px' }} />
+                    <col style={{ width: '112px', minWidth: '90px' }} />
+                    <col style={{ width: '112px', minWidth: '90px' }} />
+                    <col style={{ width: '144px', minWidth: '120px' }} />
+                    <col style={{ width: '128px', minWidth: '100px' }} />
+                    <col style={{ width: '250px', minWidth: '180px' }} />
+                    <col style={{ width: '96px', minWidth: '80px' }} />
+                    <col style={{ width: '100px', minWidth: '80px' }} />
+                    <col style={{ width: '100px', minWidth: '80px' }} />
+                    <col style={{ width: '100px', minWidth: '80px' }} />
+                    <col style={{ width: '80px', minWidth: '60px' }} />
+                    <col style={{ width: '200px', minWidth: '150px' }} />
+                    <col style={{ width: '40px' }} />
+                    {canDeleteGSTRows && <col style={{ width: '48px' }} />}
+                  </colgroup>
                   <TableHeader>
                     <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] w-12">Sr.No.</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] w-40">CLIENT</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] w-24">Mistake Month</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] w-28">Update Effect Month</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] w-28">Update in GSTR</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] w-36">Correction Type</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] w-32">Instructions By</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] min-w-[200px]">Matter Brief</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right w-24">Taxable Value</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right min-w-[80px]">CGST</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right min-w-[80px]">SGST</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right min-w-[80px]">IGST</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right w-20">Interest</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] min-w-[150px]">Remarks</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] w-10 text-center">✓</TableHead>
-                      {canDeleteGSTRows && <TableHead className="font-bold text-white border border-[#2E5A6B] w-12"></TableHead>}
+                      <TableHead className="font-bold text-white border border-[#2E5A6B]">Sr.No.</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B]">CLIENT</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B]">Mistake Month</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B]">Update Effect Month</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B]">Update in GSTR</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B]">Correction Type</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B]">Instructions By</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B]">Matter Brief</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Taxable Value</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">CGST</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">SGST</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">IGST</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Interest</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B]">Remarks</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-center">✓</TableHead>
+                      {canDeleteGSTRows && <TableHead className="font-bold text-white border border-[#2E5A6B]"></TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>

@@ -323,12 +323,14 @@ const ITCSummaryPage: React.FC = () => {
     }
 
     // Fetch all bills with reclaim_month for this client
-    // NOTE: Include carried-forward records for reclaim totals (only reversal excludes CF)
+    // IMPORTANT: Exclude carried-forward records to prevent double-counting
+    // CF records are copies of originals - counting both would double the reclaim values
     const { data: reclaimBills, error: reclaimError } = await supabase
       .from('bills_not_in_2b')
-      .select('input_igst, input_cgst, input_sgst, reclaim_month')
+      .select('input_igst, input_cgst, input_sgst, reclaim_month, is_carried_forward')
       .eq('client_id', selectedClient)
-      .not('reclaim_month', 'is', null);
+      .not('reclaim_month', 'is', null)
+      .or('is_carried_forward.is.null,is_carried_forward.eq.false');
     
     if (reclaimError) {
       console.error('Error fetching reclaim data:', reclaimError);
