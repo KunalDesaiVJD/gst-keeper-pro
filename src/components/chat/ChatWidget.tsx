@@ -163,6 +163,12 @@ const ChatWidget: React.FC = () => {
           {/* Channel List View */}
           {!activeChannelId && !showNewDM && (
             <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="p-2 border-b">
+                <Button variant="outline" size="sm" className="w-full flex items-center gap-2" onClick={() => setShowNewDM(true)}>
+                  <Plus className="h-4 w-4" />
+                  New Chat
+                </Button>
+              </div>
               <ScrollArea className="flex-1">
                 <div className="p-2 space-y-1">
                   {/* Group channels */}
