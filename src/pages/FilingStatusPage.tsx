@@ -977,21 +977,58 @@ const FilingStatusPage: React.FC = () => {
   const FilingTable = ({ records, returnType }: { records: FilingRecord[]; returnType: string }) => {
     const filteredRecords = applyFilters(records);
     const [editingRemarks, setEditingRemarks] = useState<Record<string, string>>({});
+    const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
+      // Load from localStorage
+      const saved = localStorage.getItem(`filing-col-widths-${returnType}`);
+      return saved ? JSON.parse(saved) : {};
+    });
     
     // Get unique target dates for this return type
     const uniqueTargetDates = Array.from(new Set(records.filter(r => r.target_date !== null).map(r => r.target_date!))).sort((a, b) => a - b);
+
+    const handleResizeStart = (colKey: string, startX: number) => {
+      const startWidth = columnWidths[colKey] || 150;
+      const onMouseMove = (e: MouseEvent) => {
+        const newWidth = Math.max(60, startWidth + (e.clientX - startX));
+        setColumnWidths(prev => {
+          const updated = { ...prev, [colKey]: newWidth };
+          localStorage.setItem(`filing-col-widths-${returnType}`, JSON.stringify(updated));
+          return updated;
+        });
+      };
+      const onMouseUp = () => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      };
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    };
+
+    const ResizeHandle = ({ colKey }: { colKey: string }) => (
+      <div
+        className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 z-20"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          handleResizeStart(colKey, e.clientX);
+        }}
+      />
+    );
     
     return (
       <div className="relative">
         <div className="overflow-x-auto">
           <div className="overflow-y-auto max-h-[75vh]">
-        <table className="gst-table">
+        <table className="gst-table" style={{ tableLayout: 'fixed' }}>
           <thead className="sticky top-0 z-10">
             <tr>
-              <th className="w-12">No.</th>
-              <th>Client Name</th>
-              <th>Frequency</th>
-              <th>
+              <th className="w-12 relative" style={{ width: columnWidths['no'] || 48 }}>No.<ResizeHandle colKey="no" /></th>
+              <th className="relative" style={{ width: columnWidths['client'] || 200 }}>Client Name<ResizeHandle colKey="client" /></th>
+              <th className="relative" style={{ width: columnWidths['freq'] || 80 }}>Frequency<ResizeHandle colKey="freq" /></th>
+              <th className="relative" style={{ width: columnWidths['status'] || 160 }}>
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
@@ -1035,8 +1072,9 @@ const FilingStatusPage: React.FC = () => {
                     </div>
                   </PopoverContent>
                 </Popover>
+                <ResizeHandle colKey="status" />
               </th>
-              <th className="w-20">
+              <th className="w-20 relative" style={{ width: columnWidths['target'] || 80 }}>
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
@@ -1082,11 +1120,12 @@ const FilingStatusPage: React.FC = () => {
                     </div>
                   </PopoverContent>
                 </Popover>
+                <ResizeHandle colKey="target" />
               </th>
-              <th className="w-28">Filed Date</th>
-              <th className="min-w-[200px]">Remarks</th>
-              <th className="w-16">GST</th>
-              {canUnlockSheets() && <th className="w-16">Unlock</th>}
+              <th className="w-28 relative" style={{ width: columnWidths['filed'] || 112 }}>Filed Date<ResizeHandle colKey="filed" /></th>
+              <th className="min-w-[200px] relative" style={{ width: columnWidths['remarks'] || 250 }}>Remarks<ResizeHandle colKey="remarks" /></th>
+              <th className="w-16 relative" style={{ width: columnWidths['gst'] || 64 }}>GST<ResizeHandle colKey="gst" /></th>
+              {canUnlockSheets() && <th className="w-16 relative" style={{ width: columnWidths['unlock'] || 64 }}>Unlock<ResizeHandle colKey="unlock" /></th>}
             </tr>
           </thead>
           <tbody>

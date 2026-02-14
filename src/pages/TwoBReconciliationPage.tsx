@@ -99,6 +99,23 @@ const TwoBReconciliationPage: React.FC = () => {
   // Negative value error state
   const [negativeValueError, setNegativeValueError] = useState<string | null>(null);
   
+  // Compute max date based on selected return period (last day of month)
+  const maxDateForReturnPeriod = useMemo(() => {
+    if (!selectedMonth) return undefined;
+    const [monthStr, yearStr] = selectedMonth.split('/');
+    const month = parseInt(monthStr);
+    const year = parseInt(yearStr);
+    // Last day of the selected month
+    const lastDay = new Date(year, month, 0).getDate();
+    return `${yearStr}-${monthStr}-${String(lastDay).padStart(2, '0')}`;
+  }, [selectedMonth]);
+
+  // Default date for new rows (1st of return period month)
+  const defaultDateForNewRow = useMemo(() => {
+    if (!selectedMonth) return new Date().toISOString().split('T')[0];
+    const [monthStr, yearStr] = selectedMonth.split('/');
+    return `${yearStr}-${monthStr}-01`;
+  }, [selectedMonth]);
   
   const selectedClientData = clients.find(c => c.id === selectedClientId);
 
@@ -672,7 +689,7 @@ const TwoBReconciliationPage: React.FC = () => {
     setLocalBills2B(prev => [...prev, {
       id: tempId,
       client_id: selectedClientId,
-      date: new Date().toISOString().split('T')[0],
+      date: defaultDateForNewRow,
       supplier_name: '',
       supplier_invoice_number: null,
       supplier_gstin: null,
@@ -699,7 +716,7 @@ const TwoBReconciliationPage: React.FC = () => {
     setLocalBillsBooks(prev => [...prev, {
       id: tempId,
       client_id: selectedClientId,
-      date: new Date().toISOString().split('T')[0],
+      date: defaultDateForNewRow,
       supplier_name: '',
       supplier_invoice_number: null,
       supplier_gstin: null,
@@ -719,16 +736,42 @@ const TwoBReconciliationPage: React.FC = () => {
     setHasUnsavedChanges(true);
   };
 
+  // Validation for mandatory fields
+  const validationErrors = useMemo(() => {
+    const errors: string[] = [];
+    localBills2B.forEach((b, idx) => {
+      if (b.is_carried_forward) return; // Skip CF rows
+      const rowNum = idx + 1;
+      if (!b.date) errors.push(`Bills Not in 2B - Row ${rowNum}: Date is required`);
+      if (!b.supplier_name || b.supplier_name.trim() === '') errors.push(`Bills Not in 2B - Row ${rowNum}: Supplier Name is required`);
+      if (!b.supplier_invoice_number || b.supplier_invoice_number.trim() === '') errors.push(`Bills Not in 2B - Row ${rowNum}: Invoice No. is required`);
+      if (!b.supplier_gstin || b.supplier_gstin.trim() === '') errors.push(`Bills Not in 2B - Row ${rowNum}: GSTIN is required`);
+    });
+    localBillsBooks.forEach((b, idx) => {
+      if (b.is_carried_forward) return;
+      const rowNum = idx + 1;
+      if (!b.date) errors.push(`Bills Not in Books - Row ${rowNum}: Date is required`);
+      if (!b.supplier_name || b.supplier_name.trim() === '') errors.push(`Bills Not in Books - Row ${rowNum}: Supplier Name is required`);
+      if (!b.supplier_invoice_number || b.supplier_invoice_number.trim() === '') errors.push(`Bills Not in Books - Row ${rowNum}: Invoice No. is required`);
+      if (!b.supplier_gstin || b.supplier_gstin.trim() === '') errors.push(`Bills Not in Books - Row ${rowNum}: GSTIN is required`);
+    });
+    return errors;
+  }, [localBills2B, localBillsBooks]);
+
+  const hasMandatoryFieldErrors = validationErrors.length > 0;
+
   // Save all changes to database
   const handleSaveAll = async () => {
     if (!selectedClientId || isLocked) return;
     
-    // Validate that all rows have supplier names
-    const invalidRows2B = localBills2B.filter(b => !b.supplier_name || b.supplier_name.trim() === '');
-    const invalidRowsBooks = localBillsBooks.filter(b => !b.supplier_name || b.supplier_name.trim() === '');
-    
-    if (invalidRows2B.length > 0 || invalidRowsBooks.length > 0) {
-      toast.error('Supplier name is required for all rows');
+    // Validate mandatory fields
+    if (validationErrors.length > 0) {
+      // Show first 5 errors
+      const displayErrors = validationErrors.slice(0, 5);
+      displayErrors.forEach(err => toast.error(err));
+      if (validationErrors.length > 5) {
+        toast.error(`...and ${validationErrors.length - 5} more validation errors`);
+      }
       return;
     }
     
@@ -1012,7 +1055,8 @@ const TwoBReconciliationPage: React.FC = () => {
     type: 'text' | 'number' | 'date' = 'text',
     className: string = '',
     isCarriedForward: boolean = false,
-    isEditableForCF: boolean = false
+    isEditableForCF: boolean = false,
+    maxDate?: string
   ) => {
     // Carried forward rows are non-editable (display only) - except columns marked as editable for CF
     const shouldBeReadOnly = isLocked || (isCarriedForward && !isEditableForCF);
@@ -1046,6 +1090,7 @@ const TwoBReconciliationPage: React.FC = () => {
           }
         }}
         min={type === 'number' ? 0 : undefined}
+        max={type === 'date' && maxDate ? maxDate : undefined}
         className={`h-8 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${type === 'number' ? 'w-28 text-right font-mono' : ''} ${className}`}
       />
     );
@@ -1111,8 +1156,9 @@ const TwoBReconciliationPage: React.FC = () => {
           {selectedClientId && !isLocked && (
             <Button 
               onClick={handleSaveAll} 
-              disabled={isSaving || !hasUnsavedChanges}
+              disabled={isSaving || !hasUnsavedChanges || hasMandatoryFieldErrors}
               variant={hasUnsavedChanges ? "default" : "outline"}
+              title={hasMandatoryFieldErrors ? 'Fix mandatory field errors before saving' : ''}
               className="flex items-center gap-2"
             >
               <Save className="h-4 w-4" />
@@ -1283,7 +1329,9 @@ const TwoBReconciliationPage: React.FC = () => {
                             (val) => handleUpdate2BField(row.id, 'date', val),
                             'date',
                             '',
-                            row.is_carried_forward || false
+                            row.is_carried_forward || false,
+                            false,
+                            maxDateForReturnPeriod
                           )}
                         </td>
                         <td>
@@ -1495,7 +1543,9 @@ const TwoBReconciliationPage: React.FC = () => {
                             (val) => handleUpdateBooksField(row.id, 'date', val),
                             'date',
                             '',
-                            row.is_carried_forward || false
+                            row.is_carried_forward || false,
+                            false,
+                            maxDateForReturnPeriod
                           )}
                         </td>
                         <td>
