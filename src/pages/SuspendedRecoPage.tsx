@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, Save, Loader2, Download } from 'lucide-react';
+import { FileText, Save, Loader2, Download, Trash2 } from 'lucide-react';
+import ClearDataDialog from '@/components/dialogs/ClearDataDialog';
 import { exportSuspendedRecoToExcel } from '@/utils/suspendedRecoExcelExport';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
@@ -28,6 +29,7 @@ const SuspendedRecoPage: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [showClearData, setShowClearData] = useState(false);
   const [lastSavedBy, setLastSavedBy] = useState<{ name: string; role: string; time: string } | null>(null);
   // Opening balance portal values (editable)
   const [openingCgst, setOpeningCgst] = useState<number>(0);
@@ -434,6 +436,12 @@ const SuspendedRecoPage: React.FC = () => {
                 Save Changes
               </Button>
             )}
+            {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClientId && (
+              <Button variant="destructive" size="sm" onClick={() => setShowClearData(true)} className="gap-2">
+                <Trash2 className="h-4 w-4" />
+                Clear Data
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -536,6 +544,17 @@ const SuspendedRecoPage: React.FC = () => {
           )}
         </CardContent>
       </Card>
+      
+      {selectedClientId && selectedClientData && (
+        <ClearDataDialog
+          open={showClearData}
+          onOpenChange={setShowClearData}
+          module="Suspended Reco"
+          clientId={selectedClientId}
+          clientName={selectedClientData.name}
+          onCleared={fetchData}
+        />
+      )}
     </div>
   );
 };

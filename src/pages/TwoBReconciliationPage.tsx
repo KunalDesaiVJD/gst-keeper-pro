@@ -18,6 +18,7 @@ import {
   Save,
   Filter
 } from 'lucide-react';
+import ClearDataDialog from '@/components/dialogs/ClearDataDialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
@@ -85,6 +86,7 @@ const TwoBReconciliationPage: React.FC = () => {
   const [versions, setVersions] = useState<TwoBVersion[]>([]);
   const [lastSavedInfo, setLastSavedInfo] = useState<LastSavedInfo | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showClearData, setShowClearData] = useState(false);
   
   // Multi-select filter states
   const [selectedReversalMonths, setSelectedReversalMonths] = useState<string[]>([]);
@@ -1180,6 +1182,12 @@ const TwoBReconciliationPage: React.FC = () => {
             <Download className="h-4 w-4" />
             Export Excel
           </Button>
+          {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClientId && (
+            <Button variant="destructive" size="sm" onClick={() => setShowClearData(true)} className="gap-2">
+              <Trash2 className="h-4 w-4" />
+              Clear Data
+            </Button>
+          )}
         </div>
       </div>
 
@@ -1689,6 +1697,18 @@ const TwoBReconciliationPage: React.FC = () => {
         clientName={selectedClientData?.name || ''}
         month={selectedMonth}
       />
+      
+      {/* Clear Data Dialog */}
+      {selectedClientId && selectedClientData && (
+        <ClearDataDialog
+          open={showClearData}
+          onOpenChange={setShowClearData}
+          module="2B Reconciliation"
+          clientId={selectedClientId}
+          clientName={selectedClientData.name}
+          onCleared={fetchBillsData}
+        />
+      )}
     </div>
   );
 };
