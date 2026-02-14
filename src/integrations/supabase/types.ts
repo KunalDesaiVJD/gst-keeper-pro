@@ -14,6 +14,48 @@ export type Database = {
   }
   public: {
     Tables: {
+      audit_log: {
+        Row: {
+          action: string
+          client_id: string | null
+          client_name: string | null
+          created_at: string
+          details: Json | null
+          financial_year: string | null
+          id: string
+          module: string
+          records_deleted: number | null
+          user_id: string
+          user_role: string
+        }
+        Insert: {
+          action?: string
+          client_id?: string | null
+          client_name?: string | null
+          created_at?: string
+          details?: Json | null
+          financial_year?: string | null
+          id?: string
+          module: string
+          records_deleted?: number | null
+          user_id: string
+          user_role: string
+        }
+        Update: {
+          action?: string
+          client_id?: string | null
+          client_name?: string | null
+          created_at?: string
+          details?: Json | null
+          financial_year?: string | null
+          id?: string
+          module?: string
+          records_deleted?: number | null
+          user_id?: string
+          user_role?: string
+        }
+        Relationships: []
+      }
       bills_not_in_2b: {
         Row: {
           client_id: string
@@ -155,6 +197,123 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      chat_channel_members: {
+        Row: {
+          channel_id: string
+          id: string
+          joined_at: string
+          user_id: string
+        }
+        Insert: {
+          channel_id: string
+          id?: string
+          joined_at?: string
+          user_id: string
+        }
+        Update: {
+          channel_id?: string
+          id?: string
+          joined_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_channel_members_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "chat_channels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_channel_messages: {
+        Row: {
+          channel_id: string
+          created_at: string
+          id: string
+          mentions: string[] | null
+          message: string
+          sender_id: string
+        }
+        Insert: {
+          channel_id: string
+          created_at?: string
+          id?: string
+          mentions?: string[] | null
+          message: string
+          sender_id: string
+        }
+        Update: {
+          channel_id?: string
+          created_at?: string
+          id?: string
+          mentions?: string[] | null
+          message?: string
+          sender_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_channel_messages_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "chat_channels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_channel_read_status: {
+        Row: {
+          channel_id: string
+          id: string
+          last_read_at: string
+          user_id: string
+        }
+        Insert: {
+          channel_id: string
+          id?: string
+          last_read_at?: string
+          user_id: string
+        }
+        Update: {
+          channel_id?: string
+          id?: string
+          last_read_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_channel_read_status_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "chat_channels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_channels: {
+        Row: {
+          channel_type: string
+          created_at: string
+          created_by: string | null
+          id: string
+          name: string | null
+        }
+        Insert: {
+          channel_type?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          name?: string | null
+        }
+        Update: {
+          channel_type?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          name?: string | null
+        }
+        Relationships: []
       }
       chat_messages: {
         Row: {

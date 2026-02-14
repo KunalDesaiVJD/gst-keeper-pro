@@ -9,7 +9,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { Calculator, Plus, FileSpreadsheet, FileText, Save, Loader2, Lock, Settings, Unlock, History } from 'lucide-react';
+import { Calculator, Plus, FileSpreadsheet, FileText, Save, Loader2, Lock, Settings, Unlock, History, Trash2 } from 'lucide-react';
+import ClearDataDialog from '@/components/dialogs/ClearDataDialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClient } from '@/contexts/ClientContext';
@@ -125,6 +126,7 @@ const RCMSummaryPage: React.FC = () => {
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [versions, setVersions] = useState<GenericVersion[]>([]);
   const [lastSavedBy, setLastSavedBy] = useState<{ name: string; role: string; time: string; version: number } | null>(null);
+  const [showClearData, setShowClearData] = useState(false);
 
   const isStaff = isStaffRole();
   const canUnlock = canUnlockSheets();
@@ -715,6 +717,12 @@ const RCMSummaryPage: React.FC = () => {
             <span className="text-sm font-medium">All Periods Locked</span>
           </div>
         )}
+        {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClient && (
+          <Button variant="destructive" size="sm" onClick={() => setShowClearData(true)} className="gap-2">
+            <Trash2 className="h-4 w-4" />
+            Clear Data
+          </Button>
+        )}
       </div>
 
       {/* Controls Card */}
@@ -895,6 +903,17 @@ const RCMSummaryPage: React.FC = () => {
         subtitle={`${selectedClientData?.name || ''} - FY ${financialYear}`}
         tableName="rcm_versions"
       />
+      
+      {selectedClient && selectedClientData && (
+        <ClearDataDialog
+          open={showClearData}
+          onOpenChange={setShowClearData}
+          module="RCM Summary"
+          clientId={selectedClient}
+          clientName={selectedClientData.name}
+          onCleared={fetchData}
+        />
+      )}
     </div>
   );
 };

@@ -16,6 +16,7 @@ import type { Json } from '@/integrations/supabase/types';
 import { exportITCSummaryToPDF } from '@/utils/itcPdfExport';
 import GSTPortalLink from '@/components/clients/GSTPortalLink';
 import GenericVersionHistoryDialog, { GenericVersion } from '@/components/dialogs/GenericVersionHistoryDialog';
+import ClearDataDialog from '@/components/dialogs/ClearDataDialog';
 import * as XLSX from 'xlsx';
 
 interface ITCRow {
@@ -166,6 +167,7 @@ const ITCSummaryPage: React.FC = () => {
   const [versions, setVersions] = useState<GenericVersion[]>([]);
   const [gstUpdateCount, setGstUpdateCount] = useState(0);
   const [lastSavedBy, setLastSavedBy] = useState<{ name: string; role: string; time: string; version: number } | null>(null);
+  const [showClearData, setShowClearData] = useState(false);
 
   const canViewVersions = user?.role === 'superadmin' || user?.role === 'gst_manager';
 
@@ -1114,6 +1116,12 @@ const ITCSummaryPage: React.FC = () => {
               {isSaving ? 'Saving...' : 'Save Changes'}
             </Button>
           )}
+          {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClient && (
+            <Button variant="destructive" size="sm" onClick={() => setShowClearData(true)} className="gap-2">
+              <AlertTriangle className="h-4 w-4" />
+              Clear Data
+            </Button>
+          )}
         </div>
       </div>
 
@@ -1647,6 +1655,17 @@ const ITCSummaryPage: React.FC = () => {
             </CardContent>
           </Card>
         </>
+      )}
+      
+      {selectedClient && selectedClientData && (
+        <ClearDataDialog
+          open={showClearData}
+          onOpenChange={setShowClearData}
+          module="ITC Summary"
+          clientId={selectedClient}
+          clientName={selectedClientData.name}
+          onCleared={fetchITCSummary}
+        />
       )}
     </div>
   );
