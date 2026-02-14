@@ -143,8 +143,65 @@ const SuspendedRecoPage: React.FC = () => {
         setLastSavedBy(null);
       }
 
-      // Fetch ITC Summary data to auto-calculate "Current Total"
-      // Formula: (4(B)(2)(i) + 4(B)(2)(ii)) - (5.4 + 5.5)
+      // Calculate "Current Total" using formula: (4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5)
+      // 4B(2)(i) and 5.4 are auto-linked from bills_not_in_2b, so we calculate them live
+      // 4B(2)(ii) and 5.5 are editable values stored in ITC summary
+
+      // Helper to match month patterns (same logic as ITC Summary page)
+      const getMonthPatterns = (monthStr: string) => {
+        const [monthNum, year] = monthStr.split('/');
+        const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+        const monthName = monthNames[parseInt(monthNum) - 1] || '';
+        const yearShort = year?.slice(-2) || '';
+        const yearSingle = year?.slice(-1) || '';
+        return { monthName, yearShort, yearSingle, fullYear: year || '', monthNum };
+      };
+
+      const monthMatchesFn = (storedMonth: string | null, patterns: ReturnType<typeof getMonthPatterns>): boolean => {
+        if (!storedMonth) return false;
+        const stored = storedMonth.toLowerCase().trim();
+        const { monthName, yearShort, yearSingle, fullYear } = patterns;
+        const hasMonth = stored.includes(monthName);
+        const hasYear = stored.includes(yearShort) || stored.includes(yearSingle) || stored.includes(fullYear);
+        return hasMonth && hasYear;
+      };
+
+      const patterns = getMonthPatterns(selectedMonth);
+
+      // 4B(2)(i): reversal bills where reversal_month matches current month
+      const { data: reversalBills } = await supabase
+        .from('bills_not_in_2b')
+        .select('input_igst, input_cgst, input_sgst, reversal_month')
+        .eq('client_id', selectedClientId)
+        .eq('period_month', selectedMonth)
+        .not('reversal_month', 'is', null);
+
+      const matchingReversals = (reversalBills || []).filter(b => monthMatchesFn(b.reversal_month, patterns));
+      const row4B2i = matchingReversals.reduce((acc, b) => ({
+        cgst: acc.cgst + (Number(b.input_cgst) || 0),
+        sgst: acc.sgst + (Number(b.input_sgst) || 0),
+        igst: acc.igst + (Number(b.input_igst) || 0),
+      }), { cgst: 0, sgst: 0, igst: 0 });
+
+      // 5.4: reclaim bills where reclaim_month matches current month
+      const { data: reclaimBills } = await supabase
+        .from('bills_not_in_2b')
+        .select('input_igst, input_cgst, input_sgst, reclaim_month')
+        .eq('client_id', selectedClientId)
+        .eq('period_month', selectedMonth)
+        .not('reclaim_month', 'is', null);
+
+      const matchingReclaims = (reclaimBills || []).filter(b => monthMatchesFn(b.reclaim_month, patterns));
+      const row54 = matchingReclaims.reduce((acc, b) => ({
+        cgst: acc.cgst + (Number(b.input_cgst) || 0),
+        sgst: acc.sgst + (Number(b.input_sgst) || 0),
+        igst: acc.igst + (Number(b.input_igst) || 0),
+      }), { cgst: 0, sgst: 0, igst: 0 });
+
+      // 4B(2)(ii) and 5.5: read from saved ITC summary (these are editable, not auto-linked)
+      let row4B2ii = { cgst: 0, sgst: 0, igst: 0 };
+      let row55 = { cgst: 0, sgst: 0, igst: 0 };
+
       const { data: itcData } = await supabase
         .from('itc_summaries')
         .select('data')
@@ -157,19 +214,20 @@ const SuspendedRecoPage: React.FC = () => {
         const section4A = itc.section4A || [];
         const section4B = itc.section4B || [];
 
-        const row54 = section4A.find((r: any) => r.srNo === '5.4') || { igst: 0, cgst: 0, sgst: 0 };
-        const row55 = section4A.find((r: any) => r.srNo === '5.5') || { igst: 0, cgst: 0, sgst: 0 };
-        const row4B2i = section4B.find((r: any) => r.srNo === '(i)' || r.srNo === '4(B)(2)(i)' || (r.particular && r.particular.includes('ITC Reversal for current month as per 2B RECO'))) || { igst: 0, cgst: 0, sgst: 0 };
-        const row4B2ii = section4B.find((r: any) => r.srNo === '(ii)' || r.srNo === '4(B)(2)(ii)' || (r.particular && r.particular.includes('ITC Reversal for previous months'))) || { igst: 0, cgst: 0, sgst: 0 };
+        const found4B2ii = section4B.find((r: any) => r.srNo === '(ii)' || r.srNo === '4(B)(2)(ii)' || (r.particular && r.particular.includes('ITC Reversal for previous months')));
+        if (found4B2ii) {
+          row4B2ii = { cgst: Number(found4B2ii.cgst) || 0, sgst: Number(found4B2ii.sgst) || 0, igst: Number(found4B2ii.igst) || 0 };
+        }
 
-        setPortalCgst((Number(row4B2i.cgst) || 0) + (Number(row4B2ii.cgst) || 0) - (Number(row54.cgst) || 0) - (Number(row55.cgst) || 0));
-        setPortalSgst((Number(row4B2i.sgst) || 0) + (Number(row4B2ii.sgst) || 0) - (Number(row54.sgst) || 0) - (Number(row55.sgst) || 0));
-        setPortalIgst((Number(row4B2i.igst) || 0) + (Number(row4B2ii.igst) || 0) - (Number(row54.igst) || 0) - (Number(row55.igst) || 0));
-      } else {
-        setPortalCgst(0);
-        setPortalSgst(0);
-        setPortalIgst(0);
+        const found55 = section4A.find((r: any) => r.srNo === '5.5');
+        if (found55) {
+          row55 = { cgst: Number(found55.cgst) || 0, sgst: Number(found55.sgst) || 0, igst: Number(found55.igst) || 0 };
+        }
       }
+
+      setPortalCgst(row4B2i.cgst + row4B2ii.cgst - row54.cgst - row55.cgst);
+      setPortalSgst(row4B2i.sgst + row4B2ii.sgst - row54.sgst - row55.sgst);
+      setPortalIgst(row4B2i.igst + row4B2ii.igst - row54.igst - row55.igst);
 
       // Fetch books data from bills_not_in_2b 
       const { data: booksData } = await supabase
