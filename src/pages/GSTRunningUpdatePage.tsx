@@ -56,6 +56,10 @@ const GSTRunningUpdatePage: React.FC = () => {
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [versions, setVersions] = useState<GenericVersion[]>([]);
   const [lastSavedBy, setLastSavedBy] = useState<{ name: string; role: string; time: string; version: number } | null>(null);
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
+    const saved = localStorage.getItem('gst-update-col-widths');
+    return saved ? JSON.parse(saved) : {};
+  });
 
   // Filter states
   const [filterClient, setFilterClient] = useState<string>('');
@@ -367,6 +371,38 @@ const GSTRunningUpdatePage: React.FC = () => {
     return num.toLocaleString('en-IN', { maximumFractionDigits: 2 });
   };
 
+  const handleResizeStart = (colKey: string, startX: number) => {
+    const startWidth = columnWidths[colKey] || 150;
+    const onMouseMove = (e: MouseEvent) => {
+      const newWidth = Math.max(60, startWidth + (e.clientX - startX));
+      setColumnWidths(prev => {
+        const updated = { ...prev, [colKey]: newWidth };
+        localStorage.setItem('gst-update-col-widths', JSON.stringify(updated));
+        return updated;
+      });
+    };
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
+  const ResizeHandle = ({ colKey }: { colKey: string }) => (
+    <div
+      className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-white/30 active:bg-white/50 z-20"
+      onMouseDown={(e) => {
+        e.preventDefault();
+        handleResizeStart(colKey, e.clientX);
+      }}
+    />
+  );
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
@@ -574,40 +610,40 @@ const GSTRunningUpdatePage: React.FC = () => {
               <div className="min-w-[1600px]">
                 <Table className="table-fixed">
                   <colgroup>
-                    <col style={{ width: '48px' }} />
-                    <col style={{ width: '160px', minWidth: '120px' }} />
-                    <col style={{ width: '96px', minWidth: '80px' }} />
-                    <col style={{ width: '112px', minWidth: '90px' }} />
-                    <col style={{ width: '112px', minWidth: '90px' }} />
-                    <col style={{ width: '144px', minWidth: '120px' }} />
-                    <col style={{ width: '128px', minWidth: '100px' }} />
-                    <col style={{ width: '250px', minWidth: '180px' }} />
-                    <col style={{ width: '96px', minWidth: '80px' }} />
-                    <col style={{ width: '100px', minWidth: '80px' }} />
-                    <col style={{ width: '100px', minWidth: '80px' }} />
-                    <col style={{ width: '100px', minWidth: '80px' }} />
-                    <col style={{ width: '80px', minWidth: '60px' }} />
-                    <col style={{ width: '200px', minWidth: '150px' }} />
-                    <col style={{ width: '40px' }} />
-                    {canDeleteGSTRows && <col style={{ width: '48px' }} />}
+                    <col style={{ width: columnWidths['sr'] || 48 }} />
+                    <col style={{ width: columnWidths['client'] || 160 }} />
+                    <col style={{ width: columnWidths['mistake'] || 96 }} />
+                    <col style={{ width: columnWidths['effect'] || 112 }} />
+                    <col style={{ width: columnWidths['return'] || 112 }} />
+                    <col style={{ width: columnWidths['type'] || 144 }} />
+                    <col style={{ width: columnWidths['instructions'] || 128 }} />
+                    <col style={{ width: columnWidths['brief'] || 250 }} />
+                    <col style={{ width: columnWidths['taxable'] || 96 }} />
+                    <col style={{ width: columnWidths['cgst'] || 100 }} />
+                    <col style={{ width: columnWidths['sgst'] || 100 }} />
+                    <col style={{ width: columnWidths['igst'] || 100 }} />
+                    <col style={{ width: columnWidths['interest'] || 80 }} />
+                    <col style={{ width: columnWidths['remarks'] || 200 }} />
+                    <col style={{ width: columnWidths['check'] || 40 }} />
+                    {canDeleteGSTRows && <col style={{ width: columnWidths['delete'] || 48 }} />}
                   </colgroup>
                   <TableHeader>
                     <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
-                      <TableHead className="font-bold text-white border border-[#2E5A6B]">Sr.No.</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B]">CLIENT</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B]">Mistake Month</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B]">Update Effect Month</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B]">Update in GSTR</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B]">Correction Type</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B]">Instructions By</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B]">Matter Brief</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Taxable Value</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">CGST</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">SGST</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">IGST</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Interest</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B]">Remarks</TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-center">✓</TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">Sr.No.<ResizeHandle colKey="sr" /></TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">CLIENT<ResizeHandle colKey="client" /></TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">Mistake Month<ResizeHandle colKey="mistake" /></TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">Update Effect Month<ResizeHandle colKey="effect" /></TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">Update in GSTR<ResizeHandle colKey="return" /></TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">Correction Type<ResizeHandle colKey="type" /></TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">Instructions By<ResizeHandle colKey="instructions" /></TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">Matter Brief<ResizeHandle colKey="brief" /></TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right relative">Taxable Value<ResizeHandle colKey="taxable" /></TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right relative">CGST<ResizeHandle colKey="cgst" /></TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right relative">SGST<ResizeHandle colKey="sgst" /></TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right relative">IGST<ResizeHandle colKey="igst" /></TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right relative">Interest<ResizeHandle colKey="interest" /></TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">Remarks<ResizeHandle colKey="remarks" /></TableHead>
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-center relative">✓<ResizeHandle colKey="check" /></TableHead>
                       {canDeleteGSTRows && <TableHead className="font-bold text-white border border-[#2E5A6B]"></TableHead>}
                     </TableRow>
                   </TableHeader>
