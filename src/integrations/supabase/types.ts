@@ -68,6 +68,7 @@ export type Database = {
           is_locked: boolean | null
           period_month: string
           reclaim_month: string | null
+          reclaim_subtype: string | null
           reversal_month: string | null
           supplier_gstin: string | null
           supplier_invoice_number: string | null
@@ -88,6 +89,7 @@ export type Database = {
           is_locked?: boolean | null
           period_month: string
           reclaim_month?: string | null
+          reclaim_subtype?: string | null
           reversal_month?: string | null
           supplier_gstin?: string | null
           supplier_invoice_number?: string | null
@@ -108,6 +110,7 @@ export type Database = {
           is_locked?: boolean | null
           period_month?: string
           reclaim_month?: string | null
+          reclaim_subtype?: string | null
           reversal_month?: string | null
           supplier_gstin?: string | null
           supplier_invoice_number?: string | null
@@ -490,6 +493,7 @@ export type Database = {
           effect_month: string | null
           id: string
           igst: number | null
+          instructions_by_employee_id: string | null
           interest: number | null
           matter_brief: string | null
           remarks: string | null
@@ -509,6 +513,7 @@ export type Database = {
           effect_month?: string | null
           id?: string
           igst?: number | null
+          instructions_by_employee_id?: string | null
           interest?: number | null
           matter_brief?: string | null
           remarks?: string | null
@@ -528,6 +533,7 @@ export type Database = {
           effect_month?: string | null
           id?: string
           igst?: number | null
+          instructions_by_employee_id?: string | null
           interest?: number | null
           matter_brief?: string | null
           remarks?: string | null
@@ -549,6 +555,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      gst_update_row_versions: {
+        Row: {
+          changed_at: string
+          changed_by_employee_id: string | null
+          field_name: string
+          group_version_id: string | null
+          id: string
+          new_value: Json | null
+          old_value: Json | null
+          row_id: string
+        }
+        Insert: {
+          changed_at?: string
+          changed_by_employee_id?: string | null
+          field_name: string
+          group_version_id?: string | null
+          id?: string
+          new_value?: Json | null
+          old_value?: Json | null
+          row_id: string
+        }
+        Update: {
+          changed_at?: string
+          changed_by_employee_id?: string | null
+          field_name?: string
+          group_version_id?: string | null
+          id?: string
+          new_value?: Json | null
+          old_value?: Json | null
+          row_id?: string
+        }
+        Relationships: []
       }
       gst_update_versions: {
         Row: {

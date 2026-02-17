@@ -22,6 +22,12 @@ interface Client {
   gstin: string;
 }
 
+interface StaffUser {
+  id: string;
+  name: string;
+  role: string;
+}
+
 interface GSTUpdate {
   id?: string;
   client_id: string;
@@ -30,6 +36,7 @@ interface GSTUpdate {
   update_in_return: string;
   update_type: string;
   update_instructions_by: string;
+  instructions_by_employee_id: string;
   matter_brief: string;
   taxable_value: number;
   cgst: number;
@@ -43,10 +50,11 @@ interface GSTUpdate {
 }
 
 const RETURN_OPTIONS = ['GSTR-1', 'GSTR-3B', 'GSTR-7', 'GSTR-1 & 3B'];
-const UPDATE_TYPE_OPTIONS = ['Claim ITC', 'Reversal ITC', 'Liability', 'RCM', 'Reclaim', 'Reclaim (Expense out)'];
+const UPDATE_TYPE_OPTIONS = ['Claim ITC', 'Reversal ITC', 'Liability', 'RCM Liability', 'Reclaim', 'Reclaim (Expense out)'];
 
 const GSTRunningUpdatePage: React.FC = () => {
   const { user, isStaffRole, canEditUpdateSheet } = useAuth();
+  const [staffUsers, setStaffUsers] = useState<StaffUser[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [updates, setUpdates] = useState<GSTUpdate[]>([]);
   const [originalUpdates, setOriginalUpdates] = useState<GSTUpdate[]>([]);
@@ -67,6 +75,7 @@ const GSTRunningUpdatePage: React.FC = () => {
   const [filterEffectMonth, setFilterEffectMonth] = useState<string>('');
   const [filterReturn, setFilterReturn] = useState<string>('');
   const [filterUpdateType, setFilterUpdateType] = useState<string>('');
+  const [filterInstructionsBy, setFilterInstructionsBy] = useState<string>('');
 
   const isStaff = isStaffRole();
   const canEdit = canEditUpdateSheet();
@@ -137,6 +146,7 @@ const GSTRunningUpdatePage: React.FC = () => {
         update_in_return: d.update_in_return,
         update_type: d.update_type,
         update_instructions_by: d.update_instructions_by || '',
+        instructions_by_employee_id: (d as any).instructions_by_employee_id || '',
         matter_brief: d.matter_brief || '',
         taxable_value: Number(d.taxable_value) || 0,
         cgst: Number(d.cgst) || 0,
@@ -160,6 +170,19 @@ const GSTRunningUpdatePage: React.FC = () => {
   useEffect(() => {
     fetchClients();
     fetchUpdates();
+    // Fetch staff users for Instructions By dropdown
+    const fetchStaffUsers = async () => {
+      const { data: profiles } = await supabase.from('profiles').select('user_id, first_name');
+      const { data: roles } = await supabase.from('user_roles').select('user_id, role');
+      if (profiles && roles) {
+        const roleMap = new Map(roles.map(r => [r.user_id, r.role]));
+        const users: StaffUser[] = profiles
+          .filter(p => roleMap.has(p.user_id))
+          .map(p => ({ id: p.user_id, name: p.first_name, role: roleMap.get(p.user_id) || 'employee' }));
+        setStaffUsers(users);
+      }
+    };
+    fetchStaffUsers();
   }, [fetchClients, fetchUpdates]);
 
   // Fetch version history
@@ -220,6 +243,7 @@ const GSTRunningUpdatePage: React.FC = () => {
         update_in_return: 'GSTR-1',
         update_type: 'Claim ITC',
         update_instructions_by: '',
+        instructions_by_employee_id: '',
         matter_brief: '',
         taxable_value: 0,
         cgst: 0,
@@ -307,8 +331,9 @@ const GSTRunningUpdatePage: React.FC = () => {
           client_id: update.client_id,
           update_effect_month: update.update_effect_month,
           update_in_return: update.update_in_return,
-          update_type: update.update_type,
+          update_type: update.update_type === 'RCM' ? 'RCM Liability' : update.update_type,
           update_instructions_by: update.update_instructions_by,
+          instructions_by_employee_id: update.instructions_by_employee_id || null,
           matter_brief: update.matter_brief,
           taxable_value: update.taxable_value,
           cgst: update.cgst,
@@ -336,7 +361,34 @@ const GSTRunningUpdatePage: React.FC = () => {
         }
       }
 
-      // Save version snapshot
+      // Row-wise version tracking
+      try {
+        const groupVersionId = crypto.randomUUID();
+        const fieldsToTrack = ['client_id', 'update_effect_month', 'update_in_return', 'update_type', 'update_instructions_by', 'instructions_by_employee_id', 'matter_brief', 'taxable_value', 'cgst', 'sgst', 'igst', 'interest', 'effect_month', 'remarks'];
+        
+        for (const update of updates) {
+          if (!update.id || update.isNew) continue;
+          const original = originalUpdates.find(o => o.id === update.id);
+          if (!original) continue;
+          
+          for (const field of fieldsToTrack) {
+            const oldVal = (original as any)[field];
+            const newVal = (update as any)[field];
+            if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
+              await supabase.from('gst_update_row_versions').insert({
+                row_id: update.id,
+                changed_by_employee_id: user?.id || null,
+                group_version_id: groupVersionId,
+                field_name: field,
+                old_value: JSON.stringify(oldVal),
+                new_value: JSON.stringify(newVal),
+              } as any);
+            }
+          }
+        }
+      } catch (rvErr) { console.error('Error saving row versions:', rvErr); }
+
+      // Save version snapshot (keep existing full-sheet versioning too)
       try {
         const { data: maxV } = await supabase.from('gst_update_versions').select('version_number').order('version_number', { ascending: false }).limit(1);
         const nextV = (maxV?.[0]?.version_number || 0) + 1;
@@ -362,9 +414,10 @@ const GSTRunningUpdatePage: React.FC = () => {
       if (filterEffectMonth && u.effect_month !== filterEffectMonth) return false;
       if (filterReturn && u.update_in_return !== filterReturn) return false;
       if (filterUpdateType && u.update_type !== filterUpdateType) return false;
+      if (filterInstructionsBy && u.instructions_by_employee_id !== filterInstructionsBy) return false;
       return true;
     });
-  }, [updates, filterClient, filterUpdateEffectMonth, filterEffectMonth, filterReturn, filterUpdateType]);
+  }, [updates, filterClient, filterUpdateEffectMonth, filterEffectMonth, filterReturn, filterUpdateType, filterInstructionsBy]);
 
   const formatNumber = (num: number): string => {
     if (num === 0 || !num) return '';
@@ -525,7 +578,19 @@ const GSTRunningUpdatePage: React.FC = () => {
               </Select>
             </div>
 
-            {(filterClient || filterUpdateEffectMonth || filterEffectMonth || filterReturn || filterUpdateType) && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Instructions By:</span>
+              <div className="w-48">
+                <SearchableSelect
+                  options={[{ value: '', label: 'All' }, ...staffUsers.map(u => ({ value: u.id, label: u.name, sublabel: u.role }))]}
+                  value={filterInstructionsBy}
+                  onValueChange={setFilterInstructionsBy}
+                  placeholder="All"
+                />
+              </div>
+            </div>
+
+            {(filterClient || filterUpdateEffectMonth || filterEffectMonth || filterReturn || filterUpdateType || filterInstructionsBy) && (
               <Button 
                 variant="ghost" 
                 size="sm"
@@ -535,6 +600,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                   setFilterEffectMonth('');
                   setFilterReturn('');
                   setFilterUpdateType('');
+                  setFilterInstructionsBy('');
                 }}
               >
                 Clear Filters
@@ -728,12 +794,20 @@ const GSTRunningUpdatePage: React.FC = () => {
                             )}
                           </TableCell>
                           <TableCell className="p-0 border border-border">
-                            <Input
-                              value={update.update_instructions_by}
-                              onChange={(e) => handleFieldChange(originalIndex, 'update_instructions_by', e.target.value)}
-                              className="h-8 border-0 shadow-none"
-                              disabled={!canEdit}
-                            />
+                            {canEdit ? (
+                              <SearchableSelect
+                                options={staffUsers.map(u => ({ value: u.id, label: u.name, sublabel: u.role }))}
+                                value={update.instructions_by_employee_id}
+                                onValueChange={(val) => {
+                                  const staffUser = staffUsers.find(u => u.id === val);
+                                  handleFieldChange(originalIndex, 'instructions_by_employee_id', val);
+                                  handleFieldChange(originalIndex, 'update_instructions_by', staffUser?.name || '');
+                                }}
+                                placeholder="Select..."
+                              />
+                            ) : (
+                              <span className="px-2">{update.update_instructions_by}</span>
+                            )}
                           </TableCell>
                           <TableCell className="p-0 border border-border">
                             <Input

@@ -203,6 +203,7 @@ const SuspendedRecoPage: React.FC = () => {
       // 4B(2)(ii) and 5.5: read from saved ITC summary (these are editable, not auto-linked)
       let row4B2ii = { cgst: 0, sgst: 0, igst: 0 };
       let row55 = { cgst: 0, sgst: 0, igst: 0 };
+      let row4D12 = { cgst: 0, sgst: 0, igst: 0 };
 
       const { data: itcData } = await supabase
         .from('itc_summaries')
@@ -215,6 +216,7 @@ const SuspendedRecoPage: React.FC = () => {
         const itc = itcData.data as any;
         const section4A = itc.section4A || [];
         const section4B = itc.section4B || [];
+        const section4D = itc.section4D || [];
 
         const found4B2ii = section4B.find((r: any) => r.srNo === '(ii)' || r.srNo === '4(B)(2)(ii)' || (r.particular && r.particular.includes('ITC Reversal for previous months')));
         if (found4B2ii) {
@@ -225,11 +227,20 @@ const SuspendedRecoPage: React.FC = () => {
         if (found55) {
           row55 = { cgst: Number(found55.cgst) || 0, sgst: Number(found55.sgst) || 0, igst: Number(found55.igst) || 0 };
         }
+
+        // 4(D) 1.2 - Reclaim of ITC Reversed due to 180 days rule/Others
+        const found4D12 = section4D.find((r: any) => r.srNo === '1.2');
+        row4D12 = {
+          cgst: Number(found4D12?.cgst) || 0,
+          sgst: Number(found4D12?.sgst) || 0,
+          igst: Number(found4D12?.igst) || 0,
+        };
       }
 
-      setPortalCgst(row4B2i.cgst + row4B2ii.cgst - row54.cgst - row55.cgst);
-      setPortalSgst(row4B2i.sgst + row4B2ii.sgst - row54.sgst - row55.sgst);
-      setPortalIgst(row4B2i.igst + row4B2ii.igst - row54.igst - row55.igst);
+      // Updated formula: (4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5 + 4(D) 1.2)
+      setPortalCgst(row4B2i.cgst + row4B2ii.cgst - row54.cgst - row55.cgst - row4D12.cgst);
+      setPortalSgst(row4B2i.sgst + row4B2ii.sgst - row54.sgst - row55.sgst - row4D12.sgst);
+      setPortalIgst(row4B2i.igst + row4B2ii.igst - row54.igst - row55.igst - row4D12.igst);
 
       // Fetch books data from bills_not_in_2b 
       const { data: booksData } = await supabase
