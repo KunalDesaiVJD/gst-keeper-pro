@@ -52,6 +52,7 @@ interface BillRecord {
   period_month: string;
   reversal_month?: string | null;
   reclaim_month?: string | null;
+  reclaim_subtype?: string | null;
   book_entry_month?: string | null;
   bill_in_2b_month?: string | null;
   is_locked: boolean | null;
@@ -702,6 +703,7 @@ const TwoBReconciliationPage: React.FC = () => {
       period_month: selectedMonth,
       reversal_month: null,
       reclaim_month: null,
+      reclaim_subtype: null,
       is_locked: false,
       is_carried_forward: false,
       version: 1,
@@ -1100,37 +1102,72 @@ const TwoBReconciliationPage: React.FC = () => {
 
   // Render month dropdown for reversal/reclaim - with carried forward check
   // isEditableForCF allows editing certain columns (Reclaim, Book Entry, In 2B) even for carried forward rows
+  // isReclaimColumn adds "Expense out" option
   const renderMonthDropdown = (
     value: string | null | undefined,
     onChange: (value: string) => void,
     placeholder: string,
     isCarriedForward: boolean = false,
-    isEditableForCF: boolean = false
+    isEditableForCF: boolean = false,
+    isReclaimColumn: boolean = false,
+    reclaimSubtype?: string | null,
+    onSubtypeChange?: (subtype: string | null) => void
   ) => {
     // Carried forward rows are non-editable - except columns marked as editable for CF (Reclaim, Book Entry, In 2B)
     const shouldBeReadOnly = isLocked || (isCarriedForward && !isEditableForCF);
     
     if (shouldBeReadOnly) {
-      return <span className="text-sm">{value || '-'}</span>;
+      const displayVal = value || '-';
+      const suffix = reclaimSubtype === 'EXPENSE_OUT' ? ' (Expense out)' : '';
+      return <span className="text-sm">{displayVal}{suffix}</span>;
     }
+
+    // Build options: months + "Expense out" for reclaim column
+    const expenseOutValue = '__expense_out__';
     
     return (
-      <Select 
-        value={value || '__clear__'} 
-        onValueChange={(val) => onChange(val === '__clear__' ? '' : val)}
-      >
-        <SelectTrigger className="h-8 text-sm w-24">
-          <SelectValue placeholder={placeholder} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="__clear__">-</SelectItem>
-          {reversalReclaimMonths.filter(m => m.value !== '__blank__').map((m) => (
-            <SelectItem key={m.value} value={m.value}>
-              {m.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <div className="flex flex-col gap-0.5">
+        <Select 
+          value={value || '__clear__'} 
+          onValueChange={(val) => {
+            if (val === '__clear__') {
+              onChange('');
+              if (onSubtypeChange) onSubtypeChange(null);
+            } else {
+              onChange(val);
+              // Keep existing subtype when changing month
+            }
+          }}
+        >
+          <SelectTrigger className="h-8 text-sm w-24">
+            <SelectValue placeholder={placeholder} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__clear__">-</SelectItem>
+            {reversalReclaimMonths.filter(m => m.value !== '__blank__').map((m) => (
+              <SelectItem key={m.value} value={m.value}>
+                {m.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {isReclaimColumn && value && value.trim() !== '' && (
+          <Select
+            value={reclaimSubtype || 'NORMAL'}
+            onValueChange={(val) => {
+              if (onSubtypeChange) onSubtypeChange(val === 'NORMAL' ? null : val);
+            }}
+          >
+            <SelectTrigger className="h-6 text-xs w-24 border-dashed">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="NORMAL">Reclaim</SelectItem>
+              <SelectItem value="EXPENSE_OUT">Expense out</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
+      </div>
     );
   };
 
@@ -1424,7 +1461,10 @@ const TwoBReconciliationPage: React.FC = () => {
                             (val) => handleUpdate2BField(row.id, 'reclaim_month', val || null),
                             'Rec',
                             row.is_carried_forward || false,
-                            true // isEditableForCF - allow editing Reclaim column for carried forward rows
+                            true, // isEditableForCF - allow editing Reclaim column for carried forward rows
+                            true, // isReclaimColumn - show Expense out option
+                            (row as any).reclaim_subtype,
+                            (subtype) => handleUpdate2BField(row.id, 'reclaim_subtype', subtype)
                           )}
                         </td>
                         {!isLocked && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && (

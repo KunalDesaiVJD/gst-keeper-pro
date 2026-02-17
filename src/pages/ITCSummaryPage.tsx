@@ -160,6 +160,7 @@ const ITCSummaryPage: React.FC = () => {
   const [itcSummaryId, setItcSummaryId] = useState<string | null>(null);
   const [reversalFromReco, setReversalFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [reclaimFromReco, setReclaimFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
+  const [expenseOutFromReco, setExpenseOutFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [rcmTotals, setRcmTotals] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [negativeValueError, setNegativeValueError] = useState<string | null>(null);
   const [dataLoadVersion, setDataLoadVersion] = useState(0);
@@ -294,6 +295,7 @@ const ITCSummaryPage: React.FC = () => {
     if (!selectedClient || !selectedMonth) {
       setReversalFromReco({ igst: 0, cgst: 0, sgst: 0 });
       setReclaimFromReco({ igst: 0, cgst: 0, sgst: 0 });
+      setExpenseOutFromReco({ igst: 0, cgst: 0, sgst: 0 });
       return;
     }
 
@@ -330,7 +332,7 @@ const ITCSummaryPage: React.FC = () => {
     // (the record lives in the period it belongs to, whether original or CF)
     const { data: reclaimBills, error: reclaimError } = await supabase
       .from('bills_not_in_2b')
-      .select('input_igst, input_cgst, input_sgst, reclaim_month, is_carried_forward')
+      .select('input_igst, input_cgst, input_sgst, reclaim_month, is_carried_forward, reclaim_subtype')
       .eq('client_id', selectedClient)
       .eq('period_month', selectedMonth)
       .not('reclaim_month', 'is', null);
@@ -341,14 +343,26 @@ const ITCSummaryPage: React.FC = () => {
       // Filter bills where reclaim_month matches selected month
       const matchingReclaims = reclaimBills.filter(b => monthMatches(b.reclaim_month, patterns));
 
-      const totals = matchingReclaims.reduce((acc, b) => ({
+      // Normal reclaims (not expense out)
+      const normalReclaims = matchingReclaims.filter(b => (b as any).reclaim_subtype !== 'EXPENSE_OUT');
+      const totals = normalReclaims.reduce((acc, b) => ({
         igst: acc.igst + (b.input_igst || 0),
         cgst: acc.cgst + (b.input_cgst || 0),
         sgst: acc.sgst + (b.input_sgst || 0),
       }), { igst: 0, cgst: 0, sgst: 0 });
 
-      console.log('Reclaim totals for', selectedMonth, ':', totals, 'from', matchingReclaims.length, 'bills');
+      // Expense out reclaims
+      const expenseOutReclaims = matchingReclaims.filter(b => (b as any).reclaim_subtype === 'EXPENSE_OUT');
+      const expenseOutTotals = expenseOutReclaims.reduce((acc, b) => ({
+        igst: acc.igst + (b.input_igst || 0),
+        cgst: acc.cgst + (b.input_cgst || 0),
+        sgst: acc.sgst + (b.input_sgst || 0),
+      }), { igst: 0, cgst: 0, sgst: 0 });
+
+      console.log('Reclaim totals for', selectedMonth, ':', totals, 'from', normalReclaims.length, 'bills');
+      console.log('Expense Out totals for', selectedMonth, ':', expenseOutTotals, 'from', expenseOutReclaims.length, 'bills');
       setReclaimFromReco(totals);
+      setExpenseOutFromReco(expenseOutTotals);
     }
   }, [selectedClient, selectedMonth]);
 
@@ -530,6 +544,7 @@ const ITCSummaryPage: React.FC = () => {
       });
 
       // Update Section 4D row (1) and 1.1 to match 5.4 reclaim values
+      // Update 1.2 to include expense out totals as system-calculated suggestion
       newData.section4D = prev.section4D.map(row => {
         if (row.srNo === '(1)' || row.srNo === '1.1') {
           return { 
@@ -539,12 +554,27 @@ const ITCSummaryPage: React.FC = () => {
             sgst: reclaimFromReco.sgst 
           };
         }
+        // 1.2: Add expense out totals to existing manual values
+        // Only update if no manual override has been done (values are 0)
+        // The user can still manually edit this row
+        if (row.srNo === '1.2') {
+          // If the row hasn't been manually edited (all zeros), set expense out values
+          const hasManualEdit = row.igst !== 0 || row.cgst !== 0 || row.sgst !== 0;
+          if (!hasManualEdit && (expenseOutFromReco.igst !== 0 || expenseOutFromReco.cgst !== 0 || expenseOutFromReco.sgst !== 0)) {
+            return {
+              ...row,
+              igst: expenseOutFromReco.igst,
+              cgst: expenseOutFromReco.cgst,
+              sgst: expenseOutFromReco.sgst,
+            };
+          }
+        }
         return row;
       });
       
       return newData;
     });
-  }, [reversalFromReco, reclaimFromReco, rcmTotals, dataLoadVersion]);
+  }, [reversalFromReco, reclaimFromReco, expenseOutFromReco, rcmTotals, dataLoadVersion]);
 
   // Calculate Partial ITC formula values (used in rendering)
   // FORMULAS as per Excel:
