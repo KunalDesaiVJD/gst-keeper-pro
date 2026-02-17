@@ -1122,52 +1122,52 @@ const TwoBReconciliationPage: React.FC = () => {
       return <span className="text-sm">{displayVal}{suffix}</span>;
     }
 
-    // Build options: months + "Expense out" for reclaim column
-    const expenseOutValue = '__expense_out__';
-    
     return (
-      <div className="flex flex-col gap-0.5">
-        <Select 
-          value={value || '__clear__'} 
-          onValueChange={(val) => {
-            if (val === '__clear__') {
-              onChange('');
-              if (onSubtypeChange) onSubtypeChange(null);
-            } else {
-              onChange(val);
-              // Keep existing subtype when changing month
+      <Select 
+        value={
+          isReclaimColumn && reclaimSubtype === 'EXPENSE_OUT' 
+            ? '__expense_out__' 
+            : (value || '__clear__')
+        } 
+        onValueChange={(val) => {
+          if (val === '__clear__') {
+            onChange('');
+            if (onSubtypeChange) onSubtypeChange(null);
+          } else if (val === '__expense_out__') {
+            // Set reclaim_month to current selected month or keep existing, and mark as expense out
+            if (!value || value.trim() === '') {
+              // Set a placeholder month value so the entry is identifiable
+              const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+              if (selectedMonth) {
+                const [mStr, yStr] = selectedMonth.split('/');
+                const yearShort = String(yStr).slice(-2);
+                onChange(`${monthNames[parseInt(mStr) - 1]} ${yearShort}`);
+              }
             }
-          }}
-        >
-          <SelectTrigger className="h-8 text-sm w-24">
-            <SelectValue placeholder={placeholder} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__clear__">-</SelectItem>
-            {reversalReclaimMonths.filter(m => m.value !== '__blank__').map((m) => (
-              <SelectItem key={m.value} value={m.value}>
-                {m.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {isReclaimColumn && value && value.trim() !== '' && (
-          <Select
-            value={reclaimSubtype || 'NORMAL'}
-            onValueChange={(val) => {
-              if (onSubtypeChange) onSubtypeChange(val === 'NORMAL' ? null : val);
-            }}
-          >
-            <SelectTrigger className="h-6 text-xs w-24 border-dashed">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="NORMAL">Reclaim</SelectItem>
-              <SelectItem value="EXPENSE_OUT">Expense out</SelectItem>
-            </SelectContent>
-          </Select>
-        )}
-      </div>
+            if (onSubtypeChange) onSubtypeChange('EXPENSE_OUT');
+          } else {
+            onChange(val);
+            if (onSubtypeChange) onSubtypeChange(null); // Regular month = normal reclaim
+          }
+        }}
+      >
+        <SelectTrigger className="h-8 text-sm w-28">
+          <SelectValue placeholder={placeholder} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__clear__">-</SelectItem>
+          {isReclaimColumn && (
+            <SelectItem value="__expense_out__" className="text-orange-600 font-medium">
+              Expense out
+            </SelectItem>
+          )}
+          {reversalReclaimMonths.filter(m => m.value !== '__blank__').map((m) => (
+            <SelectItem key={m.value} value={m.value}>
+              {m.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     );
   };
 
