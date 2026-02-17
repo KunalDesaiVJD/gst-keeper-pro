@@ -491,7 +491,7 @@ const SuspendedRecoPage: React.FC = () => {
                 <TableRow>
                   <TableCell className="font-medium border border-border">
                     CURRENT TOTAL AS PER SUSPENDED RECO
-                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">(4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5)</p>
+                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">(4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5 + 4(D) 1.2)</p>
                   </TableCell>
                   <TableCell className="text-right border border-border bg-accent/50">{formatNumber(portalCgst)}</TableCell>
                   <TableCell className="text-right border border-border bg-accent/50">{formatNumber(portalSgst)}</TableCell>
