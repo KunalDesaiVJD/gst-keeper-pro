@@ -185,16 +185,18 @@ const SuspendedRecoPage: React.FC = () => {
         igst: acc.igst + (Number(b.input_igst) || 0),
       }), { cgst: 0, sgst: 0, igst: 0 });
 
-      // 5.4: reclaim bills where reclaim_month matches current month
+      // 5.4: reclaim bills where reclaim_month matches current month (excluding EXPENSE_OUT, handled via 4D 1.2)
       const { data: reclaimBills } = await supabase
         .from('bills_not_in_2b')
-        .select('input_igst, input_cgst, input_sgst, reclaim_month')
+        .select('input_igst, input_cgst, input_sgst, reclaim_month, reclaim_subtype')
         .eq('client_id', selectedClientId)
         .eq('period_month', selectedMonth)
         .not('reclaim_month', 'is', null);
 
       const matchingReclaims = (reclaimBills || []).filter(b => monthMatchesFn(b.reclaim_month, patterns));
-      const row54 = matchingReclaims.reduce((acc, b) => ({
+      // Only count normal reclaims for row 5.4 (expense out is separate via 4D 1.2)
+      const normalReclaims = matchingReclaims.filter(b => (b as any).reclaim_subtype !== 'EXPENSE_OUT');
+      const row54 = normalReclaims.reduce((acc, b) => ({
         cgst: acc.cgst + (Number(b.input_cgst) || 0),
         sgst: acc.sgst + (Number(b.input_sgst) || 0),
         igst: acc.igst + (Number(b.input_igst) || 0),

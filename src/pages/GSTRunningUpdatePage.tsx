@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Checkbox } from '@/components/ui/checkbox';
-import { FileSpreadsheet, Plus, Save, Loader2, Trash2, Download, History } from 'lucide-react';
+import { FileSpreadsheet, Plus, Save, Loader2, Trash2, Download, History, Clock } from 'lucide-react';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { supabase } from '@/integrations/supabase/client';
@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { exportGSTUpdateToPDF } from '@/utils/gstUpdatePdfExport';
 import GenericVersionHistoryDialog, { GenericVersion } from '@/components/dialogs/GenericVersionHistoryDialog';
 import * as XLSX from 'xlsx';
+import RowVersionHistoryDialog from '@/components/dialogs/RowVersionHistoryDialog';
 
 interface Client {
   id: string;
@@ -68,6 +69,8 @@ const GSTRunningUpdatePage: React.FC = () => {
     const saved = localStorage.getItem('gst-update-col-widths');
     return saved ? JSON.parse(saved) : {};
   });
+  const [rowHistoryId, setRowHistoryId] = useState<string | null>(null);
+  const [rowHistoryLabel, setRowHistoryLabel] = useState<string>('');
 
   // Filter states
   const [filterClient, setFilterClient] = useState<string>('');
@@ -692,6 +695,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                     <col style={{ width: columnWidths['remarks'] || 200 }} />
                     <col style={{ width: columnWidths['check'] || 40 }} />
                     {canDeleteGSTRows && <col style={{ width: columnWidths['delete'] || 48 }} />}
+                    <col style={{ width: 40 }} />
                   </colgroup>
                   <TableHeader>
                     <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
@@ -711,6 +715,9 @@ const GSTRunningUpdatePage: React.FC = () => {
                       <TableHead className="font-bold text-white border border-[#2E5A6B] relative">Remarks<ResizeHandle colKey="remarks" /></TableHead>
                       <TableHead className="font-bold text-white border border-[#2E5A6B] text-center relative">✓<ResizeHandle colKey="check" /></TableHead>
                       {canDeleteGSTRows && <TableHead className="font-bold text-white border border-[#2E5A6B]"></TableHead>}
+                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-center">
+                        <Clock className="h-3.5 w-3.5 mx-auto" />
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -889,12 +896,28 @@ const GSTRunningUpdatePage: React.FC = () => {
                               </Button>
                             </TableCell>
                           )}
+                          <TableCell className="border border-border text-center">
+                            {update.id && !update.isNew && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setRowHistoryId(update.id!);
+                                  setRowHistoryLabel(update.client_name || '');
+                                }}
+                                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                                title="View row change history"
+                              >
+                                <Clock className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                          </TableCell>
                         </TableRow>
                       );
                     })}
                     {filteredUpdates.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={canDeleteGSTRows ? 16 : 15} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={canDeleteGSTRows ? 17 : 16} className="text-center py-8 text-muted-foreground">
                           No records found. {isStaff && 'Click "Add Row" to create a new entry.'}
                         </TableCell>
                       </TableRow>
@@ -907,6 +930,14 @@ const GSTRunningUpdatePage: React.FC = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Row Version History Dialog */}
+      <RowVersionHistoryDialog
+        open={!!rowHistoryId}
+        onOpenChange={(open) => { if (!open) setRowHistoryId(null); }}
+        rowId={rowHistoryId || ''}
+        rowLabel={rowHistoryLabel}
+      />
     </div>
   );
 };
