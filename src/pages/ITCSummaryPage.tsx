@@ -554,20 +554,16 @@ const ITCSummaryPage: React.FC = () => {
             sgst: reclaimFromReco.sgst 
           };
         }
-        // 1.2: Add expense out totals to existing manual values
-        // Only update if no manual override has been done (values are 0)
-        // The user can still manually edit this row
+        // 1.2: Always set to expense out totals from 2B reco for the selected month
+        // This ensures month-specific values and prevents stale data from other months
+        // The user can still manually edit this row after auto-link, and save will persist their values
         if (row.srNo === '1.2') {
-          // If the row hasn't been manually edited (all zeros), set expense out values
-          const hasManualEdit = row.igst !== 0 || row.cgst !== 0 || row.sgst !== 0;
-          if (!hasManualEdit && (expenseOutFromReco.igst !== 0 || expenseOutFromReco.cgst !== 0 || expenseOutFromReco.sgst !== 0)) {
-            return {
-              ...row,
-              igst: expenseOutFromReco.igst,
-              cgst: expenseOutFromReco.cgst,
-              sgst: expenseOutFromReco.sgst,
-            };
-          }
+          return {
+            ...row,
+            igst: expenseOutFromReco.igst,
+            cgst: expenseOutFromReco.cgst,
+            sgst: expenseOutFromReco.sgst,
+          };
         }
         return row;
       });
