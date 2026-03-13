@@ -36,7 +36,7 @@ const MainLayout: React.FC = () => {
       </main>
       {/* Quick actions floating button - only for staff */}
       {isStaffRole() && <QuickActionsButton />}
-      <ChatWidget />
+      {isStaffRole() && <ChatWidget />}
     </div>
   );
 };

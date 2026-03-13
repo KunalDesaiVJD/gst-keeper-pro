@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { MessageCircle, X, Users, User, ArrowLeft, Plus, UserPlus } from 'lucide-react';
+import { MessageCircle, X, Users, User, ArrowLeft, Plus, UserPlus, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -45,6 +45,11 @@ const ChatWidget: React.FC = () => {
   const [selectedGroupMembers, setSelectedGroupMembers] = useState<string[]>([]);
   const [groupSearch, setGroupSearch] = useState('');
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+  const [showAddMembers, setShowAddMembers] = useState(false);
+  const [addMemberSearch, setAddMemberSearch] = useState('');
+  const [existingMembers, setExistingMembers] = useState<string[]>([]);
+  const [selectedNewMembers, setSelectedNewMembers] = useState<string[]>([]);
+  const [isAddingMembers, setIsAddingMembers] = useState(false);
 
   // Fetch all staff users for @mention and DM list
   useEffect(() => {
@@ -144,6 +149,39 @@ const ChatWidget: React.FC = () => {
     }
   }, [user, groupName, selectedGroupMembers, fetchChannels, selectChannel, loadMessages]);
 
+  const handleOpenAddMembers = useCallback(async () => {
+    if (!activeChannelId) return;
+    // Fetch current members
+    const { data } = await supabase
+      .from('chat_channel_members')
+      .select('user_id')
+      .eq('channel_id', activeChannelId);
+    const memberIds = (data || []).map(m => m.user_id);
+    setExistingMembers(memberIds);
+    setSelectedNewMembers([]);
+    setAddMemberSearch('');
+    setShowAddMembers(true);
+  }, [activeChannelId]);
+
+  const handleAddMembers = useCallback(async () => {
+    if (!activeChannelId || selectedNewMembers.length === 0) return;
+    setIsAddingMembers(true);
+    try {
+      const members = selectedNewMembers.map(uid => ({
+        channel_id: activeChannelId,
+        user_id: uid,
+      }));
+      const { error } = await supabase.from('chat_channel_members').insert(members);
+      if (error) throw error;
+      toast.success(`${selectedNewMembers.length} member(s) added`);
+      setShowAddMembers(false);
+    } catch (err: any) {
+      toast.error('Failed to add members: ' + err.message);
+    } finally {
+      setIsAddingMembers(false);
+    }
+  }, [activeChannelId, selectedNewMembers]);
+
   // Mark as read when messages change
   useEffect(() => {
     if (isChatOpen && activeChannelId && messages.length > 0) {
@@ -211,9 +249,16 @@ const ChatWidget: React.FC = () => {
                 )}
               </div>
             </div>
-            <Button variant="ghost" size="icon" onClick={handleClose} className="h-8 w-8">
-              <X className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-1">
+              {activeChannelId && activeChannel?.channel_type === 'group' && (
+                <Button variant="ghost" size="icon" onClick={handleOpenAddMembers} className="h-8 w-8" title="Add Members">
+                  <UserPlus className="h-4 w-4" />
+                </Button>
+              )}
+              <Button variant="ghost" size="icon" onClick={handleClose} className="h-8 w-8">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
 
           {/* Channel List View */}
@@ -428,6 +473,60 @@ const ChatWidget: React.FC = () => {
             </Button>
             <Button onClick={handleCreateGroup} disabled={isCreatingGroup || !groupName.trim() || selectedGroupMembers.length === 0}>
               {isCreatingGroup ? 'Creating...' : 'Create Group'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Members to Group Dialog */}
+      <Dialog open={showAddMembers} onOpenChange={setShowAddMembers}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add Members to {activeChannel?.name || 'Group'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              value={addMemberSearch}
+              onChange={(e) => setAddMemberSearch(e.target.value)}
+              placeholder="Search users..."
+              autoFocus
+            />
+            <ScrollArea className="h-48 border rounded-md">
+              <div className="p-2 space-y-1">
+                {allUsers
+                  .filter(u => !existingMembers.includes(u.id))
+                  .filter(u => !addMemberSearch || u.name.toLowerCase().includes(addMemberSearch.toLowerCase()))
+                  .map(u => (
+                    <label
+                      key={u.id}
+                      className="flex items-center gap-3 px-2 py-1.5 rounded hover:bg-muted cursor-pointer"
+                    >
+                      <Checkbox
+                        checked={selectedNewMembers.includes(u.id)}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setSelectedNewMembers(prev => [...prev, u.id]);
+                          } else {
+                            setSelectedNewMembers(prev => prev.filter(id => id !== u.id));
+                          }
+                        }}
+                      />
+                      <div>
+                        <span className="text-sm font-medium">{u.name}</span>
+                        <span className="text-xs text-muted-foreground ml-2">({u.role})</span>
+                      </div>
+                    </label>
+                  ))}
+                {allUsers.filter(u => !existingMembers.includes(u.id)).length === 0 && (
+                  <p className="text-xs text-muted-foreground text-center py-4">All users are already members.</p>
+                )}
+              </div>
+            </ScrollArea>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowAddMembers(false)}>Cancel</Button>
+            <Button onClick={handleAddMembers} disabled={isAddingMembers || selectedNewMembers.length === 0}>
+              {isAddingMembers ? 'Adding...' : `Add ${selectedNewMembers.length} Member(s)`}
             </Button>
           </DialogFooter>
         </DialogContent>
