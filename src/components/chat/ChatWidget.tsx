@@ -477,6 +477,60 @@ const ChatWidget: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Add Members to Group Dialog */}
+      <Dialog open={showAddMembers} onOpenChange={setShowAddMembers}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add Members to {activeChannel?.name || 'Group'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              value={addMemberSearch}
+              onChange={(e) => setAddMemberSearch(e.target.value)}
+              placeholder="Search users..."
+              autoFocus
+            />
+            <ScrollArea className="h-48 border rounded-md">
+              <div className="p-2 space-y-1">
+                {allUsers
+                  .filter(u => !existingMembers.includes(u.id))
+                  .filter(u => !addMemberSearch || u.name.toLowerCase().includes(addMemberSearch.toLowerCase()))
+                  .map(u => (
+                    <label
+                      key={u.id}
+                      className="flex items-center gap-3 px-2 py-1.5 rounded hover:bg-muted cursor-pointer"
+                    >
+                      <Checkbox
+                        checked={selectedNewMembers.includes(u.id)}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setSelectedNewMembers(prev => [...prev, u.id]);
+                          } else {
+                            setSelectedNewMembers(prev => prev.filter(id => id !== u.id));
+                          }
+                        }}
+                      />
+                      <div>
+                        <span className="text-sm font-medium">{u.name}</span>
+                        <span className="text-xs text-muted-foreground ml-2">({u.role})</span>
+                      </div>
+                    </label>
+                  ))}
+                {allUsers.filter(u => !existingMembers.includes(u.id)).length === 0 && (
+                  <p className="text-xs text-muted-foreground text-center py-4">All users are already members.</p>
+                )}
+              </div>
+            </ScrollArea>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowAddMembers(false)}>Cancel</Button>
+            <Button onClick={handleAddMembers} disabled={isAddingMembers || selectedNewMembers.length === 0}>
+              {isAddingMembers ? 'Adding...' : `Add ${selectedNewMembers.length} Member(s)`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 };
