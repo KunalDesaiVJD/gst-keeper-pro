@@ -149,6 +149,39 @@ const ChatWidget: React.FC = () => {
     }
   }, [user, groupName, selectedGroupMembers, fetchChannels, selectChannel, loadMessages]);
 
+  const handleOpenAddMembers = useCallback(async () => {
+    if (!activeChannelId) return;
+    // Fetch current members
+    const { data } = await supabase
+      .from('chat_channel_members')
+      .select('user_id')
+      .eq('channel_id', activeChannelId);
+    const memberIds = (data || []).map(m => m.user_id);
+    setExistingMembers(memberIds);
+    setSelectedNewMembers([]);
+    setAddMemberSearch('');
+    setShowAddMembers(true);
+  }, [activeChannelId]);
+
+  const handleAddMembers = useCallback(async () => {
+    if (!activeChannelId || selectedNewMembers.length === 0) return;
+    setIsAddingMembers(true);
+    try {
+      const members = selectedNewMembers.map(uid => ({
+        channel_id: activeChannelId,
+        user_id: uid,
+      }));
+      const { error } = await supabase.from('chat_channel_members').insert(members);
+      if (error) throw error;
+      toast.success(`${selectedNewMembers.length} member(s) added`);
+      setShowAddMembers(false);
+    } catch (err: any) {
+      toast.error('Failed to add members: ' + err.message);
+    } finally {
+      setIsAddingMembers(false);
+    }
+  }, [activeChannelId, selectedNewMembers]);
+
   // Mark as read when messages change
   useEffect(() => {
     if (isChatOpen && activeChannelId && messages.length > 0) {
