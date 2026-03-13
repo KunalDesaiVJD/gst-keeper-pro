@@ -249,9 +249,16 @@ const ChatWidget: React.FC = () => {
                 )}
               </div>
             </div>
-            <Button variant="ghost" size="icon" onClick={handleClose} className="h-8 w-8">
-              <X className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-1">
+              {activeChannelId && activeChannel?.channel_type === 'group' && (
+                <Button variant="ghost" size="icon" onClick={handleOpenAddMembers} className="h-8 w-8" title="Add Members">
+                  <UserPlus className="h-4 w-4" />
+                </Button>
+              )}
+              <Button variant="ghost" size="icon" onClick={handleClose} className="h-8 w-8">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
 
           {/* Channel List View */}
