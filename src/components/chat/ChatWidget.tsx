@@ -45,6 +45,11 @@ const ChatWidget: React.FC = () => {
   const [selectedGroupMembers, setSelectedGroupMembers] = useState<string[]>([]);
   const [groupSearch, setGroupSearch] = useState('');
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+  const [showAddMembers, setShowAddMembers] = useState(false);
+  const [addMemberSearch, setAddMemberSearch] = useState('');
+  const [existingMembers, setExistingMembers] = useState<string[]>([]);
+  const [selectedNewMembers, setSelectedNewMembers] = useState<string[]>([]);
+  const [isAddingMembers, setIsAddingMembers] = useState(false);
 
   // Fetch all staff users for @mention and DM list
   useEffect(() => {
