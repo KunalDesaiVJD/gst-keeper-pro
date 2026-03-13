@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { MessageCircle, X, Users, User, ArrowLeft, Plus, UserPlus } from 'lucide-react';
+import { MessageCircle, X, Users, User, ArrowLeft, Plus, UserPlus, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
