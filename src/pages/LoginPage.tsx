@@ -168,7 +168,7 @@ const LoginPage: React.FC = () => {
             </div>
             
             {/* Development notice */}
-            {process.env.NODE_ENV === 'development' && (
+            {import.meta.env.DEV && (
               <div className="mt-6 p-4 bg-amber-500/10 rounded-lg border border-amber-500/30">
                 <p className="text-xs font-medium text-amber-600 mb-1">⚠️ Development Environment</p>
                 <p className="text-xs text-muted-foreground">
