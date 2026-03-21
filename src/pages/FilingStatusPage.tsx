@@ -56,6 +56,8 @@ interface FilingRecord {
   is_locked: boolean | null;
   updated_by: string | null;
   updated_at: string | null;
+  arn: string | null;
+  return_pdf_url: string | null;
   // Joined client data
   clientName?: string;
   clientEmail?: string;
