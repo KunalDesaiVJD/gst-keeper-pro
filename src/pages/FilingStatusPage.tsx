@@ -469,6 +469,8 @@ const FilingStatusPage: React.FC = () => {
               is_locked: false,
               updated_by: null,
               updated_at: null,
+              arn: null,
+              return_pdf_url: null,
               clientName: client.name,
               clientEmail: client.email || '-',
               contactNumber: client.mobile || '-',
