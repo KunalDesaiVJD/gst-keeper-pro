@@ -131,8 +131,6 @@ const StaffDashboard: React.FC = () => {
 
       const visibleClients = clientData?.filter(isClientVisibleForMonth) || [];
 
-      const pendingStatuses = ['Prepared', 'Data Pending', 'Mismatch in Data', 'Not Verified', 'Prepared Pending', 'Data Received'];
-      const pendingFilings = filingData?.filter(f => pendingStatuses.includes(f.status || ''))?.length || 0;
       const filedThisMonth = filingData?.filter(f => f.status === 'Filed')?.length || 0;
       
       // Calculate Target Due Today: target_date <= today's day AND status != Filed (includes overdue)
@@ -160,13 +158,6 @@ const StaffDashboard: React.FC = () => {
         count,
       }));
       setDueBreakdown(breakdown);
-
-      setMetrics({
-        totalClients: visibleClients.length,
-        pendingFilings,
-        targetDueToday,
-        filedThisMonth,
-      });
 
       // Show alert once per session if there are due filings today
       if (targetDueToday > 0 && !sessionStorage.getItem(SESSION_ALERT_KEY)) {
@@ -273,6 +264,17 @@ const StaffDashboard: React.FC = () => {
           }
         }
       }
+
+      // Calculate pendingFilings as sum of all pending from returnMetrics
+      // This ensures it tallies with the return-wise breakdown
+      const totalPending = returnMetricsData.reduce((sum, rm) => sum + rm.pending, 0);
+
+      setMetrics({
+        totalClients: visibleClients.length,
+        pendingFilings: totalPending,
+        targetDueToday,
+        filedThisMonth,
+      });
 
       setReturnMetrics(returnMetricsData);
     } catch (error) {

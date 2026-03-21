@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Download, FileText, Lock, Unlock, Search, Filter, ChevronDown, Info } from 'lucide-react';
+import { Download, FileText, Lock, Unlock, Search, Filter, ChevronDown, Info, Upload, Eye, Trash2 } from 'lucide-react';
 import { FilingStatusType, ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth } from '@/types';
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
@@ -56,6 +56,8 @@ interface FilingRecord {
   is_locked: boolean | null;
   updated_by: string | null;
   updated_at: string | null;
+  arn: string | null;
+  return_pdf_url: string | null;
   // Joined client data
   clientName?: string;
   clientEmail?: string;
@@ -467,6 +469,8 @@ const FilingStatusPage: React.FC = () => {
               is_locked: false,
               updated_by: null,
               updated_at: null,
+              arn: null,
+              return_pdf_url: null,
               clientName: client.name,
               clientEmail: client.email || '-',
               contactNumber: client.mobile || '-',
@@ -538,11 +542,28 @@ const FilingStatusPage: React.FC = () => {
     const isNewRecord = record.id.startsWith('temp-');
     
     // Check if user is allowed to change from Filed status
-    // Only superadmin and gst_manager can change FROM Filed to another status
     const wasFiledBefore = record.status === 'Filed';
     if (wasFiledBefore && newStatus !== 'Filed') {
       if (!canUnlockSheets()) {
         toast.error('Only GST Manager or Superadmin can change a Filed status.');
+        return;
+      }
+    }
+
+    // ARN and Return PDF validation before allowing "Filed" status
+    if (newStatus === 'Filed') {
+      if (!record.arn || record.arn.trim() === '') {
+        toast.error('ARN is mandatory before marking as Filed. Please enter the ARN first.');
+        return;
+      }
+      // Validate ARN format: 2 alphabets + 13 digits = 15 characters
+      const arnRegex = /^[A-Za-z]{2}\d{13}$/;
+      if (!arnRegex.test(record.arn.trim())) {
+        toast.error('Invalid ARN format. ARN must be 2 alphabetic characters followed by 13 digits (total 15 characters).');
+        return;
+      }
+      if (!record.return_pdf_url || record.return_pdf_url.trim() === '') {
+        toast.error('Return PDF is mandatory before marking as Filed. Please upload the PDF first.');
         return;
       }
     }
@@ -713,6 +734,8 @@ const FilingStatusPage: React.FC = () => {
             filed_date: newStatus === 'Filed' ? new Date().toISOString().split('T')[0] : null,
             updated_by: user?.id || null,
             updated_at: new Date().toISOString(),
+            arn: record.arn || null,
+            return_pdf_url: record.return_pdf_url || null,
           }]);
         
         if (error) throw error;
@@ -974,9 +997,126 @@ const FilingStatusPage: React.FC = () => {
     return Array.from(dates).sort((a, b) => a - b);
   };
 
+  const handleArnChange = async (record: FilingRecord, newArn: string) => {
+    const isNewRecord = record.id.startsWith('temp-');
+    const upperArn = newArn.toUpperCase();
+    
+    if (isNewRecord) {
+      try {
+        const { error } = await supabase
+          .from('filing_status')
+          .insert([{
+            client_id: record.client_id,
+            return_type: record.return_type as any,
+            period_month: selectedMonth,
+            status: record.status,
+            target_date: record.target_date,
+            arn: upperArn || null,
+          }]);
+        if (error) {
+          if (error.message.includes('filing_status_arn_unique')) {
+            toast.error('This ARN already exists. ARN must be unique.');
+          } else {
+            throw error;
+          }
+        }
+        fetchFilingRecords();
+      } catch (error: any) {
+        console.error('Error saving ARN:', error);
+        toast.error('Failed to save ARN: ' + error.message);
+      }
+    } else {
+      try {
+        const { error } = await supabase
+          .from('filing_status')
+          .update({ arn: upperArn || null })
+          .eq('id', record.id);
+        if (error) {
+          if (error.message.includes('filing_status_arn_unique')) {
+            toast.error('This ARN already exists. ARN must be unique.');
+          } else {
+            throw error;
+          }
+        }
+        fetchFilingRecords();
+      } catch (error: any) {
+        console.error('Error updating ARN:', error);
+        toast.error('Failed to update ARN: ' + error.message);
+      }
+    }
+  };
+
+  const handlePdfUpload = async (record: FilingRecord, file: File) => {
+    const isNewRecord = record.id.startsWith('temp-');
+    
+    // Upload file to storage
+    const fileName = `${record.client_id}/${record.return_type}/${record.period_month.replace('/', '-')}/${Date.now()}_${file.name}`;
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('return-pdfs')
+      .upload(fileName, file, { upsert: true });
+    
+    if (uploadError) {
+      toast.error('Failed to upload PDF: ' + uploadError.message);
+      return;
+    }
+    
+    const { data: { publicUrl } } = supabase.storage
+      .from('return-pdfs')
+      .getPublicUrl(fileName);
+    
+    if (isNewRecord) {
+      try {
+        const { error } = await supabase
+          .from('filing_status')
+          .insert([{
+            client_id: record.client_id,
+            return_type: record.return_type as any,
+            period_month: selectedMonth,
+            status: record.status,
+            target_date: record.target_date,
+            return_pdf_url: publicUrl,
+          }]);
+        if (error) throw error;
+        toast.success('PDF uploaded successfully');
+        fetchFilingRecords();
+      } catch (error: any) {
+        toast.error('Failed to save PDF: ' + error.message);
+      }
+    } else {
+      try {
+        const { error } = await supabase
+          .from('filing_status')
+          .update({ return_pdf_url: publicUrl })
+          .eq('id', record.id);
+        if (error) throw error;
+        toast.success('PDF uploaded successfully');
+        fetchFilingRecords();
+      } catch (error: any) {
+        toast.error('Failed to save PDF: ' + error.message);
+      }
+    }
+  };
+
+  const handlePdfDelete = async (record: FilingRecord) => {
+    if (!record.return_pdf_url || record.id.startsWith('temp-')) return;
+    
+    try {
+      const { error } = await supabase
+        .from('filing_status')
+        .update({ return_pdf_url: null })
+        .eq('id', record.id);
+      if (error) throw error;
+      toast.success('PDF removed');
+      fetchFilingRecords();
+    } catch (error: any) {
+      toast.error('Failed to remove PDF: ' + error.message);
+    }
+  };
+
   const FilingTable = ({ records, returnType }: { records: FilingRecord[]; returnType: string }) => {
     const filteredRecords = applyFilters(records);
     const [editingRemarks, setEditingRemarks] = useState<Record<string, string>>({});
+    const [editingArn, setEditingArn] = useState<Record<string, string>>({});
     
     // Get unique target dates for this return type
     const uniqueTargetDates = Array.from(new Set(records.filter(r => r.target_date !== null).map(r => r.target_date!))).sort((a, b) => a - b);
@@ -1036,6 +1176,8 @@ const FilingStatusPage: React.FC = () => {
                   </PopoverContent>
                 </Popover>
               </th>
+              <th className="w-36">ARN</th>
+              <th className="w-24">Return PDF</th>
               <th className="w-20">
                 <Popover>
                   <PopoverTrigger asChild>
@@ -1129,6 +1271,75 @@ const FilingStatusPage: React.FC = () => {
                     </SelectContent>
                   </Select>
                 </td>
+                <td>
+                  <Input
+                    value={editingArn[record.id] ?? record.arn ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 15);
+                      setEditingArn(prev => ({ ...prev, [record.id]: val }));
+                    }}
+                    onBlur={() => {
+                      const newArn = editingArn[record.id];
+                      if (newArn !== undefined && newArn !== (record.arn || '')) {
+                        if (newArn && !/^[A-Za-z]{2}\d{13}$/.test(newArn)) {
+                          toast.error('ARN must be 2 letters + 13 digits (15 chars total)');
+                          return;
+                        }
+                        handleArnChange(record, newArn);
+                      }
+                    }}
+                    placeholder="AA1234567890123"
+                    className="w-36 h-7 text-xs font-mono"
+                    maxLength={15}
+                    disabled={record.is_locked && !canUnlockSheets()}
+                  />
+                </td>
+                <td className="text-center">
+                  {record.return_pdf_url ? (
+                    <div className="flex items-center justify-center gap-1">
+                      <a
+                        href={record.return_pdf_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:text-primary/80"
+                        title="View PDF"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </a>
+                      {(!record.is_locked || canUnlockSheets()) && (
+                        <button
+                          onClick={() => handlePdfDelete(record)}
+                          className="text-destructive hover:text-destructive/80"
+                          title="Remove PDF"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <label className={`cursor-pointer inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground ${(record.is_locked && !canUnlockSheets()) ? 'pointer-events-none opacity-50' : ''}`}>
+                      <Upload className="h-3.5 w-3.5" />
+                      <span>Upload</span>
+                      <input
+                        type="file"
+                        accept=".pdf"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            if (file.type !== 'application/pdf') {
+                              toast.error('Only PDF files are allowed');
+                              return;
+                            }
+                            handlePdfUpload(record, file);
+                          }
+                          e.target.value = '';
+                        }}
+                        disabled={record.is_locked && !canUnlockSheets()}
+                      />
+                    </label>
+                  )}
+                </td>
                 <td className="text-center font-mono text-sm">{record.target_date}</td>
                 <td>
                   <div className="flex items-center gap-1">
@@ -1196,7 +1407,7 @@ const FilingStatusPage: React.FC = () => {
             ))}
             {filteredRecords.length === 0 && (
               <tr>
-                <td colSpan={canUnlockSheets() ? 9 : 8} className="text-center py-8 text-muted-foreground">
+                <td colSpan={canUnlockSheets() ? 11 : 10} className="text-center py-8 text-muted-foreground">
                   {records.length === 0 
                     ? `No clients have ${returnType} selected.`
                     : 'No records match your filters.'}
