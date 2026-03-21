@@ -734,6 +734,8 @@ const FilingStatusPage: React.FC = () => {
             filed_date: newStatus === 'Filed' ? new Date().toISOString().split('T')[0] : null,
             updated_by: user?.id || null,
             updated_at: new Date().toISOString(),
+            arn: record.arn || null,
+            return_pdf_url: record.return_pdf_url || null,
           }]);
         
         if (error) throw error;
