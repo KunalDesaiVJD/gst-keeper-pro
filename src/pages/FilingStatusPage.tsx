@@ -542,11 +542,28 @@ const FilingStatusPage: React.FC = () => {
     const isNewRecord = record.id.startsWith('temp-');
     
     // Check if user is allowed to change from Filed status
-    // Only superadmin and gst_manager can change FROM Filed to another status
     const wasFiledBefore = record.status === 'Filed';
     if (wasFiledBefore && newStatus !== 'Filed') {
       if (!canUnlockSheets()) {
         toast.error('Only GST Manager or Superadmin can change a Filed status.');
+        return;
+      }
+    }
+
+    // ARN and Return PDF validation before allowing "Filed" status
+    if (newStatus === 'Filed') {
+      if (!record.arn || record.arn.trim() === '') {
+        toast.error('ARN is mandatory before marking as Filed. Please enter the ARN first.');
+        return;
+      }
+      // Validate ARN format: 2 alphabets + 13 digits = 15 characters
+      const arnRegex = /^[A-Za-z]{2}\d{13}$/;
+      if (!arnRegex.test(record.arn.trim())) {
+        toast.error('Invalid ARN format. ARN must be 2 alphabetic characters followed by 13 digits (total 15 characters).');
+        return;
+      }
+      if (!record.return_pdf_url || record.return_pdf_url.trim() === '') {
+        toast.error('Return PDF is mandatory before marking as Filed. Please upload the PDF first.');
         return;
       }
     }
