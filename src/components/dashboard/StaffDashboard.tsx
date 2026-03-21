@@ -265,6 +265,17 @@ const StaffDashboard: React.FC = () => {
         }
       }
 
+      // Calculate pendingFilings as sum of all pending from returnMetrics
+      // This ensures it tallies with the return-wise breakdown
+      const totalPending = returnMetricsData.reduce((sum, rm) => sum + rm.pending, 0);
+
+      setMetrics({
+        totalClients: visibleClients.length,
+        pendingFilings: totalPending,
+        targetDueToday,
+        filedThisMonth,
+      });
+
       setReturnMetrics(returnMetricsData);
     } catch (error) {
       console.error('Error fetching metrics:', error);
