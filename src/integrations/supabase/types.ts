@@ -437,12 +437,14 @@ export type Database = {
       }
       filing_status: {
         Row: {
+          arn: string | null
           client_id: string
           filed_date: string | null
           id: string
           is_locked: boolean | null
           period_month: string
           remarks: string | null
+          return_pdf_url: string | null
           return_type: Database["public"]["Enums"]["return_type"]
           status: Database["public"]["Enums"]["filing_status_type"] | null
           target_date: number | null
@@ -450,12 +452,14 @@ export type Database = {
           updated_by: string | null
         }
         Insert: {
+          arn?: string | null
           client_id: string
           filed_date?: string | null
           id?: string
           is_locked?: boolean | null
           period_month: string
           remarks?: string | null
+          return_pdf_url?: string | null
           return_type: Database["public"]["Enums"]["return_type"]
           status?: Database["public"]["Enums"]["filing_status_type"] | null
           target_date?: number | null
@@ -463,12 +467,14 @@ export type Database = {
           updated_by?: string | null
         }
         Update: {
+          arn?: string | null
           client_id?: string
           filed_date?: string | null
           id?: string
           is_locked?: boolean | null
           period_month?: string
           remarks?: string | null
+          return_pdf_url?: string | null
           return_type?: Database["public"]["Enums"]["return_type"]
           status?: Database["public"]["Enums"]["filing_status_type"] | null
           target_date?: number | null
