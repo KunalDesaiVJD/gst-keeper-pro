@@ -556,10 +556,10 @@ const FilingStatusPage: React.FC = () => {
         toast.error('ARN is mandatory before marking as Filed. Please enter the ARN first.');
         return;
       }
-      // Validate ARN format: 2 alphabets + 13 digits = 15 characters
-      const arnRegex = /^[A-Za-z]{2}\d{13}$/;
+      // Validate ARN: exactly 15 alphanumeric characters
+      const arnRegex = /^[A-Za-z0-9]{15}$/;
       if (!arnRegex.test(record.arn.trim())) {
-        toast.error('Invalid ARN format. ARN must be 2 alphabetic characters followed by 13 digits (total 15 characters).');
+        toast.error('Invalid ARN format. ARN must be exactly 15 alphanumeric characters.');
         return;
       }
       if (!record.return_pdf_url || record.return_pdf_url.trim() === '') {

@@ -50,6 +50,9 @@ const ChatWidget: React.FC = () => {
   const [existingMembers, setExistingMembers] = useState<string[]>([]);
   const [selectedNewMembers, setSelectedNewMembers] = useState<string[]>([]);
   const [isAddingMembers, setIsAddingMembers] = useState(false);
+  const [showViewMembers, setShowViewMembers] = useState(false);
+  const [channelMembers, setChannelMembers] = useState<{id: string; name: string; role: string}[]>([]);
+  const [isRemovingMember, setIsRemovingMember] = useState<string | null>(null);
 
   // Fetch all staff users for @mention and DM list
   useEffect(() => {
@@ -182,6 +185,37 @@ const ChatWidget: React.FC = () => {
     }
   }, [activeChannelId, selectedNewMembers]);
 
+  const handleViewMembers = useCallback(async () => {
+    if (!activeChannelId) return;
+    const { data } = await supabase
+      .from('chat_channel_members')
+      .select('user_id')
+      .eq('channel_id', activeChannelId);
+    const memberIds = (data || []).map(m => m.user_id);
+    const members = allUsers.filter(u => memberIds.includes(u.id));
+    setChannelMembers(members);
+    setShowViewMembers(true);
+  }, [activeChannelId, allUsers]);
+
+  const handleRemoveMember = useCallback(async (memberId: string) => {
+    if (!activeChannelId) return;
+    setIsRemovingMember(memberId);
+    try {
+      const { error } = await supabase
+        .from('chat_channel_members')
+        .delete()
+        .eq('channel_id', activeChannelId)
+        .eq('user_id', memberId);
+      if (error) throw error;
+      setChannelMembers(prev => prev.filter(m => m.id !== memberId));
+      toast.success('Member removed');
+    } catch (err: any) {
+      toast.error('Failed to remove member: ' + err.message);
+    } finally {
+      setIsRemovingMember(null);
+    }
+  }, [activeChannelId]);
+
   // Mark as read when messages change
   useEffect(() => {
     if (isChatOpen && activeChannelId && messages.length > 0) {
@@ -251,9 +285,14 @@ const ChatWidget: React.FC = () => {
             </div>
             <div className="flex items-center gap-1">
               {activeChannelId && activeChannel?.channel_type === 'group' && (
-                <Button variant="ghost" size="icon" onClick={handleOpenAddMembers} className="h-8 w-8" title="Add Members">
-                  <UserPlus className="h-4 w-4" />
-                </Button>
+                <>
+                  <Button variant="ghost" size="icon" onClick={handleViewMembers} className="h-8 w-8" title="View Members">
+                    <Users className="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="icon" onClick={handleOpenAddMembers} className="h-8 w-8" title="Add Members">
+                    <UserPlus className="h-4 w-4" />
+                  </Button>
+                </>
               )}
               <Button variant="ghost" size="icon" onClick={handleClose} className="h-8 w-8">
                 <X className="h-4 w-4" />
@@ -528,6 +567,44 @@ const ChatWidget: React.FC = () => {
             <Button onClick={handleAddMembers} disabled={isAddingMembers || selectedNewMembers.length === 0}>
               {isAddingMembers ? 'Adding...' : `Add ${selectedNewMembers.length} Member(s)`}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View/Remove Members Dialog */}
+      <Dialog open={showViewMembers} onOpenChange={setShowViewMembers}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Members of {activeChannel?.name || 'Group'}</DialogTitle>
+          </DialogHeader>
+          <ScrollArea className="h-64 border rounded-md">
+            <div className="p-2 space-y-1">
+              {channelMembers.map(m => (
+                <div key={m.id} className="flex items-center justify-between px-2 py-2 rounded hover:bg-muted">
+                  <div>
+                    <span className="text-sm font-medium">{m.name}</span>
+                    <span className="text-xs text-muted-foreground ml-2">({m.role})</span>
+                  </div>
+                  {m.id !== user?.id && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs text-destructive hover:text-destructive"
+                      disabled={isRemovingMember === m.id}
+                      onClick={() => handleRemoveMember(m.id)}
+                    >
+                      {isRemovingMember === m.id ? 'Removing...' : 'Remove'}
+                    </Button>
+                  )}
+                </div>
+              ))}
+              {channelMembers.length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-4">No members found.</p>
+              )}
+            </div>
+          </ScrollArea>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowViewMembers(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
