@@ -570,6 +570,44 @@ const ChatWidget: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* View/Remove Members Dialog */}
+      <Dialog open={showViewMembers} onOpenChange={setShowViewMembers}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Members of {activeChannel?.name || 'Group'}</DialogTitle>
+          </DialogHeader>
+          <ScrollArea className="h-64 border rounded-md">
+            <div className="p-2 space-y-1">
+              {channelMembers.map(m => (
+                <div key={m.id} className="flex items-center justify-between px-2 py-2 rounded hover:bg-muted">
+                  <div>
+                    <span className="text-sm font-medium">{m.name}</span>
+                    <span className="text-xs text-muted-foreground ml-2">({m.role})</span>
+                  </div>
+                  {m.id !== user?.id && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs text-destructive hover:text-destructive"
+                      disabled={isRemovingMember === m.id}
+                      onClick={() => handleRemoveMember(m.id)}
+                    >
+                      {isRemovingMember === m.id ? 'Removing...' : 'Remove'}
+                    </Button>
+                  )}
+                </div>
+              ))}
+              {channelMembers.length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-4">No members found.</p>
+              )}
+            </div>
+          </ScrollArea>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowViewMembers(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 };
