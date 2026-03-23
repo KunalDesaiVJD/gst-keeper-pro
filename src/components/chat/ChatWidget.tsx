@@ -50,6 +50,9 @@ const ChatWidget: React.FC = () => {
   const [existingMembers, setExistingMembers] = useState<string[]>([]);
   const [selectedNewMembers, setSelectedNewMembers] = useState<string[]>([]);
   const [isAddingMembers, setIsAddingMembers] = useState(false);
+  const [showViewMembers, setShowViewMembers] = useState(false);
+  const [channelMembers, setChannelMembers] = useState<{id: string; name: string; role: string}[]>([]);
+  const [isRemovingMember, setIsRemovingMember] = useState<string | null>(null);
 
   // Fetch all staff users for @mention and DM list
   useEffect(() => {
