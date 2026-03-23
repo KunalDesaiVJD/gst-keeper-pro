@@ -185,6 +185,37 @@ const ChatWidget: React.FC = () => {
     }
   }, [activeChannelId, selectedNewMembers]);
 
+  const handleViewMembers = useCallback(async () => {
+    if (!activeChannelId) return;
+    const { data } = await supabase
+      .from('chat_channel_members')
+      .select('user_id')
+      .eq('channel_id', activeChannelId);
+    const memberIds = (data || []).map(m => m.user_id);
+    const members = allUsers.filter(u => memberIds.includes(u.id));
+    setChannelMembers(members);
+    setShowViewMembers(true);
+  }, [activeChannelId, allUsers]);
+
+  const handleRemoveMember = useCallback(async (memberId: string) => {
+    if (!activeChannelId) return;
+    setIsRemovingMember(memberId);
+    try {
+      const { error } = await supabase
+        .from('chat_channel_members')
+        .delete()
+        .eq('channel_id', activeChannelId)
+        .eq('user_id', memberId);
+      if (error) throw error;
+      setChannelMembers(prev => prev.filter(m => m.id !== memberId));
+      toast.success('Member removed');
+    } catch (err: any) {
+      toast.error('Failed to remove member: ' + err.message);
+    } finally {
+      setIsRemovingMember(null);
+    }
+  }, [activeChannelId]);
+
   // Mark as read when messages change
   useEffect(() => {
     if (isChatOpen && activeChannelId && messages.length > 0) {
