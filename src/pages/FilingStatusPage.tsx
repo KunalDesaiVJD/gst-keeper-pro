@@ -1281,8 +1281,8 @@ const FilingStatusPage: React.FC = () => {
                     onBlur={() => {
                       const newArn = editingArn[record.id];
                       if (newArn !== undefined && newArn !== (record.arn || '')) {
-                        if (newArn && !/^[A-Za-z]{2}\d{13}$/.test(newArn)) {
-                          toast.error('ARN must be 2 letters + 13 digits (15 chars total)');
+                        if (newArn && !/^[A-Za-z0-9]{15}$/.test(newArn)) {
+                          toast.error('ARN must be exactly 15 alphanumeric characters');
                           return;
                         }
                         handleArnChange(record, newArn);

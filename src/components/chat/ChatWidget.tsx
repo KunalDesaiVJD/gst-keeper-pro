@@ -286,9 +286,11 @@ const ChatWidget: React.FC = () => {
             <div className="flex items-center gap-1">
               {activeChannelId && activeChannel?.channel_type === 'group' && (
                 <>
-                  <Button variant="ghost" size="icon" onClick={handleViewMembers} className="h-8 w-8" title="View Members">
-                    <Users className="h-4 w-4" />
-                  </Button>
+                  {(user?.role === 'superadmin' || user?.role === 'gst_manager') && (
+                    <Button variant="ghost" size="icon" onClick={handleViewMembers} className="h-8 w-8" title="View Members">
+                      <Users className="h-4 w-4" />
+                    </Button>
+                  )}
                   <Button variant="ghost" size="icon" onClick={handleOpenAddMembers} className="h-8 w-8" title="Add Members">
                     <UserPlus className="h-4 w-4" />
                   </Button>
