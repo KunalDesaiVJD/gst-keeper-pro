@@ -26,7 +26,7 @@ import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { export2BToExcel, import2BFromExcel } from '@/utils/excelExport';
 import VersionHistoryDialog from '@/components/dialogs/VersionHistoryDialog';
-import { TwoBVersion, BillNotIn2B, isQuarterEndMonth } from '@/types';
+import { TwoBVersion, BillNotIn2B, BillNotInBooks, isQuarterEndMonth } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 
