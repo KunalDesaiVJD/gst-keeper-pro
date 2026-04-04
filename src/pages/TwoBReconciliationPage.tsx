@@ -534,8 +534,29 @@ const TwoBReconciliationPage: React.FC = () => {
       updatedAt: b.updated_at ? new Date(b.updated_at) : new Date(),
       version: b.version || 1,
     }));
+
+    const exportDataBooks: BillNotInBooks[] = localBillsBooks.map(b => ({
+      id: b.id,
+      clientId: b.client_id,
+      date: new Date(b.date),
+      supplierName: b.supplier_name,
+      supplierInvoiceNumber: b.supplier_invoice_number || '',
+      supplierGstin: b.supplier_gstin || '',
+      taxableValue: b.taxable_value || 0,
+      inputIgst: b.input_igst || 0,
+      inputCgst: b.input_cgst || 0,
+      inputSgst: b.input_sgst || 0,
+      bookEntryMonth: b.book_entry_month || '',
+      billIn2BMonth: b.bill_in_2b_month || '',
+      periodMonth: b.period_month,
+      isLocked: b.is_locked || false,
+      isCarriedForward: b.is_carried_forward || false,
+      updatedBy: b.updated_by || '',
+      updatedAt: b.updated_at ? new Date(b.updated_at) : new Date(),
+      version: b.version || 1,
+    }));
     
-    export2BToExcel(selectedClientData.name, selectedMonth, exportData2B, []);
+    export2BToExcel(selectedClientData.name, selectedMonth, exportData2B, exportDataBooks);
     toast.success('Excel file exported successfully');
   };
 
