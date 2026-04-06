@@ -443,8 +443,12 @@ const FilingStatusPage: React.FC = () => {
           }
           
           if (existingRecord) {
+            // Override target_date with the authoritative latest value from lookup
+            const lookupKey = `${client.id}__${rt}`;
+            const authoritativeTarget = targetDateLookup[lookupKey];
             records.push({
               ...existingRecord,
+              target_date: authoritativeTarget || existingRecord.target_date,
               clientName: client.name,
               clientEmail: client.email || '-',
               contactNumber: client.mobile || '-',
