@@ -144,18 +144,27 @@ const StaffDashboard: React.FC = () => {
       
       // Calculate Target Due Today: target_date <= today's day AND status != Filed (includes overdue)
       const todayDate = new Date().getDate();
-      const targetDueToday = filingData?.filter(f => 
-        f.target_date !== null && f.target_date <= todayDate && f.status !== 'Filed'
-      )?.length || 0;
+      // Helper to get authoritative target date for a filing record
+      const getAuthoritativeTargetDate = (f: any): number | null => {
+        const clientTargets = clientTargetLookup[f.client_id];
+        if (!clientTargets) return f.target_date;
+        const group1Types = ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-7', 'GSTR-6'];
+        return group1Types.includes(f.return_type) ? clientTargets.g1 : clientTargets.g2;
+      };
+
+      const targetDueToday = filingData?.filter(f => {
+        const td = getAuthoritativeTargetDate(f);
+        return td !== null && td <= todayDate && f.status !== 'Filed';
+      })?.length || 0;
 
       // Calculate return-wise breakdown for due targets (today + overdue)
-      const todayDueFilings = filingData?.filter(f => 
-        f.target_date !== null && f.target_date <= todayDate && f.status !== 'Filed'
-      ) || [];
+      const todayDueFilings = filingData?.filter(f => {
+        const td = getAuthoritativeTargetDate(f);
+        return td !== null && td <= todayDate && f.status !== 'Filed';
+      }) || [];
       
       const breakdownMap = new Map<string, number>();
       todayDueFilings.forEach(f => {
-        // Merge IFF into GSTR-1 and GSTR-3B(Q) into GSTR-3B for display
         let displayType = f.return_type;
         if (f.return_type === 'GSTR-1 (IFF)') displayType = 'GSTR-1';
         if (f.return_type === 'GSTR-3B (Q)') displayType = 'GSTR-3B';
