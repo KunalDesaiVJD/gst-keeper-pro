@@ -297,11 +297,13 @@ const FilingStatusPage: React.FC = () => {
   const fetchTargetDates = useCallback(async () => {
     const { data } = await supabase
       .from('filing_status')
-      .select('client_id, return_type, target_date')
-      .not('target_date', 'is', null);
+      .select('client_id, return_type, target_date, period_month')
+      .not('target_date', 'is', null)
+      .order('period_month', { ascending: false });
     
     if (data) {
       const lookup: Record<string, number> = {};
+      // Since ordered by period_month desc, the first entry per key is the latest
       data.forEach(r => {
         const key = `${r.client_id}__${r.return_type}`;
         if (!(key in lookup)) {
