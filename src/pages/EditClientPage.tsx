@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ArrowLeft, Save } from 'lucide-react';
+import { ArrowLeft, Save, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
@@ -29,6 +29,7 @@ const EditClientPage: React.FC = () => {
   const { clientId } = useParams<{ clientId: string }>();
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [showGstPassword, setShowGstPassword] = useState(false);
 
   const [formData, setFormData] = useState({
     gstin: '',
@@ -251,22 +252,22 @@ const EditClientPage: React.FC = () => {
       const defaultTarget = formData.defaultTargetDate ? parseInt(formData.defaultTargetDate) : null;
       const otherTarget = formData.otherTargetDate ? parseInt(formData.otherTargetDate) : null;
 
-      // Update GSTR-1, GSTR-7, GSTR-6 target dates (first group)
+      // Update GSTR-1, GSTR-1 (IFF), GSTR-7, GSTR-6 target dates (first group)
       if (defaultTarget !== null) {
         await supabase
           .from('filing_status')
           .update({ target_date: defaultTarget })
           .eq('client_id', clientId)
-          .in('return_type', ['GSTR-1', 'GSTR-7', 'GSTR-6']);
+          .in('return_type', ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-7', 'GSTR-6']);
       }
 
-      // Update GSTR-3B, ITC-04, CMP-08 target dates (second group)
+      // Update GSTR-3B, GSTR-3B (Q), ITC-04, CMP-08 target dates (second group)
       if (otherTarget !== null) {
         await supabase
           .from('filing_status')
           .update({ target_date: otherTarget })
           .eq('client_id', clientId)
-          .in('return_type', ['GSTR-3B', 'ITC-04', 'CMP-08']);
+          .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)', 'ITC-04', 'CMP-08']);
       }
 
       toast.success(`${formData.name} has been successfully updated.`);
@@ -676,13 +677,25 @@ const EditClientPage: React.FC = () => {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="gstPassword">GST Password</Label>
-                  <Input
-                    id="gstPassword"
-                    type="password"
-                    value={formData.gstPassword}
-                    onChange={(e) => setFormData(prev => ({ ...prev, gstPassword: e.target.value }))}
-                    placeholder="Enter GST portal Password"
-                  />
+                  <div className="relative">
+                    <Input
+                      id="gstPassword"
+                      type={showGstPassword ? 'text' : 'password'}
+                      value={formData.gstPassword}
+                      onChange={(e) => setFormData(prev => ({ ...prev, gstPassword: e.target.value }))}
+                      placeholder="Enter GST portal Password"
+                      className="pr-10"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                      onClick={() => setShowGstPassword(!showGstPassword)}
+                    >
+                      {showGstPassword ? <EyeOff className="h-4 w-4 text-muted-foreground" /> : <Eye className="h-4 w-4 text-muted-foreground" />}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
