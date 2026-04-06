@@ -383,6 +383,8 @@ export type Database = {
           regular_sub_type: string | null
           residential_area: number | null
           selected_returns: Database["public"]["Enums"]["return_type"][] | null
+          target_date_group1: number | null
+          target_date_group2: number | null
           updated_at: string | null
         }
         Insert: {
@@ -407,6 +409,8 @@ export type Database = {
           regular_sub_type?: string | null
           residential_area?: number | null
           selected_returns?: Database["public"]["Enums"]["return_type"][] | null
+          target_date_group1?: number | null
+          target_date_group2?: number | null
           updated_at?: string | null
         }
         Update: {
@@ -431,6 +435,8 @@ export type Database = {
           regular_sub_type?: string | null
           residential_area?: number | null
           selected_returns?: Database["public"]["Enums"]["return_type"][] | null
+          target_date_group1?: number | null
+          target_date_group2?: number | null
           updated_at?: string | null
         }
         Relationships: []
