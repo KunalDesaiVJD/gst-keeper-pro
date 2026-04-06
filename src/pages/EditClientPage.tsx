@@ -71,23 +71,9 @@ const EditClientPage: React.FC = () => {
         return;
       }
 
-      // Fetch target dates from the most recent filing status records
-      const { data: filingData } = await supabase
-        .from('filing_status')
-        .select('return_type, target_date')
-        .eq('client_id', clientId)
-        .not('target_date', 'is', null)
-        .order('period_month', { ascending: false });
-      
-      let defaultTarget = '';
-      let otherTarget = '';
-      if (filingData) {
-        // Get latest target_date per return_type (first occurrence since ordered desc)
-        const gstr1Record = filingData.find(f => f.return_type === 'GSTR-1' || f.return_type === 'GSTR-1 (IFF)');
-        const gstr3bRecord = filingData.find(f => f.return_type === 'GSTR-3B' || f.return_type === 'GSTR-3B (Q)');
-        if (gstr1Record?.target_date) defaultTarget = gstr1Record.target_date.toString();
-        if (gstr3bRecord?.target_date) otherTarget = gstr3bRecord.target_date.toString();
-      }
+      // Read target dates directly from the client record (single source of truth)
+      const defaultTarget = (data as any).target_date_group1?.toString() || '';
+      const otherTarget = (data as any).target_date_group2?.toString() || '';
 
       setFormData({
         gstin: data.gstin,
