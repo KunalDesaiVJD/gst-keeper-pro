@@ -226,6 +226,9 @@ const EditClientPage: React.FC = () => {
     setIsSaving(true);
 
     try {
+      const defaultTarget = formData.defaultTargetDate ? parseInt(formData.defaultTargetDate) : null;
+      const otherTarget = formData.otherTargetDate ? parseInt(formData.otherTargetDate) : null;
+
       const { error } = await supabase
         .from('clients')
         .update({
@@ -240,19 +243,18 @@ const EditClientPage: React.FC = () => {
           cancellation_date: formData.cancellationDate || null,
           gst_user_id: formData.gstUserId || null,
           gst_password: formData.gstPassword || null,
-          // Builder bifurcation fields
           regular_sub_type: formData.registrationType === 'Regular' ? formData.regularSubType : null,
           builder_itc_type: formData.regularSubType === 'Builder' ? formData.builderItcType : null,
           commercial_area: formData.builderItcType === 'PARTIAL_ITC' ? parseFloat(formData.commercialArea) || 0 : 0,
           residential_area: formData.builderItcType === 'PARTIAL_ITC' ? parseFloat(formData.residentialArea) || 0 : 0,
+          target_date_group1: defaultTarget,
+          target_date_group2: otherTarget,
         })
         .eq('id', clientId);
 
       if (error) throw error;
 
-      // Update target dates in filing_status records for ALL return types
-      const defaultTarget = formData.defaultTargetDate ? parseInt(formData.defaultTargetDate) : null;
-      const otherTarget = formData.otherTargetDate ? parseInt(formData.otherTargetDate) : null;
+      // Also update filing_status records for backward compatibility
 
       // Update GSTR-1, GSTR-1 (IFF), GSTR-7, GSTR-6 target dates (first group)
       if (defaultTarget !== null) {
