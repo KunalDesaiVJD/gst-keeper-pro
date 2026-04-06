@@ -108,12 +108,21 @@ const StaffDashboard: React.FC = () => {
     try {
       const { data: clientData, count: clientCount } = await supabase
         .from('clients')
-        .select('id, selected_returns, registration_date, cancellation_date, registration_type', { count: 'exact' });
+        .select('id, selected_returns, registration_date, cancellation_date, registration_type, target_date_group1, target_date_group2', { count: 'exact' });
 
       const { data: filingData } = await supabase
         .from('filing_status')
         .select('status, filed_date, target_date, return_type, client_id')
         .eq('period_month', selectedMonth);
+
+      // Build a client target date lookup from the authoritative clients table
+      const clientTargetLookup: Record<string, { g1: number; g2: number }> = {};
+      clientData?.forEach((c: any) => {
+        clientTargetLookup[c.id] = {
+          g1: c.target_date_group1 ?? 11,
+          g2: c.target_date_group2 ?? 20,
+        };
+      });
 
       const isClientVisibleForMonth = (client: any): boolean => {
         const [monthStr, yearStr] = selectedMonth.split('/');
