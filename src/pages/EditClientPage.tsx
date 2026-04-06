@@ -251,22 +251,22 @@ const EditClientPage: React.FC = () => {
       const defaultTarget = formData.defaultTargetDate ? parseInt(formData.defaultTargetDate) : null;
       const otherTarget = formData.otherTargetDate ? parseInt(formData.otherTargetDate) : null;
 
-      // Update GSTR-1, GSTR-7, GSTR-6 target dates (first group)
+      // Update GSTR-1, GSTR-1 (IFF), GSTR-7, GSTR-6 target dates (first group)
       if (defaultTarget !== null) {
         await supabase
           .from('filing_status')
           .update({ target_date: defaultTarget })
           .eq('client_id', clientId)
-          .in('return_type', ['GSTR-1', 'GSTR-7', 'GSTR-6']);
+          .in('return_type', ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-7', 'GSTR-6']);
       }
 
-      // Update GSTR-3B, ITC-04, CMP-08 target dates (second group)
+      // Update GSTR-3B, GSTR-3B (Q), ITC-04, CMP-08 target dates (second group)
       if (otherTarget !== null) {
         await supabase
           .from('filing_status')
           .update({ target_date: otherTarget })
           .eq('client_id', clientId)
-          .in('return_type', ['GSTR-3B', 'ITC-04', 'CMP-08']);
+          .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)', 'ITC-04', 'CMP-08']);
       }
 
       toast.success(`${formData.name} has been successfully updated.`);
