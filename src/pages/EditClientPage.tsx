@@ -71,23 +71,9 @@ const EditClientPage: React.FC = () => {
         return;
       }
 
-      // Fetch target dates from the most recent filing status records
-      const { data: filingData } = await supabase
-        .from('filing_status')
-        .select('return_type, target_date')
-        .eq('client_id', clientId)
-        .not('target_date', 'is', null)
-        .order('period_month', { ascending: false });
-      
-      let defaultTarget = '';
-      let otherTarget = '';
-      if (filingData) {
-        // Get latest target_date per return_type (first occurrence since ordered desc)
-        const gstr1Record = filingData.find(f => f.return_type === 'GSTR-1' || f.return_type === 'GSTR-1 (IFF)');
-        const gstr3bRecord = filingData.find(f => f.return_type === 'GSTR-3B' || f.return_type === 'GSTR-3B (Q)');
-        if (gstr1Record?.target_date) defaultTarget = gstr1Record.target_date.toString();
-        if (gstr3bRecord?.target_date) otherTarget = gstr3bRecord.target_date.toString();
-      }
+      // Read target dates directly from the client record (single source of truth)
+      const defaultTarget = (data as any).target_date_group1?.toString() || '';
+      const otherTarget = (data as any).target_date_group2?.toString() || '';
 
       setFormData({
         gstin: data.gstin,
@@ -226,6 +212,9 @@ const EditClientPage: React.FC = () => {
     setIsSaving(true);
 
     try {
+      const defaultTarget = formData.defaultTargetDate ? parseInt(formData.defaultTargetDate) : null;
+      const otherTarget = formData.otherTargetDate ? parseInt(formData.otherTargetDate) : null;
+
       const { error } = await supabase
         .from('clients')
         .update({
@@ -240,19 +229,18 @@ const EditClientPage: React.FC = () => {
           cancellation_date: formData.cancellationDate || null,
           gst_user_id: formData.gstUserId || null,
           gst_password: formData.gstPassword || null,
-          // Builder bifurcation fields
           regular_sub_type: formData.registrationType === 'Regular' ? formData.regularSubType : null,
           builder_itc_type: formData.regularSubType === 'Builder' ? formData.builderItcType : null,
           commercial_area: formData.builderItcType === 'PARTIAL_ITC' ? parseFloat(formData.commercialArea) || 0 : 0,
           residential_area: formData.builderItcType === 'PARTIAL_ITC' ? parseFloat(formData.residentialArea) || 0 : 0,
+          target_date_group1: defaultTarget,
+          target_date_group2: otherTarget,
         })
         .eq('id', clientId);
 
       if (error) throw error;
 
-      // Update target dates in filing_status records for ALL return types
-      const defaultTarget = formData.defaultTargetDate ? parseInt(formData.defaultTargetDate) : null;
-      const otherTarget = formData.otherTargetDate ? parseInt(formData.otherTargetDate) : null;
+      // Also update filing_status records for backward compatibility
 
       // Update GSTR-1, GSTR-1 (IFF), GSTR-7, GSTR-6 target dates (first group)
       if (defaultTarget !== null) {
