@@ -315,14 +315,19 @@ const FilingStatusPage: React.FC = () => {
     setTargetDateLookup(lookup);
   }, [clients]);
 
+  // Build target date lookup whenever clients change
+  useEffect(() => {
+    buildTargetDateLookup();
+  }, [buildTargetDateLookup]);
+
   useEffect(() => {
     const loadData = async () => {
       setIsLoading(true);
-      await Promise.all([fetchClients(), fetchFilingRecords(), fetchTargetDates()]);
+      await Promise.all([fetchClients(), fetchFilingRecords()]);
       setIsLoading(false);
     };
     loadData();
-  }, [fetchClients, fetchFilingRecords, fetchTargetDates]);
+  }, [fetchClients, fetchFilingRecords]);
 
   // Real-time subscription
   useEffect(() => {
