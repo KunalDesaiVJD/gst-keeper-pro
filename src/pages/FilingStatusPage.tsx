@@ -293,21 +293,34 @@ const FilingStatusPage: React.FC = () => {
     setFilingRecords(enrichedRecords);
   }, [selectedMonth]);
 
-  // Fetch target dates from all months for consistency
+  // Fetch authoritative target dates - use the most recently updated record per client/return_type
   const fetchTargetDates = useCallback(async () => {
     const { data } = await supabase
       .from('filing_status')
-      .select('client_id, return_type, target_date, period_month')
+      .select('client_id, return_type, target_date, updated_at')
       .not('target_date', 'is', null)
-      .order('period_month', { ascending: false });
+      .order('updated_at', { ascending: false });
     
     if (data) {
       const lookup: Record<string, number> = {};
-      // Since ordered by period_month desc, the first entry per key is the latest
+      // Since ordered by updated_at desc, the first entry per key is the most recently modified
       data.forEach(r => {
         const key = `${r.client_id}__${r.return_type}`;
         if (!(key in lookup)) {
           lookup[key] = r.target_date!;
+        }
+        // Also set for variant types (GSTR-1 <-> GSTR-1 (IFF), GSTR-3B <-> GSTR-3B (Q))
+        if (r.return_type === 'GSTR-1' && !(`${r.client_id}__GSTR-1 (IFF)` in lookup)) {
+          lookup[`${r.client_id}__GSTR-1 (IFF)`] = r.target_date!;
+        }
+        if (r.return_type === 'GSTR-1 (IFF)' && !(`${r.client_id}__GSTR-1` in lookup)) {
+          lookup[`${r.client_id}__GSTR-1`] = r.target_date!;
+        }
+        if (r.return_type === 'GSTR-3B' && !(`${r.client_id}__GSTR-3B (Q)` in lookup)) {
+          lookup[`${r.client_id}__GSTR-3B (Q)`] = r.target_date!;
+        }
+        if (r.return_type === 'GSTR-3B (Q)' && !(`${r.client_id}__GSTR-3B` in lookup)) {
+          lookup[`${r.client_id}__GSTR-3B`] = r.target_date!;
         }
       });
       setTargetDateLookup(lookup);
