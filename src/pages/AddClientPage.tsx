@@ -210,13 +210,14 @@ const AddClientPage: React.FC = () => {
           cancellation_date: formData.cancellationDate || null,
           gst_user_id: formData.gstUserId || null,
           gst_password: formData.gstPassword || null,
-          client_password: formData.gstin, // Set initial password to GSTIN
-          is_first_login: true, // Force password change on first login
-          // Builder bifurcation fields
+          client_password: formData.gstin,
+          is_first_login: true,
           regular_sub_type: formData.registrationType === 'Regular' ? formData.regularSubType : null,
           builder_itc_type: formData.regularSubType === 'Builder' ? formData.builderItcType : null,
           commercial_area: formData.builderItcType === 'PARTIAL_ITC' ? parseFloat(formData.commercialArea) || 0 : 0,
           residential_area: formData.builderItcType === 'PARTIAL_ITC' ? parseFloat(formData.residentialArea) || 0 : 0,
+          target_date_group1: formData.defaultTargetDate ? parseInt(formData.defaultTargetDate) : null,
+          target_date_group2: formData.otherTargetDate ? parseInt(formData.otherTargetDate) : null,
         }])
         .select()
         .single();
