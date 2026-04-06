@@ -29,6 +29,7 @@ const EditClientPage: React.FC = () => {
   const { clientId } = useParams<{ clientId: string }>();
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [showGstPassword, setShowGstPassword] = useState(false);
 
   const [formData, setFormData] = useState({
     gstin: '',
