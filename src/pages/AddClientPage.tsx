@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ArrowLeft, Save } from 'lucide-react';
+import { ArrowLeft, Save, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, Loader2 } from 'lucide-react';
@@ -696,13 +696,25 @@ const AddClientPage: React.FC = () => {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="gstPassword">GST Password</Label>
-                  <Input
-                    id="gstPassword"
-                    type="password"
-                    value={formData.gstPassword}
-                    onChange={(e) => setFormData(prev => ({ ...prev, gstPassword: e.target.value }))}
-                    placeholder="Enter GST portal Password"
-                  />
+                  <div className="relative">
+                    <Input
+                      id="gstPassword"
+                      type={showGstPassword ? 'text' : 'password'}
+                      value={formData.gstPassword}
+                      onChange={(e) => setFormData(prev => ({ ...prev, gstPassword: e.target.value }))}
+                      placeholder="Enter GST portal Password"
+                      className="pr-10"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                      onClick={() => setShowGstPassword(!showGstPassword)}
+                    >
+                      {showGstPassword ? <EyeOff className="h-4 w-4 text-muted-foreground" /> : <Eye className="h-4 w-4 text-muted-foreground" />}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
