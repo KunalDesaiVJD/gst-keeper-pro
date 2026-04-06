@@ -44,6 +44,7 @@ const AddClientPage: React.FC = () => {
   const [clientCredentials, setClientCredentials] = useState<{ userId: string; password: string } | null>(null);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [showGstPassword, setShowGstPassword] = useState(false);
   const [gstinWarning, setGstinWarning] = useState<string | null>(null);
   const [isCheckingGstin, setIsCheckingGstin] = useState(false);
 
