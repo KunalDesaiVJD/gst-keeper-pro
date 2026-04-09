@@ -490,11 +490,11 @@ const FilingStatusPage: React.FC = () => {
           
           // Determine filing frequency
           let filingFrequency: string;
-          if (client.registration_type === 'IFF' && (rt === 'GSTR-1 (IFF)' || returnType === 'GSTR-1')) {
+          if (effectiveScheme === 'IFF' && (rt === 'GSTR-1 (IFF)' || returnType === 'GSTR-1')) {
             filingFrequency = 'IFF';
           } else if (QUARTERLY_RETURN_TYPES.includes(rt) || 
-            client.registration_type === 'Composition' ||
-            (client.registration_type === 'IFF' && rt === 'GSTR-3B (Q)')) {
+            effectiveScheme === 'Composition' ||
+            (effectiveScheme === 'IFF' && rt === 'GSTR-3B (Q)')) {
             filingFrequency = 'Quarterly';
           } else {
             filingFrequency = 'Monthly';
