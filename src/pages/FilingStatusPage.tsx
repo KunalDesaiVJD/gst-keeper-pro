@@ -1080,63 +1080,8 @@ const FilingStatusPage: React.FC = () => {
     return null;
   };
 
-  const handleArnChange = async (record: FilingRecord, newArn: string) => {
-    const isNewRecord = record.id.startsWith('temp-');
-    const upperArn = newArn.toUpperCase();
-
-    // Pre-check for duplicate before saving
-    if (upperArn) {
-      const duplicateMsg = await findExistingArnOwner(upperArn, record.id);
-      if (duplicateMsg) {
-        toast.error(duplicateMsg);
-        return;
-      }
-    }
-    
-    if (isNewRecord) {
-      try {
-        const { error } = await supabase
-          .from('filing_status')
-          .insert([{
-            client_id: record.client_id,
-            return_type: record.return_type as any,
-            period_month: selectedMonth,
-            status: record.status,
-            target_date: record.target_date,
-            arn: upperArn || null,
-          }]);
-        if (error) {
-          if (error.message.includes('filing_status_arn_unique')) {
-            toast.error('This ARN already exists. ARN must be unique across all clients.');
-          } else {
-            throw error;
-          }
-        }
-        fetchFilingRecords();
-      } catch (error: any) {
-        console.error('Error saving ARN:', error);
-        toast.error('Failed to save ARN: ' + error.message);
-      }
-    } else {
-      try {
-        const { error } = await supabase
-          .from('filing_status')
-          .update({ arn: upperArn || null })
-          .eq('id', record.id);
-        if (error) {
-          if (error.message.includes('filing_status_arn_unique')) {
-            toast.error('This ARN already exists. ARN must be unique across all clients.');
-          } else {
-            throw error;
-          }
-        }
-        fetchFilingRecords();
-      } catch (error: any) {
-        console.error('Error updating ARN:', error);
-        toast.error('Failed to update ARN: ' + error.message);
-      }
-    }
-  };
+  // ARN is now only saved to DB when status is changed to "Filed"
+  // No separate handleArnChange that persists to DB on blur
 
   const handlePdfUpload = async (record: FilingRecord, file: File) => {
     const isNewRecord = record.id.startsWith('temp-');
