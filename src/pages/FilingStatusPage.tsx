@@ -322,14 +322,58 @@ const FilingStatusPage: React.FC = () => {
     buildTargetDateLookup();
   }, [buildTargetDateLookup]);
 
+  // Fetch scheme history for all clients
+  const fetchSchemeHistories = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('client_scheme_history')
+      .select('*')
+      .order('effective_from_date', { ascending: true });
+    
+    if (error) {
+      console.error('Error fetching scheme history:', error);
+      return;
+    }
+    
+    const map: Record<string, SchemeHistoryEntry[]> = {};
+    (data || []).forEach((entry: any) => {
+      if (!map[entry.client_id]) map[entry.client_id] = [];
+      map[entry.client_id].push(entry as SchemeHistoryEntry);
+    });
+    setSchemeHistoryMap(map);
+  }, []);
+
+  // Resolve effective scheme for a client at a given period
+  const getEffectiveScheme = useCallback((clientId: string, periodMonth: string, currentScheme: string): string => {
+    const history = schemeHistoryMap[clientId];
+    if (!history || history.length === 0) return currentScheme;
+
+    const [mm, yyyy] = periodMonth.split('/');
+    if (!mm || !yyyy) return currentScheme;
+    const periodDate = new Date(parseInt(yyyy), parseInt(mm) - 1, 1);
+
+    let effectiveScheme = history[0].old_scheme;
+
+    for (const entry of history) {
+      const effectiveDate = new Date(entry.effective_from_date);
+      const effectiveMonthStart = new Date(effectiveDate.getFullYear(), effectiveDate.getMonth(), 1);
+      if (periodDate >= effectiveMonthStart) {
+        effectiveScheme = entry.new_scheme;
+      } else {
+        break;
+      }
+    }
+
+    return effectiveScheme;
+  }, [schemeHistoryMap]);
+
   useEffect(() => {
     const loadData = async () => {
       setIsLoading(true);
-      await Promise.all([fetchClients(), fetchFilingRecords()]);
+      await Promise.all([fetchClients(), fetchFilingRecords(), fetchSchemeHistories()]);
       setIsLoading(false);
     };
     loadData();
-  }, [fetchClients, fetchFilingRecords]);
+  }, [fetchClients, fetchFilingRecords, fetchSchemeHistories]);
 
   // Real-time subscription
   useEffect(() => {
