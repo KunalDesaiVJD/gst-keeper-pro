@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Download, FileText, Lock, Unlock, Search, Filter, ChevronDown, Info, Upload, Eye, Trash2 } from 'lucide-react';
-import { FilingStatusType, ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth } from '@/types';
+import { FilingStatusType, ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth, RegistrationType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -17,6 +17,7 @@ import { useMonth } from '@/contexts/MonthContext';
 import { supabase } from '@/integrations/supabase/client';
 import GSTPortalLink from '@/components/clients/GSTPortalLink';
 import ClientHoverDetails from '@/components/filing/ClientHoverDetails';
+import { SchemeHistoryEntry } from '@/utils/schemeResolver';
 
 
 // Due date constants for each return type
@@ -81,6 +82,7 @@ const FilingStatusPage: React.FC = () => {
   const [targetDateLookup, setTargetDateLookup] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [lateFilingsFilter, setLateFilingsFilter] = useState<boolean>(false);
+  const [schemeHistoryMap, setSchemeHistoryMap] = useState<Record<string, SchemeHistoryEntry[]>>({});
   
   // Filter states
   const [clientNameFilter, setClientNameFilter] = useState<string>('');
@@ -320,14 +322,58 @@ const FilingStatusPage: React.FC = () => {
     buildTargetDateLookup();
   }, [buildTargetDateLookup]);
 
+  // Fetch scheme history for all clients
+  const fetchSchemeHistories = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('client_scheme_history')
+      .select('*')
+      .order('effective_from_date', { ascending: true });
+    
+    if (error) {
+      console.error('Error fetching scheme history:', error);
+      return;
+    }
+    
+    const map: Record<string, SchemeHistoryEntry[]> = {};
+    (data || []).forEach((entry: any) => {
+      if (!map[entry.client_id]) map[entry.client_id] = [];
+      map[entry.client_id].push(entry as SchemeHistoryEntry);
+    });
+    setSchemeHistoryMap(map);
+  }, []);
+
+  // Resolve effective scheme for a client at a given period
+  const getEffectiveScheme = useCallback((clientId: string, periodMonth: string, currentScheme: string): string => {
+    const history = schemeHistoryMap[clientId];
+    if (!history || history.length === 0) return currentScheme;
+
+    const [mm, yyyy] = periodMonth.split('/');
+    if (!mm || !yyyy) return currentScheme;
+    const periodDate = new Date(parseInt(yyyy), parseInt(mm) - 1, 1);
+
+    let effectiveScheme = history[0].old_scheme;
+
+    for (const entry of history) {
+      const effectiveDate = new Date(entry.effective_from_date);
+      const effectiveMonthStart = new Date(effectiveDate.getFullYear(), effectiveDate.getMonth(), 1);
+      if (periodDate >= effectiveMonthStart) {
+        effectiveScheme = entry.new_scheme;
+      } else {
+        break;
+      }
+    }
+
+    return effectiveScheme;
+  }, [schemeHistoryMap]);
+
   useEffect(() => {
     const loadData = async () => {
       setIsLoading(true);
-      await Promise.all([fetchClients(), fetchFilingRecords()]);
+      await Promise.all([fetchClients(), fetchFilingRecords(), fetchSchemeHistories()]);
       setIsLoading(false);
     };
     loadData();
-  }, [fetchClients, fetchFilingRecords]);
+  }, [fetchClients, fetchFilingRecords, fetchSchemeHistories]);
 
   // Real-time subscription
   useEffect(() => {
@@ -417,8 +463,14 @@ const FilingStatusPage: React.FC = () => {
         return; // Skip this client
       }
       
-      const selectedReturns = client.selected_returns || [];
-      const isQuarterlyClient = client.registration_type === 'IFF' || client.registration_type === 'Composition';
+      // Resolve effective scheme for this period using scheme history
+      const effectiveScheme = getEffectiveScheme(client.id, selectedMonth, client.registration_type);
+      const effectiveReturns = RETURN_TYPES_BY_REGISTRATION[effectiveScheme as RegistrationType] || [];
+      
+      // Use effective scheme's returns instead of current selected_returns for scheme-changed clients
+      const hasSchemeHistory = schemeHistoryMap[client.id]?.length > 0;
+      const selectedReturns = hasSchemeHistory ? effectiveReturns : (client.selected_returns || []);
+      const isQuarterlyClient = effectiveScheme === 'IFF' || effectiveScheme === 'Composition';
       
       // Check if client has any of the return types we're looking for
       for (const rt of returnTypesToCheck) {
@@ -438,11 +490,11 @@ const FilingStatusPage: React.FC = () => {
           
           // Determine filing frequency
           let filingFrequency: string;
-          if (client.registration_type === 'IFF' && (rt === 'GSTR-1 (IFF)' || returnType === 'GSTR-1')) {
+          if (effectiveScheme === 'IFF' && (rt === 'GSTR-1 (IFF)' || returnType === 'GSTR-1')) {
             filingFrequency = 'IFF';
           } else if (QUARTERLY_RETURN_TYPES.includes(rt) || 
-            client.registration_type === 'Composition' ||
-            (client.registration_type === 'IFF' && rt === 'GSTR-3B (Q)')) {
+            effectiveScheme === 'Composition' ||
+            (effectiveScheme === 'IFF' && rt === 'GSTR-3B (Q)')) {
             filingFrequency = 'Quarterly';
           } else {
             filingFrequency = 'Monthly';

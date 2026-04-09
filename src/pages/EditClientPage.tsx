@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -6,10 +6,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ArrowLeft, Save, Eye, EyeOff } from 'lucide-react';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { ArrowLeft, Save, Eye, EyeOff, AlertTriangle, History } from 'lucide-react';
 import { toast } from 'sonner';
 import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
+import { fetchSchemeHistory, SchemeHistoryEntry } from '@/utils/schemeResolver';
+import { format } from 'date-fns';
 
 interface ClientData {
   id: string;
@@ -27,9 +31,13 @@ interface ClientData {
 const EditClientPage: React.FC = () => {
   const navigate = useNavigate();
   const { clientId } = useParams<{ clientId: string }>();
+  const { user } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [showGstPassword, setShowGstPassword] = useState(false);
+
+  // Original registration type loaded from DB
+  const originalRegType = useRef<RegistrationType | ''>('');
 
   const [formData, setFormData] = useState({
     gstin: '',
@@ -41,18 +49,26 @@ const EditClientPage: React.FC = () => {
     assignedAccountant: '',
     selectedReturns: [] as ReturnType[],
     cancellationDate: '',
-    defaultTargetDate: '', // Target Date (GSTR-1, GSTR-7)
-    otherTargetDate: '', // Target Date (GSTR-3B, ITC-04)
-    gstUserId: '', // GST Portal User ID
-    gstPassword: '', // GST Portal Password
-    // Builder bifurcation for Regular type
+    defaultTargetDate: '',
+    otherTargetDate: '',
+    gstUserId: '',
+    gstPassword: '',
     regularSubType: '' as '' | 'Builder' | 'Normal',
     builderItcType: '' as '' | 'NO_ITC' | 'CLAIM_ITC' | 'PARTIAL_ITC',
     commercialArea: '',
     residentialArea: '',
   });
 
+  // Scheme transition state
+  const [effectiveFromDate, setEffectiveFromDate] = useState('');
+  const [schemeChangeNotes, setSchemeChangeNotes] = useState('');
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [schemeHistory, setSchemeHistory] = useState<SchemeHistoryEntry[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const schemeChanged = formData.registrationType !== '' && originalRegType.current !== '' && formData.registrationType !== originalRegType.current;
 
   // Fetch client data
   useEffect(() => {
@@ -71,14 +87,16 @@ const EditClientPage: React.FC = () => {
         return;
       }
 
-      // Read target dates directly from the client record (single source of truth)
       const defaultTarget = (data as any).target_date_group1?.toString() || '';
       const otherTarget = (data as any).target_date_group2?.toString() || '';
+
+      const regType = data.registration_type as RegistrationType;
+      originalRegType.current = regType;
 
       setFormData({
         gstin: data.gstin,
         name: data.name,
-        registrationType: data.registration_type as RegistrationType,
+        registrationType: regType,
         registrationDate: data.registration_date,
         mobile: data.mobile || '',
         email: data.email || '',
@@ -89,32 +107,33 @@ const EditClientPage: React.FC = () => {
         otherTargetDate: otherTarget,
         gstUserId: (data as any).gst_user_id || '',
         gstPassword: (data as any).gst_password || '',
-        // Builder bifurcation fields
         regularSubType: (data as any).regular_sub_type || '',
         builderItcType: (data as any).builder_itc_type || '',
         commercialArea: (data as any).commercial_area?.toString() || '',
         residentialArea: (data as any).residential_area?.toString() || '',
       });
+
+      // Load scheme history
+      const history = await fetchSchemeHistory(clientId);
+      setSchemeHistory(history);
+
       setIsLoading(false);
     };
 
     fetchClient();
   }, [clientId, navigate]);
 
-  // Get available returns based on registration type
   const availableReturns = useMemo(() => {
     if (!formData.registrationType) return [];
     return RETURN_TYPES_BY_REGISTRATION[formData.registrationType as RegistrationType] || [];
   }, [formData.registrationType]);
 
-  // Reset selected returns when registration type changes
   const handleRegistrationTypeChange = (value: RegistrationType) => {
     const newAvailableReturns = RETURN_TYPES_BY_REGISTRATION[value] || [];
     setFormData(prev => ({
       ...prev,
       registrationType: value,
       selectedReturns: prev.selectedReturns.filter(r => newAvailableReturns.includes(r)),
-      // Reset builder-related fields when registration type changes
       regularSubType: value === 'Regular' ? prev.regularSubType : '',
       builderItcType: value === 'Regular' ? prev.builderItcType : '',
       commercialArea: value === 'Regular' ? prev.commercialArea : '',
@@ -144,7 +163,6 @@ const EditClientPage: React.FC = () => {
     } else if (formData.gstin.length !== 15) {
       newErrors.gstin = 'GSTIN must be exactly 15 characters';
     } else if (formData.registrationType !== 'Tax Deductor' && !validateGSTIN(formData.gstin)) {
-      // Skip GSTIN format validation for Tax Deductor
       newErrors.gstin = 'Invalid GSTIN format';
     }
 
@@ -172,14 +190,12 @@ const EditClientPage: React.FC = () => {
       newErrors.returns = 'Select at least one return type';
     }
 
-    // Validate cancellation date
     if (formData.cancellationDate && formData.registrationDate) {
       if (new Date(formData.cancellationDate) < new Date(formData.registrationDate)) {
         newErrors.cancellationDate = 'Cancellation date cannot be before registration date';
       }
     }
 
-    // Validate builder fields for Regular type
     if (formData.registrationType === 'Regular' && !formData.regularSubType) {
       newErrors.regularSubType = 'Please select Builder or Normal';
     }
@@ -197,6 +213,15 @@ const EditClientPage: React.FC = () => {
       }
     }
 
+    // Validate effective from date when scheme changed
+    if (schemeChanged) {
+      if (!effectiveFromDate) {
+        newErrors.effectiveFromDate = 'Effective From Date is required when changing scheme';
+      } else if (formData.registrationDate && new Date(effectiveFromDate) < new Date(formData.registrationDate)) {
+        newErrors.effectiveFromDate = 'Effective From Date cannot be before registration date';
+      }
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -209,11 +234,43 @@ const EditClientPage: React.FC = () => {
       return;
     }
 
+    // If scheme changed, show confirmation dialog first
+    if (schemeChanged) {
+      setShowConfirmDialog(true);
+      return;
+    }
+
+    await performSave();
+  };
+
+  const performSave = async () => {
     setIsSaving(true);
+    setShowConfirmDialog(false);
 
     try {
       const defaultTarget = formData.defaultTargetDate ? parseInt(formData.defaultTargetDate) : null;
       const otherTarget = formData.otherTargetDate ? parseInt(formData.otherTargetDate) : null;
+
+      // If scheme changed, record it in history
+      if (schemeChanged && effectiveFromDate) {
+        const { error: historyError } = await supabase
+          .from('client_scheme_history')
+          .insert({
+            client_id: clientId,
+            old_scheme: originalRegType.current,
+            new_scheme: formData.registrationType,
+            effective_from_date: effectiveFromDate,
+            changed_by: user?.id || null,
+            notes: schemeChangeNotes || null,
+          });
+
+        if (historyError) {
+          console.error('Error saving scheme history:', historyError);
+          toast.error('Failed to record scheme change history');
+          setIsSaving(false);
+          return;
+        }
+      }
 
       const { error } = await supabase
         .from('clients')
@@ -240,23 +297,20 @@ const EditClientPage: React.FC = () => {
 
       if (error) throw error;
 
-      // Also update filing_status records for backward compatibility
-
-      // Update GSTR-1, GSTR-1 (IFF), GSTR-7, GSTR-6 target dates (first group)
+      // Update filing_status target dates
       if (defaultTarget !== null) {
         await supabase
           .from('filing_status')
           .update({ target_date: defaultTarget })
-          .eq('client_id', clientId)
+          .eq('client_id', clientId!)
           .in('return_type', ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-7', 'GSTR-6']);
       }
 
-      // Update GSTR-3B, GSTR-3B (Q), ITC-04, CMP-08 target dates (second group)
       if (otherTarget !== null) {
         await supabase
           .from('filing_status')
           .update({ target_date: otherTarget })
-          .eq('client_id', clientId)
+          .eq('client_id', clientId!)
           .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)', 'ITC-04', 'CMP-08']);
       }
 
@@ -360,6 +414,86 @@ const EditClientPage: React.FC = () => {
               </Select>
               {errors.registrationType && <p className="text-sm text-destructive">{errors.registrationType}</p>}
             </div>
+
+            {/* Scheme Change Section - shown only when registration type changes */}
+            {schemeChanged && (
+              <div className="border-2 border-amber-400 rounded-lg p-4 space-y-4 bg-amber-50 dark:bg-amber-950/20">
+                <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
+                  <AlertTriangle className="h-5 w-5" />
+                  <h4 className="font-semibold">Scheme Change Detected</h4>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  You are changing the registration type from <strong>{originalRegType.current}</strong> to <strong>{formData.registrationType}</strong>. 
+                  Please specify an Effective From Date. Previous periods will stay under the old scheme. The new scheme will apply from this date onward.
+                </p>
+                <div className="space-y-2">
+                  <Label htmlFor="effectiveFromDate">Effective From Date *</Label>
+                  <Input
+                    id="effectiveFromDate"
+                    type="date"
+                    value={effectiveFromDate}
+                    onChange={(e) => setEffectiveFromDate(e.target.value)}
+                    min={formData.registrationDate || undefined}
+                    className={errors.effectiveFromDate ? 'border-destructive' : ''}
+                  />
+                  {errors.effectiveFromDate && <p className="text-sm text-destructive">{errors.effectiveFromDate}</p>}
+                  <p className="text-xs text-muted-foreground">
+                    Old scheme will apply to periods before this date. New scheme will apply from this date onward.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="schemeChangeNotes">Notes (Optional)</Label>
+                  <Input
+                    id="schemeChangeNotes"
+                    value={schemeChangeNotes}
+                    onChange={(e) => setSchemeChangeNotes(e.target.value)}
+                    placeholder="Reason for scheme change..."
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Scheme History Toggle */}
+            {schemeHistory.length > 0 && (
+              <div className="space-y-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="flex items-center gap-2"
+                  onClick={() => setShowHistory(!showHistory)}
+                >
+                  <History className="h-4 w-4" />
+                  {showHistory ? 'Hide' : 'Show'} Scheme History ({schemeHistory.length})
+                </Button>
+                {showHistory && (
+                  <div className="border rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/50">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Date</th>
+                          <th className="px-3 py-2 text-left">Old Scheme</th>
+                          <th className="px-3 py-2 text-left">New Scheme</th>
+                          <th className="px-3 py-2 text-left">Effective From</th>
+                          <th className="px-3 py-2 text-left">Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {schemeHistory.map((h) => (
+                          <tr key={h.id} className="border-t">
+                            <td className="px-3 py-2">{format(new Date(h.changed_at), 'dd-MM-yyyy')}</td>
+                            <td className="px-3 py-2">{h.old_scheme}</td>
+                            <td className="px-3 py-2">{h.new_scheme}</td>
+                            <td className="px-3 py-2">{format(new Date(h.effective_from_date), 'dd-MM-yyyy')}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{h.notes || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Builder/Normal Sub-Type for Regular Registration */}
             {formData.registrationType === 'Regular' && (
@@ -509,7 +643,7 @@ const EditClientPage: React.FC = () => {
               </div>
             )}
 
-            {/* Return Types - Conditional based on Registration Type */}
+            {/* Return Types */}
             {formData.registrationType && (
               <div className="space-y-3">
                 <Label>Select Return Types *</Label>
@@ -538,7 +672,6 @@ const EditClientPage: React.FC = () => {
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Target Date (GSTR-1, GSTR-7, GSTR-6) */}
               <div className="space-y-2">
                 <Label htmlFor="defaultTargetDate">Target Date (GSTR-1, GSTR-7, GSTR-6)</Label>
                 <Input
@@ -563,7 +696,6 @@ const EditClientPage: React.FC = () => {
                 <p className="text-xs text-muted-foreground">Day 1-30 for GSTR-1, GSTR-7 & GSTR-6</p>
               </div>
 
-              {/* Target Date (GSTR-3B, ITC-04, CMP-08) */}
               <div className="space-y-2">
                 <Label htmlFor="otherTargetDate">Target Date (GSTR-3B, ITC-04, CMP-08)</Label>
                 <Input
@@ -590,7 +722,6 @@ const EditClientPage: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Assigned Accountant */}
               <div className="space-y-2">
                 <Label htmlFor="assignedAccountant">Assigned Accountant</Label>
                 <Input
@@ -601,7 +732,6 @@ const EditClientPage: React.FC = () => {
                 />
               </div>
 
-              {/* Cancellation Date - moved here */}
               <div className="space-y-2">
                 <Label htmlFor="cancellationDate">Cancellation Date (Optional)</Label>
                 <Input
@@ -619,7 +749,6 @@ const EditClientPage: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Mobile */}
               <div className="space-y-2">
                 <Label htmlFor="mobile">Mobile Number</Label>
                 <Input
@@ -634,7 +763,6 @@ const EditClientPage: React.FC = () => {
                 {errors.mobile && <p className="text-sm text-destructive">{errors.mobile}</p>}
               </div>
 
-              {/* Email */}
               <div className="space-y-2">
                 <Label htmlFor="email">Email Address</Label>
                 <Input
@@ -703,6 +831,51 @@ const EditClientPage: React.FC = () => {
           </form>
         </CardContent>
       </Card>
+
+      {/* Scheme Change Confirmation Dialog */}
+      <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm Scheme Change</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>You are about to change the registration scheme for <strong>{formData.name}</strong>. Please review the details below:</p>
+                <div className="bg-muted rounded-lg p-4 space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Old Scheme:</span>
+                    <span className="font-medium">{originalRegType.current}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">New Scheme:</span>
+                    <span className="font-medium">{formData.registrationType}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Effective From:</span>
+                    <span className="font-medium">{effectiveFromDate ? format(new Date(effectiveFromDate), 'dd-MM-yyyy') : '-'}</span>
+                  </div>
+                  {schemeChangeNotes && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Notes:</span>
+                      <span className="font-medium">{schemeChangeNotes}</span>
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Filing periods before the effective date will remain under <strong>{originalRegType.current}</strong>. 
+                  Periods from the effective date onward will follow <strong>{formData.registrationType}</strong>. 
+                  Past filed returns will not be affected.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={performSave}>
+              Confirm & Save
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
