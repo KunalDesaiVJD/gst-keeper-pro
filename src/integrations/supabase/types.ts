@@ -360,6 +360,47 @@ export type Database = {
         }
         Relationships: []
       }
+      client_scheme_history: {
+        Row: {
+          changed_at: string
+          changed_by: string | null
+          client_id: string
+          effective_from_date: string
+          id: string
+          new_scheme: string
+          notes: string | null
+          old_scheme: string
+        }
+        Insert: {
+          changed_at?: string
+          changed_by?: string | null
+          client_id: string
+          effective_from_date: string
+          id?: string
+          new_scheme: string
+          notes?: string | null
+          old_scheme: string
+        }
+        Update: {
+          changed_at?: string
+          changed_by?: string | null
+          client_id?: string
+          effective_from_date?: string
+          id?: string
+          new_scheme?: string
+          notes?: string | null
+          old_scheme?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_scheme_history_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       clients: {
         Row: {
           assigned_accountant: string | null
