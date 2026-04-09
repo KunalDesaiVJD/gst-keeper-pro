@@ -1301,7 +1301,7 @@ const FilingStatusPage: React.FC = () => {
                   <Select 
                     value={record.status} 
                     disabled={record.is_locked && !canUnlockSheets()}
-                    onValueChange={(value) => handleStatusChange(record, value as FilingStatusType)}
+                    onValueChange={(value) => handleStatusChange(record, value as FilingStatusType, editingArn[record.id])}
                   >
                     <SelectTrigger className="w-40 h-8 [appearance:none]">
                       <SelectValue />
@@ -1324,14 +1324,7 @@ const FilingStatusPage: React.FC = () => {
                       setEditingArn(prev => ({ ...prev, [record.id]: val }));
                     }}
                     onBlur={() => {
-                      const newArn = editingArn[record.id];
-                      if (newArn !== undefined && newArn !== (record.arn || '')) {
-                        if (newArn && !/^[A-Za-z0-9]{15}$/.test(newArn)) {
-                          toast.error('ARN must be exactly 15 alphanumeric characters');
-                          return;
-                        }
-                        handleArnChange(record, newArn);
-                      }
+                      // ARN is kept local only - it will be saved when status is changed to "Filed"
                     }}
                     placeholder="AA1234567890123"
                     className="w-36 h-7 text-xs font-mono"
