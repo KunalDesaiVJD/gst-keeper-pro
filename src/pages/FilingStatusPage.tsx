@@ -701,7 +701,9 @@ const FilingStatusPage: React.FC = () => {
           
           // For GSTR-3B (Q), only check in quarter-end months
           const isQuarterEndPrev = isQuarterEndMonth(prevMonth);
-          const isClientQuarterly = client && (client.registration_type === 'IFF' || client.registration_type === 'Composition');
+          // Use return_type to reliably detect quarterly 3B clients
+          const isQuarterlyGstr3b = record.return_type === 'GSTR-1 (IFF)';
+          const isClientQuarterly = isQuarterlyGstr3b || (client && (client.registration_type === 'IFF' || client.registration_type === 'Composition'));
           
           // Check GSTR-3B only if previous month is quarter-end for quarterly clients, or always for regular clients
           const shouldCheckGstr3b = !isClientQuarterly || isQuarterEndPrev;
