@@ -82,6 +82,7 @@ const FilingStatusPage: React.FC = () => {
   const [targetDateLookup, setTargetDateLookup] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [lateFilingsFilter, setLateFilingsFilter] = useState<boolean>(false);
+  const [schemeHistoryMap, setSchemeHistoryMap] = useState<Record<string, SchemeHistoryEntry[]>>({});
   
   // Filter states
   const [clientNameFilter, setClientNameFilter] = useState<string>('');
