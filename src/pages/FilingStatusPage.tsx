@@ -602,7 +602,7 @@ const FilingStatusPage: React.FC = () => {
     toast.success('PDF exported successfully');
   };
 
-  const handleStatusChange = async (record: FilingRecord, newStatus: FilingStatusType) => {
+  const handleStatusChange = async (record: FilingRecord, newStatus: FilingStatusType, localArn?: string) => {
     const isNewRecord = record.id.startsWith('temp-');
     
     // Check if user is allowed to change from Filed status
@@ -616,14 +616,20 @@ const FilingStatusPage: React.FC = () => {
 
     // ARN and Return PDF validation before allowing "Filed" status
     if (newStatus === 'Filed') {
-      if (!record.arn || record.arn.trim() === '') {
+      const arnToSave = (localArn ?? record.arn ?? '').trim().toUpperCase();
+      if (!arnToSave) {
         toast.error('ARN is mandatory before marking as Filed. Please enter the ARN first.');
         return;
       }
-      // Validate ARN: exactly 15 alphanumeric characters
       const arnRegex = /^[A-Za-z0-9]{15}$/;
-      if (!arnRegex.test(record.arn.trim())) {
+      if (!arnRegex.test(arnToSave)) {
         toast.error('Invalid ARN format. ARN must be exactly 15 alphanumeric characters.');
+        return;
+      }
+      // Check for duplicate ARN
+      const duplicateMsg = await findExistingArnOwner(arnToSave, record.id);
+      if (duplicateMsg) {
+        toast.error(duplicateMsg);
         return;
       }
       if (!record.return_pdf_url || record.return_pdf_url.trim() === '') {
