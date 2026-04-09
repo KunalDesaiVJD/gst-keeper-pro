@@ -804,7 +804,7 @@ const FilingStatusPage: React.FC = () => {
             filed_date: newStatus === 'Filed' ? new Date().toISOString().split('T')[0] : null,
             updated_by: user?.id || null,
             updated_at: new Date().toISOString(),
-            arn: record.arn || null,
+            arn: newStatus === 'Filed' ? (localArn ?? record.arn ?? '').trim().toUpperCase() : null,
             return_pdf_url: record.return_pdf_url || null,
           }]);
         
@@ -819,9 +819,11 @@ const FilingStatusPage: React.FC = () => {
         
         if (newStatus === 'Filed') {
           updateData.filed_date = new Date().toISOString().split('T')[0];
+          updateData.arn = (localArn ?? record.arn ?? '').trim().toUpperCase();
         } else {
-          // If changing from Filed to another status, clear filed_date
+          // If changing from Filed to another status, clear filed_date and ARN
           updateData.filed_date = null;
+          updateData.arn = null;
         }
         
         const { error } = await supabase
