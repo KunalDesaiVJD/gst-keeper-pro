@@ -1061,9 +1061,37 @@ const FilingStatusPage: React.FC = () => {
     return Array.from(dates).sort((a, b) => a - b);
   };
 
+  const findExistingArnOwner = async (arn: string, excludeRecordId?: string): Promise<string | null> => {
+    if (!arn) return null;
+    let query = supabase
+      .from('filing_status')
+      .select('client_id, return_type, period_month')
+      .eq('arn', arn.toUpperCase());
+    if (excludeRecordId && !excludeRecordId.startsWith('temp-')) {
+      query = query.neq('id', excludeRecordId);
+    }
+    const { data } = await query.limit(1);
+    if (data && data.length > 0) {
+      const match = data[0];
+      const client = clients.find(c => c.id === match.client_id);
+      const clientName = client?.name || 'Unknown Client';
+      return `ARN "${arn.toUpperCase()}" is already used by ${clientName} (${match.return_type}, ${match.period_month})`;
+    }
+    return null;
+  };
+
   const handleArnChange = async (record: FilingRecord, newArn: string) => {
     const isNewRecord = record.id.startsWith('temp-');
     const upperArn = newArn.toUpperCase();
+
+    // Pre-check for duplicate before saving
+    if (upperArn) {
+      const duplicateMsg = await findExistingArnOwner(upperArn, record.id);
+      if (duplicateMsg) {
+        toast.error(duplicateMsg);
+        return;
+      }
+    }
     
     if (isNewRecord) {
       try {
@@ -1079,7 +1107,7 @@ const FilingStatusPage: React.FC = () => {
           }]);
         if (error) {
           if (error.message.includes('filing_status_arn_unique')) {
-            toast.error('This ARN already exists. ARN must be unique.');
+            toast.error('This ARN already exists. ARN must be unique across all clients.');
           } else {
             throw error;
           }
@@ -1097,7 +1125,7 @@ const FilingStatusPage: React.FC = () => {
           .eq('id', record.id);
         if (error) {
           if (error.message.includes('filing_status_arn_unique')) {
-            toast.error('This ARN already exists. ARN must be unique.');
+            toast.error('This ARN already exists. ARN must be unique across all clients.');
           } else {
             throw error;
           }
