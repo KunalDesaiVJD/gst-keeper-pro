@@ -463,8 +463,14 @@ const FilingStatusPage: React.FC = () => {
         return; // Skip this client
       }
       
-      const selectedReturns = client.selected_returns || [];
-      const isQuarterlyClient = client.registration_type === 'IFF' || client.registration_type === 'Composition';
+      // Resolve effective scheme for this period using scheme history
+      const effectiveScheme = getEffectiveScheme(client.id, selectedMonth, client.registration_type);
+      const effectiveReturns = RETURN_TYPES_BY_REGISTRATION[effectiveScheme as RegistrationType] || [];
+      
+      // Use effective scheme's returns instead of current selected_returns for scheme-changed clients
+      const hasSchemeHistory = schemeHistoryMap[client.id]?.length > 0;
+      const selectedReturns = hasSchemeHistory ? effectiveReturns : (client.selected_returns || []);
+      const isQuarterlyClient = effectiveScheme === 'IFF' || effectiveScheme === 'Composition';
       
       // Check if client has any of the return types we're looking for
       for (const rt of returnTypesToCheck) {
