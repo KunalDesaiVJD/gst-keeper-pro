@@ -22,24 +22,51 @@ export const exportFilingStatusToPDF = (
   doc.setFont('helvetica', 'bold');
   doc.text(`${returnType} Filing Status - ${month}`, 148, 35, { align: 'center' });
 
+  // Show ARN column for GSTR-1 and GSTR-3B (including IFF/Quarterly variants)
+  const showArn = /^(GSTR-1|GSTR-3B)/.test(returnType);
+
   // Table
-  const tableData = records.map((record, idx) => [
-    idx + 1,
-    record.clientName,
-    record.accountantName,
-    record.filingFrequency,
-    record.status,
-    record.targetDate,
-    record.filedDate ? new Date(record.filedDate).toLocaleDateString('en-IN') : '-',
-    record.remarks || '-'
-  ]);
+  const head = showArn
+    ? [['Sr.', 'Client Name', 'Accountant', 'Frequency', 'Status', 'Target', 'Filed Date', 'ARN', 'Remarks']]
+    : [['Sr.', 'Client Name', 'Accountant', 'Frequency', 'Status', 'Target', 'Filed Date', 'Remarks']];
+
+  const tableData = records.map((record, idx) => {
+    const base = [
+      idx + 1,
+      record.clientName,
+      record.accountantName,
+      record.filingFrequency,
+      record.status,
+      record.targetDate,
+      record.filedDate ? new Date(record.filedDate).toLocaleDateString('en-IN') : '-',
+    ];
+    if (showArn) base.push(record.arn || '-');
+    base.push(record.remarks || '-');
+    return base;
+  });
+
+  const columnStyles: Record<number, any> = {
+    0: { cellWidth: 10 },
+    1: { cellWidth: 50 },
+    2: { cellWidth: 25 },
+    3: { cellWidth: 22 },
+    4: { cellWidth: 28 },
+    5: { cellWidth: 14 },
+    6: { cellWidth: 22 },
+  };
+  if (showArn) {
+    columnStyles[7] = { cellWidth: 32 };
+    columnStyles[8] = { cellWidth: 'auto' };
+  } else {
+    columnStyles[7] = { cellWidth: 'auto' };
+  }
 
   autoTable(doc, {
     startY: 42,
-    head: [['Sr.', 'Client Name', 'Accountant', 'Frequency', 'Status', 'Target', 'Filed Date', 'Remarks']],
+    head,
     body: tableData,
     headStyles: {
-      fillColor: [30, 41, 59], // sidebar color
+      fillColor: [30, 41, 59],
       textColor: 255,
       fontStyle: 'bold',
       fontSize: 9,
@@ -50,16 +77,7 @@ export const exportFilingStatusToPDF = (
     alternateRowStyles: {
       fillColor: [245, 247, 250],
     },
-    columnStyles: {
-      0: { cellWidth: 10 },
-      1: { cellWidth: 50 },
-      2: { cellWidth: 25 },
-      3: { cellWidth: 22 },
-      4: { cellWidth: 30 },
-      5: { cellWidth: 15 },
-      6: { cellWidth: 25 },
-      7: { cellWidth: 'auto' },
-    },
+    columnStyles,
     margin: { top: 42, left: 10, right: 10 },
   });
 

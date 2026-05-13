@@ -596,6 +596,7 @@ const FilingStatusPage: React.FC = () => {
       remarks: r.remarks || '',
       month: r.period_month,
       isLocked: r.is_locked || false,
+      arn: r.arn || '',
     }));
     
     exportFilingStatusToPDF(pdfRecords, returnType, selectedMonth);
