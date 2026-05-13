@@ -162,6 +162,7 @@ export interface FilingStatusRecord {
   remarks: string;
   month: string; // MM/YYYY
   isLocked: boolean;
+  arn?: string | null;
 }
 
 // Dashboard Metrics
