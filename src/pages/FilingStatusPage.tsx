@@ -602,6 +602,57 @@ const FilingStatusPage: React.FC = () => {
     toast.success('PDF exported successfully');
   };
 
+  const getPeriodParts = (periodMonth: string) => {
+    const [monthStr, yearStr] = periodMonth.split('/');
+    const month = parseInt(monthStr, 10);
+    const year = parseInt(yearStr, 10);
+    if (!month || !year) return null;
+    return { month, year };
+  };
+
+  const getPreviousPeriod = (periodMonth: string) => {
+    const parts = getPeriodParts(periodMonth);
+    if (!parts) return null;
+    let month = parts.month - 1;
+    let year = parts.year;
+    if (month < 1) {
+      month = 12;
+      year--;
+    }
+    return { month, year, period: `${String(month).padStart(2, '0')}/${year}` };
+  };
+
+  const getSchemeDependencyForPeriod = useCallback((client: Client, periodMonth: string) => {
+    const parts = getPeriodParts(periodMonth);
+    const effectiveScheme = getEffectiveScheme(client.id, periodMonth, client.registration_type);
+
+    if (effectiveScheme === 'Regular') {
+      return { gstr1Type: 'GSTR-1' as ReturnType, gstr3bType: 'GSTR-3B' as ReturnType, shouldCheckGstr3b: true };
+    }
+
+    if (effectiveScheme === 'IFF') {
+      return {
+        gstr1Type: 'GSTR-1 (IFF)' as ReturnType,
+        gstr3bType: 'GSTR-3B (Q)' as ReturnType,
+        shouldCheckGstr3b: parts ? isQuarterEndMonth(parts.month) : false,
+      };
+    }
+
+    return { gstr1Type: null, gstr3bType: null, shouldCheckGstr3b: false };
+  }, [getEffectiveScheme]);
+
+  const fetchFiledStatus = async (clientId: string, periodMonth: string, returnType: ReturnType) => {
+    const { data } = await supabase
+      .from('filing_status')
+      .select('status')
+      .eq('client_id', clientId)
+      .eq('period_month', periodMonth)
+      .eq('return_type', returnType)
+      .maybeSingle();
+
+    return data?.status === 'Filed';
+  };
+
   const handleStatusChange = async (record: FilingRecord, newStatus: FilingStatusType, localArn?: string) => {
     const isNewRecord = record.id.startsWith('temp-');
     
@@ -638,49 +689,15 @@ const FilingStatusPage: React.FC = () => {
       }
     }
     
-    // NEW VALIDATION: Check if previous month's GSTR-1 and GSTR-3B are filed before filing current month GSTR-1
-    // This validation only applies when previous month is April 2025 or later
+    // Validate previous month's obligations using the scheme that was effective in that previous period.
+    // This preserves historical correctness during IFF/Regular/Composition transitions.
     if ((record.return_type === 'GSTR-1' || record.return_type === 'GSTR-1 (IFF)') && newStatus === 'Filed') {
-      // Calculate previous month
-      const [monthStr, yearStr] = selectedMonth.split('/');
-      const currentMonth = parseInt(monthStr);
-      const currentYear = parseInt(yearStr);
-      
-      let prevMonth = currentMonth - 1;
-      let prevYear = currentYear;
-      if (prevMonth < 1) {
-        prevMonth = 12;
-        prevYear--;
-      }
-      const prevPeriod = `${String(prevMonth).padStart(2, '0')}/${prevYear}`;
+      const previous = getPreviousPeriod(selectedMonth);
       
       // Skip validation if previous month is before April 2025 (March 2025 or earlier)
-      const isPrevBeforeApril2025 = prevYear < 2025 || (prevYear === 2025 && prevMonth < 4);
+      const isPrevBeforeApril2025 = !previous || previous.year < 2025 || (previous.year === 2025 && previous.month < 4);
       
       if (!isPrevBeforeApril2025) {
-        
-        // For IFF clients, use GSTR-1 (IFF) and GSTR-3B (Q), otherwise use GSTR-1 and GSTR-3B
-        const prevGstr1Type = record.return_type === 'GSTR-1 (IFF)' ? 'GSTR-1 (IFF)' : 'GSTR-1';
-        const prevGstr3bType = record.return_type === 'GSTR-1 (IFF)' ? 'GSTR-3B (Q)' : 'GSTR-3B';
-        
-        // Check previous month's GSTR-1 filed status
-        const { data: prevGstr1Data } = await supabase
-          .from('filing_status')
-          .select('status')
-          .eq('client_id', record.client_id)
-          .eq('period_month', prevPeriod)
-          .eq('return_type', prevGstr1Type)
-          .maybeSingle();
-        
-        // Check previous month's GSTR-3B filed status
-        const { data: prevGstr3bData } = await supabase
-          .from('filing_status')
-          .select('status')
-          .eq('client_id', record.client_id)
-          .eq('period_month', prevPeriod)
-          .eq('return_type', prevGstr3bType)
-          .maybeSingle();
-        
         // Determine if previous month is the first month of client registration
         const client = clients.find(c => c.id === record.client_id);
         let isFirstMonth = false;
@@ -693,34 +710,41 @@ const FilingStatusPage: React.FC = () => {
         }
         
         // Skip validation for first month of registration
-        if (!isFirstMonth) {
-          if (!prevGstr1Data || prevGstr1Data.status !== 'Filed') {
-            toast.error(`Cannot file ${record.return_type}: Previous month's ${prevGstr1Type} (${prevPeriod}) must be filed first.`);
-            return;
+        if (client && previous && !isFirstMonth) {
+          const previousDependency = getSchemeDependencyForPeriod(client, previous.period);
+
+          if (previousDependency.gstr1Type) {
+            const isPrevGstr1Filed = await fetchFiledStatus(record.client_id, previous.period, previousDependency.gstr1Type);
+            if (!isPrevGstr1Filed) {
+              toast.error(`Cannot file ${record.return_type}: Previous month's ${previousDependency.gstr1Type} (${previous.period}) must be filed first.`);
+              return;
+            }
           }
-          
-          // For GSTR-3B (Q), only check in quarter-end months
-          const isQuarterEndPrev = isQuarterEndMonth(prevMonth);
-          // Use return_type to reliably detect quarterly 3B clients
-          const isQuarterlyGstr3b = record.return_type === 'GSTR-1 (IFF)';
-          const isClientQuarterly = isQuarterlyGstr3b || (client && (client.registration_type === 'IFF' || client.registration_type === 'Composition'));
-          
-          // Check GSTR-3B only if previous month is quarter-end for quarterly clients, or always for regular clients
-          const shouldCheckGstr3b = !isClientQuarterly || isQuarterEndPrev;
-          
-          if (shouldCheckGstr3b && (!prevGstr3bData || prevGstr3bData.status !== 'Filed')) {
-            toast.error(`Cannot file ${record.return_type}: Previous month's ${prevGstr3bType} (${prevPeriod}) must be filed first.`);
-            return;
+
+          if (previousDependency.gstr3bType && previousDependency.shouldCheckGstr3b) {
+            const isPrevGstr3bFiled = await fetchFiledStatus(record.client_id, previous.period, previousDependency.gstr3bType);
+            if (!isPrevGstr3bFiled) {
+              toast.error(`Cannot file ${record.return_type}: Previous month's ${previousDependency.gstr3bType} (${previous.period}) must be filed first.`);
+              return;
+            }
           }
+
+          if (!previousDependency.gstr1Type && !previousDependency.gstr3bType) {
+            // Prior scheme did not have GSTR-1/GSTR-3B obligations, so do not block the first Regular filing after transition.
+          }
+        } else if (!client) {
+          toast.error('Cannot validate filing dependency because client details are missing. Please refresh and try again.');
+          return;
         }
       }
     }
-    
-    // GSTR-3B dependency check: require GSTR-1 to be filed first
+
+    // GSTR-3B dependency check: require the same-period GSTR-1 applicable to the current effective scheme to be filed first
     // Also applies to GSTR-3B (Q)
     if ((record.return_type === 'GSTR-3B' || record.return_type === 'GSTR-3B (Q)') && newStatus === 'Filed') {
-      // For GSTR-3B (Q), check for GSTR-1 (IFF) filed status
-      const gstr1ReturnType = record.return_type === 'GSTR-3B (Q)' ? 'GSTR-1 (IFF)' : 'GSTR-1';
+      const client = clients.find(c => c.id === record.client_id);
+      const currentDependency = client ? getSchemeDependencyForPeriod(client, record.period_month || selectedMonth) : null;
+      const gstr1ReturnType = currentDependency?.gstr1Type || (record.return_type === 'GSTR-3B (Q)' ? 'GSTR-1 (IFF)' : 'GSTR-1');
       const gstr1Record = filingRecords.find(
         f => f.client_id === record.client_id && 
              f.return_type === gstr1ReturnType && 
@@ -731,7 +755,7 @@ const FilingStatusPage: React.FC = () => {
         toast.error(`Cannot file ${record.return_type}: ${gstr1ReturnType} must be filed first for this period.`);
         return;
       }
-      
+
       // Check Suspended Reco difference: if difference is not zero, cannot file GSTR-3B
       try {
         // Fetch suspended_reco data
