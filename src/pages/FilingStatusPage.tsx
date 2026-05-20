@@ -1096,21 +1096,38 @@ const FilingStatusPage: React.FC = () => {
     return Array.from(dates).sort((a, b) => a - b);
   };
 
+  const normalizeArn = (arn?: string | null) => (arn || '').trim().toUpperCase();
+
+  const isReturnApplicableForRecordPeriod = (clientId: string, returnType: string, periodMonth: string): boolean => {
+    const client = clients.find(c => c.id === clientId);
+    if (!client) return true;
+
+    const effectiveScheme = getEffectiveScheme(clientId, periodMonth, client.registration_type) as RegistrationType;
+    const applicableReturns = RETURN_TYPES_BY_REGISTRATION[effectiveScheme] || [];
+    return applicableReturns.includes(returnType as ReturnType);
+  };
+
   const findExistingArnOwner = async (arn: string, excludeRecordId?: string): Promise<string | null> => {
-    if (!arn) return null;
+    const normalizedArn = normalizeArn(arn);
+    if (!normalizedArn) return null;
     let query = supabase
       .from('filing_status')
-      .select('client_id, return_type, period_month')
-      .eq('arn', arn.toUpperCase());
+      .select('id, client_id, return_type, period_month, status, return_pdf_url')
+      .eq('arn', normalizedArn)
+      .eq('status', 'Filed')
+      .not('return_pdf_url', 'is', null);
     if (excludeRecordId && !excludeRecordId.startsWith('temp-')) {
       query = query.neq('id', excludeRecordId);
     }
-    const { data } = await query.limit(1);
-    if (data && data.length > 0) {
-      const match = data[0];
+    const { data } = await query.limit(5);
+    const match = (data || []).find(row =>
+      isReturnApplicableForRecordPeriod(row.client_id, row.return_type, row.period_month)
+    );
+
+    if (match) {
       const client = clients.find(c => c.id === match.client_id);
       const clientName = client?.name || 'Unknown Client';
-      return `ARN "${arn.toUpperCase()}" is already used by ${clientName} (${match.return_type}, ${match.period_month})`;
+      return `ARN "${normalizedArn}" is already used by ${clientName} (${match.return_type}, ${match.period_month})`;
     }
     return null;
   };
