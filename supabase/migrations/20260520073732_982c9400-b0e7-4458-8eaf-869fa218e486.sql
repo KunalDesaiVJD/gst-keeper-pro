@@ -1,0 +1,2 @@
+REVOKE EXECUTE ON FUNCTION public.validate_filing_status_filed_requirements() FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.clear_inapplicable_filing_status_after_scheme_change() FROM PUBLIC, anon, authenticated;
