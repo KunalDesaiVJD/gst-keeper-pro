@@ -668,7 +668,7 @@ const FilingStatusPage: React.FC = () => {
 
     // ARN and Return PDF validation before allowing "Filed" status
     if (newStatus === 'Filed') {
-      const arnToSave = (localArn ?? record.arn ?? '').trim().toUpperCase();
+      const arnToSave = normalizeArn(localArn ?? record.arn);
       if (!arnToSave) {
         toast.error('ARN is mandatory before marking as Filed. Please enter the ARN first.');
         return;
@@ -831,7 +831,7 @@ const FilingStatusPage: React.FC = () => {
             filed_date: newStatus === 'Filed' ? new Date().toISOString().split('T')[0] : null,
             updated_by: user?.id || null,
             updated_at: new Date().toISOString(),
-            arn: newStatus === 'Filed' ? (localArn ?? record.arn ?? '').trim().toUpperCase() : null,
+            arn: newStatus === 'Filed' ? normalizeArn(localArn ?? record.arn) : null,
             return_pdf_url: record.return_pdf_url || null,
           }]);
         
@@ -846,7 +846,7 @@ const FilingStatusPage: React.FC = () => {
         
         if (newStatus === 'Filed') {
           updateData.filed_date = new Date().toISOString().split('T')[0];
-          updateData.arn = (localArn ?? record.arn ?? '').trim().toUpperCase();
+          updateData.arn = normalizeArn(localArn ?? record.arn);
         } else {
           // If changing from Filed to another status, clear filed_date and ARN
           updateData.filed_date = null;
