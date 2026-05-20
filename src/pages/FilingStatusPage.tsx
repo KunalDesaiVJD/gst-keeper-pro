@@ -1188,6 +1188,11 @@ const FilingStatusPage: React.FC = () => {
 
   const handlePdfDelete = async (record: FilingRecord) => {
     if (!record.return_pdf_url || record.id.startsWith('temp-')) return;
+
+    if (record.status === 'Filed') {
+      toast.error('Filed return PDF cannot be removed. Change the status from Filed first.');
+      return;
+    }
     
     try {
       const { error } = await supabase
