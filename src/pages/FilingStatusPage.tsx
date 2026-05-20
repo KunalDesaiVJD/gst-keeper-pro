@@ -668,7 +668,7 @@ const FilingStatusPage: React.FC = () => {
 
     // ARN and Return PDF validation before allowing "Filed" status
     if (newStatus === 'Filed') {
-      const arnToSave = (localArn ?? record.arn ?? '').trim().toUpperCase();
+      const arnToSave = normalizeArn(localArn ?? record.arn);
       if (!arnToSave) {
         toast.error('ARN is mandatory before marking as Filed. Please enter the ARN first.');
         return;
@@ -831,7 +831,7 @@ const FilingStatusPage: React.FC = () => {
             filed_date: newStatus === 'Filed' ? new Date().toISOString().split('T')[0] : null,
             updated_by: user?.id || null,
             updated_at: new Date().toISOString(),
-            arn: newStatus === 'Filed' ? (localArn ?? record.arn ?? '').trim().toUpperCase() : null,
+            arn: newStatus === 'Filed' ? normalizeArn(localArn ?? record.arn) : null,
             return_pdf_url: record.return_pdf_url || null,
           }]);
         
@@ -846,7 +846,7 @@ const FilingStatusPage: React.FC = () => {
         
         if (newStatus === 'Filed') {
           updateData.filed_date = new Date().toISOString().split('T')[0];
-          updateData.arn = (localArn ?? record.arn ?? '').trim().toUpperCase();
+          updateData.arn = normalizeArn(localArn ?? record.arn);
         } else {
           // If changing from Filed to another status, clear filed_date and ARN
           updateData.filed_date = null;
@@ -1096,21 +1096,38 @@ const FilingStatusPage: React.FC = () => {
     return Array.from(dates).sort((a, b) => a - b);
   };
 
+  const normalizeArn = (arn?: string | null) => (arn || '').trim().toUpperCase();
+
+  const isReturnApplicableForRecordPeriod = (clientId: string, returnType: string, periodMonth: string): boolean => {
+    const client = clients.find(c => c.id === clientId);
+    if (!client) return true;
+
+    const effectiveScheme = getEffectiveScheme(clientId, periodMonth, client.registration_type) as RegistrationType;
+    const applicableReturns = RETURN_TYPES_BY_REGISTRATION[effectiveScheme] || [];
+    return applicableReturns.includes(returnType as ReturnType);
+  };
+
   const findExistingArnOwner = async (arn: string, excludeRecordId?: string): Promise<string | null> => {
-    if (!arn) return null;
+    const normalizedArn = normalizeArn(arn);
+    if (!normalizedArn) return null;
     let query = supabase
       .from('filing_status')
-      .select('client_id, return_type, period_month')
-      .eq('arn', arn.toUpperCase());
+      .select('id, client_id, return_type, period_month, status, return_pdf_url')
+      .eq('arn', normalizedArn)
+      .eq('status', 'Filed')
+      .not('return_pdf_url', 'is', null);
     if (excludeRecordId && !excludeRecordId.startsWith('temp-')) {
       query = query.neq('id', excludeRecordId);
     }
-    const { data } = await query.limit(1);
-    if (data && data.length > 0) {
-      const match = data[0];
+    const { data } = await query.limit(5);
+    const match = (data || []).find(row =>
+      isReturnApplicableForRecordPeriod(row.client_id, row.return_type, row.period_month)
+    );
+
+    if (match) {
       const client = clients.find(c => c.id === match.client_id);
       const clientName = client?.name || 'Unknown Client';
-      return `ARN "${arn.toUpperCase()}" is already used by ${clientName} (${match.return_type}, ${match.period_month})`;
+      return `ARN "${normalizedArn}" is already used by ${clientName} (${match.return_type}, ${match.period_month})`;
     }
     return null;
   };
@@ -1171,6 +1188,11 @@ const FilingStatusPage: React.FC = () => {
 
   const handlePdfDelete = async (record: FilingRecord) => {
     if (!record.return_pdf_url || record.id.startsWith('temp-')) return;
+
+    if (record.status === 'Filed') {
+      toast.error('Filed return PDF cannot be removed. Change the status from Filed first.');
+      return;
+    }
     
     try {
       const { error } = await supabase
