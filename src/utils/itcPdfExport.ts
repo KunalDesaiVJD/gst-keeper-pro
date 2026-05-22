@@ -40,7 +40,7 @@ export const exportITCSummaryToPDF = (params: ITCExportParams) => {
   // Title
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
-  doc.text('V.J. Desai & Co.', 148, 15, { align: 'center' });
+  doc.text('V. J. Desai & Co. LLP', 148, 15, { align: 'center' });
   
   doc.setFontSize(12);
   doc.setFont('helvetica', 'normal');

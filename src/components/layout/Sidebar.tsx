@@ -131,7 +131,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
         {/* Minimized header with expand button */}
         <div className="p-2 border-b border-sidebar-border flex flex-col items-center gap-2">
           <div className="h-10 w-10 bg-white rounded-lg flex items-center justify-center p-1">
-            <img src={logo} alt="VJ Desai" className="h-full w-auto object-contain" />
+            <img src={logo} alt="V. J. Desai & Co. LLP" className="h-full w-auto object-contain" />
           </div>
           <button
             onClick={onToggleMinimize}
@@ -189,11 +189,11 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 bg-white rounded-lg flex items-center justify-center p-1">
-              <img src={logo} alt="VJ Desai" className="h-full w-auto object-contain" />
+              <img src={logo} alt="V. J. Desai & Co. LLP" className="h-full w-auto object-contain" />
             </div>
             <div>
               <h1 className="font-heading font-semibold text-sidebar-primary text-sm">
-                VJ Desai & Co.
+                V. J. Desai & Co. LLP
               </h1>
               <p className="text-xs text-sidebar-foreground/70">GST Management</p>
             </div>

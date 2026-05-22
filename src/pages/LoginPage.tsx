@@ -78,7 +78,7 @@ const LoginPage: React.FC = () => {
             <div className="flex justify-center">
               <img 
                 src={logo} 
-                alt="V.J. Desai & Co." 
+                alt="V. J. Desai & Co. LLP"
                 className="h-16 object-contain"
               />
             </div>
@@ -181,7 +181,7 @@ const LoginPage: React.FC = () => {
         </Card>
         
         <p className="text-center text-xs text-muted-foreground mt-4">
-          © 2025 V.J. Desai & Co. All rights reserved.
+          © 2026 V. J. Desai & Co. LLP. All rights reserved.
         </p>
       </div>
 
