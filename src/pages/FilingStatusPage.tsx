@@ -18,6 +18,7 @@ import { supabase } from '@/integrations/supabase/client';
 import GSTPortalLink from '@/components/clients/GSTPortalLink';
 import ClientHoverDetails from '@/components/filing/ClientHoverDetails';
 import { SchemeHistoryEntry } from '@/utils/schemeResolver';
+import { generateFilingRecords } from '@/lib/filingRecords';
 
 
 // Due date constants for each return type
@@ -392,162 +393,17 @@ const FilingStatusPage: React.FC = () => {
     };
   }, [fetchClients, fetchFilingRecords]);
 
-  // Helper function to check if client should be visible for selected month
-  const isClientVisibleForMonth = (client: Client, periodMonth: string): boolean => {
-    // Parse period month (format: MM/YYYY)
-    const [monthStr, yearStr] = periodMonth.split('/');
-    const periodDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1);
-    
-    // Parse registration date
-    const regDate = new Date(client.registration_date);
-    const regMonth = new Date(regDate.getFullYear(), regDate.getMonth(), 1);
-    
-    // Client should only be visible if period month >= registration month
-    if (periodDate < regMonth) {
-      return false;
-    }
-    
-    // Check cancellation date if present
-    if (client.cancellation_date) {
-      const cancelDate = new Date(client.cancellation_date);
-      const cancelMonth = new Date(cancelDate.getFullYear(), cancelDate.getMonth(), 1);
-      // Client should not be visible after cancellation month
-      if (periodDate > cancelMonth) {
-        return false;
-      }
-    }
-    
-    return true;
-  };
-
-  // Helper to check if quarterly return should be visible for a month
-  const isQuarterlyReturnVisibleForMonth = (returnType: ReturnType, periodMonth: string): boolean => {
-    // Quarterly returns only show in quarter end months (March, June, September, December)
-    if (!QUARTERLY_RETURN_TYPES.includes(returnType)) {
-      return true; // Not a quarterly return, always visible
-    }
-    
-    const [monthStr] = periodMonth.split('/');
-    const month = parseInt(monthStr);
-    return isQuarterEndMonth(month);
-  };
-
-  // Generate filing records for display - with option to merge GSTR-1 (IFF) into GSTR-1 and GSTR-3B (Q) into GSTR-3B
+  // Generate filing records for display. Delegates to the shared helper so the
+  // Dashboard and this page always derive their counts from the same logic.
   const generateAllFilingRecords = (returnType: ReturnType): FilingRecord[] => {
-    const records: FilingRecord[] = [];
-    
-    // Check if this quarterly return should be visible for selected month
-    if (!isQuarterlyReturnVisibleForMonth(returnType, selectedMonth)) {
-      return []; // Don't show quarterly returns in non-quarter-end months
-    }
-    
-    // For GSTR-1 tab, also include GSTR-1 (IFF) clients
-    // For GSTR-3B tab, also include GSTR-3B (Q) clients (only in quarter-end months for IFF/Composition)
-    let returnTypesToCheck: ReturnType[];
-    if (returnType === 'GSTR-1') {
-      returnTypesToCheck = ['GSTR-1', 'GSTR-1 (IFF)'];
-    } else if (returnType === 'GSTR-3B') {
-      returnTypesToCheck = ['GSTR-3B', 'GSTR-3B (Q)'];
-    } else {
-      returnTypesToCheck = [returnType];
-    }
-    
-    // Check if current month is quarter-end for GSTR-3B (Q) logic
-    const [monthStr] = selectedMonth.split('/');
-    const currentMonthNum = parseInt(monthStr);
-    const isQuarterEnd = isQuarterEndMonth(currentMonthNum);
-    
-    clients.forEach(client => {
-      // Check if client should be visible for the selected month
-      if (!isClientVisibleForMonth(client, selectedMonth)) {
-        return; // Skip this client
-      }
-      
-      // Resolve effective scheme for this period using scheme history
-      const effectiveScheme = getEffectiveScheme(client.id, selectedMonth, client.registration_type);
-      const effectiveReturns = RETURN_TYPES_BY_REGISTRATION[effectiveScheme as RegistrationType] || [];
-      
-      // Use effective scheme's returns instead of current selected_returns for scheme-changed clients
-      const hasSchemeHistory = schemeHistoryMap[client.id]?.length > 0;
-      const selectedReturns = hasSchemeHistory ? effectiveReturns : (client.selected_returns || []);
-      const isQuarterlyClient = effectiveScheme === 'IFF' || effectiveScheme === 'Composition';
-      
-      // Check if client has any of the return types we're looking for
-      for (const rt of returnTypesToCheck) {
-        if (selectedReturns.includes(rt)) {
-          // For GSTR-3B (Q), only include in quarter-end months for IFF/Composition clients
-          if (rt === 'GSTR-3B (Q)' && (!isQuarterEnd || !isQuarterlyClient)) {
-            continue;
-          }
-          // For regular GSTR-3B, skip if client is IFF/Composition (they use GSTR-3B (Q))
-          if (rt === 'GSTR-3B' && isQuarterlyClient) {
-            continue;
-          }
-          
-          const existingRecord = filingRecords.find(
-            f => f.client_id === client.id && f.return_type === rt
-          );
-          
-          // Determine filing frequency
-          let filingFrequency: string;
-          if (effectiveScheme === 'IFF' && (rt === 'GSTR-1 (IFF)' || returnType === 'GSTR-1')) {
-            filingFrequency = 'IFF';
-          } else if (QUARTERLY_RETURN_TYPES.includes(rt) || 
-            effectiveScheme === 'Composition' ||
-            (effectiveScheme === 'IFF' && rt === 'GSTR-3B (Q)')) {
-            filingFrequency = 'Quarterly';
-          } else {
-            filingFrequency = 'Monthly';
-          }
-          
-          if (existingRecord) {
-            // Override target_date with the authoritative latest value from lookup
-            const lookupKey = `${client.id}__${rt}`;
-            const authoritativeTarget = targetDateLookup[lookupKey];
-            records.push({
-              ...existingRecord,
-              target_date: authoritativeTarget || existingRecord.target_date,
-              clientName: client.name,
-              clientEmail: client.email || '-',
-              contactNumber: client.mobile || '-',
-              accountantName: client.assigned_accountant || '-',
-              filingFrequency,
-            });
-          } else {
-            // Create new record with 'Data Pending' as default status
-            records.push({
-              id: `temp-${client.id}-${rt}`,
-              client_id: client.id,
-              return_type: rt,
-              period_month: selectedMonth,
-              status: 'Data Pending',
-              target_date: (() => {
-                // Look up existing target date from cross-month lookup
-                const lookupKey = `${client.id}__${rt}`;
-                if (targetDateLookup[lookupKey]) return targetDateLookup[lookupKey];
-                // Fallback defaults
-                return rt === 'GSTR-1' || rt === 'GSTR-1 (IFF)' ? 11 : rt === 'GSTR-3B' || rt === 'GSTR-3B (Q)' ? 20 : 25;
-              })(),
-              filed_date: null,
-              remarks: null,
-              is_locked: false,
-              updated_by: null,
-              updated_at: null,
-              arn: null,
-              return_pdf_url: null,
-              clientName: client.name,
-              clientEmail: client.email || '-',
-              contactNumber: client.mobile || '-',
-              accountantName: client.assigned_accountant || '-',
-              filingFrequency,
-            });
-          }
-          break; // Don't add the same client twice if they have both GSTR-1 and GSTR-1 (IFF) or GSTR-3B and GSTR-3B (Q)
-        }
-      }
-    });
-    
-    return records;
+    return generateFilingRecords({
+      displayReturnType: returnType,
+      clients,
+      filingRecords,
+      schemeHistoryMap,
+      selectedMonth,
+      targetDateLookup,
+    }) as FilingRecord[];
   };
 
   const handleExportPDF = () => {

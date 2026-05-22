@@ -21,8 +21,15 @@ import ClientManagementSection from './ClientManagementSection';
 import UserManagementSection from './UserManagementSection';
 import PasswordResetRequestsSection from './PasswordResetRequestsSection';
 import TargetDueAlertDialog from './TargetDueAlertDialog';
-import { ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth } from '@/types';
+import { ReturnType } from '@/types';
+import { generateFilingRecords, DISPLAY_RETURN_TYPES } from '@/lib/filingRecords';
+import { SchemeHistoryEntry } from '@/utils/schemeResolver';
 import { useState } from 'react';
+
+// Return tabs broken out for the dashboard table (IFF / quarterly shown separately)
+const BREAKDOWN_RETURN_TYPES: ReturnType[] = [
+  'GSTR-1', 'GSTR-1 (IFF)', 'GSTR-3B', 'GSTR-3B (Q)', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08',
+];
 
 // Due date constants for each return type
 const RETURN_DUE_DATES: Record<string, number> = {
@@ -115,6 +122,17 @@ const StaffDashboard: React.FC = () => {
         .select('status, filed_date, target_date, return_type, client_id')
         .eq('period_month', selectedMonth);
 
+      // Scheme history, so the dashboard resolves the same effective scheme
+      // per period as the Filing Status page.
+      const { data: schemeData } = await supabase
+        .from('client_scheme_history')
+        .select('*')
+        .order('effective_from_date', { ascending: true });
+      const schemeHistoryMap: Record<string, SchemeHistoryEntry[]> = {};
+      (schemeData || []).forEach((entry: any) => {
+        (schemeHistoryMap[entry.client_id] ??= []).push(entry as SchemeHistoryEntry);
+      });
+
       // Build a client target date lookup from the authoritative clients table
       const clientTargetLookup: Record<string, { g1: number; g2: number }> = {};
       clientData?.forEach((c: any) => {
@@ -183,109 +201,35 @@ const StaffDashboard: React.FC = () => {
         sessionStorage.setItem(SESSION_ALERT_KEY, 'true');
       }
 
-      // Calculate return-wise metrics with IFF/Normal bifurcation for GSTR-1 and GSTR-3B
-      const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08'];
-      const [monthStr] = selectedMonth.split('/');
-      const currentMonthNum = parseInt(monthStr);
-      const isQuarterEnd = isQuarterEndMonth(currentMonthNum);
-      
-      const returnMetricsData: ReturnMetrics[] = [];
-      
-      for (const rt of allReturnTypes) {
-        if (QUARTERLY_RETURN_TYPES.includes(rt) && !isQuarterEnd) continue;
-        
-        if (rt === 'GSTR-1') {
-          // Normal GSTR-1 clients
-          const normalClients = visibleClients.filter(c => 
-            (c.selected_returns || []).includes('GSTR-1') && c.registration_type !== 'IFF'
-          );
-          const normalFilings = filingData?.filter(f => f.return_type === 'GSTR-1') || [];
-          const normalFiled = normalFilings.filter(f => f.status === 'Filed').length;
-          
-          if (normalClients.length > 0) {
-            returnMetricsData.push({
-              returnType: 'GSTR-1' as ReturnType,
-              totalClients: normalClients.length,
-              pending: Math.max(0, normalClients.length - normalFiled),
-              filed: normalFiled,
-            });
-          }
-          
-          // IFF clients
-          const iffClients = visibleClients.filter(c => 
-            (c.selected_returns || []).includes('GSTR-1 (IFF)')
-          );
-          if (iffClients.length > 0 && isQuarterEnd) {
-            const iffFilings = filingData?.filter(f => f.return_type === 'GSTR-1 (IFF)') || [];
-            const iffFiled = iffFilings.filter(f => f.status === 'Filed').length;
-            returnMetricsData.push({
-              returnType: 'GSTR-1 (IFF)' as ReturnType,
-              totalClients: iffClients.length,
-              pending: Math.max(0, iffClients.length - iffFiled),
-              filed: iffFiled,
-            });
-          }
-        } else if (rt === 'GSTR-3B') {
-          // Normal GSTR-3B clients
-          const normalClients = visibleClients.filter(c => {
-            const hasGSTR3B = (c.selected_returns || []).includes('GSTR-3B');
-            const isQuarterlyClient = c.registration_type === 'IFF' || c.registration_type === 'Composition';
-            return hasGSTR3B && !isQuarterlyClient;
-          });
-          const normalFilings = filingData?.filter(f => f.return_type === 'GSTR-3B') || [];
-          const normalFiled = normalFilings.filter(f => f.status === 'Filed').length;
-          
-          if (normalClients.length > 0) {
-            returnMetricsData.push({
-              returnType: 'GSTR-3B' as ReturnType,
-              totalClients: normalClients.length,
-              pending: Math.max(0, normalClients.length - normalFiled),
-              filed: normalFiled,
-            });
-          }
-          
-          // Quarterly GSTR-3B (Q) clients
-          if (isQuarterEnd) {
-            const qClients = visibleClients.filter(c => {
-              const hasGSTR3BQ = (c.selected_returns || []).includes('GSTR-3B (Q)');
-              const isQuarterlyClient = c.registration_type === 'IFF' || c.registration_type === 'Composition';
-              return hasGSTR3BQ && isQuarterlyClient;
-            });
-            if (qClients.length > 0) {
-              const qFilings = filingData?.filter(f => f.return_type === 'GSTR-3B (Q)') || [];
-              const qFiled = qFilings.filter(f => f.status === 'Filed').length;
-              returnMetricsData.push({
-                returnType: 'GSTR-3B (Q)' as ReturnType,
-                totalClients: qClients.length,
-                pending: Math.max(0, qClients.length - qFiled),
-                filed: qFiled,
-              });
-            }
-          }
-        } else {
-          const clientsWithReturn = visibleClients.filter(c => {
-            if (!((c.selected_returns || []).includes(rt))) return false;
-            if (rt === 'CMP-08') return c.registration_type === 'Composition';
-            return true;
-          });
-          
-          const returnFilings = filingData?.filter(f => f.return_type === rt) || [];
-          const filed = returnFilings.filter(f => f.status === 'Filed').length;
+      // Build the canonical per-client filing rows for the month using the same
+      // shared logic as the Filing Status page, so the counts always tally.
+      const allFilingRows = DISPLAY_RETURN_TYPES.flatMap(dt =>
+        generateFilingRecords({
+          displayReturnType: dt,
+          clients: clientData || [],
+          filingRecords: (filingData || []) as any,
+          schemeHistoryMap,
+          selectedMonth,
+        })
+      );
 
-          if (clientsWithReturn.length > 0) {
-            returnMetricsData.push({
-              returnType: rt,
-              totalClients: clientsWithReturn.length,
-              pending: Math.max(0, clientsWithReturn.length - filed),
-              filed,
-            });
-          }
-        }
-      }
+      // Return-wise breakdown (IFF / quarterly broken out), grouped by actual return type.
+      const returnMetricsData: ReturnMetrics[] = BREAKDOWN_RETURN_TYPES
+        .map(rt => {
+          const rows = allFilingRows.filter(r => r.return_type === rt);
+          if (rows.length === 0) return null;
+          const filed = rows.filter(r => r.status === 'Filed').length;
+          return {
+            returnType: rt,
+            totalClients: rows.length,
+            pending: rows.length - filed,
+            filed,
+          } as ReturnMetrics;
+        })
+        .filter((rm): rm is ReturnMetrics => rm !== null);
 
-      // Calculate pendingFilings as sum of all pending from returnMetrics
-      // This ensures it tallies with the return-wise breakdown
-      const totalPending = returnMetricsData.reduce((sum, rm) => sum + rm.pending, 0);
+      // Pending tile = every applicable filing whose status is not Filed.
+      const totalPending = allFilingRows.filter(r => r.status !== 'Filed').length;
 
       setMetrics({
         totalClients: visibleClients.length,
@@ -311,6 +255,7 @@ const StaffDashboard: React.FC = () => {
       .channel('dashboard-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => fetchMetrics())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'filing_status' }, () => fetchMetrics())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'client_scheme_history' }, () => fetchMetrics())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'user_roles' }, () => fetchMetrics())
       .subscribe();
     return () => { supabase.removeChannel(channel); };
