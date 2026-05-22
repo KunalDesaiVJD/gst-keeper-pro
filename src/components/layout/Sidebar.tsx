@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
+import logoIcon from '@/assets/logo-icon.png';
 
 interface NavItem {
   label: string;
@@ -131,7 +132,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
         {/* Minimized header with expand button */}
         <div className="p-2 border-b border-sidebar-border flex flex-col items-center gap-2">
           <div className="h-10 w-10 bg-white rounded-lg flex items-center justify-center p-1">
-            <img src={logo} alt="V. J. Desai & Co. LLP" className="h-full w-auto object-contain" />
+            <img src={logoIcon} alt="V. J. Desai & Co. LLP" className="h-full w-auto object-contain" />
           </div>
           <button
             onClick={onToggleMinimize}
@@ -186,19 +187,12 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
     <aside className="fixed left-0 top-0 h-screen w-64 bg-sidebar text-sidebar-foreground flex flex-col shadow-sidebar z-50 transition-all duration-300">
       {/* Logo Section with Settings and User Control icons */}
       <div className="p-4 border-b border-sidebar-border">
+        <div className="bg-white rounded-lg px-3 py-2 mb-2 flex items-center justify-center">
+          <img src={logo} alt="V. J. Desai & Co. LLP" className="h-8 w-auto object-contain max-w-full" />
+        </div>
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 bg-white rounded-lg flex items-center justify-center p-1">
-              <img src={logo} alt="V. J. Desai & Co. LLP" className="h-full w-auto object-contain" />
-            </div>
-            <div>
-              <h1 className="font-heading font-semibold text-sidebar-primary text-sm">
-                V. J. Desai & Co. LLP
-              </h1>
-              <p className="text-xs text-sidebar-foreground/70">GST Management</p>
-            </div>
-          </div>
-          
+          <p className="text-xs text-sidebar-foreground/70">GST Management System</p>
+
           {/* Icon buttons for Settings, User Control, and Minimize */}
           <div className="flex items-center gap-1">
             {onToggleMinimize && (
