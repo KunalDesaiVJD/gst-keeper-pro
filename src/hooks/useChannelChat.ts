@@ -149,8 +149,35 @@ export const useChannelChat = () => {
       });
     }
 
+    // Collapse duplicate DM channels for the same user into one row (keep the
+    // most recently active channel, fold unread counts into it) so a person
+    // never appears more than once even if stray duplicate channels exist.
+    const dmByUser = new Map<string, ChatChannel>();
+    const deduped: ChatChannel[] = [];
+    for (const ch of enriched) {
+      if (ch.channel_type === 'dm' && ch.otherUserId) {
+        const existing = dmByUser.get(ch.otherUserId);
+        if (!existing) {
+          dmByUser.set(ch.otherUserId, ch);
+          deduped.push(ch);
+          continue;
+        }
+        const existingTime = new Date(existing.lastMessageAt || existing.created_at).getTime();
+        const chTime = new Date(ch.lastMessageAt || ch.created_at).getTime();
+        if (chTime > existingTime) {
+          ch.unreadCount = (ch.unreadCount || 0) + (existing.unreadCount || 0);
+          deduped[deduped.indexOf(existing)] = ch;
+          dmByUser.set(ch.otherUserId, ch);
+        } else {
+          existing.unreadCount = (existing.unreadCount || 0) + (ch.unreadCount || 0);
+        }
+      } else {
+        deduped.push(ch);
+      }
+    }
+
     // Sort: group first, then DMs by last message
-    enriched.sort((a, b) => {
+    deduped.sort((a, b) => {
       if (a.channel_type === 'group' && b.channel_type !== 'group') return -1;
       if (a.channel_type !== 'group' && b.channel_type === 'group') return 1;
       const aTime = a.lastMessageAt || a.created_at;
@@ -158,7 +185,7 @@ export const useChannelChat = () => {
       return new Date(bTime).getTime() - new Date(aTime).getTime();
     });
 
-    setChannels(enriched);
+    setChannels(deduped);
     setTotalUnread(totalUnreadCount);
   }, [user, resolveProfile]);
 
@@ -243,17 +270,18 @@ export const useChannelChat = () => {
   const startDM = useCallback(async (otherUserId: string): Promise<string | null> => {
     if (!user) return null;
 
-    // Find existing DM channel with this user
+    // Find existing DM channel(s) with this user
     const { data: myChannels } = await supabase
       .from('chat_channel_members')
       .select('channel_id')
       .eq('user_id', user.id);
 
+    const matchingDmIds: string[] = [];
     if (myChannels) {
       for (const mc of myChannels) {
         const { data: ch } = await supabase
           .from('chat_channels')
-          .select('*')
+          .select('id')
           .eq('id', mc.channel_id)
           .eq('channel_type', 'dm')
           .maybeSingle();
@@ -266,12 +294,23 @@ export const useChannelChat = () => {
             .eq('user_id', otherUserId)
             .maybeSingle();
 
-          if (otherMember) {
-            setActiveChannelId(ch.id);
-            return ch.id;
-          }
+          if (otherMember) matchingDmIds.push(ch.id);
         }
       }
+    }
+
+    if (matchingDmIds.length > 0) {
+      // If duplicates exist, reuse the one with the most recent message so this
+      // matches the channel the deduped list shows.
+      const { data: latest } = await supabase
+        .from('chat_channel_messages')
+        .select('channel_id, created_at')
+        .in('channel_id', matchingDmIds)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      const chosen = latest?.[0]?.channel_id || matchingDmIds[0];
+      setActiveChannelId(chosen);
+      return chosen;
     }
 
     // Create new DM channel
