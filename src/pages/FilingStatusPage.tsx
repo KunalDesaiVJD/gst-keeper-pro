@@ -19,6 +19,16 @@ import GSTPortalLink from '@/components/clients/GSTPortalLink';
 import ClientHoverDetails from '@/components/filing/ClientHoverDetails';
 import { SchemeHistoryEntry } from '@/utils/schemeResolver';
 import { generateFilingRecords } from '@/lib/filingRecords';
+import { SearchableSelect } from '@/components/ui/searchable-select';
+
+// Normalize an accountant name by stripping the trailing "/<number>" reference
+// (e.g. "PUNITBHAI/16" / "PAVANBHAI /66" / "PRIYA,MUKESHBHAI/ 28") so the same
+// person isn't counted as multiple accountants in the filter.
+const normalizeAccountant = (raw: string | null | undefined): string => {
+  if (!raw || raw === '-') return 'Unassigned';
+  const stripped = raw.replace(/\s*\/\s*\d+\s*$/, '').trim();
+  return stripped || 'Unassigned';
+};
 
 
 // Due date constants for each return type
@@ -425,10 +435,9 @@ const FilingStatusPage: React.FC = () => {
       if (clientNameFilter && !record.clientName?.toLowerCase().includes(clientNameFilter.toLowerCase())) {
         return false;
       }
-      // Accountant filter
-      if (selectedAccountant) {
-        const target = selectedAccountant === 'Unassigned' ? '-' : selectedAccountant;
-        if (record.accountantName !== target) return false;
+      // Accountant filter (compares normalized names so "/<ref>" variants match)
+      if (selectedAccountant && normalizeAccountant(record.accountantName) !== selectedAccountant) {
+        return false;
       }
       // Multi-select target date filter
       if (selectedTargetDates.length > 0 && record.target_date !== null && !selectedTargetDates.includes(record.target_date)) {
@@ -896,10 +905,12 @@ const FilingStatusPage: React.FC = () => {
   };
 
   // Each accountant with their distinct client count, for the filter dropdown.
+  // Reference suffixes like "/16" are stripped so variants of the same person
+  // collapse into a single row.
   const accountantOptions = useMemo(() => {
     const counts = new Map<string, number>();
     clients.forEach(c => {
-      const name = c.assigned_accountant?.trim() || 'Unassigned';
+      const name = normalizeAccountant(c.assigned_accountant);
       counts.set(name, (counts.get(name) || 0) + 1);
     });
     return Array.from(counts.entries())
@@ -914,10 +925,9 @@ const FilingStatusPage: React.FC = () => {
       if (clientNameFilter && !record.clientName?.toLowerCase().includes(clientNameFilter.toLowerCase())) {
         return false;
       }
-      // Accountant filter
-      if (selectedAccountant) {
-        const target = selectedAccountant === 'Unassigned' ? '-' : selectedAccountant;
-        if (record.accountantName !== target) return false;
+      // Accountant filter (compares normalized names so "/<ref>" variants match)
+      if (selectedAccountant && normalizeAccountant(record.accountantName) !== selectedAccountant) {
+        return false;
       }
       // Multi-select target date filter
       if (selectedTargetDates.length > 0 && record.target_date !== null && !selectedTargetDates.includes(record.target_date)) {
@@ -1489,23 +1499,19 @@ const FilingStatusPage: React.FC = () => {
               />
             </div>
 
-            {/* Accountant Filter (label shows distinct client count per accountant) */}
-            <Select
-              value={selectedAccountant || '__all__'}
-              onValueChange={(v) => setSelectedAccountant(v === '__all__' ? '' : v)}
-            >
-              <SelectTrigger className="w-56">
-                <SelectValue placeholder="All Accountants" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">All Accountants ({clients.length})</SelectItem>
-                {accountantOptions.map(opt => (
-                  <SelectItem key={opt.name} value={opt.name}>
-                    {opt.name} ({opt.count})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {/* Accountant Filter (searchable; label shows distinct client count per accountant) */}
+            <div className="w-64">
+              <SearchableSelect
+                options={[
+                  { value: '', label: `All Accountants (${clients.length})` },
+                  ...accountantOptions.map(opt => ({ value: opt.name, label: `${opt.name} (${opt.count})` })),
+                ]}
+                value={selectedAccountant}
+                onValueChange={setSelectedAccountant}
+                placeholder="All Accountants"
+                searchPlaceholder="Search accountant..."
+              />
+            </div>
 
             {(clientNameFilter || selectedAccountant || selectedTargetDates.length > 0 || selectedStatuses.length > 0) && (
               <Button
