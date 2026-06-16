@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
-import { FileText, Calculator, Pause } from 'lucide-react';
+import { FileText, Pause } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import TwoBReconciliationPage from './TwoBReconciliationPage';
 import SuspendedRecoPage from './SuspendedRecoPage';
-import RCMSummaryPage from './RCMSummaryPage';
 
-type TabType = '2b-reconciliation' | 'suspended-reco' | 'rcm-summary';
+type TabType = '2b-reconciliation' | 'suspended-reco';
 
 interface TabConfig {
   id: TabType;
@@ -16,7 +15,6 @@ interface TabConfig {
 const TABS: TabConfig[] = [
   { id: '2b-reconciliation', label: '2B Reconciliation', icon: FileText },
   { id: 'suspended-reco', label: 'Suspended Reco', icon: Pause },
-  { id: 'rcm-summary', label: 'RCM Summary', icon: Calculator },
 ];
 
 const TwoBAndRCMPage: React.FC = () => {
@@ -29,7 +27,7 @@ const TwoBAndRCMPage: React.FC = () => {
         {TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
-          
+
           return (
             <button
               key={tab.id}
@@ -52,7 +50,6 @@ const TwoBAndRCMPage: React.FC = () => {
       <div className="min-h-[calc(100vh-200px)]">
         {activeTab === '2b-reconciliation' && <TwoBReconciliationPage />}
         {activeTab === 'suspended-reco' && <SuspendedRecoPage />}
-        {activeTab === 'rcm-summary' && <RCMSummaryPage />}
       </div>
     </div>
   );
