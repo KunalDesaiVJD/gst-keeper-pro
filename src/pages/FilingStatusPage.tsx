@@ -89,6 +89,7 @@ const FilingStatusPage: React.FC = () => {
   const [clientNameFilter, setClientNameFilter] = useState<string>('');
   const [selectedTargetDates, setSelectedTargetDates] = useState<number[]>([]);
   const [selectedStatuses, setSelectedStatuses] = useState<FilingStatusType[]>([]);
+  const [selectedAccountant, setSelectedAccountant] = useState<string>('');
   
   // Sync with MonthContext when page loads
   useEffect(() => {
@@ -423,6 +424,11 @@ const FilingStatusPage: React.FC = () => {
       // Client name filter
       if (clientNameFilter && !record.clientName?.toLowerCase().includes(clientNameFilter.toLowerCase())) {
         return false;
+      }
+      // Accountant filter
+      if (selectedAccountant) {
+        const target = selectedAccountant === 'Unassigned' ? '-' : selectedAccountant;
+        if (record.accountantName !== target) return false;
       }
       // Multi-select target date filter
       if (selectedTargetDates.length > 0 && record.target_date !== null && !selectedTargetDates.includes(record.target_date)) {
@@ -889,12 +895,29 @@ const FilingStatusPage: React.FC = () => {
     }
   };
 
+  // Each accountant with their distinct client count, for the filter dropdown.
+  const accountantOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    clients.forEach(c => {
+      const name = c.assigned_accountant?.trim() || 'Unassigned';
+      counts.set(name, (counts.get(name) || 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [clients]);
+
   // Apply filters to records
   const applyFilters = (records: FilingRecord[]): FilingRecord[] => {
     return records.filter(record => {
       // Client name filter
       if (clientNameFilter && !record.clientName?.toLowerCase().includes(clientNameFilter.toLowerCase())) {
         return false;
+      }
+      // Accountant filter
+      if (selectedAccountant) {
+        const target = selectedAccountant === 'Unassigned' ? '-' : selectedAccountant;
+        if (record.accountantName !== target) return false;
       }
       // Multi-select target date filter
       if (selectedTargetDates.length > 0 && record.target_date !== null && !selectedTargetDates.includes(record.target_date)) {
@@ -1466,12 +1489,31 @@ const FilingStatusPage: React.FC = () => {
               />
             </div>
 
-            {(clientNameFilter || selectedTargetDates.length > 0 || selectedStatuses.length > 0) && (
-              <Button 
-                variant="ghost" 
+            {/* Accountant Filter (label shows distinct client count per accountant) */}
+            <Select
+              value={selectedAccountant || '__all__'}
+              onValueChange={(v) => setSelectedAccountant(v === '__all__' ? '' : v)}
+            >
+              <SelectTrigger className="w-56">
+                <SelectValue placeholder="All Accountants" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All Accountants ({clients.length})</SelectItem>
+                {accountantOptions.map(opt => (
+                  <SelectItem key={opt.name} value={opt.name}>
+                    {opt.name} ({opt.count})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {(clientNameFilter || selectedAccountant || selectedTargetDates.length > 0 || selectedStatuses.length > 0) && (
+              <Button
+                variant="ghost"
                 size="sm"
                 onClick={() => {
                   setClientNameFilter('');
+                  setSelectedAccountant('');
                   setSelectedTargetDates([]);
                   setSelectedStatuses([]);
                 }}
