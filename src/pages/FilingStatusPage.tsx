@@ -19,7 +19,7 @@ import GSTPortalLink from '@/components/clients/GSTPortalLink';
 import ClientHoverDetails from '@/components/filing/ClientHoverDetails';
 import { SchemeHistoryEntry } from '@/utils/schemeResolver';
 import { generateFilingRecords } from '@/lib/filingRecords';
-import { SearchableSelect } from '@/components/ui/searchable-select';
+import { MultiSelectPopover } from '@/components/ui/multi-select-popover';
 
 // Normalize an accountant name by stripping the trailing "/<number>" reference
 // (e.g. "PUNITBHAI/16" / "PAVANBHAI /66" / "PRIYA,MUKESHBHAI/ 28") so the same
@@ -99,7 +99,7 @@ const FilingStatusPage: React.FC = () => {
   const [clientNameFilter, setClientNameFilter] = useState<string>('');
   const [selectedTargetDates, setSelectedTargetDates] = useState<number[]>([]);
   const [selectedStatuses, setSelectedStatuses] = useState<FilingStatusType[]>([]);
-  const [selectedAccountant, setSelectedAccountant] = useState<string>('');
+  const [selectedAccountants, setSelectedAccountants] = useState<string[]>([]);
   
   // Sync with MonthContext when page loads
   useEffect(() => {
@@ -436,7 +436,7 @@ const FilingStatusPage: React.FC = () => {
         return false;
       }
       // Accountant filter (compares normalized names so "/<ref>" variants match)
-      if (selectedAccountant && normalizeAccountant(record.accountantName) !== selectedAccountant) {
+      if (selectedAccountants.length > 0 && !selectedAccountants.includes(normalizeAccountant(record.accountantName))) {
         return false;
       }
       // Multi-select target date filter
@@ -926,7 +926,7 @@ const FilingStatusPage: React.FC = () => {
         return false;
       }
       // Accountant filter (compares normalized names so "/<ref>" variants match)
-      if (selectedAccountant && normalizeAccountant(record.accountantName) !== selectedAccountant) {
+      if (selectedAccountants.length > 0 && !selectedAccountants.includes(normalizeAccountant(record.accountantName))) {
         return false;
       }
       // Multi-select target date filter
@@ -1499,27 +1499,26 @@ const FilingStatusPage: React.FC = () => {
               />
             </div>
 
-            {/* Accountant Filter (searchable; label shows distinct client count per accountant) */}
-            <div className="w-64">
-              <SearchableSelect
-                options={[
-                  { value: '', label: `All Accountants (${clients.length})` },
-                  ...accountantOptions.map(opt => ({ value: opt.name, label: `${opt.name} (${opt.count})` })),
-                ]}
-                value={selectedAccountant}
-                onValueChange={setSelectedAccountant}
-                placeholder="All Accountants"
-                searchPlaceholder="Search accountant..."
-              />
-            </div>
+            {/* Accountant Filter — Excel-style multi-select with search + Select All */}
+            <MultiSelectPopover
+              options={accountantOptions.map(opt => ({ value: opt.name, label: `${opt.name} (${opt.count})` }))}
+              selectedValues={selectedAccountants}
+              onSelectionChange={setSelectedAccountants}
+              placeholder={`All Accountants (${clients.length})`}
+              className="w-64"
+              contentClassName="w-72"
+              searchable
+              showSelectAll
+              searchPlaceholder="Search accountant..."
+            />
 
-            {(clientNameFilter || selectedAccountant || selectedTargetDates.length > 0 || selectedStatuses.length > 0) && (
+            {(clientNameFilter || selectedAccountants.length > 0 || selectedTargetDates.length > 0 || selectedStatuses.length > 0) && (
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => {
                   setClientNameFilter('');
-                  setSelectedAccountant('');
+                  setSelectedAccountants([]);
                   setSelectedTargetDates([]);
                   setSelectedStatuses([]);
                 }}
