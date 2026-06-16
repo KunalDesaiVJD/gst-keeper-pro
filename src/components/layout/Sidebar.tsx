@@ -12,7 +12,8 @@ import {
   Shield,
   Settings,
   FileSpreadsheet,
-  FileJson
+  FileJson,
+  Repeat
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
@@ -70,9 +71,15 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
         icon: <LayoutDashboard className="h-5 w-5" />,
       },
       {
-        label: '2B and RCM',
+        label: '2B Reconciliation',
         path: '/2b-and-rcm',
         icon: <FileText className="h-5 w-5" />,
+        roles: ['superadmin', 'gst_manager', 'employee'],
+      },
+      {
+        label: 'RCM Summary',
+        path: '/rcm-summary',
+        icon: <Repeat className="h-5 w-5" />,
         roles: ['superadmin', 'gst_manager', 'employee'],
       },
       {

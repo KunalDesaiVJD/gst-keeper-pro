@@ -79,6 +79,7 @@ const GSTRunningUpdatePage: React.FC = () => {
   const [filterReturn, setFilterReturn] = useState<string>('');
   const [filterUpdateType, setFilterUpdateType] = useState<string>('');
   const [filterInstructionsBy, setFilterInstructionsBy] = useState<string>('');
+  const [filterStatus, setFilterStatus] = useState<'' | 'pending' | 'given'>('');
 
   const isStaff = isStaffRole();
   const canEdit = canEditUpdateSheet();
@@ -409,18 +410,22 @@ const GSTRunningUpdatePage: React.FC = () => {
     }
   };
 
-  // Apply filters
+  // Apply filters, then float pending (unticked) effects to the top so
+  // outstanding work is visible first.
   const filteredUpdates = useMemo(() => {
-    return updates.filter(u => {
+    const filtered = updates.filter(u => {
       if (filterClient && u.client_id !== filterClient) return false;
       if (filterUpdateEffectMonth && u.update_effect_month !== filterUpdateEffectMonth) return false;
       if (filterEffectMonth && u.effect_month !== filterEffectMonth) return false;
       if (filterReturn && u.update_in_return !== filterReturn) return false;
       if (filterUpdateType && u.update_type !== filterUpdateType) return false;
       if (filterInstructionsBy && u.instructions_by_employee_id !== filterInstructionsBy) return false;
+      if (filterStatus === 'pending' && u.remarks_checked) return false;
+      if (filterStatus === 'given' && !u.remarks_checked) return false;
       return true;
     });
-  }, [updates, filterClient, filterUpdateEffectMonth, filterEffectMonth, filterReturn, filterUpdateType, filterInstructionsBy]);
+    return [...filtered].sort((a, b) => Number(a.remarks_checked) - Number(b.remarks_checked));
+  }, [updates, filterClient, filterUpdateEffectMonth, filterEffectMonth, filterReturn, filterUpdateType, filterInstructionsBy, filterStatus]);
 
   const formatNumber = (num: number): string => {
     if (num === 0 || !num) return '';
@@ -593,9 +598,23 @@ const GSTRunningUpdatePage: React.FC = () => {
               </div>
             </div>
 
-            {(filterClient || filterUpdateEffectMonth || filterEffectMonth || filterReturn || filterUpdateType || filterInstructionsBy) && (
-              <Button 
-                variant="ghost" 
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Status:</span>
+              <Select value={filterStatus || '__all__'} onValueChange={(val) => setFilterStatus(val === '__all__' ? '' : (val as 'pending' | 'given'))}>
+                <SelectTrigger className="w-36">
+                  <SelectValue placeholder="All" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="given">Given</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {(filterClient || filterUpdateEffectMonth || filterEffectMonth || filterReturn || filterUpdateType || filterInstructionsBy || filterStatus) && (
+              <Button
+                variant="ghost"
                 size="sm"
                 onClick={() => {
                   setFilterClient('');
@@ -604,6 +623,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                   setFilterReturn('');
                   setFilterUpdateType('');
                   setFilterInstructionsBy('');
+                  setFilterStatus('');
                 }}
               >
                 Clear Filters
