@@ -62,6 +62,11 @@ const AVAILABLE_PERMISSIONS = [
     label: 'Edit Update Sheet',
     description: 'Edit entries on the GST Update Sheet',
   },
+  {
+    key: 'import_excel',
+    label: 'Import Excel',
+    description: 'Import data from Excel files in 2B Reconciliation',
+  },
 ];
 
 interface Employee {

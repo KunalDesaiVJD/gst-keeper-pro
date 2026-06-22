@@ -72,7 +72,7 @@ interface LastSavedInfo {
 }
 
 const TwoBReconciliationPage: React.FC = () => {
-  const { canViewVersionHistory, canUnlockSheets, canDelete2BRows, user, isStaffRole } = useAuth();
+  const { canViewVersionHistory, canUnlockSheets, canDelete2BRows, canImportExcel, user, isStaffRole } = useAuth();
   const { selectedMonth, setSelectedMonth } = useMonth();
   const { selectedClientId, setSelectedClientId } = useClient();
   const [showVersionHistory, setShowVersionHistory] = useState(false);
@@ -1235,10 +1235,12 @@ const TwoBReconciliationPage: React.FC = () => {
             accept=".xlsx,.xls"
             className="hidden"
           />
-          <Button variant="outline" className="flex items-center gap-2" onClick={handleImportClick} disabled={isLocked}>
-            <Upload className="h-4 w-4" />
-            Import Excel
-          </Button>
+          {canImportExcel() && (
+            <Button variant="outline" className="flex items-center gap-2" onClick={handleImportClick} disabled={isLocked}>
+              <Upload className="h-4 w-4" />
+              Import Excel
+            </Button>
+          )}
           <Button variant="outline" className="flex items-center gap-2" onClick={handleExportExcel}>
             <Download className="h-4 w-4" />
             Export Excel
