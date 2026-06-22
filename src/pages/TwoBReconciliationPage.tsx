@@ -585,7 +585,10 @@ const TwoBReconciliationPage: React.FC = () => {
       if (data.billsNotIn2B.length > 0) {
         const records = data.billsNotIn2B.map(b => ({
           client_id: selectedClientId,
-          date: b.date.toISOString().split('T')[0],
+          // Format using local components — `.toISOString()` would shift the
+          // calendar day backward for users east of UTC (e.g. IST midnight
+          // becomes the previous day in UTC).
+          date: format(b.date, 'yyyy-MM-dd'),
           supplier_name: b.supplierName,
           supplier_invoice_number: b.supplierInvoiceNumber,
           supplier_gstin: b.supplierGstin,
@@ -609,7 +612,7 @@ const TwoBReconciliationPage: React.FC = () => {
       if (data.billsNotInBooks.length > 0) {
         const records = data.billsNotInBooks.map(b => ({
           client_id: selectedClientId,
-          date: b.date.toISOString().split('T')[0],
+          date: format(b.date, 'yyyy-MM-dd'),
           supplier_name: b.supplierName,
           supplier_invoice_number: b.supplierInvoiceNumber,
           supplier_gstin: b.supplierGstin,
