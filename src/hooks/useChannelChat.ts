@@ -39,8 +39,9 @@ export const useChannelChat = () => {
   const [messages, setMessages] = useState<ChannelMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
-  const [totalUnread, setTotalUnread] = useState(0);
   const profileCache = useRef<ProfileCache>({});
+
+  const totalUnread = channels.reduce((sum, ch) => sum + (ch.unreadCount || 0), 0);
 
   const resolveProfile = useCallback(async (userId: string): Promise<{ first_name: string; role: string }> => {
     if (profileCache.current[userId]) return profileCache.current[userId];
@@ -99,7 +100,6 @@ export const useChannelChat = () => {
 
     // Enrich channels
     const enriched: ChatChannel[] = [];
-    let totalUnreadCount = 0;
 
     for (const ch of channelData) {
       let otherUserName: string | undefined;
@@ -119,16 +119,17 @@ export const useChannelChat = () => {
         }
       }
 
-      // Count unread
+      // Count unread — exclude the current user's own messages so they don't
+      // count toward their own unread badge.
       const lastRead = readMap.get(ch.id) || '1970-01-01T00:00:00Z';
       const { count } = await supabase
         .from('chat_channel_messages')
         .select('*', { count: 'exact', head: true })
         .eq('channel_id', ch.id)
+        .neq('sender_id', user.id)
         .gt('created_at', lastRead);
 
       const unread = count || 0;
-      totalUnreadCount += unread;
 
       // Get last message
       const { data: lastMsg } = await supabase
@@ -186,7 +187,6 @@ export const useChannelChat = () => {
     });
 
     setChannels(deduped);
-    setTotalUnread(totalUnreadCount);
   }, [user, resolveProfile]);
 
   // Load messages for active channel
@@ -368,14 +368,17 @@ export const useChannelChat = () => {
             setMessages(prev => [...prev, enriched]);
           }
 
-          // Update channel list (unread, last message)
+          // Update channel list (unread, last message). Don't bump unread for
+          // the user's own messages or for the channel they're currently viewing.
+          const isOwnMessage = msg.sender_id === user.id;
+          const isActiveChannel = msg.channel_id === activeChannelId;
           setChannels(prev => prev.map(ch => {
             if (ch.id === msg.channel_id) {
               return {
                 ...ch,
                 lastMessage: msg.message,
                 lastMessageAt: msg.created_at,
-                unreadCount: msg.channel_id === activeChannelId ? 0 : (ch.unreadCount || 0) + 1,
+                unreadCount: isActiveChannel || isOwnMessage ? (ch.unreadCount || 0) : (ch.unreadCount || 0) + 1,
               };
             }
             return ch;
