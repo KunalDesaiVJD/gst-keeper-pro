@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, Save, Loader2, Upload, Info, Edit3 } from 'lucide-react';
+import { FileText, Save, Loader2, Upload, Info, Edit3, Download } from 'lucide-react';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -13,6 +13,7 @@ import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
 import SuspendedRecoOverrideDialog from '@/components/dialogs/SuspendedRecoOverrideDialog';
+import { exportGstReceivableRecoToExcel } from '@/utils/gstReceivableRecoExcelExport';
 import {
   parseElectronicCreditLedgerCsv,
   previousPeriodMonthKey,
@@ -571,12 +572,38 @@ const GstReceivableRecoPage: React.FC = () => {
             )}
           </div>
         </div>
-        {isStaff && isEligibleMonth && (
-          <Button onClick={handleSave} disabled={isSaving} className="flex items-center gap-2">
-            <Save className="h-4 w-4" />
-            {isSaving ? 'Saving...' : 'Save Changes'}
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {isEligibleMonth && selectedClientData && (
+            <Button variant="outline" onClick={() => {
+              exportGstReceivableRecoToExcel({
+                clientName: selectedClientData.name,
+                clientGstin: selectedClientData.gstin,
+                month: selectedMonth,
+                openingCgst, openingSgst, openingIgst,
+                availedCgst, availedSgst, availedIgst,
+                utilizedCgst: actualUtilizedCgst,
+                utilizedSgst: actualUtilizedSgst,
+                utilizedIgst: actualUtilizedIgst,
+                reversedCgst, reversedSgst, reversedIgst,
+                reclaimedCgst, reclaimedSgst, reclaimedIgst,
+                portalClosingCgst, portalClosingSgst, portalClosingIgst,
+                payableCgst, payableSgst, payableIgst,
+                booksClosingCgst, booksClosingSgst, booksClosingIgst,
+                diffCgst, diffSgst, diffIgst,
+              });
+              toast.success('Excel exported successfully');
+            }}>
+              <Download className="h-4 w-4 mr-2" />
+              Export Excel
+            </Button>
+          )}
+          {isStaff && isEligibleMonth && (
+            <Button onClick={handleSave} disabled={isSaving} className="flex items-center gap-2">
+              <Save className="h-4 w-4" />
+              {isSaving ? 'Saving...' : 'Save Changes'}
+            </Button>
+          )}
+        </div>
       </div>
 
       <Card>

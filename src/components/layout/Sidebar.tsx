@@ -13,7 +13,8 @@ import {
   Settings,
   FileSpreadsheet,
   FileJson,
-  Repeat
+  Repeat,
+  FolderDown
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
@@ -104,6 +105,12 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
         label: 'GST Update Sheet',
         path: '/gst-running-update',
         icon: <FileSpreadsheet className="h-5 w-5" />,
+        roles: ['superadmin', 'gst_manager', 'employee'],
+      },
+      {
+        label: 'Reports',
+        path: '/reports',
+        icon: <FolderDown className="h-5 w-5" />,
         roles: ['superadmin', 'gst_manager', 'employee'],
       },
     ];

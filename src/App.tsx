@@ -21,6 +21,7 @@ import ManageMastersPage from "@/pages/ManageMastersPage";
 import FilingStatusPage from "@/pages/FilingStatusPage";
 import GSTRunningUpdatePage from "@/pages/GSTRunningUpdatePage";
 import GSTR1DataPage from "@/pages/GSTR1DataPage";
+import ReportsPage from "@/pages/ReportsPage";
 import ManageEmployeesPage from "@/pages/ManageEmployeesPage";
 import UserControlPage from "@/pages/UserControlPage";
 import SettingsPage from "@/pages/SettingsPage";
@@ -56,6 +57,7 @@ const App = () => (
                   <Route path="/filing-status" element={<FilingStatusPage />} />
                   <Route path="/gst-running-update" element={<GSTRunningUpdatePage />} />
                   <Route path="/gstr1-data" element={<GSTR1DataPage />} />
+                  <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/manage-employees" element={<ManageEmployeesPage />} />
                   <Route path="/user-control" element={<UserControlPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
