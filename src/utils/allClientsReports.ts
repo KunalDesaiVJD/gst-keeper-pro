@@ -175,7 +175,7 @@ export const buildSuspendedClosingAllClients = async (month: string): Promise<Re
   return {
     title: 'Suspended Ledger — Closing Balance — All Clients',
     subtitle: `Month: ${formatMonthLabel(month)}`,
-    headers: ['Sr No.', 'Client Name', 'GSTIN', 'Closing CGST', 'Closing SGST', 'Closing IGST', 'Closing TOTAL'],
+    headers: ['Sr No.', 'Client Name', 'GSTIN', 'CGST', 'SGST', 'IGST', 'TOTAL'],
     rows,
     fileNameBase: `Suspended_Ledger_All_Clients_${month.replace('/', '-')}`,
     columnWidths: [6, 35, 18, 16, 16, 16, 16],
@@ -215,7 +215,7 @@ export const buildCreditClosingAllClients = async (month: string): Promise<Repor
   return {
     title: 'Credit Ledger — Closing Balance — All Clients',
     subtitle: `Month: ${formatMonthLabel(month)}`,
-    headers: ['Sr No.', 'Client Name', 'GSTIN', 'Closing CGST', 'Closing SGST', 'Closing IGST', 'Closing TOTAL', 'GST Payable CGST', 'GST Payable SGST', 'GST Payable IGST', 'GST Payable TOTAL'],
+    headers: ['Sr No.', 'Client Name', 'GSTIN', 'CGST', 'SGST', 'IGST', 'TOTAL', 'GST Payable CGST', 'GST Payable SGST', 'GST Payable IGST', 'GST Payable TOTAL'],
     rows,
     fileNameBase: `Credit_Ledger_All_Clients_${month.replace('/', '-')}`,
     columnWidths: [6, 35, 18, 14, 14, 14, 14, 14, 14, 14, 14],
@@ -254,7 +254,7 @@ export const buildSuspendedClosingPerClient = async (clientId: string, anyMonthI
   return {
     title: 'Suspended Ledger — Closing Balance — All Months',
     subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   ${fyLabel}`,
-    headers: ['Sr No.', 'Month', 'Closing CGST', 'Closing SGST', 'Closing IGST', 'Closing TOTAL'],
+    headers: ['Sr No.', 'Month', 'CGST', 'SGST', 'IGST', 'TOTAL'],
     rows,
     fileNameBase: `Suspended_Ledger_${client.name.replace(/\s+/g, '_')}_${fyLabel.replace(/\s+/g, '_')}`,
     columnWidths: [6, 18, 16, 16, 16, 16],
@@ -299,7 +299,7 @@ export const buildCreditClosingPerClient = async (clientId: string, anyMonthInFy
   return {
     title: 'Credit Ledger — Closing Balance — All Months',
     subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   ${fyLabel}`,
-    headers: ['Sr No.', 'Month', 'Closing CGST', 'Closing SGST', 'Closing IGST', 'Closing TOTAL', 'GST Payable CGST', 'GST Payable SGST', 'GST Payable IGST', 'GST Payable TOTAL'],
+    headers: ['Sr No.', 'Month', 'CGST', 'SGST', 'IGST', 'TOTAL', 'GST Payable CGST', 'GST Payable SGST', 'GST Payable IGST', 'GST Payable TOTAL'],
     rows,
     fileNameBase: `Credit_Ledger_${client.name.replace(/\s+/g, '_')}_${fyLabel.replace(/\s+/g, '_')}`,
     columnWidths: [6, 18, 14, 14, 14, 14, 14, 14, 14, 14],
