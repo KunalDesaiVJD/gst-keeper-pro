@@ -1,12 +1,14 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, Save, Loader2, Download, Trash2 } from 'lucide-react';
+import { FileText, Save, Loader2, Download, Trash2, Upload, Info, Edit3 } from 'lucide-react';
 import ClearDataDialog from '@/components/dialogs/ClearDataDialog';
+import SuspendedRecoOverrideDialog from '@/components/dialogs/SuspendedRecoOverrideDialog';
 import { exportSuspendedRecoToExcel } from '@/utils/suspendedRecoExcelExport';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -14,6 +16,9 @@ import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
 import GSTPortalLink from '@/components/clients/GSTPortalLink';
+import { parseElectronicCreditCsv, previousPeriodMonthKey, formatPeriodLabel } from '@/utils/parseElectronicCreditCsv';
+
+type OpeningSource = 'manual' | 'csv' | 'not_applicable';
 
 interface Client {
   id: string;
@@ -31,16 +36,29 @@ const SuspendedRecoPage: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [showClearData, setShowClearData] = useState(false);
   const [lastSavedBy, setLastSavedBy] = useState<{ name: string; role: string; time: string } | null>(null);
-  // Opening balance portal values (editable)
+  // Opening balance portal values (editable for legacy <Jun-26; for Jun-26+ set via Upload/NA/Override flow)
   const [openingCgst, setOpeningCgst] = useState<number>(0);
   const [openingSgst, setOpeningSgst] = useState<number>(0);
   const [openingIgst, setOpeningIgst] = useState<number>(0);
-  
+
+  // Opening balance source-tracking metadata (Jun-26+ only)
+  const [openingSource, setOpeningSource] = useState<OpeningSource>('manual');
+  const [openingCsvPeriodMonth, setOpeningCsvPeriodMonth] = useState<string | null>(null);
+  const [openingCsvUploadedAt, setOpeningCsvUploadedAt] = useState<string | null>(null);
+  const [openingCsvUploadedBy, setOpeningCsvUploadedBy] = useState<string | null>(null);
+  const [openingCsvUploaderName, setOpeningCsvUploaderName] = useState<string | null>(null);
+  const [openingOverrideJustification, setOpeningOverrideJustification] = useState<string | null>(null);
+  const [openingOverrideAt, setOpeningOverrideAt] = useState<string | null>(null);
+  const [openingOverrideBy, setOpeningOverrideBy] = useState<string | null>(null);
+  const [openingOverriderName, setOpeningOverriderName] = useState<string | null>(null);
+  const [showOverrideDialog, setShowOverrideDialog] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // Current total - auto-calculated from ITC Summary: (4B2i + 4B2ii) - (5.4 + 5.5)
   const [portalCgst, setPortalCgst] = useState<number>(0);
   const [portalSgst, setPortalSgst] = useState<number>(0);
   const [portalIgst, setPortalIgst] = useState<number>(0);
-  
+
   // Books values (auto-linked from 2B)
   const [booksCgst, setBooksCgst] = useState<number>(0);
   const [booksSgst, setBooksSgst] = useState<number>(0);
@@ -120,13 +138,35 @@ const SuspendedRecoPage: React.FC = () => {
         .maybeSingle();
       
       if (suspendedData) {
-        setOpeningCgst(Number((suspendedData as any).opening_cgst) || 0);
-        setOpeningSgst(Number((suspendedData as any).opening_sgst) || 0);
-        setOpeningIgst(Number((suspendedData as any).opening_igst) || 0);
-        
+        const sd = suspendedData as any;
+        setOpeningCgst(Number(sd.opening_cgst) || 0);
+        setOpeningSgst(Number(sd.opening_sgst) || 0);
+        setOpeningIgst(Number(sd.opening_igst) || 0);
+
+        // Opening-balance source metadata (added Jun-26)
+        setOpeningSource((sd.opening_source as OpeningSource) || 'manual');
+        setOpeningCsvPeriodMonth(sd.opening_csv_period_month || null);
+        setOpeningCsvUploadedAt(sd.opening_csv_uploaded_at || null);
+        setOpeningCsvUploadedBy(sd.opening_csv_uploaded_by || null);
+        setOpeningOverrideJustification(sd.opening_override_justification || null);
+        setOpeningOverrideAt(sd.opening_override_at || null);
+        setOpeningOverrideBy(sd.opening_override_by || null);
+
+        // Resolve uploader/overrider first names for the info popover
+        const ids: string[] = [];
+        if (sd.opening_csv_uploaded_by) ids.push(sd.opening_csv_uploaded_by);
+        if (sd.opening_override_by && sd.opening_override_by !== sd.opening_csv_uploaded_by) ids.push(sd.opening_override_by);
+        let nameMap = new Map<string, string>();
+        if (ids.length > 0) {
+          const { data: profiles } = await supabase.from('profiles').select('user_id, first_name').in('user_id', ids);
+          nameMap = new Map((profiles || []).map(p => [p.user_id, p.first_name || 'Unknown']));
+        }
+        setOpeningCsvUploaderName(sd.opening_csv_uploaded_by ? (nameMap.get(sd.opening_csv_uploaded_by) || 'Unknown') : null);
+        setOpeningOverriderName(sd.opening_override_by ? (nameMap.get(sd.opening_override_by) || 'Unknown') : null);
+
         // Fetch last saved by info
-        const updatedBy = (suspendedData as any).updated_by;
-        const updatedAt = (suspendedData as any).updated_at;
+        const updatedBy = sd.updated_by;
+        const updatedAt = sd.updated_at;
         if (updatedBy) {
           const { data: profile } = await supabase.from('profiles').select('first_name').eq('user_id', updatedBy).maybeSingle();
           const { data: roleData } = await supabase.from('user_roles').select('role').eq('user_id', updatedBy).maybeSingle();
@@ -142,6 +182,15 @@ const SuspendedRecoPage: React.FC = () => {
         setOpeningCgst(0);
         setOpeningSgst(0);
         setOpeningIgst(0);
+        setOpeningSource('manual');
+        setOpeningCsvPeriodMonth(null);
+        setOpeningCsvUploadedAt(null);
+        setOpeningCsvUploadedBy(null);
+        setOpeningCsvUploaderName(null);
+        setOpeningOverrideJustification(null);
+        setOpeningOverrideAt(null);
+        setOpeningOverrideBy(null);
+        setOpeningOverriderName(null);
         setLastSavedBy(null);
       }
 
@@ -308,6 +357,15 @@ const SuspendedRecoPage: React.FC = () => {
           portal_cgst: portalCgst,
           portal_sgst: portalSgst,
           portal_igst: portalIgst,
+          // Preserve opening-source metadata — Upload/NA/Override writes these
+          // directly; the Save Changes button must not clobber them.
+          opening_source: openingSource,
+          opening_csv_period_month: openingCsvPeriodMonth,
+          opening_csv_uploaded_at: openingCsvUploadedAt,
+          opening_csv_uploaded_by: openingCsvUploadedBy,
+          opening_override_justification: openingOverrideJustification,
+          opening_override_at: openingOverrideAt,
+          opening_override_by: openingOverrideBy,
           updated_by: user?.id,
           updated_at: new Date().toISOString(),
         } as any, {
@@ -323,6 +381,190 @@ const SuspendedRecoPage: React.FC = () => {
     }
   };
 
+  // Upload: trigger hidden file picker
+  const handleUploadClick = () => {
+    if (!isStaff) return;
+    fileInputRef.current?.click();
+  };
+
+  // Upload: parse selected CSV, validate GSTIN + previous-month presence, save
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (!file) return;
+    if (!selectedClientId || !selectedMonth) {
+      toast.error('Select a client and month first.');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const csvText = await file.text();
+      const parsed = parseElectronicCreditCsv(csvText);
+
+      const clientGstin = (selectedClientData?.gstin || '').trim().toUpperCase();
+      const csvGstin = parsed.gstin.trim().toUpperCase();
+      if (!csvGstin) {
+        toast.error('Could not read GSTIN from the CSV. Upload rejected.');
+        return;
+      }
+      if (csvGstin !== clientGstin) {
+        toast.error(`CSV is for GSTIN ${csvGstin}, but client GSTIN is ${clientGstin}. Upload rejected.`);
+        return;
+      }
+
+      const prevKey = previousPeriodMonthKey(selectedMonth);
+      if (!prevKey) {
+        toast.error('Could not determine the previous return period.');
+        return;
+      }
+      const row = parsed.rows.find(r => r.periodMonthKey === prevKey);
+      if (!row) {
+        toast.error(`CSV has no ${formatPeriodLabel(prevKey)} row. Upload rejected.`);
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const { error } = await supabase
+        .from('suspended_reco')
+        .upsert({
+          client_id: selectedClientId,
+          period_month: selectedMonth,
+          opening_cgst: row.closingCgst,
+          opening_sgst: row.closingSgst,
+          opening_igst: row.closingIgst,
+          portal_cgst: portalCgst,
+          portal_sgst: portalSgst,
+          portal_igst: portalIgst,
+          opening_source: 'csv',
+          opening_csv_period_month: row.periodMonthKey,
+          opening_csv_uploaded_at: now,
+          opening_csv_uploaded_by: user?.id,
+          // Re-upload wipes any prior override (Q7)
+          opening_override_justification: null,
+          opening_override_at: null,
+          opening_override_by: null,
+          updated_by: user?.id,
+          updated_at: now,
+        } as any, { onConflict: 'client_id,period_month' });
+      if (error) throw error;
+
+      setOpeningCgst(row.closingCgst);
+      setOpeningSgst(row.closingSgst);
+      setOpeningIgst(row.closingIgst);
+      setOpeningSource('csv');
+      setOpeningCsvPeriodMonth(row.periodMonthKey);
+      setOpeningCsvUploadedAt(now);
+      setOpeningCsvUploadedBy(user?.id || null);
+      setOpeningCsvUploaderName(user?.firstName || 'You');
+      setOpeningOverrideJustification(null);
+      setOpeningOverrideAt(null);
+      setOpeningOverrideBy(null);
+      setOpeningOverriderName(null);
+
+      toast.success(`Opening balance set from ${formatPeriodLabel(row.periodMonthKey)} closing.`);
+    } catch (error: any) {
+      toast.error('Failed to import: ' + error.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Not Applicable: silently set zeros + mark source
+  const handleNotApplicable = async () => {
+    if (!isStaff || !selectedClientId || !selectedMonth) return;
+    setIsSaving(true);
+    try {
+      const now = new Date().toISOString();
+      const { error } = await supabase
+        .from('suspended_reco')
+        .upsert({
+          client_id: selectedClientId,
+          period_month: selectedMonth,
+          opening_cgst: 0,
+          opening_sgst: 0,
+          opening_igst: 0,
+          portal_cgst: portalCgst,
+          portal_sgst: portalSgst,
+          portal_igst: portalIgst,
+          opening_source: 'not_applicable',
+          opening_csv_period_month: null,
+          opening_csv_uploaded_at: null,
+          opening_csv_uploaded_by: null,
+          opening_override_justification: null,
+          opening_override_at: null,
+          opening_override_by: null,
+          updated_by: user?.id,
+          updated_at: now,
+        } as any, { onConflict: 'client_id,period_month' });
+      if (error) throw error;
+
+      setOpeningCgst(0);
+      setOpeningSgst(0);
+      setOpeningIgst(0);
+      setOpeningSource('not_applicable');
+      setOpeningCsvPeriodMonth(null);
+      setOpeningCsvUploadedAt(null);
+      setOpeningCsvUploadedBy(null);
+      setOpeningCsvUploaderName(null);
+      setOpeningOverrideJustification(null);
+      setOpeningOverrideAt(null);
+      setOpeningOverrideBy(null);
+      setOpeningOverriderName(null);
+
+      toast.success('Marked Not Applicable. Opening balance set to 0.');
+    } catch (error: any) {
+      toast.error('Failed to save: ' + error.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Override: layer new values + justification on top of existing source
+  const handleOverrideSave = async (values: { cgst: number; sgst: number; igst: number; justification: string }) => {
+    if (!isStaff || !selectedClientId || !selectedMonth) return;
+    setIsSaving(true);
+    try {
+      const now = new Date().toISOString();
+      const { error } = await supabase
+        .from('suspended_reco')
+        .upsert({
+          client_id: selectedClientId,
+          period_month: selectedMonth,
+          opening_cgst: values.cgst,
+          opening_sgst: values.sgst,
+          opening_igst: values.igst,
+          portal_cgst: portalCgst,
+          portal_sgst: portalSgst,
+          portal_igst: portalIgst,
+          opening_source: openingSource,
+          opening_csv_period_month: openingCsvPeriodMonth,
+          opening_csv_uploaded_at: openingCsvUploadedAt,
+          opening_csv_uploaded_by: openingCsvUploadedBy,
+          opening_override_justification: values.justification,
+          opening_override_at: now,
+          opening_override_by: user?.id,
+          updated_by: user?.id,
+          updated_at: now,
+        } as any, { onConflict: 'client_id,period_month' });
+      if (error) throw error;
+
+      setOpeningCgst(values.cgst);
+      setOpeningSgst(values.sgst);
+      setOpeningIgst(values.igst);
+      setOpeningOverrideJustification(values.justification);
+      setOpeningOverrideAt(now);
+      setOpeningOverrideBy(user?.id || null);
+      setOpeningOverriderName(user?.firstName || 'You');
+
+      toast.success('Override saved.');
+    } catch (error: any) {
+      toast.error('Failed to save override: ' + error.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const normalizeZero = (num: number): number => {
     if (Object.is(num, -0)) return 0;
     const rounded = Math.round(num * 100) / 100;
@@ -330,17 +572,19 @@ const SuspendedRecoPage: React.FC = () => {
     return rounded;
   };
 
-  // Rs.10 rounding tolerance — applies from Jun-26 (return period 06/2026) onward
-  // only, so already-filed past months are not retroactively altered.
-  const DIFFERENCE_TOLERANCE_FROM = 202606; // YYYY * 100 + MM
+  // Rs.10 rounding tolerance AND new opening-balance flow (Upload/NA/Override)
+  // both kick in from Jun-26 (return period 06/2026) onward — so already-filed
+  // past months are not retroactively altered.
+  const NEW_FLOW_FROM = 202606; // YYYY * 100 + MM
   const monthSortKey = (() => {
     if (!selectedMonth) return 0;
     const [mm, yyyy] = selectedMonth.split('/').map(Number);
     if (!mm || !yyyy) return 0;
     return yyyy * 100 + mm;
   })();
+  const useNewFlow = monthSortKey >= NEW_FLOW_FROM;
   const applyTolerance = (value: number): number => {
-    if (monthSortKey < DIFFERENCE_TOLERANCE_FROM) return value;
+    if (!useNewFlow) return value;
     return Math.abs(value) <= 10 ? 0 : value;
   };
 
@@ -492,12 +736,106 @@ const SuspendedRecoPage: React.FC = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {/* Opening Balance As Per Portal - Editable */}
+                {/* Opening Balance As Per Portal */}
                 <TableRow>
-                  <TableCell className="font-medium border border-border">OPENING BALANCE AS PER PORTAL</TableCell>
-                  <TableCell className="p-0 border border-border">{renderEditableCell(openingCgst, setOpeningCgst)}</TableCell>
-                  <TableCell className="p-0 border border-border">{renderEditableCell(openingSgst, setOpeningSgst)}</TableCell>
-                  <TableCell className="p-0 border border-border">{renderEditableCell(openingIgst, setOpeningIgst)}</TableCell>
+                  <TableCell className="font-medium border border-border align-top">
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span>OPENING BALANCE AS PER PORTAL</span>
+                        {useNewFlow && openingSource !== 'manual' && (
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <button
+                                type="button"
+                                className="inline-flex items-center text-muted-foreground hover:text-foreground"
+                                aria-label="Opening balance source info"
+                              >
+                                <Info className="h-4 w-4" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent className="text-xs max-w-xs space-y-2" align="start">
+                              {openingSource === 'csv' && openingCsvPeriodMonth && (
+                                <p>
+                                  <span className="font-semibold">Source:</span> CSV ({formatPeriodLabel(openingCsvPeriodMonth)} closing).
+                                  {openingCsvUploaderName && (
+                                    <> Uploaded by <span className="font-semibold">{openingCsvUploaderName}</span></>
+                                  )}
+                                  {openingCsvUploadedAt && (
+                                    <> on {new Date(openingCsvUploadedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</>
+                                  )}.
+                                </p>
+                              )}
+                              {openingSource === 'not_applicable' && (
+                                <p>
+                                  <span className="font-semibold">Source:</span> Marked Not Applicable.
+                                </p>
+                              )}
+                              {openingOverrideJustification && (
+                                <div className="border-t pt-2">
+                                  <p>
+                                    <span className="font-semibold">Manually overridden</span>
+                                    {openingOverriderName && <> by <span className="font-semibold">{openingOverriderName}</span></>}
+                                    {openingOverrideAt && (
+                                      <> on {new Date(openingOverrideAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</>
+                                    )}.
+                                  </p>
+                                  <p className="mt-1"><span className="font-semibold">Reason:</span> {openingOverrideJustification}</p>
+                                </div>
+                              )}
+                            </PopoverContent>
+                          </Popover>
+                        )}
+                      </div>
+                      {useNewFlow && isStaff && (
+                        <div className="flex gap-1.5 flex-wrap">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs"
+                            onClick={handleUploadClick}
+                            disabled={!selectedClientId || isSaving}
+                          >
+                            <Upload className="h-3 w-3 mr-1" />
+                            {openingSource === 'csv' ? 'Re-upload' : 'Upload Statement'}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs"
+                            onClick={handleNotApplicable}
+                            disabled={!selectedClientId || isSaving}
+                          >
+                            Not Applicable
+                          </Button>
+                          {openingSource !== 'manual' && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs"
+                              onClick={() => setShowOverrideDialog(true)}
+                              disabled={!selectedClientId || isSaving}
+                            >
+                              <Edit3 className="h-3 w-3 mr-1" />
+                              Override
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </TableCell>
+                  {useNewFlow ? (
+                    <>
+                      <TableCell className="text-right border border-border bg-accent/30">{formatNumber(openingCgst)}</TableCell>
+                      <TableCell className="text-right border border-border bg-accent/30">{formatNumber(openingSgst)}</TableCell>
+                      <TableCell className="text-right border border-border bg-accent/30">{formatNumber(openingIgst)}</TableCell>
+                    </>
+                  ) : (
+                    <>
+                      <TableCell className="p-0 border border-border">{renderEditableCell(openingCgst, setOpeningCgst)}</TableCell>
+                      <TableCell className="p-0 border border-border">{renderEditableCell(openingSgst, setOpeningSgst)}</TableCell>
+                      <TableCell className="p-0 border border-border">{renderEditableCell(openingIgst, setOpeningIgst)}</TableCell>
+                    </>
+                  )}
                   <TableCell className="text-right font-medium border border-border bg-muted/30">
                     {formatNumber(openingTotal)}
                   </TableCell>
@@ -582,6 +920,24 @@ const SuspendedRecoPage: React.FC = () => {
           onCleared={fetchData}
         />
       )}
+
+      {/* Hidden file input for CSV upload — triggered by Upload Statement button */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".csv,text/csv"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+
+      <SuspendedRecoOverrideDialog
+        open={showOverrideDialog}
+        onOpenChange={setShowOverrideDialog}
+        initialCgst={openingCgst}
+        initialSgst={openingSgst}
+        initialIgst={openingIgst}
+        onSave={handleOverrideSave}
+      />
     </div>
   );
 };
