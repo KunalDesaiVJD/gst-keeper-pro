@@ -493,18 +493,41 @@ const GstReceivableRecoPage: React.FC = () => {
     return formatted === '-0' ? '0' : formatted;
   };
 
-  // Closing per portal = Opening + Availed - Utilized - Reversed + Reclaimed
-  const portalClosingCgst = openingCgst + availedCgst - utilizedCgst - reversedCgst + reclaimedCgst;
-  const portalClosingSgst = openingSgst + availedSgst - utilizedSgst - reversedSgst + reclaimedSgst;
-  const portalClosingIgst = openingIgst + availedIgst - utilizedIgst - reversedIgst + reclaimedIgst;
+  // Per-head available ITC (what the credit ledger holds BEFORE this month's
+  // outflow). Reversals reduce the available pool; reclaims add back.
+  const availableCgst = openingCgst + availedCgst - reversedCgst + reclaimedCgst;
+  const availableSgst = openingSgst + availedSgst - reversedSgst + reclaimedSgst;
+  const availableIgst = openingIgst + availedIgst - reversedIgst + reclaimedIgst;
+
+  // Real-world rule: the taxpayer ALWAYS exhausts the credit ledger first;
+  // only the shortfall is paid in cash. So actual ITC utilized = min(output,
+  // available) per head, and the excess (GST payable in cash) = max(0,
+  // output − available). Negative "available" (impossible in practice but
+  // possible when partial data is entered) clamps at 0 here.
+  const safeAvailableCgst = Math.max(0, availableCgst);
+  const safeAvailableSgst = Math.max(0, availableSgst);
+  const safeAvailableIgst = Math.max(0, availableIgst);
+  const actualUtilizedCgst = Math.min(safeAvailableCgst, utilizedCgst);
+  const actualUtilizedSgst = Math.min(safeAvailableSgst, utilizedSgst);
+  const actualUtilizedIgst = Math.min(safeAvailableIgst, utilizedIgst);
+  const payableCgst = Math.max(0, utilizedCgst - safeAvailableCgst);
+  const payableSgst = Math.max(0, utilizedSgst - safeAvailableSgst);
+  const payableIgst = Math.max(0, utilizedIgst - safeAvailableIgst);
+
+  // Closing per portal = Available − ITC actually utilized (clamped at 0)
+  const portalClosingCgst = safeAvailableCgst - actualUtilizedCgst;
+  const portalClosingSgst = safeAvailableSgst - actualUtilizedSgst;
+  const portalClosingIgst = safeAvailableIgst - actualUtilizedIgst;
 
   const openingTotal = openingCgst + openingSgst + openingIgst;
   const availedTotal = availedCgst + availedSgst + availedIgst;
-  const utilizedTotal = utilizedCgst + utilizedSgst + utilizedIgst;
+  const utilizedDisplayTotal = actualUtilizedCgst + actualUtilizedSgst + actualUtilizedIgst;
   const reversedTotal = reversedCgst + reversedSgst + reversedIgst;
   const reclaimedTotal = reclaimedCgst + reclaimedSgst + reclaimedIgst;
+  const payableTotal = payableCgst + payableSgst + payableIgst;
   const portalClosingTotal = portalClosingCgst + portalClosingSgst + portalClosingIgst;
   const booksClosingTotal = booksClosingCgst + booksClosingSgst + booksClosingIgst;
+  const hasPayable = payableTotal > 0;
 
   // Diff with Rs.10 tolerance — display 0 if |diff| <= 10
   const applyTolerance = (v: number) => (Math.abs(v) <= 10 ? 0 : v);
@@ -693,16 +716,17 @@ const GstReceivableRecoPage: React.FC = () => {
                   <TableCell className="text-right font-medium border border-border bg-muted/30">{formatNumber(availedTotal)}</TableCell>
                 </TableRow>
 
-                {/* ITC Utilized — auto from GSTR-1 output tax */}
+                {/* ITC Utilized — GSTR-1 output, but capped at available ITC */}
                 <TableRow>
                   <TableCell className="font-medium border border-border">
-                    <div>LESS: ITC UTILIZED (GSTR-1 output)</div>
+                    <div>LESS: ITC UTILIZED</div>
+                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">min(GSTR-1 output, Available ITC) — excess shown in GST Payable</p>
                     {!hasGstr1 && <p className="text-[10px] text-muted-foreground font-normal mt-0.5">GSTR-1 not imported for this month — showing 0</p>}
                   </TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(utilizedCgst)}</TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(utilizedSgst)}</TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(utilizedIgst)}</TableCell>
-                  <TableCell className="text-right font-medium border border-border bg-muted/30">{formatNumber(utilizedTotal)}</TableCell>
+                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(actualUtilizedCgst)}</TableCell>
+                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(actualUtilizedSgst)}</TableCell>
+                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(actualUtilizedIgst)}</TableCell>
+                  <TableCell className="text-right font-medium border border-border bg-muted/30">{formatNumber(utilizedDisplayTotal)}</TableCell>
                 </TableRow>
 
                 {/* ITC Reversed — auto from ITC Summary 4B */}
@@ -732,13 +756,27 @@ const GstReceivableRecoPage: React.FC = () => {
                 <TableRow className="bg-secondary/30 hover:bg-secondary/30">
                   <TableCell className="font-bold border border-border">
                     <div>CLOSING BALANCE AS PER PORTAL</div>
-                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">Opening + Availed − Utilized − Reversed + Reclaimed</p>
+                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">Available ITC − ITC Utilized (clamped at 0)</p>
                   </TableCell>
                   <TableCell className="text-right font-bold border border-border">{formatNumber(portalClosingCgst)}</TableCell>
                   <TableCell className="text-right font-bold border border-border">{formatNumber(portalClosingSgst)}</TableCell>
                   <TableCell className="text-right font-bold border border-border">{formatNumber(portalClosingIgst)}</TableCell>
                   <TableCell className="text-right font-bold border border-border">{formatNumber(portalClosingTotal)}</TableCell>
                 </TableRow>
+
+                {/* GST Payable — only when output > available ITC (cash leg) */}
+                {hasPayable && (
+                  <TableRow className="bg-destructive/5 hover:bg-destructive/5">
+                    <TableCell className="font-medium border border-border">
+                      <div>GST PAYABLE (CASH)</div>
+                      <p className="text-[10px] text-muted-foreground font-normal mt-0.5">Output liability not covered by Available ITC — settle in cash</p>
+                    </TableCell>
+                    <TableCell className="text-right font-medium border border-border text-destructive">{formatNumber(payableCgst)}</TableCell>
+                    <TableCell className="text-right font-medium border border-border text-destructive">{formatNumber(payableSgst)}</TableCell>
+                    <TableCell className="text-right font-medium border border-border text-destructive">{formatNumber(payableIgst)}</TableCell>
+                    <TableCell className="text-right font-bold border border-border text-destructive">{formatNumber(payableTotal)}</TableCell>
+                  </TableRow>
+                )}
 
                 {/* Closing per books — manual */}
                 <TableRow>

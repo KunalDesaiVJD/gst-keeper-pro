@@ -9,7 +9,20 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMonth } from '@/contexts/MonthContext';
+import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
+
+// gstr1_data stores period_month as the short label ("Jun-26"). The rest of
+// the app shares a single MonthContext value in "MM/YYYY" form, so convert
+// here when reading/writing the table. Keeps existing rows readable.
+const MONTH_SHORT_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const mmYyyyToShort = (mmYyyy: string): string => {
+  if (!mmYyyy) return '';
+  const [mm, yyyy] = mmYyyy.split('/').map(Number);
+  if (!mm || !yyyy) return '';
+  return `${MONTH_SHORT_NAMES[mm - 1]}-${String(yyyy).slice(-2)}`;
+};
 
 interface Client {
   id: string;
@@ -52,9 +65,11 @@ interface B2BInvoice {
 
 const GSTR1DataPage: React.FC = () => {
   const { user, isStaffRole } = useAuth();
+  // Shared selections so opening this page after picking a client/month on
+  // another page (e.g. ITC Summary, Suspended Reco) preserves the context.
+  const { selectedClientId: selectedClient, setSelectedClientId: setSelectedClient } = useClient();
+  const { selectedMonth, setSelectedMonth } = useMonth();
   const [clients, setClients] = useState<Client[]>([]);
-  const [selectedClient, setSelectedClient] = useState('');
-  const [selectedMonth, setSelectedMonth] = useState('');
   const [gstr1Data, setGstr1Data] = useState<GSTR1Record | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
@@ -63,23 +78,25 @@ const GSTR1DataPage: React.FC = () => {
 
   const isStaff = isStaffRole();
 
+  // Use the same MM/YYYY value format as every other page so the shared
+  // MonthContext stays consistent. Labels render as "Mmm YYYY" for clarity.
   const monthOptions = useMemo(() => {
     const months: { value: string; label: string }[] = [];
     const now = new Date();
     const startDate = new Date(2024, 3, 1);
     const endDate = new Date(now.getFullYear(), now.getMonth() + 12, 1);
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     let currentDate = new Date(startDate);
     while (currentDate <= endDate) {
-      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const yearShort = String(currentDate.getFullYear()).slice(-2);
-      const value = `${monthNames[currentDate.getMonth()]}-${yearShort}`;
-      months.push({ value, label: value });
+      const mm = String(currentDate.getMonth() + 1).padStart(2, '0');
+      const yyyy = currentDate.getFullYear();
+      months.push({ value: `${mm}/${yyyy}`, label: `${monthNames[currentDate.getMonth()]} ${yyyy}` });
       currentDate.setMonth(currentDate.getMonth() + 1);
     }
     return months.sort((a, b) => {
-      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const parseDate = (s: string) => { const [m, y] = s.split('-'); return (2000 + parseInt(y)) * 12 + monthNames.indexOf(m); };
-      return parseDate(b.value) - parseDate(a.value);
+      const [aM, aY] = a.value.split('/').map(Number);
+      const [bM, bY] = b.value.split('/').map(Number);
+      return bY * 12 + bM - (aY * 12 + aM);
     });
   }, []);
 
@@ -92,11 +109,12 @@ const GSTR1DataPage: React.FC = () => {
     if (!selectedClient || !selectedMonth) { setGstr1Data(null); return; }
     setIsLoading(true);
     try {
+      const periodMonthKey = mmYyyyToShort(selectedMonth);
       const { data, error } = await supabase
         .from('gstr1_data')
         .select('*')
         .eq('client_id', selectedClient)
-        .eq('period_month', selectedMonth)
+        .eq('period_month', periodMonthKey)
         .maybeSingle();
       if (error) throw error;
       setGstr1Data(data as GSTR1Record | null);
@@ -142,11 +160,12 @@ const GSTR1DataPage: React.FC = () => {
         throw new Error('Selected file is not valid JSON.');
       }
 
+      const periodMonthKey = mmYyyyToShort(selectedMonth);
       const { data: written, error } = await supabase
         .from('gstr1_data')
         .upsert({
           client_id: selectedClient,
-          period_month: selectedMonth,
+          period_month: periodMonthKey,
           raw_json: json,
           file_name: file.name,
           imported_by: user?.id,
@@ -163,7 +182,7 @@ const GSTR1DataPage: React.FC = () => {
         throw new Error('Write was rejected by the database (no row returned). Check that you are signed in.');
       }
 
-      toast.success(`GSTR-1 JSON imported for ${selectedClient ? selectedMonth : ''}.`);
+      toast.success(`GSTR-1 JSON imported for ${periodMonthKey}.`);
       await fetchGSTR1Data();
     } catch (err: any) {
       toast.error('Failed to import: ' + (err?.message || 'Unknown error'));
@@ -486,7 +505,7 @@ const GSTR1DataPage: React.FC = () => {
       ) : !gstr1Data ? (
         <Card>
           <CardContent className="p-8 text-center text-muted-foreground">
-            No GSTR-1 data imported for <span className="font-semibold">{selectedClientName}</span> - <span className="font-semibold">{selectedMonth}</span>.
+            No GSTR-1 data imported for <span className="font-semibold">{selectedClientName}</span> - <span className="font-semibold">{mmYyyyToShort(selectedMonth)}</span>.
             {isStaff && ' Click "Import JSON" to upload.'}
           </CardContent>
         </Card>

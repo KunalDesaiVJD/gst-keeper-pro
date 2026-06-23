@@ -89,6 +89,12 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
         roles: ['superadmin', 'gst_manager', 'employee'],
       },
       {
+        label: 'GSTR-01',
+        path: '/gstr1-data',
+        icon: <FileJson className="h-5 w-5" />,
+        roles: ['superadmin', 'gst_manager', 'employee'],
+      },
+      {
         label: 'Filing Status',
         path: '/filing-status',
         icon: <ClipboardList className="h-5 w-5" />,
@@ -98,12 +104,6 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
         label: 'GST Update Sheet',
         path: '/gst-running-update',
         icon: <FileSpreadsheet className="h-5 w-5" />,
-        roles: ['superadmin', 'gst_manager', 'employee'],
-      },
-      {
-        label: 'GSTR-01',
-        path: '/gstr1-data',
-        icon: <FileJson className="h-5 w-5" />,
         roles: ['superadmin', 'gst_manager', 'employee'],
       },
     ];
