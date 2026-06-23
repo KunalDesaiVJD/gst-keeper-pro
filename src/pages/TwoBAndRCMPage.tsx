@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { FileText, Pause } from 'lucide-react';
+import { FileText, Pause, Wallet } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import TwoBReconciliationPage from './TwoBReconciliationPage';
 import SuspendedRecoPage from './SuspendedRecoPage';
+import GstReceivableRecoPage from './GstReceivableRecoPage';
 
-type TabType = '2b-reconciliation' | 'suspended-reco';
+type TabType = '2b-reconciliation' | 'suspended-reco' | 'gst-receivable-reco';
 
 interface TabConfig {
   id: TabType;
@@ -15,6 +16,7 @@ interface TabConfig {
 const TABS: TabConfig[] = [
   { id: '2b-reconciliation', label: '2B Reconciliation', icon: FileText },
   { id: 'suspended-reco', label: 'Suspended Reco', icon: Pause },
+  { id: 'gst-receivable-reco', label: 'GST Receivable Reco', icon: Wallet },
 ];
 
 const TwoBAndRCMPage: React.FC = () => {
@@ -50,6 +52,7 @@ const TwoBAndRCMPage: React.FC = () => {
       <div className="min-h-[calc(100vh-200px)]">
         {activeTab === '2b-reconciliation' && <TwoBReconciliationPage />}
         {activeTab === 'suspended-reco' && <SuspendedRecoPage />}
+        {activeTab === 'gst-receivable-reco' && <GstReceivableRecoPage />}
       </div>
     </div>
   );
