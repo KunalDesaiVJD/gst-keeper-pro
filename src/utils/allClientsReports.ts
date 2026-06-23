@@ -38,6 +38,17 @@ const safeNum = (v: any): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
+// Credit Ledger reconciliation only exists from Jun-26 onward — same cutoff
+// the GstReceivableRecoPage applies. Reports must enforce this so old months
+// don't get a misleading "0 + 4A − 4B + 4D − Output" number when there is
+// genuinely no portal opening balance to compare against.
+const CREDIT_RECO_FROM = 202606; // YYYY * 100 + MM
+const monthSortKey = (mmYyyy: string): number => {
+  const [mm, yyyy] = mmYyyy.split('/').map(Number);
+  if (!mm || !yyyy) return 0;
+  return yyyy * 100 + mm;
+};
+
 // Indian FY (Apr-Mar) containing the given MM/YYYY. Returns ordered list of
 // 12 month keys (Apr first, Mar last).
 export const fyMonthsForKey = (mmYyyy: string): { fyLabel: string; months: string[] } => {
@@ -185,6 +196,9 @@ export const buildSuspendedClosingAllClients = async (month: string): Promise<Re
 // ─────────────────── REPORT 2: Credit — All Clients ──────────────────────
 
 export const buildCreditClosingAllClients = async (month: string): Promise<ReportTable> => {
+  if (monthSortKey(month) < CREDIT_RECO_FROM) {
+    throw new Error('Credit Ledger reconciliation is available from Jun-26 onward only. Pick Jun-26 or later.');
+  }
   const shortMonth = mmYyyyToShort(month);
   const [clientsRes, grRes, itcRes, gstr1Res] = await Promise.all([
     supabase.from('clients').select('id, name, gstin').order('name'),
@@ -264,7 +278,13 @@ export const buildSuspendedClosingPerClient = async (clientId: string, anyMonthI
 // ─────────── REPORT 4: Credit — Single Client (12 months of FY) ─────────
 
 export const buildCreditClosingPerClient = async (clientId: string, anyMonthInFy: string): Promise<ReportTable> => {
-  const { fyLabel, months } = fyMonthsForKey(anyMonthInFy);
+  const { fyLabel, months: allMonths } = fyMonthsForKey(anyMonthInFy);
+  // Restrict to months where Credit Ledger reconciliation actually existed
+  // (Jun-26+). If the picked FY has no eligible months, refuse the build.
+  const months = allMonths.filter(m => monthSortKey(m) >= CREDIT_RECO_FROM);
+  if (months.length === 0) {
+    throw new Error(`${fyLabel} has no months eligible for Credit Ledger reconciliation (Jun-26 onward only).`);
+  }
   const shortMonths = months.map(mmYyyyToShort);
 
   const [clientRes, grRes, itcRes, gstr1Res] = await Promise.all([
