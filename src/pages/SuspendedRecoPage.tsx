@@ -520,9 +520,11 @@ const SuspendedRecoPage: React.FC = () => {
     }
   };
 
-  // Override: layer new values + justification on top of existing source
+  // Override: layer new values + justification on top of existing source.
+  // Restricted to superadmin only (defense-in-depth even though the button
+  // is hidden for other roles).
   const handleOverrideSave = async (values: { cgst: number; sgst: number; igst: number; justification: string }) => {
-    if (!isStaff || !selectedClientId || !selectedMonth) return;
+    if (user?.role !== 'superadmin' || !selectedClientId || !selectedMonth) return;
     setIsSaving(true);
     try {
       const now = new Date().toISOString();
@@ -807,7 +809,7 @@ const SuspendedRecoPage: React.FC = () => {
                           >
                             Not Applicable
                           </Button>
-                          {openingSource !== 'manual' && (
+                          {openingSource !== 'manual' && user?.role === 'superadmin' && (
                             <Button
                               size="sm"
                               variant="outline"

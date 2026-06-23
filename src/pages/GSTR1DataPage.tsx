@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -59,6 +59,7 @@ const GSTR1DataPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [activeTab, setActiveTab] = useState('b2b');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isStaff = isStaffRole();
 
@@ -109,46 +110,66 @@ const GSTR1DataPage: React.FC = () => {
   useEffect(() => { fetchClients(); }, [fetchClients]);
   useEffect(() => { fetchGSTR1Data(); }, [fetchGSTR1Data]);
 
-  const handleImportJSON = async () => {
+  // Opens the persistent hidden <input type="file"> below. Using a stable ref
+  // (instead of a dynamically-created input with an onchange closure) means
+  // handleFileChange always reads the LATEST selectedClient / selectedMonth
+  // when the user picks a file, even if they tweaked the dropdowns between
+  // clicking Import JSON and picking the file in the OS file dialog.
+  const handleImportClick = () => {
+    if (!selectedClient || !selectedMonth) {
+      toast.error('Please select a client and month first');
+      return;
+    }
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (!file) return;
     if (!selectedClient || !selectedMonth) {
       toast.error('Please select a client and month first');
       return;
     }
 
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    input.onchange = async (e: any) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-
-      setIsImporting(true);
+    setIsImporting(true);
+    try {
+      const text = await file.text();
+      let json: any;
       try {
-        const text = await file.text();
-        const json = JSON.parse(text);
-
-        const { error } = await supabase
-          .from('gstr1_data')
-          .upsert({
-            client_id: selectedClient,
-            period_month: selectedMonth,
-            raw_json: json,
-            file_name: file.name,
-            imported_by: user?.id,
-            imported_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }, { onConflict: 'client_id,period_month' });
-
-        if (error) throw error;
-        toast.success(`GSTR-1 JSON imported successfully for ${selectedMonth}`);
-        fetchGSTR1Data();
-      } catch (err: any) {
-        toast.error('Failed to import: ' + err.message);
-      } finally {
-        setIsImporting(false);
+        json = JSON.parse(text);
+      } catch {
+        throw new Error('Selected file is not valid JSON.');
       }
-    };
-    input.click();
+
+      const { data: written, error } = await supabase
+        .from('gstr1_data')
+        .upsert({
+          client_id: selectedClient,
+          period_month: selectedMonth,
+          raw_json: json,
+          file_name: file.name,
+          imported_by: user?.id,
+          imported_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'client_id,period_month' })
+        .select('id');
+
+      if (error) throw error;
+      // .select() after .upsert() returns the affected row. If RLS or a
+      // constraint silently dropped the write, the array will be empty and
+      // we surface that instead of pretending the import succeeded.
+      if (!written || written.length === 0) {
+        throw new Error('Write was rejected by the database (no row returned). Check that you are signed in.');
+      }
+
+      toast.success(`GSTR-1 JSON imported for ${selectedClient ? selectedMonth : ''}.`);
+      await fetchGSTR1Data();
+    } catch (err: any) {
+      toast.error('Failed to import: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   const handleDelete = async () => {
@@ -396,7 +417,7 @@ const GSTR1DataPage: React.FC = () => {
         </div>
         {isStaff && (
           <div className="flex items-center gap-2">
-            <Button onClick={handleImportJSON} disabled={isImporting || !selectedClient || !selectedMonth}>
+            <Button onClick={handleImportClick} disabled={isImporting || !selectedClient || !selectedMonth}>
               {isImporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
               Import JSON
             </Button>
@@ -407,6 +428,13 @@ const GSTR1DataPage: React.FC = () => {
             )}
           </div>
         )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json,application/json"
+          className="hidden"
+          onChange={handleFileChange}
+        />
       </div>
 
       {/* Filters */}
