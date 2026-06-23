@@ -238,8 +238,9 @@ const GSTRunningUpdatePage: React.FC = () => {
 
   const handleAddRow = () => {
     const defaultClient = clients[0];
+    // Prepend so the new row appears at the top of the table, matching how
+    // most data-entry users expect "Add Row" to behave.
     setUpdates([
-      ...updates,
       {
         client_id: defaultClient?.id || '',
         client_name: defaultClient?.name || '',
@@ -259,6 +260,7 @@ const GSTRunningUpdatePage: React.FC = () => {
         remarks_checked: false,
         isNew: true,
       },
+      ...updates,
     ]);
   };
 
