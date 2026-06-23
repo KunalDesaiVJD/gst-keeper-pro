@@ -330,14 +330,28 @@ const SuspendedRecoPage: React.FC = () => {
     return rounded;
   };
 
+  // Rs.10 rounding tolerance — applies from Jun-26 (return period 06/2026) onward
+  // only, so already-filed past months are not retroactively altered.
+  const DIFFERENCE_TOLERANCE_FROM = 202606; // YYYY * 100 + MM
+  const monthSortKey = (() => {
+    if (!selectedMonth) return 0;
+    const [mm, yyyy] = selectedMonth.split('/').map(Number);
+    if (!mm || !yyyy) return 0;
+    return yyyy * 100 + mm;
+  })();
+  const applyTolerance = (value: number): number => {
+    if (monthSortKey < DIFFERENCE_TOLERANCE_FROM) return value;
+    return Math.abs(value) <= 10 ? 0 : value;
+  };
+
   // New formula: Difference = Opening Balance + Current Total - As Per Books
   const openingTotal = openingCgst + openingSgst + openingIgst;
   const portalTotal = portalCgst + portalSgst + portalIgst;
   const booksTotal = booksCgst + booksSgst + booksIgst;
-  const diffCgst = normalizeZero(openingCgst + portalCgst - booksCgst);
-  const diffSgst = normalizeZero(openingSgst + portalSgst - booksSgst);
-  const diffIgst = normalizeZero(openingIgst + portalIgst - booksIgst);
-  const diffTotal = normalizeZero(openingTotal + portalTotal - booksTotal);
+  const diffCgst = applyTolerance(normalizeZero(openingCgst + portalCgst - booksCgst));
+  const diffSgst = applyTolerance(normalizeZero(openingSgst + portalSgst - booksSgst));
+  const diffIgst = applyTolerance(normalizeZero(openingIgst + portalIgst - booksIgst));
+  const diffTotal = applyTolerance(normalizeZero(openingTotal + portalTotal - booksTotal));
 
   const formatNumber = (num: number): string => {
     if (num === 0 || Object.is(num, -0)) return '0';
