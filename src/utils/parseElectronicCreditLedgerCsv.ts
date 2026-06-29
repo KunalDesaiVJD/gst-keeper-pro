@@ -16,6 +16,12 @@ export interface CreditLedgerRow {
   periodMonthKey: string;  // "03/2025" — matches MM/YYYY used in the app
   description: string;
   transactionType: string; // "Credit" | "Debit"
+  // Transaction amount columns (6-10). For a Debit row this is the per-head
+  // ITC utilized; for a Credit row it's the per-head ITC accrued.
+  amountIgst: number;
+  amountCgst: number;
+  amountSgst: number;
+  // Running balance columns (11-15).
   balanceIgst: number;
   balanceCgst: number;
   balanceSgst: number;
@@ -94,6 +100,9 @@ export const parseElectronicCreditLedgerCsv = (csv: string): CreditLedgerParseRe
       periodMonthKey,
       description: cells[4] || '',
       transactionType: cells[5] || '',
+      amountIgst: toNum(cells[6]),
+      amountCgst: toNum(cells[7]),
+      amountSgst: toNum(cells[8]),
       balanceIgst: toNum(cells[11]),
       balanceCgst: toNum(cells[12]),
       balanceSgst: toNum(cells[13]),

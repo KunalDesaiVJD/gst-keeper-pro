@@ -80,9 +80,13 @@ const GstReceivableRecoPage: React.FC = () => {
   const [availedCgst, setAvailedCgst] = useState(0);
   const [availedSgst, setAvailedSgst] = useState(0);
   const [availedIgst, setAvailedIgst] = useState(0);
+  // ITC actually utilized. When the Credit Ledger CSV has been uploaded we
+  // pull the M-1 Debit row's per-head amounts (cross-head accurate). Otherwise
+  // we fall back to GSTR-1 output (per-head approximation).
   const [utilizedCgst, setUtilizedCgst] = useState(0);
   const [utilizedSgst, setUtilizedSgst] = useState(0);
   const [utilizedIgst, setUtilizedIgst] = useState(0);
+  const [utilizedFromCsv, setUtilizedFromCsv] = useState(false);
 
   // Source-availability flags (drive the small notes on the row labels)
   const [hasItcSummary, setHasItcSummary] = useState(false);
@@ -169,6 +173,14 @@ const GstReceivableRecoPage: React.FC = () => {
         setBooksClosingCgst(Number(r.books_closing_cgst) || 0);
         setBooksClosingSgst(Number(r.books_closing_sgst) || 0);
         setBooksClosingIgst(Number(r.books_closing_igst) || 0);
+        const hasUtilizedFromCsv =
+          r.utilized_cgst !== null && r.utilized_cgst !== undefined;
+        setUtilizedFromCsv(!!hasUtilizedFromCsv);
+        if (hasUtilizedFromCsv) {
+          setUtilizedCgst(Number(r.utilized_cgst) || 0);
+          setUtilizedSgst(Number(r.utilized_sgst) || 0);
+          setUtilizedIgst(Number(r.utilized_igst) || 0);
+        }
 
         // Resolve names for hover popover
         const ids: string[] = [];
@@ -205,6 +217,7 @@ const GstReceivableRecoPage: React.FC = () => {
         setOpeningOverrideBy(null);
         setOpeningOverriderName(null);
         setBooksClosingCgst(0); setBooksClosingSgst(0); setBooksClosingIgst(0);
+        setUtilizedFromCsv(false);
         setLastSavedBy(null);
       }
 
@@ -225,26 +238,64 @@ const GstReceivableRecoPage: React.FC = () => {
       if (itcData?.data) {
         setHasItcSummary(true);
         const itc = itcData.data as any;
-        const sumSection = (rows: any[]): { cgst: number; sgst: number; igst: number } =>
-          (rows || []).reduce(
+        const rowsA: any[] = itc.section4A || [];
+        const rowsB: any[] = itc.section4B || [];
+        const findRow = (rows: any[], srNo: string) =>
+          rows.find(r => r?.srNo === srNo) || { cgst: 0, sgst: 0, igst: 0 };
+        const num = (v: any) => Number(v) || 0;
+
+        // Total (5) = 5.1 + 5.2 − 5.3 + 5.4 + 5.5 (matches ITC Summary page)
+        const r51 = findRow(rowsA, '5.1');
+        const r52 = findRow(rowsA, '5.2');
+        const r53 = findRow(rowsA, '5.3');
+        const r54 = findRow(rowsA, '5.4');
+        const r55 = findRow(rowsA, '5.5');
+        const total5 = {
+          cgst: num(r51.cgst) + num(r52.cgst) - num(r53.cgst) + num(r54.cgst) + num(r55.cgst),
+          sgst: num(r51.sgst) + num(r52.sgst) - num(r53.sgst) + num(r54.sgst) + num(r55.sgst),
+          igst: num(r51.igst) + num(r52.igst) - num(r53.igst) + num(r54.igst) + num(r55.igst),
+        };
+        // Total 4A = rows (1)+(2)+(3)+(4) + Total (5)
+        const rows1To4 = rowsA.slice(0, 4).reduce(
+          (acc, r) => ({
+            cgst: acc.cgst + num(r?.cgst),
+            sgst: acc.sgst + num(r?.sgst),
+            igst: acc.igst + num(r?.igst),
+          }),
+          { cgst: 0, sgst: 0, igst: 0 }
+        );
+        const total4A = {
+          cgst: rows1To4.cgst + total5.cgst,
+          sgst: rows1To4.sgst + total5.sgst,
+          igst: rows1To4.igst + total5.igst,
+        };
+        // Total 4B = sum of non-header rows
+        const total4B = rowsB
+          .filter(r => !r?.isHeader)
+          .reduce(
             (acc, r) => ({
-              cgst: acc.cgst + (Number(r?.cgst) || 0),
-              sgst: acc.sgst + (Number(r?.sgst) || 0),
-              igst: acc.igst + (Number(r?.igst) || 0),
+              cgst: acc.cgst + num(r?.cgst),
+              sgst: acc.sgst + num(r?.sgst),
+              igst: acc.igst + num(r?.igst),
             }),
             { cgst: 0, sgst: 0, igst: 0 }
           );
-        const a4 = sumSection(itc.section4A);
-        const b4 = sumSection(itc.section4B);
-        setAvailedCgst(a4.cgst - b4.cgst);
-        setAvailedSgst(a4.sgst - b4.sgst);
-        setAvailedIgst(a4.igst - b4.igst);
+        // Net ITC Available (4C) = 4A − 4B
+        setAvailedCgst(total4A.cgst - total4B.cgst);
+        setAvailedSgst(total4A.sgst - total4B.sgst);
+        setAvailedIgst(total4A.igst - total4B.igst);
       } else {
         setHasItcSummary(false);
         setAvailedCgst(0); setAvailedSgst(0); setAvailedIgst(0);
       }
 
-      // 3. GSTR-1 (M-1) → output tax = ITC Utilized proxy
+      // 3. GSTR-1 (M-1) → output tax. Only used as a fallback when the CSV
+      // hasn't been uploaded; otherwise the M-1 Debit row from the credit
+      // ledger CSV is more accurate (it includes cross-head set-off).
+      const hasUtilizedFromCsv =
+        rowData &&
+        (rowData as any).utilized_cgst !== null &&
+        (rowData as any).utilized_cgst !== undefined;
       const shortMonth = prevMonth ? toShortMonth(prevMonth) : '';
       const { data: gstr1Data } = shortMonth
         ? await supabase
@@ -255,15 +306,16 @@ const GstReceivableRecoPage: React.FC = () => {
             .maybeSingle()
         : { data: null };
 
-      if (gstr1Data?.raw_json) {
-        setHasGstr1(true);
-        const out = computeGstr1OutputTax(gstr1Data.raw_json);
-        setUtilizedCgst(out.cgst);
-        setUtilizedSgst(out.sgst);
-        setUtilizedIgst(out.igst);
-      } else {
-        setHasGstr1(false);
-        setUtilizedCgst(0); setUtilizedSgst(0); setUtilizedIgst(0);
+      setHasGstr1(!!gstr1Data?.raw_json);
+      if (!hasUtilizedFromCsv) {
+        if (gstr1Data?.raw_json) {
+          const out = computeGstr1OutputTax(gstr1Data.raw_json);
+          setUtilizedCgst(out.cgst);
+          setUtilizedSgst(out.sgst);
+          setUtilizedIgst(out.igst);
+        } else {
+          setUtilizedCgst(0); setUtilizedSgst(0); setUtilizedIgst(0);
+        }
       }
     } catch (error: any) {
       toast.error('Failed to fetch data: ' + error.message);
@@ -320,6 +372,16 @@ const GstReceivableRecoPage: React.FC = () => {
         return;
       }
 
+      // ITC actually utilized in M-1 = the per-head Debit amounts of the M-1
+      // row in the same CSV (cols 6-10). rowsByPeriod keeps the highest-S.No
+      // row per period which is the Debit row when both Credit + Debit exist.
+      const prevKey = previousPeriodMonthKey(selectedMonth);
+      const prevRow = prevKey ? parsed.rowsByPeriod.get(prevKey) : undefined;
+      const utilizedFromCsvRow =
+        prevRow && prevRow.transactionType.toLowerCase() === 'debit'
+          ? { cgst: prevRow.amountCgst, sgst: prevRow.amountSgst, igst: prevRow.amountIgst }
+          : null;
+
       const now = new Date().toISOString();
       const { error } = await supabase
         .from('gst_receivable_reco' as any)
@@ -336,6 +398,9 @@ const GstReceivableRecoPage: React.FC = () => {
           opening_override_justification: null,
           opening_override_at: null,
           opening_override_by: null,
+          utilized_cgst: utilizedFromCsvRow?.cgst ?? null,
+          utilized_sgst: utilizedFromCsvRow?.sgst ?? null,
+          utilized_igst: utilizedFromCsvRow?.igst ?? null,
           books_closing_cgst: booksClosingCgst,
           books_closing_sgst: booksClosingSgst,
           books_closing_igst: booksClosingIgst,
@@ -356,8 +421,19 @@ const GstReceivableRecoPage: React.FC = () => {
       setOpeningOverrideAt(null);
       setOpeningOverrideBy(null);
       setOpeningOverriderName(null);
+      if (utilizedFromCsvRow) {
+        setUtilizedCgst(utilizedFromCsvRow.cgst);
+        setUtilizedSgst(utilizedFromCsvRow.sgst);
+        setUtilizedIgst(utilizedFromCsvRow.igst);
+        setUtilizedFromCsv(true);
+      } else {
+        setUtilizedFromCsv(false);
+      }
 
-      toast.success(`Opening balance set from ${formatPeriodLabel(row.periodMonthKey)} (S.No ${row.srNo}).`);
+      const utilizedNote = utilizedFromCsvRow
+        ? ` ITC utilized captured from ${prevKey ? formatPeriodLabel(prevKey) : 'M-1'} Debit row.`
+        : '';
+      toast.success(`Opening balance set from ${formatPeriodLabel(row.periodMonthKey)} (S.No ${row.srNo}).${utilizedNote}`);
     } catch (error: any) {
       toast.error('Failed to import: ' + error.message);
     } finally {
@@ -383,6 +459,9 @@ const GstReceivableRecoPage: React.FC = () => {
           opening_override_justification: null,
           opening_override_at: null,
           opening_override_by: null,
+          utilized_cgst: null,
+          utilized_sgst: null,
+          utilized_igst: null,
           books_closing_cgst: booksClosingCgst,
           books_closing_sgst: booksClosingSgst,
           books_closing_igst: booksClosingIgst,
@@ -401,6 +480,7 @@ const GstReceivableRecoPage: React.FC = () => {
       setOpeningOverrideAt(null);
       setOpeningOverrideBy(null);
       setOpeningOverriderName(null);
+      setUtilizedFromCsv(false);
 
       toast.success('Marked Not Applicable. Opening balance set to 0.');
     } catch (error: any) {
@@ -430,6 +510,9 @@ const GstReceivableRecoPage: React.FC = () => {
           opening_override_justification: values.justification,
           opening_override_at: now,
           opening_override_by: user.id,
+          utilized_cgst: utilizedFromCsv ? utilizedCgst : null,
+          utilized_sgst: utilizedFromCsv ? utilizedSgst : null,
+          utilized_igst: utilizedFromCsv ? utilizedIgst : null,
           books_closing_cgst: booksClosingCgst,
           books_closing_sgst: booksClosingSgst,
           books_closing_igst: booksClosingIgst,
@@ -476,6 +559,9 @@ const GstReceivableRecoPage: React.FC = () => {
           opening_override_justification: openingOverrideJustification,
           opening_override_at: openingOverrideAt,
           opening_override_by: openingOverrideBy,
+          utilized_cgst: utilizedFromCsv ? utilizedCgst : null,
+          utilized_sgst: utilizedFromCsv ? utilizedSgst : null,
+          utilized_igst: utilizedFromCsv ? utilizedIgst : null,
           books_closing_cgst: booksClosingCgst,
           books_closing_sgst: booksClosingSgst,
           books_closing_igst: booksClosingIgst,
@@ -508,25 +594,31 @@ const GstReceivableRecoPage: React.FC = () => {
   const availableSgst = openingSgst + availedSgst;
   const availableIgst = openingIgst + availedIgst;
 
-  // Real-world rule: the taxpayer ALWAYS exhausts the credit ledger first;
-  // only the shortfall is paid in cash. So actual ITC utilized = min(output,
-  // available) per head, and the excess (GST payable in cash) = max(0,
-  // output − available). Negative "available" (impossible in practice but
-  // possible when partial data is entered) clamps at 0 here.
+  // When utilized comes from the credit ledger CSV, it's the actual per-head
+  // debit the portal applied, so we use it as-is and the closing matches the
+  // portal exactly. When utilized falls back to GSTR-1 output we cap at
+  // available (cross-head set-off isn't visible to that path) and surface the
+  // shortfall as GST Payable (Cash) for awareness.
   const safeAvailableCgst = Math.max(0, availableCgst);
   const safeAvailableSgst = Math.max(0, availableSgst);
   const safeAvailableIgst = Math.max(0, availableIgst);
-  const actualUtilizedCgst = Math.min(safeAvailableCgst, utilizedCgst);
-  const actualUtilizedSgst = Math.min(safeAvailableSgst, utilizedSgst);
-  const actualUtilizedIgst = Math.min(safeAvailableIgst, utilizedIgst);
-  const payableCgst = Math.max(0, utilizedCgst - safeAvailableCgst);
-  const payableSgst = Math.max(0, utilizedSgst - safeAvailableSgst);
-  const payableIgst = Math.max(0, utilizedIgst - safeAvailableIgst);
+  const actualUtilizedCgst = utilizedFromCsv ? utilizedCgst : Math.min(safeAvailableCgst, utilizedCgst);
+  const actualUtilizedSgst = utilizedFromCsv ? utilizedSgst : Math.min(safeAvailableSgst, utilizedSgst);
+  const actualUtilizedIgst = utilizedFromCsv ? utilizedIgst : Math.min(safeAvailableIgst, utilizedIgst);
+  const payableCgst = utilizedFromCsv ? 0 : Math.max(0, utilizedCgst - safeAvailableCgst);
+  const payableSgst = utilizedFromCsv ? 0 : Math.max(0, utilizedSgst - safeAvailableSgst);
+  const payableIgst = utilizedFromCsv ? 0 : Math.max(0, utilizedIgst - safeAvailableIgst);
 
-  // Closing per portal = Available − ITC actually utilized (clamped at 0)
-  const portalClosingCgst = safeAvailableCgst - actualUtilizedCgst;
-  const portalClosingSgst = safeAvailableSgst - actualUtilizedSgst;
-  const portalClosingIgst = safeAvailableIgst - actualUtilizedIgst;
+  // Closing per portal = Available − ITC actually utilized
+  const portalClosingCgst = utilizedFromCsv
+    ? availableCgst - actualUtilizedCgst
+    : safeAvailableCgst - actualUtilizedCgst;
+  const portalClosingSgst = utilizedFromCsv
+    ? availableSgst - actualUtilizedSgst
+    : safeAvailableSgst - actualUtilizedSgst;
+  const portalClosingIgst = utilizedFromCsv
+    ? availableIgst - actualUtilizedIgst
+    : safeAvailableIgst - actualUtilizedIgst;
 
   const openingTotal = openingCgst + openingSgst + openingIgst;
   const availedTotal = availedCgst + availedSgst + availedIgst;
@@ -749,12 +841,27 @@ const GstReceivableRecoPage: React.FC = () => {
                   <TableCell className="text-right font-medium border border-border bg-muted/30">{formatNumber(availedTotal)}</TableCell>
                 </TableRow>
 
-                {/* ITC Utilized — output tax from M-1 GSTR-1, capped at available ITC */}
+                {/* ITC Utilized — actual per-head debit from credit ledger CSV when available, GSTR-1 output otherwise */}
                 <TableRow>
                   <TableCell className="font-medium border border-border">
                     <div>LESS: ITC UTILIZED</div>
-                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">{prevMonthLabel ? `From ${prevMonthLabel} GSTR-1 output — capped at Available ITC; excess shown in GST Payable` : 'From previous month GSTR-1 output — capped at Available ITC'}</p>
-                    {!hasGstr1 && <p className="text-[10px] text-muted-foreground font-normal mt-0.5">{prevMonthLabel ? `GSTR-1 not imported for ${prevMonthLabel} — showing 0` : 'GSTR-1 not imported — showing 0'}</p>}
+                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">
+                      {utilizedFromCsv
+                        ? `Actual per-head debit from ${prevMonthLabel || 'M-1'} row of Credit Ledger (covers cross-head set-off)`
+                        : prevMonthLabel
+                          ? `From ${prevMonthLabel} GSTR-1 output — capped at Available ITC; excess shown in GST Payable`
+                          : 'From previous month GSTR-1 output — capped at Available ITC'}
+                    </p>
+                    {!utilizedFromCsv && !hasGstr1 && (
+                      <p className="text-[10px] text-muted-foreground font-normal mt-0.5">
+                        {prevMonthLabel ? `GSTR-1 not imported for ${prevMonthLabel} — showing 0` : 'GSTR-1 not imported — showing 0'}
+                      </p>
+                    )}
+                    {!utilizedFromCsv && (
+                      <p className="text-[10px] text-amber-600 font-normal mt-0.5">
+                        Tip: Upload the Credit Ledger CSV to pull the actual per-head debit (closing will then tally with the portal).
+                      </p>
+                    )}
                   </TableCell>
                   <TableCell className="text-right border border-border bg-accent/30">{formatNumber(actualUtilizedCgst)}</TableCell>
                   <TableCell className="text-right border border-border bg-accent/30">{formatNumber(actualUtilizedSgst)}</TableCell>
