@@ -113,13 +113,21 @@ export const parseElectronicCreditLedgerCsv = (csv: string): CreditLedgerParseRe
 };
 
 // Helper: given a target month (MM/YYYY), return the previous month's key.
-// Jun-26 page wants May-26's closing as its opening.
+// e.g. Jun-26 → May-26. Used for sourcing M-1 figures (ITC Summary, GSTR-1).
 export const previousPeriodMonthKey = (targetMonth: string): string | null => {
   const [mm, yyyy] = targetMonth.split('/').map(Number);
   if (!mm || !yyyy) return null;
   const prevMonth = mm === 1 ? 12 : mm - 1;
   const prevYear = mm === 1 ? yyyy - 1 : yyyy;
   return `${String(prevMonth).padStart(2, '0')}/${prevYear}`;
+};
+
+// Helper: given a target month (MM/YYYY), return the M-2 month's key. The
+// Jun-26 reco verifies May-26 entries, so the page's "OPENING BALANCE" is
+// May-26's opening = Apr-26's closing in the Credit Ledger CSV.
+export const openingBalancePeriodKey = (targetMonth: string): string | null => {
+  const prev = previousPeriodMonthKey(targetMonth);
+  return prev ? previousPeriodMonthKey(prev) : null;
 };
 
 // Helper: format a periodMonthKey ("05/2026") into a human label ("May-26").

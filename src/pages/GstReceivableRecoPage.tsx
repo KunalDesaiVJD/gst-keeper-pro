@@ -17,6 +17,7 @@ import { exportGstReceivableRecoToExcel } from '@/utils/gstReceivableRecoExcelEx
 import {
   parseElectronicCreditLedgerCsv,
   previousPeriodMonthKey,
+  openingBalancePeriodKey,
   formatPeriodLabel,
 } from '@/utils/parseElectronicCreditLedgerCsv';
 import { computeGstr1OutputTax } from '@/utils/computeGstr1OutputTax';
@@ -82,12 +83,6 @@ const GstReceivableRecoPage: React.FC = () => {
   const [utilizedCgst, setUtilizedCgst] = useState(0);
   const [utilizedSgst, setUtilizedSgst] = useState(0);
   const [utilizedIgst, setUtilizedIgst] = useState(0);
-  const [reversedCgst, setReversedCgst] = useState(0);
-  const [reversedSgst, setReversedSgst] = useState(0);
-  const [reversedIgst, setReversedIgst] = useState(0);
-  const [reclaimedCgst, setReclaimedCgst] = useState(0);
-  const [reclaimedSgst, setReclaimedSgst] = useState(0);
-  const [reclaimedIgst, setReclaimedIgst] = useState(0);
 
   // Source-availability flags (drive the small notes on the row labels)
   const [hasItcSummary, setHasItcSummary] = useState(false);
@@ -103,6 +98,12 @@ const GstReceivableRecoPage: React.FC = () => {
     return yyyy * 100 + mm;
   }, [selectedMonth]);
   const isEligibleMonth = monthSortKey >= RECEIVABLE_FROM;
+
+  // Human label for the M-1 source month, e.g. "May-26" when selectedMonth is June 2026
+  const prevMonthLabel = useMemo(() => {
+    const prev = previousPeriodMonthKey(selectedMonth);
+    return prev ? formatPeriodLabel(prev) : '';
+  }, [selectedMonth]);
 
   // Month options — copied from SuspendedRecoPage for layout consistency
   const generateMonthOptions = useMemo(() => {
@@ -207,13 +208,19 @@ const GstReceivableRecoPage: React.FC = () => {
         setLastSavedBy(null);
       }
 
-      // 2. ITC Summary → Availed (4A) + Reversed (4B) + Reclaimed (4D)
-      const { data: itcData } = await supabase
-        .from('itc_summaries')
-        .select('data')
-        .eq('client_id', selectedClientId)
-        .eq('period_month', selectedMonth)
-        .maybeSingle();
+      // The June-26 page verifies May-26 set-off, so all derived figures come
+      // from the M-1 (previous month) sources.
+      const prevMonth = previousPeriodMonthKey(selectedMonth);
+
+      // 2. ITC Summary (M-1) → Net ITC Available (4C = 4A − 4B)
+      const { data: itcData } = prevMonth
+        ? await supabase
+            .from('itc_summaries')
+            .select('data')
+            .eq('client_id', selectedClientId)
+            .eq('period_month', prevMonth)
+            .maybeSingle()
+        : { data: null };
 
       if (itcData?.data) {
         setHasItcSummary(true);
@@ -229,25 +236,24 @@ const GstReceivableRecoPage: React.FC = () => {
           );
         const a4 = sumSection(itc.section4A);
         const b4 = sumSection(itc.section4B);
-        const d4 = sumSection(itc.section4D);
-        setAvailedCgst(a4.cgst); setAvailedSgst(a4.sgst); setAvailedIgst(a4.igst);
-        setReversedCgst(b4.cgst); setReversedSgst(b4.sgst); setReversedIgst(b4.igst);
-        setReclaimedCgst(d4.cgst); setReclaimedSgst(d4.sgst); setReclaimedIgst(d4.igst);
+        setAvailedCgst(a4.cgst - b4.cgst);
+        setAvailedSgst(a4.sgst - b4.sgst);
+        setAvailedIgst(a4.igst - b4.igst);
       } else {
         setHasItcSummary(false);
         setAvailedCgst(0); setAvailedSgst(0); setAvailedIgst(0);
-        setReversedCgst(0); setReversedSgst(0); setReversedIgst(0);
-        setReclaimedCgst(0); setReclaimedSgst(0); setReclaimedIgst(0);
       }
 
-      // 3. GSTR-1 → output tax = ITC Utilized proxy
-      const shortMonth = toShortMonth(selectedMonth);
-      const { data: gstr1Data } = await supabase
-        .from('gstr1_data')
-        .select('raw_json')
-        .eq('client_id', selectedClientId)
-        .eq('period_month', shortMonth)
-        .maybeSingle();
+      // 3. GSTR-1 (M-1) → output tax = ITC Utilized proxy
+      const shortMonth = prevMonth ? toShortMonth(prevMonth) : '';
+      const { data: gstr1Data } = shortMonth
+        ? await supabase
+            .from('gstr1_data')
+            .select('raw_json')
+            .eq('client_id', selectedClientId)
+            .eq('period_month', shortMonth)
+            .maybeSingle()
+        : { data: null };
 
       if (gstr1Data?.raw_json) {
         setHasGstr1(true);
@@ -302,14 +308,15 @@ const GstReceivableRecoPage: React.FC = () => {
         return;
       }
 
-      const prevKey = previousPeriodMonthKey(selectedMonth);
-      if (!prevKey) {
-        toast.error('Could not determine the previous return period.');
+      // Page verifies M-1's set-off, so opening = M-2's closing balance.
+      const openingKey = openingBalancePeriodKey(selectedMonth);
+      if (!openingKey) {
+        toast.error('Could not determine the opening return period.');
         return;
       }
-      const row = parsed.rowsByPeriod.get(prevKey);
+      const row = parsed.rowsByPeriod.get(openingKey);
       if (!row) {
-        toast.error(`Credit Ledger CSV has no ${formatPeriodLabel(prevKey)} entry. Upload rejected.`);
+        toast.error(`Credit Ledger CSV has no ${formatPeriodLabel(openingKey)} entry. Upload rejected.`);
         return;
       }
 
@@ -494,11 +501,12 @@ const GstReceivableRecoPage: React.FC = () => {
     return formatted === '-0' ? '0' : formatted;
   };
 
-  // Per-head available ITC (what the credit ledger holds BEFORE this month's
-  // outflow). Reversals reduce the available pool; reclaims add back.
-  const availableCgst = openingCgst + availedCgst - reversedCgst + reclaimedCgst;
-  const availableSgst = openingSgst + availedSgst - reversedSgst + reclaimedSgst;
-  const availableIgst = openingIgst + availedIgst - reversedIgst + reclaimedIgst;
+  // Per-head available ITC: Opening (M-2 closing) + Net ITC Available (M-1 4C).
+  // The 4B reversals/4D reclaims are already netted inside 4C, so we don't
+  // subtract/add them again here.
+  const availableCgst = openingCgst + availedCgst;
+  const availableSgst = openingSgst + availedSgst;
+  const availableIgst = openingIgst + availedIgst;
 
   // Real-world rule: the taxpayer ALWAYS exhausts the credit ledger first;
   // only the shortfall is paid in cash. So actual ITC utilized = min(output,
@@ -523,8 +531,6 @@ const GstReceivableRecoPage: React.FC = () => {
   const openingTotal = openingCgst + openingSgst + openingIgst;
   const availedTotal = availedCgst + availedSgst + availedIgst;
   const utilizedDisplayTotal = actualUtilizedCgst + actualUtilizedSgst + actualUtilizedIgst;
-  const reversedTotal = reversedCgst + reversedSgst + reversedIgst;
-  const reclaimedTotal = reclaimedCgst + reclaimedSgst + reclaimedIgst;
   const payableTotal = payableCgst + payableSgst + payableIgst;
   const portalClosingTotal = portalClosingCgst + portalClosingSgst + portalClosingIgst;
   const booksClosingTotal = booksClosingCgst + booksClosingSgst + booksClosingIgst;
@@ -579,13 +585,12 @@ const GstReceivableRecoPage: React.FC = () => {
                 clientName: selectedClientData.name,
                 clientGstin: selectedClientData.gstin,
                 month: selectedMonth,
+                prevMonthLabel,
                 openingCgst, openingSgst, openingIgst,
                 availedCgst, availedSgst, availedIgst,
                 utilizedCgst: actualUtilizedCgst,
                 utilizedSgst: actualUtilizedSgst,
                 utilizedIgst: actualUtilizedIgst,
-                reversedCgst, reversedSgst, reversedIgst,
-                reclaimedCgst, reclaimedSgst, reclaimedIgst,
                 portalClosingCgst, portalClosingSgst, portalClosingIgst,
                 payableCgst, payableSgst, payableIgst,
                 booksClosingCgst, booksClosingSgst, booksClosingIgst,
@@ -731,11 +736,12 @@ const GstReceivableRecoPage: React.FC = () => {
                   <TableCell className="text-right font-medium border border-border bg-muted/30">{formatNumber(openingTotal)}</TableCell>
                 </TableRow>
 
-                {/* ITC Availed — auto from ITC Summary 4A */}
+                {/* Net ITC Available — auto from ITC Summary (M-1) 4C = 4A − 4B */}
                 <TableRow>
                   <TableCell className="font-medium border border-border">
-                    <div>ADD: ITC AVAILED (4A)</div>
-                    {!hasItcSummary && <p className="text-[10px] text-muted-foreground font-normal mt-0.5">ITC Summary not saved for this month — showing 0</p>}
+                    <div>ADD: NET ITC AVAILABLE (4C)</div>
+                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">{prevMonthLabel ? `From ${prevMonthLabel} ITC Summary (4A − 4B)` : '4A − 4B from previous month'}</p>
+                    {!hasItcSummary && <p className="text-[10px] text-muted-foreground font-normal mt-0.5">{prevMonthLabel ? `ITC Summary not saved for ${prevMonthLabel} — showing 0` : 'ITC Summary not saved — showing 0'}</p>}
                   </TableCell>
                   <TableCell className="text-right border border-border bg-accent/30">{formatNumber(availedCgst)}</TableCell>
                   <TableCell className="text-right border border-border bg-accent/30">{formatNumber(availedSgst)}</TableCell>
@@ -743,35 +749,17 @@ const GstReceivableRecoPage: React.FC = () => {
                   <TableCell className="text-right font-medium border border-border bg-muted/30">{formatNumber(availedTotal)}</TableCell>
                 </TableRow>
 
-                {/* ITC Utilized — GSTR-1 output, but capped at available ITC */}
+                {/* ITC Utilized — output tax from M-1 GSTR-1, capped at available ITC */}
                 <TableRow>
                   <TableCell className="font-medium border border-border">
                     <div>LESS: ITC UTILIZED</div>
-                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">min(GSTR-1 output, Available ITC) — excess shown in GST Payable</p>
-                    {!hasGstr1 && <p className="text-[10px] text-muted-foreground font-normal mt-0.5">GSTR-1 not imported for this month — showing 0</p>}
+                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">{prevMonthLabel ? `From ${prevMonthLabel} GSTR-1 output — capped at Available ITC; excess shown in GST Payable` : 'From previous month GSTR-1 output — capped at Available ITC'}</p>
+                    {!hasGstr1 && <p className="text-[10px] text-muted-foreground font-normal mt-0.5">{prevMonthLabel ? `GSTR-1 not imported for ${prevMonthLabel} — showing 0` : 'GSTR-1 not imported — showing 0'}</p>}
                   </TableCell>
                   <TableCell className="text-right border border-border bg-accent/30">{formatNumber(actualUtilizedCgst)}</TableCell>
                   <TableCell className="text-right border border-border bg-accent/30">{formatNumber(actualUtilizedSgst)}</TableCell>
                   <TableCell className="text-right border border-border bg-accent/30">{formatNumber(actualUtilizedIgst)}</TableCell>
                   <TableCell className="text-right font-medium border border-border bg-muted/30">{formatNumber(utilizedDisplayTotal)}</TableCell>
-                </TableRow>
-
-                {/* ITC Reversed — auto from ITC Summary 4B */}
-                <TableRow>
-                  <TableCell className="font-medium border border-border">LESS: ITC REVERSED (4B)</TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(reversedCgst)}</TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(reversedSgst)}</TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(reversedIgst)}</TableCell>
-                  <TableCell className="text-right font-medium border border-border bg-muted/30">{formatNumber(reversedTotal)}</TableCell>
-                </TableRow>
-
-                {/* ITC Reclaimed — auto from ITC Summary 4D */}
-                <TableRow>
-                  <TableCell className="font-medium border border-border">ADD: ITC RECLAIMED (4D)</TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(reclaimedCgst)}</TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(reclaimedSgst)}</TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(reclaimedIgst)}</TableCell>
-                  <TableCell className="text-right font-medium border border-border bg-muted/30">{formatNumber(reclaimedTotal)}</TableCell>
                 </TableRow>
 
                 {/* Spacer */}
@@ -783,7 +771,7 @@ const GstReceivableRecoPage: React.FC = () => {
                 <TableRow className="bg-secondary/30 hover:bg-secondary/30">
                   <TableCell className="font-bold border border-border">
                     <div>CLOSING BALANCE AS PER PORTAL</div>
-                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">Available ITC − ITC Utilized (clamped at 0)</p>
+                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">Opening + Net ITC Available − ITC Utilized (clamped at 0)</p>
                   </TableCell>
                   <TableCell className="text-right font-bold border border-border">{formatNumber(portalClosingCgst)}</TableCell>
                   <TableCell className="text-right font-bold border border-border">{formatNumber(portalClosingSgst)}</TableCell>
