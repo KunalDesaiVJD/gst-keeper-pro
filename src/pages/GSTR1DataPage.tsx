@@ -4,7 +4,15 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Upload, FileJson, Loader2, Trash2 } from 'lucide-react';
+import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { supabase } from '@/integrations/supabase/client';
@@ -37,6 +45,13 @@ interface GSTR1Record {
   raw_json: any;
   file_name: string | null;
   imported_at: string;
+  // Populated by the gst-push edge function after a portal push (nullable:
+  // absent until the first push, or until the migration adding these columns
+  // is applied).
+  last_pushed_at?: string | null;
+  last_push_status?: string | null;
+  last_push_by?: string | null;
+  last_push_message?: string | null;
 }
 
 // GSTR-1 JSON section types
@@ -64,7 +79,7 @@ interface B2BInvoice {
 }
 
 const GSTR1DataPage: React.FC = () => {
-  const { user, isStaffRole } = useAuth();
+  const { user, isStaffRole, canEditFilingStatus } = useAuth();
   // Shared selections so opening this page after picking a client/month on
   // another page (e.g. ITC Summary, Suspended Reco) preserves the context.
   const { selectedClientId: selectedClient, setSelectedClientId: setSelectedClient } = useClient();
@@ -75,6 +90,11 @@ const GSTR1DataPage: React.FC = () => {
   const [isImporting, setIsImporting] = useState(false);
   const [activeTab, setActiveTab] = useState('b2b');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // "Push to GST Portal" (Humonex) flow.
+  const [pushDialogOpen, setPushDialogOpen] = useState(false);
+  const [isPushing, setIsPushing] = useState(false);
+  const [pushResult, setPushResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   const isStaff = isStaffRole();
 
@@ -99,6 +119,27 @@ const GSTR1DataPage: React.FC = () => {
       return bY * 12 + bM - (aY * 12 + aM);
     });
   }, []);
+
+  // The GST portal / Humonex filing period fields derived from the selected
+  // month. The edge function recomputes these authoritatively; this copy is
+  // only for showing the operator what will be submitted before they confirm.
+  const derivedFiling = useMemo(() => {
+    if (!selectedMonth) return null;
+    const [mmStr, yyyyStr] = selectedMonth.split('/');
+    const mm = Number(mmStr);
+    const yyyy = Number(yyyyStr);
+    if (!mm || mm < 1 || mm > 12 || !yyyy) return null;
+    const fullNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const period = fullNames[mm - 1];
+    const fyStart = mm >= 4 ? yyyy : yyyy - 1;
+    const financialYear = `${fyStart}-${String(fyStart + 1).slice(-2)}`;
+    let quarter: string;
+    if (mm >= 4 && mm <= 6) quarter = 'Quarter 1 (Apr - Jun)';
+    else if (mm >= 7 && mm <= 9) quarter = 'Quarter 2 (Jul - Sep)';
+    else if (mm >= 10 && mm <= 12) quarter = 'Quarter 3 (Oct - Dec)';
+    else quarter = 'Quarter 4 (Jan - Mar)';
+    return { period, financialYear, quarter };
+  }, [selectedMonth]);
 
   const fetchClients = useCallback(async () => {
     const { data } = await supabase.from('clients').select('id, name, gstin').order('name');
@@ -127,6 +168,9 @@ const GSTR1DataPage: React.FC = () => {
 
   useEffect(() => { fetchClients(); }, [fetchClients]);
   useEffect(() => { fetchGSTR1Data(); }, [fetchGSTR1Data]);
+  // Clear the transient push banner when the operator switches client/month
+  // (but not on a post-push refetch of the same selection).
+  useEffect(() => { setPushResult(null); }, [selectedClient, selectedMonth]);
 
   // Opens the persistent hidden <input type="file"> below. Using a stable ref
   // (instead of a dynamically-created input with an onchange closure) means
@@ -200,6 +244,67 @@ const GSTR1DataPage: React.FC = () => {
       setGstr1Data(null);
     } catch (err: any) {
       toast.error('Failed to delete: ' + err.message);
+    }
+  };
+
+  // Sends the stored GSTR-1 JSON to the GST portal through the server-side
+  // Humonex proxy (the gst-push edge function). The client's GST-portal login
+  // and the secret Humonex token are handled entirely on the server; the app
+  // only sends which client + period to push.
+  const handlePush = async () => {
+    if (!gstr1Data || !selectedClient || !selectedMonth) return;
+    setIsPushing(true);
+    setPushResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('gst-push', {
+        body: {
+          clientId: selectedClient,
+          periodMonth: selectedMonth,
+          actorId: user?.id,
+          actorRole: user?.role,
+        },
+      });
+
+      // supabase-js only populates `data` on a 2xx response; the function
+      // returns 200 for every handled outcome, so a non-null `error` means a
+      // network failure or an unexpected 500 (which may carry a body message).
+      if (error) {
+        let message = error.message || 'Request to the push service failed.';
+        try {
+          const ctx = (error as any).context;
+          if (ctx && typeof ctx.json === 'function') {
+            const body = await ctx.json();
+            if (body?.error) message = body.error;
+          }
+        } catch { /* keep the original message */ }
+        throw new Error(message);
+      }
+
+      const pushedAt = new Date().toISOString();
+      if (data?.ok) {
+        const msg = `Pushed to GST portal — ${selectedClientName}, ${data.period} ${data.financialYear}.`;
+        toast.success(msg);
+        setPushResult({ ok: true, message: msg });
+        // Mirror what the edge function persisted so the "last pushed" indicator
+        // updates immediately without waiting for a reload.
+        setGstr1Data((prev) => prev ? { ...prev, last_pushed_at: pushedAt, last_push_status: 'success', last_push_by: user?.id ?? null, last_push_message: null } : prev);
+      } else {
+        const remote =
+          (data?.response && typeof data.response === 'object' && (data.response.message || data.response.error)) ||
+          (typeof data?.response === 'string' ? data.response : '') ||
+          data?.error ||
+          'The GST portal push was not accepted.';
+        toast.error(`Push failed: ${remote}`);
+        setPushResult({ ok: false, message: remote });
+        setGstr1Data((prev) => prev ? { ...prev, last_pushed_at: pushedAt, last_push_status: 'failed', last_push_by: user?.id ?? null, last_push_message: remote } : prev);
+      }
+    } catch (err: any) {
+      const message = err?.message || 'Unknown error';
+      toast.error('Push failed: ' + message);
+      setPushResult({ ok: false, message });
+    } finally {
+      setIsPushing(false);
+      setPushDialogOpen(false);
     }
   };
 
@@ -440,8 +545,18 @@ const GSTR1DataPage: React.FC = () => {
               {isImporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
               Import JSON
             </Button>
+            {gstr1Data && canEditFilingStatus() && (
+              <Button
+                onClick={() => { setPushResult(null); setPushDialogOpen(true); }}
+                disabled={isPushing}
+                className="bg-success text-success-foreground hover:bg-success/90"
+              >
+                {isPushing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+                Push to GST Portal
+              </Button>
+            )}
             {gstr1Data && (
-              <Button variant="destructive" size="sm" onClick={handleDelete}>
+              <Button variant="destructive" size="sm" onClick={handleDelete} disabled={isPushing}>
                 <Trash2 className="h-4 w-4 mr-2" /> Delete
               </Button>
             )}
@@ -483,13 +598,43 @@ const GSTR1DataPage: React.FC = () => {
               </div>
             </div>
             {gstr1Data && (
-              <div className="text-xs text-muted-foreground ml-auto">
-                File: <span className="font-medium">{gstr1Data.file_name}</span> • Imported: {new Date(gstr1Data.imported_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+              <div className="ml-auto flex flex-col items-end gap-0.5">
+                <div className="text-xs text-muted-foreground">
+                  File: <span className="font-medium">{gstr1Data.file_name}</span> • Imported: {new Date(gstr1Data.imported_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                </div>
+                {gstr1Data.last_pushed_at && (
+                  <div className={`text-xs flex items-center gap-1 font-medium ${gstr1Data.last_push_status === 'success' ? 'text-success' : 'text-destructive'}`}>
+                    {gstr1Data.last_push_status === 'success'
+                      ? <CheckCircle2 className="h-3.5 w-3.5" />
+                      : <XCircle className="h-3.5 w-3.5" />}
+                    {gstr1Data.last_push_status === 'success' ? 'Pushed to GST portal' : 'Last push failed'}
+                    {' · '}
+                    {new Date(gstr1Data.last_pushed_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                )}
               </div>
             )}
           </div>
         </CardContent>
       </Card>
+
+      {/* Last push result */}
+      {pushResult && (
+        <div
+          className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${
+            pushResult.ok
+              ? 'border-success/30 bg-success/10 text-success'
+              : 'border-destructive/30 bg-destructive/10 text-destructive'
+          }`}
+        >
+          {pushResult.ok ? (
+            <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-success" />
+          ) : (
+            <XCircle className="h-4 w-4 mt-0.5 shrink-0" />
+          )}
+          <span className="break-words">{pushResult.message}</span>
+        </div>
+      )}
 
       {/* Data Display */}
       {isLoading ? (
@@ -968,6 +1113,60 @@ const GSTR1DataPage: React.FC = () => {
           </CardContent>
         </Card>
       )}
+
+      {/* Push confirmation — submitting to the live GST portal is outward and
+          hard to reverse, so require an explicit confirm showing exactly what
+          period is being filed. */}
+      <AlertDialog open={pushDialogOpen} onOpenChange={(o) => { if (!isPushing) setPushDialogOpen(o); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Push GSTR-1 to the GST portal?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>
+                  This submits the imported GSTR-1 data to the live GST portal via Humonex.
+                  Review the details before continuing:
+                </p>
+                <div className="rounded-md border bg-muted/40 p-3 text-sm text-foreground space-y-1">
+                  <div className="flex justify-between gap-4">
+                    <span className="text-muted-foreground">Client</span>
+                    <span className="font-medium text-right">{selectedClientName || '—'}</span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-muted-foreground">Period</span>
+                    <span className="font-medium text-right">{derivedFiling?.period} {selectedMonth?.split('/')[1]}</span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-muted-foreground">Quarter</span>
+                    <span className="font-medium text-right">{derivedFiling?.quarter}</span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-muted-foreground">Financial year</span>
+                    <span className="font-medium text-right">{derivedFiling?.financialYear}</span>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  The client's stored GST portal login is used to file. Make sure the data on this page
+                  is final — this action cannot be undone from here.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button variant="outline" onClick={() => setPushDialogOpen(false)} disabled={isPushing}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handlePush}
+              disabled={isPushing}
+              className="bg-success text-success-foreground hover:bg-success/90"
+            >
+              {isPushing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+              {isPushing ? 'Pushing…' : 'Confirm & Push'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

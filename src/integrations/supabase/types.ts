@@ -688,6 +688,10 @@ export type Database = {
           id: string
           imported_at: string
           imported_by: string | null
+          last_push_by: string | null
+          last_push_message: string | null
+          last_push_status: string | null
+          last_pushed_at: string | null
           period_month: string
           raw_json: Json
           updated_at: string | null
@@ -698,6 +702,10 @@ export type Database = {
           id?: string
           imported_at?: string
           imported_by?: string | null
+          last_push_by?: string | null
+          last_push_message?: string | null
+          last_push_status?: string | null
+          last_pushed_at?: string | null
           period_month: string
           raw_json?: Json
           updated_at?: string | null
@@ -708,6 +716,10 @@ export type Database = {
           id?: string
           imported_at?: string
           imported_by?: string | null
+          last_push_by?: string | null
+          last_push_message?: string | null
+          last_push_status?: string | null
+          last_pushed_at?: string | null
           period_month?: string
           raw_json?: Json
           updated_at?: string | null

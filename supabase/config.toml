@@ -1,1 +1,8 @@
 project_id = "gcquafqxbykxkbexcdpy"
+
+# Server-side GSTR-1 push to the GST portal via the Humonex API.
+# This app uses custom auth (not Supabase Auth), so there is no Supabase JWT to
+# verify on invoke; authorization is enforced at the app layer, and the secret
+# Humonex token stays in the HUMONEX_BEARER_TOKEN function secret.
+[functions.gst-push]
+verify_jwt = false
