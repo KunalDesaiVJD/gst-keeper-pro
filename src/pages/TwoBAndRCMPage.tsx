@@ -15,14 +15,14 @@ interface TabConfig {
 }
 
 const TABS: TabConfig[] = [
+  { id: 'import-2b', label: 'Import 2B', icon: FileSpreadsheet },
   { id: '2b-reconciliation', label: '2B Reconciliation', icon: FileText },
   { id: 'suspended-reco', label: 'Suspended Reco', icon: Pause },
   { id: 'gst-receivable-reco', label: 'GST Receivable Reco', icon: Wallet },
-  { id: 'import-2b', label: 'Import 2B', icon: FileSpreadsheet },
 ];
 
 const TwoBAndRCMPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<TabType>('2b-reconciliation');
+  const [activeTab, setActiveTab] = useState<TabType>('import-2b');
 
   return (
     <div className="space-y-4 animate-fade-in">
