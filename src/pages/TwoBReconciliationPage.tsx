@@ -171,6 +171,31 @@ const TwoBReconciliationPage: React.FC = () => {
 
   const monthOptions = generateMonthOptions;
 
+  // Restrict Reversal / Reclaim / Book Entry / In-2B dropdowns for return
+  // periods from Jun-26 onward to just the current month (+ blank and, on
+  // the Reclaim column only, "Expense out"). Backfilling past months was
+  // producing bad data; older periods keep the full historical list so
+  // already-saved rows are not affected.
+  const RESTRICT_MONTHS_FROM = 202606; // YYYY * 100 + MM
+
+  const currentPeriodMonthLabel = useMemo(() => {
+    if (!selectedMonth) return '';
+    const parts = selectedMonth.split('/');
+    if (parts.length !== 2) return '';
+    const [mmStr, yyStr] = parts;
+    const idx = parseInt(mmStr, 10) - 1;
+    if (idx < 0 || idx > 11) return '';
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${monthNames[idx]} ${String(yyStr).slice(-2)}`;
+  }, [selectedMonth]);
+
+  const isRestrictedPeriod = useMemo(() => {
+    if (!selectedMonth) return false;
+    const [mm, yy] = selectedMonth.split('/').map(Number);
+    if (!mm || !yy) return false;
+    return yy * 100 + mm >= RESTRICT_MONTHS_FROM;
+  }, [selectedMonth]);
+
   // Generate month dropdown options for reversal/reclaim - from April 2024, future limited to +2 months
   // Shows all historical months so existing saved data is preserved (prospective restriction only)
   const reversalReclaimMonths = useMemo(() => {
@@ -580,7 +605,30 @@ const TwoBReconciliationPage: React.FC = () => {
 
     try {
       const data = await import2BFromExcel(file);
-      
+
+      // For Jun-26+ periods, blank out any Reversal / Reclaim / Book Entry /
+      // In-2B value that isn't the current month or (Reclaim only) "Expense
+      // out". Matches the on-screen dropdown restriction — imports must not
+      // be a backdoor for backfilling past-month values.
+      let sanitizedCount = 0;
+      const sanitizeMonth = (
+        raw: string | null | undefined,
+        allowExpenseOut: boolean,
+      ): string | null => {
+        if (!isRestrictedPeriod) return raw ? raw : null;
+        if (!raw || String(raw).trim() === '') return null;
+        const trimmed = String(raw).trim();
+        if (trimmed === currentPeriodMonthLabel) return trimmed;
+        if (allowExpenseOut && trimmed.toLowerCase() === 'expense out') {
+          // Best-effort: coerce to current-month reclaim. The Excel export
+          // doesn't carry the subtype flag, so we can't restore EXPENSE_OUT
+          // exactly here — the row can be re-marked in the UI if needed.
+          return currentPeriodMonthLabel;
+        }
+        sanitizedCount++;
+        return null;
+      };
+
       // Insert bills not in 2B
       if (data.billsNotIn2B.length > 0) {
         const records = data.billsNotIn2B.map(b => ({
@@ -597,14 +645,14 @@ const TwoBReconciliationPage: React.FC = () => {
           input_cgst: b.inputCgst,
           input_sgst: b.inputSgst,
           period_month: selectedMonth,
-          reversal_month: b.reversalMonth,
-          reclaim_month: b.reclaimMonth || null,
+          reversal_month: sanitizeMonth(b.reversalMonth, false),
+          reclaim_month: sanitizeMonth(b.reclaimMonth, true),
         }));
-        
+
         const { error } = await supabase
           .from('bills_not_in_2b')
           .insert(records);
-        
+
         if (error) throw error;
       }
 
@@ -621,18 +669,21 @@ const TwoBReconciliationPage: React.FC = () => {
           input_cgst: b.inputCgst,
           input_sgst: b.inputSgst,
           period_month: selectedMonth,
-          book_entry_month: b.bookEntryMonth || null,
-          bill_in_2b_month: b.billIn2BMonth || null,
+          book_entry_month: sanitizeMonth(b.bookEntryMonth, false),
+          bill_in_2b_month: sanitizeMonth(b.billIn2BMonth, false),
         }));
-        
+
         const { error } = await supabase
           .from('bills_not_in_books')
           .insert(records);
-        
+
         if (error) throw error;
       }
-      
+
       toast.success(`Imported ${data.billsNotIn2B.length} records to "Bills Not in 2B" and ${data.billsNotInBooks.length} to "Bills Not in Books"`);
+      if (sanitizedCount > 0) {
+        toast.warning(`${sanitizedCount} past/future month value(s) were blanked because return period ${currentPeriodMonthLabel} restricts month cells to the current period only.`);
+      }
       fetchBillsData();
     } catch (error: any) {
       console.error('Import error:', error);
@@ -1185,11 +1236,15 @@ const TwoBReconciliationPage: React.FC = () => {
               Expense out
             </SelectItem>
           )}
-          {reversalReclaimMonths.filter(m => m.value !== '__blank__').map((m) => (
-            <SelectItem key={m.value} value={m.value}>
-              {m.label}
-            </SelectItem>
-          ))}
+          {isRestrictedPeriod
+            ? (currentPeriodMonthLabel && (
+                <SelectItem value={currentPeriodMonthLabel}>{currentPeriodMonthLabel}</SelectItem>
+              ))
+            : reversalReclaimMonths.filter(m => m.value !== '__blank__').map((m) => (
+                <SelectItem key={m.value} value={m.value}>
+                  {m.label}
+                </SelectItem>
+              ))}
         </SelectContent>
       </Select>
     );
