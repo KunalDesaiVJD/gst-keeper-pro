@@ -24,6 +24,7 @@ export interface FilingClient {
   selected_returns: string[] | null;
   registration_date: string;
   cancellation_date?: string | null;
+  inactive_at_hand?: boolean | null;
   target_date_group1?: number | null;
   target_date_group2?: number | null;
 }
@@ -52,6 +53,9 @@ export interface GeneratedFilingRecord {
 }
 
 export function isClientVisibleForMonth(client: FilingClient, periodMonth: string): boolean {
+  // Manual "Inactive at hand" toggle wins over every other check — the CA has
+  // explicitly said this client shouldn't appear until they clear the flag.
+  if (client.inactive_at_hand) return false;
   const [monthStr, yearStr] = periodMonth.split('/');
   const periodDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1);
   const regDate = new Date(client.registration_date);

@@ -33,6 +33,7 @@ const AddClientPage: React.FC = () => {
     selectedReturns: [] as ReturnType[],
     cancellationDate: '', // Optional — labeled "GSTR 10 Date" in UI
     registrationCancellationDate: '', // Optional — actual registration cancellation date
+    inactiveAtHand: false, // Optional — hides client from Filing Status when true
     gstUserId: '', // GST Portal User ID
     gstPassword: '', // GST Portal Password
     // Builder bifurcation for Regular type
@@ -210,6 +211,7 @@ const AddClientPage: React.FC = () => {
           client_user_id: clientCredentials?.userId || null,
           cancellation_date: formData.cancellationDate || null,
           registration_cancellation_date: formData.registrationCancellationDate || null,
+          inactive_at_hand: formData.inactiveAtHand,
           gst_user_id: formData.gstUserId || null,
           gst_password: formData.gstPassword || null,
           client_password: formData.gstin,
@@ -666,6 +668,37 @@ const AddClientPage: React.FC = () => {
                 <p className="text-xs text-muted-foreground">
                   Date on which the GST registration was cancelled. Informational only.
                 </p>
+              </div>
+
+              {/* Inactive at hand — hides client from Filing Status */}
+              <div className="space-y-2">
+                <Label>Inactive at hand</Label>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setFormData(prev => ({ ...prev, inactiveAtHand: !prev.inactiveAtHand }));
+                    }
+                  }}
+                  onClick={() => setFormData(prev => ({ ...prev, inactiveAtHand: !prev.inactiveAtHand }))}
+                  className={`flex items-start gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                    formData.inactiveAtHand ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                  }`}
+                >
+                  <Checkbox
+                    checked={formData.inactiveAtHand}
+                    onCheckedChange={(v) => setFormData(prev => ({ ...prev, inactiveAtHand: !!v }))}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <Label className="cursor-pointer font-normal block">Mark client as inactive at hand</Label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      When ticked, this client will not appear in Filing Status. Untick to restore visibility.
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
 
