@@ -733,7 +733,7 @@ const EditClientPage: React.FC = () => {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="cancellationDate">Cancellation Date (Optional)</Label>
+                <Label htmlFor="cancellationDate">GSTR 10 Date (Optional)</Label>
                 <Input
                   id="cancellationDate"
                   type="date"

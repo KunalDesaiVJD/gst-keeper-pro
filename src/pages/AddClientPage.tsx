@@ -636,9 +636,11 @@ const AddClientPage: React.FC = () => {
                 {errors.assignedAccountant && <p className="text-sm text-destructive">{errors.assignedAccountant}</p>}
               </div>
 
-              {/* Cancellation Date */}
+              {/* GSTR 10 Date (label only — the field id / state key
+                  / DB column stays `cancellationDate` since user asked
+                  for a UI-only change) */}
               <div className="space-y-2">
-                <Label htmlFor="cancellationDate">Cancellation Date</Label>
+                <Label htmlFor="cancellationDate">GSTR 10 Date (Optional)</Label>
                 <Input
                   id="cancellationDate"
                   type="date"
