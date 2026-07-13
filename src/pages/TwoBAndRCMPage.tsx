@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { FileText, Pause, Wallet } from 'lucide-react';
+import { FileText, Pause, Wallet, FileSpreadsheet } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import TwoBReconciliationPage from './TwoBReconciliationPage';
 import SuspendedRecoPage from './SuspendedRecoPage';
 import GstReceivableRecoPage from './GstReceivableRecoPage';
+import Import2BTab from './Import2BTab';
 
-type TabType = '2b-reconciliation' | 'suspended-reco' | 'gst-receivable-reco';
+type TabType = '2b-reconciliation' | 'suspended-reco' | 'gst-receivable-reco' | 'import-2b';
 
 interface TabConfig {
   id: TabType;
@@ -17,6 +18,7 @@ const TABS: TabConfig[] = [
   { id: '2b-reconciliation', label: '2B Reconciliation', icon: FileText },
   { id: 'suspended-reco', label: 'Suspended Reco', icon: Pause },
   { id: 'gst-receivable-reco', label: 'GST Receivable Reco', icon: Wallet },
+  { id: 'import-2b', label: 'Import 2B', icon: FileSpreadsheet },
 ];
 
 const TwoBAndRCMPage: React.FC = () => {
@@ -53,6 +55,7 @@ const TwoBAndRCMPage: React.FC = () => {
         {activeTab === '2b-reconciliation' && <TwoBReconciliationPage />}
         {activeTab === 'suspended-reco' && <SuspendedRecoPage />}
         {activeTab === 'gst-receivable-reco' && <GstReceivableRecoPage />}
+        {activeTab === 'import-2b' && <Import2BTab />}
       </div>
     </div>
   );

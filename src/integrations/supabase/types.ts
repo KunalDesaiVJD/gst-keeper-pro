@@ -734,6 +734,181 @@ export type Database = {
           },
         ]
       }
+      books_register: {
+        Row: {
+          book_treatment: string | null
+          client_id: string
+          created_at: string | null
+          date: string | null
+          id: string
+          input_cgst: number | null
+          input_igst: number | null
+          input_sgst: number | null
+          matched_2b_id: string | null
+          period_month: string
+          supplier_gstin: string | null
+          supplier_invoice_number: string | null
+          supplier_name: string | null
+          taxable_value: number | null
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          book_treatment?: string | null
+          client_id: string
+          created_at?: string | null
+          date?: string | null
+          id?: string
+          input_cgst?: number | null
+          input_igst?: number | null
+          input_sgst?: number | null
+          matched_2b_id?: string | null
+          period_month: string
+          supplier_gstin?: string | null
+          supplier_invoice_number?: string | null
+          supplier_name?: string | null
+          taxable_value?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          book_treatment?: string | null
+          client_id?: string
+          created_at?: string | null
+          date?: string | null
+          id?: string
+          input_cgst?: number | null
+          input_igst?: number | null
+          input_sgst?: number | null
+          matched_2b_id?: string | null
+          period_month?: string
+          supplier_gstin?: string | null
+          supplier_invoice_number?: string | null
+          supplier_name?: string | null
+          taxable_value?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "books_register_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      twob_import_docs: {
+        Row: {
+          bucket: string
+          cess: number | null
+          client_id: string
+          date: string | null
+          gstr1_filing_date: string | null
+          gstr1_period: string | null
+          id: string
+          import_batch_id: string | null
+          imported_at: string | null
+          imported_by: string | null
+          input_cgst: number | null
+          input_igst: number | null
+          input_sgst: number | null
+          invoice_type: string | null
+          invoice_value: number | null
+          irn: string | null
+          itc_action: string
+          itc_available: boolean | null
+          itc_reason: string | null
+          matched_book_id: string | null
+          period_month: string
+          place_of_supply: string | null
+          reverse_charge: boolean
+          source: string | null
+          source_sheet: string | null
+          supplier_gstin: string | null
+          supplier_invoice_number: string | null
+          supplier_name: string | null
+          taxable_value: number | null
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          bucket?: string
+          cess?: number | null
+          client_id: string
+          date?: string | null
+          gstr1_filing_date?: string | null
+          gstr1_period?: string | null
+          id?: string
+          import_batch_id?: string | null
+          imported_at?: string | null
+          imported_by?: string | null
+          input_cgst?: number | null
+          input_igst?: number | null
+          input_sgst?: number | null
+          invoice_type?: string | null
+          invoice_value?: number | null
+          irn?: string | null
+          itc_action?: string
+          itc_available?: boolean | null
+          itc_reason?: string | null
+          matched_book_id?: string | null
+          period_month: string
+          place_of_supply?: string | null
+          reverse_charge?: boolean
+          source?: string | null
+          source_sheet?: string | null
+          supplier_gstin?: string | null
+          supplier_invoice_number?: string | null
+          supplier_name?: string | null
+          taxable_value?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          bucket?: string
+          cess?: number | null
+          client_id?: string
+          date?: string | null
+          gstr1_filing_date?: string | null
+          gstr1_period?: string | null
+          id?: string
+          import_batch_id?: string | null
+          imported_at?: string | null
+          imported_by?: string | null
+          input_cgst?: number | null
+          input_igst?: number | null
+          input_sgst?: number | null
+          invoice_type?: string | null
+          invoice_value?: number | null
+          irn?: string | null
+          itc_action?: string
+          itc_available?: boolean | null
+          itc_reason?: string | null
+          matched_book_id?: string | null
+          period_month?: string
+          place_of_supply?: string | null
+          reverse_charge?: boolean
+          source?: string | null
+          source_sheet?: string | null
+          supplier_gstin?: string | null
+          supplier_invoice_number?: string | null
+          supplier_name?: string | null
+          taxable_value?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "twob_import_docs_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       itc_summaries: {
         Row: {
           client_id: string
