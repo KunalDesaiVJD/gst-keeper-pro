@@ -31,7 +31,8 @@ const AddClientPage: React.FC = () => {
     defaultTargetDate: '', // Optional - for GSTR-1, GSTR-7
     otherTargetDate: '', // Optional - for GSTR-3B, ITC-04
     selectedReturns: [] as ReturnType[],
-    cancellationDate: '', // Optional
+    cancellationDate: '', // Optional — labeled "GSTR 10 Date" in UI
+    registrationCancellationDate: '', // Optional — actual registration cancellation date
     gstUserId: '', // GST Portal User ID
     gstPassword: '', // GST Portal Password
     // Builder bifurcation for Regular type
@@ -208,6 +209,7 @@ const AddClientPage: React.FC = () => {
           selected_returns: formData.selectedReturns,
           client_user_id: clientCredentials?.userId || null,
           cancellation_date: formData.cancellationDate || null,
+          registration_cancellation_date: formData.registrationCancellationDate || null,
           gst_user_id: formData.gstUserId || null,
           gst_password: formData.gstPassword || null,
           client_password: formData.gstin,
@@ -648,6 +650,22 @@ const AddClientPage: React.FC = () => {
                   onChange={(e) => setFormData(prev => ({ ...prev, cancellationDate: e.target.value }))}
                 />
                 <p className="text-xs text-muted-foreground">Optional. Filing stops after this date.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Cancellation Date — informational only, no downstream effect */}
+              <div className="space-y-2">
+                <Label htmlFor="registrationCancellationDate">Cancellation Date (Optional)</Label>
+                <Input
+                  id="registrationCancellationDate"
+                  type="date"
+                  value={formData.registrationCancellationDate}
+                  onChange={(e) => setFormData(prev => ({ ...prev, registrationCancellationDate: e.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Date on which the GST registration was cancelled. Informational only.
+                </p>
               </div>
             </div>
 

@@ -26,6 +26,7 @@ interface ClientData {
   assigned_accountant: string | null;
   selected_returns: ReturnType[] | null;
   cancellation_date?: string | null;
+  registration_cancellation_date?: string | null;
 }
 
 const EditClientPage: React.FC = () => {
@@ -49,6 +50,7 @@ const EditClientPage: React.FC = () => {
     assignedAccountant: '',
     selectedReturns: [] as ReturnType[],
     cancellationDate: '',
+    registrationCancellationDate: '',
     defaultTargetDate: '',
     otherTargetDate: '',
     gstUserId: '',
@@ -103,6 +105,7 @@ const EditClientPage: React.FC = () => {
         assignedAccountant: data.assigned_accountant || '',
         selectedReturns: (data.selected_returns || []) as ReturnType[],
         cancellationDate: (data as any).cancellation_date || '',
+        registrationCancellationDate: (data as any).registration_cancellation_date || '',
         defaultTargetDate: defaultTarget,
         otherTargetDate: otherTarget,
         gstUserId: (data as any).gst_user_id || '',
@@ -284,6 +287,7 @@ const EditClientPage: React.FC = () => {
           assigned_accountant: formData.assignedAccountant || null,
           selected_returns: formData.selectedReturns,
           cancellation_date: formData.cancellationDate || null,
+          registration_cancellation_date: formData.registrationCancellationDate || null,
           gst_user_id: formData.gstUserId || null,
           gst_password: formData.gstPassword || null,
           regular_sub_type: formData.registrationType === 'Regular' ? formData.regularSubType : null,
@@ -744,6 +748,21 @@ const EditClientPage: React.FC = () => {
                 {errors.cancellationDate && <p className="text-sm text-destructive">{errors.cancellationDate}</p>}
                 <p className="text-xs text-muted-foreground">
                   If set, client will not appear in Filing Status after this date
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="registrationCancellationDate">Cancellation Date (Optional)</Label>
+                <Input
+                  id="registrationCancellationDate"
+                  type="date"
+                  value={formData.registrationCancellationDate}
+                  onChange={(e) => setFormData(prev => ({ ...prev, registrationCancellationDate: e.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Date on which the GST registration was cancelled. Informational only.
                 </p>
               </div>
             </div>
