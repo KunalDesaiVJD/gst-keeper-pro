@@ -670,35 +670,32 @@ const AddClientPage: React.FC = () => {
                 </p>
               </div>
 
-              {/* Inactive at hand — hides client from Filing Status */}
+              {/* Inactive at hand — hides client from Filing Status. Uses a
+                  native <label htmlFor> so clicking anywhere on the card
+                  activates the Checkbox via HTML semantics — no custom
+                  onClick that could race with Radix's button and end up
+                  triggering the parent form's submit path. */}
               <div className="space-y-2">
                 <Label>Inactive at hand</Label>
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      setFormData(prev => ({ ...prev, inactiveAtHand: !prev.inactiveAtHand }));
-                    }
-                  }}
-                  onClick={() => setFormData(prev => ({ ...prev, inactiveAtHand: !prev.inactiveAtHand }))}
+                <label
+                  htmlFor="inactiveAtHand"
                   className={`flex items-start gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
                     formData.inactiveAtHand ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
                   }`}
                 >
                   <Checkbox
+                    id="inactiveAtHand"
                     checked={formData.inactiveAtHand}
-                    onCheckedChange={(v) => setFormData(prev => ({ ...prev, inactiveAtHand: !!v }))}
+                    onCheckedChange={(v) => setFormData(prev => ({ ...prev, inactiveAtHand: v === true }))}
                     className="mt-0.5"
                   />
                   <div>
-                    <Label className="cursor-pointer font-normal block">Mark client as inactive at hand</Label>
+                    <span className="text-sm font-normal block">Mark client as inactive at hand</span>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       When ticked, this client will not appear in Filing Status. Untick to restore visibility.
                     </p>
                   </div>
-                </div>
+                </label>
               </div>
             </div>
 
