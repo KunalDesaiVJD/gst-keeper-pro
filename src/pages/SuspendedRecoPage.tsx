@@ -3,6 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { FileText, Save, Loader2, Download, Trash2, Upload, Info, Edit3 } from 'lucide-react';
+import { PortalActionButton } from '@/components/portal/PortalActionButton';
 import ClearDataDialog from '@/components/dialogs/ClearDataDialog';
 import SuspendedRecoOverrideDialog from '@/components/dialogs/SuspendedRecoOverrideDialog';
 import { exportSuspendedRecoToExcel } from '@/utils/suspendedRecoExcelExport';
@@ -790,6 +791,17 @@ const SuspendedRecoPage: React.FC = () => {
                       </div>
                       {useNewFlow && isStaff && (
                         <div className="flex gap-1.5 flex-wrap">
+                          <PortalActionButton
+                            clientId={selectedClientId}
+                            periodMonth={selectedMonth}
+                            jobType="PULL_LEDGERS"
+                            label="Pull from portal"
+                            icon={<Download className="h-3 w-3 mr-1" />}
+                            size="sm"
+                            className="h-7 text-xs"
+                            disabled={!selectedClientId || isSaving}
+                            onDone={fetchData}
+                          />
                           <Button
                             size="sm"
                             variant="outline"

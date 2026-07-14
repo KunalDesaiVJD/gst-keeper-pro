@@ -2,7 +2,6 @@ import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
 import { usePortalJob } from '@/hooks/usePortalJob';
-import { PortalCaptchaDialog } from './PortalCaptchaDialog';
 import { JOB_LABELS, PortalJob, PortalJobType } from '@/lib/portalJobs';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -24,30 +23,25 @@ export const PortalActionButton: React.FC<{
   icon?: React.ReactNode;
   variant?: 'default' | 'outline' | 'secondary' | 'destructive';
   size?: 'default' | 'sm';
+  className?: string;
   disabled?: boolean;
   onDone?: (job: PortalJob) => void;
-}> = ({ clientId, jobType, periodMonth, mode, payload, label, icon, variant = 'outline', size = 'default', disabled, onDone }) => {
-  const { job, busy, needsCaptcha, run, submitCaptchaText, cancel } = usePortalJob(onDone);
+}> = ({ clientId, jobType, periodMonth, mode, payload, label, icon, variant = 'outline', size = 'default', className, disabled, onDone }) => {
+  const { job, busy, run } = usePortalJob(onDone);
 
   const text = busy && job ? (STATUS_LABEL[job.status] ?? 'Working…') : (label ?? JOB_LABELS[jobType]);
 
+  // CAPTCHA (needs_human) is handled globally by PortalCaptchaWatcher in MainLayout.
   return (
-    <>
-      <Button
-        variant={variant}
-        size={size}
-        disabled={disabled || busy || !clientId}
-        onClick={() => run({ clientId, jobType, periodMonth, mode, payload })}
-      >
-        {busy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : icon}
-        {text}
-      </Button>
-      <PortalCaptchaDialog
-        open={!!needsCaptcha}
-        image={job?.human_prompt?.image}
-        onSubmit={submitCaptchaText}
-        onCancel={cancel}
-      />
-    </>
+    <Button
+      variant={variant}
+      size={size}
+      className={className}
+      disabled={disabled || busy || !clientId}
+      onClick={() => run({ clientId, jobType, periodMonth, mode, payload })}
+    >
+      {busy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : icon}
+      {text}
+    </Button>
   );
 };

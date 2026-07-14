@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import Sidebar from './Sidebar';
 import QuickActionsButton from './QuickActionsButton';
 import ChatWidget from '@/components/chat/ChatWidget';
+import { PortalCaptchaWatcher } from '@/components/portal/PortalCaptchaWatcher';
 import { Loader2 } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
@@ -37,6 +38,8 @@ const MainLayout: React.FC = () => {
       {/* Quick actions floating button - only for staff */}
       {isStaffRole() && <QuickActionsButton />}
       {isStaffRole() && <ChatWidget />}
+      {/* Global CAPTCHA surface for portal-agent jobs (single/bulk) */}
+      {isStaffRole() && <PortalCaptchaWatcher />}
     </div>
   );
 };

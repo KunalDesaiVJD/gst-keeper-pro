@@ -1,8 +1,16 @@
 import { Page } from 'playwright';
-import { PortalJob, ClientCreds, logEvent, recordVerification } from './supabase.js';
+import { supabase, PortalJob, ClientCreds, logEvent, recordVerification } from './supabase.js';
 import { newClientContext, screenshot } from './browser.js';
 import { ensureLoggedIn } from './login.js';
 import { jsonDiff } from './verify.js';
+
+// suspended_reco has no (client,period) unique constraint, so upsert-by-key
+// manually (works for gst_receivable_reco too).
+async function upsertByClientPeriod(table: string, clientId: string, period: string, patch: Record<string, any>) {
+  const { data: existing } = await supabase.from(table).select('id').eq('client_id', clientId).eq('period_month', period).maybeSingle();
+  if (existing) await supabase.from(table).update(patch).eq('id', (existing as any).id);
+  else await supabase.from(table).insert({ client_id: clientId, period_month: period, ...patch });
+}
 
 // Each handler logs in (session-reused), does its portal work, self-verifies,
 // and returns a JSON result. PULL handlers also (Phase 2+) write into the app's
@@ -82,9 +90,73 @@ async function readBackFromPortal(_page: Page, _job: PortalJob): Promise<any> {
   return {};
 }
 
-const handlePullLedgers = notImplemented('PULL_LEDGERS', 'Phase 3');
 const handlePullGstr1 = notImplemented('PULL_GSTR1', 'Phase 3');
-const handlePullFilingStatus = notImplemented('PULL_FILING_STATUS', 'Phase 3');
+
+// ---- Feature A (G1): filed returns → ARN + PDF into filing_status ----------
+// DB/storage writes are real; only the portal reading is TODO(selector).
+interface FiledReturn { return_type: string; period: string; arn: string; filed_date: string | null; pdfBytes: Buffer | null }
+
+const handlePullFilingStatus: Handler = async (job, creds, _page) => {
+  // TODO(selector): Services > Returns > Track Return Status. For each filed
+  // return read: return_type (map portal label -> the return_type enum:
+  // GSTR-1 / GSTR-3B / GSTR-3B (Q) / GSTR-1 (IFF) / CMP-08 / ITC-04 / GSTR-6 / GSTR-7),
+  // period (MM/YYYY), ARN (15 chars), filed_date (YYYY-MM-DD), and download the
+  // filed-return PDF into pdfBytes.
+  const filed: FiledReturn[] = [];
+  if (filed.length === 0) {
+    await logEvent(job.id, 'warn', 'pull_filing_status', 'No filed returns read — portal selectors not wired yet.');
+    throw new Error('PULL_FILING_STATUS not wired (Feature A / G1): fill in the Track-Return-Status selectors.');
+  }
+
+  const written: any[] = [];
+  for (const r of filed) {
+    // Upload the PDF to the return-pdfs bucket.
+    let pdfUrl: string | null = null;
+    if (r.pdfBytes) {
+      const path = `${creds.id}/${r.period.replace('/', '-')}/${r.return_type}-${r.arn}.pdf`;
+      const { error: upErr } = await supabase.storage.from('return-pdfs')
+        .upload(path, r.pdfBytes, { contentType: 'application/pdf', upsert: true });
+      if (!upErr) pdfUrl = supabase.storage.from('return-pdfs').getPublicUrl(path).data.publicUrl;
+    }
+    // Only write "Filed" when ARN + PDF verify (the DB trigger also enforces this).
+    const arnOk = /^[A-Z0-9]{15}$/.test((r.arn || '').toUpperCase());
+    const passed = arnOk && !!pdfUrl;
+    await recordVerification({ jobId: job.id, clientId: creds.id, period: r.period, checkType: 'FILING_ARN_PDF', passed, expected: { arn15: true, pdf: true }, actual: { arn: r.arn, pdf: !!pdfUrl } });
+    if (!passed) { written.push({ ...r, pdfBytes: undefined, skipped: 'arn/pdf failed verification' }); continue; }
+
+    await supabase.from('filing_status').upsert({
+      client_id: creds.id, return_type: r.return_type, period_month: r.period,
+      status: 'Filed', arn: r.arn.toUpperCase(), filed_date: r.filed_date, return_pdf_url: pdfUrl,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'client_id,return_type,period_month' });
+    written.push({ return_type: r.return_type, period: r.period, arn: r.arn, pdf: !!pdfUrl });
+  }
+  return { filingStatus: written };
+};
+
+// ---- Feature B (G2): electronic credit ledger → suspended/receivable opening -
+const handlePullLedgers: Handler = async (job, creds, _page) => {
+  // TODO(selector): Services > Ledgers > Electronic Credit Ledger. Set the
+  // period's date range, download the ledger, and derive the OPENING balance
+  // (IGST/CGST/SGST) — the same figure the app's parseElectronicCreditLedgerCsv
+  // produces from the manual CSV upload (port that logic here).
+  const opening: { igst: number; cgst: number; sgst: number } | null = null; // TODO(parse)
+  if (!opening) {
+    await logEvent(job.id, 'warn', 'pull_ledgers', 'Ledger opening not parsed — portal selectors/parser not wired yet.');
+    throw new Error('PULL_LEDGERS not wired (Feature B / G2): fill in the credit-ledger selectors + opening parser.');
+  }
+
+  const period = job.period_month || '';
+  const patch = {
+    opening_igst: opening.igst, opening_cgst: opening.cgst, opening_sgst: opening.sgst,
+    opening_source: 'portal', opening_portal_pulled_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  await upsertByClientPeriod('suspended_reco', creds.id, period, patch);
+  await upsertByClientPeriod('gst_receivable_reco', creds.id, period, patch);
+  await recordVerification({ jobId: job.id, clientId: creds.id, period, checkType: 'LEDGER_OPENING', passed: true, expected: opening, actual: opening });
+  return { opening };
+};
 
 // SYNC_ALL: one login (shared page) then every PULL in sequence. A single step
 // failing is captured but doesn't abort the rest — "single click, everything imported".

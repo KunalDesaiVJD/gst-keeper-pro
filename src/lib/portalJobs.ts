@@ -97,6 +97,26 @@ export async function recentPortalJobs(clientId: string, periodMonth: string | n
   return (data as PortalJob[]) ?? [];
 }
 
+// Any job currently waiting on a human CAPTCHA (for the global watcher).
+export async function getPendingCaptchaJob(): Promise<PortalJob | null> {
+  const { data } = await db.from('portal_jobs').select('*')
+    .eq('status', 'needs_human').order('updated_at', { ascending: true }).limit(1).maybeSingle();
+  const j = data as PortalJob | null;
+  return j && j.human_prompt?.kind === 'captcha' && !j.human_response ? j : null;
+}
+
+// Bulk-enqueue a filed-returns pull for many clients (Filing Status page).
+export async function enqueueBulkFilingPull(clientIds: string[], periodMonth: string, requestedBy?: string | null): Promise<number> {
+  if (!clientIds.length) return 0;
+  const rows = clientIds.map((id) => ({
+    client_id: id, period_month: periodMonth, job_type: 'PULL_FILING_STATUS' as const,
+    mode: 'live', status: 'queued', requested_by: requestedBy ?? null, payload: {},
+  }));
+  const { error } = await db.from('portal_jobs').insert(rows);
+  if (error) throw error;
+  return rows.length;
+}
+
 export interface AgentStatus { online: boolean; lastSeen: string | null; agentId: string | null }
 
 // The Agent upserts a heartbeat each poll; "online" if seen in the last 30s.
