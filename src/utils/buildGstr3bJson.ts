@@ -1,0 +1,206 @@
+// Build a GSTR-3B JSON (GSTN offline-utility schema) from the app's already-
+// computed numbers.
+//
+// ⚠️ THIS FILES TAX. The output is a DRAFT: a CA must verify it line-by-line,
+// and it must be tested in shadow mode before any live push. Several mappings
+// are marked REVIEW below because the app doesn't compute them (Table 5 inward
+// exempt) or the GSTN mapping is ambiguous (4D → itc_inelg).
+//
+// Sources:
+//   Table 3.1 (outward) + 3.2   ← the client's GSTR-1 raw JSON (computed here)
+//   Table 3.1(d) inward RCM     ← RCM Summary totals (rcm_data)
+//   Table 4 (ITC) 4A / 4B / 4C  ← ITC Summary (itc_summaries.data)
+//   Table 4D(2) ineligible      ← ITC Summary 4D(2)  [4D(1) reclaim already sits inside 4A(5)]
+//   Table 5 (exempt inward)     ← NOT computed by the app → left 0 (REVIEW)
+
+export interface ItcRow { srNo: string; igst: number; cgst: number; sgst: number }
+export interface ItcData { section4A: ItcRow[]; section4B: ItcRow[]; section4D: ItcRow[] }
+export interface RcmTotals { taxable: number; igst: number; cgst: number; sgst: number }
+
+export interface Gstr3bInput {
+  gstin: string;
+  periodMonth: string;    // "MM/YYYY"
+  gstr1Raw: any | null;   // GSTR-1 JSON (outward supplies)
+  itc: ItcData | null;    // itc_summaries.data
+  rcm: RcmTotals;         // RCM liability/ITC totals for the period
+}
+
+export interface TaxHead { igst: number; cgst: number; sgst: number }
+export interface Gstr3bSummary {
+  outward: { txval: number; igst: number; cgst: number; sgst: number }; // 3.1(a)
+  zeroRated: { txval: number; igst: number };                           // 3.1(b)
+  nilExempt: number;                                                    // 3.1(c) txval
+  rcmLiability: { txval: number; igst: number; cgst: number; sgst: number }; // 3.1(d)
+  nonGst: number;                                                       // 3.1(e) txval
+  itcAvailable: TaxHead;  // 4A total
+  itcReversed: TaxHead;   // 4B total
+  itcNet: TaxHead;        // 4C
+  itcIneligible: TaxHead; // 4D(2)
+  totalLiability: TaxHead;      // output + RCM
+  indicativeNetPayable: TaxHead; // liability − net ITC (indicative; real offset is done on the portal)
+}
+export interface Gstr3bResult { json: any; summary: Gstr3bSummary; flags: string[] }
+
+const r2 = (n: number) => Math.round((n || 0) * 100) / 100;
+const num = (v: any) => (typeof v === 'number' ? v : parseFloat(v) || 0);
+
+function retPeriod(mmYyyy: string): string {
+  const [mm, yyyy] = (mmYyyy || '').split('/');
+  return mm && yyyy ? `${mm}${yyyy}` : '';
+}
+
+// ---- Table 4 helpers -------------------------------------------------------
+function row(rows: ItcRow[] | undefined, sr: string): ItcRow {
+  return (rows || []).find((r) => r.srNo === sr) || { srNo: sr, igst: 0, cgst: 0, sgst: 0 };
+}
+const add3 = (...rs: TaxHead[]): TaxHead => rs.reduce(
+  (a, r) => ({ igst: a.igst + (r.igst || 0), cgst: a.cgst + (r.cgst || 0), sgst: a.sgst + (r.sgst || 0) }),
+  { igst: 0, cgst: 0, sgst: 0 });
+const sub3 = (a: TaxHead, b: TaxHead): TaxHead => ({ igst: a.igst - b.igst, cgst: a.cgst - b.cgst, sgst: a.sgst - b.sgst });
+const round3 = (t: TaxHead): TaxHead => ({ igst: r2(t.igst), cgst: r2(t.cgst), sgst: r2(t.sgst) });
+
+// ---- Table 3.1 outward, computed from the GSTR-1 raw JSON ------------------
+function computeOutward(g: any) {
+  const det = { txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 }; // 3.1(a)
+  const zero = { txval: 0, iamt: 0, csamt: 0 };                  // 3.1(b)
+  let nilExempt = 0;                                             // 3.1(c) txval
+  let nonGst = 0;                                                // 3.1(e) txval
+
+  const addDet = (it: any, sign = 1) => {
+    det.txval += sign * num(it.txval); det.iamt += sign * num(it.iamt);
+    det.camt += sign * num(it.camt); det.samt += sign * num(it.samt); det.csamt += sign * num(it.csamt);
+  };
+  if (g) {
+    (g.b2b || []).forEach((p: any) => (p.inv || []).forEach((inv: any) => (inv.itms || []).forEach((i: any) => addDet(i.itm_det || {}))));
+    (g.b2cl || []).forEach((s: any) => (s.inv || []).forEach((inv: any) => (inv.itms || []).forEach((i: any) => addDet(i.itm_det || {}))));
+    (g.b2cs || []).forEach((i: any) => addDet(i));
+    // Credit note subtracts, debit note adds (same convention as computeGstr1OutputTax).
+    (g.cdnr || []).forEach((p: any) => (p.nt || []).forEach((nt: any) => (nt.itms || []).forEach((i: any) => addDet(i.itm_det || {}, nt.typ === 'C' ? -1 : 1))));
+    (g.cdnur || []).forEach((nt: any) => (nt.itms || []).forEach((i: any) => addDet(i.itm_det || {}, nt.typ === 'C' ? -1 : 1)));
+    // Advances: tax only (no taxable value), AT adds / TXPD subtracts — mirrors the app's output-tax util.
+    (g.at || []).forEach((a: any) => { const it = a.itms?.[0] || a; det.iamt += num(it.iamt); det.camt += num(it.camt); det.samt += num(it.samt); });
+    (g.txpd || []).forEach((a: any) => { const it = a.itms?.[0] || a; det.iamt -= num(it.iamt); det.camt -= num(it.camt); det.samt -= num(it.samt); });
+    // Exports = zero-rated.
+    (g.exp || []).forEach((e: any) => (e.inv || []).forEach((inv: any) => (inv.itms || []).forEach((i: any) => { zero.txval += num(i.txval); zero.iamt += num(i.iamt); })));
+    // Nil / exempt / non-GST.
+    (g.nil?.inv || []).forEach((n: any) => { nilExempt += num(n.nil_amt) + num(n.expt_amt); nonGst += num(n.ngsup_amt); });
+  }
+
+  const roundObj = (o: any) => { Object.keys(o).forEach((k) => (o[k] = r2(o[k]))); return o; };
+  return { det: roundObj(det), zero: roundObj(zero), nilExempt: r2(nilExempt), nonGst: r2(nonGst) };
+}
+
+// 3.2 inter-state supplies to unregistered persons — POS-wise from B2CL + inter B2CS.
+function computeInterUnreg(g: any) {
+  const byPos: Record<string, { txval: number; iamt: number }> = {};
+  const bump = (pos: string, txval: number, iamt: number) => {
+    if (!pos) return;
+    byPos[pos] = byPos[pos] || { txval: 0, iamt: 0 };
+    byPos[pos].txval += num(txval); byPos[pos].iamt += num(iamt);
+  };
+  if (g) {
+    (g.b2cl || []).forEach((s: any) => (s.inv || []).forEach((inv: any) => (inv.itms || []).forEach((i: any) => bump(s.pos, num(i.itm_det?.txval), num(i.itm_det?.iamt)))));
+    (g.b2cs || []).forEach((i: any) => { if ((i.sply_ty || '').toUpperCase() === 'INTER') bump(i.pos, num(i.txval), num(i.iamt)); });
+  }
+  return Object.entries(byPos).map(([pos, v]) => ({ pos, txval: r2(v.txval), iamt: r2(v.iamt) }));
+}
+
+export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
+  const flags: string[] = [];
+  const g = input.gstr1Raw;
+  const itc = input.itc;
+  if (!g) flags.push('No GSTR-1 data — outward (Table 3.1 a/b/c/e, 3.2) is all zero.');
+  if (!itc) flags.push('No ITC Summary — Table 4 (ITC) is all zero.');
+
+  const out = computeOutward(g);
+
+  // ---- Table 4 (ITC) ----
+  const A: ItcRow[] = itc?.section4A || [];
+  const B: ItcRow[] = itc?.section4B || [];
+  const D: ItcRow[] = itc?.section4D || [];
+
+  const impg = row(A, '(1)');   // 4A(1) import of goods
+  const imps = row(A, '(2)');   // 4A(2) import of services
+  const isrc = row(A, '(3)');   // 4A(3) RCM ITC (auto-linked from rcm_data)
+  const isd = row(A, '(4)');    // 4A(4) ISD
+  // 4A(5) "all other ITC" = 5.1 + 5.2 − 5.3 + 5.4 + 5.5
+  const oth4a = round3(add3(row(A, '5.1'), row(A, '5.2'), sub3({ igst: 0, cgst: 0, sgst: 0 }, row(A, '5.3')), row(A, '5.4'), row(A, '5.5')));
+
+  const revRul = row(B, '(1)');                       // 4B(1) rule 38/42/43 & 17(5)
+  const revOth = round3(add3(row(B, '(i)'), row(B, '(ii)'), row(B, '(iii)'))); // 4B(2) others
+
+  const inelgOth = row(D, '(2)');                     // 4D(2) 16(4) & PoS
+  // REVIEW: GSTN itc_inelg has ty RUL + OTH; the app has no distinct 4D "RUL" input → 0.
+  flags.push('4D itc_inelg: mapped 4D(2) → OTH; RUL defaulted to 0 (confirm with the CA).');
+  flags.push('Table 5 (exempt / nil / non-GST INWARD supplies) is not computed by the app → left 0 (fill manually if applicable).');
+
+  const itcAvail = round3(add3(impg, imps, isrc, isd, oth4a));
+  const itcRev = round3(add3(revRul, revOth));
+  const itcNet = round3(sub3(itcAvail, itcRev));
+
+  const rcm = { txval: r2(input.rcm.taxable), iamt: r2(input.rcm.igst), camt: r2(input.rcm.cgst), samt: r2(input.rcm.sgst), csamt: 0 };
+
+  const json = {
+    gstin: input.gstin,
+    ret_period: retPeriod(input.periodMonth),
+    sup_details: {
+      osup_det: out.det,                                   // 3.1(a)
+      osup_zero: out.zero,                                 // 3.1(b)
+      osup_nil_exmp: { txval: out.nilExempt },             // 3.1(c)
+      isup_rev: rcm,                                       // 3.1(d) inward RCM
+      osup_nongst: { txval: out.nonGst },                  // 3.1(e)
+    },
+    inter_sup: {
+      unreg_details: computeInterUnreg(g),                 // 3.2
+      comp_details: [],
+      uin_details: [],
+    },
+    itc_elg: {
+      itc_avl: [
+        { ty: 'IMPG', ...impg },
+        { ty: 'IMPS', ...imps },
+        { ty: 'ISRC', ...isrc },
+        { ty: 'ISD', ...isd },
+        { ty: 'OTH', ...oth4a },
+      ].map(stripSr),
+      itc_rev: [
+        { ty: 'RUL', ...revRul },
+        { ty: 'OTH', ...revOth },
+      ].map(stripSr),
+      itc_net: itcNet,
+      itc_inelg: [
+        { ty: 'RUL', igst: 0, cgst: 0, sgst: 0 },
+        { ty: 'OTH', ...inelgOth },
+      ].map(stripSr),
+    },
+    // Table 5 — not computed; provided as a zeroed placeholder for the CA to fill.
+    inward_sup: {
+      isup_details: [
+        { ty: 'GST', inter: 0, intra: 0 },
+        { ty: 'NONGST', inter: 0, intra: 0 },
+      ],
+    },
+  };
+
+  const totalLiability = round3(add3(
+    { igst: out.det.iamt, cgst: out.det.camt, sgst: out.det.samt },
+    { igst: rcm.iamt, cgst: rcm.camt, sgst: rcm.samt },
+  ));
+  const summary: Gstr3bSummary = {
+    outward: { txval: out.det.txval, igst: out.det.iamt, cgst: out.det.camt, sgst: out.det.samt },
+    zeroRated: { txval: out.zero.txval, igst: out.zero.iamt },
+    nilExempt: out.nilExempt,
+    rcmLiability: { txval: rcm.txval, igst: rcm.iamt, cgst: rcm.camt, sgst: rcm.samt },
+    nonGst: out.nonGst,
+    itcAvailable: itcAvail,
+    itcReversed: itcRev,
+    itcNet,
+    itcIneligible: round3(inelgOth),
+    totalLiability,
+    indicativeNetPayable: round3(sub3(totalLiability, itcNet)),
+  };
+
+  return { json, summary, flags };
+}
+
+function stripSr(o: any) { const { srNo, ...rest } = o; return rest; }

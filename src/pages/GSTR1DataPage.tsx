@@ -4,9 +4,10 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, Download } from 'lucide-react';
+import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, Download, FileSpreadsheet } from 'lucide-react';
 import { PortalActionButton } from '@/components/portal/PortalActionButton';
 import { PortalJobsPanel } from '@/components/portal/PortalJobsPanel';
+import { Gstr3bPreviewDialog } from '@/components/portal/Gstr3bPreviewDialog';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -97,6 +98,7 @@ const GSTR1DataPage: React.FC = () => {
   const [pushDialogOpen, setPushDialogOpen] = useState(false);
   const [isPushing, setIsPushing] = useState(false);
   const [pushResult, setPushResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [gstr3bOpen, setGstr3bOpen] = useState(false);
 
   const isStaff = isStaffRole();
 
@@ -574,6 +576,11 @@ const GSTR1DataPage: React.FC = () => {
               >
                 {isPushing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
                 Push to GST Portal
+              </Button>
+            )}
+            {selectedClient && canEditFilingStatus() && (
+              <Button variant="outline" onClick={() => setGstr3bOpen(true)} disabled={!selectedClient || !selectedMonth}>
+                <FileSpreadsheet className="h-4 w-4 mr-2" /> Prepare GSTR-3B
               </Button>
             )}
             {gstr1Data && (
@@ -1136,6 +1143,14 @@ const GSTR1DataPage: React.FC = () => {
       )}
 
       {selectedClient && <PortalJobsPanel clientId={selectedClient} periodMonth={selectedMonth} />}
+
+      <Gstr3bPreviewDialog
+        open={gstr3bOpen}
+        onOpenChange={setGstr3bOpen}
+        clientId={selectedClient}
+        gstin={clients.find((c) => c.id === selectedClient)?.gstin || ''}
+        periodMonth={selectedMonth}
+      />
 
       {/* Push confirmation — submitting to the live GST portal is outward and
           hard to reverse, so require an explicit confirm showing exactly what
