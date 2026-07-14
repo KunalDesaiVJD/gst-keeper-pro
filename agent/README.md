@@ -58,3 +58,42 @@ npm run dev               # starts the poll loop
 ```
 `SUPABASE_SERVICE_ROLE_KEY` lets the Agent read client credentials + write results.
 Keep it only on the trusted office machine.
+
+## Run it automatically, forever (nobody starts it manually)
+
+Set this up ONCE on an always-on machine; after that the team just clicks **Sync**
+in the app and the background Agent does the rest.
+
+### Option A — Windows service on an office PC (recommended, free)
+Install [NSSM](https://nssm.cc/) (Non-Sucking Service Manager), then:
+```powershell
+# from an elevated PowerShell, in the agent folder
+npm install
+npx playwright install chromium
+npm run build            # optional: or run via tsx directly below
+
+nssm install GSTKeeperAgent "C:\Program Files\nodejs\node.exe" "C:\path\to\agent\node_modules\tsx\dist\cli.mjs" "C:\path\to\agent\src\index.ts"
+nssm set GSTKeeperAgent AppDirectory "C:\path\to\agent"
+nssm set GSTKeeperAgent Start SERVICE_AUTO_START     # starts on boot
+nssm set GSTKeeperAgent AppExit Default Restart      # auto-restart on crash
+nssm start GSTKeeperAgent
+```
+The service now starts on boot, restarts if it crashes, and polls the queue 24/7.
+(Set `HEADFUL=false` in `.env` for a service; keep the PC on and signed in.)
+
+Simpler (no NSSM): Task Scheduler → "Create Task" → Trigger "At startup" → Action
+`npm --prefix C:\path\to\agent run start` → check "Run whether user is logged on".
+
+### Option B — a small always-on container (cloud or a mini-PC)
+A `Dockerfile` using the official `mcr.microsoft.com/playwright` image, `npm ci`,
+then `CMD ["npm","start"]`, deployed to any host that can keep one small container
+running (a cheap VPS / Fly.io / a Raspberry-class box). Same behaviour, off your desk.
+
+## The CAPTCHA (auto-attempt, then human)
+`login.ts` calls `autoSolveCaptcha()` (in `captchaSolver.ts`) first. That function is
+**left unimplemented on purpose** (returns null) — auto-defeating the portal CAPTCHA
+is against GSTN's terms and is not provided here. Until/unless your firm fills it in,
+every fresh login **falls back to a human**: the job parks as `needs_human`, the app
+shows the CAPTCHA image, and any staff member types it once (the session is then
+reused for hours). So the day-to-day is: click Sync → it runs in the background →
+occasionally someone types a CAPTCHA when a client's session has expired.

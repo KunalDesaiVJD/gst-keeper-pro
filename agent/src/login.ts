@@ -2,6 +2,7 @@ import { BrowserContext, Page } from 'playwright';
 import { config } from './config.js';
 import { PortalJob, ClientCreds, setStatus, waitForHumanResponse, logEvent } from './supabase.js';
 import { saveSession } from './browser.js';
+import { autoSolveCaptcha } from './captchaSolver.js';
 
 // Returns a logged-in page for the client, reusing a saved session when possible.
 // If a fresh login is needed, the CAPTCHA is handed to a HUMAN (see solveCaptcha).
@@ -70,9 +71,20 @@ async function readLoginError(page: Page): Promise<string | null> {
 async function solveCaptcha(page: Page, job: PortalJob): Promise<string | null> {
   const captchaImg = page.locator('#imgCaptcha, img.captcha'); // TODO(selector)
   const buffer = await captchaImg.screenshot().catch(() => null);
-  const b64 = buffer ? `data:image/png;base64,${buffer.toString('base64')}` : null;
 
-  await logEvent(job.id, 'info', 'captcha', 'Waiting for a human to type the CAPTCHA.');
+  // 1) Try the optional auto-solver first (unimplemented by default -> returns
+  //    null; your firm can fill in autoSolveCaptcha() in captchaSolver.ts).
+  if (buffer) {
+    const auto = await autoSolveCaptcha(buffer).catch(() => null);
+    if (auto && auto.trim()) {
+      await logEvent(job.id, 'info', 'captcha', 'CAPTCHA auto-solved.');
+      return auto.trim();
+    }
+  }
+
+  // 2) Fall back to a human via the app (the always-on path when there's no solver).
+  const b64 = buffer ? `data:image/png;base64,${buffer.toString('base64')}` : null;
+  await logEvent(job.id, 'info', 'captcha', 'Auto-solver unavailable — waiting for a human to type the CAPTCHA.');
   await setStatus(job.id, 'needs_human', {
     human_prompt: { kind: 'captcha', image: b64, message: 'Type the CAPTCHA shown to continue login.' },
     human_response: null,
