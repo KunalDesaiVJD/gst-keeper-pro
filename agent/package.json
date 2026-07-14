@@ -1,0 +1,22 @@
+{
+  "name": "gst-keeper-portal-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local Playwright worker: pull/push between GST Keeper and the GST portal (save-only).",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.89.0",
+    "dotenv": "^16.4.5",
+    "playwright": "^1.48.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.16.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3"
+  }
+}
