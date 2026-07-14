@@ -82,12 +82,38 @@ async function readBackFromPortal(_page: Page, _job: PortalJob): Promise<any> {
   return {};
 }
 
+const handlePullLedgers = notImplemented('PULL_LEDGERS', 'Phase 3');
+const handlePullGstr1 = notImplemented('PULL_GSTR1', 'Phase 3');
+const handlePullFilingStatus = notImplemented('PULL_FILING_STATUS', 'Phase 3');
+
+// SYNC_ALL: one login (shared page) then every PULL in sequence. A single step
+// failing is captured but doesn't abort the rest — "single click, everything imported".
+const handleSyncAll: Handler = async (job, creds, page) => {
+  const steps: [string, Handler][] = [
+    ['PULL_2B', handlePull2b],
+    ['PULL_LEDGERS', handlePullLedgers],
+    ['PULL_GSTR1', handlePullGstr1],
+    ['PULL_FILING_STATUS', handlePullFilingStatus],
+  ];
+  const results: Record<string, any> = {};
+  for (const [name, fn] of steps) {
+    try {
+      results[name] = await fn(job, creds, page);
+    } catch (e: any) {
+      results[name] = { error: e?.message || String(e) };
+      await logEvent(job.id, 'warn', 'sync_all', `${name}: ${e?.message || e}`);
+    }
+  }
+  return { sync: results };
+};
+
 export const HANDLERS: Record<string, Handler> = {
   LOGIN_TEST: handleLoginTest,
+  SYNC_ALL: handleSyncAll,
   PULL_2B: handlePull2b,
-  PULL_LEDGERS: notImplemented('PULL_LEDGERS', 'Phase 3'),
-  PULL_GSTR1: notImplemented('PULL_GSTR1', 'Phase 3'),
-  PULL_FILING_STATUS: notImplemented('PULL_FILING_STATUS', 'Phase 3'),
+  PULL_LEDGERS: handlePullLedgers,
+  PULL_GSTR1: handlePullGstr1,
+  PULL_FILING_STATUS: handlePullFilingStatus,
   PUSH_GSTR1_SAVE: makePushHandler('PUSH_GSTR1_SAVE', 'Phase 4'),
   PUSH_GSTR3B_SAVE: makePushHandler('PUSH_GSTR3B_SAVE', 'Phase 5'),
 };

@@ -19,6 +19,7 @@ export const config = {
 
 export type JobType =
   | 'LOGIN_TEST'
+  | 'SYNC_ALL'
   | 'PULL_2B'
   | 'PULL_LEDGERS'
   | 'PULL_GSTR1'

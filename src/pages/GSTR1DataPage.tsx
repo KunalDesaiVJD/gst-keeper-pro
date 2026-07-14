@@ -4,7 +4,9 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle } from 'lucide-react';
+import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, Download } from 'lucide-react';
+import { PortalActionButton } from '@/components/portal/PortalActionButton';
+import { PortalJobsPanel } from '@/components/portal/PortalJobsPanel';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -541,10 +543,29 @@ const GSTR1DataPage: React.FC = () => {
         </div>
         {isStaff && (
           <div className="flex items-center gap-2">
+            <PortalActionButton
+              clientId={selectedClient}
+              periodMonth={selectedMonth}
+              jobType="PULL_GSTR1"
+              label="Pull from portal"
+              icon={<Download className="h-4 w-4 mr-2" />}
+              disabled={!selectedClient || !selectedMonth}
+              onDone={fetchGSTR1Data}
+            />
             <Button onClick={handleImportClick} disabled={isImporting || !selectedClient || !selectedMonth}>
               {isImporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
               Import JSON
             </Button>
+            {gstr1Data && canEditFilingStatus() && (
+              <PortalActionButton
+                clientId={selectedClient}
+                periodMonth={selectedMonth}
+                jobType="PUSH_GSTR1_SAVE"
+                label="Push via agent (save)"
+                icon={<Send className="h-4 w-4 mr-2" />}
+                payload={{ gstr_json: gstr1Data?.raw_json }}
+              />
+            )}
             {gstr1Data && canEditFilingStatus() && (
               <Button
                 onClick={() => { setPushResult(null); setPushDialogOpen(true); }}
@@ -1113,6 +1134,8 @@ const GSTR1DataPage: React.FC = () => {
           </CardContent>
         </Card>
       )}
+
+      {selectedClient && <PortalJobsPanel clientId={selectedClient} periodMonth={selectedMonth} />}
 
       {/* Push confirmation — submitting to the live GST portal is outward and
           hard to reverse, so require an explicit confirm showing exactly what

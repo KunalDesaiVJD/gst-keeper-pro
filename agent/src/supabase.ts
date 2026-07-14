@@ -87,6 +87,13 @@ export async function recordVerification(v: {
   });
 }
 
+// Liveness ping so the app can show "agent online".
+export async function heartbeat() {
+  await supabase.from('portal_agent_heartbeat').upsert({
+    agent_id: config.agentId, last_seen: new Date().toISOString(), info: { headful: config.headful },
+  }, { onConflict: 'agent_id' });
+}
+
 export async function getClientCreds(clientId: string): Promise<ClientCreds | null> {
   const { data } = await supabase.from('clients')
     .select('id, name, gstin, gst_user_id, gst_password')

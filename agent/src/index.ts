@@ -1,5 +1,5 @@
 import { config } from './config.js';
-import { claimNextJob, setStatus, finishJob, logEvent, getClientCreds } from './supabase.js';
+import { claimNextJob, setStatus, finishJob, logEvent, getClientCreds, heartbeat } from './supabase.js';
 import { runJob } from './handlers.js';
 import { closeBrowser } from './browser.js';
 
@@ -39,6 +39,7 @@ async function main() {
   console.log(`Headful: ${config.headful}. CAPTCHA: human-assisted (no auto-solver).`);
   while (running) {
     try {
+      await heartbeat();
       await tick();
     } catch (e) {
       console.error('Loop error:', e);

@@ -86,4 +86,17 @@ CREATE POLICY "Anyone can view portal_verifications" ON public.portal_verificati
 DROP POLICY IF EXISTS "Staff can manage portal_verifications" ON public.portal_verifications;
 CREATE POLICY "Staff can manage portal_verifications" ON public.portal_verifications FOR ALL USING (true) WITH CHECK (true);
 
+-- Agent liveness: the Agent upserts its last_seen every poll so the app can show
+-- "agent online / last seen Ns ago".
+CREATE TABLE IF NOT EXISTS public.portal_agent_heartbeat (
+  agent_id text PRIMARY KEY,
+  last_seen timestamptz NOT NULL DEFAULT now(),
+  info jsonb
+);
+ALTER TABLE public.portal_agent_heartbeat ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Anyone can view portal_agent_heartbeat" ON public.portal_agent_heartbeat;
+CREATE POLICY "Anyone can view portal_agent_heartbeat" ON public.portal_agent_heartbeat FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Staff can manage portal_agent_heartbeat" ON public.portal_agent_heartbeat;
+CREATE POLICY "Staff can manage portal_agent_heartbeat" ON public.portal_agent_heartbeat FOR ALL USING (true) WITH CHECK (true);
+
 COMMIT;

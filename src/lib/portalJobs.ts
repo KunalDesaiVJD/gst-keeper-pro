@@ -8,6 +8,7 @@ const db = supabase as any;
 
 export type PortalJobType =
   | 'LOGIN_TEST'
+  | 'SYNC_ALL'
   | 'PULL_2B'
   | 'PULL_LEDGERS'
   | 'PULL_GSTR1'
@@ -38,6 +39,7 @@ export interface PortalJob {
 
 export const JOB_LABELS: Record<PortalJobType, string> = {
   LOGIN_TEST: 'Test portal login',
+  SYNC_ALL: 'Sync from portal',
   PULL_2B: 'Pull GSTR-2B',
   PULL_LEDGERS: 'Pull ledgers',
   PULL_GSTR1: 'Pull GSTR-1',
@@ -93,4 +95,15 @@ export async function recentPortalJobs(clientId: string, periodMonth: string | n
   if (periodMonth) q = q.eq('period_month', periodMonth);
   const { data } = await q;
   return (data as PortalJob[]) ?? [];
+}
+
+export interface AgentStatus { online: boolean; lastSeen: string | null; agentId: string | null }
+
+// The Agent upserts a heartbeat each poll; "online" if seen in the last 30s.
+export async function getAgentStatus(): Promise<AgentStatus> {
+  const { data } = await db.from('portal_agent_heartbeat')
+    .select('agent_id, last_seen').order('last_seen', { ascending: false }).limit(1).maybeSingle();
+  if (!data?.last_seen) return { online: false, lastSeen: null, agentId: null };
+  const online = Date.now() - new Date(data.last_seen).getTime() < 30_000;
+  return { online, lastSeen: data.last_seen, agentId: data.agent_id ?? null };
 }
