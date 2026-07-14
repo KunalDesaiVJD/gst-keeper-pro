@@ -4,7 +4,8 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { Upload, Loader2, Trash2, Plus, Lock, X } from 'lucide-react';
+import { Upload, Loader2, Trash2, Plus, Lock, X, Download } from 'lucide-react';
+import { PortalActionButton } from '@/components/portal/PortalActionButton';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -469,6 +470,15 @@ const Import2BTab: React.FC = () => {
         </div>
         {isStaff && (
           <div className="flex items-center gap-2">
+            <PortalActionButton
+              clientId={selectedClient}
+              periodMonth={selectedMonth}
+              jobType="PULL_2B"
+              label="Pull 2B from portal"
+              icon={<Download className="h-4 w-4 mr-2" />}
+              disabled={!selectedClient || !selectedMonth || isLocked}
+              onDone={fetchAll}
+            />
             <Button onClick={handleImportClick} disabled={isImporting || !selectedClient || !selectedMonth || isLocked}>
               {isImporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
               Import GSTR-2B
