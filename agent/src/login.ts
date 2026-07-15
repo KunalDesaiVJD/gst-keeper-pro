@@ -26,16 +26,18 @@ export async function ensureLoggedIn(
 
   // 2) Fresh login.
   await page.goto(config.loginUrl, { waitUntil: 'domcontentloaded' });
-  // TODO(selector): confirm these against the live portal DOM.
+  // CONFIRMED 2026-07-14 (live DOM): id=username (name=user_name), id=user_pass.
   await page.fill('#username', creds.gst_user_id);
   await page.fill('#user_pass', creds.gst_password);
 
   // 3) CAPTCHA — HUMAN-ASSISTED. We do NOT auto-solve the portal's bot-detection.
   const captchaText = await solveCaptcha(page, job);
   if (!captchaText) throw new Error('CAPTCHA was not provided by a human in time.');
-  await page.fill('#captcha', captchaText); // TODO(selector)
+  await page.fill('#captcha', captchaText); // TODO(selector): captcha input — re-verify on a logged-out login page.
 
-  await page.click('button[type="submit"]'); // TODO(selector): the LOGIN button
+  // CONFIRMED 2026-07-14: <button type=submit class="btn btn-primary">Login</button>.
+  // Scope to text so we don't hit the browser-extension's injected submit buttons.
+  await page.locator('button.btn-primary:has-text("Login")').click();
   await page.waitForLoadState('networkidle').catch(() => {});
 
   // Distinguish "wrong captcha" (retryable) from "wrong password" (stop).

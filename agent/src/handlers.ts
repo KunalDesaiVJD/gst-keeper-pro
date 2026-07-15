@@ -12,6 +12,60 @@ async function upsertByClientPeriod(table: string, clientId: string, period: str
   else await supabase.from(table).insert({ client_id: clientId, period_month: period, ...patch });
 }
 
+// --- Returns Dashboard period selection (CONFIRMED live 2026-07-14) ----------
+// The Returns Dashboard is the shared entry for 2B / GSTR-1 / GSTR-3B / status.
+// Its period selects are `name`-based (no id) and the month cascades off quarter.
+// See agent/SELECTORS.md for the full map.
+const RETURN_DASHBOARD_URL = 'https://return.gst.gov.in/returns/auth/dashboard';
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+// Map a MM/YYYY period to the dashboard dropdown labels (GST FY runs Apr–Mar).
+function periodToDashboard(period: string): { fin: string; quarterPrefix: string; month: string } {
+  const [mm, yyyy] = period.split('/').map((n) => parseInt(n, 10));
+  if (!mm || !yyyy || mm < 1 || mm > 12) throw new Error(`Bad period "${period}" (expected MM/YYYY).`);
+  const fyStart = mm >= 4 ? yyyy : yyyy - 1;                 // Apr starts the FY
+  const fin = `${fyStart}-${String((fyStart + 1) % 100).padStart(2, '0')}`; // e.g. 2026-27
+  const q = mm >= 4 && mm <= 6 ? 1 : mm >= 7 && mm <= 9 ? 2 : mm >= 10 && mm <= 12 ? 3 : 4;
+  return { fin, quarterPrefix: `Quarter ${q}`, month: MONTH_NAMES[mm - 1] };
+}
+
+// Select a dropdown <option> by the START of its visible text (robust to the
+// portal's option value/index churn). Throws if nothing matches.
+async function selectByTextStart(page: Page, selector: string, textStart: string): Promise<void> {
+  const value = await page.$$eval(
+    `${selector} option`,
+    (opts, t) => {
+      const m = (opts as HTMLOptionElement[]).find((o) => (o.textContent || '').trim().startsWith(t as string));
+      return m ? m.value : null;
+    },
+    textStart,
+  );
+  if (value == null) throw new Error(`No <option> starting with "${textStart}" in ${selector}.`);
+  await page.selectOption(selector, value);
+}
+
+// Navigate to the Returns Dashboard and select job.period_month, then Search so
+// the return tiles render. Returns the resolved labels for logging/verification.
+async function selectReturnPeriod(page: Page, period: string): Promise<{ fin: string; month: string }> {
+  const { fin, quarterPrefix, month } = periodToDashboard(period);
+  await page.goto(RETURN_DASHBOARD_URL, { waitUntil: 'domcontentloaded' });
+  await selectByTextStart(page, 'select[name="fin"]', fin);
+  await selectByTextStart(page, 'select[name="quarter"]', quarterPrefix);
+  await page.waitForTimeout(600);                            // month repopulates after quarter changes
+  await selectByTextStart(page, 'select[name="mon"]', month);
+  await page.locator('button.srchbtn').click();
+  await page.waitForLoadState('networkidle').catch(() => {});
+  return { fin, month };
+}
+
+// Locate a return tile by its name and return its action button. Every tile's
+// buttons share `btn btn-primary smallbutton` with generic text, so we MUST
+// scope by the tile (its column) first. `returnName` matches the tile header
+// (e.g. 'GSTR-2B', 'GSTR-3B'); `action` is the button label (e.g. /^Download$/i).
+function tileButton(page: Page, returnName: string, action: RegExp) {
+  return page.locator('div.col-md-4').filter({ hasText: returnName }).getByRole('button', { name: action });
+}
+
 // Each handler logs in (session-reused), does its portal work, self-verifies,
 // and returns a JSON result. PULL handlers also (Phase 2+) write into the app's
 // tables; PUSH handlers upload+SAVE only and read back to verify.
@@ -29,16 +83,46 @@ const handleLoginTest: Handler = async (job, creds, page) => {
   return { loggedIn: true, gstin: creds.gstin };
 };
 
-// ---- Phase 2: PULL_2B (scaffold) -------------------------------------------
+// ---- Phase 2: PULL_2B (navigation CONFIRMED; download+parse need a live run) -
 const handlePull2b: Handler = async (job, creds, page) => {
-  // TODO(selector): Returns Dashboard -> select period -> GSTR-2B -> Download (JSON/Excel).
-  // 1. navigate + pick job.period_month
-  // 2. download the 2B file, read its bytes
-  // 3. parse (reuse the app's parseGstr2b logic ported to the agent) -> rows + tax totals
-  // 4. RECONCILE: compare summed ITC to the portal's on-screen "ITC Available" figure
-  // 5. write rows into public.twob_import_docs (replace batch), record verification
-  await logEvent(job.id, 'warn', 'pull_2b', 'PULL_2B scaffold — portal selectors not yet wired.');
-  throw new Error('PULL_2B not implemented yet (Phase 2): fill in portal selectors + parser, then remove this.');
+  const period = job.period_month;
+  if (!period) throw new Error('PULL_2B: job.period_month (MM/YYYY) is required.');
+
+  // 1) CONFIRMED: pick the period on the Returns Dashboard, then open the
+  //    GSTR-2B tile's Download (scoped to the tile — button text is not unique).
+  const { fin, month } = await selectReturnPeriod(page, period);
+  await logEvent(job.id, 'info', 'pull_2b', `Dashboard set to ${month} ${fin}; opening GSTR-2B download.`);
+  await tileButton(page, 'GSTR-2B', /^Download$/i).click();
+  await page.waitForLoadState('networkidle').catch(() => {});
+
+  // 2) CONFIRMED page: gstr2b.../gstr2bdwld with two buttons — we use the Excel
+  //    one (the app already has an .xlsx importer). Clicking it triggers a
+  //    server-side generation; TODO(verify): confirm on a live run whether the
+  //    file auto-downloads or a "download" link/button appears after generation.
+  const genExcel = page.locator('button.btn-primary:has-text("GENERATE EXCEL FILE TO DOWNLOAD")');
+  await genExcel.waitFor({ state: 'visible', timeout: 30_000 });
+  let download;
+  try {
+    [download] = await Promise.all([
+      page.waitForEvent('download', { timeout: 120_000 }),
+      genExcel.click(),
+    ]);
+  } catch {
+    // Fallback: generation reveals a separate download control.
+    await logEvent(job.id, 'info', 'pull_2b', 'No direct download after GENERATE — looking for a download link.');
+    [download] = await Promise.all([
+      page.waitForEvent('download', { timeout: 120_000 }),
+      page.locator('a:has-text("download"), button:has-text("DOWNLOAD")').first().click(),
+    ]);
+  }
+  const filePath = await download.path();
+  await logEvent(job.id, 'info', 'pull_2b', `Downloaded 2B file: ${download.suggestedFilename()}.`);
+
+  // 3) TODO(parse): read `filePath` (.xlsx) and port the app's parseGstr2b logic
+  //    here -> rows + tax totals. 4) RECONCILE summed ITC vs the portal figure.
+  //    5) write rows into public.twob_import_docs (replace batch) + verification.
+  await logEvent(job.id, 'warn', 'pull_2b', 'Navigation + download wired; parser/reconcile/write still to port (needs a live-run to finalize).');
+  throw new Error(`PULL_2B: navigation is wired and the file downloaded to ${filePath}, but the xlsx parser + twob_import_docs write are not ported yet.`);
 };
 
 const notImplemented = (name: string, phase: string): Handler => async (job) => {
@@ -135,15 +219,28 @@ const handlePullFilingStatus: Handler = async (job, creds, _page) => {
 };
 
 // ---- Feature B (G2): electronic credit ledger → suspended/receivable opening -
-const handlePullLedgers: Handler = async (job, creds, _page) => {
-  // TODO(selector): Services > Ledgers > Electronic Credit Ledger. Set the
-  // period's date range, download the ledger, and derive the OPENING balance
-  // (IGST/CGST/SGST) — the same figure the app's parseElectronicCreditLedgerCsv
-  // produces from the manual CSV upload (port that logic here).
-  const opening: { igst: number; cgst: number; sgst: number } | null = null; // TODO(parse)
+const CREDIT_LEDGER_URL = 'https://return.gst.gov.in/returns/auth/ledger/itcledger';
+
+const handlePullLedgers: Handler = async (job, creds, page) => {
+  // CONFIRMED live 2026-07-14: the Electronic Credit Ledger LANDING page shows a
+  // single TOTAL "ITC Balance As On Date" in `div.rettbl-format span.reg` (plus
+  // provisional/blocked). It does NOT break the balance into IGST/CGST/SGST and
+  // has no date-range form — that per-head, period-end detail lives on the
+  // separate detailed-ledger view (From/To + GO), which was NOT inspected yet.
+  await page.goto(CREDIT_LEDGER_URL, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(800);
+  const totalRaw = await page.locator('div.rettbl-format span.reg').first().innerText().catch(() => '');
+  const itcTotal = totalRaw ? Number(totalRaw.replace(/[,\s]/g, '')) : NaN;
+  await logEvent(job.id, 'info', 'pull_ledgers', `Credit-ledger total ITC balance (as-on-today): ${totalRaw || 'not found'}.`);
+
+  // The app needs the per-head opening (opening_igst/cgst/sgst); a single total
+  // can't be split safely. Record what we read, then stop until the detailed
+  // ledger (per-head + date range) is inspected/wired — do NOT write a fake split.
+  const opening: { igst: number; cgst: number; sgst: number } | null = null; // TODO(detail-view)
   if (!opening) {
-    await logEvent(job.id, 'warn', 'pull_ledgers', 'Ledger opening not parsed — portal selectors/parser not wired yet.');
-    throw new Error('PULL_LEDGERS not wired (Feature B / G2): fill in the credit-ledger selectors + opening parser.');
+    await recordVerification({ jobId: job.id, clientId: creds.id, period: job.period_month, checkType: 'LEDGER_TOTAL_READ', passed: Number.isFinite(itcTotal), expected: { total: true }, actual: { total: itcTotal } });
+    await logEvent(job.id, 'warn', 'pull_ledgers', 'Read the total balance, but per-head opening needs the detailed-ledger view (not inspected yet).');
+    throw new Error(`PULL_LEDGERS: read total ITC balance = ${itcTotal}, but per-head opening (IGST/CGST/SGST) requires the detailed-ledger date-range view, which is not wired yet.`);
   }
 
   const period = job.period_month || '';
