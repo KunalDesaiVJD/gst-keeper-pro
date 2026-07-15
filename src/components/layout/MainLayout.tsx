@@ -5,6 +5,7 @@ import Sidebar from './Sidebar';
 import QuickActionsButton from './QuickActionsButton';
 import ChatWidget from '@/components/chat/ChatWidget';
 import { PortalCaptchaWatcher } from '@/components/portal/PortalCaptchaWatcher';
+import BulkSyncButton from '@/components/portal/BulkSyncButton';
 import { Loader2 } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
@@ -38,6 +39,8 @@ const MainLayout: React.FC = () => {
       {/* Quick actions floating button - only for staff */}
       {isStaffRole() && <QuickActionsButton />}
       {isStaffRole() && <ChatWidget />}
+      {/* One-click Bulk Sync pop-up (scope: current / choose / all clients) */}
+      {isStaffRole() && <BulkSyncButton />}
       {/* Global CAPTCHA surface for portal-agent jobs (single/bulk) */}
       {isStaffRole() && <PortalCaptchaWatcher />}
     </div>

@@ -105,6 +105,27 @@ export async function getPendingCaptchaJob(): Promise<PortalJob | null> {
   return j && j.human_prompt?.kind === 'captcha' && !j.human_response ? j : null;
 }
 
+// Bulk-enqueue a full SYNC_ALL (one login -> every pull) for many clients. This
+// is what the one-click Bulk Sync dialog fires. Returns the created jobs so the
+// UI can track each client's progress + surface its CAPTCHA.
+export async function enqueueBulkSync(clientIds: string[], periodMonth: string, requestedBy?: string | null): Promise<PortalJob[]> {
+  if (!clientIds.length) return [];
+  const rows = clientIds.map((id) => ({
+    client_id: id, period_month: periodMonth, job_type: 'SYNC_ALL' as const,
+    mode: 'live', status: 'queued', requested_by: requestedBy ?? null, payload: {},
+  }));
+  const { data, error } = await db.from('portal_jobs').insert(rows).select('*');
+  if (error) throw error;
+  return (data as PortalJob[]) ?? [];
+}
+
+// Poll a specific set of jobs by id (the Bulk Sync tracker watches its own jobs).
+export async function getPortalJobsByIds(ids: string[]): Promise<PortalJob[]> {
+  if (!ids.length) return [];
+  const { data } = await db.from('portal_jobs').select('*').in('id', ids);
+  return (data as PortalJob[]) ?? [];
+}
+
 // Bulk-enqueue a filed-returns pull for many clients (Filing Status page).
 export async function enqueueBulkFilingPull(clientIds: string[], periodMonth: string, requestedBy?: string | null): Promise<number> {
   if (!clientIds.length) return 0;
