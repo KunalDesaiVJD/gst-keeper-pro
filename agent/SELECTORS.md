@@ -17,12 +17,16 @@ Date of capture: 2026-07-14. Portal: `services.gst.gov.in` + return sub-domains.
 | Returns Dashboard period select + tiles | ✅ confirmed | ✅ `handlers.ts` (`selectReturnPeriod`, `tileButton`) | — |
 | PULL_2B navigation → GENERATE EXCEL | ✅ confirmed | ✅ `handlers.ts` | post-generate download trigger; xlsx parser → `twob_import_docs` |
 | Credit-ledger total balance | ✅ confirmed | ✅ `handlers.ts` (reads total) | **per-head** IGST/CGST/SGST via the detailed date-range ledger (NOT inspected) |
-| Track Return Status (ARN/filed-date/PDF) | ❌ not inspected | scaffold only | whole page — inspect selectors |
+| 2B parse → `twob_import_docs` | ✅ done | ✅ `handlers.ts` + `parseGstr2b.ts` | post-GENERATE download trigger (live-run) |
+| Track Return Status (ARN/date/status) | ✅ confirmed | scaffold only | wire the table read → `filing_status` |
+| View e-Filed Returns (ARN + PDF) | ✅ confirmed | scaffold only | wire selects+search+download → PDF; confirm download-icon = PDF (live-run) |
 | PUSH GSTR-1 / GSTR-3B (save) | ❌ not inspected | scaffold only | the offline-upload/save flow |
 
-**Two inspection gaps remain** (both need a logged-in portal, blocked when captured): (1) the login
-CAPTCHA input/image, and (2) the **Track Return Status** page. Plus the credit-ledger **detailed**
-view for per-head opening. None can be finalized without a live run on the office PC.
+**Pull-side inspection COMPLETE** — all pages captured (login, dashboard, 2B, credit ledger, Track
+Return Status, View e-Filed Returns). Remaining gaps: (1) login CAPTCHA input/image (still `#captcha`
+guess — grab on a logged-out login page), (2) credit-ledger **detailed** per-head view, (3) wiring +
+a live run for the filing-status handler and the push-save flows. None can be *finalized* without a
+live run on the office PC.
 
 ---
 
@@ -121,6 +125,63 @@ const raw = await page.locator('div.rettbl-format span.reg').first().innerText()
 const itcBalance = Number(raw.replace(/,/g,''));
 ```
 
-## 5. Track Return Status  ⏳ pending inspection
-Services → Returns → Track Return Status. Need: ARN cell, status cell, filed-date cell,
-period row structure (for PULL_FILING_STATUS + ARN write-back).
+## 5. Track Return Status — `https://return.gst.gov.in/returns/auth/trackreturnstatus`  ✅ confirmed
+
+Gives ARN / return-type / period / filed-date / status per filed return. **No PDF here** — the
+filed-return PDF is on **View e-Filed Returns** (separate page, still to inspect).
+
+Search controls:
+
+| Control | Selector | Notes |
+|---|---|---|
+| Search mode | `input[name="aaa"]` radios: value `ackNo` (ARN), **`retFilePer`** (Return Filing Period), `status` | pick `retFilePer` |
+| Financial Year | `select[name="fin"]` | **"2026-2027"** full format (NOT the dashboard's "2026-27") |
+| Search | `button.srchbtn` | text "Search" |
+
+Results table = the page's single `<table>`. Rows: `table tbody tr`. **Cell order (0-indexed):**
+
+| idx | Column | Example | Agent use |
+|---|---|---|---|
+| 0 | ARN | `AA240626641125D` | `arn` (15-char; validate `^[A-Z0-9]{15}$`) |
+| 1 | Return Type | `GSTR-1/IFF` | map portal label → `return_type` enum (see below) |
+| 2 | Financial Year | `2026-2027` | + col 3 → period MM/YYYY |
+| 3 | Tax Period | `June` (month) or quarter | month-name → MM; with FY → `MM/YYYY` |
+| 4 | Date of filing | `09/07/2026` (dd/MM/yyyy) | `filed_date` → ISO yyyy-MM-dd |
+| 5 | Status | `Filed` | only import when `Filed` |
+| 6 | Mode of filing | `ONLINE` | informational |
+
+Return-type label mapping (portal → app `return_type` enum): `GSTR-1/IFF`→`GSTR-1` (or `GSTR-1 (IFF)`
+if IFF/quarterly — disambiguate by tax period being a month within a quarter), `GSTR3B`/`GSTR-3B`→`GSTR-3B`,
+`GSTR-3B`(quarterly)→`GSTR-3B (Q)`, `CMP-08`→`CMP-08`, `ITC-04`→`ITC-04`, `GSTR-6`→`GSTR-6`, `GSTR-7`→`GSTR-7`.
+
+## 6. View e-Filed Returns — `https://return.gst.gov.in/returns/auth/efiledReturns`  ✅ confirmed
+
+**Single source for ARN + filed-date + the PDF** (its table has the Acknowledgement Number AND the
+download). More clicks than Track Return Status (needs 4 selects → one return at a time) but gives
+the PDF, so it's the page for the full filing-status auto-import.
+
+Search controls (id-based here; `Select` is the empty first option):
+
+| Control | Selector | Notes |
+|---|---|---|
+| Financial Year | `#finYr` | "2026-27" **short** format |
+| Filing frequency | `#optValue` | Annual / Half Yearly / Monthly / Quarterly … (5 opts) |
+| Tax Period (month) | the 3rd `<select>` (no id/name) — `select` after `#optValue` | January…December (+"Select") |
+| Return Type | `#retTyp` | `GSTR-1/IFF/GSTR-1A`, `GSTR3B`, … (17 opts) |
+| Search | `button.btn-primary.pull-right` | text "Search" |
+
+Results table (`table`) columns: Return Type · Financial Year · Tax Period · **Acknowledgement Number**
+· **Date of filing** · Mode of filing · Filed By · **View/Download**. In the last cell:
+
+| Control | Selector | Action |
+|---|---|---|
+| View | `a.btn-edit:has-text("View")` | opens the return view page (NOT needed for the pull) |
+| **Download PDF** | `a[title="download"]` (contains `i.fa-download`) | **direct PDF download** — this fills `return_pdf_url` |
+
+Agent flow (PULL_FILING_STATUS): per client, per period, for each return type the client files →
+set `#finYr` + `#optValue` + month + `#retTyp` → `button.btn-primary.pull-right` → if a row exists,
+read ARN (col "Acknowledgement Number") + Date of filing, click `a[title="download"]` to grab the
+PDF → upload to `return-pdfs` bucket → upsert `filing_status`. (Alternatively, Track Return Status
+gives ARN/date/status for ALL returns in one FY search but no PDF — use it for a fast status sweep.)
+**TODO(live-run):** confirm the download-icon yields a PDF (vs opening a viewer) + the `#optValue`
+option labels.
