@@ -28,7 +28,6 @@ type Scope = 'current' | 'choose' | 'all';
 const SYNC_STEPS: { key: string; label: string }[] = [
   { key: 'PULL_2B', label: '2B' },
   { key: 'PULL_LEDGERS', label: 'Ledger' },
-  { key: 'PULL_GSTR1', label: 'GSTR-1' },
   { key: 'PULL_FILING_STATUS', label: 'Filing' },
 ];
 

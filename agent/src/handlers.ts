@@ -244,77 +244,159 @@ async function readBackFromPortal(_page: Page, _job: PortalJob): Promise<any> {
 
 const handlePullGstr1 = notImplemented('PULL_GSTR1', 'Phase 3');
 
-// ---- Feature A (G1): filed returns → ARN + PDF into filing_status ----------
-// DB/storage writes are real; only the portal reading is TODO(selector).
-interface FiledReturn { return_type: string; period: string; arn: string; filed_date: string | null; pdfBytes: Buffer | null }
+// ---- Feature A (G1): filed returns → ARN + filed-date + status into filing_status
+// CONFIRMED live 2026-07-15: Track Return Status (Return Filing Period + FY + Search)
+// lists every filed return for the FY with ARN / return type / period / filed date /
+// status (no PDF — that's on View e-Filed Returns). We write ARN + filed_date +
+// status='Filed'; no DB rule needs a PDF, and auto_lock_on_filed still fires. The PDF
+// attachment via View e-Filed Returns is a later enhancement.
+const TRACK_RETURN_STATUS_URL = 'https://return.gst.gov.in/returns/auth/trackreturnstatus';
+const FILING_MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
-const handlePullFilingStatus: Handler = async (job, creds, _page) => {
-  // TODO(selector): Services > Returns > Track Return Status. For each filed
-  // return read: return_type (map portal label -> the return_type enum:
-  // GSTR-1 / GSTR-3B / GSTR-3B (Q) / GSTR-1 (IFF) / CMP-08 / ITC-04 / GSTR-6 / GSTR-7),
-  // period (MM/YYYY), ARN (15 chars), filed_date (YYYY-MM-DD), and download the
-  // filed-return PDF into pdfBytes.
-  const filed: FiledReturn[] = [];
-  if (filed.length === 0) {
-    await logEvent(job.id, 'warn', 'pull_filing_status', 'No filed returns read — portal selectors not wired yet.');
-    throw new Error('PULL_FILING_STATUS not wired (Feature A / G1): fill in the Track-Return-Status selectors.');
-  }
+function fyStartOf(period: string): number {
+  const [mm, yyyy] = period.split('/').map((n) => parseInt(n, 10));
+  return mm >= 4 ? yyyy : yyyy - 1;
+}
+
+function ddmmyyyyToIso(s: string): string | null {
+  const m = (s || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : null;
+}
+
+// Portal "Return Type" label + the client's selected_returns -> app return_type.
+// GSTR-1 and GSTR-3B each have a monthly vs quarterly/IFF variant; selected_returns
+// disambiguates. Unknown labels -> null (skip; never guess).
+function resolveReturnType(portalLabel: string, selectedReturns: string[]): string | null {
+  const has = (t: string) => selectedReturns.includes(t);
+  const L = (portalLabel || '').toUpperCase().replace(/\s/g, '');
+  if (L.includes('IFF') || L.includes('GSTR-1') || L.includes('GSTR1')) return has('GSTR-1 (IFF)') ? 'GSTR-1 (IFF)' : 'GSTR-1';
+  if (L.includes('GSTR-3B') || L.includes('GSTR3B')) return has('GSTR-3B (Q)') ? 'GSTR-3B (Q)' : 'GSTR-3B';
+  if (L.includes('GSTR-7') || L.includes('GSTR7')) return 'GSTR-7';
+  if (L.includes('GSTR-6') || L.includes('GSTR6')) return 'GSTR-6';
+  if (L.includes('CMP-08') || L.includes('CMP08')) return 'CMP-08';
+  if (L.includes('ITC-04') || L.includes('ITC04')) return 'ITC-04';
+  return null;
+}
+
+// FY text ("2026-2027") + tax period ("June") -> app period_month "MM/YYYY".
+// Quarterly / non-month tax periods return null (skipped — refine later).
+function resolvePeriodMonth(fyText: string, taxPeriod: string): string | null {
+  const mi = FILING_MONTHS.findIndex((m) => (taxPeriod || '').trim().toLowerCase().startsWith(m));
+  const fyMatch = (fyText || '').match(/(\d{4})/);
+  if (mi < 0 || !fyMatch) return null;
+  const fyStart = parseInt(fyMatch[1], 10);
+  const monthNum = mi + 1;
+  const year = monthNum >= 4 ? fyStart : fyStart + 1;
+  return `${String(monthNum).padStart(2, '0')}/${year}`;
+}
+
+const handlePullFilingStatus: Handler = async (job, creds, page) => {
+  const jobPeriod = job.period_month;
+  const fyStart = jobPeriod ? fyStartOf(jobPeriod) : new Date().getFullYear();
+  const fyFull = `${fyStart}-${fyStart + 1}`; // Track Return Status uses the full FY form
+
+  // The client's selected_returns disambiguate GSTR-1 vs IFF and GSTR-3B vs (Q).
+  const { data: clientRow } = await supabase.from('clients').select('selected_returns').eq('id', creds.id).maybeSingle();
+  const selectedReturns: string[] = ((clientRow as any)?.selected_returns as string[]) || [];
+
+  await page.goto(TRACK_RETURN_STATUS_URL, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(500);
+  await page.check('input[name="aaa"][value="retFilePer"]').catch(() => {});
+  await selectByTextStart(page, 'select[name="fin"]', fyFull);
+  await page.locator('button.srchbtn').click();
+  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForTimeout(1200);
+
+  // Columns: [ARN, Return Type, FY, Tax Period, Date of filing, Status, Mode].
+  const raw: string[][] = await page.evaluate(() => {
+    const t = document.querySelector('table');
+    if (!t) return [] as string[][];
+    return [...t.querySelectorAll('tbody tr')].map((tr) => [...tr.children].map((td) => (td.textContent || '').replace(/\s+/g, ' ').trim()));
+  });
 
   const written: any[] = [];
-  for (const r of filed) {
-    // Upload the PDF to the return-pdfs bucket.
-    let pdfUrl: string | null = null;
-    if (r.pdfBytes) {
-      const path = `${creds.id}/${r.period.replace('/', '-')}/${r.return_type}-${r.arn}.pdf`;
-      const { error: upErr } = await supabase.storage.from('return-pdfs')
-        .upload(path, r.pdfBytes, { contentType: 'application/pdf', upsert: true });
-      if (!upErr) pdfUrl = supabase.storage.from('return-pdfs').getPublicUrl(path).data.publicUrl;
-    }
-    // Only write "Filed" when ARN + PDF verify (the DB trigger also enforces this).
-    const arnOk = /^[A-Z0-9]{15}$/.test((r.arn || '').toUpperCase());
-    const passed = arnOk && !!pdfUrl;
-    await recordVerification({ jobId: job.id, clientId: creds.id, period: r.period, checkType: 'FILING_ARN_PDF', passed, expected: { arn15: true, pdf: true }, actual: { arn: r.arn, pdf: !!pdfUrl } });
-    if (!passed) { written.push({ ...r, pdfBytes: undefined, skipped: 'arn/pdf failed verification' }); continue; }
+  const skipped: any[] = [];
+  const nowIso = new Date().toISOString();
+  for (const cells of raw) {
+    if (cells.length < 6) continue;
+    const [arnRaw, typeLabel, fyText, taxPeriod, dateFiled, status] = cells;
+    if (!/^filed$/i.test((status || '').trim())) continue;                    // only filed returns
+    const arn = (arnRaw || '').toUpperCase();
+    if (!/^[A-Z0-9]{15}$/.test(arn)) { skipped.push({ arn: arnRaw, why: 'bad ARN' }); continue; }
+    const return_type = resolveReturnType(typeLabel, selectedReturns);
+    const period_month = resolvePeriodMonth(fyText, taxPeriod);
+    if (!return_type || !period_month) { skipped.push({ arn, typeLabel, taxPeriod, why: 'unresolved type/period (e.g. quarterly)' }); continue; }
 
-    await supabase.from('filing_status').upsert({
-      client_id: creds.id, return_type: r.return_type, period_month: r.period,
-      status: 'Filed', arn: r.arn.toUpperCase(), filed_date: r.filed_date, return_pdf_url: pdfUrl,
-      updated_at: new Date().toISOString(),
+    // Upsert ARN + filed date + Filed. Omit return_pdf_url so an existing PDF is kept.
+    const { error } = await supabase.from('filing_status').upsert({
+      client_id: creds.id, return_type, period_month,
+      status: 'Filed', arn, filed_date: ddmmyyyyToIso(dateFiled), updated_at: nowIso,
     }, { onConflict: 'client_id,return_type,period_month' });
-    written.push({ return_type: r.return_type, period: r.period, arn: r.arn, pdf: !!pdfUrl });
+    if (error) { skipped.push({ arn, return_type, period_month, why: error.message }); continue; }
+    written.push({ return_type, period_month, arn, filed_date: ddmmyyyyToIso(dateFiled) });
   }
-  return { filingStatus: written };
+
+  await recordVerification({
+    jobId: job.id, clientId: creds.id, period: jobPeriod, checkType: 'FILING_STATUS_ARN',
+    passed: written.length > 0, expected: { fy: fyFull }, actual: { written: written.length, skipped: skipped.length },
+  });
+  await logEvent(job.id, written.length ? 'info' : 'warn', 'pull_filing_status',
+    `Filing status FY ${fyFull}: wrote ${written.length} ARN(s)${skipped.length ? `, skipped ${skipped.length}` : ''}.`);
+  if (written.length === 0 && raw.length === 0) {
+    throw new Error('PULL_FILING_STATUS: no rows read from Track Return Status (check FY select / Search).');
+  }
+  return { filingStatus: written, skipped };
 };
 
 // ---- Feature B (G2): electronic credit ledger → suspended/receivable opening -
-const CREDIT_LEDGER_URL = 'https://return.gst.gov.in/returns/auth/ledger/itcledger';
+const DETAILED_LEDGER_URL = 'https://return.gst.gov.in/returns/auth/ledger/detailedledger';
+
+// dd/mm/yyyy first + last day of a MM/YYYY period.
+function periodDateRange(period: string): { from: string; to: string } {
+  const [mm, yyyy] = period.split('/').map((n) => parseInt(n, 10));
+  const last = new Date(yyyy, mm, 0).getDate(); // day 0 of next month = last day of this month
+  const p2 = (n: number) => String(n).padStart(2, '0');
+  return { from: `01/${p2(mm)}/${yyyy}`, to: `${p2(last)}/${p2(mm)}/${yyyy}` };
+}
 
 const handlePullLedgers: Handler = async (job, creds, page) => {
-  // CONFIRMED live 2026-07-14: the Electronic Credit Ledger LANDING page shows a
-  // single TOTAL "ITC Balance As On Date" in `div.rettbl-format span.reg` (plus
-  // provisional/blocked). It does NOT break the balance into IGST/CGST/SGST and
-  // has no date-range form — that per-head, period-end detail lives on the
-  // separate detailed-ledger view (From/To + GO), which was NOT inspected yet.
-  await page.goto(CREDIT_LEDGER_URL, { waitUntil: 'domcontentloaded' });
+  const period = job.period_month;
+  if (!period) throw new Error('PULL_LEDGERS: job.period_month (MM/YYYY) is required.');
+  const { from, to } = periodDateRange(period);
+
+  // CONFIRMED live 2026-07-15: the DETAILED credit ledger (date range + GO) renders a
+  // table whose "Opening Balance" row holds the per-head opening in its last 5 cells
+  // (Balance group = [IGST, CGST, SGST, Cess, Total]). Opening as of `from` = the ITC
+  // carried into the period. (The landing page only exposes a single total.)
+  await page.goto(DETAILED_LEDGER_URL, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(800);
-  const totalRaw = await page.locator('div.rettbl-format span.reg').first().innerText().catch(() => '');
-  const itcTotal = totalRaw ? Number(totalRaw.replace(/[,\s]/g, '')) : NaN;
-  await logEvent(job.id, 'info', 'pull_ledgers', `Credit-ledger total ITC balance (as-on-today): ${totalRaw || 'not found'}.`);
 
-  // The app needs the per-head opening (opening_igst/cgst/sgst); a single total
-  // can't be split safely. Record what we read, then stop until the detailed
-  // ledger (per-head + date range) is inspected/wired — do NOT write a fake split.
-  // TODO(detail-view): parse per-head opening from the detailed ledger (date-range
-  // view). Typed as the union (not literal null) so the write scaffold below stays
-  // valid for when it's wired.
-  const opening = null as { igst: number; cgst: number; sgst: number } | null;
+  // Date pickers #sumlg_frdt / #sumlg_todt — try typing. TODO(live-run): some portal
+  // date-pickers are calendar-only; if .fill() is rejected, drive the calendar.
+  await page.fill('#sumlg_frdt', from);
+  await page.fill('#sumlg_todt', to);
+  await page.locator('button.btn-primary.mar-0, button:has-text("GO")').first().click();
+  await page.waitForTimeout(1500);
+
+  const opening = await page.evaluate(() => {
+    const t = document.querySelector('table');
+    if (!t) return null;
+    const row = [...t.querySelectorAll('tbody tr')].find((tr) => /opening balance/i.test(tr.textContent || ''));
+    if (!row) return null;
+    const cells = [...row.children].map((td) => (td.textContent || '').replace(/[,\s₹]/g, '').trim());
+    const n = cells.length;
+    const num = (s: string) => { const x = parseFloat(s); return isFinite(x) ? x : 0; };
+    // Balance group = the last 5 cells: [Integrated, Central, State, Cess, Total].
+    return { igst: num(cells[n - 5]), cgst: num(cells[n - 4]), sgst: num(cells[n - 3]), cess: num(cells[n - 2]), total: num(cells[n - 1]) };
+  });
+
   if (!opening) {
-    await recordVerification({ jobId: job.id, clientId: creds.id, period: job.period_month, checkType: 'LEDGER_TOTAL_READ', passed: Number.isFinite(itcTotal), expected: { total: true }, actual: { total: itcTotal } });
-    await logEvent(job.id, 'warn', 'pull_ledgers', 'Read the total balance, but per-head opening needs the detailed-ledger view (not inspected yet).');
-    throw new Error(`PULL_LEDGERS: read total ITC balance = ${itcTotal}, but per-head opening (IGST/CGST/SGST) requires the detailed-ledger date-range view, which is not wired yet.`);
+    await logEvent(job.id, 'warn', 'pull_ledgers', 'Detailed ledger loaded but no "Opening Balance" row found (check date range / GO).');
+    throw new Error('PULL_LEDGERS: could not read the Opening Balance row from the detailed ledger.');
   }
+  await logEvent(job.id, 'info', 'pull_ledgers',
+    `Opening as of ${from}: IGST ${opening.igst}, CGST ${opening.cgst}, SGST ${opening.sgst}, Cess ${opening.cess}.`);
 
-  const period = job.period_month || '';
   const patch = {
     opening_igst: opening.igst, opening_cgst: opening.cgst, opening_sgst: opening.sgst,
     opening_source: 'portal', opening_portal_pulled_at: new Date().toISOString(),
@@ -322,17 +404,19 @@ const handlePullLedgers: Handler = async (job, creds, page) => {
   };
   await upsertByClientPeriod('suspended_reco', creds.id, period, patch);
   await upsertByClientPeriod('gst_receivable_reco', creds.id, period, patch);
-  await recordVerification({ jobId: job.id, clientId: creds.id, period, checkType: 'LEDGER_OPENING', passed: true, expected: opening, actual: opening });
+  await recordVerification({ jobId: job.id, clientId: creds.id, period, checkType: 'LEDGER_OPENING', passed: true, expected: { from }, actual: opening });
   return { opening };
 };
 
 // SYNC_ALL: one login (shared page) then every PULL in sequence. A single step
 // failing is captured but doesn't abort the rest — "single click, everything imported".
 const handleSyncAll: Handler = async (job, creds, page) => {
+  // The three wired pulls. GSTR-1 DATA pull is a separate, unbuilt feature — it's
+  // not in the sync sequence so it can't show a spurious failure. Filing-status
+  // already captures each GSTR-1's ARN/filed-date.
   const steps: [string, Handler][] = [
     ['PULL_2B', handlePull2b],
     ['PULL_LEDGERS', handlePullLedgers],
-    ['PULL_GSTR1', handlePullGstr1],
     ['PULL_FILING_STATUS', handlePullFilingStatus],
   ];
   const results: Record<string, any> = {};

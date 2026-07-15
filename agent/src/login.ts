@@ -33,7 +33,7 @@ export async function ensureLoggedIn(
   // 3) CAPTCHA — HUMAN-ASSISTED. We do NOT auto-solve the portal's bot-detection.
   const captchaText = await solveCaptcha(page, job);
   if (!captchaText) throw new Error('CAPTCHA was not provided by a human in time.');
-  await page.fill('#captcha', captchaText); // TODO(selector): captcha input — re-verify on a logged-out login page.
+  await page.fill('#captcha', captchaText); // CONFIRMED 2026-07-15: id=captcha (placeholder "Enter Characters shown below").
 
   // CONFIRMED 2026-07-14: <button type=submit class="btn btn-primary">Login</button>.
   // Scope to text so we don't hit the browser-extension's injected submit buttons.
@@ -71,7 +71,7 @@ async function readLoginError(page: Page): Promise<string | null> {
 // (If you choose to add an automatic solver, this is the single seam to change —
 // it is intentionally left to you.)
 async function solveCaptcha(page: Page, job: PortalJob): Promise<string | null> {
-  const captchaImg = page.locator('#imgCaptcha, img.captcha'); // TODO(selector)
+  const captchaImg = page.locator('#imgCaptcha, img.captcha'); // CONFIRMED 2026-07-15: id=imgCaptcha, class="captcha".
   const buffer = await captchaImg.screenshot().catch(() => null);
 
   // 1) Try the optional auto-solver first (unimplemented by default -> returns

@@ -13,20 +13,21 @@ Date of capture: 2026-07-14. Portal: `services.gst.gov.in` + return sub-domains.
 | Area | Selectors | Wired into code | Still needs a live run |
 |---|---|---|---|
 | Login (username/password/Login btn) | ✅ confirmed | ✅ `login.ts` | — |
-| Login CAPTCHA field + image | ⚠️ unverified (`#captcha`/`#imgCaptcha` guess) | left as-is | re-read on a logged-out login page |
+| Login CAPTCHA field + image | ✅ confirmed (`#captcha` / `#imgCaptcha`) | ✅ `login.ts` | — |
 | Returns Dashboard period select + tiles | ✅ confirmed | ✅ `handlers.ts` (`selectReturnPeriod`, `tileButton`) | — |
 | PULL_2B navigation → GENERATE EXCEL | ✅ confirmed | ✅ `handlers.ts` | post-generate download trigger; xlsx parser → `twob_import_docs` |
-| Credit-ledger total balance | ✅ confirmed | ✅ `handlers.ts` (reads total) | **per-head** IGST/CGST/SGST via the detailed date-range ledger (NOT inspected) |
 | 2B parse → `twob_import_docs` | ✅ done | ✅ `handlers.ts` + `parseGstr2b.ts` | post-GENERATE download trigger (live-run) |
-| Track Return Status (ARN/date/status) | ✅ confirmed | scaffold only | wire the table read → `filing_status` |
-| View e-Filed Returns (ARN + PDF) | ✅ confirmed | scaffold only | wire selects+search+download → PDF; confirm download-icon = PDF (live-run) |
-| PUSH GSTR-1 / GSTR-3B (save) | ❌ not inspected | scaffold only | the offline-upload/save flow |
+| Ledger per-head opening | ✅ confirmed (detailed view) | ✅ `handlers.ts` (Opening Balance row) | date-picker `.fill()` may be calendar-only (live-run) |
+| Filing status (ARN/date/status) | ✅ confirmed | ✅ `handlers.ts` (Track Return Status → `filing_status`) | quarterly/IFF period mapping is SKIPPED not guessed; filed-PDF attach = later |
+| View e-Filed Returns (PDF attach) | ✅ confirmed | not wired (optional) | selects+search+download → `return_pdf_url`; confirm download-icon = PDF (live-run) |
+| PUSH GSTR-1 / GSTR-3B (save) | ❌ not inspected | scaffold only | deferred by user (Humonex already pushes GSTR-1); separate phase |
 
-**Pull-side inspection COMPLETE** — all pages captured (login, dashboard, 2B, credit ledger, Track
-Return Status, View e-Filed Returns). Remaining gaps: (1) login CAPTCHA input/image (still `#captcha`
-guess — grab on a logged-out login page), (2) credit-ledger **detailed** per-head view, (3) wiring +
-a live run for the filing-status handler and the push-save flows. None can be *finalized* without a
-live run on the office PC.
+**PULL SIDE WIRED** — 2B, ledgers (per-head), and filing-status (ARN/date/status) are all coded +
+`npm run typecheck` clean. `SYNC_ALL` runs these three (GSTR-1 *data* pull dropped from the sequence —
+separate unbuilt feature). Remaining before a real green run: a **live run on the office PC** to
+confirm the three live-run items above (2B download trigger, ledger date-picker, and that Track Return
+Status renders as inspected), plus a human (or the `autoSolveCaptcha` seam) for the login CAPTCHA.
+Optional later: filed-PDF attachment + self-hosted push-save.
 
 ---
 
@@ -124,6 +125,31 @@ Parse hint (agent):
 const raw = await page.locator('div.rettbl-format span.reg').first().innerText(); // "4,64,763.00"
 const itcBalance = Number(raw.replace(/,/g,''));
 ```
+
+### 4b. Detailed Credit Ledger (per-head opening) — `https://return.gst.gov.in/returns/auth/ledger/detailedledger`  ✅ confirmed
+
+This is the per-head, date-range view (reached from the ledger, or navigate directly). Set a date
+range → GO → the transaction table renders with an **Opening Balance** row broken by tax head.
+
+| Control | Selector | Notes |
+|---|---|---|
+| From date | `#sumlg_frdt` | `placeholder DD/MM/YYYY`, class `date-picker` (may be calendar-only — test typed `.fill()` on a live run) |
+| To date | `#sumlg_todt` | same |
+| GO | `button.btn-primary.mar-0` (text "GO") | renders the table for the range |
+| Save As Excel | `button:has-text("Save As Excel")` | downloads the ledger (per-head) — alt to reading the table |
+| Save As Pdf | `button:has-text("Save As Pdf")` | |
+
+Main table (the page's **first** `<table>`; the other two tables are the date-picker calendars).
+18 columns: Sr.No · Date · Reference No · Tax Period · Description · Transaction Type · **Credit/Debit
+group** [Integrated, Central, State, Cess, Total] · **Balance group** [Integrated, Central, State,
+Cess, Total]. The **"Opening Balance"** row (Description = "Opening Balance") holds the opening in its
+**Balance group = the last 5 cells**: `[IGST, CGST, SGST, Cess, Total]`.
+
+Agent PULL_LEDGERS (per-head): goto detailedledger → set `#sumlg_frdt` = first day of the period,
+`#sumlg_todt` = last day → click GO → find the row whose Description is "Opening Balance" → read its
+last 5 numeric cells → opening `{igst, cgst, sgst}` (+ cess, total). (Or click "Save As Excel" and
+port the app's `parseElectronicCreditLedgerCsv`.) **TODO(live-run):** confirm the date pickers accept
+typed input vs. requiring calendar clicks.
 
 ## 5. Track Return Status — `https://return.gst.gov.in/returns/auth/trackreturnstatus`  ✅ confirmed
 
