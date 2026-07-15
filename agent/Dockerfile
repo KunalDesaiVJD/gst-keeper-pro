@@ -5,7 +5,7 @@
 # Config comes from environment variables (set in the cloud dashboard), so no .env
 # and no secrets in the image.
 
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 WORKDIR /app
 
