@@ -19,7 +19,7 @@ Date of capture: 2026-07-14. Portal: `services.gst.gov.in` + return sub-domains.
 | 2B parse → `twob_import_docs` | ✅ done | ✅ `handlers.ts` + `parseGstr2b.ts` | post-GENERATE download trigger (live-run) |
 | Ledger per-head opening | ✅ confirmed (detailed view) | ✅ `handlers.ts` (Opening Balance row) | date-picker `.fill()` may be calendar-only (live-run) |
 | Filing status (ARN/date/status) | ✅ confirmed | ✅ `handlers.ts` (Track Return Status → `filing_status`) | quarterly/IFF period mapping is SKIPPED not guessed; filed-PDF attach = later |
-| View e-Filed Returns (PDF attach) | ✅ confirmed | not wired (optional) | selects+search+download → `return_pdf_url`; confirm download-icon = PDF (live-run) |
+| View e-Filed Returns (PDF attach) | ✅ confirmed | ✅ `handlers.ts` (best-effort, job-period-scoped) | download-icon = PDF? + `#optValue`/`#retTyp` labels (live-run) |
 | PUSH GSTR-1 / GSTR-3B (save) | ❌ not inspected | scaffold only | deferred by user (Humonex already pushes GSTR-1); separate phase |
 
 **PULL SIDE WIRED** — 2B, ledgers (per-head), and filing-status (ARN/date/status) are all coded +

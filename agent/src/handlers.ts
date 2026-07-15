@@ -290,6 +290,44 @@ function resolvePeriodMonth(fyText: string, taxPeriod: string): string | null {
   return `${String(monthNum).padStart(2, '0')}/${year}`;
 }
 
+const EFILED_RETURNS_URL = 'https://return.gst.gov.in/returns/auth/efiledReturns';
+const MONTH_NAMES_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+// Best-effort: fetch a filed return's PDF from View e-Filed Returns. Returns the
+// PDF bytes or null (never throws to the caller in a way that would drop the ARN
+// write). CONFIRMED selectors; the live-run uncertainties are the #optValue
+// frequency label and #retTyp option text (both best-effort here).
+async function fetchFiledReturnPdf(page: Page, p: { fyStart: number; return_type: string; period_month: string }): Promise<Buffer | null> {
+  const fyShort = `${p.fyStart}-${String((p.fyStart + 1) % 100).padStart(2, '0')}`; // "2026-27"
+  const mm = parseInt(p.period_month.split('/')[0], 10);
+  const monthName = MONTH_NAMES_FULL[mm - 1];
+  const retTypPrefix = /GSTR-1/.test(p.return_type) ? 'GSTR-1'
+    : /GSTR-3B/.test(p.return_type) ? 'GSTR3B'
+    : p.return_type.replace(/[^A-Z0-9]/gi, '');
+
+  await page.goto(EFILED_RETURNS_URL, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(600);
+  await selectByTextStart(page, '#finYr', fyShort);
+  await selectByTextStart(page, '#optValue', 'Monthly').catch(() => {});          // monthly returns; skip if absent
+  await page.waitForTimeout(300);
+  // The month select has no id — it's the <select> that carries month options.
+  await page.locator('select').filter({ has: page.locator('option', { hasText: monthName }) })
+    .first().selectOption({ label: monthName }).catch(() => {});
+  await selectByTextStart(page, '#retTyp', retTypPrefix).catch(() => {});
+  await page.locator('button.btn-primary.pull-right, button:has-text("Search")').first().click();
+  await page.waitForTimeout(1200);
+
+  const dl = page.locator('a[title="download"]').first();
+  if (!(await dl.count())) return null;
+  try {
+    const [download] = await Promise.all([page.waitForEvent('download', { timeout: 30_000 }), dl.click()]);
+    const fp = await download.path();
+    return fp ? await readFile(fp) : null;
+  } catch {
+    return null; // opened a viewer instead of downloading, or nothing matched — skip
+  }
+}
+
 const handlePullFilingStatus: Handler = async (job, creds, page) => {
   const jobPeriod = job.period_month;
   const fyStart = jobPeriod ? fyStartOf(jobPeriod) : new Date().getFullYear();
@@ -336,16 +374,38 @@ const handlePullFilingStatus: Handler = async (job, creds, page) => {
     written.push({ return_type, period_month, arn, filed_date: ddmmyyyyToIso(dateFiled) });
   }
 
+  // Optional filed-return PDF attachment (View e-Filed Returns). Scoped to the
+  // job's period to stay fast; fully best-effort — any failure here never touches
+  // the ARN rows already written above. Fills filing_status.return_pdf_url.
+  let pdfAttached = 0;
+  const toAttach = jobPeriod ? written.filter((w) => w.period_month === jobPeriod) : [];
+  for (const w of toAttach) {
+    try {
+      const pdf = await fetchFiledReturnPdf(page, { fyStart, return_type: w.return_type, period_month: w.period_month });
+      if (!pdf) continue;
+      const path = `${creds.id}/${w.period_month.replace('/', '-')}/${w.return_type}-${w.arn}.pdf`;
+      const { error: upErr } = await supabase.storage.from('return-pdfs').upload(path, pdf, { contentType: 'application/pdf', upsert: true });
+      if (upErr) { await logEvent(job.id, 'warn', 'pull_filing_status', `PDF upload failed for ${w.arn}: ${upErr.message}`); continue; }
+      const pdfUrl = supabase.storage.from('return-pdfs').getPublicUrl(path).data.publicUrl;
+      await supabase.from('filing_status').update({ return_pdf_url: pdfUrl, updated_at: new Date().toISOString() })
+        .eq('client_id', creds.id).eq('return_type', w.return_type).eq('period_month', w.period_month);
+      w.pdf = true; pdfAttached++;
+    } catch (e: any) {
+      await logEvent(job.id, 'warn', 'pull_filing_status', `PDF attach skipped for ${w.return_type} ${w.period_month}: ${e?.message || e}`);
+    }
+  }
+  if (toAttach.length) await logEvent(job.id, 'info', 'pull_filing_status', `Attached ${pdfAttached}/${toAttach.length} filed-return PDF(s) for ${jobPeriod}.`);
+
   await recordVerification({
     jobId: job.id, clientId: creds.id, period: jobPeriod, checkType: 'FILING_STATUS_ARN',
-    passed: written.length > 0, expected: { fy: fyFull }, actual: { written: written.length, skipped: skipped.length },
+    passed: written.length > 0, expected: { fy: fyFull }, actual: { written: written.length, skipped: skipped.length, pdfAttached },
   });
   await logEvent(job.id, written.length ? 'info' : 'warn', 'pull_filing_status',
-    `Filing status FY ${fyFull}: wrote ${written.length} ARN(s)${skipped.length ? `, skipped ${skipped.length}` : ''}.`);
+    `Filing status FY ${fyFull}: wrote ${written.length} ARN(s)${skipped.length ? `, skipped ${skipped.length}` : ''}${pdfAttached ? `, ${pdfAttached} PDF(s)` : ''}.`);
   if (written.length === 0 && raw.length === 0) {
     throw new Error('PULL_FILING_STATUS: no rows read from Track Return Status (check FY select / Search).');
   }
-  return { filingStatus: written, skipped };
+  return { filingStatus: written, skipped, pdfAttached };
 };
 
 // ---- Feature B (G2): electronic credit ledger → suspended/receivable opening -
