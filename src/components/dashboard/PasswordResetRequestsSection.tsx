@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Key, Loader2, CheckCircle2, Clock, User } from 'lucide-react';
+import { Key, Loader2, CheckCircle2, Clock, User, X } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -27,6 +27,9 @@ const PasswordResetRequestsSection: React.FC = () => {
   const [selectedRequest, setSelectedRequest] = useState<PasswordResetRequest | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Per-row id currently being cancelled — used to disable that row's Cancel
+  // button while its update is in flight, so a double-click doesn't fire twice.
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   const fetchRequests = useCallback(async () => {
     try {
@@ -138,6 +141,44 @@ const PasswordResetRequestsSection: React.FC = () => {
     }
   };
 
+  // Cancel a duplicate/no-longer-needed request without changing anyone's
+  // password. Records the cancel like a resolve so the audit fields
+  // (resolved_by / resolved_at) reflect who dismissed it and when. The
+  // realtime subscription refetches automatically, but we also filter locally
+  // so the row disappears immediately without waiting for the socket.
+  const handleCancelRequest = async (request: PasswordResetRequest) => {
+    const ok = window.confirm(
+      `Cancel the password reset request from ${request.requested_by_name}? This does NOT change their password — it just dismisses the request from this list.`,
+    );
+    if (!ok) return;
+    setCancellingId(request.id);
+    try {
+      const { error } = await supabase
+        .from('password_reset_requests')
+        .update({
+          status: 'cancelled',
+          resolved_by: user?.id,
+          resolved_at: new Date().toISOString(),
+        })
+        .eq('id', request.id);
+      if (error) throw error;
+      setRequests(prev => prev.filter(r => r.id !== request.id));
+      toast({
+        title: 'Request cancelled',
+        description: `Password reset request from ${request.requested_by_name} was dismissed.`,
+      });
+    } catch (error: any) {
+      console.error('Error cancelling reset request:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to cancel request: ' + (error?.message || 'Unknown error'),
+        variant: 'destructive',
+      });
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
   if (requests.length === 0 && !isLoading) {
     return null; // Don't show section if no pending requests
   }
@@ -191,13 +232,29 @@ const PasswordResetRequestsSection: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                  <Button
-                    size="sm"
-                    onClick={() => setSelectedRequest(request)}
-                  >
-                    <Key className="h-4 w-4 mr-2" />
-                    Set New Password
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleCancelRequest(request)}
+                      disabled={cancellingId === request.id}
+                      className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/40"
+                    >
+                      {cancellingId === request.id ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <X className="h-4 w-4 mr-2" />
+                      )}
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => setSelectedRequest(request)}
+                    >
+                      <Key className="h-4 w-4 mr-2" />
+                      Set New Password
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
