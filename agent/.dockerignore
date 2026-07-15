@@ -1,0 +1,10 @@
+node_modules
+.agent-data
+.env
+.env.*
+*.log
+npm-debug.log*
+install-agent.ps1
+install-agent.bat
+uninstall-agent.ps1
+uninstall-agent.bat

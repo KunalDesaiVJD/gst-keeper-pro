@@ -61,10 +61,18 @@ Keep it only on the trusted office machine.
 
 ## Run it automatically, forever (nobody starts it manually)
 
-Set this up ONCE on an always-on machine; after that the team just clicks **Sync**
+Two ways to host the always-on agent. After either, the team just clicks **Sync**
 in the app and the background Agent does the rest.
 
-### Easiest — double-click the installer (recommended)
+### No office PC at all — run it in the cloud (recommended for "zero machine effort")
+Deploy the agent as a small always-on cloud worker (Render / Railway / Fly.io) so
+**no machine in your office does anything** — not even a one-time install. The repo
+has `render.yaml` + `Dockerfile`; see **[CLOUD-DEPLOY.md](CLOUD-DEPLOY.md)**: push the
+repo, connect it in the Render dashboard, paste one secret, click Apply. ~US$5–7/mo.
+(Trade-off: cloud IPs can draw more CAPTCHAs from the portal — CLOUD-DEPLOY.md has the
+proxy fallback.)
+
+### On an office PC — double-click the installer
 On the office PC, open the `agent` folder and **double-click `install-agent.bat`**.
 It will:
 1. check Node.js is installed (if not, it points you to nodejs.org),

@@ -1,0 +1,33 @@
+# Render Blueprint - runs the GST Keeper portal agent as an always-on CLOUD worker.
+# No office PC. Everything (build + run) happens on Render.
+#
+# One-time deploy (all in the browser, no terminal):
+#   1. Push this repo to GitHub (already done).
+#   2. Render dashboard -> New + -> Blueprint -> pick this repo -> Apply.
+#   3. When prompted, paste SUPABASE_SERVICE_ROLE_KEY (Supabase -> Settings -> API
+#      -> service_role). Everything else is filled in below.
+#   4. Render builds the Dockerfile and keeps the worker running 24/7, restarting
+#      it on crash. Nothing else to run, ever.
+#
+# The Vercel web app is unchanged - it just enqueues jobs; this worker processes
+# them. A human still types a CAPTCHA in the web app when a login expires.
+
+services:
+  - type: worker                       # background worker (no public port)
+    name: gst-keeper-agent
+    runtime: docker
+    dockerfilePath: ./agent/Dockerfile
+    dockerContext: ./agent
+    plan: starter                      # smallest always-on paid instance
+    autoDeploy: true                   # redeploy on every push to the default branch
+    envVars:
+      - key: SUPABASE_URL
+        value: https://gcquafqxbykxkbexcdpy.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false                    # secret - paste once in the Render dashboard
+      - key: AGENT_ID
+        value: cloud-agent-1
+      - key: HEADFUL
+        value: "false"
+      - key: POLL_INTERVAL_MS
+        value: "4000"
