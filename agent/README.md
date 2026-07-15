@@ -64,7 +64,27 @@ Keep it only on the trusted office machine.
 Set this up ONCE on an always-on machine; after that the team just clicks **Sync**
 in the app and the background Agent does the rest.
 
-### Option A — Windows service on an office PC (recommended, free)
+### Easiest — double-click the installer (recommended)
+On the office PC, open the `agent` folder and **double-click `install-agent.bat`**.
+It will:
+1. check Node.js is installed (if not, it points you to nodejs.org),
+2. ask **once** for your Supabase **service-role key** (Supabase dashboard →
+   Project Settings → API → `service_role` secret) and write the local `.env`
+   (the `SUPABASE_URL` is filled in for you),
+3. `npm install` + download the Chromium browser,
+4. register a **scheduled task** that starts the agent **at logon and restarts it
+   if it ever crashes**, then start it right now.
+
+After that single double-click the agent runs 24/7 on its own — **nobody opens a
+terminal again.** The only recurring human step is typing a CAPTCHA in the app.
+(One prerequisite: install **Node.js LTS** from https://nodejs.org once. To stop
+and remove the auto-start later, double-click `uninstall-agent.bat`.)
+
+> Keep the PC **on and signed in** — the task starts the agent at logon and it
+> polls the queue continuously. `.env` sets `HEADFUL=false` so it runs invisibly;
+> if the portal ever blocks headless logins, set `HEADFUL=true` and re-save.
+
+### Option A — Windows service on an office PC (via NSSM, alternative)
 Install [NSSM](https://nssm.cc/) (Non-Sucking Service Manager), then:
 ```powershell
 # from an elevated PowerShell, in the agent folder
