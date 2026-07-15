@@ -9,10 +9,14 @@
   periodEl.value = String(pm.getMonth() + 1).padStart(2, '0') + '/' + pm.getFullYear();
 
   let clients = [];
-  try { clients = await GSTKdb.getClients(); } catch (e) { /* offline */ }
+  let err = null;
+  try { clients = await GSTKdb.getClients(); } catch (e) { err = (e && e.message) || String(e); }
   clientSel.innerHTML = '';
-  if (!clients.length) {
-    clientSel.innerHTML = '<option>(no clients found / offline)</option>';
+  if (err) {
+    clientSel.innerHTML = '<option>Error: ' + err.slice(0, 60) + '</option>';
+    goBtn.disabled = true;
+  } else if (!clients.length) {
+    clientSel.innerHTML = '<option>(no clients found)</option>';
     goBtn.disabled = true;
   } else {
     for (const c of clients) {

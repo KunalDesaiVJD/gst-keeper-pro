@@ -12,10 +12,13 @@
     "default_popup": "popup.html",
     "default_title": "GST Keeper Sync"
   },
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": ["https://*.gst.gov.in/*"],
-      "js": ["config.js", "db.js", "content.js"],
+      "js": ["db.js", "content.js"],
       "run_at": "document_idle"
     }
   ]
