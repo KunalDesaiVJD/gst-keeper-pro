@@ -24,8 +24,27 @@ export async function ensureLoggedIn(
     throw new Error(`Client ${creds.name} has no stored GST portal username/password.`);
   }
 
-  // 2) Fresh login.
-  await page.goto(config.loginUrl, { waitUntil: 'domcontentloaded' });
+  // 2) Fresh login. The form is Angular-rendered; from a datacenter IP the portal
+  // sometimes serves a slow/blocked page, so retry the load once and, if the form
+  // still never appears, capture what the portal ACTUALLY served (to tell a slow
+  // render apart from an IP/bot block).
+  let formReady = false;
+  for (let attempt = 1; attempt <= 2 && !formReady; attempt++) {
+    await page.goto(config.loginUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+    formReady = await page.locator('#username').first().isVisible().catch(() => false);
+    if (!formReady) await page.waitForTimeout(1500);
+  }
+  if (!formReady) {
+    const info = await page.evaluate(() => ({
+      title: document.title,
+      url: location.href,
+      text: ((document.body && document.body.innerText) || '').replace(/\s+/g, ' ').trim().slice(0, 300),
+    })).catch(() => ({ title: '?', url: '?', text: '?' }));
+    await logEvent(job.id, 'error', 'login',
+      `Login form (#username) not found. Portal served: title="${info.title}" url="${info.url}" text="${info.text}"`);
+    throw new Error(`Login page did not render the form (#username) — the portal likely blocked/redirected the request (datacenter IP?). Served: "${info.text.slice(0, 140)}"`);
+  }
   // CONFIRMED 2026-07-14 (live DOM): id=username (name=user_name), id=user_pass.
   await page.fill('#username', creds.gst_user_id);
   await page.fill('#user_pass', creds.gst_password);
