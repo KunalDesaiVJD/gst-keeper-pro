@@ -71,7 +71,15 @@ async function readLoginError(page: Page): Promise<string | null> {
 // (If you choose to add an automatic solver, this is the single seam to change —
 // it is intentionally left to you.)
 async function solveCaptcha(page: Page, job: PortalJob): Promise<string | null> {
-  const captchaImg = page.locator('#imgCaptcha, img.captcha'); // CONFIRMED 2026-07-15: id=imgCaptcha, class="captcha".
+  const captchaImg = page.locator('#imgCaptcha, img.captcha').first(); // CONFIRMED 2026-07-15: id=imgCaptcha, class="captcha".
+  // Wait for the image CONTENT to load before screenshotting. The <img> element
+  // exists immediately but its picture loads async; screenshotting too early
+  // captures a ~3px blank (the bug seen on the first live run 2026-07-15).
+  await captchaImg.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
+  await page.waitForFunction(() => {
+    const el = document.querySelector('#imgCaptcha, img.captcha') as HTMLImageElement | null;
+    return !!el && el.complete && el.naturalWidth > 10;
+  }, undefined, { timeout: 15000 }).catch(() => {});
   const buffer = await captchaImg.screenshot().catch(() => null);
 
   // 1) Try the optional auto-solver first (unimplemented by default -> returns
