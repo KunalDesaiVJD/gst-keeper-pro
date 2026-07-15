@@ -1,0 +1,91 @@
+# GST Keeper Portal Agent - FREE cloud runner (no card, no office PC).
+#
+# Runs the agent on GitHub's cloud on a schedule (and on demand). Each run drains
+# any queued jobs, then exits. A cheap queue-check runs first, so when there's
+# nothing to do the run ends in seconds (keeps it well inside the free minutes).
+#
+# ONE-TIME SETUP (all free, in the browser):
+#   1. Apply supabase/migrations/20260715120000_portal_sessions.sql to Supabase.
+#   2. Repo -> Settings -> Secrets and variables -> Actions -> New repository secret:
+#        SUPABASE_SERVICE_ROLE_KEY = <your Supabase service_role key>
+#   3. Repo -> Actions tab -> enable workflows if prompted.
+# That's it. It then runs itself every 30 minutes, and staff can also hit
+# "Run workflow" for an instant sync. A human types a CAPTCHA in the app when a
+# client's session needs a fresh login (rare - sessions are reused for hours).
+
+name: Portal Agent
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'          # every 30 min (sized to stay within free minutes)
+  workflow_dispatch: {}             # manual "Run workflow" button = instant sync
+  repository_dispatch:
+    types: [portal-sync]            # optional on-demand trigger from a backend
+
+concurrency:
+  group: portal-agent               # never run two agents at once
+  cancel-in-progress: false
+
+env:
+  SUPABASE_URL: https://gcquafqxbykxkbexcdpy.supabase.co
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Cheap gate: is there any queued job? If not, end now (~seconds).
+      - name: Check the job queue
+        id: check
+        env:
+          KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          Q=$(curl -s "$SUPABASE_URL/rest/v1/portal_jobs?status=eq.queued&select=id&limit=1" \
+                -H "apikey: $KEY" -H "Authorization: Bearer $KEY")
+          if [ -z "$Q" ] || [ "$Q" = "[]" ]; then
+            echo "Queue empty - nothing to do."
+            echo "has_jobs=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Queue has work."
+            echo "has_jobs=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.check.outputs.has_jobs == 'true'
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        if: steps.check.outputs.has_jobs == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+
+      - name: Install dependencies
+        if: steps.check.outputs.has_jobs == 'true'
+        working-directory: agent
+        run: npm ci
+
+      - name: Cache Playwright browser
+        if: steps.check.outputs.has_jobs == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('agent/package-lock.json') }}
+
+      - name: Install Chromium
+        if: steps.check.outputs.has_jobs == 'true'
+        working-directory: agent
+        run: npx playwright install --with-deps chromium
+
+      - name: Run agent (drain the queue, then exit)
+        if: steps.check.outputs.has_jobs == 'true'
+        working-directory: agent
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          AGENT_ID: github-actions
+          HEADFUL: 'false'
+          RUN_ONCE: 'true'
+          MAX_RUN_MS: '600000'
+        run: npm start

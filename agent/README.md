@@ -64,13 +64,20 @@ Keep it only on the trusted office machine.
 Two ways to host the always-on agent. After either, the team just clicks **Sync**
 in the app and the background Agent does the rest.
 
-### No office PC at all — run it in the cloud (recommended for "zero machine effort")
-Deploy the agent as a small always-on cloud worker (Render / Railway / Fly.io) so
-**no machine in your office does anything** — not even a one-time install. The repo
-has `render.yaml` + `Dockerfile`; see **[CLOUD-DEPLOY.md](CLOUD-DEPLOY.md)**: push the
-repo, connect it in the Render dashboard, paste one secret, click Apply. ~US$5–7/mo.
-(Trade-off: cloud IPs can draw more CAPTCHAs from the portal — CLOUD-DEPLOY.md has the
-proxy fallback.)
+### Free cloud, no card — GitHub Actions (no office PC)
+Runs the agent on GitHub's free cloud runners on a schedule (every 30 min) + on
+demand. **No card, nothing installed on any machine.** See
+**[GITHUB-ACTIONS.md](GITHUB-ACTIONS.md)**: apply one migration, add one repo secret,
+enable Actions. Trade-offs: up to ~30-min delay (or click "Run workflow" for instant),
+and GitHub's datacenter IP can draw more CAPTCHAs. This is the free choice.
+
+### Paid always-on worker (Render / Railway / Fly.io) — instant, no schedule
+Deploy the agent as a small always-on cloud worker so **no machine in your office does
+anything**. The repo has `render.yaml` + `Dockerfile`; see
+**[CLOUD-DEPLOY.md](CLOUD-DEPLOY.md)**: connect it in the Render dashboard, paste one
+secret, click Apply. **~US$5–7/mo** (requires a card). Instant (no 30-min wait) and a
+persistent session. (Trade-off: cloud IPs can draw more CAPTCHAs — proxy fallback in
+CLOUD-DEPLOY.md.)
 
 ### On an office PC — double-click the installer
 On the office PC, open the `agent` folder and **double-click `install-agent.bat`**.

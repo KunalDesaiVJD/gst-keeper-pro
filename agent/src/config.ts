@@ -13,6 +13,11 @@ export const config = {
   pollIntervalMs: Number(process.env.POLL_INTERVAL_MS || 4000),
   headful: (process.env.HEADFUL || 'true') === 'true',
   dataDir: process.env.DATA_DIR || './.agent-data',
+  // RUN_ONCE: drain the queue and exit (for ephemeral cloud runners like GitHub
+  // Actions). Default false = the persistent poll loop (office PC / a VM).
+  runOnce: (process.env.RUN_ONCE || 'false') === 'true',
+  // Hard time budget for a run-once pass, so a scheduled job can't run away.
+  maxRunMs: Number(process.env.MAX_RUN_MS || 300000),
   portalBaseUrl: 'https://services.gst.gov.in',
   loginUrl: 'https://services.gst.gov.in/services/login',
 };
