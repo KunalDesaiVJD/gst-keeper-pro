@@ -1227,7 +1227,22 @@ const TwoBReconciliationPage: React.FC = () => {
         }}
       >
         <SelectTrigger className="h-8 text-sm w-28">
-          <SelectValue placeholder={placeholder} />
+          {/*
+            Override SelectValue's default rendering. Radix normally reflects
+            the trigger text by looking up the current value in the SelectItem
+            list — but on Jun-26+ we restrict the list to just [blank, current
+            month, Expense out], so a legacy saved value like "May 26" has no
+            matching SelectItem and the trigger falls back to the placeholder,
+            making the cell look empty even though the DB still has the value.
+            Computing the display text directly here decouples "what's shown"
+            from "what's selectable", so historic values render correctly while
+            the restriction still limits what the user can newly pick.
+          */}
+          <SelectValue placeholder={placeholder}>
+            {isReclaimColumn && reclaimSubtype === 'EXPENSE_OUT'
+              ? 'Expense out'
+              : (value && value.trim() !== '' ? value : (placeholder || '-'))}
+          </SelectValue>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="__clear__">-</SelectItem>
