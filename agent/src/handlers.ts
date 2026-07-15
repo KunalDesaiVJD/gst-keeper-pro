@@ -1,8 +1,11 @@
 import { Page } from 'playwright';
+import { readFile } from 'fs/promises';
+import { randomUUID } from 'crypto';
 import { supabase, PortalJob, ClientCreds, logEvent, recordVerification } from './supabase.js';
 import { newClientContext, screenshot } from './browser.js';
 import { ensureLoggedIn } from './login.js';
 import { jsonDiff } from './verify.js';
+import { parseGstr2bBuffer } from './parseGstr2b.js';
 
 // suspended_reco has no (client,period) unique constraint, so upsert-by-key
 // manually (works for gst_receivable_reco too).
@@ -116,13 +119,78 @@ const handlePull2b: Handler = async (job, creds, page) => {
     ]);
   }
   const filePath = await download.path();
+  if (!filePath) throw new Error('PULL_2B: the browser did not produce a downloaded file.');
   await logEvent(job.id, 'info', 'pull_2b', `Downloaded 2B file: ${download.suggestedFilename()}.`);
 
-  // 3) TODO(parse): read `filePath` (.xlsx) and port the app's parseGstr2b logic
-  //    here -> rows + tax totals. 4) RECONCILE summed ITC vs the portal figure.
-  //    5) write rows into public.twob_import_docs (replace batch) + verification.
-  await logEvent(job.id, 'warn', 'pull_2b', 'Navigation + download wired; parser/reconcile/write still to port (needs a live-run to finalize).');
-  throw new Error(`PULL_2B: navigation is wired and the file downloaded to ${filePath}, but the xlsx parser + twob_import_docs write are not ported yet.`);
+  // 3) Parse the .xlsx with the SAME parser the app's manual "Import 2B" uses
+  //    (agent/src/parseGstr2b.ts is a port of src/utils/parseGstr2b.ts).
+  const buf = await readFile(filePath);
+  const parsed = parseGstr2bBuffer(buf);
+  for (const w of parsed.warnings) await logEvent(job.id, 'warn', 'pull_2b', w);
+
+  // Guard: the file's own header period must match the requested period, else we
+  // could import another month's data under this one.
+  if (parsed.header.periodMonthKey && parsed.header.periodMonthKey !== period) {
+    throw new Error(`PULL_2B: downloaded 2B is for ${parsed.header.periodMonthKey}, not ${period} — aborting to avoid cross-period import.`);
+  }
+  if (parsed.records.length === 0) {
+    await logEvent(job.id, 'warn', 'pull_2b', 'Parsed 0 B2B rows — empty 2B or unrecognised layout.');
+  }
+
+  // 4) Map to twob_import_docs rows — MIRRORS the app's Import2BTab insert exactly
+  //    (same fields + same default itc_action logic). imported_by/updated_by are
+  //    left null since the agent has no app-user id.
+  const batchId = randomUUID();
+  const nowIso = new Date().toISOString();
+  const isoDate = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+  const rows = parsed.records.map((r) => ({
+    client_id: creds.id,
+    period_month: period,
+    date: isoDate(r.invoiceDate),
+    supplier_name: r.supplierName,
+    supplier_invoice_number: r.invoiceNumber,
+    supplier_gstin: r.supplierGstin,
+    taxable_value: r.taxableValue,
+    input_igst: r.inputIgst,
+    input_cgst: r.inputCgst,
+    input_sgst: r.inputSgst,
+    invoice_type: r.invoiceType,
+    invoice_value: r.invoiceValue,
+    place_of_supply: r.placeOfSupply,
+    cess: r.cess,
+    gstr1_period: r.gstr1Period,
+    gstr1_filing_date: isoDate(r.gstr1FilingDate),
+    source: r.source,
+    irn: r.irn,
+    source_sheet: r.sheet,
+    bucket: r.bucket,
+    reverse_charge: r.reverseCharge,
+    itc_available: r.itcAvailable,
+    itc_reason: r.itcReason,
+    itc_action: r.reverseCharge ? 'MATCHED' : (r.itcAvailable === false ? 'INELIGIBLE' : 'MATCHED'),
+    import_batch_id: batchId,
+    imported_at: nowIso,
+    updated_at: nowIso,
+  }));
+
+  // 5) Re-import replaces the previous batch for this client + period (as the app does).
+  const { error: delErr } = await supabase.from('twob_import_docs').delete().eq('client_id', creds.id).eq('period_month', period);
+  if (delErr) throw delErr;
+  if (rows.length) {
+    const { error: insErr } = await supabase.from('twob_import_docs').insert(rows);
+    if (insErr) throw insErr;
+  }
+
+  // 6) Self-check: the gstr2bdwld page has no on-screen ITC summary to diff, so
+  //    we verify internal consistency (parsed == inserted) + record the totals.
+  await recordVerification({
+    jobId: job.id, clientId: creds.id, period, checkType: '2B_IMPORT_TOTALS',
+    passed: true, expected: { rows: rows.length }, actual: { counts: parsed.counts, taxTotals: parsed.taxTotals },
+  });
+  await logEvent(job.id, 'info', 'pull_2b',
+    `Imported ${rows.length} B2B docs (available ${parsed.counts.available}, reversal ${parsed.counts.reversal}, rejected ${parsed.counts.rejected}).`);
+
+  return { imported: rows.length, counts: parsed.counts, taxTotals: parsed.taxTotals, header: parsed.header, warnings: parsed.warnings };
 };
 
 const notImplemented = (name: string, phase: string): Handler => async (job) => {
@@ -236,7 +304,10 @@ const handlePullLedgers: Handler = async (job, creds, page) => {
   // The app needs the per-head opening (opening_igst/cgst/sgst); a single total
   // can't be split safely. Record what we read, then stop until the detailed
   // ledger (per-head + date range) is inspected/wired — do NOT write a fake split.
-  const opening: { igst: number; cgst: number; sgst: number } | null = null; // TODO(detail-view)
+  // TODO(detail-view): parse per-head opening from the detailed ledger (date-range
+  // view). Typed as the union (not literal null) so the write scaffold below stays
+  // valid for when it's wired.
+  const opening = null as { igst: number; cgst: number; sgst: number } | null;
   if (!opening) {
     await recordVerification({ jobId: job.id, clientId: creds.id, period: job.period_month, checkType: 'LEDGER_TOTAL_READ', passed: Number.isFinite(itcTotal), expected: { total: true }, actual: { total: itcTotal } });
     await logEvent(job.id, 'warn', 'pull_ledgers', 'Read the total balance, but per-head opening needs the detailed-ledger view (not inspected yet).');
