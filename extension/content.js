@@ -37,6 +37,50 @@
     setVal(s, opt.value);
     return true;
   }
+  // Robustly select an <option> by its VISIBLE text across ALL selects on the
+  // page — no reliance on element IDs. Polls until the option exists, because on
+  // the AngularJS portal the option lists load asynchronously and cascading
+  // dropdowns (e.g. Month) only render AFTER a prior select changes. Setting
+  // .value + .selected and firing input+change is what makes ng-model register it.
+  async function selectWhereOption(desired, opts = {}) {
+    const { startsWith = false, alnum = false, timeout = 12000 } = opts;
+    const norm = alnum
+      ? (s) => (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+      : (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const target = norm(desired);
+    if (!target) return null;
+    const t = Date.now();
+    while (Date.now() - t < timeout) {
+      for (const s of $$('select')) {
+        if (s.disabled || s.offsetParent === null) continue;
+        const opt = [...s.options].find((o) => {
+          const txt = norm(o.textContent);
+          return txt && (startsWith ? txt.startsWith(target) : txt === target);
+        });
+        if (opt && !opt.disabled) {
+          s.value = opt.value;
+          opt.selected = true;
+          s.dispatchEvent(new Event('input', { bubbles: true }));
+          s.dispatchEvent(new Event('change', { bubbles: true }));
+          return s;
+        }
+      }
+      await sleep(250);
+    }
+    return null;
+  }
+  // Wait for a real DATA row (>=4 cells) in the first table — filters out the
+  // "no records"/placeholder single-cell row while results are still loading.
+  async function waitForRow(ms = 12000) {
+    const t = Date.now();
+    while (Date.now() - t < ms) {
+      const tbl = $('table');
+      const tr = tbl && tbl.querySelector('tbody tr');
+      if (tr && tr.children.length >= 4 && (tr.textContent || '').replace(/\s+/g, '').length > 0) return tr;
+      await sleep(300);
+    }
+    return null;
+  }
   function banner(msg, color = '#2563eb') {
     let b = document.getElementById('gstk-banner');
     if (!b) {
@@ -98,7 +142,7 @@
   // while we expected to be logged in, DON'T keep navigating. Re-login a couple of
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'efiledpdf') && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'efiledpdf' || job.step === 'twob' || job.step === 'twobdwld') && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -117,6 +161,8 @@
     else if (job.step === 'ledger') await handleLedger(job, cur, progress);
     else if (job.step === 'reversal') await handleReversal(job, cur, progress);
     else if (job.step === 'efiledpdf') await handleReturnPdf(job, cur, progress);
+    else if (job.step === 'twob') await handleTwob(job, cur, progress);
+    else if (job.step === 'twobdwld') await handleTwobDownload(job, cur, progress);
     else if (job.step === 'logout') await handleLogout(job);
     else if (job.step === 'done') { await clearJob(); }
   } catch (e) {
@@ -154,6 +200,11 @@
         job.step = 'efiledpdf';
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/efiledReturns';
+      } else if (job.mode === 'twob') {
+        banner('Logged in — opening the returns dashboard…' + progress);
+        job.step = 'twob';
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
       } else {
         banner('Logged in — reading ledgers…' + progress);
         job.step = 'ledger';
@@ -183,7 +234,10 @@
   // (MAIN-world hook captures the blob), uploads it, and marks the return Filed.
   async function handleReturnPdf(job, cur) {
     if (!/efiledReturns/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/efiledReturns'; return; }
-    if (!(await waitFor('#finYr'))) { banner('e-Filed Returns page did not load.', '#dc2626'); await clearJob(); return; }
+    // If we already clicked the download once and bounced back here, the link
+    // opened a viewer/page instead of downloading a file — stop, don't loop.
+    if (job.pdfClicked) { banner('The download opened a page instead of a file — tell me what you saw when clicking View/Download and I\'ll adjust.', '#dc2626'); await clearJob(); return; }
+    if (!(await waitFor('select', 20000))) { banner('e-Filed Returns page did not load.', '#dc2626'); await clearJob(); return; }
     const MONTHS_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     const ret = job.ret || {};
     const [mm, yyyy] = String(ret.period_month || '').split('/').map((n) => parseInt(n, 10));
@@ -192,39 +246,54 @@
     const fyShort = fyStart + '-' + String((fyStart + 1) % 100).padStart(2, '0');
     const monthName = MONTHS_FULL[mm - 1];
     const freq = /\(Q\)|IFF/.test(ret.return_type || '') ? 'Quarterly' : 'Monthly';
-    const retPrefix = /GSTR-1/.test(ret.return_type || '') ? 'GSTR-1'
+    // Portal Return Type option labels are alnum, e.g. "GSTR3B", "GSTR1".
+    const retAlnum = /GSTR-1/.test(ret.return_type || '') ? 'GSTR1'
       : /GSTR-3B/.test(ret.return_type || '') ? 'GSTR3B'
-      : String(ret.return_type || '').replace(/[^A-Za-z0-9]/g, '');
+      : String(ret.return_type || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
+    // Fill the cascading form in order, waiting for each option list to render.
     banner('Finding ' + ret.return_type + ' ' + ret.period_month + '…');
-    selectByText('#finYr', fyShort);
-    selectByText('#optValue', freq);
+    if (!(await selectWhereOption(fyShort))) { banner('Could not set financial year ' + fyShort + ' (page layout may differ).', '#dc2626'); await clearJob(); return; }
+    if (!(await selectWhereOption(freq))) { banner('Could not set the filing period (' + freq + ').', '#dc2626'); await clearJob(); return; }
+    if (freq === 'Quarterly') {
+      // GST FY quarters: Q1 Apr-Jun, Q2 Jul-Sep, Q3 Oct-Dec, Q4 Jan-Mar.
+      const q = mm >= 4 ? Math.ceil((mm - 3) / 3) : 4;
+      await selectWhereOption('Quarter' + q, { alnum: true, startsWith: true, timeout: 6000 });
+    }
+    // Month dropdown only renders after the period is chosen — selectWhereOption
+    // polls, so it waits for it to appear. (Quarterly views may not have one.)
+    const monthSel = await selectWhereOption(monthName, { timeout: freq === 'Monthly' ? 12000 : 6000 });
+    if (freq === 'Monthly' && !monthSel) { banner('Could not set the month (' + monthName + ').', '#dc2626'); await clearJob(); return; }
+    await selectWhereOption(retAlnum, { alnum: true, startsWith: true, timeout: 6000 });
     await sleep(300);
-    const monthSel = $$('select').find((s) => [...s.options].some((o) => (o.textContent || '').trim() === monthName));
-    if (monthSel) { const opt = [...monthSel.options].find((o) => (o.textContent || '').trim() === monthName); if (opt) setVal(monthSel, opt.value); }
-    selectByText('#retTyp', retPrefix);
-    await sleep(300);
-    const search = $('button.btn-primary.pull-right') || $$('button').find((b) => /search/i.test(b.textContent || ''));
-    if (search) search.click();
-    await sleep(2500);
+    const search = $$('button, input[type=submit], input[type=button]').find((b) => /search/i.test((b.textContent || '') + ' ' + (b.value || ''))) || $('button.btn-primary.pull-right');
+    if (!search) { banner('Could not find the Search button.', '#dc2626'); await clearJob(); return; }
+    search.click();
 
-    const tr = $('table') ? $('table').querySelector('tbody tr') : null;
-    if (!tr) { banner('No filed ' + ret.return_type + ' found for ' + ret.period_month + '.', '#f59e0b'); await clearJob(); return; }
+    const tr = await waitForRow(12000);
+    if (!tr) { banner('No filed ' + ret.return_type + ' found for ' + ret.period_month + ' — check the period.', '#f59e0b'); await clearJob(); return; }
     const cells = [...tr.children].map((td) => (td.textContent || '').replace(/\s+/g, ' ').trim());
     // Columns: Return Type, FY, Tax Period, Acknowledgement Number, Date of filing, ...
     const arn = (cells[3] || '').toUpperCase();
     const filedDate = ddmmyyyyToIso(cells[4] || '');
-    const dl = tr.querySelector('a[title="download"]');
-    if (!/^[A-Z0-9]{15}$/.test(arn) || !dl) { banner('Could not read the ARN / download for ' + ret.return_type + '.', '#f59e0b'); await clearJob(); return; }
+    if (!/^[A-Z0-9]{15}$/.test(arn)) { banner('Found a row but could not read a valid ARN for ' + ret.return_type + '.', '#f59e0b'); await clearJob(); return; }
+    // The last cell holds the download control. Prefer a real DOWNLOAD link/icon;
+    // deliberately do NOT fall back to a "View" link (it navigates → would loop).
+    const dl = tr.querySelector('a[title="download" i], a[download], a[href$=".pdf" i], a[href*="pdf" i]')
+      || (tr.querySelector('i.fa-download') && tr.querySelector('i.fa-download').closest('a, button'))
+      || [...tr.querySelectorAll('a, button')].find((a) => /download/i.test((a.textContent || '') + ' ' + (a.getAttribute('title') || '') + ' ' + (a.className || '')));
+    if (!dl) { banner('Found ' + ret.return_type + ' (ARN ' + arn + ') but no direct PDF-download link in the row (only View?) — tell me and I\'ll wire the View→download step.', '#f59e0b'); await clearJob(); return; }
 
     banner('Downloading the ' + ret.return_type + ' PDF…');
+    job.pdfClicked = true;
+    await setJob(job);
     const dataUrl = await new Promise((resolve) => {
       const h = (e) => { if (e.data && e.data.__gstkPdf) { window.removeEventListener('message', h); resolve(e.data.__gstkPdf); } };
       window.addEventListener('message', h);
-      setTimeout(() => { window.removeEventListener('message', h); resolve(null); }, 15000);
+      setTimeout(() => { window.removeEventListener('message', h); resolve(null); }, 20000);
       dl.click();
     });
-    if (!dataUrl) { banner('Could not capture the ' + ret.return_type + ' PDF (download may work differently).', '#dc2626'); await clearJob(); return; }
+    if (!dataUrl) { banner('Found ' + ret.return_type + ' (ARN ' + arn + ') but could not capture the PDF — tell me what happens when you click View/Download in that row.', '#dc2626'); await clearJob(); return; }
 
     try {
       const path = cur.clientId + '/' + ret.period_month.replace('/', '-') + '/' + ret.return_type + '-' + arn + '.pdf';
@@ -237,6 +306,81 @@
     } catch (e) {
       banner('Save failed: ' + (e && e.message), '#dc2626');
     }
+    await clearJob();
+  }
+
+  // "Pull GSTR-2B" mode — triggered by the app's Import 2B "Pull from portal"
+  // button. On the Returns Dashboard: pick FY + quarter + month, Search, then
+  // click the GSTR-2B tile's Download (which navigates to the GSTR-2B download
+  // page). The actual file is captured on the next page (handleTwobDownload).
+  async function handleTwob(job, cur, progress) {
+    if (!/returns\/auth\/dashboard/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
+    if (!(await waitFor('select', 20000))) { banner('Returns dashboard did not load.', '#dc2626'); await clearJob(); return; }
+    const MONTHS_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) { banner('Bad 2B period.', '#dc2626'); await clearJob(); return; }
+    const fyStart = mm >= 4 ? yyyy : yyyy - 1;
+    const fyShort = fyStart + '-' + String((fyStart + 1) % 100).padStart(2, '0');
+    const monthName = MONTHS_FULL[mm - 1];
+    const q = mm >= 4 ? Math.ceil((mm - 3) / 3) : 4; // FY quarters: Q1 Apr-Jun … Q4 Jan-Mar
+
+    banner('Selecting ' + monthName + ' ' + yyyy + ' on the dashboard…' + progress);
+    if (!(await selectWhereOption(fyShort))) { banner('Could not set the financial year on the dashboard.', '#dc2626'); await clearJob(); return; }
+    await selectWhereOption('Quarter ' + q, { startsWith: true, timeout: 8000 });
+    if (!(await selectWhereOption(monthName, { timeout: 10000 }))) { banner('Could not set the month on the dashboard.', '#dc2626'); await clearJob(); return; }
+    await sleep(300);
+    const search = $('button.srchbtn') || $$('button').find((b) => /^search$/i.test((b.textContent || '').trim()));
+    if (!search) { banner('Could not find the dashboard Search button.', '#dc2626'); await clearJob(); return; }
+    search.click();
+
+    // Wait for the GSTR-2B tile to render, then find its Download control.
+    let dlBtn = null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 14000 && !dlBtn) {
+      await sleep(400);
+      const tiles = $$('div.col-md-4, div.col-sm-4, div.dash-tiles, div.card, div.panel');
+      const tile = tiles.find((t) => /gstr[\s-]*2b/i.test(t.textContent || ''));
+      if (tile) dlBtn = [...tile.querySelectorAll('button, a')].find((b) => /download/i.test(b.textContent || ''));
+    }
+    if (!dlBtn) { banner('Could not find the GSTR-2B tile / Download after Search.', '#dc2626'); await clearJob(); return; }
+    job.step = 'twobdwld';
+    await setJob(job);
+    banner('Opening the GSTR-2B download page…' + progress);
+    dlBtn.click();
+    // Navigates to gstr2b.gst.gov.in/gstr2b/auth/gstr2bdwld — handled on next load.
+  }
+
+  // On the GSTR-2B download page: click "GENERATE EXCEL FILE TO DOWNLOAD"; when the
+  // portal builds the .xlsx blob, inject.js (MAIN world) captures it and posts it
+  // here. We stash the file in chrome.storage for the app tab to import via its
+  // own parser (appbridge picks it up through chrome.storage.onChanged).
+  async function handleTwobDownload(job, cur, progress) {
+    if (!/gstr2b/.test(url)) { banner('Did not reach the GSTR-2B download page.', '#f59e0b'); await clearJob(); return; }
+    banner('Generating the GSTR-2B Excel…' + progress);
+    let genBtn = null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 15000 && !genBtn) {
+      genBtn = $$('button, a').find((x) => /generate\s+excel/i.test(x.textContent || ''));
+      if (!genBtn) await sleep(400);
+    }
+    if (!genBtn) { banner('Could not find "Generate Excel" on the GSTR-2B download page.', '#dc2626'); await clearJob(); return; }
+
+    const captured = new Promise((resolve) => {
+      const h = (e) => { if (e.data && e.data.__gstkPdf) { window.removeEventListener('message', h); resolve(e.data); } };
+      window.addEventListener('message', h);
+      setTimeout(() => { window.removeEventListener('message', h); resolve(null); }, 60000);
+    });
+    genBtn.click();
+    banner('Waiting for the GSTR-2B file (this can take a moment)…' + progress);
+    const data = await captured;
+    if (!data || !data.__gstkPdf) { banner('GSTR-2B did not download as a file I can capture — tell me what happens after "Generate Excel".', '#dc2626'); await clearJob(); return; }
+
+    const fileName = 'GSTR2B_' + cur.clientId + '_' + String(job.period).replace('/', '-') + '.xlsx';
+    await store.set({ gstk_twob_result: {
+      ok: true, clientId: cur.clientId, gstin: (cur.creds && cur.creds.gstin) || '', period: job.period,
+      fileB64: data.__gstkPdf, fileName, at: Date.now(),
+    } });
+    banner('GSTR-2B captured ✓ — importing into GST Keeper. You can close this tab.', '#16a34a');
     await clearJob();
   }
 

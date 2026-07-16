@@ -28,7 +28,31 @@ window.addEventListener('message', (e) => {
       const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
       window.postMessage({ __gstkPullResult: ok ? { ok: true } : { ok: false, error } }, '*');
     });
+    return;
   }
+
+  // The Import 2B "Pull from portal" button asked to pull the GSTR-2B. This opens
+  // a portal tab; the downloaded file arrives later via chrome.storage.onChanged.
+  if (d.__gstkPull2B) {
+    const info = d.__gstkPull2B;
+    if (!info.clientId || !info.period_month) return;
+    chrome.runtime.sendMessage({ gstk: true, fn: 'startTwobPull', args: [info] }, (resp) => {
+      if (!(resp && resp.ok)) {
+        const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
+        window.postMessage({ __gstkPull2BResult: { ok: false, error } }, '*');
+      }
+    });
+  }
+});
+
+// The portal tab stashes the captured GSTR-2B file in chrome.storage; relay it to
+// the app page so it can import via its own parser, then clear it.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.gstk_twob_result) return;
+  const v = changes.gstk_twob_result.newValue;
+  if (!v) return;
+  window.postMessage({ __gstkPull2BResult: v }, '*');
+  chrome.storage.local.remove('gstk_twob_result');
 });
 
 // Announce on load too (covers the case where the app's listener is already

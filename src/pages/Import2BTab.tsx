@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { Upload, Loader2, Trash2, Plus, Lock, X } from 'lucide-react';
+import { Upload, Loader2, Trash2, Plus, Lock, X, Download } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -210,9 +210,9 @@ const Import2BTab: React.FC = () => {
     fileInputRef.current?.click();
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (fileInputRef.current) fileInputRef.current.value = '';
+  // Shared import path — used by both the manual file picker and the extension's
+  // "Pull from portal" hand-off (a portal-downloaded .xlsx, reconstructed to a File).
+  const importFile = async (file: File) => {
     if (!file || !selectedClient || !selectedMonth) return;
 
     setIsImporting(true);
@@ -288,6 +288,62 @@ const Import2BTab: React.FC = () => {
     } finally {
       setIsImporting(false);
     }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (file) await importFile(file);
+  };
+
+  // ---- Pull GSTR-2B from the portal (via the browser extension) --------------
+  // Always call the latest importFile from the message listener (avoids stale closures).
+  const importFileRef = useRef(importFile);
+  importFileRef.current = importFile;
+
+  const [extReady, setExtReady] = useState(false);
+  useEffect(() => {
+    const dataUrlToFile = (dataUrl: string, name: string): File => {
+      const [meta, b64] = String(dataUrl).split(',');
+      const mime = (meta.match(/data:([^;]+)/) || [])[1] || 'application/octet-stream';
+      const bin = atob(b64 || '');
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new File([bytes], name, { type: mime });
+    };
+    const onMsg = (e: MessageEvent) => {
+      const d: any = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkPull2BResult) {
+        const r = d.__gstkPull2BResult;
+        if (!r.ok) { toast.error('Portal 2B pull: ' + (r.error || 'failed')); return; }
+        if (r.clientId !== selectedClient || r.period !== selectedMonth) {
+          toast.warning(`Pulled GSTR-2B is for a different client/month (${r.period}). Open that client & month to import it.`);
+          return;
+        }
+        try {
+          toast.success('GSTR-2B pulled from portal — importing…');
+          importFileRef.current(dataUrlToFile(r.fileB64, r.fileName || 'GSTR2B.xlsx'));
+        } catch (err: any) {
+          toast.error('Could not read the pulled GSTR-2B file: ' + (err?.message || ''));
+        }
+      }
+    };
+    window.addEventListener('message', onMsg);
+    const ping = () => window.postMessage({ __gstkAppReady: true }, '*');
+    ping();
+    const t1 = setTimeout(ping, 400);
+    const t2 = setTimeout(ping, 1200);
+    return () => { window.removeEventListener('message', onMsg); clearTimeout(t1); clearTimeout(t2); };
+  }, [selectedClient, selectedMonth]);
+
+  const pull2BFromPortal = () => {
+    if (!selectedClient || !selectedMonth) { toast.error('Select a client and month first'); return; }
+    if (isLocked) { toast.error('The return is filed — this sheet is locked.'); return; }
+    if (!extReady) { toast.error('Install/enable the GST Keeper browser extension, then reload this page.'); return; }
+    window.postMessage({ __gstkPull2B: { clientId: selectedClient, period_month: selectedMonth } }, '*');
+    toast.info('Opening the portal in a new tab — type the CAPTCHA there; the GSTR-2B will import here automatically when it finishes.');
   };
 
   const deleteImported2B = async () => {
@@ -469,6 +525,18 @@ const Import2BTab: React.FC = () => {
         </div>
         {isStaff && (
           <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={pull2BFromPortal}
+              disabled={isImporting || !selectedClient || !selectedMonth || isLocked}
+              className={extReady ? '' : 'text-muted-foreground'}
+              title={extReady
+                ? 'Pull this client\'s GSTR-2B from the portal via the browser extension'
+                : 'GST Keeper extension not detected yet — install/enable it and reload this page'}
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Pull from portal
+            </Button>
             <Button onClick={handleImportClick} disabled={isImporting || !selectedClient || !selectedMonth || isLocked}>
               {isImporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
               Import GSTR-2B
