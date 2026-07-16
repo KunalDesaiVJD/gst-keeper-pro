@@ -148,8 +148,20 @@
       if (!return_type || !period_month) continue;
       written.push({ client_id: job.clientId, return_type, period_month, status: 'Filed', arn, filed_date: ddmmyyyyToIso(dateFiled), updated_at: nowIso });
     }
-    if (written.length) await GSTKdb.upsertFilingStatus(written);
-    banner('Filing status: wrote ' + written.length + ' ARN(s). Now the ledger…', '#16a34a');
+    // Best-effort: a blocked filing write (e.g. the app's "PDF required before Filed"
+    // rule) must NOT stop the rest of the sync. Warn and carry on to the ledger.
+    let msg;
+    if (!written.length) {
+      msg = 'no filed returns matched this period';
+    } else {
+      try {
+        await GSTKdb.upsertFilingStatus(written);
+        msg = 'filing status: ' + written.length + ' ARN(s) saved ✓';
+      } catch (e) {
+        msg = 'filing needs the return PDF to mark Filed (' + written.length + ' found) — skipping for now';
+      }
+    }
+    banner(msg + ' — now the ledger…', '#f59e0b');
     job.step = 'ledger';
     await setJob(job);
     location.href = 'https://return.gst.gov.in/returns/auth/ledger/detailedledger';
