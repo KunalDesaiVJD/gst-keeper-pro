@@ -64,8 +64,9 @@
       clients: list.map((c) => ({ clientId: c.id, creds: toCred(c) })),
       startedAt: Date.now(),
     };
+    const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
+    job.tabId = tab.id;
     await chrome.storage.local.set({ gstk_active_job: job });
-    await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     window.close();
   };
 

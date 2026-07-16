@@ -17,6 +17,7 @@
   }
 
   globalThis.GSTKdb = {
+    whoami: () => call('whoami'),
     getClients: () => call('getClients'),
     getClient: (id) => call('getClient', id),
     upsertFilingStatus: (rows) => call('upsertFilingStatus', rows),
