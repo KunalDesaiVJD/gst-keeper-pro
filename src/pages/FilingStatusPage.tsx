@@ -1040,7 +1040,20 @@ const FilingStatusPage: React.FC = () => {
       }
     };
     window.addEventListener('message', onMsg);
-    return () => window.removeEventListener('message', onMsg);
+    // Actively ask the extension if it's present. The extension announces itself
+    // on load, but as a SPA our listener usually mounts AFTER that one-shot
+    // message — so we ping and the extension answers (race-proof either way).
+    // A few short retries cover the extension's content script injecting slightly
+    // later than this page's React mount.
+    const ping = () => window.postMessage({ __gstkAppReady: true }, '*');
+    ping();
+    const t1 = setTimeout(ping, 400);
+    const t2 = setTimeout(ping, 1200);
+    return () => {
+      window.removeEventListener('message', onMsg);
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, []);
   const pullFromPortal = (record: FilingRecord) => {
     if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to pull from the portal.'); return; }
@@ -1338,11 +1351,13 @@ const FilingStatusPage: React.FC = () => {
                           disabled={record.is_locked && !canUnlockSheets()}
                         />
                       </label>
-                      {extReady && (!record.is_locked || canUnlockSheets()) && (
+                      {(!record.is_locked || canUnlockSheets()) && (
                         <button
                           onClick={() => pullFromPortal(record)}
-                          className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80"
-                          title="Pull the filed return + PDF from the GST portal (via the browser extension)"
+                          className={`inline-flex items-center gap-1 text-xs ${extReady ? 'text-primary hover:text-primary/80' : 'text-muted-foreground hover:text-foreground'}`}
+                          title={extReady
+                            ? 'Pull the filed return + PDF from the GST portal (via the browser extension)'
+                            : 'GST Keeper extension not detected yet — install/enable it and reload this page, then click to pull'}
                         >
                           <Download className="h-3.5 w-3.5" />
                           <span>Portal</span>

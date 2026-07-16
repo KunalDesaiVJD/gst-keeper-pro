@@ -28,7 +28,7 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://gst-keeper-pro.vercel.app/*"],
+      "matches": ["https://gst-keeper-pro.vercel.app/*", "https://*.vercel.app/*"],
       "js": ["appbridge.js"],
       "run_at": "document_idle"
     }
