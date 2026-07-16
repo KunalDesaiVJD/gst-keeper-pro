@@ -8,11 +8,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Download, FileText, Lock, Unlock, Search, Filter, ChevronDown, Info, Upload, Eye, Trash2, RefreshCw } from 'lucide-react';
+import { Download, FileText, Lock, Unlock, Search, Filter, ChevronDown, Info, Upload, Eye, Trash2 } from 'lucide-react';
 import { FilingStatusType, ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth, RegistrationType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
-import { enqueueBulkFilingPull } from '@/lib/portalJobs';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -1494,27 +1493,6 @@ const FilingStatusPage: React.FC = () => {
           <p className="text-muted-foreground">Track GST return filing status for all clients</p>
         </div>
         <div className="flex items-center gap-2">
-          {isStaffRole() && (
-            <Button
-              variant="outline"
-              className="flex items-center gap-2"
-              disabled={clients.length === 0}
-              onClick={async () => {
-                const ids = clients.map((c) => c.id);
-                if (!ids.length) return;
-                if (!confirm(`Queue a "pull filed returns" job for all ${ids.length} clients for ${selectedMonth}? The Portal Agent processes them one at a time (a CAPTCHA may be needed per client login).`)) return;
-                try {
-                  const n = await enqueueBulkFilingPull(ids, selectedMonth, user?.id);
-                  toast.success(`Queued ${n} filed-return pull job(s). Watch the Portal activity for progress.`);
-                } catch (e: any) {
-                  toast.error('Could not queue jobs: ' + (e?.message || 'unknown'));
-                }
-              }}
-            >
-              <RefreshCw className="h-4 w-4" />
-              Pull filed returns
-            </Button>
-          )}
           <Button variant="outline" className="flex items-center gap-2" onClick={handleExportPDF}>
             <Download className="h-4 w-4" />
             Export PDF

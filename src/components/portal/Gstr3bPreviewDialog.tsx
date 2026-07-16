@@ -8,7 +8,6 @@ import { Loader2, Download, AlertTriangle } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { buildGstr3bJson, Gstr3bResult, ItcData, RcmTotals } from '@/utils/buildGstr3bJson';
-import { PortalActionButton } from './PortalActionButton';
 
 const SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const toShort = (mmYyyy: string) => { const [mm, yyyy] = mmYyyy.split('/'); return `${SHORT[Number(mm) - 1]}-${String(yyyy).slice(-2)}`; };
@@ -158,15 +157,6 @@ export const Gstr3bPreviewDialog: React.FC<{
           <Button variant="outline" onClick={download} disabled={!result}>
             <Download className="h-4 w-4 mr-2" />Download JSON
           </Button>
-          <PortalActionButton
-            clientId={clientId}
-            periodMonth={periodMonth}
-            jobType="PUSH_GSTR3B_SAVE"
-            label="Push GSTR-3B (save)"
-            variant="default"
-            disabled={!result}
-            payload={{ gstr_json: result?.json }}
-          />
         </DialogFooter>
       </DialogContent>
     </Dialog>
