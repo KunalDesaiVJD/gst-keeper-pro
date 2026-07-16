@@ -382,6 +382,23 @@
     await clearJob();
   }
 
+  // Find an action button inside the dashboard tile that names `returnRe`, and is
+  // NOT a wrapper that also names any of `excludeRes` (all the dashboard action
+  // buttons share the text "Download"/"View", so a wrapper of several tiles would
+  // otherwise yield the wrong return's button). Picks the SMALLEST element that
+  // contains BOTH the return name and a matching button (= the tile card itself).
+  function findTileButton(returnRe, btnRe, excludeRes) {
+    const cands = $$('div[class*="col-"]').filter((t) => {
+      const txt = t.textContent || '';
+      if (!returnRe.test(txt)) return false;
+      if (excludeRes.some((re) => re.test(txt))) return false;
+      return [...t.querySelectorAll('button, a')].some((b) => btnRe.test((b.textContent || '').trim()));
+    });
+    cands.sort((a, b) => (a.textContent || '').length - (b.textContent || '').length);
+    const tile = cands[0];
+    return tile ? ([...tile.querySelectorAll('button, a')].find((b) => btnRe.test((b.textContent || '').trim())) || null) : null;
+  }
+
   // "Pull GSTR-2B" mode — triggered by the app's Import 2B "Pull from portal"
   // button. On the Returns Dashboard: pick FY + quarter + month, Search, then
   // click the GSTR-2B tile's Download (which navigates to the GSTR-2B download
@@ -408,16 +425,16 @@
     if (!search) { banner('Could not find the dashboard Search button.', '#dc2626'); await clearJob(); return; }
     search.click();
 
-    // Wait for the GSTR-2B tile to render, then find its Download control.
+    // Wait for the tiles to render, then find the GSTR-2B tile's OWN Download
+    // button (never a wrapper's — that was clicking GSTR-1 by mistake). The
+    // excludes reject any element that also names another return (= a wrapper).
     let dlBtn = null;
     const t0 = Date.now();
-    while (Date.now() - t0 < 14000 && !dlBtn) {
+    while (Date.now() - t0 < 15000 && !dlBtn) {
       await sleep(400);
-      const tiles = $$('div.col-md-4, div.col-sm-4, div.dash-tiles, div.card, div.panel');
-      const tile = tiles.find((t) => /gstr[\s-]*2b/i.test(t.textContent || ''));
-      if (tile) dlBtn = [...tile.querySelectorAll('button, a')].find((b) => /download/i.test(b.textContent || ''));
+      dlBtn = findTileButton(/gstr[\s-]*2b/i, /^download$/i, [/gstr[\s-]*1\b/i, /gstr[\s-]*2a/i, /gstr[\s-]*3b/i]);
     }
-    if (!dlBtn) { banner('Could not find the GSTR-2B tile / Download after Search.', '#dc2626'); await clearJob(); return; }
+    if (!dlBtn) { banner('Could not find the GSTR-2B tile / Download after Search — is GSTR-2B generated for ' + monthName + ' ' + yyyy + '?', '#dc2626'); await clearJob(); return; }
     job.step = 'twobdwld';
     await setJob(job);
     banner('Opening the GSTR-2B download page…' + progress);
@@ -430,7 +447,13 @@
   // here. We stash the file in chrome.storage for the app tab to import via its
   // own parser (appbridge picks it up through chrome.storage.onChanged).
   async function handleTwobDownload(job, cur, progress) {
-    if (!/gstr2b/.test(url)) { banner('Did not reach the GSTR-2B download page.', '#f59e0b'); await clearJob(); return; }
+    const pageText = (document.body && document.body.innerText) || '';
+    // Wrong-tile safety: the GSTR-1 offline page reads "Offline Download for GSTR-1".
+    if (/offline download for gstr-?1\b/i.test(pageText)) {
+      banner('Landed on the GSTR-1 download page (wrong tile). Reload the extension and retry.', '#dc2626'); await clearJob(); return;
+    }
+    if (!(/gstr2b/.test(url) || /gstr-?2b/i.test(pageText))) { banner('Did not reach the GSTR-2B download page (at ' + location.pathname + ').', '#f59e0b'); await clearJob(); return; }
+
     banner('Generating the GSTR-2B Excel…' + progress);
     let genBtn = null;
     const t0 = Date.now();
@@ -438,16 +461,30 @@
       genBtn = $$('button, a').find((x) => /generate\s+excel/i.test(x.textContent || ''));
       if (!genBtn) await sleep(400);
     }
-    if (!genBtn) { banner('Could not find "Generate Excel" on the GSTR-2B download page.', '#dc2626'); await clearJob(); return; }
+    if (!genBtn) { banner('No "Generate Excel" button on the GSTR-2B download page — tell me what buttons you see.', '#dc2626'); await clearJob(); return; }
 
+    // Capture the .xlsx blob the portal builds (inject.js posts __gstkPdf). Excel
+    // generation can be slow, so allow up to 90s.
     const captured = new Promise((resolve) => {
       const h = (e) => { if (e.data && e.data.__gstkPdf) { window.removeEventListener('message', h); resolve(e.data); } };
       window.addEventListener('message', h);
-      setTimeout(() => { window.removeEventListener('message', h); resolve(null); }, 60000);
+      setTimeout(() => { window.removeEventListener('message', h); resolve(null); }, 90000);
     });
     genBtn.click();
-    banner('Waiting for the GSTR-2B file (this can take a moment)…' + progress);
+    banner('Waiting for the GSTR-2B file (generation can take a moment)…' + progress);
+    // Some flows reveal a "click here to download" link once the file is ready.
+    let done = false;
+    const clicked = new Set();
+    (async () => {
+      while (!done) {
+        await sleep(2000);
+        const link = $$('a, button').filter((x) => x.offsetParent !== null &&
+          !x.closest('nav, header, .navbar, .nav, .dropdown-menu')).find((x) => /click here/i.test((x.textContent || '').trim()) && !clicked.has(x));
+        if (link) { clicked.add(link); try { link.click(); } catch (e) { /* noop */ } }
+      }
+    })();
     const data = await captured;
+    done = true;
     if (!data || !data.__gstkPdf) { banner('GSTR-2B did not download as a file I can capture — tell me what happens after "Generate Excel".', '#dc2626'); await clearJob(); return; }
 
     const fileName = 'GSTR2B_' + cur.clientId + '_' + String(job.period).replace('/', '-') + '.xlsx';
