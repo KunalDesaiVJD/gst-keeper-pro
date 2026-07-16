@@ -22,6 +22,8 @@
     upsertFilingStatus: (rows) => call('upsertFilingStatus', rows),
     upsertReco: (table, clientId, period, patchObj) => call('upsertReco', table, clientId, period, patchObj),
     replaceTwob: (clientId, period, rows) => call('replaceTwob', clientId, period, rows),
+    uploadPdf: (path, dataUrl) => call('uploadPdf', path, dataUrl),
+    markFiled: (row) => call('markFiled', row),
     logEvent: (clientId, level, message) => { console.log('[GSTKeeper]', level, clientId, message); },
   };
 })();

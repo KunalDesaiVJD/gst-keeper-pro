@@ -91,7 +91,7 @@
   // while we expected to be logged in, DON'T keep navigating. Re-login a couple of
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
-  if ((job.step === 'filing' || job.step === 'ledger' || job.step === 'reversal') && bounced) {
+  if ((job.step === 'filing' || job.step === 'filingpdf' || job.step === 'ledger' || job.step === 'reversal') && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -108,6 +108,7 @@
   try {
     if (job.step === 'login') await handleLogin(job, cur, progress);
     else if (job.step === 'filing') await handleFiling(job, cur);
+    else if (job.step === 'filingpdf') await handleFilingPdf(job, cur, progress);
     else if (job.step === 'ledger') await handleLedger(job, cur, progress);
     else if (job.step === 'reversal') await handleReversal(job, cur, progress);
     else if (job.step === 'logout') await handleLogout(job);
@@ -196,23 +197,81 @@
       if (!return_type || !period_month) continue;
       written.push({ client_id: cur.clientId, return_type, period_month, status: 'Filed', arn, filed_date: ddmmyyyyToIso(dateFiled), updated_at: nowIso });
     }
-    // Best-effort: a blocked filing write (e.g. the app's "PDF required before Filed"
-    // rule) must NOT stop the rest of the sync. Warn and carry on to the ledger.
-    let msg;
-    if (!written.length) {
-      msg = 'no filed returns matched this period';
-    } else {
-      try {
-        await GSTKdb.upsertFilingStatus(written);
-        msg = 'filing status: ' + written.length + ' ARN(s) saved ✓';
-      } catch (e) {
-        msg = 'filing needs the return PDF to mark Filed (' + written.length + ' found) — skipping for now';
-      }
-    }
-    banner(msg + ' — now the ledger…', '#f59e0b');
-    job.step = 'ledger';
+    // Queue the period's filed returns for the PDF step (which fetches each PDF,
+    // uploads it, and marks the return Filed — the app requires the PDF for Filed).
+    job.pdfQueue = written
+      .filter((w) => w.period_month === job.period)
+      .map((w) => ({ return_type: w.return_type, period_month: w.period_month, arn: w.arn, filed_date: w.filed_date }));
+    banner('Found ' + job.pdfQueue.length + ' filed return(s) for ' + job.period + ' — fetching PDFs…', '#2563eb');
+    job.step = 'filingpdf';
     await setJob(job);
-    location.href = 'https://return.gst.gov.in/returns/auth/ledger/detailedledger';
+    location.href = 'https://return.gst.gov.in/returns/auth/efiledReturns';
+  }
+
+  // For each queued filed return: open View e-Filed Returns, find it, capture its
+  // PDF (the MAIN-world hook posts the download blob back), upload it, mark Filed.
+  async function handleFilingPdf(job, cur, progress) {
+    const MONTHS_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const q = job.pdfQueue || [];
+    if (!q.length) {
+      job.step = 'ledger';
+      await setJob(job);
+      location.href = 'https://return.gst.gov.in/returns/auth/ledger/detailedledger';
+      return;
+    }
+    if (!/efiledReturns/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/efiledReturns'; return; }
+    if (!(await waitFor('#finYr'))) { banner('e-Filed Returns page did not load — skipping PDFs.' + progress, '#f59e0b'); job.pdfQueue = []; await setJob(job); location.reload(); return; }
+
+    const r = q[0];
+    banner('PDF for ' + r.return_type + ' ' + r.period_month + ' (' + q.length + ' left)…' + progress);
+    const [mm, yyyy] = r.period_month.split('/').map((n) => parseInt(n, 10));
+    const fyStart = mm >= 4 ? yyyy : yyyy - 1;
+    const fyShort = fyStart + '-' + String((fyStart + 1) % 100).padStart(2, '0');
+    const monthName = MONTHS_FULL[mm - 1];
+    const retPrefix = /GSTR-1/.test(r.return_type) ? 'GSTR-1' : /GSTR-3B/.test(r.return_type) ? 'GSTR3B' : r.return_type.replace(/[^A-Za-z0-9]/g, '');
+
+    selectByText('#finYr', fyShort);
+    selectByText('#optValue', 'Monthly');
+    await sleep(300);
+    const monthSel = $$('select').find((s) => [...s.options].some((o) => (o.textContent || '').trim() === monthName));
+    if (monthSel) { const opt = [...monthSel.options].find((o) => (o.textContent || '').trim() === monthName); if (opt) setVal(monthSel, opt.value); }
+    selectByText('#retTyp', retPrefix);
+    await sleep(300);
+    const search = $('button.btn-primary.pull-right') || $$('button').find((b) => /search/i.test(b.textContent || ''));
+    if (search) search.click();
+    await sleep(2500);
+
+    const dl = $('a[title="download"]');
+    if (!dl) {
+      banner('No filed ' + r.return_type + ' found on e-Filed Returns — skipping.' + progress, '#f59e0b');
+      q.shift(); job.pdfQueue = q; await setJob(job); location.reload(); return;
+    }
+    // The MAIN-world hook posts the download blob back as a data URL.
+    const dataUrl = await new Promise((resolve) => {
+      const h = (e) => { if (e.data && e.data.__gstkPdf) { window.removeEventListener('message', h); resolve(e.data.__gstkPdf); } };
+      window.addEventListener('message', h);
+      setTimeout(() => { window.removeEventListener('message', h); resolve(null); }, 15000);
+      dl.click();
+    });
+
+    if (dataUrl) {
+      try {
+        const path = cur.clientId + '/' + r.period_month.replace('/', '-') + '/' + r.return_type + '-' + r.arn + '.pdf';
+        const pdfUrl = await GSTKdb.uploadPdf(path, dataUrl);
+        await GSTKdb.markFiled({
+          client_id: cur.clientId, return_type: r.return_type, period_month: r.period_month,
+          status: 'Filed', arn: r.arn, filed_date: r.filed_date, return_pdf_url: pdfUrl,
+          updated_at: new Date().toISOString(),
+        });
+        banner(r.return_type + ' filed + PDF saved ✓' + progress, '#16a34a');
+      } catch (e) {
+        banner('PDF save failed for ' + r.return_type + ': ' + (e && e.message), '#dc2626');
+      }
+    } else {
+      banner('Could not capture the ' + r.return_type + ' PDF — skipping.' + progress, '#f59e0b');
+    }
+    q.shift(); job.pdfQueue = q; await setJob(job);
+    location.reload();
   }
 
   async function handleLedger(job, cur, progress) {
