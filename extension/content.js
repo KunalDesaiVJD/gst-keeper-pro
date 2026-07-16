@@ -49,23 +49,36 @@
       : (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
     const target = norm(desired);
     if (!target) return null;
+    const matches = (o) => { const txt = norm(o && o.textContent); return !!txt && (startsWith ? txt.startsWith(target) : txt === target); };
+    // Apply a selection the way AngularJS registers it: set value AND selectedIndex,
+    // then fire input/change/blur so ng-model + ng-change both run.
+    const apply = (s, opt) => {
+      try { s.focus(); } catch (e) { /* noop */ }
+      s.value = opt.value;
+      s.selectedIndex = opt.index;
+      opt.selected = true;
+      s.dispatchEvent(new Event('input', { bubbles: true }));
+      s.dispatchEvent(new Event('change', { bubbles: true }));
+      s.dispatchEvent(new Event('blur', { bubbles: true }));
+    };
     const t = Date.now();
     while (Date.now() - t < timeout) {
       for (const s of $$('select')) {
         if (s.disabled || s.offsetParent === null) continue;
-        const opt = [...s.options].find((o) => {
-          const txt = norm(o.textContent);
-          return txt && (startsWith ? txt.startsWith(target) : txt === target);
-        });
+        const opt = [...s.options].find(matches);
         if (opt && !opt.disabled) {
-          s.value = opt.value;
-          opt.selected = true;
-          s.dispatchEvent(new Event('input', { bubbles: true }));
-          s.dispatchEvent(new Event('change', { bubbles: true }));
-          return s;
+          apply(s, opt);
+          // AngularJS can revert a programmatic set on its next digest (especially a
+          // cascade parent). Verify it stuck; if it reverted, re-apply, then keep
+          // polling — once the form settles the selection holds.
+          await sleep(300);
+          if (matches(s.options[s.selectedIndex])) return s;
+          apply(s, opt);
+          await sleep(300);
+          if (matches(s.options[s.selectedIndex])) return s;
         }
       }
-      await sleep(250);
+      await sleep(200);
     }
     return null;
   }
@@ -255,15 +268,18 @@
     // Fill the cascading form in order, waiting for each option list to render.
     banner('Finding ' + ret.return_type + ' ' + ret.period_month + '…');
     if (!(await selectWhereOption(fyShort))) { banner('Could not set financial year ' + fyShort + ' (page layout may differ).', '#dc2626'); await clearJob(); return; }
+    await sleep(700); // let the FY change settle before the cascading period select
     if (!(await selectWhereOption(freq))) { banner('Could not set the filing period (' + freq + ').', '#dc2626'); await clearJob(); return; }
+    await sleep(700); // selecting the period reveals the Month dropdown — give it a beat
     if (freq === 'Quarterly') {
       // GST FY quarters: Q1 Apr-Jun, Q2 Jul-Sep, Q3 Oct-Dec, Q4 Jan-Mar.
       const q = mm >= 4 ? Math.ceil((mm - 3) / 3) : 4;
       await selectWhereOption('Quarter' + q, { alnum: true, startsWith: true, timeout: 6000 });
+      await sleep(500);
     }
     // Month dropdown only renders after the period is chosen — selectWhereOption
     // polls, so it waits for it to appear. (Quarterly views may not have one.)
-    const monthSel = await selectWhereOption(monthName, { timeout: freq === 'Monthly' ? 12000 : 6000 });
+    const monthSel = await selectWhereOption(monthName, { timeout: freq === 'Monthly' ? 15000 : 6000 });
     if (freq === 'Monthly' && !monthSel) { banner('Could not set the month (' + monthName + ').', '#dc2626'); await clearJob(); return; }
     await selectWhereOption(retAlnum, { alnum: true, startsWith: true, timeout: 6000 });
     await sleep(300);
@@ -383,8 +399,10 @@
 
     banner('Selecting ' + monthName + ' ' + yyyy + ' on the dashboard…' + progress);
     if (!(await selectWhereOption(fyShort))) { banner('Could not set the financial year on the dashboard.', '#dc2626'); await clearJob(); return; }
+    await sleep(700);
     await selectWhereOption('Quarter ' + q, { startsWith: true, timeout: 8000 });
-    if (!(await selectWhereOption(monthName, { timeout: 10000 }))) { banner('Could not set the month on the dashboard.', '#dc2626'); await clearJob(); return; }
+    await sleep(700); // quarter cascades the month options
+    if (!(await selectWhereOption(monthName, { timeout: 12000 }))) { banner('Could not set the month on the dashboard.', '#dc2626'); await clearJob(); return; }
     await sleep(300);
     const search = $('button.srchbtn') || $$('button').find((b) => /^search$/i.test((b.textContent || '').trim()));
     if (!search) { banner('Could not find the dashboard Search button.', '#dc2626'); await clearJob(); return; }
