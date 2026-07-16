@@ -81,30 +81,58 @@
 
   const job = await getJob();
   if (!job) return;
+  // Support the single-client shape AND the multi-client queue shape.
+  if (!job.clients) job.clients = [{ clientId: job.clientId, creds: job.creds }];
+  if (job.idx == null) job.idx = 0;
+  const cur = job.clients[job.idx];
+  const progress = job.clients.length > 1 ? ' (client ' + (job.idx + 1) + '/' + job.clients.length + ')' : '';
 
   try {
-    if (job.step === 'login') await handleLogin(job);
-    else if (job.step === 'filing') await handleFiling(job);
-    else if (job.step === 'ledger') await handleLedger(job);
-    else if (job.step === 'done') { banner('All done — you can close this tab.', '#16a34a'); await clearJob(); }
+    if (job.step === 'login') await handleLogin(job, cur, progress);
+    else if (job.step === 'filing') await handleFiling(job, cur);
+    else if (job.step === 'ledger') await handleLedger(job, cur, progress);
+    else if (job.step === 'logout') await handleLogout(job);
+    else if (job.step === 'done') { await clearJob(); }
   } catch (e) {
     if (e && e.message === 'cancelled') { banner('Cancelled.', '#6b7280'); await clearJob(); }
     else banner('Error: ' + (e && e.message), '#dc2626');
   }
 
-  async function handleLogin(job) {
+  // Move to the next client in the queue (log out first), or finish.
+  async function advance(job) {
+    job.idx++;
+    if (job.idx < job.clients.length) {
+      job.step = 'logout';
+      await setJob(job);
+      banner('Client done — switching to the next…', '#2563eb');
+      location.href = 'https://services.gst.gov.in/services/logout';
+    } else {
+      banner('All ' + job.clients.length + ' client(s) done ✓ — you can close this tab.', '#16a34a');
+      await clearJob();
+    }
+  }
+  async function handleLogout(job) {
+    // On the logout page now — let the previous client's session fully clear, then
+    // start the next client's login.
+    await sleep(2000);
+    job.step = 'login';
+    await setJob(job);
+    location.href = 'https://services.gst.gov.in/services/login';
+  }
+
+  async function handleLogin(job, cur, progress) {
     if (isLoggedIn()) {
-      banner('Logged in — reading filed returns…');
+      banner('Logged in — reading filed returns…' + progress);
       job.step = 'filing';
       await setJob(job);
       location.href = 'https://return.gst.gov.in/returns/auth/trackreturnstatus';
       return;
     }
     if (!/services\/login/.test(url)) { location.href = 'https://services.gst.gov.in/services/login'; return; }
-    banner('Logging in ' + job.creds.name + '…');
+    banner('Logging in ' + cur.creds.name + '…' + progress);
     if (!(await waitFor('#username'))) { banner('Login form did not load — reload the page.', '#dc2626'); return; }
-    setVal($('#username'), job.creds.user);
-    setVal($('#user_pass'), job.creds.pass);
+    setVal($('#username'), cur.creds.user);
+    setVal($('#user_pass'), cur.creds.pass);
     await waitFor('#imgCaptcha', 8000);
     const text = await askCaptcha();
     setVal($('#captcha'), text);
@@ -116,7 +144,7 @@
     // Page navigates; next content-script load (step still 'login') re-checks isLoggedIn().
   }
 
-  async function handleFiling(job) {
+  async function handleFiling(job, cur) {
     if (!/trackreturnstatus/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/trackreturnstatus'; return; }
     banner('Reading filed returns…');
     await waitFor('input[name="aaa"]');
@@ -143,10 +171,10 @@
       if (!/^filed$/i.test((status || '').trim())) continue;
       const arn = (arnRaw || '').toUpperCase();
       if (!/^[A-Z0-9]{15}$/.test(arn)) continue;
-      const return_type = resolveReturnType(typeLabel, job.creds.selectedReturns || []);
+      const return_type = resolveReturnType(typeLabel, cur.creds.selectedReturns || []);
       const period_month = resolvePeriodMonth(fyText, taxPeriod);
       if (!return_type || !period_month) continue;
-      written.push({ client_id: job.clientId, return_type, period_month, status: 'Filed', arn, filed_date: ddmmyyyyToIso(dateFiled), updated_at: nowIso });
+      written.push({ client_id: cur.clientId, return_type, period_month, status: 'Filed', arn, filed_date: ddmmyyyyToIso(dateFiled), updated_at: nowIso });
     }
     // Best-effort: a blocked filing write (e.g. the app's "PDF required before Filed"
     // rule) must NOT stop the rest of the sync. Warn and carry on to the ledger.
@@ -167,10 +195,10 @@
     location.href = 'https://return.gst.gov.in/returns/auth/ledger/detailedledger';
   }
 
-  async function handleLedger(job) {
+  async function handleLedger(job, cur, progress) {
     if (!/detailedledger/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/ledger/detailedledger'; return; }
-    banner('Reading credit-ledger opening balance…');
-    if (!(await waitFor('#sumlg_frdt'))) { banner('Ledger form did not load — done anyway.', '#f59e0b'); job.step = 'done'; await setJob(job); location.reload(); return; }
+    banner('Reading credit-ledger opening balance…' + progress);
+    if (!(await waitFor('#sumlg_frdt'))) { banner('Ledger form did not load — moving on.' + progress, '#f59e0b'); await advance(job); return; }
     const [mm, yyyy] = job.period.split('/').map((n) => parseInt(n, 10));
     const last = new Date(yyyy, mm, 0).getDate();
     const p2 = (n) => String(n).padStart(2, '0');
@@ -188,13 +216,14 @@
         opening_igst: cells[n - 5], opening_cgst: cells[n - 4], opening_sgst: cells[n - 3],
         opening_source: 'portal', opening_portal_pulled_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       };
-      await GSTKdb.upsertReco('suspended_reco', job.clientId, job.period, opening);
-      await GSTKdb.upsertReco('gst_receivable_reco', job.clientId, job.period, opening);
-      banner('Opening balance saved. Sync complete — close this tab.', '#16a34a');
+      // Credit-ledger opening -> GST Receivable Reco ONLY. Suspended Reco needs the
+      // ITC-reversal ledger opening (a DIFFERENT figure) — pulled separately (TODO).
+      await GSTKdb.upsertReco('gst_receivable_reco', cur.clientId, job.period, opening);
+      banner('Credit-ledger opening saved.' + progress, '#16a34a');
     } else {
-      banner('No opening-balance row found — filing status was still saved. Done.', '#f59e0b');
+      banner('No opening-balance row found (ledger).' + progress, '#f59e0b');
     }
-    await clearJob();
+    await advance(job);
   }
 
   // --- mapping helpers (mirror the agent) ---
