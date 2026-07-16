@@ -87,6 +87,24 @@
   const cur = job.clients[job.idx];
   const progress = job.clients.length > 1 ? ' (client ' + (job.idx + 1) + '/' + job.clients.length + ')' : '';
 
+  // Loop guard: if the session died mid-sync (Access Denied / bounced to login)
+  // while we expected to be logged in, DON'T keep navigating. Re-login a couple of
+  // times, then give up on this client — never loop forever.
+  const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
+  if ((job.step === 'filing' || job.step === 'ledger') && bounced) {
+    job.retries = (job.retries || 0) + 1;
+    if (job.retries > 2) {
+      banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
+      await advance(job);
+      return;
+    }
+    job.step = 'login';
+    await setJob(job);
+    banner('Session expired — signing in again…', '#f59e0b');
+    location.href = 'https://services.gst.gov.in/services/login';
+    return;
+  }
+
   try {
     if (job.step === 'login') await handleLogin(job, cur, progress);
     else if (job.step === 'filing') await handleFiling(job, cur);
@@ -124,6 +142,7 @@
     if (isLoggedIn()) {
       banner('Logged in — reading filed returns…' + progress);
       job.step = 'filing';
+      job.retries = 0;
       await setJob(job);
       location.href = 'https://return.gst.gov.in/returns/auth/trackreturnstatus';
       return;
