@@ -26,6 +26,11 @@
       "matches": ["https://*.gst.gov.in/*"],
       "js": ["db.js", "content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://gst-keeper-pro.vercel.app/*"],
+      "js": ["appbridge.js"],
+      "run_at": "document_idle"
     }
   ]
 }

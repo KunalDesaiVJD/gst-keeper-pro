@@ -1026,6 +1026,28 @@ const FilingStatusPage: React.FC = () => {
   // ARN is now only saved to DB when status is changed to "Filed"
   // No separate handleArnChange that persists to DB on blur
 
+  // Browser-extension bridge: the GST Keeper extension announces itself, and the
+  // per-return "Portal" button posts a request it picks up (opens the portal in a
+  // new tab, pulls that return's ARN + PDF on your own IP, and marks it Filed).
+  const [extReady, setExtReady] = useState(false);
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      const d: any = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkPullResult) {
+        if (d.__gstkPullResult.ok) toast.success('Portal opened in a new tab — type the CAPTCHA there; the return will be marked Filed with its PDF. Refresh this page when it finishes.');
+        else toast.error('Could not start the portal pull: ' + d.__gstkPullResult.error);
+      }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+  const pullFromPortal = (record: FilingRecord) => {
+    if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to pull from the portal.'); return; }
+    window.postMessage({ __gstkPullReturn: { clientId: record.client_id, return_type: record.return_type, period_month: record.period_month } }, '*');
+  };
+
   const handlePdfUpload = async (record: FilingRecord, file: File) => {
     const isNewRecord = record.id.startsWith('temp-');
     
@@ -1295,27 +1317,39 @@ const FilingStatusPage: React.FC = () => {
                       )}
                     </div>
                   ) : (
-                    <label className={`cursor-pointer inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground ${(record.is_locked && !canUnlockSheets()) ? 'pointer-events-none opacity-50' : ''}`}>
-                      <Upload className="h-3.5 w-3.5" />
-                      <span>Upload</span>
-                      <input
-                        type="file"
-                        accept=".pdf"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            if (file.type !== 'application/pdf') {
-                              toast.error('Only PDF files are allowed');
-                              return;
+                    <div className="flex items-center justify-center gap-2">
+                      <label className={`cursor-pointer inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground ${(record.is_locked && !canUnlockSheets()) ? 'pointer-events-none opacity-50' : ''}`}>
+                        <Upload className="h-3.5 w-3.5" />
+                        <span>Upload</span>
+                        <input
+                          type="file"
+                          accept=".pdf"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              if (file.type !== 'application/pdf') {
+                                toast.error('Only PDF files are allowed');
+                                return;
+                              }
+                              handlePdfUpload(record, file);
                             }
-                            handlePdfUpload(record, file);
-                          }
-                          e.target.value = '';
-                        }}
-                        disabled={record.is_locked && !canUnlockSheets()}
-                      />
-                    </label>
+                            e.target.value = '';
+                          }}
+                          disabled={record.is_locked && !canUnlockSheets()}
+                        />
+                      </label>
+                      {extReady && (!record.is_locked || canUnlockSheets()) && (
+                        <button
+                          onClick={() => pullFromPortal(record)}
+                          className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80"
+                          title="Pull the filed return + PDF from the GST portal (via the browser extension)"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          <span>Portal</span>
+                        </button>
+                      )}
+                    </div>
                   )}
                 </td>
                 <td className="text-center font-mono text-sm">{record.target_date}</td>

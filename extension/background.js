@@ -68,6 +68,24 @@ const API = {
   // Mark a return Filed (with ARN + filed_date + PDF url). Passes the app's
   // "PDF required before Filed" trigger because return_pdf_url is set.
   markFiled: (row) => post('filing_status?on_conflict=client_id,return_type,period_month', [row], 'resolution=merge-duplicates,return=minimal'),
+
+  // From the app's Filing Status "Pull from portal" button: pull ONE filed
+  // return's ARN + PDF and mark it Filed. Fetches creds, opens a portal tab.
+  startReturnPull: async (info) => {
+    const c = await API.getClient(info.clientId);
+    if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
+    const [mm, yyyy] = String(info.period_month).split('/').map((n) => parseInt(n, 10));
+    const fyStart = mm >= 4 ? yyyy : yyyy - 1;
+    const job = {
+      mode: 'returnpdf', period: info.period_month, fyStart, idx: 0, step: 'login', startedAt: Date.now(),
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+      ret: { return_type: info.return_type, period_month: info.period_month },
+    };
+    const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
+    job.tabId = tab.id;
+    await chrome.storage.local.set({ gstk_active_job: job });
+    return { started: true, client: c.name, return_type: info.return_type };
+  },
 };
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
