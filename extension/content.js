@@ -81,6 +81,13 @@
 
   const job = await getJob();
   if (!job) return;
+
+  // Only act in the sync tab we opened, and drop stale jobs — so the extension
+  // NEVER prompts a CAPTCHA during normal portal browsing (the "harassment" bug).
+  if (job.startedAt && Date.now() - job.startedAt > 20 * 60 * 1000) { await clearJob(); return; }
+  const me = await GSTKdb.whoami().catch(() => null);
+  if (job.tabId != null && me && me.tabId != null && me.tabId !== job.tabId) return;
+
   // Support the single-client shape AND the multi-client queue shape.
   if (!job.clients) job.clients = [{ clientId: job.clientId, creds: job.creds }];
   if (job.idx == null) job.idx = 0;

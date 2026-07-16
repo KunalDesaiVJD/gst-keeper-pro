@@ -70,8 +70,12 @@ const API = {
   markFiled: (row) => post('filing_status?on_conflict=client_id,return_type,period_month', [row], 'resolution=merge-duplicates,return=minimal'),
 };
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.gstk) return;
+  if (msg.fn === 'whoami') {
+    sendResponse({ ok: true, data: { tabId: sender && sender.tab ? sender.tab.id : null } });
+    return true;
+  }
   const fn = API[msg.fn];
   if (!fn) { sendResponse({ error: 'unknown fn: ' + msg.fn }); return; }
   Promise.resolve(fn(...(msg.args || [])))
