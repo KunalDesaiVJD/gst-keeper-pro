@@ -11,6 +11,8 @@
   let clients = [];
   let err = null;
   try { clients = await GSTKdb.getClients(); } catch (e) { err = (e && e.message) || String(e); }
+  const withCreds = clients.filter((c) => c.gst_user_id);
+
   clientSel.innerHTML = '';
   if (err) {
     clientSel.innerHTML = '<option>Error: ' + err.slice(0, 60) + '</option>';
@@ -19,6 +21,10 @@
     clientSel.innerHTML = '<option>(no clients found)</option>';
     goBtn.disabled = true;
   } else {
+    const all = document.createElement('option');
+    all.value = '__ALL__';
+    all.textContent = 'All clients with credentials (' + withCreds.length + ')';
+    clientSel.appendChild(all);
     for (const c of clients) {
       const o = document.createElement('option');
       o.value = c.id;
@@ -28,18 +34,34 @@
     }
   }
 
+  const toCred = (c) => ({
+    user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin,
+    selectedReturns: c.selected_returns || [],
+  });
+
   goBtn.onclick = async () => {
-    const clientId = clientSel.value;
     const period = periodEl.value.trim();
     if (!/^\d{2}\/\d{4}$/.test(period)) { alert('Period must be MM/YYYY, e.g. 06/2026'); return; }
-    const c = await GSTKdb.getClient(clientId);
-    if (!c || !c.gst_user_id) { alert('This client has no saved GST username/password.'); return; }
+
+    let list;
+    if (clientSel.value === '__ALL__') {
+      list = withCreds;
+    } else {
+      const c = clients.find((x) => x.id === clientSel.value);
+      if (!c || !c.gst_user_id) { alert('This client has no saved GST username/password.'); return; }
+      list = [c];
+    }
+    if (!list.length) { alert('No clients with saved credentials.'); return; }
+    if (list.length > 1 &&
+        !confirm('Sync ' + list.length + ' clients one after another? You type a CAPTCHA for each; keep the tab open until it says all done.')) {
+      return;
+    }
 
     const [mm, yyyy] = period.split('/').map((n) => parseInt(n, 10));
     const fyStart = mm >= 4 ? yyyy : yyyy - 1;
     const job = {
-      clientId: c.id, period, fyStart, step: 'login',
-      creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },
+      period, fyStart, idx: 0, step: 'login',
+      clients: list.map((c) => ({ clientId: c.id, creds: toCred(c) })),
       startedAt: Date.now(),
     };
     await chrome.storage.local.set({ gstk_active_job: job });

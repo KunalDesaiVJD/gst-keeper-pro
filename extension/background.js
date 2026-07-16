@@ -34,7 +34,7 @@ const del = async (table, query) => {
 };
 
 const API = {
-  getClients: () => sel('clients?select=id,name,gstin,gst_user_id,gst_password&order=name'),
+  getClients: () => sel('clients?select=id,name,gstin,gst_user_id,gst_password,selected_returns&order=name'),
   getClient: (id) => sel(`clients?id=eq.${id}&select=id,name,gstin,gst_user_id,gst_password,selected_returns&limit=1`).then((a) => a[0] || null),
   upsertFilingStatus: (rows) => post('filing_status?on_conflict=client_id,return_type,period_month', rows, 'resolution=merge-duplicates,return=minimal'),
   upsertReco: async (table, clientId, period, patchObj) => {
