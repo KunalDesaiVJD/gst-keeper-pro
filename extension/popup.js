@@ -68,4 +68,10 @@
     await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     window.close();
   };
+
+  // Escape hatch: clear any active/stuck sync so the content script stops acting.
+  document.getElementById('stop').onclick = async () => {
+    await chrome.storage.local.remove('gstk_active_job');
+    alert('Sync stopped. You can close any open GST portal tab.');
+  };
 })();
