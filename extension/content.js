@@ -91,7 +91,7 @@
   // while we expected to be logged in, DON'T keep navigating. Re-login a couple of
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
-  if ((job.step === 'filing' || job.step === 'ledger') && bounced) {
+  if ((job.step === 'filing' || job.step === 'ledger' || job.step === 'reversal') && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -109,6 +109,7 @@
     if (job.step === 'login') await handleLogin(job, cur, progress);
     else if (job.step === 'filing') await handleFiling(job, cur);
     else if (job.step === 'ledger') await handleLedger(job, cur, progress);
+    else if (job.step === 'reversal') await handleReversal(job, cur, progress);
     else if (job.step === 'logout') await handleLogout(job);
     else if (job.step === 'done') { await clearJob(); }
   } catch (e) {
@@ -235,12 +236,45 @@
         opening_igst: cells[n - 5], opening_cgst: cells[n - 4], opening_sgst: cells[n - 3],
         opening_source: 'portal', opening_portal_pulled_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       };
-      // Credit-ledger opening -> GST Receivable Reco ONLY. Suspended Reco needs the
-      // ITC-reversal ledger opening (a DIFFERENT figure) — pulled separately (TODO).
+      // Credit-ledger opening -> GST Receivable Reco.
       await GSTKdb.upsertReco('gst_receivable_reco', cur.clientId, job.period, opening);
-      banner('Credit-ledger opening saved.' + progress, '#16a34a');
+      banner('Credit-ledger opening saved — now the reversal ledger…' + progress, '#16a34a');
     } else {
-      banner('No opening-balance row found (ledger).' + progress, '#f59e0b');
+      banner('No credit-ledger opening row — now the reversal ledger…' + progress, '#f59e0b');
+    }
+    job.step = 'reversal';
+    await setJob(job);
+    location.href = 'https://return.gst.gov.in/returns/auth/ledger/revreclaimdetledger';
+  }
+
+  // ITC-reversal (Electronic Credit Reversal & Re-claimed Statement) opening ->
+  // Suspended Reco. Same date form as the credit ledger; the "Opening Balance" row's
+  // last 4 cells are the balance group [IGST, CGST, SGST, Cess] (no Total column).
+  async function handleReversal(job, cur, progress) {
+    if (!/revreclaimdetledger/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/ledger/revreclaimdetledger'; return; }
+    banner('Reading ITC-reversal ledger opening…' + progress);
+    if (!(await waitFor('#sumlg_frdt'))) { banner('Reversal ledger form did not load — moving on.' + progress, '#f59e0b'); await advance(job); return; }
+    const [mm, yyyy] = job.period.split('/').map((n) => parseInt(n, 10));
+    const last = new Date(yyyy, mm, 0).getDate();
+    const p2 = (n) => String(n).padStart(2, '0');
+    setVal($('#sumlg_frdt'), '01/' + p2(mm) + '/' + yyyy);
+    setVal($('#sumlg_todt'), p2(last) + '/' + p2(mm) + '/' + yyyy);
+    const go = $('button.btn-primary.mar-0') || $$('button').find((b) => /^go$/i.test((b.textContent || '').trim()));
+    if (go) go.click();
+    await sleep(2500);
+    const trs = $('table') ? [...$('table').querySelectorAll('tbody tr')] : [];
+    const row = trs.find((tr) => /opening balance/i.test(tr.textContent || ''));
+    if (row) {
+      const cells = [...row.children].map((td) => parseFloat((td.textContent || '').replace(/[,\s₹]/g, '')) || 0);
+      const n = cells.length;
+      const opening = {
+        opening_igst: cells[n - 4], opening_cgst: cells[n - 3], opening_sgst: cells[n - 2],
+        opening_source: 'portal', opening_portal_pulled_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      };
+      await GSTKdb.upsertReco('suspended_reco', cur.clientId, job.period, opening);
+      banner('Reversal-ledger opening saved.' + progress, '#16a34a');
+    } else {
+      banner('No reversal opening-balance row found.' + progress, '#f59e0b');
     }
     await advance(job);
   }
