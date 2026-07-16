@@ -46,6 +46,28 @@ const API = {
     await del('twob_import_docs', `client_id=eq.${clientId}&period_month=eq.${enc(period)}`);
     return rows.length ? post('twob_import_docs', rows) : true;
   },
+
+  // Upload a base64 data-URL PDF to the return-pdfs bucket, return its public URL.
+  uploadPdf: async (path, dataUrl) => {
+    const b64 = String(dataUrl).split(',')[1] || '';
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const r = await fetch(SUPABASE_URL + '/storage/v1/object/return-pdfs/' + path, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
+        'Content-Type': 'application/pdf', 'x-upsert': 'true',
+      },
+      body: bytes,
+    });
+    if (!r.ok) throw new Error('PDF upload -> ' + r.status + ' ' + (await r.text()).slice(0, 100));
+    return SUPABASE_URL + '/storage/v1/object/public/return-pdfs/' + path;
+  },
+
+  // Mark a return Filed (with ARN + filed_date + PDF url). Passes the app's
+  // "PDF required before Filed" trigger because return_pdf_url is set.
+  markFiled: (row) => post('filing_status?on_conflict=client_id,return_type,period_month', [row], 'resolution=merge-duplicates,return=minimal'),
 };
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
