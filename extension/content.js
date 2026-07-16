@@ -142,7 +142,7 @@
   // while we expected to be logged in, DON'T keep navigating. Re-login a couple of
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'efiledpdf' || job.step === 'twob' || job.step === 'twobdwld') && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld') && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -161,6 +161,7 @@
     else if (job.step === 'ledger') await handleLedger(job, cur, progress);
     else if (job.step === 'reversal') await handleReversal(job, cur, progress);
     else if (job.step === 'efiledpdf') await handleReturnPdf(job, cur, progress);
+    else if (job.step === 'efiledview') await handleReturnView(job, cur, progress);
     else if (job.step === 'twob') await handleTwob(job, cur, progress);
     else if (job.step === 'twobdwld') await handleTwobDownload(job, cur, progress);
     else if (job.step === 'logout') await handleLogout(job);
@@ -277,35 +278,91 @@
     const arn = (cells[3] || '').toUpperCase();
     const filedDate = ddmmyyyyToIso(cells[4] || '');
     if (!/^[A-Z0-9]{15}$/.test(arn)) { banner('Found a row but could not read a valid ARN for ' + ret.return_type + '.', '#f59e0b'); await clearJob(); return; }
-    // The last cell holds the download control. Prefer a real DOWNLOAD link/icon;
-    // deliberately do NOT fall back to a "View" link (it navigates → would loop).
-    const dl = tr.querySelector('a[title="download" i], a[download], a[href$=".pdf" i], a[href*="pdf" i]')
+    // Prefer a real DIRECT download control in the row. If the row only has a
+    // "View" link (e.g. GSTR-3B), open it and grab the PDF from the return-view
+    // page (handleReturnView). Never click "View" as a "download" fallback here.
+    const directDl = tr.querySelector('a[title="download" i], a[download], a[href$=".pdf" i], a[href*="pdf" i]')
       || (tr.querySelector('i.fa-download') && tr.querySelector('i.fa-download').closest('a, button'))
-      || [...tr.querySelectorAll('a, button')].find((a) => /download/i.test((a.textContent || '') + ' ' + (a.getAttribute('title') || '') + ' ' + (a.className || '')));
-    if (!dl) { banner('Found ' + ret.return_type + ' (ARN ' + arn + ') but no direct PDF-download link in the row (only View?) — tell me and I\'ll wire the View→download step.', '#f59e0b'); await clearJob(); return; }
+      || [...tr.querySelectorAll('a, button')].find((a) => /download/i.test((a.textContent || '') + ' ' + (a.getAttribute('title') || '') + ' ' + (a.className || '')) && !/view/i.test(a.textContent || ''));
+
+    if (directDl) {
+      banner('Downloading the ' + ret.return_type + ' PDF…');
+      job.pdfClicked = true;
+      await setJob(job);
+      const dataUrl = await new Promise((resolve) => {
+        const h = (e) => { if (e.data && e.data.__gstkPdf) { window.removeEventListener('message', h); resolve(e.data.__gstkPdf); } };
+        window.addEventListener('message', h);
+        setTimeout(() => { window.removeEventListener('message', h); resolve(null); }, 20000);
+        directDl.click();
+      });
+      if (!dataUrl) { banner('Found ' + ret.return_type + ' (ARN ' + arn + ') but could not capture the PDF.', '#dc2626'); await clearJob(); return; }
+      try { await saveReturnPdf(cur, ret, arn, filedDate, dataUrl); banner(ret.return_type + ' ' + ret.period_month + ' — Filed + PDF saved ✓. Close this tab.', '#16a34a'); }
+      catch (e) { banner('Save failed: ' + (e && e.message), '#dc2626'); }
+      await clearJob();
+      return;
+    }
+
+    // No direct download in the row → open the return's "View" page and grab the
+    // PDF there. Stash ARN + filed date first (the view page won't show them).
+    const viewLink = tr.querySelector('a.btn-edit') || [...tr.querySelectorAll('a, button')].find((a) => /^\s*view\s*$/i.test(a.textContent || ''));
+    if (!viewLink) { banner('Found ' + ret.return_type + ' (ARN ' + arn + ') but no View/Download control in the row.', '#f59e0b'); await clearJob(); return; }
+    job.ret = Object.assign({}, ret, { arn, filedDate });
+    job.step = 'efiledview';
+    job.viewClicked = false;
+    await setJob(job);
+    banner('Opening the filed ' + ret.return_type + ' to download its PDF…');
+    viewLink.click();
+  }
+
+  // Upload a captured PDF data-URL to the bucket and mark the return Filed.
+  async function saveReturnPdf(cur, ret, arn, filedDate, dataUrl) {
+    const path = cur.clientId + '/' + ret.period_month.replace('/', '-') + '/' + ret.return_type + '-' + arn + '.pdf';
+    const pdfUrl = await GSTKdb.uploadPdf(path, dataUrl);
+    await GSTKdb.markFiled({
+      client_id: cur.clientId, return_type: ret.return_type, period_month: ret.period_month,
+      status: 'Filed', arn, filed_date: filedDate, return_pdf_url: pdfUrl, updated_at: new Date().toISOString(),
+    });
+  }
+
+  // The return-view page reached by clicking "View" on View e-Filed Returns.
+  // Find the PDF-download button (e.g. "DOWNLOAD FILED GSTR-3B"), capture the blob
+  // (inject.js hook), upload it, and mark Filed. Runs when step === 'efiledview'.
+  async function handleReturnView(job, cur) {
+    const ret = job.ret || {};
+    const arn = (ret.arn || '').toUpperCase();
+    if (!/^[A-Z0-9]{15}$/.test(arn)) { banner('Lost the ARN — please retry the pull.', '#dc2626'); await clearJob(); return; }
+    // Already clicked download and bounced back → it opened a viewer we can't
+    // capture; stop instead of looping.
+    if (job.viewClicked) { banner('The ' + ret.return_type + ' download did not produce a capturable file — tell me the exact button label on the view page.', '#dc2626'); await clearJob(); return; }
+
+    banner('Looking for the ' + ret.return_type + ' PDF download…');
+    const t = (x) => (x.textContent || '') + ' ' + (x.getAttribute('title') || '');
+    let dl = null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 20000 && !dl) {
+      // Only content controls — exclude the portal's top-nav "Downloads" menu.
+      const cands = $$('a, button').filter((x) => x.offsetParent !== null &&
+        !x.closest('nav, header, .navbar, .nav, .navbar-nav, .dropdown-menu, .top-nav, .mega-menu, ul.nav'));
+      dl = cands.find((x) => /download/i.test(t(x)) && /pdf/i.test(t(x)))
+        || cands.find((x) => /download/i.test(t(x)) && /(gstr|filed|return)/i.test(t(x)))
+        || cands.find((x) => /^\s*download\s*$/i.test((x.textContent || '').trim()))
+        || cands.find((x) => x.querySelector && x.querySelector('i.fa-download'));
+      if (!dl) await sleep(500);
+    }
+    if (!dl) { banner('On the filed ' + ret.return_type + ' page but found no PDF-download button — tell me the button label you see.', '#f59e0b'); await clearJob(); return; }
 
     banner('Downloading the ' + ret.return_type + ' PDF…');
-    job.pdfClicked = true;
+    job.viewClicked = true;
     await setJob(job);
     const dataUrl = await new Promise((resolve) => {
       const h = (e) => { if (e.data && e.data.__gstkPdf) { window.removeEventListener('message', h); resolve(e.data.__gstkPdf); } };
       window.addEventListener('message', h);
-      setTimeout(() => { window.removeEventListener('message', h); resolve(null); }, 20000);
+      setTimeout(() => { window.removeEventListener('message', h); resolve(null); }, 25000);
       dl.click();
     });
-    if (!dataUrl) { banner('Found ' + ret.return_type + ' (ARN ' + arn + ') but could not capture the PDF — tell me what happens when you click View/Download in that row.', '#dc2626'); await clearJob(); return; }
-
-    try {
-      const path = cur.clientId + '/' + ret.period_month.replace('/', '-') + '/' + ret.return_type + '-' + arn + '.pdf';
-      const pdfUrl = await GSTKdb.uploadPdf(path, dataUrl);
-      await GSTKdb.markFiled({
-        client_id: cur.clientId, return_type: ret.return_type, period_month: ret.period_month,
-        status: 'Filed', arn, filed_date: filedDate, return_pdf_url: pdfUrl, updated_at: new Date().toISOString(),
-      });
-      banner(ret.return_type + ' ' + ret.period_month + ' — Filed + PDF saved ✓. Close this tab.', '#16a34a');
-    } catch (e) {
-      banner('Save failed: ' + (e && e.message), '#dc2626');
-    }
+    if (!dataUrl) { banner('Clicked download on the ' + ret.return_type + ' page but could not capture the PDF — tell me what happened.', '#dc2626'); await clearJob(); return; }
+    try { await saveReturnPdf(cur, ret, arn, ret.filedDate, dataUrl); banner(ret.return_type + ' ' + ret.period_month + ' — Filed + PDF saved ✓. Close this tab.', '#16a34a'); }
+    catch (e) { banner('Save failed: ' + (e && e.message), '#dc2626'); }
     await clearJob();
   }
 
