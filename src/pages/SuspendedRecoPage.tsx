@@ -28,7 +28,7 @@ interface Client {
 }
 
 const SuspendedRecoPage: React.FC = () => {
-  const { user, isStaffRole } = useAuth();
+  const { user, isStaffRole, canManualOverride } = useAuth();
   const { selectedMonth, setSelectedMonth } = useMonth();
   const { selectedClientId, setSelectedClientId } = useClient();
   const [clients, setClients] = useState<Client[]>([]);
@@ -521,10 +521,11 @@ const SuspendedRecoPage: React.FC = () => {
   };
 
   // Override: layer new values + justification on top of existing source.
-  // Restricted to superadmin only (defense-in-depth even though the button
-  // is hidden for other roles).
+  // Gated by canManualOverride() (superadmin always; others need the
+  // 'manual_override' permission from User Control) — same check as the
+  // button visibility, applied here as defense-in-depth.
   const handleOverrideSave = async (values: { cgst: number; sgst: number; igst: number; justification: string }) => {
-    if (user?.role !== 'superadmin' || !selectedClientId || !selectedMonth) return;
+    if (!canManualOverride() || !selectedClientId || !selectedMonth) return;
     setIsSaving(true);
     try {
       const now = new Date().toISOString();
@@ -809,7 +810,7 @@ const SuspendedRecoPage: React.FC = () => {
                           >
                             Not Applicable
                           </Button>
-                          {openingSource !== 'manual' && user?.role === 'superadmin' && (
+                          {openingSource !== 'manual' && canManualOverride() && (
                             <Button
                               size="sm"
                               variant="outline"

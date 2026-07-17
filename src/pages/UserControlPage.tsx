@@ -67,6 +67,11 @@ const AVAILABLE_PERMISSIONS = [
     label: 'Import Excel',
     description: 'Import data from Excel files in 2B Reconciliation',
   },
+  {
+    key: 'manual_override',
+    label: 'Manual Override',
+    description: 'Override opening balance on Suspended Reco and GST Receivable Reco (requires justification)',
+  },
 ];
 
 interface Employee {

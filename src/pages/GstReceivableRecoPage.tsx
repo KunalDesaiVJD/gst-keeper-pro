@@ -46,7 +46,7 @@ const toShortMonth = (mmYyyy: string): string => {
 };
 
 const GstReceivableRecoPage: React.FC = () => {
-  const { user, isStaffRole } = useAuth();
+  const { user, isStaffRole, canManualOverride } = useAuth();
   const { selectedMonth, setSelectedMonth } = useMonth();
   const { selectedClientId, setSelectedClientId } = useClient();
   const [clients, setClients] = useState<Client[]>([]);
@@ -491,7 +491,7 @@ const GstReceivableRecoPage: React.FC = () => {
   };
 
   const handleOverrideSave = async (values: { cgst: number; sgst: number; igst: number; justification: string }) => {
-    if (user?.role !== 'superadmin' || !selectedClientId || !selectedMonth) return;
+    if (!canManualOverride() || !selectedClientId || !selectedMonth) return;
     setIsSaving(true);
     try {
       const now = new Date().toISOString();
@@ -812,7 +812,7 @@ const GstReceivableRecoPage: React.FC = () => {
                           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleNotApplicable} disabled={!selectedClientId || isSaving}>
                             Not Applicable
                           </Button>
-                          {openingSource !== 'manual' && user?.role === 'superadmin' && (
+                          {openingSource !== 'manual' && canManualOverride() && (
                             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowOverrideDialog(true)} disabled={!selectedClientId || isSaving}>
                               <Edit3 className="h-3 w-3 mr-1" />
                               Override
