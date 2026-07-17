@@ -300,40 +300,38 @@
     const arn = (cells[3] || '').toUpperCase();
     const filedDate = ddmmyyyyToIso(cells[4] || '');
     if (!/^[A-Z0-9]{15}$/.test(arn)) { banner('Found a row but could not read a valid ARN for ' + ret.return_type + '.', '#f59e0b'); await clearJob(); return; }
-    // Prefer a real DIRECT download control in the row. If the row only has a
-    // "View" link (e.g. GSTR-3B), open it and grab the PDF from the return-view
-    // page (handleReturnView). Never click "View" as a "download" fallback here.
-    const directDl = tr.querySelector('a[title="download" i], a[download], a[href$=".pdf" i], a[href*="pdf" i]')
-      || (tr.querySelector('i.fa-download') && tr.querySelector('i.fa-download').closest('a, button'))
-      || [...tr.querySelectorAll('a, button')].find((a) => /download/i.test((a.textContent || '') + ' ' + (a.getAttribute('title') || '') + ' ' + (a.className || '')) && !/view/i.test(a.textContent || ''));
-
-    if (directDl) {
-      banner('Downloading the ' + ret.return_type + ' PDF…');
-      job.pdfClicked = true;
+    // Prefer the "View" page: it has a dedicated Download-PDF button that yields
+    // a capturable file. The row's inline download icon tends to open a PDF
+    // VIEWER page instead of saving a file, so only use it when there's NO View.
+    const viewLink = tr.querySelector('a.btn-edit') || [...tr.querySelectorAll('a, button')].find((a) => /^\s*view\s*$/i.test(a.textContent || ''));
+    if (viewLink) {
+      job.ret = Object.assign({}, ret, { arn, filedDate });
+      job.step = 'efiledview';
+      job.viewClicked = false;
       await setJob(job);
-      const dataUrl = await new Promise((resolve) => {
-        const h = (e) => { if (e.data && e.data.__gstkPdf) { window.removeEventListener('message', h); resolve(e.data.__gstkPdf); } };
-        window.addEventListener('message', h);
-        setTimeout(() => { window.removeEventListener('message', h); resolve(null); }, 20000);
-        directDl.click();
-      });
-      if (!dataUrl) { banner('Found ' + ret.return_type + ' (ARN ' + arn + ') but could not capture the PDF.', '#dc2626'); await clearJob(); return; }
-      try { await saveReturnPdf(cur, ret, arn, filedDate, dataUrl); banner(ret.return_type + ' ' + ret.period_month + ' — Filed + PDF saved ✓. Close this tab.', '#16a34a'); }
-      catch (e) { banner('Save failed: ' + (e && e.message), '#dc2626'); }
-      await clearJob();
+      banner('Opening the filed ' + ret.return_type + ' to download its PDF…');
+      viewLink.click();
       return;
     }
 
-    // No direct download in the row → open the return's "View" page and grab the
-    // PDF there. Stash ARN + filed date first (the view page won't show them).
-    const viewLink = tr.querySelector('a.btn-edit') || [...tr.querySelectorAll('a, button')].find((a) => /^\s*view\s*$/i.test(a.textContent || ''));
-    if (!viewLink) { banner('Found ' + ret.return_type + ' (ARN ' + arn + ') but no View/Download control in the row.', '#f59e0b'); await clearJob(); return; }
-    job.ret = Object.assign({}, ret, { arn, filedDate });
-    job.step = 'efiledview';
-    job.viewClicked = false;
+    // No View link → try an inline direct download control in the row.
+    const directDl = tr.querySelector('a[title="download" i], a[download], a[href$=".pdf" i], a[href*="pdf" i]')
+      || (tr.querySelector('i.fa-download') && tr.querySelector('i.fa-download').closest('a, button'))
+      || [...tr.querySelectorAll('a, button')].find((a) => /download/i.test((a.textContent || '') + ' ' + (a.getAttribute('title') || '') + ' ' + (a.className || '')) && !/view/i.test(a.textContent || ''));
+    if (!directDl) { banner('Found ' + ret.return_type + ' (ARN ' + arn + ') but no View/Download control in the row.', '#f59e0b'); await clearJob(); return; }
+    banner('Downloading the ' + ret.return_type + ' PDF…');
+    job.pdfClicked = true;
     await setJob(job);
-    banner('Opening the filed ' + ret.return_type + ' to download its PDF…');
-    viewLink.click();
+    const dataUrl = await new Promise((resolve) => {
+      const h = (e) => { if (e.data && e.data.__gstkPdf) { window.removeEventListener('message', h); resolve(e.data.__gstkPdf); } };
+      window.addEventListener('message', h);
+      setTimeout(() => { window.removeEventListener('message', h); resolve(null); }, 20000);
+      directDl.click();
+    });
+    if (!dataUrl) { banner('Found ' + ret.return_type + ' (ARN ' + arn + ') but could not capture the PDF.', '#dc2626'); await clearJob(); return; }
+    try { await saveReturnPdf(cur, ret, arn, filedDate, dataUrl); banner(ret.return_type + ' ' + ret.period_month + ' — Filed + PDF saved ✓. Close this tab.', '#16a34a'); }
+    catch (e) { banner('Save failed: ' + (e && e.message), '#dc2626'); }
+    await clearJob();
   }
 
   // Upload a captured PDF data-URL to the bucket and mark the return Filed.
