@@ -17,6 +17,7 @@ interface UserPermissions {
   manage_rcm_masters: boolean;
   edit_update_sheet: boolean;
   import_excel: boolean;
+  manual_override: boolean;
 }
 
 const DEFAULT_PERMISSIONS: UserPermissions = {
@@ -31,6 +32,7 @@ const DEFAULT_PERMISSIONS: UserPermissions = {
   manage_rcm_masters: false,
   edit_update_sheet: false,
   import_excel: false,
+  manual_override: false,
 };
 
 interface AppUser {
@@ -63,6 +65,7 @@ interface AuthContextType {
   canManageRCMMasters: () => boolean;
   canEditUpdateSheet: () => boolean;
   canImportExcel: () => boolean;
+  canManualOverride: () => boolean;
   hasPermission: (permission: keyof UserPermissions) => boolean;
 }
 
@@ -536,6 +539,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return hasPermission('import_excel');
   }, [user, hasPermission]);
 
+  // Note the deliberate difference from other helpers: only superadmin bypasses
+  // the explicit permission check here. gst_manager and employees must both be
+  // granted `manual_override` in User Control to see the Override button. This
+  // preserves the previous "superadmin only" behaviour while adding a knob for
+  // trusted employees.
+  const canManualOverride = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin') return true;
+    return hasPermission('manual_override');
+  }, [user, hasPermission]);
+
   return (
     <AuthContext.Provider
       value={{
@@ -559,6 +573,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canManageRCMMasters,
         canEditUpdateSheet,
         canImportExcel,
+        canManualOverride,
         hasPermission,
       }}
     >
