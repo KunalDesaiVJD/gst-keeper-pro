@@ -104,6 +104,42 @@ const API = {
   },
 };
 
+// ---- GSTR-2B Excel capture (to-disk download) ------------------------------
+// The GSTR-2B Excel downloads via a direct URL (not a JS blob), so the page hook
+// can't see it. While a 'twob' pull is active, watch chrome.downloads, re-fetch
+// the file with the user's logged-in session (cookies via host_permissions), and
+// hand the bytes to the app. The downloaded file is left on disk untouched (the
+// user keeps it for their client folder).
+function abToBase64(buf) {
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
+chrome.downloads.onCreated.addListener(async (item) => {
+  try {
+    const { gstk_active_job: job } = await chrome.storage.local.get('gstk_active_job');
+    if (!job || job.mode !== 'twob' || !job.clients) return;
+    const fileUrl = item.finalUrl || item.url || '';
+    const hint = (item.filename || '') + ' ' + fileUrl;
+    const looksLike2b = /\.(xlsx|xls|zip)(\?|$)/i.test(hint) || /gstr-?2b|gstr2b/i.test(hint);
+    if (!looksLike2b || !/^https?:/i.test(fileUrl)) return; // blob:/data: handled in-page
+    const resp = await fetch(fileUrl, { credentials: 'include' });
+    if (!resp.ok) return;
+    const buf = await resp.arrayBuffer();
+    if (!buf || buf.byteLength < 100) return;
+    const mime = resp.headers.get('content-type') || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    const dataUrl = 'data:' + mime + ';base64,' + abToBase64(buf);
+    const cur = job.clients[job.idx || 0];
+    if (!cur) return;
+    await chrome.storage.local.set({ gstk_twob_result: {
+      ok: true, clientId: cur.clientId, gstin: (cur.creds && cur.creds.gstin) || '', period: job.period,
+      fileB64: dataUrl, fileName: item.filename || ('GSTR2B_' + cur.clientId + '.xlsx'), at: Date.now(),
+    } });
+  } catch (e) { /* ignore — the in-page path or a timeout will report */ }
+});
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.gstk) return;
   if (msg.fn === 'whoami') {

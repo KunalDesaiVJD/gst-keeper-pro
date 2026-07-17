@@ -463,13 +463,25 @@
     }
     if (!genBtn) { banner('No "Generate Excel" button on the GSTR-2B download page — tell me what buttons you see.', '#dc2626'); await clearJob(); return; }
 
-    // Capture the .xlsx blob the portal builds (inject.js posts __gstkPdf). Excel
-    // generation can be slow, so allow up to 90s.
-    const captured = new Promise((resolve) => {
-      const h = (e) => { if (e.data && e.data.__gstkPdf) { window.removeEventListener('message', h); resolve(e.data); } };
-      window.addEventListener('message', h);
-      setTimeout(() => { window.removeEventListener('message', h); resolve(null); }, 90000);
+    // Two capture paths BOTH write chrome.storage 'gstk_twob_result':
+    //  (A) if the portal builds a blob (createObjectURL), inject.js posts __gstkPdf → we store it;
+    //  (B) the usual case — the Excel downloads to disk via a direct URL — the
+    //      background re-fetches it with the logged-in session and stores it
+    //      (see the chrome.downloads hook in background.js).
+    // Wait for whichever writes the result first (up to 90s; generation is slow).
+    const resultWritten = new Promise((resolve) => {
+      const onChg = (changes, area) => {
+        if (area === 'local' && changes.gstk_twob_result && changes.gstk_twob_result.newValue) {
+          chrome.storage.onChanged.removeListener(onChg);
+          resolve(true);
+        }
+      };
+      chrome.storage.onChanged.addListener(onChg);
+      setTimeout(() => { chrome.storage.onChanged.removeListener(onChg); resolve(false); }, 90000);
     });
+    const onPdf = (e) => { if (e.data && e.data.__gstkPdf) { window.removeEventListener('message', onPdf); storeTwobResult(cur, job.period, e.data.__gstkPdf); } };
+    window.addEventListener('message', onPdf);
+
     genBtn.click();
     banner('Waiting for the GSTR-2B file (generation can take a moment)…' + progress);
     // Some flows reveal a "click here to download" link once the file is ready.
@@ -483,17 +495,22 @@
         if (link) { clicked.add(link); try { link.click(); } catch (e) { /* noop */ } }
       }
     })();
-    const data = await captured;
-    done = true;
-    if (!data || !data.__gstkPdf) { banner('GSTR-2B did not download as a file I can capture — tell me what happens after "Generate Excel".', '#dc2626'); await clearJob(); return; }
 
-    const fileName = 'GSTR2B_' + cur.clientId + '_' + String(job.period).replace('/', '-') + '.xlsx';
-    await store.set({ gstk_twob_result: {
-      ok: true, clientId: cur.clientId, gstin: (cur.creds && cur.creds.gstin) || '', period: job.period,
-      fileB64: data.__gstkPdf, fileName, at: Date.now(),
-    } });
-    banner('GSTR-2B captured ✓ — importing into GST Keeper. You can close this tab.', '#16a34a');
+    const ok = await resultWritten;
+    done = true;
+    window.removeEventListener('message', onPdf);
+    if (!ok) { banner('GSTR-2B downloaded but I could not capture its data to import — tell me and I\'ll adjust.', '#dc2626'); await clearJob(); return; }
+    banner('GSTR-2B captured ✓ — importing into GST Keeper. Your downloaded file is untouched — save it to the client folder if you like. You can close this tab.', '#16a34a');
     await clearJob();
+  }
+
+  // Stash a captured GSTR-2B file (blob path) for the app to import via its parser.
+  async function storeTwobResult(cur, period, dataUrl) {
+    const fileName = 'GSTR2B_' + cur.clientId + '_' + String(period).replace('/', '-') + '.xlsx';
+    await store.set({ gstk_twob_result: {
+      ok: true, clientId: cur.clientId, gstin: (cur.creds && cur.creds.gstin) || '', period,
+      fileB64: dataUrl, fileName, at: Date.now(),
+    } });
   }
 
   async function handleLedger(job, cur, progress) {
