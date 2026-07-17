@@ -134,6 +134,7 @@ function abToBase64(buf) {
   return btoa(binary);
 }
 
+if (chrome.downloads && chrome.downloads.onCreated) {
 chrome.downloads.onCreated.addListener(async (item) => {
   try {
     const { gstk_active_job: job } = await chrome.storage.local.get('gstk_active_job');
@@ -156,6 +157,7 @@ chrome.downloads.onCreated.addListener(async (item) => {
     } });
   } catch (e) { /* ignore — the in-page path or a timeout will report */ }
 });
+}
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.gstk) return;
