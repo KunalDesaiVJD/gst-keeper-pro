@@ -537,10 +537,6 @@ const Import2BTab: React.FC = () => {
               <Download className="h-4 w-4 mr-2" />
               Pull from portal
             </Button>
-            <Button onClick={handleImportClick} disabled={isImporting || !selectedClient || !selectedMonth || isLocked}>
-              {isImporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
-              Import GSTR-2B
-            </Button>
             {twoBDocs.length > 0 && (
               <Button variant="destructive" size="sm" onClick={deleteImported2B} disabled={readOnly}>
                 <Trash2 className="h-4 w-4 mr-2" />Delete 2B
@@ -548,7 +544,6 @@ const Import2BTab: React.FC = () => {
             )}
           </div>
         )}
-        <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />
       </div>
 
       {/* Filters (client / month) */}
@@ -617,7 +612,7 @@ const Import2BTab: React.FC = () => {
               </div>
               {twoBDocs.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground text-sm">
-                  No GSTR-2B imported for {selectedClientName} — {selectedMonth}.{isStaff && !isLocked && ' Click "Import GSTR-2B".'}
+                  No GSTR-2B imported for {selectedClientName} — {selectedMonth}.{isStaff && !isLocked && ' Click "Pull from portal".'}
                 </div>
               ) : (
                 <ScrollArea className="w-full">

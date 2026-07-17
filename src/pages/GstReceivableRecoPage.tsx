@@ -805,10 +805,6 @@ const GstReceivableRecoPage: React.FC = () => {
                       </div>
                       {isStaff && (
                         <div className="flex gap-1.5 flex-wrap">
-                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleUploadClick} disabled={!selectedClientId || isSaving}>
-                            <Upload className="h-3 w-3 mr-1" />
-                            {openingSource === 'csv' ? 'Re-upload' : 'Upload Ledger'}
-                          </Button>
                           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleNotApplicable} disabled={!selectedClientId || isSaving}>
                             Not Applicable
                           </Button>
@@ -927,15 +923,6 @@ const GstReceivableRecoPage: React.FC = () => {
           )}
         </CardContent>
       </Card>
-
-      {/* Hidden file picker for CSV upload */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".csv,text/csv"
-        className="hidden"
-        onChange={handleFileChange}
-      />
 
       <SuspendedRecoOverrideDialog
         open={showOverrideDialog}

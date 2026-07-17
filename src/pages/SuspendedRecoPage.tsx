@@ -794,16 +794,6 @@ const SuspendedRecoPage: React.FC = () => {
                             size="sm"
                             variant="outline"
                             className="h-7 text-xs"
-                            onClick={handleUploadClick}
-                            disabled={!selectedClientId || isSaving}
-                          >
-                            <Upload className="h-3 w-3 mr-1" />
-                            {openingSource === 'csv' ? 'Re-upload' : 'Upload Statement'}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-xs"
                             onClick={handleNotApplicable}
                             disabled={!selectedClientId || isSaving}
                           >
@@ -922,15 +912,6 @@ const SuspendedRecoPage: React.FC = () => {
           onCleared={fetchData}
         />
       )}
-
-      {/* Hidden file input for CSV upload — triggered by Upload Statement button */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".csv,text/csv"
-        className="hidden"
-        onChange={handleFileChange}
-      />
 
       <SuspendedRecoOverrideDialog
         open={showOverrideDialog}

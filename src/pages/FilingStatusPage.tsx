@@ -1340,27 +1340,6 @@ const FilingStatusPage: React.FC = () => {
                     </div>
                   ) : (
                     <div className="flex items-center justify-center gap-2">
-                      <label className={`cursor-pointer inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground ${(record.is_locked && !canUnlockSheets()) ? 'pointer-events-none opacity-50' : ''}`}>
-                        <Upload className="h-3.5 w-3.5" />
-                        <span>Upload</span>
-                        <input
-                          type="file"
-                          accept=".pdf"
-                          className="hidden"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                              if (file.type !== 'application/pdf') {
-                                toast.error('Only PDF files are allowed');
-                                return;
-                              }
-                              handlePdfUpload(record, file);
-                            }
-                            e.target.value = '';
-                          }}
-                          disabled={record.is_locked && !canUnlockSheets()}
-                        />
-                      </label>
                       {(!record.is_locked || canUnlockSheets()) && (
                         <button
                           onClick={() => pullFromPortal(record)}
