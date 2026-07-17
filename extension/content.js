@@ -155,7 +155,7 @@
   // while we expected to be logged in, DON'T keep navigating. Re-login a couple of
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld') && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'filing') && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -177,6 +177,7 @@
     else if (job.step === 'efiledview') await handleReturnView(job, cur, progress);
     else if (job.step === 'twob') await handleTwob(job, cur, progress);
     else if (job.step === 'twobdwld') await handleTwobDownload(job, cur, progress);
+    else if (job.step === 'filing') await handleFiling(job, cur, progress);
     else if (job.step === 'logout') await handleLogout(job);
     else if (job.step === 'done') { await clearJob(); }
   } catch (e) {
@@ -217,6 +218,11 @@
       } else if (job.mode === 'twob') {
         banner('Logged in — opening the returns dashboard…' + progress);
         job.step = 'twob';
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      } else if (job.mode === 'filing') {
+        banner('Logged in — opening the filing page…' + progress);
+        job.step = 'filing';
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
       } else {
@@ -397,6 +403,65 @@
     cands.sort((a, b) => (a.textContent || '').length - (b.textContent || '').length);
     const tile = cands[0];
     return tile ? ([...tile.querySelectorAll('button, a')].find((b) => btnRe.test((b.textContent || '').trim())) || null) : null;
+  }
+
+  // Map an app return_type to its dashboard tile + filing button. `excl` rejects
+  // wrapper/other-return tiles (see findTileButton).
+  function filingTileFor(returnType) {
+    const rt = String(returnType || '').toUpperCase();
+    if (/GSTR-?3B/.test(rt)) return { re: /gstr[\s-]*3b/i, label: 'GSTR-3B', excl: [/gstr[\s-]*1\b/i, /gstr[\s-]*2/i] };
+    if (/GSTR-?1/.test(rt)) return { re: /gstr[\s-]*1\b/i, label: 'GSTR-1', excl: [/gstr[\s-]*1a/i, /gstr[\s-]*2/i, /gstr[\s-]*3/i, /gstr[\s-]*6/i, /gstr[\s-]*7/i] };
+    if (/ITC-?0?4/.test(rt)) return { re: /itc[\s-]*0?4/i, label: 'ITC-04', excl: [] };
+    if (/GSTR-?6/.test(rt)) return { re: /gstr[\s-]*6\b/i, label: 'GSTR-6', excl: [/gstr[\s-]*1/i, /gstr[\s-]*2/i, /gstr[\s-]*3/i] };
+    if (/GSTR-?7/.test(rt)) return { re: /gstr[\s-]*7\b/i, label: 'GSTR-7', excl: [/gstr[\s-]*1/i, /gstr[\s-]*2/i, /gstr[\s-]*3/i] };
+    if (/CMP-?0?8/.test(rt)) return { re: /cmp[\s-]*0?8/i, label: 'CMP-08', excl: [] };
+    return null;
+  }
+
+  // "Open filing page" mode — from the Filing Status login icon. Log in (done),
+  // then on the dashboard pick FY + quarter + month, Search, and click the
+  // return's "Prepare Online" so the human lands on the filing page. We DO NOT
+  // submit — CAPTCHA and the final OTP/DSC submission stay with the human.
+  async function handleFiling(job, cur, progress) {
+    if (!/returns\/auth\/dashboard/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
+    if (!(await waitFor('select', 20000))) { banner('Returns dashboard did not load.', '#dc2626'); await clearJob(); return; }
+    const MONTHS_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const ret = job.ret || {};
+    const map = filingTileFor(ret.return_type);
+    if (!map) { banner('This return type is not supported for one-click filing: ' + ret.return_type, '#dc2626'); await clearJob(); return; }
+    const [mm, yyyy] = String(ret.period_month || '').split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) { banner('Bad filing period.', '#dc2626'); await clearJob(); return; }
+    const fyStart = mm >= 4 ? yyyy : yyyy - 1;
+    const fyShort = fyStart + '-' + String((fyStart + 1) % 100).padStart(2, '0');
+    const monthName = MONTHS_FULL[mm - 1];
+    const q = mm >= 4 ? Math.ceil((mm - 3) / 3) : 4;
+
+    banner('Opening ' + map.label + ' for ' + monthName + ' ' + yyyy + '…' + progress);
+    if (!(await selectWhereOption(fyShort))) { banner('Could not set the financial year on the dashboard.', '#dc2626'); await clearJob(); return; }
+    await sleep(700);
+    await selectWhereOption('Quarter ' + q, { startsWith: true, timeout: 8000 });
+    await sleep(700);
+    if (!(await selectWhereOption(monthName, { timeout: 12000 }))) { banner('Could not set the month on the dashboard.', '#dc2626'); await clearJob(); return; }
+    await sleep(300);
+    const search = $('button.srchbtn') || $$('button').find((b) => /^search$/i.test((b.textContent || '').trim()));
+    if (!search) { banner('Could not find the dashboard Search button.', '#dc2626'); await clearJob(); return; }
+    search.click();
+
+    // Find the return tile's filing button ("Prepare Online" for unfiled returns).
+    let btn = null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 15000 && !btn) {
+      await sleep(400);
+      btn = findTileButton(map.re, /prepare\s*online/i, map.excl) || findTileButton(map.re, /prepare|proceed|file\b/i, map.excl);
+    }
+    if (!btn) {
+      banner('Logged in — but no "Prepare Online" for ' + map.label + ' (already filed, or a different button). You are on the dashboard for ' + monthName + ' — open it yourself.', '#f59e0b');
+      await clearJob();
+      return;
+    }
+    banner('Opening the ' + map.label + ' filing page — review and submit with OTP/DSC yourself.', '#16a34a');
+    await clearJob(); // stop acting; a reload here won't re-trigger. The human takes over.
+    btn.click();
   }
 
   // "Pull GSTR-2B" mode — triggered by the app's Import 2B "Pull from portal"

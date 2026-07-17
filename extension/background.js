@@ -102,6 +102,23 @@ const API = {
     await chrome.storage.local.set({ gstk_active_job: job });
     return { started: true, client: c.name };
   },
+
+  // From the Filing Status login icon: log the client in and open the given
+  // return's filing page (current tab's return + period). The human does the
+  // CAPTCHA and the final OTP/DSC submission — we only log in + navigate.
+  startFilingOpen: async (info) => {
+    const c = await API.getClient(info.clientId);
+    if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
+    const job = {
+      mode: 'filing', period: info.period_month, idx: 0, step: 'login', startedAt: Date.now(),
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+      ret: { return_type: info.return_type, period_month: info.period_month },
+    };
+    const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
+    job.tabId = tab.id;
+    await chrome.storage.local.set({ gstk_active_job: job });
+    return { started: true, client: c.name, return_type: info.return_type };
+  },
 };
 
 // ---- GSTR-2B Excel capture (to-disk download) ------------------------------

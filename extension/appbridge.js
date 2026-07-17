@@ -42,6 +42,19 @@ window.addEventListener('message', (e) => {
         window.postMessage({ __gstkPull2BResult: { ok: false, error } }, '*');
       }
     });
+    return;
+  }
+
+  // The Filing Status login icon asked to log a client in and open a return's
+  // filing page. Opens a portal tab; the human does the CAPTCHA + OTP/DSC submit.
+  if (d.__gstkOpenFiling) {
+    const info = d.__gstkOpenFiling;
+    if (!info.clientId || !info.return_type || !info.period_month) return;
+    chrome.runtime.sendMessage({ gstk: true, fn: 'startFilingOpen', args: [info] }, (resp) => {
+      const ok = resp && resp.ok;
+      const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
+      window.postMessage({ __gstkOpenFilingResult: ok ? { ok: true } : { ok: false, error } }, '*');
+    });
   }
 });
 

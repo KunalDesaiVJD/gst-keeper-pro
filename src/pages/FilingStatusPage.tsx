@@ -8,14 +8,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Download, FileText, Lock, Unlock, Search, Filter, ChevronDown, Info, Upload, Eye, Trash2 } from 'lucide-react';
+import { Download, FileText, Lock, Unlock, Search, Filter, ChevronDown, Info, Upload, Eye, Trash2, LogIn } from 'lucide-react';
 import { FilingStatusType, ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth, RegistrationType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { supabase } from '@/integrations/supabase/client';
-import GSTPortalLink from '@/components/clients/GSTPortalLink';
 import ClientHoverDetails from '@/components/filing/ClientHoverDetails';
 import { SchemeHistoryEntry } from '@/utils/schemeResolver';
 import { generateFilingRecords } from '@/lib/filingRecords';
@@ -1038,6 +1037,10 @@ const FilingStatusPage: React.FC = () => {
         if (d.__gstkPullResult.ok) toast.success('Portal opened in a new tab — type the CAPTCHA there; the return will be marked Filed with its PDF. Refresh this page when it finishes.');
         else toast.error('Could not start the portal pull: ' + d.__gstkPullResult.error);
       }
+      if (d.__gstkOpenFilingResult) {
+        if (d.__gstkOpenFilingResult.ok) toast.success('Portal opening in a new tab — type the CAPTCHA; it lands on the return\'s filing page. Review and submit with OTP/DSC yourself.');
+        else toast.error('Could not open the filing page: ' + d.__gstkOpenFilingResult.error);
+      }
     };
     window.addEventListener('message', onMsg);
     // Actively ask the extension if it's present. The extension announces itself
@@ -1058,6 +1061,13 @@ const FilingStatusPage: React.FC = () => {
   const pullFromPortal = (record: FilingRecord) => {
     if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to pull from the portal.'); return; }
     window.postMessage({ __gstkPullReturn: { clientId: record.client_id, return_type: record.return_type, period_month: record.period_month } }, '*');
+  };
+
+  // Log the client in on the portal and open THIS return's filing page (current
+  // tab's return + period). The human does the CAPTCHA and the OTP/DSC submit.
+  const openFilingOnPortal = (record: FilingRecord) => {
+    if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to log in from here.'); return; }
+    window.postMessage({ __gstkOpenFiling: { clientId: record.client_id, return_type: record.return_type, period_month: record.period_month } }, '*');
   };
 
   const handlePdfUpload = async (record: FilingRecord, file: File) => {
@@ -1246,7 +1256,7 @@ const FilingStatusPage: React.FC = () => {
               </th>
               <th className="w-28">Filed Date</th>
               <th className="min-w-[200px]">Remarks</th>
-              <th className="w-16">GST</th>
+              <th className="w-16">Login</th>
               {canUnlockSheets() && <th className="w-16">Unlock</th>}
             </tr>
           </thead>
@@ -1412,7 +1422,15 @@ const FilingStatusPage: React.FC = () => {
                   </div>
                 </td>
                 <td className="text-center">
-                  <GSTPortalLink clientId={record.client_id} clientName={record.clientName} />
+                  <button
+                    onClick={() => openFilingOnPortal(record)}
+                    className={`inline-flex items-center justify-center h-7 w-7 rounded ${extReady ? 'text-primary hover:bg-primary/10' : 'text-muted-foreground hover:bg-muted'}`}
+                    title={extReady
+                      ? `Log ${record.clientName || 'this client'} in and open the ${record.return_type} filing page — you do the CAPTCHA & submit with OTP/DSC`
+                      : 'GST Keeper extension not detected yet — install/enable it and reload this page'}
+                  >
+                    <LogIn className="h-4 w-4" />
+                  </button>
                 </td>
                 {canUnlockSheets() && (
                   <td className="text-center">
