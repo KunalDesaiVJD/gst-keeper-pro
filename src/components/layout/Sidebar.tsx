@@ -15,8 +15,7 @@ import {
   FileJson,
   Repeat,
   FolderDown,
-  Users,
-  Database
+  Users
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
@@ -106,12 +105,7 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     icon: <FileSpreadsheet className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
-  {
-    label: 'Manage Masters',
-    path: '/manage-masters',
-    icon: <Database className="h-5 w-5" />,
-    roles: ['superadmin', 'gst_manager', 'employee'],
-  },
+  // "Manage Masters" now lives inside Settings -> Masters tab (not a top-level nav item).
   {
     label: 'Reports',
     path: '/reports',

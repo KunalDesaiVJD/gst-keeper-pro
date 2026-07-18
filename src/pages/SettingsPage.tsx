@@ -8,7 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { Settings, Lock, Users, AlertCircle, Check, X, Loader2 } from 'lucide-react';
+import { Settings, Lock, Users, AlertCircle, Check, X, Loader2, Database } from 'lucide-react';
+import ManageMastersPage from '@/pages/ManageMastersPage';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
@@ -37,7 +38,7 @@ const RequiredMark: React.FC = () => (
 );
 
 const SettingsPage: React.FC = () => {
-  const { user, canManageEmployees } = useAuth();
+  const { user, canManageEmployees, isStaffRole } = useAuth();
 
   // Password change state
   const [currentPassword, setCurrentPassword] = useState('');
@@ -257,6 +258,12 @@ const SettingsPage: React.FC = () => {
             <TabsTrigger value="employees" className="flex items-center gap-2">
               <Users className="h-4 w-4" />
               Employee Passwords
+            </TabsTrigger>
+          )}
+          {isStaffRole() && (
+            <TabsTrigger value="masters" className="flex items-center gap-2">
+              <Database className="h-4 w-4" />
+              Masters
             </TabsTrigger>
           )}
         </TabsList>
@@ -480,6 +487,12 @@ const SettingsPage: React.FC = () => {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+        )}
+
+        {isStaffRole() && (
+          <TabsContent value="masters">
+            <ManageMastersPage embedded />
           </TabsContent>
         )}
       </Tabs>

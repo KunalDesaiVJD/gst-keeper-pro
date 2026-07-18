@@ -62,7 +62,13 @@ const RequiredMark: React.FC = () => (
   </span>
 );
 
-const ManageMastersPage: React.FC = () => {
+interface ManageMastersPageProps {
+  /** Rendered inside another page (the Settings "Masters" tab): hides the back
+   *  button and uses a smaller heading so there is no duplicate page title. */
+  embedded?: boolean;
+}
+
+const ManageMastersPage: React.FC<ManageMastersPageProps> = ({ embedded = false }) => {
   const navigate = useNavigate();
   const { user, canManageRCMMasters } = useAuth();
   const [masters, setMasters] = useState<RCMMaster[]>([]);
@@ -218,20 +224,23 @@ const ManageMastersPage: React.FC = () => {
   const inactiveMasters = masters.filter((m) => !m.is_active);
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={embedded ? 'space-y-6' : 'space-y-6 animate-fade-in'}>
       {/* Header */}
       <div className="flex items-start gap-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Back to RCM Summary"
-          onClick={() => navigate('/rcm-summary')}
-          className="mt-1 shrink-0"
-        >
-          <ArrowLeft className="h-5 w-5" />
-        </Button>
+        {!embedded && (
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Back to RCM Summary"
+            onClick={() => navigate('/rcm-summary')}
+            className="mt-1 shrink-0"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+        )}
         <PageHeader
           className="flex-1"
+          embedded={embedded}
           title="Manage RCM Masters"
           subtitle="Add, edit, or delete expense masters"
           icon={<Settings className="h-6 w-6" />}
