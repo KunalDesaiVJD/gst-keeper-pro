@@ -6,7 +6,7 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Badge } from '@/components/ui/badge';
 import { isQuarterEndMonth } from '@/types';
-import { Lock, AlertCircle, Save, Download, History, AlertTriangle } from 'lucide-react';
+import { Lock, AlertCircle, Save, Download, History, AlertTriangle, Trash2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
@@ -1144,7 +1144,7 @@ const ITCSummaryPage: React.FC = () => {
           )}
           {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClient && (
             <Button variant="destructive" size="sm" onClick={() => setShowClearData(true)} className="gap-2">
-              <AlertTriangle className="h-4 w-4" />
+              <Trash2 className="h-4 w-4" />
               Clear Data
             </Button>
           )}

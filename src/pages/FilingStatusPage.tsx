@@ -29,6 +29,20 @@ const normalizeAccountant = (raw: string | null | undefined): string => {
   return stripped || 'Unassigned';
 };
 
+// Left-accent + subtle tint for the Filing Status control, so a "Filed" row reads
+// differently from "Mismatch"/"Pending" at a glance — using the semantic tokens.
+const filingStatusAccent = (status: string): string => {
+  switch (status) {
+    case 'Filed': return 'border-l-4 border-l-success bg-success/5';
+    case 'Mismatch in Data': return 'border-l-4 border-l-destructive bg-destructive/5';
+    case 'Data Pending':
+    case 'Prepared Pending': return 'border-l-4 border-l-warning bg-warning/5';
+    case 'Data Received':
+    case 'Prepared': return 'border-l-4 border-l-info bg-info/5';
+    default: return '';
+  }
+};
+
 
 // Due date constants for each return type
 const RETURN_DUE_DATES: Record<string, number> = {
@@ -1274,9 +1288,9 @@ const FilingStatusPage: React.FC = () => {
                   />
                 </td>
                 <td>
-                  <Badge 
-                    variant={record.filingFrequency === 'Quarterly' || record.filingFrequency === 'IFF' ? 'default' : 'outline'} 
-                    className={`text-xs ${record.filingFrequency === 'Quarterly' ? 'bg-amber-500 hover:bg-amber-600 text-white' : record.filingFrequency === 'IFF' ? 'bg-blue-500 hover:bg-blue-600 text-white' : ''}`}
+                  <Badge
+                    variant={record.filingFrequency === 'Quarterly' ? 'warning' : record.filingFrequency === 'IFF' ? 'info' : 'outline'}
+                    className="text-xs"
                   >
                     {record.filingFrequency === 'Quarterly' ? 'Q' : record.filingFrequency === 'IFF' ? 'IFF' : 'M'}
                   </Badge>
@@ -1287,7 +1301,7 @@ const FilingStatusPage: React.FC = () => {
                     disabled={record.is_locked && !canUnlockSheets()}
                     onValueChange={(value) => handleStatusChange(record, value as FilingStatusType, editingArn[record.id])}
                   >
-                    <SelectTrigger className="w-40 h-8 [appearance:none]">
+                    <SelectTrigger className={`w-40 h-8 [appearance:none] ${filingStatusAccent(record.status)}`}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
