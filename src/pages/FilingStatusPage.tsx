@@ -1169,13 +1169,19 @@ const FilingStatusPage: React.FC = () => {
       <div className="relative">
         <div className="overflow-x-auto">
           <div className="overflow-y-auto max-h-[75vh]">
-        <table className="gst-table" style={{ tableLayout: 'fixed' }}>
+        {/* Fixed layout + an explicit width on every column, and a min-width so the
+            grid scrolls horizontally instead of crushing columns into each other.
+            Tighter px-3/py-2 density (vs .gst-table's roomy px-4/py-3) to fit 11 columns. */}
+        <table
+          className="gst-table min-w-[1250px] [&_th]:px-3 [&_th]:py-2 [&_td]:px-3 [&_td]:py-2"
+          style={{ tableLayout: 'fixed' }}
+        >
           <thead className="sticky top-0 z-10">
             <tr>
               <th className="w-12">No.</th>
-              <th>Client Name</th>
-              <th>Frequency</th>
-              <th>
+              <th className="w-52">Client Name</th>
+              <th className="w-20">Frequency</th>
+              <th className="w-40">
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
@@ -1221,8 +1227,8 @@ const FilingStatusPage: React.FC = () => {
                 </Popover>
               </th>
               <th className="w-36">ARN</th>
-              <th className="w-24">Return PDF</th>
-              <th className="w-20">
+              <th className="w-28">Return PDF</th>
+              <th className="w-16">
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
@@ -1270,7 +1276,7 @@ const FilingStatusPage: React.FC = () => {
                 </Popover>
               </th>
               <th className="w-28">Filed Date</th>
-              <th className="min-w-[200px]">Remarks</th>
+              <th className="w-48">Remarks</th>
               <th className="w-16">Login</th>
               {canUnlockSheets() && <th className="w-16">Unlock</th>}
             </tr>
@@ -1302,7 +1308,7 @@ const FilingStatusPage: React.FC = () => {
                     disabled={record.is_locked && !canUnlockSheets()}
                     onValueChange={(value) => handleStatusChange(record, value as FilingStatusType, editingArn[record.id])}
                   >
-                    <SelectTrigger className={`w-40 h-8 [appearance:none] ${filingStatusAccent(record.status)}`}>
+                    <SelectTrigger className={`w-full h-8 text-xs [appearance:none] ${filingStatusAccent(record.status)}`}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1326,7 +1332,7 @@ const FilingStatusPage: React.FC = () => {
                       // ARN is kept local only - it will be saved when status is changed to "Filed"
                     }}
                     placeholder="AA1234567890123"
-                    className="w-36 h-7 text-xs font-mono"
+                    className="w-full h-7 text-xs font-mono"
                     maxLength={15}
                     disabled={record.is_locked && !canUnlockSheets()}
                   />
@@ -1420,7 +1426,7 @@ const FilingStatusPage: React.FC = () => {
                     )}
                   </div>
                 </td>
-                <td className="min-w-[200px]">
+                <td>
                   <div className="flex items-start gap-1">
                     <textarea
                       value={editingRemarks[record.id] ?? record.remarks ?? ''}
