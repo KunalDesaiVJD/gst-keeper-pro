@@ -5,6 +5,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Upload, Loader2, Trash2, Plus, Lock, X, Download, RefreshCw } from 'lucide-react';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -114,6 +115,7 @@ const Import2BTab: React.FC = () => {
 
   const isStaff = isStaffRole();
   const readOnly = isLocked || !isStaff;
+  const confirm = useConfirm();
 
   const monthOptions = useMemo(() => {
     const months: { value: string; label: string }[] = [];
@@ -223,12 +225,12 @@ const Import2BTab: React.FC = () => {
       const fileGstin = (result.header.gstin || '').toUpperCase().trim();
       const clientGstin = (client?.gstin || '').toUpperCase().trim();
       if (fileGstin && clientGstin && fileGstin !== clientGstin) {
-        if (!confirm(`The file's GSTIN (${fileGstin}) does not match ${client?.name} (${clientGstin}). Import anyway?`)) {
+        if (!(await confirm({ title: 'GSTIN mismatch', description: `The file's GSTIN (${fileGstin}) doesn't match ${client?.name} (${clientGstin}). Import anyway?`, confirmText: 'Import anyway' }))) {
           setIsImporting(false); return;
         }
       }
       if (result.header.periodMonthKey && result.header.periodMonthKey !== selectedMonth) {
-        if (!confirm(`The file is for ${result.header.periodLabel || result.header.periodMonthKey}, but ${selectedMonth} is selected. Import anyway?`)) {
+        if (!(await confirm({ title: 'Period mismatch', description: `The file is for ${result.header.periodLabel || result.header.periodMonthKey}, but ${selectedMonth} is selected. Import anyway?`, confirmText: 'Import anyway' }))) {
           setIsImporting(false); return;
         }
       }
@@ -348,7 +350,7 @@ const Import2BTab: React.FC = () => {
 
   const deleteImported2B = async () => {
     if (readOnly || !selectedClient || !selectedMonth || twoBDocs.length === 0) return;
-    if (!confirm(`Delete ALL imported GSTR-2B for ${selectedClientName} — ${selectedMonth}? Books entries are kept.`)) return;
+    if (!(await confirm({ title: 'Delete imported 2B?', description: `Delete ALL imported GSTR-2B for ${selectedClientName} — ${selectedMonth}? Books entries are kept.`, destructive: true, confirmText: 'Delete' }))) return;
     const { error } = await supabase.from('twob_import_docs')
       .delete().eq('client_id', selectedClient).eq('period_month', selectedMonth);
     if (error) { toast.error('Delete failed: ' + error.message); return; }
