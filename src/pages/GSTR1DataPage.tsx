@@ -2,10 +2,11 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, FileSpreadsheet } from 'lucide-react';
+import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, FileCheck2, Inbox } from 'lucide-react';
 import { Gstr3bPreviewDialog } from '@/components/portal/Gstr3bPreviewDialog';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import {
   AlertDialog,
@@ -55,6 +56,11 @@ interface GSTR1Record {
   last_push_by?: string | null;
   last_push_message?: string | null;
 }
+
+// Shared scroll shell for the eleven tab tables. shadcn's <Table> renders its
+// own `overflow-auto` div, so the height cap has to land on that child for the
+// sticky header to have a scroll container to stick to.
+const TABLE_SHELL = 'rounded-md border border-border [&>div]:max-h-[70vh] [&>div]:overflow-auto';
 
 // GSTR-1 JSON section types
 interface B2BInvoice {
@@ -523,9 +529,11 @@ const GSTR1DataPage: React.FC = () => {
   }, [json.doc_issue]);
 
   const renderEmptyState = (label: string) => (
-    <div className="text-center py-8 text-muted-foreground">
-      No {label} data found in this GSTR-1 file
-    </div>
+    <TableEmptyState
+      icon={<Inbox className="h-6 w-6" />}
+      title={`No ${label} data`}
+      description={`This GSTR-1 file contains no ${label} records for the selected client and period.`}
+    />
   );
 
   const selectedClientName = clients.find(c => c.id === selectedClient)?.name || '';
@@ -533,18 +541,12 @@ const GSTR1DataPage: React.FC = () => {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-primary/10 rounded-lg">
-            <FileJson className="h-6 w-6 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-heading font-bold text-foreground">GSTR-01</h1>
-            <p className="text-muted-foreground">Import and view GSTR-01 JSON data client-wise & month-wise</p>
-          </div>
-        </div>
-        {isStaff && (
-          <div className="flex items-center gap-2">
+      <PageHeader
+        title="GSTR-01"
+        subtitle="Import and view GSTR-01 JSON data client-wise & month-wise"
+        icon={<FileJson className="h-6 w-6" />}
+        actions={isStaff ? (
+          <>
             <Button onClick={handleImportClick} disabled={isImporting || !selectedClient || !selectedMonth}>
               {isImporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
               Import JSON
@@ -561,24 +563,24 @@ const GSTR1DataPage: React.FC = () => {
             )}
             {selectedClient && canEditFilingStatus() && (
               <Button variant="outline" onClick={() => setGstr3bOpen(true)} disabled={!selectedClient || !selectedMonth}>
-                <FileSpreadsheet className="h-4 w-4 mr-2" /> Prepare GSTR-3B
+                <FileCheck2 className="h-4 w-4 mr-2" /> Prepare GSTR-3B
               </Button>
             )}
             {gstr1Data && (
-              <Button variant="destructive" size="sm" onClick={handleDelete} disabled={isPushing}>
+              <Button variant="destructive" onClick={handleDelete} disabled={isPushing}>
                 <Trash2 className="h-4 w-4 mr-2" /> Delete
               </Button>
             )}
-          </div>
-        )}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".json,application/json"
-          className="hidden"
-          onChange={handleFileChange}
-        />
-      </div>
+          </>
+        ) : undefined}
+      />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={handleFileChange}
+      />
 
       {/* Filters */}
       <Card>
@@ -648,19 +650,26 @@ const GSTR1DataPage: React.FC = () => {
       {/* Data Display */}
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>
       ) : !selectedClient || !selectedMonth ? (
         <Card>
-          <CardContent className="p-8 text-center text-muted-foreground">
-            Select a client and month to view GSTR-1 data
+          <CardContent className="p-4">
+            <TableEmptyState
+              icon={<FileJson className="h-6 w-6" />}
+              title="No client or month selected"
+              description="Select a client and a return period above to view GSTR-1 data."
+            />
           </CardContent>
         </Card>
       ) : !gstr1Data ? (
         <Card>
-          <CardContent className="p-8 text-center text-muted-foreground">
-            No GSTR-1 data imported for <span className="font-semibold">{selectedClientName}</span> - <span className="font-semibold">{mmYyyyToShort(selectedMonth)}</span>.
-            {isStaff && ' Click "Import JSON" to upload.'}
+          <CardContent className="p-4">
+            <TableEmptyState
+              icon={<Upload className="h-6 w-6" />}
+              title={`No GSTR-1 data for ${selectedClientName} — ${mmYyyyToShort(selectedMonth)}`}
+              description={isStaff ? 'Click "Import JSON" above to upload the GSTR-1 file for this period.' : undefined}
+            />
           </CardContent>
         </Card>
       ) : (
@@ -684,70 +693,67 @@ const GSTR1DataPage: React.FC = () => {
               {/* B2B Tab */}
               <TabsContent value="b2b">
                 {b2bRows.length === 0 ? renderEmptyState('B2B') : (
-                  <ScrollArea className="w-full">
-                    <div className="min-w-[1200px]">
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] w-12">Sr.</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">GSTIN</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">Invoice No.</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">Date</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Value</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">POS</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">Rev. Chrg</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">Type</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Rate</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Taxable Value</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">IGST</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">CGST</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">SGST</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Cess</TableHead>
+                  <div className={TABLE_SHELL}>
+                    <Table className="min-w-[1200px]">
+                      <TableHeader className="sticky top-0 z-10">
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">GSTIN</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Invoice No.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Date</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Value</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Rev. Chrg</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Type</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Taxable Value</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {b2bRows.map((row, i) => (
+                          <TableRow key={i}>
+                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
+                            <TableCell className="border border-border font-mono text-xs">{row.ctin}</TableCell>
+                            <TableCell className="border border-border">{row.inum}</TableCell>
+                            <TableCell className="border border-border">{row.idt}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.val)}</TableCell>
+                            <TableCell className="border border-border">{row.pos}</TableCell>
+                            <TableCell className="border border-border">{row.rchrg}</TableCell>
+                            <TableCell className="border border-border">{row.inv_typ}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.txval)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {b2bRows.map((row, i) => (
-                            <TableRow key={i}>
-                              <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                              <TableCell className="border border-border font-mono text-xs">{row.ctin}</TableCell>
-                              <TableCell className="border border-border">{row.inum}</TableCell>
-                              <TableCell className="border border-border">{row.idt}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.val)}</TableCell>
-                              <TableCell className="border border-border">{row.pos}</TableCell>
-                              <TableCell className="border border-border">{row.rchrg}</TableCell>
-                              <TableCell className="border border-border">{row.inv_typ}</TableCell>
-                              <TableCell className="border border-border text-right">{row.rt}%</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.txval)}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.iamt)}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.camt)}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.samt)}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.csamt)}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                    <ScrollBar orientation="horizontal" />
-                  </ScrollArea>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </TabsContent>
 
               {/* B2CL Tab */}
               <TabsContent value="b2cl">
                 {b2clRows.length === 0 ? renderEmptyState('B2CL') : (
-                  <ScrollArea className="w-full">
+                  <div className={TABLE_SHELL}>
                     <Table>
-                      <TableHeader>
-                        <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
-                          <TableHead className="font-bold text-white border border-[#2E5A6B] w-12">Sr.</TableHead>
-                          <TableHead className="font-bold text-white border border-[#2E5A6B]">POS</TableHead>
-                          <TableHead className="font-bold text-white border border-[#2E5A6B]">Invoice No.</TableHead>
-                          <TableHead className="font-bold text-white border border-[#2E5A6B]">Date</TableHead>
-                          <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Value</TableHead>
-                          <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Rate</TableHead>
-                          <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Taxable Value</TableHead>
-                          <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">IGST</TableHead>
-                          <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Cess</TableHead>
+                      <TableHeader className="sticky top-0 z-10">
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Invoice No.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Date</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Value</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Taxable Value</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -757,120 +763,118 @@ const GSTR1DataPage: React.FC = () => {
                             <TableCell className="border border-border">{row.pos}</TableCell>
                             <TableCell className="border border-border">{row.inum}</TableCell>
                             <TableCell className="border border-border">{row.idt}</TableCell>
-                            <TableCell className="border border-border text-right">{formatNumber(row.val)}</TableCell>
-                            <TableCell className="border border-border text-right">{row.rt}%</TableCell>
-                            <TableCell className="border border-border text-right">{formatNumber(row.txval)}</TableCell>
-                            <TableCell className="border border-border text-right">{formatNumber(row.iamt)}</TableCell>
-                            <TableCell className="border border-border text-right">{formatNumber(row.csamt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.val)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.txval)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
                     </Table>
-                    <ScrollBar orientation="horizontal" />
-                  </ScrollArea>
+                  </div>
                 )}
               </TabsContent>
 
               {/* B2CS Tab */}
               <TabsContent value="b2cs">
                 {b2csRows.length === 0 ? renderEmptyState('B2CS') : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] w-12">Sr.</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B]">POS</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B]">Type</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Rate</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Taxable Value</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">IGST</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">CGST</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">SGST</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Cess</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {b2csRows.map((row: any, i: number) => (
-                        <TableRow key={i}>
-                          <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                          <TableCell className="border border-border">{row.pos}</TableCell>
-                          <TableCell className="border border-border">{row.typ}</TableCell>
-                          <TableCell className="border border-border text-right">{row.rt}%</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(row.txval)}</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(row.iamt)}</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(row.camt)}</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(row.samt)}</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(row.csamt)}</TableCell>
+                  <div className={TABLE_SHELL}>
+                    <Table>
+                      <TableHeader className="sticky top-0 z-10">
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Type</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Taxable Value</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {b2csRows.map((row: any, i: number) => (
+                          <TableRow key={i}>
+                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
+                            <TableCell className="border border-border">{row.pos}</TableCell>
+                            <TableCell className="border border-border">{row.typ}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.txval)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </TabsContent>
 
               {/* CDNR Tab */}
               <TabsContent value="cdnr">
                 {cdnrRows.length === 0 ? renderEmptyState('CDNR') : (
-                  <ScrollArea className="w-full">
-                    <div className="min-w-[1200px]">
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] w-12">Sr.</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">GSTIN</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">Note No.</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">Date</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">Type</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Value</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Rate</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Taxable Value</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">IGST</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">CGST</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">SGST</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Cess</TableHead>
+                  <div className={TABLE_SHELL}>
+                    <Table className="min-w-[1200px]">
+                      <TableHeader className="sticky top-0 z-10">
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">GSTIN</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Note No.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Date</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Type</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Value</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Taxable Value</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {cdnrRows.map((row, i) => (
+                          <TableRow key={i}>
+                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
+                            <TableCell className="border border-border font-mono text-xs">{row.ctin}</TableCell>
+                            <TableCell className="border border-border">{row.ntNum}</TableCell>
+                            <TableCell className="border border-border">{row.ntDt}</TableCell>
+                            <TableCell className="border border-border">{row.ntTyp}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.val)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.txval)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {cdnrRows.map((row, i) => (
-                            <TableRow key={i}>
-                              <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                              <TableCell className="border border-border font-mono text-xs">{row.ctin}</TableCell>
-                              <TableCell className="border border-border">{row.ntNum}</TableCell>
-                              <TableCell className="border border-border">{row.ntDt}</TableCell>
-                              <TableCell className="border border-border">{row.ntTyp}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.val)}</TableCell>
-                              <TableCell className="border border-border text-right">{row.rt}%</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.txval)}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.iamt)}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.camt)}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.samt)}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.csamt)}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                    <ScrollBar orientation="horizontal" />
-                  </ScrollArea>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </TabsContent>
 
               {/* CDNUR Tab */}
               <TabsContent value="cdnur">
                 {cdnurRows.length === 0 ? renderEmptyState('CDNUR') : (
-                  <ScrollArea className="w-full">
+                  <div className={TABLE_SHELL}>
                     <Table>
-                      <TableHeader>
-                        <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
-                          <TableHead className="font-bold text-white border border-[#2E5A6B] w-12">Sr.</TableHead>
-                          <TableHead className="font-bold text-white border border-[#2E5A6B]">Note No.</TableHead>
-                          <TableHead className="font-bold text-white border border-[#2E5A6B]">Date</TableHead>
-                          <TableHead className="font-bold text-white border border-[#2E5A6B]">Type</TableHead>
-                          <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Value</TableHead>
-                          <TableHead className="font-bold text-white border border-[#2E5A6B]">POS</TableHead>
-                          <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Rate</TableHead>
-                          <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Taxable Value</TableHead>
-                          <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">IGST</TableHead>
-                          <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Cess</TableHead>
+                      <TableHeader className="sticky top-0 z-10">
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Note No.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Date</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Type</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Value</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Taxable Value</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -880,242 +884,243 @@ const GSTR1DataPage: React.FC = () => {
                             <TableCell className="border border-border">{row.ntNum}</TableCell>
                             <TableCell className="border border-border">{row.ntDt}</TableCell>
                             <TableCell className="border border-border">{row.ntTyp}</TableCell>
-                            <TableCell className="border border-border text-right">{formatNumber(row.val)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.val)}</TableCell>
                             <TableCell className="border border-border">{row.pos}</TableCell>
-                            <TableCell className="border border-border text-right">{row.rt}%</TableCell>
-                            <TableCell className="border border-border text-right">{formatNumber(row.txval)}</TableCell>
-                            <TableCell className="border border-border text-right">{formatNumber(row.iamt)}</TableCell>
-                            <TableCell className="border border-border text-right">{formatNumber(row.csamt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.txval)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
                     </Table>
-                    <ScrollBar orientation="horizontal" />
-                  </ScrollArea>
+                  </div>
                 )}
               </TabsContent>
 
               {/* EXP Tab */}
               <TabsContent value="exp">
                 {expRows.length === 0 ? renderEmptyState('Export') : (
-                  <ScrollArea className="w-full">
-                    <div className="min-w-[1100px]">
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] w-12">Sr.</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">Export Type</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">Invoice No.</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">Date</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Value</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">Port Code</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">SB No.</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">SB Date</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Rate</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Taxable Value</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">IGST</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Cess</TableHead>
+                  <div className={TABLE_SHELL}>
+                    <Table className="min-w-[1100px]">
+                      <TableHeader className="sticky top-0 z-10">
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Export Type</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Invoice No.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Date</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Value</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Port Code</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">SB No.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">SB Date</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Taxable Value</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {expRows.map((row, i) => (
+                          <TableRow key={i}>
+                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
+                            <TableCell className="border border-border">{row.expTyp}</TableCell>
+                            <TableCell className="border border-border">{row.inum}</TableCell>
+                            <TableCell className="border border-border">{row.idt}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.val)}</TableCell>
+                            <TableCell className="border border-border">{row.sbpcode}</TableCell>
+                            <TableCell className="border border-border">{row.sbnum}</TableCell>
+                            <TableCell className="border border-border">{row.sbdt}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.txval)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {expRows.map((row, i) => (
-                            <TableRow key={i}>
-                              <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                              <TableCell className="border border-border">{row.expTyp}</TableCell>
-                              <TableCell className="border border-border">{row.inum}</TableCell>
-                              <TableCell className="border border-border">{row.idt}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.val)}</TableCell>
-                              <TableCell className="border border-border">{row.sbpcode}</TableCell>
-                              <TableCell className="border border-border">{row.sbnum}</TableCell>
-                              <TableCell className="border border-border">{row.sbdt}</TableCell>
-                              <TableCell className="border border-border text-right">{row.rt}%</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.txval)}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.iamt)}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.csamt)}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                    <ScrollBar orientation="horizontal" />
-                  </ScrollArea>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </TabsContent>
 
               {/* HSN Tab */}
               <TabsContent value="hsn">
                 {hsnRows.length === 0 ? renderEmptyState('HSN') : (
-                  <ScrollArea className="w-full">
-                    <div className="min-w-[1000px]">
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] w-12">Sr.</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">HSN Code</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">Description</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B]">UQC</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Qty</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Rate</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Taxable Value</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">IGST</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">CGST</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">SGST</TableHead>
-                            <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Cess</TableHead>
+                  <div className={TABLE_SHELL}>
+                    <Table className="min-w-[1000px]">
+                      <TableHeader className="sticky top-0 z-10">
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">HSN Code</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Description</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">UQC</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Qty</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Taxable Value</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {hsnRows.map((row: any, i: number) => (
+                          <TableRow key={i}>
+                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
+                            <TableCell className="border border-border font-mono">{row.hsn_sc}</TableCell>
+                            <TableCell className="border border-border">{row.desc}</TableCell>
+                            <TableCell className="border border-border">{row.uqc}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.qty)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.txval)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {hsnRows.map((row: any, i: number) => (
-                            <TableRow key={i}>
-                              <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                              <TableCell className="border border-border font-mono">{row.hsn_sc}</TableCell>
-                              <TableCell className="border border-border">{row.desc}</TableCell>
-                              <TableCell className="border border-border">{row.uqc}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.qty)}</TableCell>
-                              <TableCell className="border border-border text-right">{row.rt}%</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.txval)}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.iamt)}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.camt)}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.samt)}</TableCell>
-                              <TableCell className="border border-border text-right">{formatNumber(row.csamt)}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                    <ScrollBar orientation="horizontal" />
-                  </ScrollArea>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </TabsContent>
 
               {/* NIL Tab */}
               <TabsContent value="nil">
                 {!nilData.inv ? renderEmptyState('Nil Rated') : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
-                        <TableHead className="font-bold text-white border border-[#2E5A6B]">Description</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Nil Rated</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Exempted</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Non-GST</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {(nilData.inv || []).map((item: any, i: number) => (
-                        <TableRow key={i}>
-                          <TableCell className="border border-border">{item.sply_ty === 'INTRB2B' ? 'Inter-State B2B' : item.sply_ty === 'INTRAB2B' ? 'Intra-State B2B' : item.sply_ty === 'INTRB2C' ? 'Inter-State B2C' : item.sply_ty === 'INTRAB2C' ? 'Intra-State B2C' : item.sply_ty}</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(item.nil_amt)}</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(item.expt_amt)}</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(item.ngsup_amt)}</TableCell>
+                  <div className={TABLE_SHELL}>
+                    <Table>
+                      <TableHeader className="sticky top-0 z-10">
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Description</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Nil Rated</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Exempted</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Non-GST</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {(nilData.inv || []).map((item: any, i: number) => (
+                          <TableRow key={i}>
+                            <TableCell className="border border-border">{item.sply_ty === 'INTRB2B' ? 'Inter-State B2B' : item.sply_ty === 'INTRAB2B' ? 'Intra-State B2B' : item.sply_ty === 'INTRB2C' ? 'Inter-State B2C' : item.sply_ty === 'INTRAB2C' ? 'Intra-State B2C' : item.sply_ty}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(item.nil_amt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(item.expt_amt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(item.ngsup_amt)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </TabsContent>
 
               {/* AT Tab */}
               <TabsContent value="at">
                 {atRows.length === 0 ? renderEmptyState('Advance Tax') : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] w-12">Sr.</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B]">POS</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B]">Supply Type</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Rate</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Advance Amount</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">IGST</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">CGST</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">SGST</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Cess</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {atRows.map((row: any, i: number) => (
-                        <TableRow key={i}>
-                          <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                          <TableCell className="border border-border">{row.pos}</TableCell>
-                          <TableCell className="border border-border">{row.sply_ty}</TableCell>
-                          <TableCell className="border border-border text-right">{row.rt}%</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(row.ad_amt)}</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(row.iamt)}</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(row.camt)}</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(row.samt)}</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(row.csamt)}</TableCell>
+                  <div className={TABLE_SHELL}>
+                    <Table>
+                      <TableHeader className="sticky top-0 z-10">
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Supply Type</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Advance Amount</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {atRows.map((row: any, i: number) => (
+                          <TableRow key={i}>
+                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
+                            <TableCell className="border border-border">{row.pos}</TableCell>
+                            <TableCell className="border border-border">{row.sply_ty}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.ad_amt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </TabsContent>
 
               {/* TXPD Tab */}
               <TabsContent value="txpd">
                 {txpdRows.length === 0 ? renderEmptyState('Advance Adjustment') : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] w-12">Sr.</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B]">POS</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B]">Supply Type</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Rate</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Advance Amount</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">IGST</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">CGST</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">SGST</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Cess</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {txpdRows.map((row: any, i: number) => (
-                        <TableRow key={i}>
-                          <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                          <TableCell className="border border-border">{row.pos}</TableCell>
-                          <TableCell className="border border-border">{row.sply_ty}</TableCell>
-                          <TableCell className="border border-border text-right">{row.rt}%</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(row.ad_amt)}</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(row.iamt)}</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(row.camt)}</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(row.samt)}</TableCell>
-                          <TableCell className="border border-border text-right">{formatNumber(row.csamt)}</TableCell>
+                  <div className={TABLE_SHELL}>
+                    <Table>
+                      <TableHeader className="sticky top-0 z-10">
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Supply Type</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Advance Amount</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {txpdRows.map((row: any, i: number) => (
+                          <TableRow key={i}>
+                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
+                            <TableCell className="border border-border">{row.pos}</TableCell>
+                            <TableCell className="border border-border">{row.sply_ty}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.ad_amt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </TabsContent>
 
               {/* DOC Tab */}
               <TabsContent value="doc">
                 {docRows.length === 0 ? renderEmptyState('Document Issued') : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] w-12">Sr.</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B]">Doc Type</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B]">Sr. No.</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B]">From</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B]">To</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Total</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Cancelled</TableHead>
-                        <TableHead className="font-bold text-white border border-[#2E5A6B] text-right">Net Issued</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {docRows.map((row, i) => (
-                        <TableRow key={i}>
-                          <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                          <TableCell className="border border-border">{row.doc_typ}</TableCell>
-                          <TableCell className="border border-border">{row.doc_num}</TableCell>
-                          <TableCell className="border border-border">{row.from}</TableCell>
-                          <TableCell className="border border-border">{row.to}</TableCell>
-                          <TableCell className="border border-border text-right">{row.totnum}</TableCell>
-                          <TableCell className="border border-border text-right">{row.cancel}</TableCell>
-                          <TableCell className="border border-border text-right">{row.net_issue}</TableCell>
+                  <div className={TABLE_SHELL}>
+                    <Table>
+                      <TableHeader className="sticky top-0 z-10">
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Doc Type</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Sr. No.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">From</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">To</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Total</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cancelled</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Net Issued</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {docRows.map((row, i) => (
+                          <TableRow key={i}>
+                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
+                            <TableCell className="border border-border">{row.doc_typ}</TableCell>
+                            <TableCell className="border border-border">{row.doc_num}</TableCell>
+                            <TableCell className="border border-border">{row.from}</TableCell>
+                            <TableCell className="border border-border">{row.to}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{row.totnum}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{row.cancel}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{row.net_issue}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </TabsContent>
             </Tabs>

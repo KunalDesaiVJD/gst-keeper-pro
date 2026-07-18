@@ -20,6 +20,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -35,11 +36,14 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { Settings, Plus, Pencil, Trash2, Loader2, ArrowLeft } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { cn } from '@/lib/utils';
 
 interface RCMMaster {
   id: string;
@@ -49,6 +53,14 @@ interface RCMMaster {
   is_active: boolean;
   created_at: string;
 }
+
+/** Small red asterisk marking a required field. */
+const RequiredMark: React.FC = () => (
+  <span className="text-destructive" aria-hidden="true">
+    {' '}
+    *
+  </span>
+);
 
 const ManageMastersPage: React.FC = () => {
   const navigate = useNavigate();
@@ -65,9 +77,12 @@ const ManageMastersPage: React.FC = () => {
   const [expenseName, setExpenseName] = useState('');
   const [rate, setRate] = useState<string>('5%');
   const [supplyType, setSupplyType] = useState<string>('intrastate');
+  const [showValidation, setShowValidation] = useState(false);
 
   // Check if user has permission
   const hasPermission = canManageRCMMasters();
+
+  const expenseNameInvalid = showValidation && !expenseName.trim();
 
   const fetchMasters = useCallback(async () => {
     setIsLoading(true);
@@ -95,10 +110,12 @@ const ManageMastersPage: React.FC = () => {
     setRate('5%');
     setSupplyType('intrastate');
     setSelectedMaster(null);
+    setShowValidation(false);
   };
 
   const handleAdd = async () => {
     if (!expenseName.trim()) {
+      setShowValidation(true);
       toast.error('Please enter expense name');
       return;
     }
@@ -129,6 +146,7 @@ const ManageMastersPage: React.FC = () => {
 
   const handleEdit = async () => {
     if (!selectedMaster || !expenseName.trim()) {
+      setShowValidation(true);
       toast.error('Please enter expense name');
       return;
     }
@@ -187,6 +205,7 @@ const ManageMastersPage: React.FC = () => {
     setExpenseName(master.expense_name);
     setRate(master.rate);
     setSupplyType(master.supply_type);
+    setShowValidation(false);
     setShowEditDialog(true);
   };
 
@@ -201,25 +220,35 @@ const ManageMastersPage: React.FC = () => {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/rcm-summary')}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div className="p-2 bg-primary/10 rounded-lg">
-            <Settings className="h-6 w-6 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-heading font-bold text-foreground">Manage RCM Masters</h1>
-            <p className="text-muted-foreground">Add, edit, or delete expense masters</p>
-          </div>
-        </div>
-        {hasPermission && (
-          <Button onClick={() => setShowAddDialog(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Master
-          </Button>
-        )}
+      <div className="flex items-start gap-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Back to RCM Summary"
+          onClick={() => navigate('/rcm-summary')}
+          className="mt-1 shrink-0"
+        >
+          <ArrowLeft className="h-5 w-5" />
+        </Button>
+        <PageHeader
+          className="flex-1"
+          title="Manage RCM Masters"
+          subtitle="Add, edit, or delete expense masters"
+          icon={<Settings className="h-6 w-6" />}
+          actions={
+            hasPermission ? (
+              <Button
+                onClick={() => {
+                  resetForm();
+                  setShowAddDialog(true);
+                }}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add Master
+              </Button>
+            ) : undefined
+          }
+        />
       </div>
 
       {/* Active Masters */}
@@ -229,53 +258,64 @@ const ManageMastersPage: React.FC = () => {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
-          ) : activeMasters.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">No active masters found</p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Expense Name</TableHead>
-                  <TableHead>Rate</TableHead>
-                  <TableHead>Supply Type</TableHead>
-                  <TableHead className="w-24 text-center">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {activeMasters.map((master) => (
-                  <TableRow key={master.id}>
-                    <TableCell className="font-medium">{master.expense_name}</TableCell>
-                    <TableCell>{master.rate}</TableCell>
-                    <TableCell className="capitalize">{master.supply_type}</TableCell>
-                    <TableCell>
-                      {hasPermission && (
-                        <div className="flex items-center justify-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => openEditDialog(master)}
-                            className="h-8 w-8"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => openDeleteDialog(master)}
-                            className="h-8 w-8 text-destructive hover:text-destructive"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      )}
-                    </TableCell>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader className="sticky top-0 z-10">
+                  <TableRow className="bg-primary hover:bg-primary">
+                    <TableHead className="text-primary-foreground">Expense Name</TableHead>
+                    <TableHead className="text-primary-foreground">Rate</TableHead>
+                    <TableHead className="text-primary-foreground">Supply Type</TableHead>
+                    <TableHead className="w-24 text-center text-primary-foreground">Actions</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {activeMasters.length === 0 ? (
+                    <TableEmptyState
+                      colSpan={4}
+                      icon={<Settings className="h-6 w-6" />}
+                      title="No active masters"
+                      description="Add an expense master to make it available in the RCM dropdown."
+                    />
+                  ) : (
+                    activeMasters.map((master) => (
+                      <TableRow key={master.id}>
+                        <TableCell className="font-medium">{master.expense_name}</TableCell>
+                        <TableCell className="text-right tabular-nums">{master.rate}</TableCell>
+                        <TableCell className="capitalize">{master.supply_type}</TableCell>
+                        <TableCell>
+                          {hasPermission && (
+                            <div className="flex items-center justify-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={`Edit ${master.expense_name}`}
+                                onClick={() => openEditDialog(master)}
+                                className="h-8 w-8"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={`Delete ${master.expense_name}`}
+                                onClick={() => openDeleteDialog(master)}
+                                className="h-8 w-8 text-destructive hover:text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -289,24 +329,26 @@ const ManageMastersPage: React.FC = () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Expense Name</TableHead>
-                  <TableHead>Rate</TableHead>
-                  <TableHead>Supply Type</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {inactiveMasters.map((master) => (
-                  <TableRow key={master.id} className="opacity-60">
-                    <TableCell className="font-medium">{master.expense_name}</TableCell>
-                    <TableCell>{master.rate}</TableCell>
-                    <TableCell className="capitalize">{master.supply_type}</TableCell>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader className="sticky top-0 z-10">
+                  <TableRow className="bg-primary hover:bg-primary">
+                    <TableHead className="text-primary-foreground">Expense Name</TableHead>
+                    <TableHead className="text-primary-foreground">Rate</TableHead>
+                    <TableHead className="text-primary-foreground">Supply Type</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {inactiveMasters.map((master) => (
+                    <TableRow key={master.id} className="opacity-60">
+                      <TableCell className="font-medium">{master.expense_name}</TableCell>
+                      <TableCell className="text-right tabular-nums">{master.rate}</TableCell>
+                      <TableCell className="capitalize">{master.supply_type}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -316,21 +358,38 @@ const ManageMastersPage: React.FC = () => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add New Master</DialogTitle>
+            <DialogDescription>
+              Create an RCM expense master. It becomes selectable in the RCM expense dropdown.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="expenseName">Expense Name</Label>
+              <Label htmlFor="expenseName">
+                Expense Name
+                <RequiredMark />
+              </Label>
               <Input
                 id="expenseName"
                 value={expenseName}
                 onChange={(e) => setExpenseName(e.target.value)}
                 placeholder="Enter expense name"
+                aria-invalid={expenseNameInvalid}
+                aria-describedby={expenseNameInvalid ? 'expenseName-error' : undefined}
+                className={cn(expenseNameInvalid && 'border-destructive focus-visible:ring-destructive')}
               />
+              {expenseNameInvalid && (
+                <p id="expenseName-error" className="text-xs text-destructive">
+                  Expense name is required.
+                </p>
+              )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="rate">Rate</Label>
+              <Label htmlFor="rate">
+                Rate
+                <RequiredMark />
+              </Label>
               <Select value={rate} onValueChange={setRate}>
-                <SelectTrigger>
+                <SelectTrigger id="rate">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -340,9 +399,12 @@ const ManageMastersPage: React.FC = () => {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="supplyType">Supply Type</Label>
+              <Label htmlFor="supplyType">
+                Supply Type
+                <RequiredMark />
+              </Label>
               <Select value={supplyType} onValueChange={setSupplyType}>
-                <SelectTrigger>
+                <SelectTrigger id="supplyType">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -353,12 +415,19 @@ const ManageMastersPage: React.FC = () => {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowAddDialog(false); resetForm(); }}>
+            <Button
+              variant="outline"
+              disabled={isSubmitting}
+              onClick={() => {
+                setShowAddDialog(false);
+                resetForm();
+              }}
+            >
               Cancel
             </Button>
             <Button onClick={handleAdd} disabled={isSubmitting}>
               {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Add Master
+              {isSubmitting ? 'Adding…' : 'Add Master'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -369,21 +438,38 @@ const ManageMastersPage: React.FC = () => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit Master</DialogTitle>
+            <DialogDescription>
+              Update the name, rate or supply type of this RCM expense master.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="editExpenseName">Expense Name</Label>
+              <Label htmlFor="editExpenseName">
+                Expense Name
+                <RequiredMark />
+              </Label>
               <Input
                 id="editExpenseName"
                 value={expenseName}
                 onChange={(e) => setExpenseName(e.target.value)}
                 placeholder="Enter expense name"
+                aria-invalid={expenseNameInvalid}
+                aria-describedby={expenseNameInvalid ? 'editExpenseName-error' : undefined}
+                className={cn(expenseNameInvalid && 'border-destructive focus-visible:ring-destructive')}
               />
+              {expenseNameInvalid && (
+                <p id="editExpenseName-error" className="text-xs text-destructive">
+                  Expense name is required.
+                </p>
+              )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="editRate">Rate</Label>
+              <Label htmlFor="editRate">
+                Rate
+                <RequiredMark />
+              </Label>
               <Select value={rate} onValueChange={setRate}>
-                <SelectTrigger>
+                <SelectTrigger id="editRate">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -393,9 +479,12 @@ const ManageMastersPage: React.FC = () => {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="editSupplyType">Supply Type</Label>
+              <Label htmlFor="editSupplyType">
+                Supply Type
+                <RequiredMark />
+              </Label>
               <Select value={supplyType} onValueChange={setSupplyType}>
-                <SelectTrigger>
+                <SelectTrigger id="editSupplyType">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -406,12 +495,19 @@ const ManageMastersPage: React.FC = () => {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowEditDialog(false); resetForm(); }}>
+            <Button
+              variant="outline"
+              disabled={isSubmitting}
+              onClick={() => {
+                setShowEditDialog(false);
+                resetForm();
+              }}
+            >
               Cancel
             </Button>
             <Button onClick={handleEdit} disabled={isSubmitting}>
               {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Save Changes
+              {isSubmitting ? 'Saving…' : 'Save Changes'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -428,12 +524,22 @@ const ManageMastersPage: React.FC = () => {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => { setShowDeleteDialog(false); resetForm(); }}>
+            <AlertDialogCancel
+              disabled={isSubmitting}
+              onClick={() => {
+                setShowDeleteDialog(false);
+                resetForm();
+              }}
+            >
               Cancel
             </AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={isSubmitting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
               {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Delete
+              {isSubmitting ? 'Deleting…' : 'Delete'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

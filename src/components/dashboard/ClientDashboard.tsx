@@ -3,16 +3,20 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { 
-  CheckCircle2, 
-  Clock, 
+import {
+  CheckCircle2,
+  Clock,
   Download,
   ExternalLink,
   Building2,
+  LayoutDashboard,
+  Loader2,
   Phone,
   Mail
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { TableEmptyState } from '@/components/ui/table-empty-state';
 import ClientPasswordResetRequest from '@/components/clients/ClientPasswordResetRequest';
 
 interface ClientData {
@@ -102,7 +106,7 @@ const ClientDashboard: React.FC = () => {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">Loading...</p>
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
@@ -110,7 +114,11 @@ const ClientDashboard: React.FC = () => {
   if (!client) {
     return (
       <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">Client data not found.</p>
+        <TableEmptyState
+          icon={<Building2 className="h-6 w-6" />}
+          title="Client data not found"
+          description="We couldn't find a client profile linked to your login. Please contact your GST manager."
+        />
       </div>
     );
   }
@@ -148,6 +156,12 @@ const ClientDashboard: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-fade-in">
+      <PageHeader
+        title="Dashboard"
+        subtitle="Your GST registration details and filing history."
+        icon={<LayoutDashboard className="h-6 w-6" />}
+      />
+
       {/* Client Header */}
       <Card>
         <CardContent className="p-6">
@@ -157,9 +171,9 @@ const ClientDashboard: React.FC = () => {
                 <Building2 className="h-8 w-8 text-primary" />
               </div>
               <div>
-                <h1 className="text-xl font-heading font-bold text-foreground">
+                <h2 className="text-xl font-heading font-bold text-foreground">
                   {client.name}
-                </h1>
+                </h2>
                 <p className="text-sm text-muted-foreground mt-1">
                   GSTIN: {client.gstin}
                 </p>
@@ -220,17 +234,17 @@ const ClientDashboard: React.FC = () => {
           <CardTitle className="text-lg font-heading">Filing Tracker</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto rounded-lg border">
             <table className="w-full border-collapse">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-3 px-4 font-medium text-muted-foreground">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-primary text-primary-foreground">
+                  <th className="text-left py-3 px-4 font-medium">
                     Month
                   </th>
                   {selectedReturns.map((returnType) => (
-                    <th 
-                      key={returnType} 
-                      className="text-center py-3 px-4 font-medium text-muted-foreground"
+                    <th
+                      key={returnType}
+                      className="text-center py-3 px-4 font-medium"
                     >
                       {returnType}
                     </th>
@@ -238,9 +252,17 @@ const ClientDashboard: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
+                {months.length === 0 && (
+                  <TableEmptyState
+                    colSpan={selectedReturns.length + 1}
+                    icon={<Clock className="h-6 w-6" />}
+                    title="No filing periods yet"
+                    description="Filing periods appear here once your registration date has passed."
+                  />
+                )}
                 {months.map((month) => (
-                  <tr key={month} className="border-b border-border hover:bg-muted/30">
-                    <td className="py-3 px-4 font-medium">{month}</td>
+                  <tr key={month} className="border-b border-border last:border-0 hover:bg-muted/30">
+                    <td className="py-3 px-4 font-medium tabular-nums">{month}</td>
                     {selectedReturns.map((returnType) => {
                       const status = getFilingStatusForMonth(returnType, month);
                       const isFiled = isFiledStatus(status);

@@ -6,16 +6,19 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { 
+import {
   Trash2,
   UserPlus,
   Shield,
   Users,
+  Loader2,
   Pencil,
   RefreshCw
 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { useConfirm } from '@/components/ui/confirm-dialog';
+import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface Employee {
@@ -34,7 +37,7 @@ interface UserMetrics {
 
 const UserManagementSection: React.FC = () => {
   const { canManageEmployees } = useAuth();
-  const { toast } = useToast();
+  const confirm = useConfirm();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
@@ -131,15 +134,11 @@ const UserManagementSection: React.FC = () => {
       });
     } catch (error: any) {
       console.error('UserManagement - Error:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load employees',
-        variant: 'destructive',
-      });
+      toast.error('Failed to load employees');
     } finally {
       setIsLoading(false);
     }
-  }, [toast]);
+  }, []);
 
   useEffect(() => {
     fetchEmployees();
@@ -166,11 +165,7 @@ const UserManagementSection: React.FC = () => {
 
   const handleAddEmployee = async () => {
     if (!newEmployee.firstName.trim()) {
-      toast({
-        title: 'Validation Error',
-        description: 'Please enter the employee name.',
-        variant: 'destructive',
-      });
+      toast.error('Please enter the employee name.');
       return;
     }
 
@@ -205,27 +200,26 @@ const UserManagementSection: React.FC = () => {
         throw roleError;
       }
 
-      toast({
-        title: 'Employee Added',
-        description: `${newEmployee.firstName} added. Login: ${newEmployee.firstName} / 2026`,
-      });
+      toast.success(`${newEmployee.firstName} added. Login: ${newEmployee.firstName} / 2026`);
 
       setNewEmployee({ firstName: '', role: 'employee' });
       setShowAddDialog(false);
       fetchEmployees();
     } catch (error: any) {
       console.error('Error adding employee:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to add employee: ' + error.message,
-        variant: 'destructive',
-      });
+      toast.error('Failed to add employee: ' + error.message);
     }
   };
 
   const handleDeleteEmployee = async (employeeId: string, userId: string, name: string) => {
-    if (!confirm(`Remove ${name} from the system?`)) return;
-    
+    const ok = await confirm({
+      title: 'Remove staff member?',
+      description: `${name} will be removed from the system and will no longer be able to log in.`,
+      destructive: true,
+      confirmText: 'Remove',
+    });
+    if (!ok) return;
+
     try {
       // Delete role first (child), then profile (parent)
       const { error: roleError } = await supabase
@@ -242,18 +236,11 @@ const UserManagementSection: React.FC = () => {
       
       if (profileError) throw profileError;
 
-      toast({
-        title: 'Employee Removed',
-        description: `${name} has been removed.`,
-      });
-      
+      toast.success(`${name} has been removed.`);
+
       fetchEmployees();
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: 'Failed to delete: ' + error.message,
-        variant: 'destructive',
-      });
+      toast.error('Failed to delete: ' + error.message);
     }
   };
 
@@ -273,20 +260,15 @@ const UserManagementSection: React.FC = () => {
 
       if (error) throw error;
 
-      toast({
-        title: 'Role Updated',
-        description: `${editingEmployee.first_name}'s role changed to ${editingEmployee.role === 'gst_manager' ? 'GST Manager' : 'Employee'}.`,
-      });
+      toast.success(
+        `${editingEmployee.first_name}'s role changed to ${editingEmployee.role === 'gst_manager' ? 'GST Manager' : 'Employee'}.`,
+      );
 
       setShowEditDialog(false);
       setEditingEmployee(null);
       fetchEmployees();
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: 'Failed to update role: ' + error.message,
-        variant: 'destructive',
-      });
+      toast.error('Failed to update role: ' + error.message);
     }
   };
 
@@ -337,7 +319,8 @@ const UserManagementSection: React.FC = () => {
             size="icon"
             onClick={fetchEmployees}
             disabled={isLoading}
-            title="Refresh"
+            title="Refresh staff list"
+            aria-label="Refresh staff list"
           >
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           </Button>
@@ -363,7 +346,7 @@ const UserManagementSection: React.FC = () => {
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">{card.label}</p>
-                    <p className="text-2xl font-bold">{isLoading ? '...' : card.value}</p>
+                    <p className="text-2xl font-bold tabular-nums">{isLoading ? '—' : card.value}</p>
                   </div>
                 </div>
               </CardContent>
@@ -441,11 +424,15 @@ const UserManagementSection: React.FC = () => {
         {/* Staff List */}
         <div className="space-y-2 max-h-80 overflow-y-auto">
           {isLoading ? (
-            <p className="text-center py-8 text-muted-foreground text-sm">Loading staff...</p>
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
           ) : filteredEmployees.length === 0 ? (
-            <p className="text-center py-8 text-muted-foreground text-sm">
-              No {selectedFilter === 'all' ? 'staff members' : selectedFilter === 'gst_manager' ? 'GST managers' : 'employees'} found.
-            </p>
+            <TableEmptyState
+              icon={<Users className="h-6 w-6" />}
+              title={`No ${selectedFilter === 'all' ? 'staff members' : selectedFilter === 'gst_manager' ? 'GST managers' : 'employees'} found`}
+              description="Use Add Employee to create a staff login."
+            />
           ) : (
             filteredEmployees.map((emp) => (
               <div
@@ -481,7 +468,8 @@ const UserManagementSection: React.FC = () => {
                     size="icon"
                     className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10"
                     onClick={() => handleEditEmployee(emp)}
-                    title="Edit Role"
+                    title="Edit role"
+                    aria-label={`Edit role for ${emp.first_name}`}
                   >
                     <Pencil className="h-4 w-4" />
                   </Button>
@@ -490,7 +478,8 @@ const UserManagementSection: React.FC = () => {
                     size="icon"
                     className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
                     onClick={() => handleDeleteEmployee(emp.id, emp.user_id, emp.first_name)}
-                    title="Delete Employee"
+                    title="Remove staff member"
+                    aria-label={`Remove staff member ${emp.first_name}`}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>

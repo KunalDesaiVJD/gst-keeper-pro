@@ -6,15 +6,18 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { 
+import {
   Trash2,
   UserPlus,
   Shield,
   Users,
+  Loader2,
   Pencil
 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { useConfirm } from '@/components/ui/confirm-dialog';
+import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useAuth } from '@/contexts/AuthContext';
 
 
@@ -32,7 +35,7 @@ interface EmployeeManagementSectionProps {
 
 const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ filterRole = 'all' }) => {
   const { canManageEmployees } = useAuth();
-  const { toast } = useToast();
+  const confirm = useConfirm();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
@@ -121,11 +124,7 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
 
   const handleAddEmployee = async () => {
     if (!newEmployee.firstName.trim()) {
-      toast({
-        title: 'Validation Error',
-        description: 'Please enter the employee name.',
-        variant: 'destructive',
-      });
+      toast.error('Please enter the employee name.');
       return;
     }
 
@@ -162,27 +161,26 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
 
       // No need to update mock data - employees are now fully in Supabase
 
-      toast({
-        title: 'Employee Added',
-        description: `${newEmployee.firstName} has been added. Login: ${newEmployee.firstName} / 2026`,
-      });
+      toast.success(`${newEmployee.firstName} has been added. Login: ${newEmployee.firstName} / 2026`);
 
       setNewEmployee({ firstName: '', role: 'employee' });
       setShowAddDialog(false);
       fetchEmployees();
     } catch (error: any) {
       console.error('Error adding employee:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to add employee: ' + error.message,
-        variant: 'destructive',
-      });
+      toast.error('Failed to add employee: ' + error.message);
     }
   };
 
   const handleDeleteEmployee = async (employeeId: string, userId: string, name: string) => {
-    if (!confirm(`Remove ${name} from the system?`)) return;
-    
+    const ok = await confirm({
+      title: 'Remove employee?',
+      description: `${name} will be removed from the system and will no longer be able to log in.`,
+      destructive: true,
+      confirmText: 'Remove',
+    });
+    if (!ok) return;
+
     try {
       // Delete role first (child), then profile (parent)
       await supabase.from('user_roles').delete().eq('user_id', userId);
@@ -190,18 +188,11 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
 
       // No need to update mock data - employees are now fully in Supabase
 
-      toast({
-        title: 'Employee Removed',
-        description: `${name} has been removed.`,
-      });
-      
+      toast.success(`${name} has been removed.`);
+
       fetchEmployees();
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: 'Failed to delete: ' + error.message,
-        variant: 'destructive',
-      });
+      toast.error('Failed to delete: ' + error.message);
     }
   };
 
@@ -223,20 +214,15 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
 
       // No need to update mock data - employees are now fully in Supabase
 
-      toast({
-        title: 'Role Updated',
-        description: `${editingEmployee.first_name}'s role has been changed to ${editingEmployee.role === 'gst_manager' ? 'GST Manager' : 'Employee'}.`,
-      });
+      toast.success(
+        `${editingEmployee.first_name}'s role has been changed to ${editingEmployee.role === 'gst_manager' ? 'GST Manager' : 'Employee'}.`,
+      );
 
       setShowEditDialog(false);
       setEditingEmployee(null);
       fetchEmployees();
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: 'Failed to update role: ' + error.message,
-        variant: 'destructive',
-      });
+      toast.error('Failed to update role: ' + error.message);
     }
   };
 
@@ -327,9 +313,15 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
       <CardContent className="px-0">
         <div className="space-y-2 max-h-64 overflow-y-auto">
           {isLoading ? (
-            <p className="text-center py-4 text-muted-foreground text-sm">Loading...</p>
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
           ) : filteredEmployees.length === 0 ? (
-            <p className="text-center py-4 text-muted-foreground text-sm">No {sectionTitle.toLowerCase()} yet.</p>
+            <TableEmptyState
+              icon={<Users className="h-6 w-6" />}
+              title={`No ${sectionTitle.toLowerCase()} yet`}
+              description="Use Add Employee to create a staff login."
+            />
           ) : (
             filteredEmployees.map((emp) => (
               <div
@@ -362,7 +354,8 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
                     size="icon"
                     className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10"
                     onClick={() => handleEditEmployee(emp)}
-                    title="Edit Role"
+                    title="Edit role"
+                    aria-label={`Edit role for ${emp.first_name}`}
                   >
                     <Pencil className="h-3.5 w-3.5" />
                   </Button>
@@ -371,7 +364,8 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
                     size="icon"
                     className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
                     onClick={() => handleDeleteEmployee(emp.id, emp.user_id, emp.first_name)}
-                    title="Delete Employee"
+                    title="Remove employee"
+                    aria-label={`Remove employee ${emp.first_name}`}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>

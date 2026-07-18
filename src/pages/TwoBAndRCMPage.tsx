@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { FileText, Pause, Wallet, FileSpreadsheet } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { PageHeader } from '@/components/layout/PageHeader';
 import TwoBReconciliationPage from './TwoBReconciliationPage';
 import SuspendedRecoPage from './SuspendedRecoPage';
 import GstReceivableRecoPage from './GstReceivableRecoPage';
@@ -25,7 +26,13 @@ const TwoBAndRCMPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('import-2b');
 
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-6 animate-fade-in">
+      <PageHeader
+        title="2B and RCM"
+        subtitle="Import GSTR-2B, reconcile against books, and track suspended & receivable items"
+        icon={<FileText className="h-6 w-6" />}
+      />
+
       {/* Tab Navigation */}
       <div className="flex flex-wrap gap-2 p-1 bg-muted/50 rounded-lg w-fit">
         {TABS.map((tab) => {

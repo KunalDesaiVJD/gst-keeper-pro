@@ -6,7 +6,9 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Badge } from '@/components/ui/badge';
 import { isQuarterEndMonth } from '@/types';
-import { Lock, AlertCircle, Save, Download, History, AlertTriangle, Trash2 } from 'lucide-react';
+import { Lock, AlertCircle, Save, FileText, History, AlertTriangle, Trash2, Receipt } from 'lucide-react';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
@@ -1116,39 +1118,42 @@ const ITCSummaryPage: React.FC = () => {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-heading font-bold text-foreground">ITC Summary</h1>
-          <p className="text-muted-foreground">Input Tax Credit summary for the month</p>
-          {lastSavedBy && (
-            <p className="text-xs text-muted-foreground mt-1">
-              Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
-              {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
-              {' '}on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-              {' '}• v{lastSavedBy.version}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {selectedClient && (
-            <Button variant="outline" onClick={handleExportPDF} className="flex items-center gap-2">
-              <Download className="h-4 w-4" />
-              Download PDF
-            </Button>
-          )}
-          {selectedClient && !isLocked && (
-            <Button onClick={handleSave} disabled={isSaving} className="flex items-center gap-2">
-              <Save className="h-4 w-4" />
-              {isSaving ? 'Saving...' : 'Save Changes'}
-            </Button>
-          )}
-          {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClient && (
-            <Button variant="destructive" size="sm" onClick={() => setShowClearData(true)} className="gap-2">
-              <Trash2 className="h-4 w-4" />
-              Clear Data
-            </Button>
-          )}
-        </div>
+      <div className="space-y-1">
+        <PageHeader
+          title="ITC Summary"
+          subtitle="Input Tax Credit summary for the month"
+          icon={<Receipt className="h-6 w-6" />}
+          actions={
+            <>
+              {selectedClient && (
+                <Button variant="outline" onClick={handleExportPDF} className="gap-2">
+                  <FileText className="h-4 w-4" />
+                  Export PDF
+                </Button>
+              )}
+              {selectedClient && !isLocked && (
+                <Button onClick={handleSave} disabled={isSaving} className="gap-2">
+                  <Save className="h-4 w-4" />
+                  {isSaving ? 'Saving...' : 'Save Changes'}
+                </Button>
+              )}
+              {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClient && (
+                <Button variant="destructive" onClick={() => setShowClearData(true)} className="gap-2">
+                  <Trash2 className="h-4 w-4" />
+                  Clear Data
+                </Button>
+              )}
+            </>
+          }
+        />
+        {lastSavedBy && (
+          <p className="text-xs text-muted-foreground">
+            Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
+            {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
+            {' '}on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+            {' '}• v{lastSavedBy.version}
+          </p>
+        )}
       </div>
 
       {/* Filters */}
@@ -1206,9 +1211,12 @@ const ITCSummaryPage: React.FC = () => {
 
       {!selectedClient ? (
         <Card>
-          <CardContent className="p-12 text-center">
-            <AlertCircle className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <p className="text-muted-foreground">Please select a client to view ITC Summary.</p>
+          <CardContent className="p-6">
+            <TableEmptyState
+              icon={<AlertCircle className="h-6 w-6" />}
+              title="No client selected"
+              description="Please select a client to view the ITC Summary."
+            />
           </CardContent>
         </Card>
       ) : (
@@ -1223,10 +1231,10 @@ const ITCSummaryPage: React.FC = () => {
 
           {/* GST Update Sheet Reminder Banner */}
           {gstUpdateCount > 0 && (
-            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700 rounded-lg p-3 flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
-              <span className="text-sm text-amber-800 dark:text-amber-300">
-                ⚠️ An effect is written on GST Update Sheet. Make sure that effect is given. <span className="text-xs text-amber-600 dark:text-amber-500">(Entries found: {gstUpdateCount})</span>
+            <div className="bg-warning/10 border border-warning/30 rounded-lg p-3 flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-warning shrink-0" />
+              <span className="text-sm text-warning">
+                An effect is written on GST Update Sheet. Make sure that effect is given. <span className="text-xs text-warning/80">(Entries found: {gstUpdateCount})</span>
               </span>
             </div>
           )}
@@ -1234,7 +1242,7 @@ const ITCSummaryPage: React.FC = () => {
           {/* Summary Boxes */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             {/* 1. Total ITC Excl RCM */}
-            <Card className="bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800">
+            <Card className="bg-info/5 border-info/20">
               <CardContent className="p-4">
                 <h4 className="text-sm font-semibold text-muted-foreground mb-1">Total ITC Excl RCM</h4>
                 <p className="text-[9px] text-muted-foreground mb-1">Total(5) − (5.4 + 5.5 + 4A{'{3}'})</p>
@@ -1259,7 +1267,7 @@ const ITCSummaryPage: React.FC = () => {
               </CardContent>
             </Card>
             {/* 2. RCM ITC */}
-            <Card className="bg-purple-50 dark:bg-purple-950/30 border-purple-200 dark:border-purple-800">
+            <Card className="bg-primary/5 border-primary/20">
               <CardContent className="p-4">
                 <h4 className="text-sm font-semibold text-muted-foreground mb-2">RCM ITC</h4>
                 <div className="grid grid-cols-4 gap-1 text-xs">
@@ -1297,11 +1305,11 @@ const ITCSummaryPage: React.FC = () => {
               </CardContent>
             </Card>
             {/* 5. NET ITC = 4(C) */}
-            <Card className="bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800">
+            <Card className="bg-success/10 border-success/30">
               <CardContent className="p-4 text-center">
                 <p className="text-sm text-muted-foreground">NET ITC</p>
                 <p className="text-[9px] text-muted-foreground">4(C) = 4A − 4B</p>
-                <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">₹{(net4C.igst + net4C.cgst + net4C.sgst).toLocaleString('en-IN')}</p>
+                <p className="text-2xl font-bold text-success">₹{(net4C.igst + net4C.cgst + net4C.sgst).toLocaleString('en-IN')}</p>
               </CardContent>
             </Card>
           </div>
@@ -1327,17 +1335,17 @@ const ITCSummaryPage: React.FC = () => {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto overflow-y-auto max-h-[70vh]">
                 <table className="gst-table">
                   <thead>
                     <tr>
-                      <th className="w-20">Sr. No.</th>
-                      <th>PARTICULAR</th>
-                      <th className="text-right w-28">IGST</th>
-                      <th className="text-right w-28">CGST</th>
-                      <th className="text-right w-28">SGST</th>
-                      <th className="text-right w-32">TOTAL</th>
-                      <th className="w-40">REASONS</th>
+                      <th className="w-20 sticky top-0 z-10">Sr. No.</th>
+                      <th className="sticky top-0 z-10">PARTICULAR</th>
+                      <th className="text-right w-28 sticky top-0 z-10">IGST</th>
+                      <th className="text-right w-28 sticky top-0 z-10">CGST</th>
+                      <th className="text-right w-28 sticky top-0 z-10">SGST</th>
+                      <th className="text-right w-32 sticky top-0 z-10">TOTAL</th>
+                      <th className="w-40 sticky top-0 z-10">REASONS</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1364,10 +1372,10 @@ const ITCSummaryPage: React.FC = () => {
                               </Badge>
                             )}
                           </td>
-                          <td className="text-right">{renderEditableCell('section4A', idx, row, 'igst')}</td>
-                          <td className="text-right">{renderEditableCell('section4A', idx, row, 'cgst')}</td>
-                          <td className="text-right">{renderEditableCell('section4A', idx, row, 'sgst')}</td>
-                          <td className="text-right font-medium">
+                          <td className="text-right tabular-nums">{renderEditableCell('section4A', idx, row, 'igst')}</td>
+                          <td className="text-right tabular-nums">{renderEditableCell('section4A', idx, row, 'cgst')}</td>
+                          <td className="text-right tabular-nums">{renderEditableCell('section4A', idx, row, 'sgst')}</td>
+                          <td className="text-right font-medium tabular-nums">
                             {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
                           </td>
                           <td>
@@ -1387,10 +1395,10 @@ const ITCSummaryPage: React.FC = () => {
                           <tr className="bg-muted/30 font-medium">
                             <td>Total (5)</td>
                             <td className="text-xs text-muted-foreground">Total (5) = 5.1+5.2-5.3+5.4+5.5</td>
-                            <td className="text-right">{total5.igst.toLocaleString('en-IN')}</td>
-                            <td className="text-right">{total5.cgst.toLocaleString('en-IN')}</td>
-                            <td className="text-right">{total5.sgst.toLocaleString('en-IN')}</td>
-                            <td className="text-right">
+                            <td className="text-right tabular-nums">{total5.igst.toLocaleString('en-IN')}</td>
+                            <td className="text-right tabular-nums">{total5.cgst.toLocaleString('en-IN')}</td>
+                            <td className="text-right tabular-nums">{total5.sgst.toLocaleString('en-IN')}</td>
+                            <td className="text-right tabular-nums">
                               {(total5.igst + total5.cgst + total5.sgst).toLocaleString('en-IN')}
                             </td>
                             <td></td>
@@ -1401,10 +1409,10 @@ const ITCSummaryPage: React.FC = () => {
                     <tr className="bg-muted/50 font-semibold">
                       <td></td>
                       <td>Total (4A)</td>
-                      <td className="text-right">{total4A.igst.toLocaleString('en-IN')}</td>
-                      <td className="text-right">{total4A.cgst.toLocaleString('en-IN')}</td>
-                      <td className="text-right">{total4A.sgst.toLocaleString('en-IN')}</td>
-                      <td className="text-right">
+                      <td className="text-right tabular-nums">{total4A.igst.toLocaleString('en-IN')}</td>
+                      <td className="text-right tabular-nums">{total4A.cgst.toLocaleString('en-IN')}</td>
+                      <td className="text-right tabular-nums">{total4A.sgst.toLocaleString('en-IN')}</td>
+                      <td className="text-right tabular-nums">
                         {(total4A.igst + total4A.cgst + total4A.sgst).toLocaleString('en-IN')}
                       </td>
                       <td></td>
@@ -1440,10 +1448,10 @@ const ITCSummaryPage: React.FC = () => {
                                   Auto-calculated
                                 </Badge>
                               </td>
-                              <td className="text-right">{formatNumber(vals.igst)}</td>
-                              <td className="text-right">{formatNumber(vals.cgst)}</td>
-                              <td className="text-right">{formatNumber(vals.sgst)}</td>
-                              <td className="text-right font-medium">
+                              <td className="text-right tabular-nums">{formatNumber(vals.igst)}</td>
+                              <td className="text-right tabular-nums">{formatNumber(vals.cgst)}</td>
+                              <td className="text-right tabular-nums">{formatNumber(vals.sgst)}</td>
+                              <td className="text-right font-medium tabular-nums">
                                 {formatNumber(vals.igst + vals.cgst + vals.sgst)}
                               </td>
                               <td>
@@ -1472,10 +1480,10 @@ const ITCSummaryPage: React.FC = () => {
                                   Auto-calculated
                                 </Badge>
                               </td>
-                              <td className="text-right">{formatNumber(vals.igst)}</td>
-                              <td className="text-right">{formatNumber(vals.cgst)}</td>
-                              <td className="text-right">{formatNumber(vals.sgst)}</td>
-                              <td className="text-right font-medium">
+                              <td className="text-right tabular-nums">{formatNumber(vals.igst)}</td>
+                              <td className="text-right tabular-nums">{formatNumber(vals.cgst)}</td>
+                              <td className="text-right tabular-nums">{formatNumber(vals.sgst)}</td>
+                              <td className="text-right font-medium tabular-nums">
                                 {formatNumber(vals.igst + vals.cgst + vals.sgst)}
                               </td>
                               <td>
@@ -1504,10 +1512,10 @@ const ITCSummaryPage: React.FC = () => {
                                   Auto-calculated
                                 </Badge>
                               </td>
-                              <td className="text-right">{formatNumber(vals.igst)}</td>
-                              <td className="text-right">{formatNumber(vals.cgst)}</td>
-                              <td className="text-right">{formatNumber(vals.sgst)}</td>
-                              <td className="text-right font-medium">
+                              <td className="text-right tabular-nums">{formatNumber(vals.igst)}</td>
+                              <td className="text-right tabular-nums">{formatNumber(vals.cgst)}</td>
+                              <td className="text-right tabular-nums">{formatNumber(vals.sgst)}</td>
+                              <td className="text-right font-medium tabular-nums">
                                 {formatNumber(vals.igst + vals.cgst + vals.sgst)}
                               </td>
                               <td>
@@ -1536,10 +1544,10 @@ const ITCSummaryPage: React.FC = () => {
                                   Auto-calculated
                                 </Badge>
                               </td>
-                              <td className="text-right">{formatNumber(vals.igst)}</td>
-                              <td className="text-right">{formatNumber(vals.cgst)}</td>
-                              <td className="text-right">{formatNumber(vals.sgst)}</td>
-                              <td className="text-right font-medium">
+                              <td className="text-right tabular-nums">{formatNumber(vals.igst)}</td>
+                              <td className="text-right tabular-nums">{formatNumber(vals.cgst)}</td>
+                              <td className="text-right tabular-nums">{formatNumber(vals.sgst)}</td>
+                              <td className="text-right font-medium tabular-nums">
                                 {formatNumber(vals.igst + vals.cgst + vals.sgst)}
                               </td>
                               <td>
@@ -1569,10 +1577,10 @@ const ITCSummaryPage: React.FC = () => {
                               </Badge>
                             )}
                           </td>
-                          <td className="text-right">{renderEditableCell('section4B', idx, row, 'igst')}</td>
-                          <td className="text-right">{renderEditableCell('section4B', idx, row, 'cgst')}</td>
-                          <td className="text-right">{renderEditableCell('section4B', idx, row, 'sgst')}</td>
-                          <td className="text-right font-medium">
+                          <td className="text-right tabular-nums">{renderEditableCell('section4B', idx, row, 'igst')}</td>
+                          <td className="text-right tabular-nums">{renderEditableCell('section4B', idx, row, 'cgst')}</td>
+                          <td className="text-right tabular-nums">{renderEditableCell('section4B', idx, row, 'sgst')}</td>
+                          <td className="text-right font-medium tabular-nums">
                             {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
                           </td>
                           <td>
@@ -1591,10 +1599,10 @@ const ITCSummaryPage: React.FC = () => {
                     <tr className="bg-muted/50 font-semibold">
                       <td></td>
                       <td>Total (4B)</td>
-                      <td className="text-right">{total4B.igst.toLocaleString('en-IN')}</td>
-                      <td className="text-right">{total4B.cgst.toLocaleString('en-IN')}</td>
-                      <td className="text-right">{total4B.sgst.toLocaleString('en-IN')}</td>
-                      <td className="text-right">
+                      <td className="text-right tabular-nums">{total4B.igst.toLocaleString('en-IN')}</td>
+                      <td className="text-right tabular-nums">{total4B.cgst.toLocaleString('en-IN')}</td>
+                      <td className="text-right tabular-nums">{total4B.sgst.toLocaleString('en-IN')}</td>
+                      <td className="text-right tabular-nums">
                         {(total4B.igst + total4B.cgst + total4B.sgst).toLocaleString('en-IN')}
                       </td>
                       <td></td>
@@ -1604,10 +1612,10 @@ const ITCSummaryPage: React.FC = () => {
                     <tr className="bg-success/10 font-bold">
                       <td>4 (C)</td>
                       <td>NET ITC AVAILABLE FOR THE MONTH (A - B)</td>
-                      <td className="text-right">{net4C.igst.toLocaleString('en-IN')}</td>
-                      <td className="text-right">{net4C.cgst.toLocaleString('en-IN')}</td>
-                      <td className="text-right">{net4C.sgst.toLocaleString('en-IN')}</td>
-                      <td className="text-right">
+                      <td className="text-right tabular-nums">{net4C.igst.toLocaleString('en-IN')}</td>
+                      <td className="text-right tabular-nums">{net4C.cgst.toLocaleString('en-IN')}</td>
+                      <td className="text-right tabular-nums">{net4C.sgst.toLocaleString('en-IN')}</td>
+                      <td className="text-right tabular-nums">
                         {(net4C.igst + net4C.cgst + net4C.sgst).toLocaleString('en-IN')}
                       </td>
                       <td></td>
@@ -1629,10 +1637,10 @@ const ITCSummaryPage: React.FC = () => {
                             </Badge>
                           )}
                         </td>
-                        <td className="text-right">{renderEditableCell('section4D', idx, row, 'igst')}</td>
-                        <td className="text-right">{renderEditableCell('section4D', idx, row, 'cgst')}</td>
-                        <td className="text-right">{renderEditableCell('section4D', idx, row, 'sgst')}</td>
-                        <td className="text-right font-medium">
+                        <td className="text-right tabular-nums">{renderEditableCell('section4D', idx, row, 'igst')}</td>
+                        <td className="text-right tabular-nums">{renderEditableCell('section4D', idx, row, 'cgst')}</td>
+                        <td className="text-right tabular-nums">{renderEditableCell('section4D', idx, row, 'sgst')}</td>
+                        <td className="text-right font-medium tabular-nums">
                           {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
                         </td>
                         <td>
@@ -1658,19 +1666,19 @@ const ITCSummaryPage: React.FC = () => {
                     <tbody>
                       <tr className="bg-muted/30">
                         <td className="border border-border px-4 py-2 font-medium">Commercial Area</td>
-                        <td className="border border-border px-4 py-2 text-right text-primary font-medium">
+                        <td className="border border-border px-4 py-2 text-right tabular-nums text-primary font-medium">
                           {commercialArea.toLocaleString('en-IN')}
                         </td>
                       </tr>
                       <tr className="bg-muted/30">
                         <td className="border border-border px-4 py-2 font-medium">Residential Area</td>
-                        <td className="border border-border px-4 py-2 text-right text-primary font-medium">
+                        <td className="border border-border px-4 py-2 text-right tabular-nums text-primary font-medium">
                           {residentialArea.toLocaleString('en-IN')}
                         </td>
                       </tr>
                       <tr className="bg-muted/50 font-semibold">
                         <td className="border border-border px-4 py-2">Total</td>
-                        <td className="border border-border px-4 py-2 text-right text-primary">
+                        <td className="border border-border px-4 py-2 text-right tabular-nums text-primary">
                           {(commercialArea + residentialArea).toLocaleString('en-IN')}
                         </td>
                       </tr>

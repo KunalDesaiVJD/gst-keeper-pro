@@ -6,11 +6,10 @@ import { Label } from '@/components/ui/label';
 import { Lock, Send, Loader2, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 
 const ClientPasswordResetRequest: React.FC = () => {
   const { user } = useAuth();
-  const { toast } = useToast();
   const [reason, setReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasSubmitted, setHasSubmitted] = useState(false);
@@ -31,17 +30,10 @@ const ClientPasswordResetRequest: React.FC = () => {
       if (error) throw error;
 
       setHasSubmitted(true);
-      toast({
-        title: 'Request Submitted',
-        description: 'Your password reset request has been sent to the admin team.',
-      });
+      toast.success('Your password reset request has been sent to the admin team.');
     } catch (error: any) {
       console.error('Error submitting request:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to submit request. Please try again.',
-        variant: 'destructive',
-      });
+      toast.error('Failed to submit request. Please try again.');
     } finally {
       setIsSubmitting(false);
     }

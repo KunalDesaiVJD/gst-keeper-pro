@@ -6,14 +6,15 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { 
-  AlertTriangle, 
-  CheckCircle2, 
-  Clock,
+import { PageHeader } from '@/components/layout/PageHeader';
+import {
+  AlertTriangle,
+  CheckCircle2,
   Calendar,
   Building2,
   ChevronDown,
   ChevronUp,
+  LayoutDashboard,
   Target
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
@@ -308,26 +309,27 @@ const StaffDashboard: React.FC = () => {
       />
 
       {/* Header with Month Selector */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-heading font-bold text-foreground">Dashboard</h1>
-          <p className="text-muted-foreground">Welcome back! Here's your overview.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Calendar className="h-5 w-5 text-muted-foreground" />
-          <div>
-            <p className="text-[10px] text-muted-foreground mb-0.5">Return Period</p>
-            <div className="w-48">
-              <SearchableMonthSelect
-                options={months}
-                value={selectedMonth}
-                onValueChange={setSelectedMonth}
-                placeholder="Select Month"
-              />
+      <PageHeader
+        title="Dashboard"
+        subtitle="Welcome back! Here's your overview."
+        icon={<LayoutDashboard className="h-6 w-6" />}
+        actions={
+          <div className="flex items-center gap-2">
+            <Calendar className="h-5 w-5 text-muted-foreground" />
+            <div>
+              <p className="text-[10px] text-muted-foreground mb-0.5">Return Period</p>
+              <div className="w-48">
+                <SearchableMonthSelect
+                  options={months}
+                  value={selectedMonth}
+                  onValueChange={setSelectedMonth}
+                  placeholder="Select Month"
+                />
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        }
+      />
 
       <PasswordResetRequestsSection />
       <Card>
@@ -352,8 +354,8 @@ const StaffDashboard: React.FC = () => {
                   <div className="flex items-start justify-between">
                     <div>
                       <p className="text-sm text-muted-foreground font-medium">{card.label}</p>
-                      <p className="text-3xl font-bold text-foreground mt-1">
-                        {isLoading ? '...' : card.value}
+                      <p className="text-3xl font-bold text-foreground mt-1 tabular-nums">
+                        {isLoading ? '—' : card.value}
                       </p>
                     </div>
                     <div className={`p-2 rounded-full ${card.bgColor}`}>
@@ -369,6 +371,7 @@ const StaffDashboard: React.FC = () => {
             variant="ghost"
             size="sm"
             onClick={() => setShowReturnBreakdown(!showReturnBreakdown)}
+            aria-expanded={showReturnBreakdown}
             className="text-sm text-muted-foreground mb-2"
           >
             {showReturnBreakdown ? <ChevronUp className="h-4 w-4 mr-1" /> : <ChevronDown className="h-4 w-4 mr-1" />}
@@ -376,23 +379,23 @@ const StaffDashboard: React.FC = () => {
           </Button>
 
           {showReturnBreakdown && returnMetrics.length > 0 && (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto rounded-lg border">
               <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/50">
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-primary text-primary-foreground">
                     <th className="text-left p-2 font-medium">Return Type</th>
-                    <th className="text-center p-2 font-medium">Total Clients</th>
-                    <th className="text-center p-2 font-medium">Pending</th>
-                    <th className="text-center p-2 font-medium">Filed</th>
+                    <th className="text-right p-2 font-medium">Total Clients</th>
+                    <th className="text-right p-2 font-medium">Pending</th>
+                    <th className="text-right p-2 font-medium">Filed</th>
                   </tr>
                 </thead>
                 <tbody>
                   {returnMetrics.map((rm) => (
-                    <tr key={rm.returnType} className="border-b hover:bg-muted/30">
+                    <tr key={rm.returnType} className="border-b last:border-0 hover:bg-muted/30">
                       <td className="p-2"><Badge variant="outline">{rm.returnType}</Badge></td>
-                      <td className="text-center p-2">{rm.totalClients}</td>
-                      <td className="text-center p-2"><span className="text-warning font-medium">{rm.pending}</span></td>
-                      <td className="text-center p-2"><span className="text-success font-medium">{rm.filed}</span></td>
+                      <td className="text-right p-2 tabular-nums">{rm.totalClients}</td>
+                      <td className="text-right p-2 tabular-nums font-medium text-warning">{rm.pending}</td>
+                      <td className="text-right p-2 tabular-nums font-medium text-success">{rm.filed}</td>
                     </tr>
                   ))}
                 </tbody>

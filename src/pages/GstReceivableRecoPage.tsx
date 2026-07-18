@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, Save, Loader2, Upload, Info, Edit3, Download, RefreshCw } from 'lucide-react';
+import { FileText, Save, Loader2, Upload, Info, Edit3, FileSpreadsheet, RefreshCw } from 'lucide-react';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -636,13 +637,14 @@ const GstReceivableRecoPage: React.FC = () => {
   const diffTotal = applyTolerance(portalClosingTotal - booksClosingTotal);
 
   const renderBooksCell = (value: number, onChange: (val: number) => void) => {
-    if (!isStaff) return <span className="block text-right px-3">{formatNumber(value)}</span>;
+    if (!isStaff) return <span className="block text-right tabular-nums px-3">{formatNumber(value)}</span>;
     return (
       <Input
         type="number"
         value={value || ''}
         onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-        className="h-10 text-right border-0 shadow-none rounded-none"
+        className="h-10 text-right tabular-nums border-0 shadow-none rounded-none"
+        aria-label="Closing balance as per books amount"
       />
     );
   };
@@ -685,77 +687,75 @@ const GstReceivableRecoPage: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-primary/10 rounded-lg">
-            <FileText className="h-6 w-6 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-heading font-bold text-foreground">GST Receivable Reco</h1>
-            <p className="text-muted-foreground">Reconcile Electronic Credit Ledger closing with books</p>
-            {lastSavedBy && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
-                {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
-                {lastSavedBy.time && (
-                  <> on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</>
-                )}
-              </p>
+      <PageHeader
+        embedded
+        title="GST Receivable Reco"
+        subtitle="Reconcile Electronic Credit Ledger closing with books"
+        icon={<FileText className="h-6 w-6" />}
+        actions={
+          <>
+            {isStaff && (
+              <Button
+                variant="outline"
+                onClick={pullLedgers}
+                disabled={!selectedClientId || !selectedMonth}
+                className={extReady ? '' : 'text-muted-foreground'}
+                title={extReady
+                  ? 'Pull the opening balance from the portal ledgers (via the browser extension)'
+                  : 'GST Keeper extension not detected yet — install/enable it and reload this page'}
+              >
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Pull
+              </Button>
             )}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {isEligibleMonth && selectedClientData && (
-            <Button variant="outline" onClick={() => {
-              exportGstReceivableRecoToExcel({
-                clientName: selectedClientData.name,
-                clientGstin: selectedClientData.gstin,
-                month: selectedMonth,
-                prevMonthLabel,
-                openingCgst, openingSgst, openingIgst,
-                availedCgst, availedSgst, availedIgst,
-                utilizedCgst: actualUtilizedCgst,
-                utilizedSgst: actualUtilizedSgst,
-                utilizedIgst: actualUtilizedIgst,
-                portalClosingCgst, portalClosingSgst, portalClosingIgst,
-                payableCgst, payableSgst, payableIgst,
-                booksClosingCgst, booksClosingSgst, booksClosingIgst,
-                diffCgst, diffSgst, diffIgst,
-              });
-              toast.success('Excel exported successfully');
-            }}>
-              <Download className="h-4 w-4 mr-2" />
-              Export Excel
-            </Button>
+            {isEligibleMonth && selectedClientData && (
+              <Button variant="outline" onClick={() => {
+                exportGstReceivableRecoToExcel({
+                  clientName: selectedClientData.name,
+                  clientGstin: selectedClientData.gstin,
+                  month: selectedMonth,
+                  prevMonthLabel,
+                  openingCgst, openingSgst, openingIgst,
+                  availedCgst, availedSgst, availedIgst,
+                  utilizedCgst: actualUtilizedCgst,
+                  utilizedSgst: actualUtilizedSgst,
+                  utilizedIgst: actualUtilizedIgst,
+                  portalClosingCgst, portalClosingSgst, portalClosingIgst,
+                  payableCgst, payableSgst, payableIgst,
+                  booksClosingCgst, booksClosingSgst, booksClosingIgst,
+                  diffCgst, diffSgst, diffIgst,
+                });
+                toast.success('Excel exported successfully');
+              }}>
+                <FileSpreadsheet className="h-4 w-4 mr-2" />
+                Export Excel
+              </Button>
+            )}
+            {isStaff && isEligibleMonth && (
+              <Button onClick={handleSave} disabled={isSaving}>
+                {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+                {isSaving ? 'Saving...' : 'Save Changes'}
+              </Button>
+            )}
+          </>
+        }
+      />
+
+      {lastSavedBy && (
+        <p className="text-xs text-muted-foreground -mt-3">
+          Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
+          {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
+          {lastSavedBy.time && (
+            <> on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</>
           )}
-          {isStaff && (
-            <Button
-              variant="outline"
-              onClick={pullLedgers}
-              disabled={!selectedClientId || !selectedMonth}
-              className={extReady ? '' : 'text-muted-foreground'}
-              title={extReady
-                ? 'Pull the opening balance from the portal ledgers (via the browser extension)'
-                : 'GST Keeper extension not detected yet — install/enable it and reload this page'}
-            >
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Pull
-            </Button>
-          )}
-          {isStaff && isEligibleMonth && (
-            <Button onClick={handleSave} disabled={isSaving} className="flex items-center gap-2">
-              <Save className="h-4 w-4" />
-              {isSaving ? 'Saving...' : 'Save Changes'}
-            </Button>
-          )}
-        </div>
-      </div>
+        </p>
+      )}
 
       <Card>
         <CardContent className="p-4">
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-2">
-              <span className="font-medium whitespace-nowrap">Client:</span>
+              <span className="font-medium text-foreground whitespace-nowrap">Client:</span>
               <div className="min-w-[250px]">
                 <SearchableSelect
                   options={clients.map(c => ({ value: c.id, label: c.name, sublabel: c.gstin }))}
@@ -769,7 +769,7 @@ const GstReceivableRecoPage: React.FC = () => {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <span className="font-medium whitespace-nowrap">Month:</span>
+              <span className="font-medium text-foreground whitespace-nowrap">Month:</span>
               <div className="w-40">
                 <SearchableMonthSelect
                   options={generateMonthOptions}
@@ -786,18 +786,19 @@ const GstReceivableRecoPage: React.FC = () => {
       <Card>
         <CardContent className="p-4">
           {!selectedClientId || !selectedMonth ? (
-            <div className="text-center py-8 text-muted-foreground">
+            <div className="text-center py-8 text-sm text-muted-foreground">
               Please select a client and month to view the reconciliation.
             </div>
           ) : !isEligibleMonth ? (
-            <div className="text-center py-8 text-muted-foreground">
+            <div className="text-center py-8 text-sm text-muted-foreground">
               GST Receivable Reco is available from return period <span className="font-semibold">Jun-26</span> onward.
             </div>
           ) : isLoading ? (
             <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow className="bg-primary hover:bg-primary">
@@ -870,10 +871,10 @@ const GstReceivableRecoPage: React.FC = () => {
                       )}
                     </div>
                   </TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(openingCgst)}</TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(openingSgst)}</TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(openingIgst)}</TableCell>
-                  <TableCell className="text-right font-medium border border-border bg-muted/30">{formatNumber(openingTotal)}</TableCell>
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(openingCgst)}</TableCell>
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(openingSgst)}</TableCell>
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(openingIgst)}</TableCell>
+                  <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">{formatNumber(openingTotal)}</TableCell>
                 </TableRow>
 
                 {/* Net ITC Available — auto from ITC Summary (M-1) 4C = 4A − 4B */}
@@ -883,10 +884,10 @@ const GstReceivableRecoPage: React.FC = () => {
                     <p className="text-[10px] text-muted-foreground font-normal mt-0.5">{prevMonthLabel ? `From ${prevMonthLabel} ITC Summary (4A − 4B)` : '4A − 4B from previous month'}</p>
                     {!hasItcSummary && <p className="text-[10px] text-muted-foreground font-normal mt-0.5">{prevMonthLabel ? `ITC Summary not saved for ${prevMonthLabel} — showing 0` : 'ITC Summary not saved — showing 0'}</p>}
                   </TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(availedCgst)}</TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(availedSgst)}</TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(availedIgst)}</TableCell>
-                  <TableCell className="text-right font-medium border border-border bg-muted/30">{formatNumber(availedTotal)}</TableCell>
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(availedCgst)}</TableCell>
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(availedSgst)}</TableCell>
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(availedIgst)}</TableCell>
+                  <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">{formatNumber(availedTotal)}</TableCell>
                 </TableRow>
 
                 {/* ITC Utilized — actual per-head debit from credit ledger CSV when available, GSTR-1 output otherwise */}
@@ -906,15 +907,15 @@ const GstReceivableRecoPage: React.FC = () => {
                       </p>
                     )}
                     {!utilizedFromCsv && (
-                      <p className="text-[10px] text-amber-600 font-normal mt-0.5">
+                      <p className="text-[10px] text-warning font-normal mt-0.5">
                         Tip: Upload the Credit Ledger CSV to pull the actual per-head debit (closing will then tally with the portal).
                       </p>
                     )}
                   </TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(actualUtilizedCgst)}</TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(actualUtilizedSgst)}</TableCell>
-                  <TableCell className="text-right border border-border bg-accent/30">{formatNumber(actualUtilizedIgst)}</TableCell>
-                  <TableCell className="text-right font-medium border border-border bg-muted/30">{formatNumber(utilizedDisplayTotal)}</TableCell>
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(actualUtilizedCgst)}</TableCell>
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(actualUtilizedSgst)}</TableCell>
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(actualUtilizedIgst)}</TableCell>
+                  <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">{formatNumber(utilizedDisplayTotal)}</TableCell>
                 </TableRow>
 
                 {/* Spacer */}
@@ -928,10 +929,10 @@ const GstReceivableRecoPage: React.FC = () => {
                     <div>CLOSING BALANCE AS PER PORTAL</div>
                     <p className="text-[10px] text-muted-foreground font-normal mt-0.5">Opening + Net ITC Available − ITC Utilized (clamped at 0)</p>
                   </TableCell>
-                  <TableCell className="text-right font-bold border border-border">{formatNumber(portalClosingCgst)}</TableCell>
-                  <TableCell className="text-right font-bold border border-border">{formatNumber(portalClosingSgst)}</TableCell>
-                  <TableCell className="text-right font-bold border border-border">{formatNumber(portalClosingIgst)}</TableCell>
-                  <TableCell className="text-right font-bold border border-border">{formatNumber(portalClosingTotal)}</TableCell>
+                  <TableCell className="text-right tabular-nums font-bold border border-border">{formatNumber(portalClosingCgst)}</TableCell>
+                  <TableCell className="text-right tabular-nums font-bold border border-border">{formatNumber(portalClosingSgst)}</TableCell>
+                  <TableCell className="text-right tabular-nums font-bold border border-border">{formatNumber(portalClosingIgst)}</TableCell>
+                  <TableCell className="text-right tabular-nums font-bold border border-border">{formatNumber(portalClosingTotal)}</TableCell>
                 </TableRow>
 
                 {/* GST Payable — only when output > available ITC (cash leg) */}
@@ -941,10 +942,10 @@ const GstReceivableRecoPage: React.FC = () => {
                       <div>GST PAYABLE (CASH)</div>
                       <p className="text-[10px] text-muted-foreground font-normal mt-0.5">Output liability not covered by Available ITC — settle in cash</p>
                     </TableCell>
-                    <TableCell className="text-right font-medium border border-border text-destructive">{formatNumber(payableCgst)}</TableCell>
-                    <TableCell className="text-right font-medium border border-border text-destructive">{formatNumber(payableSgst)}</TableCell>
-                    <TableCell className="text-right font-medium border border-border text-destructive">{formatNumber(payableIgst)}</TableCell>
-                    <TableCell className="text-right font-bold border border-border text-destructive">{formatNumber(payableTotal)}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium border border-border text-destructive">{formatNumber(payableCgst)}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium border border-border text-destructive">{formatNumber(payableSgst)}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium border border-border text-destructive">{formatNumber(payableIgst)}</TableCell>
+                    <TableCell className="text-right tabular-nums font-bold border border-border text-destructive">{formatNumber(payableTotal)}</TableCell>
                   </TableRow>
                 )}
 
@@ -954,7 +955,7 @@ const GstReceivableRecoPage: React.FC = () => {
                   <TableCell className="p-0 border border-border">{renderBooksCell(booksClosingCgst, setBooksClosingCgst)}</TableCell>
                   <TableCell className="p-0 border border-border">{renderBooksCell(booksClosingSgst, setBooksClosingSgst)}</TableCell>
                   <TableCell className="p-0 border border-border">{renderBooksCell(booksClosingIgst, setBooksClosingIgst)}</TableCell>
-                  <TableCell className="text-right font-medium border border-border bg-muted/30">{formatNumber(booksClosingTotal)}</TableCell>
+                  <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">{formatNumber(booksClosingTotal)}</TableCell>
                 </TableRow>
 
                 {/* Spacer */}
@@ -965,13 +966,14 @@ const GstReceivableRecoPage: React.FC = () => {
                 {/* Difference */}
                 <TableRow className="bg-warning/10 hover:bg-warning/10">
                   <TableCell className="font-bold border border-border">DIFFERENCE</TableCell>
-                  <TableCell className={`text-right font-medium border border-border ${diffCgst !== 0 ? 'text-destructive' : ''}`}>{formatNumber(diffCgst)}</TableCell>
-                  <TableCell className={`text-right font-medium border border-border ${diffSgst !== 0 ? 'text-destructive' : ''}`}>{formatNumber(diffSgst)}</TableCell>
-                  <TableCell className={`text-right font-medium border border-border ${diffIgst !== 0 ? 'text-destructive' : ''}`}>{formatNumber(diffIgst)}</TableCell>
-                  <TableCell className={`text-right font-bold border border-border ${diffTotal !== 0 ? 'text-destructive' : ''}`}>{formatNumber(diffTotal)}</TableCell>
+                  <TableCell className={`text-right tabular-nums font-medium border border-border ${diffCgst !== 0 ? 'text-destructive' : ''}`}>{formatNumber(diffCgst)}</TableCell>
+                  <TableCell className={`text-right tabular-nums font-medium border border-border ${diffSgst !== 0 ? 'text-destructive' : ''}`}>{formatNumber(diffSgst)}</TableCell>
+                  <TableCell className={`text-right tabular-nums font-medium border border-border ${diffIgst !== 0 ? 'text-destructive' : ''}`}>{formatNumber(diffIgst)}</TableCell>
+                  <TableCell className={`text-right tabular-nums font-bold border border-border ${diffTotal !== 0 ? 'text-destructive' : ''}`}>{formatNumber(diffTotal)}</TableCell>
                 </TableRow>
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>

@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ExternalLink, Copy, Check, Eye, EyeOff } from 'lucide-react';
+import { PasswordInput } from '@/components/ui/password-input';
+import { ExternalLink, Copy, Check, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -16,7 +17,6 @@ const GSTPortalLink: React.FC<GSTPortalLinkProps> = ({ clientId, clientName }) =
   const [isOpen, setIsOpen] = useState(false);
   const [credentials, setCredentials] = useState<{ userId: string; password: string } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   const fetchCredentials = async () => {
@@ -101,8 +101,8 @@ const GSTPortalLink: React.FC<GSTPortalLinkProps> = ({ clientId, clientName }) =
 
           <div className="space-y-4">
             {isLoading ? (
-              <div className="text-center py-4 text-muted-foreground">
-                Loading credentials...
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
               </div>
             ) : credentials ? (
               <>
@@ -117,6 +117,7 @@ const GSTPortalLink: React.FC<GSTPortalLinkProps> = ({ clientId, clientName }) =
                     <Button
                       variant="outline"
                       size="icon"
+                      aria-label="Copy GST user ID"
                       onClick={() => handleCopy(credentials.userId, 'User ID')}
                     >
                       {copiedField === 'User ID' ? (
@@ -131,30 +132,17 @@ const GSTPortalLink: React.FC<GSTPortalLinkProps> = ({ clientId, clientName }) =
                 <div className="space-y-2">
                   <Label>GST Password</Label>
                   <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <Input
-                        type={showPassword ? 'text' : 'password'}
+                    <div className="flex-1">
+                      <PasswordInput
                         value={credentials.password}
                         readOnly
-                        className="font-mono pr-10"
+                        className="font-mono"
                       />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="absolute right-0 top-0 h-full px-3"
-                        onClick={() => setShowPassword(!showPassword)}
-                      >
-                        {showPassword ? (
-                          <EyeOff className="h-4 w-4" />
-                        ) : (
-                          <Eye className="h-4 w-4" />
-                        )}
-                      </Button>
                     </div>
                     <Button
                       variant="outline"
                       size="icon"
+                      aria-label="Copy GST password"
                       onClick={() => handleCopy(credentials.password, 'Password')}
                     >
                       {copiedField === 'Password' ? (

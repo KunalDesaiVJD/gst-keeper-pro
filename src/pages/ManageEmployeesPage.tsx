@@ -7,16 +7,28 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { 
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { TableEmptyState } from '@/components/ui/table-empty-state';
+import {
   Trash2,
   UserPlus,
   Shield,
-  Users
+  Users,
+  Loader2,
 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Navigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { cn } from '@/lib/utils';
 
 
 interface Employee {
@@ -31,22 +43,26 @@ interface ManageEmployeesPageProps {
   embedded?: boolean;
 }
 
+/** Small red asterisk marking a required field. */
+const RequiredMark: React.FC = () => (
+  <span className="text-destructive" aria-hidden="true">
+    {' '}
+    *
+  </span>
+);
+
 const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = false }) => {
   const { user, canManageEmployees } = useAuth();
   const confirm = useConfirm();
-  const { toast } = useToast();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showValidation, setShowValidation] = useState(false);
   const [newEmployee, setNewEmployee] = useState({
     firstName: '',
     role: 'employee' as 'gst_manager' | 'employee',
   });
-
-  // Only Superadmin can access this page (unless embedded)
-  if (!embedded && !canManageEmployees()) {
-    return <Navigate to="/dashboard" replace />;
-  }
 
   // Fetch employees from Supabase
   const fetchEmployees = useCallback(async () => {
@@ -56,7 +72,7 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
         .from('user_roles')
         .select('user_id, role')
         .in('role', ['gst_manager', 'employee']);
-      
+
       if (rolesError) throw rolesError;
 
       if (!roles || roles.length === 0) {
@@ -72,7 +88,7 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
         .from('profiles')
         .select('id, user_id, first_name, email')
         .in('user_id', uniqueUserIds);
-      
+
       if (profilesError) throw profilesError;
 
       // Create a map of user_id to role (take first occurrence)
@@ -85,7 +101,7 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
 
       // Only include users that have matching profiles with valid names
       const employeeList: Employee[] = [];
-      
+
       profiles?.forEach(profile => {
         const role = roleMap.get(profile.user_id);
         if (role && profile.first_name && profile.first_name !== 'Unknown') {
@@ -102,15 +118,11 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
       setEmployees(employeeList);
     } catch (error: any) {
       console.error('Error fetching employees:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load employees: ' + error.message,
-        variant: 'destructive',
-      });
+      toast.error('Failed to load employees: ' + error.message);
     } finally {
       setIsLoading(false);
     }
-  }, [toast]);
+  }, []);
 
   useEffect(() => {
     fetchEmployees();
@@ -118,19 +130,17 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
 
   const handleAddEmployee = async () => {
     if (!newEmployee.firstName.trim()) {
-      toast({
-        title: 'Validation Error',
-        description: 'Please enter the employee name.',
-        variant: 'destructive',
-      });
+      setShowValidation(true);
+      toast.error('Please enter the employee name.');
       return;
     }
 
+    setIsSubmitting(true);
     try {
       // Generate a unique user_id for the employee
       const tempUserId = crypto.randomUUID();
       const email = `${newEmployee.firstName.toLowerCase().replace(/\s+/g, '.')}@staff.local`;
-      
+
       // First, insert into profiles with password
       const { error: profileError } = await supabase
         .from('profiles')
@@ -140,7 +150,7 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
           email: email,
           password: '2026', // Default password stored in profiles
         }]);
-      
+
       if (profileError) throw profileError;
 
       // Then insert into user_roles
@@ -151,7 +161,7 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
           role: newEmployee.role,
           is_first_login: true,
         }]);
-      
+
       if (roleError) {
         // Rollback profile if role insert fails
         await supabase.from('profiles').delete().eq('user_id', tempUserId);
@@ -160,21 +170,19 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
 
       // Employees are now fully managed in Supabase - no mock data needed
 
-      toast({
-        title: 'Employee Added',
-        description: `${newEmployee.firstName} has been added as ${newEmployee.role === 'gst_manager' ? 'GST Manager' : 'Employee'}. Login: ${newEmployee.firstName} / 2026`,
-      });
+      toast.success(
+        `${newEmployee.firstName} has been added as ${newEmployee.role === 'gst_manager' ? 'GST Manager' : 'Employee'}. Login: ${newEmployee.firstName} / 2026`
+      );
 
       setNewEmployee({ firstName: '', role: 'employee' });
+      setShowValidation(false);
       setShowAddDialog(false);
       fetchEmployees();
     } catch (error: any) {
       console.error('Error adding employee:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to add employee: ' + error.message,
-        variant: 'destructive',
-      });
+      toast.error('Failed to add employee: ' + error.message);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -191,7 +199,7 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
         .from('user_roles')
         .delete()
         .eq('user_id', userId);
-      
+
       // Delete from profiles (parent table)
       await supabase
         .from('profiles')
@@ -200,20 +208,21 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
 
       // Employees are now fully managed in Supabase - no mock data needed
 
-      toast({
-        title: 'Employee Removed',
-        description: `${name} has been removed from the system.`,
-      });
-      
+      toast.success(`${name} has been removed from the system.`);
+
       fetchEmployees();
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: 'Failed to delete employee: ' + error.message,
-        variant: 'destructive',
-      });
+      toast.error('Failed to delete employee: ' + error.message);
     }
   };
+
+  const nameInvalid = showValidation && !newEmployee.firstName.trim();
+
+  // Only Superadmin can access this page (unless embedded).
+  // Kept after all hook declarations so hook order stays stable (Rules of Hooks).
+  if (!embedded && !canManageEmployees()) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   const content = (
     <>
@@ -229,7 +238,13 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
               {employees.length} employees in the system
             </CardDescription>
           </div>
-          <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+          <Dialog
+            open={showAddDialog}
+            onOpenChange={(open) => {
+              setShowAddDialog(open);
+              if (!open) setShowValidation(false);
+            }}
+          >
             <DialogTrigger asChild>
               <Button size="sm" className="flex items-center gap-2">
                 <UserPlus className="h-4 w-4" />
@@ -239,29 +254,48 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Add New Employee</DialogTitle>
+                <DialogDescription>
+                  Create a staff login. The employee signs in with their first name and the default
+                  password, then must set their own on first login.
+                </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 pt-4">
                 <div className="space-y-2">
-                  <Label htmlFor="firstName">Employee Name (First Name)</Label>
+                  <Label htmlFor="firstName">
+                    Employee Name (First Name)
+                    <RequiredMark />
+                  </Label>
                   <Input
                     id="firstName"
                     value={newEmployee.firstName}
                     onChange={(e) => setNewEmployee(prev => ({ ...prev, firstName: e.target.value }))}
                     placeholder="Enter first name"
+                    aria-invalid={nameInvalid}
+                    aria-describedby={nameInvalid ? 'firstName-error' : 'firstName-hint'}
+                    className={cn(nameInvalid && 'border-destructive focus-visible:ring-destructive')}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    This will be used as the login ID
-                  </p>
+                  {nameInvalid ? (
+                    <p id="firstName-error" className="text-xs text-destructive">
+                      Employee name is required.
+                    </p>
+                  ) : (
+                    <p id="firstName-hint" className="text-xs text-muted-foreground">
+                      This will be used as the login ID
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
-                  <Label>Role</Label>
+                  <Label htmlFor="employeeRole">
+                    Role
+                    <RequiredMark />
+                  </Label>
                   <Select
                     value={newEmployee.role}
-                    onValueChange={(value: 'gst_manager' | 'employee') => 
+                    onValueChange={(value: 'gst_manager' | 'employee') =>
                       setNewEmployee(prev => ({ ...prev, role: value }))
                     }
                   >
-                    <SelectTrigger>
+                    <SelectTrigger id="employeeRole">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -279,21 +313,28 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
                     Password: <span className="font-mono">2026</span> (must change on first login)
                   </p>
                 </div>
-                <div className="flex gap-2 justify-end pt-2">
-                  <Button variant="outline" onClick={() => setShowAddDialog(false)}>
-                    Cancel
-                  </Button>
-                  <Button onClick={handleAddEmployee}>
-                    Add Employee
-                  </Button>
-                </div>
               </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  disabled={isSubmitting}
+                  onClick={() => setShowAddDialog(false)}
+                >
+                  Cancel
+                </Button>
+                <Button onClick={handleAddEmployee} disabled={isSubmitting}>
+                  {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  {isSubmitting ? 'Adding…' : 'Add Employee'}
+                </Button>
+              </DialogFooter>
             </DialogContent>
           </Dialog>
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <p className="text-center py-8 text-muted-foreground">Loading...</p>
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
           ) : (
             <div className="space-y-3">
               {employees.map((emp) => (
@@ -328,6 +369,7 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
                   <Button
                     variant="ghost"
                     size="icon"
+                    aria-label={`Remove ${emp.first_name}`}
                     className="text-destructive hover:text-destructive hover:bg-destructive/10"
                     onClick={() => handleDeleteEmployee(emp.id, emp.user_id, emp.first_name)}
                   >
@@ -336,7 +378,11 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
                 </div>
               ))}
               {employees.length === 0 && (
-                <p className="text-center py-8 text-muted-foreground">No employees found. Add your first employee above.</p>
+                <TableEmptyState
+                  icon={<Users className="h-6 w-6" />}
+                  title="No employees yet"
+                  description="Use “Add Employee” above to create your first staff login."
+                />
               )}
             </div>
           )}
@@ -351,11 +397,11 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-heading font-bold text-foreground">Manage Employees</h1>
-        <p className="text-muted-foreground">Add, edit, or remove staff members</p>
-      </div>
+      <PageHeader
+        title="Manage Employees"
+        subtitle="Add, edit, or remove staff members"
+        icon={<Users className="h-6 w-6" />}
+      />
       {content}
     </div>
   );

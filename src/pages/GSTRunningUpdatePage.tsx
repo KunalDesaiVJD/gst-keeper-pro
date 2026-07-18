@@ -6,7 +6,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Checkbox } from '@/components/ui/checkbox';
-import { FileSpreadsheet, Plus, Save, Loader2, Trash2, Download, History, Clock } from 'lucide-react';
+import { ClipboardList, Plus, Save, Loader2, Trash2, FileText, History, Clock } from 'lucide-react';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { supabase } from '@/integrations/supabase/client';
@@ -458,7 +460,7 @@ const GSTRunningUpdatePage: React.FC = () => {
 
   const ResizeHandle = ({ colKey }: { colKey: string }) => (
     <div
-      className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-white/30 active:bg-white/50 z-20"
+      className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary-foreground/30 active:bg-primary-foreground/50 z-20"
       onMouseDown={(e) => {
         e.preventDefault();
         handleResizeStart(colKey, e.clientX);
@@ -469,52 +471,54 @@ const GSTRunningUpdatePage: React.FC = () => {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-primary/10 rounded-lg">
-            <FileSpreadsheet className="h-6 w-6 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-heading font-bold text-foreground">GST Update Sheet</h1>
-            <p className="text-muted-foreground">Track GST updates and changes</p>
-            {lastSavedBy && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
-                {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
-                {' '}on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-                {' '}• v{lastSavedBy.version}
-              </p>
-            )}
-          </div>
-        </div>
-        {canEdit && (
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={() => {
-              exportGSTUpdateToPDF(filteredUpdates, {
-                client: filterClient ? clients.find(c => c.id === filterClient)?.name : undefined,
-                updateEffectMonth: filterUpdateEffectMonth || undefined,
-                effectMonth: filterEffectMonth || undefined,
-              });
-              toast.success('PDF exported successfully');
-            }}>
-              <Download className="h-4 w-4 mr-2" />
-              Export PDF
-            </Button>
-            {canViewVersions && (
-              <Button variant="outline" onClick={() => setShowVersionHistory(true)}>
-                <History className="h-4 w-4 mr-2" />
-                View Versions
-              </Button>
-            )}
-            <Button onClick={handleAddRow} variant="outline">
-              <Plus className="h-4 w-4 mr-2" />
-              Add Row
-            </Button>
-            <Button onClick={handleSave} disabled={isSaving || !hasChanges}>
-              {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
-              Save Changes
-            </Button>
-          </div>
+      <div className="space-y-1">
+        <PageHeader
+          title="GST Update Sheet"
+          subtitle="Track GST updates and changes"
+          icon={<ClipboardList className="h-6 w-6" />}
+          actions={
+            canEdit ? (
+              <>
+                <Button
+                  variant="outline"
+                  className="gap-2"
+                  onClick={() => {
+                    exportGSTUpdateToPDF(filteredUpdates, {
+                      client: filterClient ? clients.find(c => c.id === filterClient)?.name : undefined,
+                      updateEffectMonth: filterUpdateEffectMonth || undefined,
+                      effectMonth: filterEffectMonth || undefined,
+                    });
+                    toast.success('PDF exported successfully');
+                  }}
+                >
+                  <FileText className="h-4 w-4" />
+                  Export PDF
+                </Button>
+                {canViewVersions && (
+                  <Button variant="outline" className="gap-2" onClick={() => setShowVersionHistory(true)}>
+                    <History className="h-4 w-4" />
+                    View Versions
+                  </Button>
+                )}
+                <Button onClick={handleAddRow} variant="outline" className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  Add Row
+                </Button>
+                <Button onClick={handleSave} disabled={isSaving || !hasChanges} className="gap-2">
+                  {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  Save Changes
+                </Button>
+              </>
+            ) : undefined
+          }
+        />
+        {lastSavedBy && (
+          <p className="text-xs text-muted-foreground">
+            Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
+            {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
+            {' '}on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+            {' '}• v{lastSavedBy.version}
+          </p>
         )}
       </div>
 
@@ -693,11 +697,11 @@ const GSTRunningUpdatePage: React.FC = () => {
       <Card>
         <CardContent className="p-4">
           {isLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
           ) : (
-             <ScrollArea className="w-full">
+             <ScrollArea className="w-full max-h-[70vh]">
               <div className="min-w-[1600px]">
                 <Table className="table-fixed">
                   <colgroup>
@@ -720,24 +724,24 @@ const GSTRunningUpdatePage: React.FC = () => {
                     <col style={{ width: 40 }} />
                   </colgroup>
                   <TableHeader>
-                    <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">Sr.No.<ResizeHandle colKey="sr" /></TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">CLIENT<ResizeHandle colKey="client" /></TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">Mistake Month<ResizeHandle colKey="mistake" /></TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">Update Effect Month<ResizeHandle colKey="effect" /></TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">Update in GSTR<ResizeHandle colKey="return" /></TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">Correction Type<ResizeHandle colKey="type" /></TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">Instructions By<ResizeHandle colKey="instructions" /></TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">Matter Brief<ResizeHandle colKey="brief" /></TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right relative">Taxable Value<ResizeHandle colKey="taxable" /></TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right relative">CGST<ResizeHandle colKey="cgst" /></TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right relative">SGST<ResizeHandle colKey="sgst" /></TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right relative">IGST<ResizeHandle colKey="igst" /></TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-right relative">Interest<ResizeHandle colKey="interest" /></TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] relative">Remarks<ResizeHandle colKey="remarks" /></TableHead>
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-center relative">✓<ResizeHandle colKey="check" /></TableHead>
-                      {canDeleteGSTRows && <TableHead className="font-bold text-white border border-[#2E5A6B]"></TableHead>}
-                      <TableHead className="font-bold text-white border border-[#2E5A6B] text-center">
+                    <TableRow className="bg-primary hover:bg-primary">
+                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">Sr.No.<ResizeHandle colKey="sr" /></TableHead>
+                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">CLIENT<ResizeHandle colKey="client" /></TableHead>
+                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">Mistake Month<ResizeHandle colKey="mistake" /></TableHead>
+                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">Update Effect Month<ResizeHandle colKey="effect" /></TableHead>
+                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">Update in GSTR<ResizeHandle colKey="return" /></TableHead>
+                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">Correction Type<ResizeHandle colKey="type" /></TableHead>
+                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">Instructions By<ResizeHandle colKey="instructions" /></TableHead>
+                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">Matter Brief<ResizeHandle colKey="brief" /></TableHead>
+                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-right relative">Taxable Value<ResizeHandle colKey="taxable" /></TableHead>
+                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-right relative">CGST<ResizeHandle colKey="cgst" /></TableHead>
+                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-right relative">SGST<ResizeHandle colKey="sgst" /></TableHead>
+                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-right relative">IGST<ResizeHandle colKey="igst" /></TableHead>
+                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-right relative">Interest<ResizeHandle colKey="interest" /></TableHead>
+                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">Remarks<ResizeHandle colKey="remarks" /></TableHead>
+                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-center relative">✓<ResizeHandle colKey="check" /></TableHead>
+                      {canDeleteGSTRows && <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary"></TableHead>}
+                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-center">
                         <Clock className="h-3.5 w-3.5 mx-auto" />
                       </TableHead>
                     </TableRow>
@@ -747,7 +751,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                       const originalIndex = updates.indexOf(update);
                       return (
                         <TableRow key={update.id || `new-${index}`}>
-                          <TableCell className="border border-border text-center">{index + 1}</TableCell>
+                          <TableCell className="border border-border text-center tabular-nums">{index + 1}</TableCell>
                           <TableCell className="p-0 border border-border">
                             {canEdit ? (
                               <SearchableSelect
@@ -851,7 +855,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                               type="number"
                               value={update.taxable_value || ''}
                               onChange={(e) => handleFieldChange(originalIndex, 'taxable_value', parseFloat(e.target.value) || 0)}
-                              className="h-8 text-right border-0 shadow-none"
+                              className="h-8 text-right tabular-nums border-0 shadow-none"
                               disabled={!canEdit}
                             />
                           </TableCell>
@@ -860,7 +864,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                               type="number"
                               value={update.cgst || ''}
                               onChange={(e) => handleFieldChange(originalIndex, 'cgst', parseFloat(e.target.value) || 0)}
-                              className="h-8 text-right border-0 shadow-none"
+                              className="h-8 text-right tabular-nums border-0 shadow-none"
                               disabled={!canEdit}
                             />
                           </TableCell>
@@ -869,7 +873,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                               type="number"
                               value={update.sgst || ''}
                               onChange={(e) => handleFieldChange(originalIndex, 'sgst', parseFloat(e.target.value) || 0)}
-                              className="h-8 text-right border-0 shadow-none"
+                              className="h-8 text-right tabular-nums border-0 shadow-none"
                               disabled={!canEdit}
                             />
                           </TableCell>
@@ -878,7 +882,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                               type="number"
                               value={update.igst || ''}
                               onChange={(e) => handleFieldChange(originalIndex, 'igst', parseFloat(e.target.value) || 0)}
-                              className="h-8 text-right border-0 shadow-none"
+                              className="h-8 text-right tabular-nums border-0 shadow-none"
                               disabled={!canEdit}
                             />
                           </TableCell>
@@ -887,7 +891,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                               type="number"
                               value={update.interest || ''}
                               onChange={(e) => handleFieldChange(originalIndex, 'interest', parseFloat(e.target.value) || 0)}
-                              className="h-8 text-right border-0 shadow-none"
+                              className="h-8 text-right tabular-nums border-0 shadow-none"
                               disabled={!canEdit}
                             />
                           </TableCell>
@@ -912,6 +916,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => handleDeleteRow(originalIndex)}
+                                aria-label="Delete row"
                                 className="h-8 w-8 p-0 text-destructive hover:text-destructive"
                               >
                                 <Trash2 className="h-4 w-4" />
@@ -928,6 +933,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                                   setRowHistoryLabel(update.client_name || '');
                                 }}
                                 className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                                aria-label="View row change history"
                                 title="View row change history"
                               >
                                 <Clock className="h-3.5 w-3.5" />
@@ -938,11 +944,12 @@ const GSTRunningUpdatePage: React.FC = () => {
                       );
                     })}
                     {filteredUpdates.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={canDeleteGSTRows ? 17 : 16} className="text-center py-8 text-muted-foreground">
-                          No records found. {isStaff && 'Click "Add Row" to create a new entry.'}
-                        </TableCell>
-                      </TableRow>
+                      <TableEmptyState
+                        colSpan={canDeleteGSTRows ? 17 : 16}
+                        icon={<ClipboardList className="h-6 w-6" />}
+                        title="No records found"
+                        description={isStaff ? 'Click "Add Row" to create a new entry.' : undefined}
+                      />
                     )}
                   </TableBody>
                 </Table>

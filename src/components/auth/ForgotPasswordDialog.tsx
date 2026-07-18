@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { KeyRound, AlertCircle } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 
 interface ForgotPasswordDialogProps {
@@ -15,15 +15,10 @@ const ForgotPasswordDialog: React.FC<ForgotPasswordDialogProps> = ({ children })
   const [open, setOpen] = useState(false);
   const [userId, setUserId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { toast } = useToast();
 
   const handleSubmit = async () => {
     if (!userId.trim()) {
-      toast({
-        title: 'Validation Error',
-        description: 'Please enter your User ID (First Name).',
-        variant: 'destructive',
-      });
+      toast.error('Please enter your User ID (First Name).');
       return;
     }
 
@@ -38,10 +33,8 @@ const ForgotPasswordDialog: React.FC<ForgotPasswordDialogProps> = ({ children })
         .single();
 
       if (!profile) {
-        toast({
-          title: 'User Not Found',
+        toast.error('User Not Found', {
           description: 'No employee found with that User ID. Please contact your administrator.',
-          variant: 'destructive',
         });
         return;
       }
@@ -57,8 +50,7 @@ const ForgotPasswordDialog: React.FC<ForgotPasswordDialogProps> = ({ children })
 
       if (error) throw error;
 
-      toast({
-        title: 'Request Submitted',
+      toast.success('Request Submitted', {
         description: 'Your password reset request has been sent to the administrator. They will reset your password shortly.',
       });
 
@@ -66,11 +58,7 @@ const ForgotPasswordDialog: React.FC<ForgotPasswordDialogProps> = ({ children })
       setUserId('');
     } catch (error: any) {
       console.error('Error submitting reset request:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to submit request. Please try again.',
-        variant: 'destructive',
-      });
+      toast.error('Failed to submit request. Please try again.');
     } finally {
       setIsSubmitting(false);
     }

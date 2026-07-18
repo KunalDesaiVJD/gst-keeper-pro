@@ -9,7 +9,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { Calculator, Plus, FileSpreadsheet, FileText, Save, Loader2, Lock, Settings, Unlock, History, Trash2 } from 'lucide-react';
+import { Calculator, FileSpreadsheet, FileText, Save, Loader2, Lock, Settings, Unlock, History, Trash2 } from 'lucide-react';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { TableEmptyState } from '@/components/ui/table-empty-state';
 import ClearDataDialog from '@/components/dialogs/ClearDataDialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -693,35 +695,49 @@ const RCMSummaryPage: React.FC = () => {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-primary/10 rounded-lg">
-            <Calculator className="h-6 w-6 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-heading font-bold text-foreground">RCM Summary</h1>
-            <p className="text-muted-foreground">Reverse Charge Mechanism Summary</p>
-            {lastSavedBy && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
-                {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
-                {' '}on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-                {' '}• v{lastSavedBy.version}
-              </p>
-            )}
-          </div>
-        </div>
-        {allMonthsLocked && (
-          <div className="flex items-center gap-2 text-warning bg-warning/10 px-3 py-1.5 rounded-lg">
-            <Lock className="h-4 w-4" />
-            <span className="text-sm font-medium">All Periods Locked</span>
-          </div>
-        )}
-        {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClient && (
-          <Button variant="destructive" size="sm" onClick={() => setShowClearData(true)} className="gap-2">
-            <Trash2 className="h-4 w-4" />
-            Clear Data
-          </Button>
+      <div className="space-y-1">
+        <PageHeader
+          title="RCM Summary"
+          subtitle="Reverse Charge Mechanism Summary"
+          icon={<Calculator className="h-6 w-6" />}
+          actions={
+            <>
+              {allMonthsLocked && (
+                <div className="flex items-center gap-2 text-warning bg-warning/10 px-3 py-1.5 rounded-lg">
+                  <Lock className="h-4 w-4" />
+                  <span className="text-sm font-medium">All Periods Locked</span>
+                </div>
+              )}
+              <Button variant="outline" onClick={handleExportPDF} className="gap-2">
+                <FileText className="h-4 w-4" />
+                Export PDF
+              </Button>
+              <Button variant="outline" onClick={handleExportExcel} className="gap-2">
+                <FileSpreadsheet className="h-4 w-4" />
+                Export Excel
+              </Button>
+              {canViewVersions && selectedClient && (
+                <Button variant="outline" onClick={() => setShowVersionHistory(true)} className="gap-2">
+                  <History className="h-4 w-4" />
+                  View Versions
+                </Button>
+              )}
+              {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClient && (
+                <Button variant="destructive" onClick={() => setShowClearData(true)} className="gap-2">
+                  <Trash2 className="h-4 w-4" />
+                  Clear Data
+                </Button>
+              )}
+            </>
+          }
+        />
+        {lastSavedBy && (
+          <p className="text-xs text-muted-foreground">
+            Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
+            {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
+            {' '}on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+            {' '}• v{lastSavedBy.version}
+          </p>
         )}
       </div>
 
@@ -784,22 +800,6 @@ const RCMSummaryPage: React.FC = () => {
                 </Select>
               </div>
 
-              <Button variant="outline" size="sm" onClick={handleExportExcel}>
-                <FileSpreadsheet className="h-4 w-4 mr-1" />
-                Excel
-              </Button>
-
-              <Button variant="outline" size="sm" onClick={handleExportPDF}>
-                <FileText className="h-4 w-4 mr-1" />
-                PDF
-              </Button>
-
-              {canViewVersions && selectedClient && (
-                <Button variant="outline" size="sm" onClick={() => setShowVersionHistory(true)}>
-                  <History className="h-4 w-4 mr-1" />
-                  View Versions
-                </Button>
-              )}
             </div>
           </div>
         </CardContent>
@@ -823,6 +823,7 @@ const RCMSummaryPage: React.FC = () => {
                       variant="ghost"
                       size="sm"
                       className="h-4 w-4 p-0 ml-1 hover:bg-warning/20"
+                      aria-label={`Unlock ${month}`}
                       onClick={() => handleUnlockMonth(month)}
                     >
                       <Unlock className="h-3 w-3" />
@@ -862,13 +863,11 @@ const RCMSummaryPage: React.FC = () => {
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
           ) : !selectedClient ? (
-            <div className="flex flex-col items-center justify-center py-16 text-center">
-              <Calculator className="h-16 w-16 text-muted-foreground/50 mb-4" />
-              <h3 className="text-lg font-medium text-foreground mb-2">Select a Client</h3>
-              <p className="text-muted-foreground max-w-md">
-                Choose a client and financial year to view and manage RCM data.
-              </p>
-            </div>
+            <TableEmptyState
+              icon={<Calculator className="h-6 w-6" />}
+              title="Select a client"
+              description="Choose a client and financial year to view and manage RCM data."
+            />
           ) : (
             <RCMTable
               data={data}

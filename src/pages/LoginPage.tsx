@@ -4,9 +4,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Eye, EyeOff, Lock, User } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { AlertTriangle, Lock, User } from 'lucide-react';
+import { toast } from 'sonner';
 import logo from '@/assets/logo.png';
 import ChangePasswordDialog from '@/components/auth/ChangePasswordDialog';
 import ForgotPasswordDialog from '@/components/auth/ForgotPasswordDialog';
@@ -15,24 +16,18 @@ import ClientForgotPasswordDialog from '@/components/auth/ClientForgotPasswordDi
 const LoginPage: React.FC = () => {
   const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [showFirstLoginDialog, setShowFirstLoginDialog] = useState(false);
   const [pendingUserName, setPendingUserName] = useState('');
   
   const { login, completeFirstLogin } = useAuth();
   const navigate = useNavigate();
-  const { toast } = useToast();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!userId.trim() || !password.trim()) {
-      toast({
-        title: 'Validation Error',
-        description: 'Please enter both User ID and Password.',
-        variant: 'destructive',
-      });
+      toast.error('Please enter both User ID and Password.');
       return;
     }
 
@@ -118,26 +113,14 @@ const LoginPage: React.FC = () => {
                 </Label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
+                  <PasswordInput
                     id="password"
-                    type={showPassword ? 'text' : 'password'}
                     placeholder="Enter your password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="pl-10 pr-10 h-11"
+                    className="pl-10 h-11"
                     autoComplete="current-password"
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    {showPassword ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </button>
                 </div>
               </div>
               
@@ -169,8 +152,11 @@ const LoginPage: React.FC = () => {
             
             {/* Development notice */}
             {import.meta.env.DEV && (
-              <div className="mt-6 p-4 bg-amber-500/10 rounded-lg border border-amber-500/30">
-                <p className="text-xs font-medium text-amber-600 mb-1">⚠️ Development Environment</p>
+              <div className="mt-6 p-4 bg-warning/10 rounded-lg border border-warning/30">
+                <p className="text-xs font-medium text-warning mb-1 flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  Development Environment
+                </p>
                 <p className="text-xs text-muted-foreground">
                   Staff: Use name + "2026". Clients: Use GSTIN as both User ID and Password.
                   First login requires password change.

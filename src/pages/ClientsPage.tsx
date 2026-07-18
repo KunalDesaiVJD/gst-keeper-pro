@@ -4,21 +4,24 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Plus, 
-  Search, 
-  Pencil, 
+import {
+  Plus,
+  Search,
+  Pencil,
   Trash2,
   Building2,
   Phone,
   Mail,
-  Upload
+  Users,
+  Loader2
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { TableEmptyState } from '@/components/ui/table-empty-state';
 
 interface Client {
   id: string;
@@ -93,21 +96,19 @@ const ClientsPage: React.FC = () => {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">Loading clients...</p>
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-heading font-bold text-foreground">Clients</h1>
-          <p className="text-muted-foreground">Manage your client database</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {canAddEditClients() && (
+      <PageHeader
+        title="Clients"
+        subtitle="Manage your client database"
+        icon={<Users className="h-6 w-6" />}
+        actions={
+          canAddEditClients() ? (
             <>
               <BulkAddClientsDialog onSuccess={() => fetchClients()} />
               <Button onClick={() => navigate('/add-client')} className="flex items-center gap-2">
@@ -115,9 +116,9 @@ const ClientsPage: React.FC = () => {
                 Add Client
               </Button>
             </>
-          )}
-        </div>
-      </div>
+          ) : undefined
+        }
+      />
 
       {/* Search */}
       <div className="relative max-w-md">
@@ -171,20 +172,22 @@ const ClientsPage: React.FC = () => {
                 </div>
                 <div className="flex items-center gap-2">
                   {canAddEditClients() && (
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
+                    <Button
+                      variant="ghost"
+                      size="icon"
                       title="Edit Client"
+                      aria-label={`Edit client ${client.name}`}
                       onClick={() => navigate(`/edit-client/${client.id}`)}
                     >
                       <Pencil className="h-4 w-4" />
                     </Button>
                   )}
                   {canDeleteClients() && (
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      title="Delete Client" 
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title="Delete Client"
+                      aria-label={`Delete client ${client.name}`}
                       className="text-destructive hover:text-destructive"
                       onClick={() => handleDeleteClient(client.id, client.name)}
                     >
@@ -199,12 +202,16 @@ const ClientsPage: React.FC = () => {
 
         {filteredClients.length === 0 && (
           <Card>
-            <CardContent className="p-12 text-center">
-              <p className="text-muted-foreground">
-                {clients.length === 0 
-                  ? 'No clients found. Add your first client to get started.'
-                  : 'No clients found matching your search.'}
-              </p>
+            <CardContent className="p-6">
+              <TableEmptyState
+                icon={<Building2 className="h-6 w-6" />}
+                title={clients.length === 0 ? 'No clients yet' : 'No matching clients'}
+                description={
+                  clients.length === 0
+                    ? 'Add your first client to get started.'
+                    : 'No clients found matching your search.'
+                }
+              />
             </CardContent>
           </Card>
         )}

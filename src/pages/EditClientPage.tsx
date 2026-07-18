@@ -5,15 +5,26 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { ArrowLeft, Save, Eye, EyeOff, AlertTriangle, History } from 'lucide-react';
+import { ArrowLeft, Save, AlertTriangle, History, Loader2, UserCog } from 'lucide-react';
 import { toast } from 'sonner';
 import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchSchemeHistory, SchemeHistoryEntry } from '@/utils/schemeResolver';
 import { format } from 'date-fns';
+import { PageHeader } from '@/components/layout/PageHeader';
+
+/** Consistent required-field marker used across the Add / Edit client forms. */
+const Req: React.FC = () => (
+  <>
+    <span className="text-destructive" aria-hidden="true"> *</span>
+    <span className="sr-only"> (required)</span>
+  </>
+);
 
 interface ClientData {
   id: string;
@@ -36,7 +47,6 @@ const EditClientPage: React.FC = () => {
   const { user } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [showGstPassword, setShowGstPassword] = useState(false);
 
   // Original registration type loaded from DB
   const originalRegType = useRef<RegistrationType | ''>('');
@@ -335,7 +345,7 @@ const EditClientPage: React.FC = () => {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">Loading client data...</p>
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
@@ -343,14 +353,22 @@ const EditClientPage: React.FC = () => {
   return (
     <div className="space-y-6 animate-fade-in max-w-3xl mx-auto">
       {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+      <div className="flex items-start gap-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Go back"
+          className="mt-1 shrink-0"
+          onClick={() => navigate(-1)}
+        >
           <ArrowLeft className="h-5 w-5" />
         </Button>
-        <div>
-          <h1 className="text-2xl font-heading font-bold text-foreground">Edit Client</h1>
-          <p className="text-muted-foreground">Update client details</p>
-        </div>
+        <PageHeader
+          className="flex-1"
+          title="Edit Client"
+          subtitle="Update client details"
+          icon={<UserCog className="h-6 w-6" />}
+        />
       </div>
 
       <Card>
@@ -364,7 +382,7 @@ const EditClientPage: React.FC = () => {
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* GSTIN */}
             <div className="space-y-2">
-              <Label htmlFor="gstin">GSTIN *</Label>
+              <Label htmlFor="gstin">GSTIN<Req /></Label>
               <Input
                 id="gstin"
                 value={formData.gstin}
@@ -378,7 +396,7 @@ const EditClientPage: React.FC = () => {
 
             {/* Client Name */}
             <div className="space-y-2">
-              <Label htmlFor="name">Client Name *</Label>
+              <Label htmlFor="name">Client Name<Req /></Label>
               <Input
                 id="name"
                 value={formData.name}
@@ -391,7 +409,7 @@ const EditClientPage: React.FC = () => {
 
             {/* Registration Date */}
             <div className="space-y-2">
-              <Label htmlFor="registrationDate">Registration Date *</Label>
+              <Label htmlFor="registrationDate">Registration Date<Req /></Label>
               <Input
                 id="registrationDate"
                 type="date"
@@ -404,7 +422,7 @@ const EditClientPage: React.FC = () => {
 
             {/* Registration Type */}
             <div className="space-y-2">
-              <Label>Registration Type *</Label>
+              <Label>Registration Type<Req /></Label>
               <Select
                 value={formData.registrationType}
                 onValueChange={(value) => handleRegistrationTypeChange(value as RegistrationType)}
@@ -425,8 +443,8 @@ const EditClientPage: React.FC = () => {
 
             {/* Scheme Change Section - shown only when registration type changes */}
             {schemeChanged && (
-              <div className="border-2 border-amber-400 rounded-lg p-4 space-y-4 bg-amber-50 dark:bg-amber-950/20">
-                <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
+              <div className="border-2 border-warning/50 rounded-lg p-4 space-y-4 bg-warning/10">
+                <div className="flex items-center gap-2 text-warning">
                   <AlertTriangle className="h-5 w-5" />
                   <h4 className="font-semibold">Scheme Change Detected</h4>
                 </div>
@@ -435,7 +453,7 @@ const EditClientPage: React.FC = () => {
                   Please specify an Effective From Date. Previous periods will stay under the old scheme. The new scheme will apply from this date onward.
                 </p>
                 <div className="space-y-2">
-                  <Label htmlFor="effectiveFromDate">Effective From Date *</Label>
+                  <Label htmlFor="effectiveFromDate">Effective From Date<Req /></Label>
                   <Input
                     id="effectiveFromDate"
                     type="date"
@@ -475,24 +493,24 @@ const EditClientPage: React.FC = () => {
                   {showHistory ? 'Hide' : 'Show'} Scheme History ({schemeHistory.length})
                 </Button>
                 {showHistory && (
-                  <div className="border rounded-lg overflow-hidden">
+                  <div className="border rounded-lg overflow-x-auto max-h-72 overflow-y-auto">
                     <table className="w-full text-sm">
-                      <thead className="bg-muted/50">
+                      <thead className="bg-primary text-primary-foreground sticky top-0 z-10">
                         <tr>
-                          <th className="px-3 py-2 text-left">Date</th>
-                          <th className="px-3 py-2 text-left">Old Scheme</th>
-                          <th className="px-3 py-2 text-left">New Scheme</th>
-                          <th className="px-3 py-2 text-left">Effective From</th>
-                          <th className="px-3 py-2 text-left">Notes</th>
+                          <th className="px-3 py-2 text-left font-medium whitespace-nowrap">Date</th>
+                          <th className="px-3 py-2 text-left font-medium whitespace-nowrap">Old Scheme</th>
+                          <th className="px-3 py-2 text-left font-medium whitespace-nowrap">New Scheme</th>
+                          <th className="px-3 py-2 text-left font-medium whitespace-nowrap">Effective From</th>
+                          <th className="px-3 py-2 text-left font-medium">Notes</th>
                         </tr>
                       </thead>
                       <tbody>
                         {schemeHistory.map((h) => (
                           <tr key={h.id} className="border-t">
-                            <td className="px-3 py-2">{format(new Date(h.changed_at), 'dd-MM-yyyy')}</td>
-                            <td className="px-3 py-2">{h.old_scheme}</td>
-                            <td className="px-3 py-2">{h.new_scheme}</td>
-                            <td className="px-3 py-2">{format(new Date(h.effective_from_date), 'dd-MM-yyyy')}</td>
+                            <td className="px-3 py-2 whitespace-nowrap tabular-nums">{format(new Date(h.changed_at), 'dd-MM-yyyy')}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">{h.old_scheme}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">{h.new_scheme}</td>
+                            <td className="px-3 py-2 whitespace-nowrap tabular-nums">{format(new Date(h.effective_from_date), 'dd-MM-yyyy')}</td>
                             <td className="px-3 py-2 text-muted-foreground">{h.notes || '-'}</td>
                           </tr>
                         ))}
@@ -507,51 +525,31 @@ const EditClientPage: React.FC = () => {
             {formData.registrationType === 'Regular' && (
               <div className="space-y-4 border rounded-lg p-4 bg-muted/30">
                 <div className="space-y-2">
-                  <Label>Regular Type *</Label>
-                  <div className="flex gap-4">
-                    <div
-                      className={`flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
-                        formData.regularSubType === 'Builder' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
-                      }`}
-                      onClick={() => setFormData(prev => ({
-                        ...prev,
-                        regularSubType: 'Builder',
-                        builderItcType: '',
-                        commercialArea: '',
-                        residentialArea: ''
-                      }))}
-                    >
-                      <Checkbox checked={formData.regularSubType === 'Builder'} onCheckedChange={() => setFormData(prev => ({
-                        ...prev,
-                        regularSubType: 'Builder',
-                        builderItcType: '',
-                        commercialArea: '',
-                        residentialArea: ''
-                      }))} />
-                      <Label className="cursor-pointer font-normal">Builder</Label>
-                    </div>
-                    <div
-                      className={`flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
-                        formData.regularSubType === 'Normal' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
-                      }`}
-                      onClick={() => setFormData(prev => ({
-                        ...prev,
-                        regularSubType: 'Normal',
-                        builderItcType: '',
-                        commercialArea: '',
-                        residentialArea: ''
-                      }))}
-                    >
-                      <Checkbox checked={formData.regularSubType === 'Normal'} onCheckedChange={() => setFormData(prev => ({
-                        ...prev,
-                        regularSubType: 'Normal',
-                        builderItcType: '',
-                        commercialArea: '',
-                        residentialArea: ''
-                      }))} />
-                      <Label className="cursor-pointer font-normal">Normal</Label>
-                    </div>
-                  </div>
+                  <Label>Regular Type<Req /></Label>
+                  <RadioGroup
+                    className="flex gap-4"
+                    value={formData.regularSubType}
+                    onValueChange={(value) => setFormData(prev => ({
+                      ...prev,
+                      regularSubType: value as 'Builder' | 'Normal',
+                      builderItcType: '',
+                      commercialArea: '',
+                      residentialArea: ''
+                    }))}
+                  >
+                    {(['Builder', 'Normal'] as const).map((option) => (
+                      <label
+                        key={option}
+                        htmlFor={`regularSubType-${option}`}
+                        className={`flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                          formData.regularSubType === option ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                        }`}
+                      >
+                        <RadioGroupItem value={option} id={`regularSubType-${option}`} />
+                        <span className="text-sm font-normal">{option}</span>
+                      </label>
+                    ))}
+                  </RadioGroup>
                   {errors.regularSubType && <p className="text-sm text-destructive">{errors.regularSubType}</p>}
                 </div>
 
@@ -559,56 +557,34 @@ const EditClientPage: React.FC = () => {
                 {formData.regularSubType === 'Builder' && (
                   <div className="space-y-4">
                     <div className="space-y-2">
-                      <Label>ITC Type *</Label>
-                      <div className="flex gap-4 flex-wrap">
-                        <div
-                          className={`flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
-                            formData.builderItcType === 'NO_ITC' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
-                          }`}
-                          onClick={() => setFormData(prev => ({
-                            ...prev,
-                            builderItcType: 'NO_ITC',
-                            commercialArea: '',
-                            residentialArea: ''
-                          }))}
-                        >
-                          <Checkbox checked={formData.builderItcType === 'NO_ITC'} onCheckedChange={() => setFormData(prev => ({
-                            ...prev,
-                            builderItcType: 'NO_ITC',
-                            commercialArea: '',
-                            residentialArea: ''
-                          }))} />
-                          <Label className="cursor-pointer font-normal">NO ITC</Label>
-                        </div>
-                        <div
-                          className={`flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
-                            formData.builderItcType === 'CLAIM_ITC' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
-                          }`}
-                          onClick={() => setFormData(prev => ({
-                            ...prev,
-                            builderItcType: 'CLAIM_ITC',
-                            commercialArea: '',
-                            residentialArea: ''
-                          }))}
-                        >
-                          <Checkbox checked={formData.builderItcType === 'CLAIM_ITC'} onCheckedChange={() => setFormData(prev => ({
-                            ...prev,
-                            builderItcType: 'CLAIM_ITC',
-                            commercialArea: '',
-                            residentialArea: ''
-                          }))} />
-                          <Label className="cursor-pointer font-normal">CLAIM ITC</Label>
-                        </div>
-                        <div
-                          className={`flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
-                            formData.builderItcType === 'PARTIAL_ITC' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
-                          }`}
-                          onClick={() => setFormData(prev => ({ ...prev, builderItcType: 'PARTIAL_ITC' }))}
-                        >
-                          <Checkbox checked={formData.builderItcType === 'PARTIAL_ITC'} onCheckedChange={() => setFormData(prev => ({ ...prev, builderItcType: 'PARTIAL_ITC' }))} />
-                          <Label className="cursor-pointer font-normal">PARTIAL ITC</Label>
-                        </div>
-                      </div>
+                      <Label>ITC Type<Req /></Label>
+                      <RadioGroup
+                        className="flex gap-4 flex-wrap"
+                        value={formData.builderItcType}
+                        onValueChange={(value) => setFormData(prev => ({
+                          ...prev,
+                          builderItcType: value as 'NO_ITC' | 'CLAIM_ITC' | 'PARTIAL_ITC',
+                          // Areas only apply to PARTIAL_ITC — clear them for the other two.
+                          ...(value === 'PARTIAL_ITC' ? {} : { commercialArea: '', residentialArea: '' }),
+                        }))}
+                      >
+                        {([
+                          { value: 'NO_ITC', label: 'NO ITC' },
+                          { value: 'CLAIM_ITC', label: 'CLAIM ITC' },
+                          { value: 'PARTIAL_ITC', label: 'PARTIAL ITC' },
+                        ] as const).map((option) => (
+                          <label
+                            key={option.value}
+                            htmlFor={`builderItcType-${option.value}`}
+                            className={`flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                              formData.builderItcType === option.value ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                            }`}
+                          >
+                            <RadioGroupItem value={option.value} id={`builderItcType-${option.value}`} />
+                            <span className="text-sm font-normal">{option.label}</span>
+                          </label>
+                        ))}
+                      </RadioGroup>
                       {errors.builderItcType && <p className="text-sm text-destructive">{errors.builderItcType}</p>}
                     </div>
 
@@ -616,7 +592,7 @@ const EditClientPage: React.FC = () => {
                     {formData.builderItcType === 'PARTIAL_ITC' && (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-4">
                         <div className="space-y-2">
-                          <Label htmlFor="commercialArea">Commercial Area *</Label>
+                          <Label htmlFor="commercialArea">Commercial Area<Req /></Label>
                           <Input
                             id="commercialArea"
                             type="number"
@@ -629,7 +605,7 @@ const EditClientPage: React.FC = () => {
                           {errors.commercialArea && <p className="text-sm text-destructive">{errors.commercialArea}</p>}
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="residentialArea">Residential Area *</Label>
+                          <Label htmlFor="residentialArea">Residential Area<Req /></Label>
                           <Input
                             id="residentialArea"
                             type="number"
@@ -654,7 +630,7 @@ const EditClientPage: React.FC = () => {
             {/* Return Types */}
             {formData.registrationType && (
               <div className="space-y-3">
-                <Label>Select Return Types *</Label>
+                <Label>Select Return Types<Req /></Label>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   {availableReturns.map((returnType) => (
                     <div
@@ -841,25 +817,12 @@ const EditClientPage: React.FC = () => {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="gstPassword">GST Password</Label>
-                  <div className="relative">
-                    <Input
-                      id="gstPassword"
-                      type={showGstPassword ? 'text' : 'password'}
-                      value={formData.gstPassword}
-                      onChange={(e) => setFormData(prev => ({ ...prev, gstPassword: e.target.value }))}
-                      placeholder="Enter GST portal Password"
-                      className="pr-10"
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
-                      onClick={() => setShowGstPassword(!showGstPassword)}
-                    >
-                      {showGstPassword ? <EyeOff className="h-4 w-4 text-muted-foreground" /> : <Eye className="h-4 w-4 text-muted-foreground" />}
-                    </Button>
-                  </div>
+                  <PasswordInput
+                    id="gstPassword"
+                    value={formData.gstPassword}
+                    onChange={(e) => setFormData(prev => ({ ...prev, gstPassword: e.target.value }))}
+                    placeholder="Enter GST portal Password"
+                  />
                 </div>
               </div>
             </div>
@@ -870,7 +833,7 @@ const EditClientPage: React.FC = () => {
                 Cancel
               </Button>
               <Button type="submit" className="flex items-center gap-2" disabled={isSaving}>
-                <Save className="h-4 w-4" />
+                {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 {isSaving ? 'Saving...' : 'Save Changes'}
               </Button>
             </div>

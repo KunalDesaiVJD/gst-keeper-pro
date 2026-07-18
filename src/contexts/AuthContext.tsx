@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 
 type UserRole = 'superadmin' | 'gst_manager' | 'employee' | 'client';
 
@@ -100,7 +100,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<AppUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [pendingFirstLogin, setPendingFirstLogin] = useState<{ userId: string; firstName: string } | null>(null);
-  const { toast } = useToast();
 
   const fetchUserData = useCallback(async (authUserId: string, email: string): Promise<AppUser | null> => {
     try {
@@ -234,8 +233,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         
         if (staff.is_first_login && password === '2026') {
           setPendingFirstLogin({ userId: staff.user_id, firstName: staff.first_name });
-          toast({
-            title: 'Password Change Required',
+          toast.info('Password Change Required', {
             description: 'Please set a new password to continue.',
           });
           return { success: true, isFirstLogin: true };
@@ -256,8 +254,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.setItem(FALLBACK_AUTH_KEY, JSON.stringify(userData));
         setUser(userData);
         
-        toast({
-          title: 'Login Successful',
+        toast.success('Login Successful', {
           description: `Welcome back, ${userData.firstName}!`,
         });
         
@@ -281,8 +278,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Check if first login - need to change password
           if (client.is_first_login && password === client.gstin) {
             setPendingFirstLogin({ userId: client.client_id, firstName: client.client_name });
-            toast({
-              title: 'Password Change Required',
+            toast.info('Password Change Required', {
               description: 'Please set a new password to continue.',
             });
             return { success: true, isFirstLogin: true };
@@ -300,8 +296,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           localStorage.setItem(FALLBACK_AUTH_KEY, JSON.stringify(clientUser));
           setUser(clientUser);
           
-          toast({
-            title: 'Login Successful',
+          toast.success('Login Successful', {
             description: `Welcome, ${clientUser.firstName}!`,
           });
           
@@ -309,22 +304,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      toast({
-        title: 'Login Failed',
+      toast.error('Login Failed', {
         description: 'Invalid credentials. Please check your User ID and password.',
-        variant: 'destructive',
       });
       return { success: false };
     } catch (error) {
       console.error('Login error:', error);
-      toast({
-        title: 'Login Failed',
+      toast.error('Login Failed', {
         description: 'An unexpected error occurred.',
-        variant: 'destructive',
       });
       return { success: false };
     }
-  }, [toast]);
+  }, []);
 
   const completeFirstLogin = useCallback(async (newPassword: string): Promise<boolean> => {
     if (!pendingFirstLogin) {
@@ -348,11 +339,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (clientError) {
           console.error('Client first login error:', clientError);
-          toast({
-            title: 'Error',
-            description: 'Failed to update password.',
-            variant: 'destructive',
-          });
+          toast.error('Failed to update password.');
           return false;
         }
 
@@ -369,8 +356,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(clientUser);
         setPendingFirstLogin(null);
 
-        toast({
-          title: 'Password Set Successfully',
+        toast.success('Password Set Successfully', {
           description: `Welcome, ${clientUser.firstName}!`,
         });
 
@@ -385,11 +371,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (staffError) {
         console.error('Staff first login error:', staffError);
-        toast({
-          title: 'Error',
-          description: 'Failed to update password.',
-          variant: 'destructive',
-        });
+        toast.error('Failed to update password.');
         return false;
       }
 
@@ -399,11 +381,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       if (snapshotError || !userData || userData.length === 0) {
-        toast({
-          title: 'Error',
-          description: 'Failed to complete login.',
-          variant: 'destructive',
-        });
+        toast.error('Failed to complete login.');
         return false;
       }
 
@@ -423,22 +401,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(appUser);
       setPendingFirstLogin(null);
 
-      toast({
-        title: 'Password Set Successfully',
+      toast.success('Password Set Successfully', {
         description: `Welcome, ${appUser.firstName}!`,
       });
 
       return true;
     } catch (error) {
       console.error('Error completing first login:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to set password. Please try again.',
-        variant: 'destructive',
-      });
+      toast.error('Failed to set password. Please try again.');
       return false;
     }
-  }, [pendingFirstLogin, toast]);
+  }, [pendingFirstLogin]);
 
   const logout = useCallback(async () => {
     localStorage.removeItem(FALLBACK_AUTH_KEY);
@@ -447,11 +420,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     setPendingFirstLogin(null);
     
-    toast({
-      title: 'Logged Out',
+    toast.success('Logged Out', {
       description: 'You have been successfully logged out.',
     });
-  }, [toast]);
+  }, []);
 
   // Role-based permission checks - Superadmin has all permissions by default
   const isStaffRole = useCallback((): boolean => {

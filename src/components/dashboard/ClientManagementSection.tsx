@@ -4,17 +4,19 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Plus, 
-  Search, 
-  Pencil, 
+import {
+  Plus,
+  Search,
+  Pencil,
   Trash2,
   Building2,
-  Phone,
-  Mail
+  Loader2,
+  Phone
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { useConfirm } from '@/components/ui/confirm-dialog';
+import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface Client {
@@ -30,6 +32,7 @@ interface Client {
 const ClientManagementSection: React.FC = () => {
   const navigate = useNavigate();
   const { canAddEditClients, canDeleteClients } = useAuth();
+  const confirm = useConfirm();
   const [searchTerm, setSearchTerm] = useState('');
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -65,7 +68,13 @@ const ClientManagementSection: React.FC = () => {
   }, [fetchClients]);
 
   const handleDeleteClient = async (id: string, name: string) => {
-    if (!confirm(`Are you sure you want to delete "${name}"?`)) return;
+    const ok = await confirm({
+      title: 'Delete client?',
+      description: `"${name}" and its associated records will be permanently removed. This cannot be undone.`,
+      destructive: true,
+      confirmText: 'Delete',
+    });
+    if (!ok) return;
 
     const { error } = await supabase
       .from('clients')
@@ -119,11 +128,19 @@ const ClientManagementSection: React.FC = () => {
         {/* Client List */}
         <div className="space-y-2 max-h-80 overflow-y-auto">
           {isLoading ? (
-            <p className="text-center py-4 text-muted-foreground">Loading...</p>
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
           ) : filteredClients.length === 0 ? (
-            <p className="text-center py-4 text-muted-foreground">
-              {clients.length === 0 ? 'No clients found.' : 'No matching clients.'}
-            </p>
+            <TableEmptyState
+              icon={<Building2 className="h-6 w-6" />}
+              title={clients.length === 0 ? 'No clients yet' : 'No matching clients'}
+              description={
+                clients.length === 0
+                  ? 'Add your first client to start tracking GST filings.'
+                  : 'Try a different name or GSTIN.'
+              }
+            />
           ) : (
             filteredClients.slice(0, 10).map((client) => (
               <div
@@ -156,8 +173,9 @@ const ClientManagementSection: React.FC = () => {
                       <Button 
                         variant="ghost" 
                         size="icon" 
-                        className="h-8 w-8" 
-                        title="Edit"
+                        className="h-8 w-8"
+                        title="Edit client"
+                        aria-label={`Edit client ${client.name}`}
                         onClick={(e) => {
                           e.stopPropagation();
                           navigate(`/edit-client/${client.id}`);
@@ -175,7 +193,8 @@ const ClientManagementSection: React.FC = () => {
                           e.stopPropagation();
                           handleDeleteClient(client.id, client.name);
                         }}
-                        title="Delete"
+                        title="Delete client"
+                        aria-label={`Delete client ${client.name}`}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>

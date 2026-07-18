@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Upload, Download, FileSpreadsheet, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
+import { Upload, Download, CheckCircle2, XCircle, AlertTriangle, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/integrations/supabase/client';
@@ -332,7 +332,7 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button variant="outline" className="flex items-center gap-2">
-          <FileSpreadsheet className="h-4 w-4" />
+          <Upload className="h-4 w-4" />
           Bulk Add Clients
         </Button>
       </DialogTrigger>
@@ -376,13 +376,17 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
                 onChange={handleFileUpload}
                 className="hidden"
               />
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isProcessing}
                 className="flex items-center gap-2"
               >
-                <Upload className="h-4 w-4" />
+                {isProcessing ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Upload className="h-4 w-4" />
+                )}
                 {isProcessing ? 'Processing...' : 'Upload Excel File'}
               </Button>
             </div>
@@ -398,7 +402,7 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
               
               <div className="ml-8 flex items-center gap-4">
                 <Badge variant="outline" className="flex items-center gap-1">
-                  <CheckCircle2 className="h-3 w-3 text-green-500" />
+                  <CheckCircle2 className="h-3 w-3 text-success" />
                   {validCount} Valid
                 </Badge>
                 {invalidCount > 0 && (
@@ -409,25 +413,25 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
                 )}
               </div>
 
-              <div className="ml-8 max-h-60 overflow-y-auto border rounded-lg">
+              <div className="ml-8 max-h-60 overflow-y-auto overflow-x-auto border rounded-lg">
                 <table className="w-full text-sm">
-                  <thead className="bg-muted sticky top-0">
+                  <thead className="bg-primary text-primary-foreground sticky top-0 z-10">
                     <tr>
-                      <th className="px-3 py-2 text-left">Row</th>
-                      <th className="px-3 py-2 text-left">GSTIN</th>
-                      <th className="px-3 py-2 text-left">Name</th>
-                      <th className="px-3 py-2 text-left">Status</th>
+                      <th className="px-3 py-2 text-right font-medium">Row</th>
+                      <th className="px-3 py-2 text-left font-medium">GSTIN</th>
+                      <th className="px-3 py-2 text-left font-medium">Name</th>
+                      <th className="px-3 py-2 text-left font-medium">Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {validationResults.map((result, idx) => (
                       <tr key={idx} className={result.isValid ? '' : 'bg-destructive/5'}>
-                        <td className="px-3 py-2">{result.row}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{result.row}</td>
                         <td className="px-3 py-2 font-mono text-xs">{result.data.gstin}</td>
                         <td className="px-3 py-2">{result.data.name}</td>
                         <td className="px-3 py-2">
                           {result.isValid ? (
-                            <CheckCircle2 className="h-4 w-4 text-green-500" />
+                            <CheckCircle2 className="h-4 w-4 text-success" />
                           ) : (
                             <div className="flex items-start gap-1">
                               <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
@@ -443,11 +447,12 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
 
               {validCount > 0 && (
                 <div className="ml-8">
-                  <Button 
-                    onClick={handleImport} 
+                  <Button
+                    onClick={handleImport}
                     disabled={isImporting}
                     className="flex items-center gap-2"
                   >
+                    {isImporting && <Loader2 className="h-4 w-4 animate-spin" />}
                     {isImporting ? 'Importing...' : `Import ${validCount} Clients`}
                   </Button>
                 </div>

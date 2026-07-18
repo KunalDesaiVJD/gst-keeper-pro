@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Eye, EyeOff, Lock } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 
 interface ChangePasswordDialogProps {
   open: boolean;
@@ -26,7 +26,6 @@ const ChangePasswordDialog: React.FC<ChangePasswordDialogProps> = ({
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { toast } = useToast();
 
   const validatePassword = (password: string): string | null => {
     if (password.length < 8) {
@@ -44,19 +43,15 @@ const ChangePasswordDialog: React.FC<ChangePasswordDialogProps> = ({
     
     const validationError = validatePassword(newPassword);
     if (validationError) {
-      toast({
-        title: 'Invalid Password',
+      toast.error('Invalid Password', {
         description: validationError,
-        variant: 'destructive',
       });
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      toast({
-        title: 'Password Mismatch',
+      toast.error('Password Mismatch', {
         description: 'Passwords do not match.',
-        variant: 'destructive',
       });
       return;
     }

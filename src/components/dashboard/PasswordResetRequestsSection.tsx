@@ -1,15 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Key, Loader2, CheckCircle2, Clock, User, X } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useAuth } from '@/contexts/AuthContext';
-import { mockPasswords } from '@/data/mockData';
 
 interface PasswordResetRequest {
   id: string;
@@ -21,7 +21,7 @@ interface PasswordResetRequest {
 
 const PasswordResetRequestsSection: React.FC = () => {
   const { user } = useAuth();
-  const { toast } = useToast();
+  const confirm = useConfirm();
   const [requests, setRequests] = useState<PasswordResetRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedRequest, setSelectedRequest] = useState<PasswordResetRequest | null>(null);
@@ -72,20 +72,12 @@ const PasswordResetRequestsSection: React.FC = () => {
 
   const handleSetPassword = async () => {
     if (!selectedRequest || !newPassword) {
-      toast({
-        title: 'Error',
-        description: 'Please enter a new password',
-        variant: 'destructive',
-      });
+      toast.error('Please enter a new password');
       return;
     }
 
     if (newPassword.length < 8) {
-      toast({
-        title: 'Invalid Password',
-        description: 'Password must be at least 8 characters long.',
-        variant: 'destructive',
-      });
+      toast.error('Password must be at least 8 characters long.');
       return;
     }
 
@@ -121,21 +113,14 @@ const PasswordResetRequestsSection: React.FC = () => {
 
       if (requestError) throw requestError;
 
-      toast({
-        title: 'Password Reset',
-        description: `Password for ${selectedRequest.requested_by_name} has been set successfully.`,
-      });
+      toast.success(`Password for ${selectedRequest.requested_by_name} has been set successfully.`);
 
       setSelectedRequest(null);
       setNewPassword('');
       fetchRequests();
     } catch (error: any) {
       console.error('Error setting password:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to set password: ' + error.message,
-        variant: 'destructive',
-      });
+      toast.error('Failed to set password: ' + error.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -147,9 +132,13 @@ const PasswordResetRequestsSection: React.FC = () => {
   // realtime subscription refetches automatically, but we also filter locally
   // so the row disappears immediately without waiting for the socket.
   const handleCancelRequest = async (request: PasswordResetRequest) => {
-    const ok = window.confirm(
-      `Cancel the password reset request from ${request.requested_by_name}? This does NOT change their password — it just dismisses the request from this list.`,
-    );
+    const ok = await confirm({
+      title: 'Cancel password reset request?',
+      description: `This dismisses the request from ${request.requested_by_name} from this list. It does NOT change their password.`,
+      destructive: true,
+      confirmText: 'Cancel request',
+      cancelText: 'Keep request',
+    });
     if (!ok) return;
     setCancellingId(request.id);
     try {
@@ -163,17 +152,10 @@ const PasswordResetRequestsSection: React.FC = () => {
         .eq('id', request.id);
       if (error) throw error;
       setRequests(prev => prev.filter(r => r.id !== request.id));
-      toast({
-        title: 'Request cancelled',
-        description: `Password reset request from ${request.requested_by_name} was dismissed.`,
-      });
+      toast.success(`Password reset request from ${request.requested_by_name} was dismissed.`);
     } catch (error: any) {
       console.error('Error cancelling reset request:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to cancel request: ' + (error?.message || 'Unknown error'),
-        variant: 'destructive',
-      });
+      toast.error('Failed to cancel request: ' + (error?.message || 'Unknown error'));
     } finally {
       setCancellingId(null);
     }
@@ -191,7 +173,7 @@ const PasswordResetRequestsSection: React.FC = () => {
             <Key className="h-5 w-5 text-warning" />
             Password Reset Requests
             {requests.length > 0 && (
-              <Badge variant="destructive" className="ml-2">
+              <Badge variant="warning" className="ml-2">
                 {requests.length} pending
               </Badge>
             )}
@@ -202,8 +184,8 @@ const PasswordResetRequestsSection: React.FC = () => {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="flex items-center justify-center py-4">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
           ) : (
             <div className="space-y-3">
@@ -271,9 +253,8 @@ const PasswordResetRequestsSection: React.FC = () => {
           <div className="space-y-4 pt-4">
             <div className="space-y-2">
               <Label htmlFor="newPassword">New Password</Label>
-              <Input
+              <PasswordInput
                 id="newPassword"
-                type="password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="Enter new password"

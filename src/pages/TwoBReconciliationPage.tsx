@@ -7,17 +7,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { MultiSelectPopover } from '@/components/ui/multi-select-popover';
-import { 
-  Upload, 
-  Download, 
+import {
+  Upload,
+  FileSpreadsheet,
   History,
   AlertCircle,
   Lock,
   Trash2,
   Plus,
   Save,
-  Filter
+  Filter,
+  Inbox
 } from 'lucide-react';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { TableEmptyState } from '@/components/ui/table-empty-state';
 import ClearDataDialog from '@/components/dialogs/ClearDataDialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -1145,7 +1148,7 @@ const TwoBReconciliationPage: React.FC = () => {
         return <span>{format(new Date(value as string), 'dd/MM/yyyy')}</span>;
       }
       if (type === 'number' && value !== null && value !== undefined) {
-        return <span className="font-mono">{Number(value).toLocaleString('en-IN')}</span>;
+        return <span className="font-mono tabular-nums">{Number(value).toLocaleString('en-IN')}</span>;
       }
       return <span>{value ?? '-'}</span>;
     }
@@ -1170,7 +1173,7 @@ const TwoBReconciliationPage: React.FC = () => {
         }}
         min={type === 'number' ? 0 : undefined}
         max={type === 'date' && maxDate ? maxDate : undefined}
-        className={`h-8 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${type === 'number' ? 'w-28 text-right font-mono' : ''} ${className}`}
+        className={`h-8 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${type === 'number' ? 'w-28 text-right font-mono tabular-nums' : ''} ${className}`}
       />
     );
   };
@@ -1247,7 +1250,7 @@ const TwoBReconciliationPage: React.FC = () => {
         <SelectContent>
           <SelectItem value="__clear__">-</SelectItem>
           {isReclaimColumn && (
-            <SelectItem value="__expense_out__" className="text-orange-600 font-medium">
+            <SelectItem value="__expense_out__" className="text-warning font-medium">
               Expense out
             </SelectItem>
           )}
@@ -1269,60 +1272,62 @@ const TwoBReconciliationPage: React.FC = () => {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-heading font-bold text-foreground">2B Reconciliation</h1>
-          <p className="text-muted-foreground">Manage bills not available in 2B or Books</p>
-          {/* Last saved audit label */}
-          {lastSavedInfo && selectedClientId && (
-            <p className="text-xs text-muted-foreground mt-1">
-              Last {lastSavedInfo.actionType === 'RESTORE' ? 'restored' : 'saved'} by{' '}
-              <span className="font-medium text-foreground">{lastSavedInfo.savedBy}</span>
-              {lastSavedInfo.savedByRole && (
-                <span className="text-muted-foreground"> ({lastSavedInfo.savedByRole})</span>
-              )}
-              {' '}on {format(lastSavedInfo.savedAt, 'dd-MMM-yyyy HH:mm')} • v{lastSavedInfo.versionNumber}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {selectedClientId && !isLocked && (
-            <Button 
-              onClick={handleSaveAll} 
-              disabled={isSaving || !hasUnsavedChanges || hasMandatoryFieldErrors}
-              variant={hasUnsavedChanges ? "default" : "outline"}
-              title={hasMandatoryFieldErrors ? 'Fix mandatory field errors before saving' : ''}
-              className="flex items-center gap-2"
-            >
-              <Save className="h-4 w-4" />
-              {isSaving ? 'Saving...' : 'Save Changes'}
+      <PageHeader
+        embedded
+        title="2B Reconciliation"
+        subtitle="Manage bills not available in 2B or Books"
+        actions={
+          <>
+            {selectedClientId && !isLocked && (
+              <Button
+                onClick={handleSaveAll}
+                disabled={isSaving || !hasUnsavedChanges || hasMandatoryFieldErrors}
+                variant={hasUnsavedChanges ? "default" : "outline"}
+                title={hasMandatoryFieldErrors ? 'Fix mandatory field errors before saving' : ''}
+                className="flex items-center gap-2"
+              >
+                <Save className="h-4 w-4" />
+                {isSaving ? 'Saving...' : 'Save Changes'}
+              </Button>
+            )}
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileChange}
+              accept=".xlsx,.xls"
+              className="hidden"
+            />
+            {canImportExcel() && (
+              <Button variant="outline" className="flex items-center gap-2" onClick={handleImportClick} disabled={isLocked}>
+                <Upload className="h-4 w-4" />
+                Import Excel
+              </Button>
+            )}
+            <Button variant="outline" className="flex items-center gap-2" onClick={handleExportExcel}>
+              <FileSpreadsheet className="h-4 w-4" />
+              Export Excel
             </Button>
+            {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClientId && (
+              <Button variant="destructive" size="sm" onClick={() => setShowClearData(true)} className="gap-2">
+                <Trash2 className="h-4 w-4" />
+                Clear Data
+              </Button>
+            )}
+          </>
+        }
+      />
+
+      {/* Last saved audit label */}
+      {lastSavedInfo && selectedClientId && (
+        <p className="-mt-4 text-xs text-muted-foreground">
+          Last {lastSavedInfo.actionType === 'RESTORE' ? 'restored' : 'saved'} by{' '}
+          <span className="font-medium text-foreground">{lastSavedInfo.savedBy}</span>
+          {lastSavedInfo.savedByRole && (
+            <span className="text-muted-foreground"> ({lastSavedInfo.savedByRole})</span>
           )}
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            accept=".xlsx,.xls"
-            className="hidden"
-          />
-          {canImportExcel() && (
-            <Button variant="outline" className="flex items-center gap-2" onClick={handleImportClick} disabled={isLocked}>
-              <Upload className="h-4 w-4" />
-              Import Excel
-            </Button>
-          )}
-          <Button variant="outline" className="flex items-center gap-2" onClick={handleExportExcel}>
-            <Download className="h-4 w-4" />
-            Export Excel
-          </Button>
-          {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClientId && (
-            <Button variant="destructive" size="sm" onClick={() => setShowClearData(true)} className="gap-2">
-              <Trash2 className="h-4 w-4" />
-              Clear Data
-            </Button>
-          )}
-        </div>
-      </div>
+          {' '}on {format(lastSavedInfo.savedAt, 'dd-MMM-yyyy HH:mm')} • v{lastSavedInfo.versionNumber}
+        </p>
+      )}
 
       {/* Filters */}
       <Card>
@@ -1363,9 +1368,12 @@ const TwoBReconciliationPage: React.FC = () => {
 
       {!selectedClientId ? (
         <Card>
-          <CardContent className="p-12 text-center">
-            <AlertCircle className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <p className="text-muted-foreground">Please select a client to view 2B reconciliation data.</p>
+          <CardContent className="p-12">
+            <TableEmptyState
+              icon={<AlertCircle className="h-6 w-6" />}
+              title="No client selected"
+              description="Please select a client to view 2B reconciliation data."
+            />
           </CardContent>
         </Card>
       ) : (
@@ -1416,11 +1424,13 @@ const TwoBReconciliationPage: React.FC = () => {
                         <div className="flex flex-col items-center gap-1">
                           <span>Date</span>
                           {!isLocked && (
-                            <Button 
-                              variant="outline" 
-                              size="sm" 
+                            <Button
+                              variant="outline"
+                              size="icon"
                               onClick={handleAddRow2B}
-                              className="h-6 w-6 p-0"
+                              className="h-6 w-6"
+                              aria-label="Add row to Bills Not Available in 2B"
+                              title="Add row"
                             >
                               <Plus className="h-3 w-3" />
                             </Button>
@@ -1463,7 +1473,7 @@ const TwoBReconciliationPage: React.FC = () => {
                   </thead>
                   <tbody>
                     {filteredBills2B.map((row) => (
-                      <tr key={row.id} className={row.is_carried_forward ? 'bg-blue-50 dark:bg-blue-950/20' : ''}>
+                      <tr key={row.id} className={row.is_carried_forward ? 'bg-info/10' : ''}>
                         <td>
                           {renderEditableInput(
                             row.date,
@@ -1565,11 +1575,12 @@ const TwoBReconciliationPage: React.FC = () => {
                         </td>
                         {!isLocked && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && (
                           <td>
-                            <Button 
-                              variant="ghost" 
-                              size="sm" 
+                            <Button
+                              variant="ghost"
+                              size="icon"
                               onClick={() => handleDeleteRow2B(row.id)}
-                              className="h-7 w-7 p-0 text-destructive"
+                              className="h-7 w-7 text-destructive hover:text-destructive"
+                              aria-label={row.is_carried_forward ? 'Delete carried forward row' : 'Delete row'}
                               title={row.is_carried_forward ? 'Delete carried forward row' : 'Delete row'}
                             >
                               <Trash2 className="h-3 w-3" />
@@ -1580,21 +1591,22 @@ const TwoBReconciliationPage: React.FC = () => {
                       </tr>
                     ))}
                     {filteredBills2B.length === 0 && (
-                      <tr>
-                        <td colSpan={isLocked ? 10 : 11} className="text-center py-8 text-muted-foreground">
-                          {localBills2B.length === 0 
-                            ? 'No records found. Click + button below Date or use "Import Excel" to add data.'
-                            : 'No records match the selected filters.'}
-                        </td>
-                      </tr>
+                      <TableEmptyState
+                        colSpan={isLocked ? 10 : 11}
+                        icon={<Inbox className="h-6 w-6" />}
+                        title={localBills2B.length === 0 ? 'No records found' : 'No matching records'}
+                        description={localBills2B.length === 0
+                          ? 'Click the + button below Date or use "Import Excel" to add data.'
+                          : 'No records match the selected filters.'}
+                      />
                     )}
                     {/* Totals Row */}
                     <tr className="bg-muted/50 font-semibold">
                       <td colSpan={4} className="text-right">TOTAL</td>
-                      <td className="text-right">{totals2B.taxableValue.toLocaleString('en-IN')}</td>
-                      <td className="text-right">{totals2B.igst.toLocaleString('en-IN')}</td>
-                      <td className="text-right">{totals2B.cgst.toLocaleString('en-IN')}</td>
-                      <td className="text-right">{totals2B.sgst.toLocaleString('en-IN')}</td>
+                      <td className="text-right tabular-nums">{totals2B.taxableValue.toLocaleString('en-IN')}</td>
+                      <td className="text-right tabular-nums">{totals2B.igst.toLocaleString('en-IN')}</td>
+                      <td className="text-right tabular-nums">{totals2B.cgst.toLocaleString('en-IN')}</td>
+                      <td className="text-right tabular-nums">{totals2B.sgst.toLocaleString('en-IN')}</td>
                       <td></td>
                       <td></td>
                       {!isLocked && <td></td>}
@@ -1633,11 +1645,13 @@ const TwoBReconciliationPage: React.FC = () => {
                         <div className="flex flex-col items-center gap-1">
                           <span>Date</span>
                           {!isLocked && (
-                            <Button 
-                              variant="outline" 
-                              size="sm" 
+                            <Button
+                              variant="outline"
+                              size="icon"
                               onClick={handleAddRowBooks}
-                              className="h-6 w-6 p-0"
+                              className="h-6 w-6"
+                              aria-label="Add row to Bills Not Available in Books"
+                              title="Add row"
                             >
                               <Plus className="h-3 w-3" />
                             </Button>
@@ -1680,7 +1694,7 @@ const TwoBReconciliationPage: React.FC = () => {
                   </thead>
                   <tbody>
                     {filteredBillsBooks.map((row) => (
-                      <tr key={row.id} className={row.is_carried_forward ? 'bg-blue-50 dark:bg-blue-950/20' : ''}>
+                      <tr key={row.id} className={row.is_carried_forward ? 'bg-info/10' : ''}>
                         <td>
                           {renderEditableInput(
                             row.date,
@@ -1780,11 +1794,12 @@ const TwoBReconciliationPage: React.FC = () => {
                         </td>
                         {!isLocked && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && (
                           <td>
-                            <Button 
+                            <Button
                               variant="ghost"
-                              size="sm" 
+                              size="icon"
                               onClick={() => handleDeleteRowBooks(row.id)}
-                              className="h-7 w-7 p-0 text-destructive"
+                              className="h-7 w-7 text-destructive hover:text-destructive"
+                              aria-label={row.is_carried_forward ? 'Delete carried forward row' : 'Delete row'}
                               title={row.is_carried_forward ? 'Delete carried forward row' : 'Delete row'}
                             >
                               <Trash2 className="h-3 w-3" />
@@ -1795,21 +1810,22 @@ const TwoBReconciliationPage: React.FC = () => {
                       </tr>
                     ))}
                     {filteredBillsBooks.length === 0 && (
-                      <tr>
-                        <td colSpan={isLocked ? 10 : 11} className="text-center py-8 text-muted-foreground">
-                          {localBillsBooks.length === 0 
-                            ? 'No records found. Click + button below Date or use "Import Excel" to add data.'
-                            : 'No records match the selected filters.'}
-                        </td>
-                      </tr>
+                      <TableEmptyState
+                        colSpan={isLocked ? 10 : 11}
+                        icon={<Inbox className="h-6 w-6" />}
+                        title={localBillsBooks.length === 0 ? 'No records found' : 'No matching records'}
+                        description={localBillsBooks.length === 0
+                          ? 'Click the + button below Date or use "Import Excel" to add data.'
+                          : 'No records match the selected filters.'}
+                      />
                     )}
                     {/* Totals Row */}
                     <tr className="bg-muted/50 font-semibold">
                       <td colSpan={4} className="text-right">TOTAL</td>
-                      <td className="text-right">{totalsBooks.taxableValue.toLocaleString('en-IN')}</td>
-                      <td className="text-right">{totalsBooks.igst.toLocaleString('en-IN')}</td>
-                      <td className="text-right">{totalsBooks.cgst.toLocaleString('en-IN')}</td>
-                      <td className="text-right">{totalsBooks.sgst.toLocaleString('en-IN')}</td>
+                      <td className="text-right tabular-nums">{totalsBooks.taxableValue.toLocaleString('en-IN')}</td>
+                      <td className="text-right tabular-nums">{totalsBooks.igst.toLocaleString('en-IN')}</td>
+                      <td className="text-right tabular-nums">{totalsBooks.cgst.toLocaleString('en-IN')}</td>
+                      <td className="text-right tabular-nums">{totalsBooks.sgst.toLocaleString('en-IN')}</td>
                       <td></td>
                       <td></td>
                       {!isLocked && <td></td>}

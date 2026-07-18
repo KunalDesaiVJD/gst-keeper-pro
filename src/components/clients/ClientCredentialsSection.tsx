@@ -4,8 +4,9 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { KeyRound, Copy, RefreshCw, Eye, EyeOff } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { PasswordInput } from '@/components/ui/password-input';
+import { KeyRound, Copy, RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface ClientCredentialsSectionProps {
   gstin: string;
@@ -19,8 +20,6 @@ const ClientCredentialsSection: React.FC<ClientCredentialsSectionProps> = ({
   const [generateCredentials, setGenerateCredentials] = useState(false);
   const [clientUserId, setClientUserId] = useState('');
   const [clientPassword, setClientPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const { toast } = useToast();
 
   // Extract PAN from GSTIN (characters 3-12)
   const extractPAN = (gstinValue: string): string => {
@@ -42,11 +41,7 @@ const ClientCredentialsSection: React.FC<ClientCredentialsSectionProps> = ({
   const handleGenerateCredentials = () => {
     const pan = extractPAN(gstin);
     if (!pan) {
-      toast({
-        title: 'Invalid GSTIN',
-        description: 'Please enter a valid GSTIN to generate credentials.',
-        variant: 'destructive',
-      });
+      toast.error('Please enter a valid GSTIN to generate credentials.');
       return;
     }
 
@@ -61,10 +56,7 @@ const ClientCredentialsSection: React.FC<ClientCredentialsSectionProps> = ({
       onCredentialsGenerated(userId, password);
     }
 
-    toast({
-      title: 'Credentials Generated',
-      description: 'Client login credentials have been created.',
-    });
+    toast.success('Client login credentials have been created.');
   };
 
   const handleUsePANAsPassword = () => {
@@ -79,10 +71,7 @@ const ClientCredentialsSection: React.FC<ClientCredentialsSectionProps> = ({
 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
-    toast({
-      title: 'Copied',
-      description: `${label} copied to clipboard.`,
-    });
+    toast.success(`${label} copied to clipboard.`);
   };
 
   return (
@@ -131,6 +120,7 @@ const ClientCredentialsSection: React.FC<ClientCredentialsSectionProps> = ({
                   type="button"
                   variant="outline"
                   size="icon"
+                  aria-label="Copy user ID"
                   onClick={() => copyToClipboard(clientUserId, 'User ID')}
                 >
                   <Copy className="h-4 w-4" />
@@ -141,10 +131,9 @@ const ClientCredentialsSection: React.FC<ClientCredentialsSectionProps> = ({
             <div className="space-y-2">
               <Label htmlFor="clientPassword">Initial Password</Label>
               <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Input
+                <div className="flex-1">
+                  <PasswordInput
                     id="clientPassword"
-                    type={showPassword ? 'text' : 'password'}
                     value={clientPassword}
                     onChange={(e) => {
                       setClientPassword(e.target.value);
@@ -152,20 +141,14 @@ const ClientCredentialsSection: React.FC<ClientCredentialsSectionProps> = ({
                         onCredentialsGenerated(clientUserId, e.target.value);
                       }
                     }}
-                    className="font-mono pr-10"
+                    className="font-mono"
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
                 </div>
                 <Button
                   type="button"
                   variant="outline"
                   size="icon"
+                  aria-label="Copy password"
                   onClick={() => copyToClipboard(clientPassword, 'Password')}
                 >
                   <Copy className="h-4 w-4" />
@@ -182,6 +165,7 @@ const ClientCredentialsSection: React.FC<ClientCredentialsSectionProps> = ({
                     }
                   }}
                   title="Generate new password"
+                  aria-label="Generate new password"
                 >
                   <RefreshCw className="h-4 w-4" />
                 </Button>
@@ -199,7 +183,7 @@ const ClientCredentialsSection: React.FC<ClientCredentialsSectionProps> = ({
               </div>
             </div>
 
-            <div className="text-xs text-muted-foreground p-2 bg-amber-500/10 rounded border border-amber-500/30">
+            <div className="text-xs text-muted-foreground p-2 bg-warning/10 rounded border border-warning/30">
               <strong>Note:</strong> The client will be required to change this password on their first login.
               Make sure to communicate these credentials securely to the client.
             </div>

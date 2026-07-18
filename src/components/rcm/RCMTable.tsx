@@ -203,8 +203,8 @@ const RCMTable: React.FC<RCMTableProps> = ({
         <div className="min-w-[1400px]">
           <Table>
             <TableHeader>
-              <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4]">
-                <TableHead className="w-48 font-bold text-white border border-[#2E5A6B]">
+              <TableRow className="bg-primary hover:bg-primary">
+                <TableHead className="w-48 font-bold text-primary-foreground border border-border">
                   <div className="flex flex-col">
                     <span>Particulars</span>
                     {isStaff && !isLocked && (
@@ -212,7 +212,7 @@ const RCMTable: React.FC<RCMTableProps> = ({
                         onClick={handleAddRow}
                         variant="ghost"
                         size="sm"
-                        className="mt-1 h-6 text-xs text-white hover:bg-white/20 p-1"
+                        className="mt-1 h-6 text-xs text-primary-foreground hover:bg-white/20 p-1"
                       >
                         <Plus className="h-3 w-3 mr-1" />
                         Add Row
@@ -220,18 +220,18 @@ const RCMTable: React.FC<RCMTableProps> = ({
                     )}
                   </div>
                 </TableHead>
-                <TableHead className="w-24 font-bold text-white text-center border border-[#2E5A6B]">RATE</TableHead>
+                <TableHead className="w-24 font-bold text-primary-foreground text-center border border-border">RATE</TableHead>
                 {months.map((month) => (
-                  <TableHead key={month} className="w-20 font-bold text-white text-center border border-[#2E5A6B]">
+                  <TableHead key={month} className="w-20 font-bold text-primary-foreground text-center border border-border">
                     <div className="flex items-center justify-center gap-1">
                       {month}
                       {isMonthLocked(month) && <Lock className="h-3 w-3" />}
                     </div>
                   </TableHead>
                 ))}
-                <TableHead className="w-24 font-bold text-white text-center border border-[#2E5A6B]">TOTAL</TableHead>
+                <TableHead className="w-24 font-bold text-primary-foreground text-center border border-border">TOTAL</TableHead>
                 {isStaff && !isLocked && (
-                  <TableHead className="w-12 text-center font-bold text-white border border-[#2E5A6B]"></TableHead>
+                  <TableHead className="w-12 text-center font-bold text-primary-foreground border border-border"></TableHead>
                 )}
               </TableRow>
             </TableHeader>
@@ -304,18 +304,18 @@ const RCMTable: React.FC<RCMTableProps> = ({
               ))}
 
               {/* Totals Row */}
-              <TableRow className="bg-[#4A90A4] hover:bg-[#4A90A4] font-bold">
-                <TableCell className="text-center text-white border border-[#2E5A6B]">TOTAL</TableCell>
-                <TableCell className="text-center text-white border border-[#2E5A6B]">-</TableCell>
+              <TableRow className="bg-primary hover:bg-primary font-bold">
+                <TableCell className="text-center text-primary-foreground border border-border">TOTAL</TableCell>
+                <TableCell className="text-center text-primary-foreground border border-border">-</TableCell>
                 {months.map((month) => (
-                  <TableCell key={month} className="text-right text-white border border-[#2E5A6B]">
+                  <TableCell key={month} className="text-right text-primary-foreground border border-border">
                     {formatNumber(getMonthTotal(month))}
                   </TableCell>
                 ))}
-                <TableCell className="text-right text-white border border-[#2E5A6B]">
+                <TableCell className="text-right text-primary-foreground border border-border">
                   {formatNumber(getGrandTotal())}
                 </TableCell>
-                {isStaff && !isLocked && <TableCell className="border border-[#2E5A6B]" />}
+                {isStaff && !isLocked && <TableCell className="border border-border" />}
               </TableRow>
 
               {/* Empty Row for spacing */}

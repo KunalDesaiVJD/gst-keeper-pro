@@ -2,14 +2,16 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Settings, Lock, Users, AlertCircle, Check, X, Eye, EyeOff } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { Settings, Lock, Users, AlertCircle, Check, X, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { cn } from '@/lib/utils';
 
 interface PasswordResetRequest {
   id: string;
@@ -26,25 +28,29 @@ interface Employee {
   role: string;
 }
 
+/** Small red asterisk marking a required field. */
+const RequiredMark: React.FC = () => (
+  <span className="text-destructive" aria-hidden="true">
+    {' '}
+    *
+  </span>
+);
+
 const SettingsPage: React.FC = () => {
   const { user, canManageEmployees } = useAuth();
-  const { toast } = useToast();
-  
+
   // Password change state
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
-  const [showNewPassword, setShowNewPassword] = useState(false);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
-  
+
   // Employee password reset state
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState('');
   const [employeeNewPassword, setEmployeeNewPassword] = useState('');
-  const [showEmployeePassword, setShowEmployeePassword] = useState(false);
   const [isResettingEmployee, setIsResettingEmployee] = useState(false);
-  
+
   // Reset requests state
   const [resetRequests, setResetRequests] = useState<PasswordResetRequest[]>([]);
   const [isLoadingRequests, setIsLoadingRequests] = useState(false);
@@ -108,29 +114,17 @@ const SettingsPage: React.FC = () => {
     e.preventDefault();
 
     if (!currentPassword) {
-      toast({
-        title: 'Current Password Required',
-        description: 'Please enter your current password.',
-        variant: 'destructive',
-      });
+      toast.error('Please enter your current password.');
       return;
     }
 
     if (newPassword.length < 8) {
-      toast({
-        title: 'Invalid Password',
-        description: 'New password must be at least 8 characters long.',
-        variant: 'destructive',
-      });
+      toast.error('New password must be at least 8 characters long.');
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      toast({
-        title: 'Password Mismatch',
-        description: 'New passwords do not match.',
-        variant: 'destructive',
-      });
+      toast.error('New passwords do not match.');
       return;
     }
 
@@ -139,7 +133,7 @@ const SettingsPage: React.FC = () => {
     try {
       // Verify current password first by re-authenticating
       if (!user) {
-        toast({ title: 'Error', description: 'No user session found.', variant: 'destructive' });
+        toast.error('No user session found.');
         return;
       }
 
@@ -150,29 +144,18 @@ const SettingsPage: React.FC = () => {
       });
 
       if (error) {
-        toast({
-          title: 'Error',
-          description: error.message,
-          variant: 'destructive',
-        });
+        toast.error(error.message);
         return;
       }
 
-      toast({
-        title: 'Password Changed',
-        description: 'Your password has been updated successfully.',
-      });
+      toast.success('Your password has been updated successfully.');
 
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
     } catch (error) {
       console.error('Error changing password:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to change password.',
-        variant: 'destructive',
-      });
+      toast.error('Failed to change password.');
     } finally {
       setIsChangingPassword(false);
     }
@@ -180,20 +163,12 @@ const SettingsPage: React.FC = () => {
 
   const handleResetEmployeePassword = async () => {
     if (!selectedEmployee) {
-      toast({
-        title: 'Select Employee',
-        description: 'Please select an employee to reset their password.',
-        variant: 'destructive',
-      });
+      toast.error('Please select an employee to reset their password.');
       return;
     }
 
     if (employeeNewPassword.length < 8) {
-      toast({
-        title: 'Invalid Password',
-        description: 'Password must be at least 8 characters long.',
-        variant: 'destructive',
-      });
+      toast.error('Password must be at least 8 characters long.');
       return;
     }
 
@@ -210,29 +185,20 @@ const SettingsPage: React.FC = () => {
 
         if (error) {
           console.error('Error resetting password:', error);
-          toast({
-            title: 'Error',
-            description: error.message || 'Failed to reset password.',
-            variant: 'destructive',
-          });
+          toast.error(error.message || 'Failed to reset password.');
           return;
         }
 
-        toast({
-          title: 'Password Reset',
-          description: `Password has been reset for ${employee.first_name}. They can now login with the new password.`,
-        });
+        toast.success(
+          `Password has been reset for ${employee.first_name}. They can now login with the new password.`
+        );
 
         setSelectedEmployee('');
         setEmployeeNewPassword('');
       }
     } catch (error) {
       console.error('Error resetting password:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to reset password.',
-        variant: 'destructive',
-      });
+      toast.error('Failed to reset password.');
     } finally {
       setIsResettingEmployee(false);
     }
@@ -243,10 +209,7 @@ const SettingsPage: React.FC = () => {
       if (action === 'approve') {
         // Set employee as selected for password reset
         setSelectedEmployee(request.user_id);
-        toast({
-          title: 'Set New Password',
-          description: `Please enter a new password for ${request.requested_by_name}.`,
-        });
+        toast.info(`Please enter a new password for ${request.requested_by_name}.`);
       }
 
       // Update request status
@@ -261,25 +224,28 @@ const SettingsPage: React.FC = () => {
       fetchResetRequests();
 
       if (action === 'reject') {
-        toast({
-          title: 'Request Rejected',
-          description: `Password reset request from ${request.requested_by_name} has been rejected.`,
-        });
+        toast.success(
+          `Password reset request from ${request.requested_by_name} has been rejected.`
+        );
       }
     } catch (error) {
       console.error('Error resolving request:', error);
     }
   };
 
+  // Inline validation feedback
+  const newPasswordTooShort = newPassword.length > 0 && newPassword.length < 8;
+  const confirmMismatch = confirmPassword.length > 0 && newPassword !== confirmPassword;
+  const employeePasswordTooShort =
+    employeeNewPassword.length > 0 && employeeNewPassword.length < 8;
+
   return (
     <div className="space-y-6 animate-fade-in max-w-4xl mx-auto">
-      <div className="flex items-center gap-3">
-        <Settings className="h-8 w-8 text-primary" />
-        <div>
-          <h1 className="text-2xl font-heading font-bold text-foreground">Settings</h1>
-          <p className="text-muted-foreground">Manage your account and system settings</p>
-        </div>
-      </div>
+      <PageHeader
+        title="Settings"
+        subtitle="Manage your account and system settings"
+        icon={<Settings className="h-6 w-6" />}
+      />
 
       <Tabs defaultValue="password" className="space-y-4">
         <TabsList>
@@ -306,60 +272,79 @@ const SettingsPage: React.FC = () => {
             <CardContent>
               <form onSubmit={handleChangeOwnPassword} className="space-y-4 max-w-md">
                 <div className="space-y-2">
-                  <Label htmlFor="currentPassword">Current Password</Label>
-                  <div className="relative">
-                    <Input
-                      id="currentPassword"
-                      type={showCurrentPassword ? 'text' : 'password'}
-                      value={currentPassword}
-                      onChange={(e) => setCurrentPassword(e.target.value)}
-                      placeholder="Enter current password"
-                      className="pr-10"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    >
-                      {showCurrentPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="newPassword">New Password</Label>
-                  <div className="relative">
-                    <Input
-                      id="newPassword"
-                      type={showNewPassword ? 'text' : 'password'}
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="At least 8 characters"
-                      className="pr-10"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowNewPassword(!showNewPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    >
-                      {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="confirmPassword">Confirm New Password</Label>
-                  <Input
-                    id="confirmPassword"
-                    type="password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Re-enter new password"
+                  <Label htmlFor="currentPassword">
+                    Current Password
+                    <RequiredMark />
+                  </Label>
+                  <PasswordInput
+                    id="currentPassword"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="Enter current password"
+                    autoComplete="current-password"
                   />
                 </div>
 
+                <div className="space-y-2">
+                  <Label htmlFor="newPassword">
+                    New Password
+                    <RequiredMark />
+                  </Label>
+                  <PasswordInput
+                    id="newPassword"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="At least 8 characters"
+                    autoComplete="new-password"
+                    aria-invalid={newPasswordTooShort}
+                    aria-describedby={newPasswordTooShort ? 'newPassword-error' : undefined}
+                    className={cn(
+                      newPasswordTooShort && 'border-destructive focus-visible:ring-destructive'
+                    )}
+                  />
+                  {newPasswordTooShort && (
+                    <p id="newPassword-error" className="text-xs text-destructive">
+                      Password must be at least 8 characters long.
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="confirmPassword">
+                    Confirm New Password
+                    <RequiredMark />
+                  </Label>
+                  <PasswordInput
+                    id="confirmPassword"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Re-enter new password"
+                    autoComplete="new-password"
+                    aria-invalid={confirmMismatch}
+                    aria-describedby={confirmMismatch ? 'confirmPassword-error' : undefined}
+                    className={cn(
+                      confirmMismatch && 'border-destructive focus-visible:ring-destructive'
+                    )}
+                  />
+                  {confirmMismatch && (
+                    <p id="confirmPassword-error" className="text-xs text-destructive">
+                      Passwords do not match.
+                    </p>
+                  )}
+                </div>
+
                 <Button type="submit" disabled={isChangingPassword}>
-                  {isChangingPassword ? 'Changing...' : 'Change Password'}
+                  {isChangingPassword ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Changing…
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="mr-2 h-4 w-4" />
+                      Change Password
+                    </>
+                  )}
                 </Button>
               </form>
             </CardContent>
@@ -370,10 +355,10 @@ const SettingsPage: React.FC = () => {
           <TabsContent value="employees" className="space-y-4">
             {/* Password Reset Requests */}
             {resetRequests.length > 0 && (
-              <Card className="border-amber-500/50">
+              <Card className="border-warning/50">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <AlertCircle className="h-5 w-5 text-amber-500" />
+                    <AlertCircle className="h-5 w-5 text-warning" />
                     Pending Password Reset Requests
                   </CardTitle>
                   <CardDescription>
@@ -405,6 +390,7 @@ const SettingsPage: React.FC = () => {
                           <Button
                             size="sm"
                             variant="ghost"
+                            aria-label={`Reject password reset request from ${request.requested_by_name}`}
                             onClick={() => handleResolveRequest(request, 'reject')}
                           >
                             <X className="h-4 w-4" />
@@ -428,9 +414,12 @@ const SettingsPage: React.FC = () => {
               <CardContent>
                 <div className="space-y-4 max-w-md">
                   <div className="space-y-2">
-                    <Label>Select Employee</Label>
+                    <Label htmlFor="employeeSelect">
+                      Select Employee
+                      <RequiredMark />
+                    </Label>
                     <Select value={selectedEmployee} onValueChange={setSelectedEmployee}>
-                      <SelectTrigger>
+                      <SelectTrigger id="employeeSelect">
                         <SelectValue placeholder="Choose an employee..." />
                       </SelectTrigger>
                       <SelectContent>
@@ -449,28 +438,44 @@ const SettingsPage: React.FC = () => {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="employeeNewPassword">New Password</Label>
-                    <div className="relative">
-                      <Input
-                        id="employeeNewPassword"
-                        type={showEmployeePassword ? 'text' : 'password'}
-                        value={employeeNewPassword}
-                        onChange={(e) => setEmployeeNewPassword(e.target.value)}
-                        placeholder="At least 8 characters"
-                        className="pr-10"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowEmployeePassword(!showEmployeePassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      >
-                        {showEmployeePassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
+                    <Label htmlFor="employeeNewPassword">
+                      New Password
+                      <RequiredMark />
+                    </Label>
+                    <PasswordInput
+                      id="employeeNewPassword"
+                      value={employeeNewPassword}
+                      onChange={(e) => setEmployeeNewPassword(e.target.value)}
+                      placeholder="At least 8 characters"
+                      autoComplete="new-password"
+                      aria-invalid={employeePasswordTooShort}
+                      aria-describedby={
+                        employeePasswordTooShort ? 'employeeNewPassword-error' : undefined
+                      }
+                      className={cn(
+                        employeePasswordTooShort &&
+                          'border-destructive focus-visible:ring-destructive'
+                      )}
+                    />
+                    {employeePasswordTooShort && (
+                      <p id="employeeNewPassword-error" className="text-xs text-destructive">
+                        Password must be at least 8 characters long.
+                      </p>
+                    )}
                   </div>
 
                   <Button onClick={handleResetEmployeePassword} disabled={isResettingEmployee}>
-                    {isResettingEmployee ? 'Resetting...' : 'Reset Password'}
+                    {isResettingEmployee ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Resetting…
+                      </>
+                    ) : (
+                      <>
+                        <Lock className="mr-2 h-4 w-4" />
+                        Reset Password
+                      </>
+                    )}
                   </Button>
                 </div>
               </CardContent>

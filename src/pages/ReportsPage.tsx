@@ -3,7 +3,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { FileSpreadsheet, FileDown, Loader2, Pause, Wallet, Users, User } from 'lucide-react';
+import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Users, User } from 'lucide-react';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
@@ -144,12 +145,22 @@ const ReportsPage: React.FC = () => {
           <CardDescription>{report.description}</CardDescription>
         </CardHeader>
         <CardContent className="flex gap-2 flex-wrap">
-          <Button onClick={() => handleDownload(report, 'xlsx')} disabled={isDisabled || xlsxBusy} variant="default">
+          <Button
+            onClick={() => handleDownload(report, 'xlsx')}
+            disabled={isDisabled || xlsxBusy}
+            variant="default"
+            aria-label={`Download ${report.title} as Excel`}
+          >
             {xlsxBusy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileSpreadsheet className="h-4 w-4 mr-2" />}
             Excel
           </Button>
-          <Button onClick={() => handleDownload(report, 'pdf')} disabled={isDisabled || pdfBusy} variant="outline">
-            {pdfBusy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileDown className="h-4 w-4 mr-2" />}
+          <Button
+            onClick={() => handleDownload(report, 'pdf')}
+            disabled={isDisabled || pdfBusy}
+            variant="outline"
+            aria-label={`Download ${report.title} as PDF`}
+          >
+            {pdfBusy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileText className="h-4 w-4 mr-2" />}
             PDF
           </Button>
         </CardContent>
@@ -159,15 +170,11 @@ const ReportsPage: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center gap-3">
-        <div className="p-2 bg-primary/10 rounded-lg">
-          <FileSpreadsheet className="h-6 w-6 text-primary" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-heading font-bold text-foreground">Reports</h1>
-          <p className="text-muted-foreground">Cross-client and per-client closing-balance reports</p>
-        </div>
-      </div>
+      <PageHeader
+        title="Reports"
+        subtitle="Cross-client and per-client closing-balance reports"
+        icon={<FileSpreadsheet className="h-6 w-6" />}
+      />
 
       <Card>
         <CardContent className="p-4">

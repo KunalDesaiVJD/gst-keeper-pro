@@ -1,65 +1,67 @@
-# GST Keeper — UI/UX Redesign Roadmap
+# GST Keeper — UI/UX Redesign
 
-From a 5-part code audit (2026-07-18). **Key finding:** the app has a strong
-foundation already — HSL semantic tokens in `src/index.css` wired through
-`tailwind.config.ts`, a full shadcn/ui kit, and domain tokens
-(`success`/`warning`/`info` + `--gst-filed/pending/late/nil`). ~80% of the work
-is **adopting** what already exists, not building new. Implement incrementally,
-`npm run build` green per commit.
+From a 5-part code audit (2026-07-18), then executed across the whole app.
+**Key finding:** the foundation was already strong — HSL semantic tokens in
+`src/index.css` wired through `tailwind.config.ts`, a full shadcn/ui kit, and
+domain tokens (`success`/`warning`/`info`). The problem was **adoption**: pages
+bypassed the system they already owned. ~80% of this work was wiring existing
+components to existing tokens.
 
-## Design direction (the rules)
-- **Colour:** semantic tokens only in app code; raw hex / raw Tailwind palette
-  (`bg-amber-500`) allowed only inside `src/components/ui/*` + `chart.tsx`.
-  Status is fixed app-wide: Filed = `success`, Pending/Prepared = `warning`,
-  Late/Mismatch = `destructive`, Nil/received = `info`. Accent coral = one CTA, never status.
+## Design rules (enforce in review)
+- **Colour:** semantic tokens only in app code (`primary`, `muted`, `success`,
+  `warning`, `info`, `destructive`, `border`, …). Raw hex / raw Tailwind palette
+  (`bg-amber-500`) allowed only inside `src/components/ui/*` and `chart.tsx`.
+- **Status semantics, app-wide:** Filed = `success`; Prepared / Pending / Data
+  Pending = `warning`; Mismatch / Late = `destructive`; Data Received / Nil = `info`.
 - **Typography:** Poppins headings / Inter body. page-title `text-2xl/bold`,
-  section `text-lg/semibold`, card-title `text-base/semibold`, body `text-sm`,
-  caption `text-xs muted`, metric `text-3xl tabular-nums`. Amounts use `tabular-nums`.
-- **Spacing:** 8px rhythm; every page root = `space-y-6`, full-bleed.
-- **Icons:** one icon+label per action — FileText=Export PDF, FileSpreadsheet=Export Excel,
-  Trash2=delete/clear, Download=generic download, Upload=import, Lock=locked, RefreshCw=portal pull.
-- **Dark mode:** light-only for now (a11y toasts pinned light); dark is a later project.
+  section `text-lg/semibold`, body `text-sm`, caption `text-xs muted`. Amounts
+  use `tabular-nums`.
+- **Spacing:** 8px rhythm; page root is always `space-y-6 animate-fade-in`.
+- **Icons, one per action:** `FileText`=Export PDF, `FileSpreadsheet`=Export Excel,
+  `Trash2`=delete/clear, `Download`=generic download, `Upload`=import,
+  `RefreshCw`=pull-from-portal, `Lock`=locked, `Save`=save.
+- **Every icon-only button needs an `aria-label`.**
+- **Dark mode:** the app is **light-only**. Toasts are pinned light. The `.dark`
+  token block is retained but dormant — do not add `dark:` variants to app code.
 
-## Phases
+## Shared kit (use these — don't hand-roll)
+| Component | Import |
+|---|---|
+| `PageHeader` (title/subtitle/icon/actions/embedded) | `@/components/layout/PageHeader` |
+| `useConfirm()` — styled confirmation, replaces `confirm()` | `@/components/ui/confirm-dialog` |
+| `StatusBadge` | `@/components/ui/status-badge` |
+| `TableEmptyState` | `@/components/ui/table-empty-state` |
+| `PasswordInput` (built-in reveal) | `@/components/ui/password-input` |
+| `NumberInput` (no spinners) | `@/components/ui/number-input` |
+| `Badge` variants `success \| warning \| info` | `@/components/ui/badge` |
+| Toasts — **sonner only** | `import { toast } from 'sonner'` |
 
-### Phase 1 — Foundation & consistency (SAFE, additive) — IN PROGRESS
-- [x] Force sonner toasts to light (`ui/sonner.tsx`)
-- [x] Add `success`/`warning`/`info` variants to `ui/badge.tsx`
-- [x] Colour-code Filing Status (status control accent + frequency badge on tokens)
-- [x] ITC "Clear Data" icon → Trash2 (match RCM/Suspended)
-- [~] `<PageHeader>` built (`src/components/layout/PageHeader.tsx`) + adopted on Filing Status. ROLLOUT IN PROGRESS — remaining pages: Dashboard, Clients, Add/Edit Client, Import 2B, 2B Reco, Suspended/Receivable Reco, ITC, RCM, GSTR-01, GST Update Sheet, Manage Masters, Reports, Manage Employees, User Control, Settings.
-- [ ] `<StatusBadge>` for read-only status displays
-- [ ] Unify toasts on sonner: migrate `useToast` callers, remove shadcn `<Toaster>`
-- [x] `useConfirm()`/`<ConfirmDialog>` built + mounted; **employee-delete now guarded**; replaced confirm() on ClientsPage, GSTR1DataPage, Import 2B. _Remaining: dashboard-section duplicates (ClientManagement/EmployeeManagement/UserManagement/PasswordResetRequests) — convert or remove in Phase 2 (they may be redundant)._
-- [ ] Shared `<TableEmptyState>`, skeleton rows, `<PasswordInput>`, `<NumberInput>`
-- [ ] aria-label + focus ring on every icon-only button
-- [ ] Fold real `.metric-card`/`.gst-table` usages into Card/Table variants; delete dead `@layer components` + `.status-*`
-- [ ] Delete `Index.tsx` scaffold; brand the 404
+## Status — all phases COMPLETE
+- [x] **Phase 1 — Foundation & consistency.** Shared kit built; `PageHeader` adopted
+      app-wide; status colour-coding; badge/token migration; **all native `confirm()`
+      retired** (incl. the previously *unguarded* employee delete); single toast
+      system (sonner); empty/loading states; aria-labels; dead CSS + unused
+      `Index.tsx` removed; branded 404.
+- [x] **Phase 2 — Navigation & IA.** Clients + Manage Masters added to the sidebar;
+      stronger active state; ChevronRight removed from flat links; duplicate tab
+      headers removed via `embedded`; QuickActions routes aligned.
+- [x] **Phase 3 — Unified tables.** Hardcoded teal (`#4A90A4`/`#2E5A6B`) and the raw
+      palette purged across GSTR-1 (11 tabs), Import 2B, reco, ITC/RCM and RCMTable;
+      sticky token-based headers; `overflow-x-auto`; right-aligned `tabular-nums`.
+- [x] **Phase 4 — Responsive shell.** Below `md` the sidebar becomes a Sheet drawer
+      behind a hamburger and `<main>` goes full-width; ≥`md` keeps the fixed rail
+      and minimize behaviour.
+- [x] **Phase 5 — Forms depth.** Exclusive checkbox groups → `RadioGroup`;
+      `PasswordInput` everywhere; consistent required-field asterisks across Add
+      and Edit; submit spinners; Rules-of-Hooks fixes in the admin pages.
+- [x] **Phase 6 — Dark mode.** Decision: **light-only**; toasts pinned light.
 
-### Phase 2 — Navigation & IA (Medium)
-- [ ] Add Clients + Manage Masters to sidebar; kill orphan routes (`/manage-employees` etc.)
-- [ ] `embedded` header flag on tab bodies; lift Client/Month bar above the tab bar
-- [ ] Stronger active nav (left accent + semibold + brighter bg); drop misleading ChevronRight
-- [ ] Remove FilingStatusPage local-month fork → use MonthContext directly
+## Deliberately NOT changed
+Business logic, Supabase queries, calculations, routes, permissions, the
+extension/portal wiring (`__gstk*` bridge, Pull buttons), and the Humonex
+"Push to GST Portal" flow — all verified intact after the refactor.
 
-### Phase 3 — Unified table system (Med-High)
-- [ ] One token-driven `<PortalTable>`; migrate GSTR-1 (11 tabs), Import 2B, reco pages
-- [ ] Replace `#4A90A4`/`#2E5A6B` teal literals with tokens (`--table-export`)
-- [ ] Sticky header + sticky-left identity col + ScrollArea everywhere; one number formatter
-
-### Phase 4 — Responsive shell (Medium)
-- [ ] Sidebar → Sheet drawer below `md` (reuse `ui/sidebar` + `useIsMobile`); `<main>` full-width
-- [ ] Sticky-left client column; column-priority hiding on narrow widths
-
-### Phase 5 — Forms depth (Medium)
-- [ ] RadioGroup for exclusive choices; inline validation + scroll-to-first-error
-- [ ] One required-field contract (Add == Edit); isSubmitting on Add Employee
-- [ ] Adopt `<PasswordInput>`/`<NumberInput>` everywhere; Rules-of-Hooks fixes
-
-### Phase 6 — Dark mode decision (deferred)
-- [ ] Ship it (next-themes + toggle + full colour audit) OR delete `.dark` + `dark:` variants
-
-## Known bug to fix in Phase 1/2
+## Known follow-up (not a regression — pre-existing)
 `FilingTable` is declared **inside** `FilingStatusPage`, so it remounts on every
-realtime refetch and **drops in-progress ARN/Remarks edits**. Hoist it to a
-stable top-level component taking data/handlers as props.
+realtime refetch and can drop in-progress ARN/Remarks edits. Hoist it to a stable
+top-level component taking data/handlers as props.

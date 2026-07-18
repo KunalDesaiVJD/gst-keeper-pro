@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, Save, Loader2, Download, Trash2, Upload, Info, Edit3, RefreshCw } from 'lucide-react';
+import { FileText, Save, Loader2, FileSpreadsheet, Trash2, Upload, Info, Edit3, RefreshCw } from 'lucide-react';
+import { PageHeader } from '@/components/layout/PageHeader';
 import ClearDataDialog from '@/components/dialogs/ClearDataDialog';
 import SuspendedRecoOverrideDialog from '@/components/dialogs/SuspendedRecoOverrideDialog';
 import { exportSuspendedRecoToExcel } from '@/utils/suspendedRecoExcelExport';
@@ -609,15 +610,16 @@ const SuspendedRecoPage: React.FC = () => {
 
   const renderEditableCell = (value: number, onChange: (val: number) => void) => {
     if (!isStaff) {
-      return <span className="block text-right px-3">{formatNumber(value)}</span>;
+      return <span className="block text-right tabular-nums px-3">{formatNumber(value)}</span>;
     }
     return (
       <Input
         type="number"
         value={value || ''}
         onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-        className="h-10 text-right border-0 shadow-none rounded-none"
+        className="h-10 text-right tabular-nums border-0 shadow-none rounded-none"
         min="0"
+        aria-label="Opening balance amount"
       />
     );
   };
@@ -659,26 +661,73 @@ const SuspendedRecoPage: React.FC = () => {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-primary/10 rounded-lg">
-            <FileText className="h-6 w-6 text-primary" />
-          </div>
-           <div>
-            <h1 className="text-2xl font-heading font-bold text-foreground">Suspended Reconciliation</h1>
-            <p className="text-muted-foreground">Compare portal figures with books data</p>
-            {lastSavedBy && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
-                {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
-                {lastSavedBy.time && (
-                  <> on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</>
-                )}
-              </p>
+      <PageHeader
+        embedded
+        title="Suspended Reconciliation"
+        subtitle="Compare portal figures with books data"
+        icon={<FileText className="h-6 w-6" />}
+        actions={
+          <>
+            {selectedClientId && (
+              <Button
+                variant="outline"
+                onClick={pullLedgers}
+                disabled={!selectedClientId || !selectedMonth}
+                className={extReady ? '' : 'text-muted-foreground'}
+                title={extReady
+                  ? 'Pull the opening balance from the portal ledgers (via the browser extension)'
+                  : 'GST Keeper extension not detected yet — install/enable it and reload this page'}
+              >
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Pull
+              </Button>
             )}
-          </div>
-        </div>
-      </div>
+
+            {selectedClientId && (
+              <Button variant="outline" onClick={() => {
+                if (!selectedClientData) return;
+                exportSuspendedRecoToExcel({
+                  clientName: selectedClientData.name,
+                  clientGstin: selectedClientData.gstin,
+                  month: selectedMonth,
+                  openingCgst, openingSgst, openingIgst,
+                  portalCgst, portalSgst, portalIgst,
+                  booksCgst, booksSgst, booksIgst,
+                  diffCgst, diffSgst, diffIgst,
+                });
+                toast.success('Excel exported successfully');
+              }}>
+                <FileSpreadsheet className="h-4 w-4 mr-2" />
+                Export Excel
+              </Button>
+            )}
+
+            {isStaff && (
+              <Button onClick={handleSave} disabled={isSaving || !selectedClientId}>
+                {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+                Save Changes
+              </Button>
+            )}
+
+            {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClientId && (
+              <Button variant="destructive" onClick={() => setShowClearData(true)}>
+                <Trash2 className="h-4 w-4 mr-2" />
+                Clear Data
+              </Button>
+            )}
+          </>
+        }
+      />
+
+      {lastSavedBy && (
+        <p className="text-xs text-muted-foreground -mt-3">
+          Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
+          {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
+          {lastSavedBy.time && (
+            <> on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</>
+          )}
+        </p>
+      )}
 
       {/* Controls */}
       <Card>
@@ -714,52 +763,6 @@ const SuspendedRecoPage: React.FC = () => {
                 />
               </div>
             </div>
-
-            {selectedClientId && (
-              <Button
-                variant="outline"
-                onClick={pullLedgers}
-                disabled={!selectedClientId || !selectedMonth}
-                className={extReady ? '' : 'text-muted-foreground'}
-                title={extReady
-                  ? 'Pull the opening balance from the portal ledgers (via the browser extension)'
-                  : 'GST Keeper extension not detected yet — install/enable it and reload this page'}
-              >
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Pull
-              </Button>
-            )}
-
-            {selectedClientId && (
-              <Button variant="outline" onClick={() => {
-                if (!selectedClientData) return;
-                exportSuspendedRecoToExcel({
-                  clientName: selectedClientData.name,
-                  clientGstin: selectedClientData.gstin,
-                  month: selectedMonth,
-                  openingCgst, openingSgst, openingIgst,
-                  portalCgst, portalSgst, portalIgst,
-                  booksCgst, booksSgst, booksIgst,
-                  diffCgst, diffSgst, diffIgst,
-                });
-                toast.success('Excel exported successfully');
-              }}>
-                <Download className="h-4 w-4 mr-2" />
-                Export Excel
-              </Button>
-            )}
-            {isStaff && (
-              <Button onClick={handleSave} disabled={isSaving || !selectedClientId} className="ml-auto">
-                {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
-                Save Changes
-              </Button>
-            )}
-            {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClientId && (
-              <Button variant="destructive" size="sm" onClick={() => setShowClearData(true)} className="gap-2">
-                <Trash2 className="h-4 w-4" />
-                Clear Data
-              </Button>
-            )}
           </div>
         </CardContent>
       </Card>
@@ -768,10 +771,11 @@ const SuspendedRecoPage: React.FC = () => {
       <Card>
         <CardContent className="p-4">
           {isLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow className="bg-primary hover:bg-primary">
@@ -873,9 +877,9 @@ const SuspendedRecoPage: React.FC = () => {
                   </TableCell>
                   {useNewFlow ? (
                     <>
-                      <TableCell className="text-right border border-border bg-accent/30">{formatNumber(openingCgst)}</TableCell>
-                      <TableCell className="text-right border border-border bg-accent/30">{formatNumber(openingSgst)}</TableCell>
-                      <TableCell className="text-right border border-border bg-accent/30">{formatNumber(openingIgst)}</TableCell>
+                      <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(openingCgst)}</TableCell>
+                      <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(openingSgst)}</TableCell>
+                      <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(openingIgst)}</TableCell>
                     </>
                   ) : (
                     <>
@@ -884,7 +888,7 @@ const SuspendedRecoPage: React.FC = () => {
                       <TableCell className="p-0 border border-border">{renderEditableCell(openingIgst, setOpeningIgst)}</TableCell>
                     </>
                   )}
-                  <TableCell className="text-right font-medium border border-border bg-muted/30">
+                  <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">
                     {formatNumber(openingTotal)}
                   </TableCell>
                 </TableRow>
@@ -895,10 +899,10 @@ const SuspendedRecoPage: React.FC = () => {
                     CURRENT TOTAL AS PER SUSPENDED RECO
                     <p className="text-[10px] text-muted-foreground font-normal mt-0.5">(4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5 + 4(D) 1.2)</p>
                   </TableCell>
-                  <TableCell className="text-right border border-border bg-accent/50">{formatNumber(portalCgst)}</TableCell>
-                  <TableCell className="text-right border border-border bg-accent/50">{formatNumber(portalSgst)}</TableCell>
-                  <TableCell className="text-right border border-border bg-accent/50">{formatNumber(portalIgst)}</TableCell>
-                  <TableCell className="text-right font-medium border border-border bg-muted/30">
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/50">{formatNumber(portalCgst)}</TableCell>
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/50">{formatNumber(portalSgst)}</TableCell>
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/50">{formatNumber(portalIgst)}</TableCell>
+                  <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">
                     {formatNumber(portalTotal)}
                   </TableCell>
                 </TableRow>
@@ -911,16 +915,16 @@ const SuspendedRecoPage: React.FC = () => {
                 {/* As Per Books Row - Auto-linked */}
                 <TableRow>
                   <TableCell className="font-medium border border-border">CLOSING BALANCE AS PER BOOKS</TableCell>
-                  <TableCell className="text-right border border-border bg-accent/50">
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/50">
                     {formatNumber(booksCgst)}
                   </TableCell>
-                  <TableCell className="text-right border border-border bg-accent/50">
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/50">
                     {formatNumber(booksSgst)}
                   </TableCell>
-                  <TableCell className="text-right border border-border bg-accent/50">
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/50">
                     {formatNumber(booksIgst)}
                   </TableCell>
-                  <TableCell className="text-right font-medium border border-border bg-muted/30">
+                  <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">
                     {formatNumber(booksTotal)}
                   </TableCell>
                 </TableRow>
@@ -933,25 +937,26 @@ const SuspendedRecoPage: React.FC = () => {
                 {/* Difference Row: Opening + Current - Books */}
                 <TableRow className="bg-warning/10 hover:bg-warning/10">
                   <TableCell className="font-bold border border-border">DIFFERENCE</TableCell>
-                  <TableCell className={`text-right font-medium border border-border ${diffCgst !== 0 ? 'text-destructive' : ''}`}>
+                  <TableCell className={`text-right tabular-nums font-medium border border-border ${diffCgst !== 0 ? 'text-destructive' : ''}`}>
                     {formatNumber(diffCgst)}
                   </TableCell>
-                  <TableCell className={`text-right font-medium border border-border ${diffSgst !== 0 ? 'text-destructive' : ''}`}>
+                  <TableCell className={`text-right tabular-nums font-medium border border-border ${diffSgst !== 0 ? 'text-destructive' : ''}`}>
                     {formatNumber(diffSgst)}
                   </TableCell>
-                  <TableCell className={`text-right font-medium border border-border ${diffIgst !== 0 ? 'text-destructive' : ''}`}>
+                  <TableCell className={`text-right tabular-nums font-medium border border-border ${diffIgst !== 0 ? 'text-destructive' : ''}`}>
                     {formatNumber(diffIgst)}
                   </TableCell>
-                  <TableCell className={`text-right font-bold border border-border ${diffTotal !== 0 ? 'text-destructive' : ''}`}>
+                  <TableCell className={`text-right tabular-nums font-bold border border-border ${diffTotal !== 0 ? 'text-destructive' : ''}`}>
                     {formatNumber(diffTotal)}
                   </TableCell>
                 </TableRow>
               </TableBody>
             </Table>
+            </div>
           )}
 
           {!selectedClientId && (
-            <div className="text-center py-8 text-muted-foreground">
+            <div className="text-center py-8 text-sm text-muted-foreground">
               Please select a client to view suspended reconciliation data.
             </div>
           )}

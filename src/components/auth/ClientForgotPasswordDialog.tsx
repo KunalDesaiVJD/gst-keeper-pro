@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { KeyRound, AlertCircle, Building } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 
 interface ClientForgotPasswordDialogProps {
@@ -15,24 +15,17 @@ const ClientForgotPasswordDialog: React.FC<ClientForgotPasswordDialogProps> = ({
   const [open, setOpen] = useState(false);
   const [gstin, setGstin] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { toast } = useToast();
 
   const handleSubmit = async () => {
     if (!gstin.trim()) {
-      toast({
-        title: 'Validation Error',
-        description: 'Please enter your GSTIN.',
-        variant: 'destructive',
-      });
+      toast.error('Please enter your GSTIN.');
       return;
     }
 
     // Validate GSTIN format (15 characters)
     if (gstin.trim().length !== 15) {
-      toast({
-        title: 'Invalid GSTIN',
+      toast.error('Invalid GSTIN', {
         description: 'GSTIN must be exactly 15 characters.',
-        variant: 'destructive',
       });
       return;
     }
@@ -48,10 +41,8 @@ const ClientForgotPasswordDialog: React.FC<ClientForgotPasswordDialogProps> = ({
         .single();
 
       if (clientError || !client) {
-        toast({
-          title: 'Client Not Found',
+        toast.error('Client Not Found', {
           description: 'No client found with that GSTIN. Please verify your GSTIN or contact your accountant.',
-          variant: 'destructive',
         });
         return;
       }
@@ -67,8 +58,7 @@ const ClientForgotPasswordDialog: React.FC<ClientForgotPasswordDialogProps> = ({
 
       if (error) throw error;
 
-      toast({
-        title: 'Request Submitted',
+      toast.success('Request Submitted', {
         description: 'Your password reset request has been sent. Your accountant will reset your password shortly.',
       });
 
@@ -76,11 +66,7 @@ const ClientForgotPasswordDialog: React.FC<ClientForgotPasswordDialogProps> = ({
       setGstin('');
     } catch (error: any) {
       console.error('Error submitting reset request:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to submit request. Please try again or contact your accountant.',
-        variant: 'destructive',
-      });
+      toast.error('Failed to submit request. Please try again or contact your accountant.');
     } finally {
       setIsSubmitting(false);
     }

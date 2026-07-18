@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { Shield, Users, Save, Loader2 } from 'lucide-react';
 import { Navigate } from 'react-router-dom';
 
@@ -87,18 +88,12 @@ interface UserPermission {
 
 const UserControlPage: React.FC = () => {
   const { user, canManageEmployees } = useAuth();
-  const { toast } = useToast();
-  
+
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<string>('');
   const [permissions, setPermissions] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-
-  // Redirect if not superadmin
-  if (!canManageEmployees()) {
-    return <Navigate to="/dashboard" replace />;
-  }
 
   // Fetch employees (non-client users)
   useEffect(() => {
@@ -163,18 +158,14 @@ const UserControlPage: React.FC = () => {
         setEmployees(employeeList);
       } catch (error) {
         console.error('Error fetching employees:', error);
-        toast({
-          title: 'Error',
-          description: 'Failed to load employees',
-          variant: 'destructive',
-        });
+        toast.error('Failed to load employees');
       } finally {
         setLoading(false);
       }
     };
 
     fetchEmployees();
-  }, [toast]);
+  }, []);
 
   // Fetch permissions when employee is selected
   useEffect(() => {
@@ -196,16 +187,12 @@ const UserControlPage: React.FC = () => {
         setPermissions(permSet);
       } catch (error) {
         console.error('Error fetching permissions:', error);
-        toast({
-          title: 'Error',
-          description: 'Failed to load permissions',
-          variant: 'destructive',
-        });
+        toast.error('Failed to load permissions');
       }
     };
 
     fetchPermissions();
-  }, [selectedEmployee, toast]);
+  }, [selectedEmployee]);
 
   const handlePermissionChange = (permissionKey: string, checked: boolean) => {
     setPermissions(prev => {
@@ -223,11 +210,7 @@ const UserControlPage: React.FC = () => {
     console.log('handleSave called - selectedEmployee:', selectedEmployee, 'permissions:', Array.from(permissions));
     
     if (!selectedEmployee) {
-      toast({
-        title: 'Error',
-        description: 'Please select an employee first',
-        variant: 'destructive',
-      });
+      toast.error('Please select an employee first');
       return;
     }
 
@@ -261,17 +244,10 @@ const UserControlPage: React.FC = () => {
         if (insertError) throw insertError;
       }
 
-      toast({
-        title: 'Success',
-        description: 'Permissions updated successfully',
-      });
+      toast.success('Permissions updated successfully');
     } catch (error: any) {
       console.error('Error saving permissions:', error);
-      toast({
-        title: 'Error',
-        description: error?.message || 'Failed to save permissions',
-        variant: 'destructive',
-      });
+      toast.error(error?.message || 'Failed to save permissions');
     } finally {
       setSaving(false);
     }
@@ -287,18 +263,19 @@ const UserControlPage: React.FC = () => {
     }
   };
 
+  // Redirect if not superadmin.
+  // Kept after all hook declarations so hook order stays stable (Rules of Hooks).
+  if (!canManageEmployees()) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="p-2 bg-primary/10 rounded-lg">
-          <Shield className="h-6 w-6 text-primary" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-heading font-bold text-foreground">User Control</h1>
-          <p className="text-muted-foreground">Manage employee permissions and access rights</p>
-        </div>
-      </div>
+    <div className="space-y-6 animate-fade-in">
+      <PageHeader
+        title="User Control"
+        subtitle="Manage employee permissions and access rights"
+        icon={<Shield className="h-6 w-6" />}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Employee Selection */}
@@ -345,9 +322,15 @@ const UserControlPage: React.FC = () => {
               </div>
             )}
 
+            {!loading && employees.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                No staff members found. Add employees first on the Manage Employees page.
+              </p>
+            )}
+
             {loading && (
-              <div className="flex items-center justify-center py-4">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
               </div>
             )}
           </CardContent>
