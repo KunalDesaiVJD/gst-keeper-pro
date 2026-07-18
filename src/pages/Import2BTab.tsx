@@ -537,6 +537,17 @@ const Import2BTab: React.FC = () => {
               <Download className="h-4 w-4 mr-2" />
               Pull from portal
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs text-muted-foreground hover:text-foreground"
+              onClick={handleImportClick}
+              disabled={isImporting || !selectedClient || !selectedMonth || isLocked}
+              title="Manual fallback — import a GSTR-2B Excel file if the portal pull didn't work"
+            >
+              <Upload className="h-3.5 w-3.5 mr-1" />
+              Import file
+            </Button>
             {twoBDocs.length > 0 && (
               <Button variant="destructive" size="sm" onClick={deleteImported2B} disabled={readOnly}>
                 <Trash2 className="h-4 w-4 mr-2" />Delete 2B
@@ -544,6 +555,7 @@ const Import2BTab: React.FC = () => {
             )}
           </div>
         )}
+        <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />
       </div>
 
       {/* Filters (client / month) */}

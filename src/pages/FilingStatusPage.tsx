@@ -1352,6 +1352,28 @@ const FilingStatusPage: React.FC = () => {
                           <span>Portal</span>
                         </button>
                       )}
+                      {(!record.is_locked || canUnlockSheets()) && (
+                        <label
+                          className="cursor-pointer inline-flex items-center text-muted-foreground/60 hover:text-foreground"
+                          title="Manual fallback — upload the return PDF if the portal pull didn't work"
+                        >
+                          <Upload className="h-3 w-3" />
+                          <input
+                            type="file"
+                            accept=".pdf"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                if (file.type !== 'application/pdf') { toast.error('Only PDF files are allowed'); return; }
+                                handlePdfUpload(record, file);
+                              }
+                              e.target.value = '';
+                            }}
+                            disabled={record.is_locked && !canUnlockSheets()}
+                          />
+                        </label>
+                      )}
                     </div>
                   )}
                 </td>

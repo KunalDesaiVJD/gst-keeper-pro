@@ -814,6 +814,10 @@ const GstReceivableRecoPage: React.FC = () => {
                               Override
                             </Button>
                           )}
+                          <Button size="sm" variant="ghost" className="h-7 text-xs text-muted-foreground hover:text-foreground" onClick={handleUploadClick} disabled={!selectedClientId || isSaving} title="Manual fallback — upload the ledger if the portal sync didn't set this">
+                            <Upload className="h-3 w-3 mr-1" />
+                            {openingSource === 'csv' ? 'Re-upload' : 'Upload'}
+                          </Button>
                         </div>
                       )}
                     </div>
@@ -923,6 +927,9 @@ const GstReceivableRecoPage: React.FC = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Manual fallback file input — triggered by the muted "Upload" button */}
+      <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleFileChange} />
 
       <SuspendedRecoOverrideDialog
         open={showOverrideDialog}
