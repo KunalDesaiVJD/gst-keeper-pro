@@ -55,6 +55,18 @@ window.addEventListener('message', (e) => {
       const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
       window.postMessage({ __gstkOpenFilingResult: ok ? { ok: true } : { ok: false, error } }, '*');
     });
+    return;
+  }
+
+  // A reco page "Pull" button asked to fetch the ledger opening balances.
+  if (d.__gstkPullLedgers) {
+    const info = d.__gstkPullLedgers;
+    if (!info.clientId || !info.period_month) return;
+    chrome.runtime.sendMessage({ gstk: true, fn: 'startLedgerPull', args: [info] }, (resp) => {
+      const ok = resp && resp.ok;
+      const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
+      window.postMessage({ __gstkPullLedgersResult: ok ? { ok: true } : { ok: false, error } }, '*');
+    });
   }
 });
 

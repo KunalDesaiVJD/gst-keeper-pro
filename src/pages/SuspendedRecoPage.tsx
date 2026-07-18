@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, Save, Loader2, Download, Trash2, Upload, Info, Edit3 } from 'lucide-react';
+import { FileText, Save, Loader2, Download, Trash2, Upload, Info, Edit3, RefreshCw } from 'lucide-react';
 import ClearDataDialog from '@/components/dialogs/ClearDataDialog';
 import SuspendedRecoOverrideDialog from '@/components/dialogs/SuspendedRecoOverrideDialog';
 import { exportSuspendedRecoToExcel } from '@/utils/suspendedRecoExcelExport';
@@ -15,7 +15,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
-import GSTPortalLink from '@/components/clients/GSTPortalLink';
 import { parseElectronicCreditCsv, previousPeriodMonthKey, formatPeriodLabel } from '@/utils/parseElectronicCreditCsv';
 
 type OpeningSource = 'manual' | 'csv' | 'not_applicable';
@@ -623,6 +622,40 @@ const SuspendedRecoPage: React.FC = () => {
     );
   };
 
+  // Browser-extension pull: fetch the ledger opening balances from the portal.
+  const [extReady, setExtReady] = useState(false);
+  const pulledRef = useRef(false);
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      const d: any = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkPullLedgersResult) {
+        if (d.__gstkPullLedgersResult.ok) toast.success('Portal opening in a new tab — type the CAPTCHA there; the opening balance is fetched automatically and appears here when you switch back.');
+        else toast.error('Could not start the pull: ' + d.__gstkPullLedgersResult.error);
+      }
+    };
+    window.addEventListener('message', onMsg);
+    const ping = () => window.postMessage({ __gstkAppReady: true }, '*');
+    ping();
+    const t1 = setTimeout(ping, 400);
+    const t2 = setTimeout(ping, 1200);
+    const onFocus = () => { if (pulledRef.current) fetchData(); };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.removeEventListener('message', onMsg);
+      window.removeEventListener('focus', onFocus);
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [fetchData]);
+  const pullLedgers = () => {
+    if (!selectedClientId || !selectedMonth) { toast.error('Select a client and month first'); return; }
+    if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to pull from the portal.'); return; }
+    pulledRef.current = true;
+    window.postMessage({ __gstkPullLedgers: { clientId: selectedClientId, period_month: selectedMonth } }, '*');
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
@@ -683,7 +716,18 @@ const SuspendedRecoPage: React.FC = () => {
             </div>
 
             {selectedClientId && (
-              <GSTPortalLink clientId={selectedClientId} clientName={selectedClientData?.name} />
+              <Button
+                variant="outline"
+                onClick={pullLedgers}
+                disabled={!selectedClientId || !selectedMonth}
+                className={extReady ? '' : 'text-muted-foreground'}
+                title={extReady
+                  ? 'Pull the opening balance from the portal ledgers (via the browser extension)'
+                  : 'GST Keeper extension not detected yet — install/enable it and reload this page'}
+              >
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Pull
+              </Button>
             )}
 
             {selectedClientId && (

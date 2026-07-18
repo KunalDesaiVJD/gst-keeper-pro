@@ -119,6 +119,22 @@ const API = {
     await chrome.storage.local.set({ gstk_active_job: job });
     return { started: true, client: c.name, return_type: info.return_type };
   },
+
+  // From a reco page "Pull" button: log the client in and pull the ledger opening
+  // balances (credit ledger -> GST Receivable Reco, reversal ledger -> Suspended
+  // Reco). No mode -> the default ledger sync. Human does the CAPTCHA.
+  startLedgerPull: async (info) => {
+    const c = await API.getClient(info.clientId);
+    if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
+    const job = {
+      period: info.period_month, idx: 0, step: 'login', startedAt: Date.now(),
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+    };
+    const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
+    job.tabId = tab.id;
+    await chrome.storage.local.set({ gstk_active_job: job });
+    return { started: true, client: c.name };
+  },
 };
 
 // ---- GSTR-2B Excel capture (to-disk download) ------------------------------
