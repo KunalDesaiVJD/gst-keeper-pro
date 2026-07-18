@@ -544,11 +544,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // granted `manual_override` in User Control to see the Override button. This
   // preserves the previous "superadmin only" behaviour while adding a knob for
   // trusted employees.
+  // Overriding portal figures is restricted to GST Manager and Superadmin only —
+  // junior staff (employees) can never override, regardless of row permissions.
   const canManualOverride = useCallback((): boolean => {
     if (!user) return false;
-    if (user.role === 'superadmin') return true;
-    return hasPermission('manual_override');
-  }, [user, hasPermission]);
+    return user.role === 'superadmin' || user.role === 'gst_manager';
+  }, [user]);
 
   return (
     <AuthContext.Provider

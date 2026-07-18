@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { Upload, Loader2, Trash2, Plus, Lock, X, Download } from 'lucide-react';
+import { Upload, Loader2, Trash2, Plus, Lock, X, Download, RefreshCw } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -534,7 +534,7 @@ const Import2BTab: React.FC = () => {
                 ? 'Pull this client\'s GSTR-2B from the portal via the browser extension'
                 : 'GST Keeper extension not detected yet — install/enable it and reload this page'}
             >
-              <Download className="h-4 w-4 mr-2" />
+              <RefreshCw className="h-4 w-4 mr-2" />
               Pull from portal
             </Button>
             <Button
