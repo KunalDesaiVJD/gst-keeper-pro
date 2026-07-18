@@ -9,7 +9,6 @@ import {
   LogOut,
   ChevronRight,
   ChevronLeft,
-  Shield,
   Settings,
   FileSpreadsheet,
   FileJson,
@@ -155,7 +154,7 @@ export const SidebarContents: React.FC<{
   onToggleMinimize?: () => void;
   onNavigate?: () => void;
 }> = ({ onToggleMinimize, onNavigate }) => {
-  const { user, logout, canManageEmployees, isStaffRole } = useAuth();
+  const { user, logout, isStaffRole } = useAuth();
   const navigate = useNavigate();
   const navItems = useSidebarNavItems();
 
@@ -186,24 +185,7 @@ export const SidebarContents: React.FC<{
                 <ChevronLeft className="h-4 w-4" />
               </button>
             )}
-            {canManageEmployees() && (
-              <NavLink
-                to="/user-control"
-                onClick={onNavigate}
-                className={({ isActive }) =>
-                  cn(
-                    'p-2 rounded-lg transition-colors',
-                    isActive
-                      ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                      : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground'
-                  )
-                }
-                title="User Control"
-                aria-label="User Control"
-              >
-                <Shield className="h-4 w-4" />
-              </NavLink>
-            )}
+            {/* "User Control" now lives inside Settings -> User Control tab. */}
             {isStaffRole() && (
               <NavLink
                 to="/settings"

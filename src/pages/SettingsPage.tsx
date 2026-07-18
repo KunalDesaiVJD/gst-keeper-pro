@@ -8,8 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { Settings, Lock, Users, AlertCircle, Check, X, Loader2, Database } from 'lucide-react';
+import { Settings, Lock, Users, AlertCircle, Check, X, Loader2, Database, Shield } from 'lucide-react';
 import ManageMastersPage from '@/pages/ManageMastersPage';
+import UserControlPage from '@/pages/UserControlPage';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
@@ -241,7 +242,7 @@ const SettingsPage: React.FC = () => {
     employeeNewPassword.length > 0 && employeeNewPassword.length < 8;
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-4xl mx-auto">
+    <div className="space-y-6 animate-fade-in">
       <PageHeader
         title="Settings"
         subtitle="Manage your account and system settings"
@@ -260,6 +261,12 @@ const SettingsPage: React.FC = () => {
               Employee Passwords
             </TabsTrigger>
           )}
+          {canManageEmployees() && (
+            <TabsTrigger value="user-control" className="flex items-center gap-2">
+              <Shield className="h-4 w-4" />
+              User Control
+            </TabsTrigger>
+          )}
           {isStaffRole() && (
             <TabsTrigger value="masters" className="flex items-center gap-2">
               <Database className="h-4 w-4" />
@@ -269,7 +276,7 @@ const SettingsPage: React.FC = () => {
         </TabsList>
 
         <TabsContent value="password">
-          <Card>
+          <Card className="max-w-2xl">
             <CardHeader>
               <CardTitle>Change My Password</CardTitle>
               <CardDescription>
@@ -487,6 +494,12 @@ const SettingsPage: React.FC = () => {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+        )}
+
+        {canManageEmployees() && (
+          <TabsContent value="user-control">
+            <UserControlPage embedded />
           </TabsContent>
         )}
 

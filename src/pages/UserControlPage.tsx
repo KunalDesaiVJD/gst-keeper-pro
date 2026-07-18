@@ -86,7 +86,12 @@ interface UserPermission {
   permission_key: string;
 }
 
-const UserControlPage: React.FC = () => {
+interface UserControlPageProps {
+  /** Rendered inside the Settings "User Control" tab: smaller heading, no page chrome. */
+  embedded?: boolean;
+}
+
+const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) => {
   const { user, canManageEmployees } = useAuth();
 
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -270,8 +275,9 @@ const UserControlPage: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={embedded ? 'space-y-6' : 'space-y-6 animate-fade-in'}>
       <PageHeader
+        embedded={embedded}
         title="User Control"
         subtitle="Manage employee permissions and access rights"
         icon={<Shield className="h-6 w-6" />}
