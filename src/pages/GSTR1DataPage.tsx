@@ -6,6 +6,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, FileSpreadsheet } from 'lucide-react';
 import { Gstr3bPreviewDialog } from '@/components/portal/Gstr3bPreviewDialog';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -81,6 +82,7 @@ interface B2BInvoice {
 
 const GSTR1DataPage: React.FC = () => {
   const { user, isStaffRole, canEditFilingStatus } = useAuth();
+  const confirm = useConfirm();
   // Shared selections so opening this page after picking a client/month on
   // another page (e.g. ITC Summary, Suspended Reco) preserves the context.
   const { selectedClientId: selectedClient, setSelectedClientId: setSelectedClient } = useClient();
@@ -239,7 +241,7 @@ const GSTR1DataPage: React.FC = () => {
 
   const handleDelete = async () => {
     if (!gstr1Data) return;
-    if (!confirm('Are you sure you want to delete this GSTR-1 data?')) return;
+    if (!(await confirm({ title: 'Delete GSTR-1 data?', description: 'This removes the imported GSTR-1 data for this client and period.', destructive: true, confirmText: 'Delete' }))) return;
     try {
       await supabase.from('gstr1_data').delete().eq('id', gstr1Data.id);
       toast.success('GSTR-1 data deleted');

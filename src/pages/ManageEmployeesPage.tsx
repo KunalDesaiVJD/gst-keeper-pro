@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,6 +33,7 @@ interface ManageEmployeesPageProps {
 
 const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = false }) => {
   const { user, canManageEmployees } = useAuth();
+  const confirm = useConfirm();
   const { toast } = useToast();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -177,6 +179,12 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
   };
 
   const handleDeleteEmployee = async (employeeId: string, userId: string, name: string) => {
+    if (!(await confirm({
+      title: 'Remove employee?',
+      description: `This permanently deletes ${name}'s account — login, role and profile. This cannot be undone.`,
+      destructive: true,
+      confirmText: 'Delete',
+    }))) return;
     try {
       // Delete from user_roles first (child table)
       await supabase

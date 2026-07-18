@@ -18,6 +18,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
 import { useAuth } from '@/contexts/AuthContext';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 
 interface Client {
   id: string;
@@ -32,6 +33,7 @@ interface Client {
 const ClientsPage: React.FC = () => {
   const navigate = useNavigate();
   const { canAddEditClients, canDeleteClients } = useAuth();
+  const confirm = useConfirm();
   const [searchTerm, setSearchTerm] = useState('');
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -68,7 +70,7 @@ const ClientsPage: React.FC = () => {
   }, [fetchClients]);
 
   const handleDeleteClient = async (id: string, name: string) => {
-    if (!confirm(`Are you sure you want to delete "${name}"?`)) return;
+    if (!(await confirm({ title: 'Delete client?', description: `This permanently deletes "${name}" and all of its data.`, destructive: true, confirmText: 'Delete' }))) return;
 
     const { error } = await supabase
       .from('clients')
