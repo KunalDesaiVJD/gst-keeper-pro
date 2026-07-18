@@ -16,6 +16,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { supabase } from '@/integrations/supabase/client';
 import ClientHoverDetails from '@/components/filing/ClientHoverDetails';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { SchemeHistoryEntry } from '@/utils/schemeResolver';
 import { generateFilingRecords } from '@/lib/filingRecords';
 import { MultiSelectPopover } from '@/components/ui/multi-select-popover';
@@ -1534,19 +1535,16 @@ const FilingStatusPage: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-heading font-bold text-foreground">Filing Status</h1>
-          <p className="text-muted-foreground">Track GST return filing status for all clients</p>
-        </div>
-        <div className="flex items-center gap-2">
+      <PageHeader
+        title="Filing Status"
+        subtitle="Track GST return filing status for all clients"
+        actions={
           <Button variant="outline" className="flex items-center gap-2" onClick={handleExportPDF}>
             <Download className="h-4 w-4" />
             Export PDF
           </Button>
-        </div>
-      </div>
+        }
+      />
 
       {/* Filters */}
       <Card>

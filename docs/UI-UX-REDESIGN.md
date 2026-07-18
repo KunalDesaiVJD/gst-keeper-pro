@@ -27,10 +27,10 @@ is **adopting** what already exists, not building new. Implement incrementally,
 - [x] Add `success`/`warning`/`info` variants to `ui/badge.tsx`
 - [x] Colour-code Filing Status (status control accent + frequency badge on tokens)
 - [x] ITC "Clear Data" icon → Trash2 (match RCM/Suspended)
-- [ ] Extract `<PageHeader title/subtitle/icon/actions/embedded>` — adopt on ~15 pages; standardise on h1 + `space-y-6`
+- [~] `<PageHeader>` built (`src/components/layout/PageHeader.tsx`) + adopted on Filing Status. ROLLOUT IN PROGRESS — remaining pages: Dashboard, Clients, Add/Edit Client, Import 2B, 2B Reco, Suspended/Receivable Reco, ITC, RCM, GSTR-01, GST Update Sheet, Manage Masters, Reports, Manage Employees, User Control, Settings.
 - [ ] `<StatusBadge>` for read-only status displays
 - [ ] Unify toasts on sonner: migrate `useToast` callers, remove shadcn `<Toaster>`
-- [ ] `useConfirm()`/`<ConfirmDialog>` — replace all 9 native `confirm()`; **guard employee delete**
+- [x] `useConfirm()`/`<ConfirmDialog>` built + mounted; **employee-delete now guarded**; replaced confirm() on ClientsPage, GSTR1DataPage, Import 2B. _Remaining: dashboard-section duplicates (ClientManagement/EmployeeManagement/UserManagement/PasswordResetRequests) — convert or remove in Phase 2 (they may be redundant)._
 - [ ] Shared `<TableEmptyState>`, skeleton rows, `<PasswordInput>`, `<NumberInput>`
 - [ ] aria-label + focus ring on every icon-only button
 - [ ] Fold real `.metric-card`/`.gst-table` usages into Card/Table variants; delete dead `@layer components` + `.status-*`
