@@ -586,22 +586,33 @@
   // Returns { igst, cgst, sgst, cess } or null.
   async function readOpeningBalance(timeout = 25000) {
     const clean = (el) => (el.textContent || '').replace(/[,\s₹]/g, '');
+    // The portal prints "-" for a nil figure, so a dash is NOT a number.
+    const isNum = (raw) => raw !== '' && raw !== '-' && Number.isFinite(Number(raw));
     const t0 = Date.now();
     while (Date.now() - t0 < timeout) {
       for (const table of $$('table')) {
-        const row = [...table.querySelectorAll('tr')].find((tr) => /opening\s*balance/i.test(tr.textContent || ''));
-        if (!row) continue;
+        const rows = [...table.querySelectorAll('tr')];
+        const row = rows.find((tr) => /opening\s*balance/i.test(tr.textContent || ''));
+        // The grid has finished rendering only once the Closing Balance row is there
+        // too — otherwise we can read a half-drawn/stale table.
+        if (!row || !rows.some((tr) => /closing\s*balance/i.test(tr.textContent || ''))) continue;
+
         const tds = [...row.children];
-        let i = tds.length - 1;
-        while (i >= 0 && clean(tds[i]) === '') i--; // ignore trailing blank/action cells
         const vals = [];
-        for (; i >= 0 && vals.length < 6; i--) {
+        for (let i = tds.length - 1; i >= 0 && vals.length < 6; i--) {
           const raw = clean(tds[i]);
-          const v = Number(raw);
-          if (raw === '' || !Number.isFinite(v)) break;
-          vals.unshift(v);
+          if (!isNum(raw)) { if (vals.length) break; else continue; } // skip trailing blanks
+          vals.unshift(Number(raw));
         }
-        if (vals.length < 4) continue; // not the figures row yet — keep polling
+
+        if (vals.length < 4) {
+          // Row rendered but every figure is "-"/blank => a genuine NIL opening balance
+          // (common, e.g. a client with no carried-forward credit). Record zeros rather
+          // than reporting a failure.
+          if (!tds.some((td) => isNum(clean(td)))) return { igst: 0, cgst: 0, sgst: 0, cess: 0 };
+          continue;
+        }
+
         let group = vals.slice(-4);
         if (vals.length >= 5) {
           const last = vals[vals.length - 1];
@@ -616,7 +627,11 @@
     return null;
   }
 
-  const inr = (n) => Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  // NOTE: a function declaration (hoisted) — as a `const` arrow it sat in the temporal
+  // dead zone and threw "Cannot access 'inr' before initialization" when a handler ran.
+  function inr(n) {
+    return Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  }
 
   async function handleLedger(job, cur, progress) {
     if (!/detailedledger/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/ledger/detailedledger'; return; }
