@@ -584,6 +584,56 @@
   // silently shifted every figure by one column when the portal rendered differently.
   // Polls, so a slow grid isn't read stale/empty.
   // Returns { igst, cgst, sgst, cess } or null.
+  // The ledger date inputs. Prefer the known ids; fall back to any visible input
+  // already holding a dd/mm/yyyy value (the reversal ledger can differ).
+  function findDateInputs() {
+    const f = $('#sumlg_frdt');
+    const t = $('#sumlg_todt');
+    if (f && t) return [f, t];
+    const dated = $$('input').filter((i) => i.offsetParent !== null && /^\d{2}\/\d{2}\/\d{4}$/.test((i.value || '').trim()));
+    return [f || dated[0] || null, t || dated[1] || null];
+  }
+
+  // Set From/To, hit GO, and WAIT until the page confirms it is showing that exact
+  // range ("Viewing ... details from 01/06/2026 To 30/06/2026").
+  //
+  // This is the fix for opening balances coming from the WRONG MONTH: AngularJS was
+  // reverting the programmatic date set, the portal kept its default period, and we
+  // happily parsed that period's opening balance. Now we verify the dates stuck AND
+  // that the grid reloaded for them — otherwise we refuse to save anything.
+  async function loadLedgerPeriod(period) {
+    const [mm, yyyy] = String(period).split('/').map((n) => parseInt(n, 10));
+    const lastDay = new Date(yyyy, mm, 0).getDate();
+    const p2 = (n) => String(n).padStart(2, '0');
+    const from = '01/' + p2(mm) + '/' + yyyy;
+    const to = p2(lastDay) + '/' + p2(mm) + '/' + yyyy;
+
+    const [fEl, tEl] = findDateInputs();
+    if (!fEl || !tEl) return { ok: false, from, to, why: 'date fields not found' };
+
+    const stuck = (el, v) => (el.value || '').trim() === v;
+    for (let i = 0; i < 4 && !(stuck(fEl, from) && stuck(tEl, to)); i++) {
+      setVal(fEl, from);
+      fEl.dispatchEvent(new Event('blur', { bubbles: true }));
+      setVal(tEl, to);
+      tEl.dispatchEvent(new Event('blur', { bubbles: true }));
+      await sleep(300);
+    }
+    if (!(stuck(fEl, from) && stuck(tEl, to))) return { ok: false, from, to, why: 'the portal kept resetting the dates' };
+
+    const go = $('button.btn-primary.mar-0') || $$('button').find((b) => /^go$/i.test((b.textContent || '').trim()));
+    if (!go) return { ok: false, from, to, why: 'GO button not found' };
+    go.click();
+
+    const t0 = Date.now();
+    while (Date.now() - t0 < 20000) {
+      const txt = (document.body.innerText || '').replace(/\s+/g, ' ');
+      if (txt.includes(from) && txt.includes(to)) return { ok: true, from, to };
+      await sleep(400);
+    }
+    return { ok: false, from, to, why: 'the page never confirmed the period' };
+  }
+
   async function readOpeningBalance(timeout = 25000) {
     const clean = (el) => (el.textContent || '').replace(/[,\s₹]/g, '');
     // The portal prints "-" for a nil figure, so a dash is NOT a number.
@@ -636,15 +686,16 @@
   async function handleLedger(job, cur, progress) {
     if (!/detailedledger/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/ledger/detailedledger'; return; }
     banner('Reading credit-ledger opening balance…' + progress);
-    if (!(await waitFor('#sumlg_frdt'))) { banner('Ledger form did not load — moving on.' + progress, '#f59e0b'); await advance(job); return; }
-    const [mm, yyyy] = job.period.split('/').map((n) => parseInt(n, 10));
-    const last = new Date(yyyy, mm, 0).getDate();
-    const p2 = (n) => String(n).padStart(2, '0');
-    setVal($('#sumlg_frdt'), '01/' + p2(mm) + '/' + yyyy);
-    setVal($('#sumlg_todt'), p2(last) + '/' + p2(mm) + '/' + yyyy);
-    const go = $('button.btn-primary.mar-0') || $$('button').find((b) => /^go$/i.test((b.textContent || '').trim()));
-    if (go) go.click();
-    await sleep(1500);
+    if (!(await waitFor('#sumlg_frdt', 20000))) { banner('Ledger form did not load — moving on.' + progress, '#f59e0b'); await advance(job); return; }
+    const per = await loadLedgerPeriod(job.period);
+    if (!per.ok) {
+      banner('Credit ledger: could not load ' + per.from + ' – ' + per.to + ' (' + per.why + '). Skipped so a wrong period is not saved.', '#dc2626');
+      await sleep(2000);
+      job.step = 'reversal';
+      await setJob(job);
+      location.href = 'https://return.gst.gov.in/returns/auth/ledger/revreclaimdetledger';
+      return;
+    }
     const bal = await readOpeningBalance();
     if (bal) {
       const opening = {
@@ -670,15 +721,14 @@
   async function handleReversal(job, cur, progress) {
     if (!/revreclaimdetledger/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/ledger/revreclaimdetledger'; return; }
     banner('Reading ITC-reversal ledger opening…' + progress);
-    if (!(await waitFor('#sumlg_frdt'))) { banner('Reversal ledger form did not load — moving on.' + progress, '#f59e0b'); await advance(job); return; }
-    const [mm, yyyy] = job.period.split('/').map((n) => parseInt(n, 10));
-    const last = new Date(yyyy, mm, 0).getDate();
-    const p2 = (n) => String(n).padStart(2, '0');
-    setVal($('#sumlg_frdt'), '01/' + p2(mm) + '/' + yyyy);
-    setVal($('#sumlg_todt'), p2(last) + '/' + p2(mm) + '/' + yyyy);
-    const go = $('button.btn-primary.mar-0') || $$('button').find((b) => /^go$/i.test((b.textContent || '').trim()));
-    if (go) go.click();
-    await sleep(1500);
+    if (!(await waitFor('input', 20000))) { banner('Reversal ledger form did not load — moving on.' + progress, '#f59e0b'); await advance(job); return; }
+    const per = await loadLedgerPeriod(job.period);
+    if (!per.ok) {
+      banner('Reversal ledger: could not load ' + per.from + ' – ' + per.to + ' (' + per.why + '). Skipped so a wrong period is not saved.', '#dc2626');
+      await sleep(2500);
+      await advance(job);
+      return;
+    }
     const bal = await readOpeningBalance();
     if (bal) {
       const opening = {
