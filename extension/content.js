@@ -612,26 +612,49 @@
     if (!fEl || !tEl) return { ok: false, from, to, why: 'date fields not found' };
 
     const stuck = (el, v) => (el.value || '').trim() === v;
-    for (let i = 0; i < 4 && !(stuck(fEl, from) && stuck(tEl, to)); i++) {
-      setVal(fEl, from);
-      fEl.dispatchEvent(new Event('blur', { bubbles: true }));
-      setVal(tEl, to);
-      tEl.dispatchEvent(new Event('blur', { bubbles: true }));
-      await sleep(300);
+    for (let i = 0; i < 5 && !(stuck(fEl, from) && stuck(tEl, to)); i++) {
+      setDateInput(fEl, from);
+      setDateInput(tEl, to);
+      await sleep(350);
     }
-    if (!(stuck(fEl, from) && stuck(tEl, to))) return { ok: false, from, to, why: 'the portal kept resetting the dates' };
+    if (!(stuck(fEl, from) && stuck(tEl, to))) {
+      return { ok: false, from, to, why: 'dates would not take (From now reads "' + (fEl.value || '') + '", To "' + (tEl.value || '') + '")' };
+    }
 
     const go = $('button.btn-primary.mar-0') || $$('button').find((b) => /^go$/i.test((b.textContent || '').trim()));
     if (!go) return { ok: false, from, to, why: 'GO button not found' };
     go.click();
 
+    // The page prints "…details from DD/MM/YYYY To DD/MM/YYYY" — wait for OUR range.
+    const shown = () => {
+      const m = (document.body.innerText || '').replace(/\s+/g, ' ').match(/from\s+(\d{2}\/\d{2}\/\d{4})\s+to\s+(\d{2}\/\d{2}\/\d{4})/i);
+      return m ? { from: m[1], to: m[2] } : null;
+    };
     const t0 = Date.now();
     while (Date.now() - t0 < 20000) {
-      const txt = (document.body.innerText || '').replace(/\s+/g, ' ');
-      if (txt.includes(from) && txt.includes(to)) return { ok: true, from, to };
+      const s = shown();
+      if (s && s.from === from && s.to === to) return { ok: true, from, to };
       await sleep(400);
     }
-    return { ok: false, from, to, why: 'the page never confirmed the period' };
+    const s = shown();
+    return { ok: false, from, to, why: s ? ('page is still showing ' + s.from + ' – ' + s.to) : 'the page never confirmed the period' };
+  }
+
+  // GST date fields are datepicker inputs and are often readonly, so a plain value
+  // assignment is ignored by AngularJS. Drop readonly, use the NATIVE value setter
+  // (bypasses the framework's cached value), and fire the full event set including
+  // keyup, which the portal's datepicker listens to.
+  function setDateInput(el, value) {
+    const wasReadonly = el.hasAttribute('readonly');
+    if (wasReadonly) el.removeAttribute('readonly');
+    try { el.focus(); } catch (e) { /* noop */ }
+    const desc = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+    if (desc && desc.set) desc.set.call(el, value); else el.value = value;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    try { el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: '0' })); } catch (e) { /* noop */ }
+    el.dispatchEvent(new Event('blur', { bubbles: true }));
+    if (wasReadonly) el.setAttribute('readonly', 'readonly');
   }
 
   async function readOpeningBalance(timeout = 25000) {
