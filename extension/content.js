@@ -576,6 +576,48 @@
     } });
   }
 
+  // Read the "Opening Balance" row from whichever ledger table actually has it.
+  //
+  // The balance figures are the TRAILING run of numeric cells: [IGST, CGST, SGST, Cess],
+  // and some ledgers append a Total column after it. We DETECT that total (last value
+  // ~= sum of the previous four) instead of assuming a fixed column count — assuming it
+  // silently shifted every figure by one column when the portal rendered differently.
+  // Polls, so a slow grid isn't read stale/empty.
+  // Returns { igst, cgst, sgst, cess } or null.
+  async function readOpeningBalance(timeout = 25000) {
+    const clean = (el) => (el.textContent || '').replace(/[,\s₹]/g, '');
+    const t0 = Date.now();
+    while (Date.now() - t0 < timeout) {
+      for (const table of $$('table')) {
+        const row = [...table.querySelectorAll('tr')].find((tr) => /opening\s*balance/i.test(tr.textContent || ''));
+        if (!row) continue;
+        const tds = [...row.children];
+        let i = tds.length - 1;
+        while (i >= 0 && clean(tds[i]) === '') i--; // ignore trailing blank/action cells
+        const vals = [];
+        for (; i >= 0 && vals.length < 6; i--) {
+          const raw = clean(tds[i]);
+          const v = Number(raw);
+          if (raw === '' || !Number.isFinite(v)) break;
+          vals.unshift(v);
+        }
+        if (vals.length < 4) continue; // not the figures row yet — keep polling
+        let group = vals.slice(-4);
+        if (vals.length >= 5) {
+          const last = vals[vals.length - 1];
+          const four = vals.slice(-5, -1);
+          const sum = four.reduce((a, b) => a + b, 0);
+          if (Math.abs(sum - last) < 1) group = four; // trailing Total column detected
+        }
+        return { igst: group[0], cgst: group[1], sgst: group[2], cess: group[3] };
+      }
+      await sleep(500);
+    }
+    return null;
+  }
+
+  const inr = (n) => Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+
   async function handleLedger(job, cur, progress) {
     if (!/detailedledger/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/ledger/detailedledger'; return; }
     banner('Reading credit-ledger opening balance…' + progress);
@@ -587,19 +629,18 @@
     setVal($('#sumlg_todt'), p2(last) + '/' + p2(mm) + '/' + yyyy);
     const go = $('button.btn-primary.mar-0') || $$('button').find((b) => /^go$/i.test((b.textContent || '').trim()));
     if (go) go.click();
-    await sleep(2500);
-    const trs = $('table') ? [...$('table').querySelectorAll('tbody tr')] : [];
-    const row = trs.find((tr) => /opening balance/i.test(tr.textContent || ''));
-    if (row) {
-      const cells = [...row.children].map((td) => parseFloat((td.textContent || '').replace(/[,\s₹]/g, '')) || 0);
-      const n = cells.length;
+    await sleep(1500);
+    const bal = await readOpeningBalance();
+    if (bal) {
       const opening = {
-        opening_igst: cells[n - 5], opening_cgst: cells[n - 4], opening_sgst: cells[n - 3],
+        opening_igst: bal.igst, opening_cgst: bal.cgst, opening_sgst: bal.sgst,
         opening_source: 'portal', opening_portal_pulled_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       };
       // Credit-ledger opening -> GST Receivable Reco.
       await GSTKdb.upsertReco('gst_receivable_reco', cur.clientId, job.period, opening);
-      banner('Credit-ledger opening saved — now the reversal ledger…' + progress, '#16a34a');
+      // Echo the figures so they can be checked against the portal at a glance.
+      banner('Credit ledger → IGST ' + inr(bal.igst) + ' · CGST ' + inr(bal.cgst) + ' · SGST ' + inr(bal.sgst) + ' — saved. Now the reversal ledger…' + progress, '#16a34a');
+      await sleep(1200);
     } else {
       banner('No credit-ledger opening row — now the reversal ledger…' + progress, '#f59e0b');
     }
@@ -622,18 +663,16 @@
     setVal($('#sumlg_todt'), p2(last) + '/' + p2(mm) + '/' + yyyy);
     const go = $('button.btn-primary.mar-0') || $$('button').find((b) => /^go$/i.test((b.textContent || '').trim()));
     if (go) go.click();
-    await sleep(2500);
-    const trs = $('table') ? [...$('table').querySelectorAll('tbody tr')] : [];
-    const row = trs.find((tr) => /opening balance/i.test(tr.textContent || ''));
-    if (row) {
-      const cells = [...row.children].map((td) => parseFloat((td.textContent || '').replace(/[,\s₹]/g, '')) || 0);
-      const n = cells.length;
+    await sleep(1500);
+    const bal = await readOpeningBalance();
+    if (bal) {
       const opening = {
-        opening_igst: cells[n - 4], opening_cgst: cells[n - 3], opening_sgst: cells[n - 2],
+        opening_igst: bal.igst, opening_cgst: bal.cgst, opening_sgst: bal.sgst,
         opening_source: 'portal', opening_portal_pulled_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       };
       await GSTKdb.upsertReco('suspended_reco', cur.clientId, job.period, opening);
-      banner('Reversal-ledger opening saved.' + progress, '#16a34a');
+      banner('Reversal ledger → IGST ' + inr(bal.igst) + ' · CGST ' + inr(bal.cgst) + ' · SGST ' + inr(bal.sgst) + ' — saved.' + progress, '#16a34a');
+      await sleep(1500);
     } else {
       banner('No reversal opening-balance row found.' + progress, '#f59e0b');
     }
