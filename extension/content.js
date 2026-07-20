@@ -584,6 +584,27 @@
   // silently shifted every figure by one column when the portal rendered differently.
   // Polls, so a slow grid isn't read stale/empty.
   // Returns { igst, cgst, sgst, cess } or null.
+  // A persistent, selectable diagnostic box. The normal banner is one line and is
+  // easy to miss, so ledger pulls also dump exactly what they saw here.
+  function debugPanel(lines) {
+    let el = document.getElementById('gstk-debug');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'gstk-debug';
+      el.style.cssText = 'position:fixed;top:36px;left:0;right:0;z-index:2147483647;background:#0b0b0b;color:#7CFC7C;' +
+        'font:12px/1.55 ui-monospace,Consolas,monospace;padding:10px 14px;max-height:46vh;overflow:auto;' +
+        'white-space:pre-wrap;word-break:break-word;user-select:text;border-bottom:2px solid #7CFC7C';
+      document.documentElement.appendChild(el);
+    }
+    el.textContent = '⬇ GST Keeper diagnostic — please screenshot this whole box ⬇\n' + lines.join('\n');
+  }
+
+  // The "…details from DD/MM/YYYY To DD/MM/YYYY" line the portal prints.
+  function shownPeriod() {
+    const m = (document.body.innerText || '').replace(/\s+/g, ' ').match(/from\s+(\d{2}\/\d{2}\/\d{4})\s+to\s+(\d{2}\/\d{2}\/\d{4})/i);
+    return m ? m[1] + ' – ' + m[2] : null;
+  }
+
   // The ledger date inputs. Prefer the known ids; fall back to any visible input
   // already holding a dd/mm/yyyy value (the reversal ledger can differ).
   function findDateInputs() {
@@ -682,7 +703,7 @@
           // Row rendered but every figure is "-"/blank => a genuine NIL opening balance
           // (common, e.g. a client with no carried-forward credit). Record zeros rather
           // than reporting a failure.
-          if (!tds.some((td) => isNum(clean(td)))) return { igst: 0, cgst: 0, sgst: 0, cess: 0 };
+          if (!tds.some((td) => isNum(clean(td)))) return { igst: 0, cgst: 0, sgst: 0, cess: 0, raw: tds.map((td) => (td.textContent || '').trim()) };
           continue;
         }
 
@@ -693,7 +714,7 @@
           const sum = four.reduce((a, b) => a + b, 0);
           if (Math.abs(sum - last) < 1) group = four; // trailing Total column detected
         }
-        return { igst: group[0], cgst: group[1], sgst: group[2], cess: group[3] };
+        return { igst: group[0], cgst: group[1], sgst: group[2], cess: group[3], raw: tds.map((td) => (td.textContent || '').trim()) };
       }
       await sleep(500);
     }
@@ -720,6 +741,14 @@
       return;
     }
     const bal = await readOpeningBalance();
+    debugPanel([
+      'STEP: Electronic Credit ledger  (' + location.pathname + ')',
+      'requested period : ' + per.from + ' – ' + per.to,
+      'page is showing  : ' + (shownPeriod() || '(none)'),
+      'opening row cells: ' + (bal && bal.raw ? JSON.stringify(bal.raw) : '(NO Opening Balance row found)'),
+      'parsed           : IGST=' + (bal ? bal.igst : '?') + '  CGST=' + (bal ? bal.cgst : '?') + '  SGST=' + (bal ? bal.sgst : '?') + '  Cess=' + (bal ? bal.cess : '?'),
+      '-> GST Receivable Reco gets CGST/SGST/IGST above. (Suspended Reco comes from the NEXT page.)',
+    ]);
     if (bal) {
       const opening = {
         opening_igst: bal.igst, opening_cgst: bal.cgst, opening_sgst: bal.sgst,
@@ -747,12 +776,27 @@
     if (!(await waitFor('input', 20000))) { banner('Reversal ledger form did not load — moving on.' + progress, '#f59e0b'); await advance(job); return; }
     const per = await loadLedgerPeriod(job.period);
     if (!per.ok) {
-      banner('Reversal ledger: could not load ' + per.from + ' – ' + per.to + ' (' + per.why + '). Skipped so a wrong period is not saved.', '#dc2626');
-      await sleep(2500);
+      debugPanel([
+        'STEP: ITC-Reversal ledger  (' + location.pathname + ')',
+        'requested period : ' + per.from + ' – ' + per.to,
+        'page is showing  : ' + (shownPeriod() || '(no "from … To …" text found)'),
+        'FAILED because   : ' + per.why,
+        'Nothing was saved (so a wrong period cannot overwrite your figures).',
+      ]);
+      banner('Reversal ledger: could not load ' + per.from + ' – ' + per.to + ' (' + per.why + '). Nothing saved — see the diagnostic box.', '#dc2626');
+      await sleep(4000);
       await advance(job);
       return;
     }
     const bal = await readOpeningBalance();
+    debugPanel([
+      'STEP: ITC-Reversal ledger  (' + location.pathname + ')',
+      'requested period : ' + per.from + ' – ' + per.to,
+      'page is showing  : ' + (shownPeriod() || '(none)'),
+      'opening row cells: ' + (bal && bal.raw ? JSON.stringify(bal.raw) : '(NO Opening Balance row found)'),
+      'parsed           : IGST=' + (bal ? bal.igst : '?') + '  CGST=' + (bal ? bal.cgst : '?') + '  SGST=' + (bal ? bal.sgst : '?') + '  Cess=' + (bal ? bal.cess : '?'),
+      '-> Suspended Reco gets CGST/SGST/IGST above.',
+    ]);
     if (bal) {
       const opening = {
         opening_igst: bal.igst, opening_cgst: bal.cgst, opening_sgst: bal.sgst,
