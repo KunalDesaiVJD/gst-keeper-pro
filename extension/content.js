@@ -678,18 +678,25 @@
     if (wasReadonly) el.setAttribute('readonly', 'readonly');
   }
 
-  async function readOpeningBalance(timeout = 25000) {
+  // Read the ledger's "Opening Balance" or "Closing Balance" row for the loaded period.
+  //
+  // CRITICAL: only DATA rows are considered. The reversal ledger's HEADER cell reads
+  // "Closing Balance (₹) (Opening Balance + Reversal (4B(2)) - Reclaimed (4D(1)))", so a
+  // naive text match hit the header — which has no numbers — and silently returned all
+  // zeros. That was the "everything comes through as 0" bug.
+  async function readLedgerBalance(which, timeout = 25000) {
+    const re = which === 'closing' ? /closing\s*balance/i : /opening\s*balance/i;
     const clean = (el) => (el.textContent || '').replace(/[,\s₹]/g, '');
     // The portal prints "-" for a nil figure, so a dash is NOT a number.
     const isNum = (raw) => raw !== '' && raw !== '-' && Number.isFinite(Number(raw));
     const t0 = Date.now();
     while (Date.now() - t0 < timeout) {
       for (const table of $$('table')) {
-        const rows = [...table.querySelectorAll('tr')];
-        const row = rows.find((tr) => /opening\s*balance/i.test(tr.textContent || ''));
-        // The grid has finished rendering only once the Closing Balance row is there
-        // too — otherwise we can read a half-drawn/stale table.
-        if (!row || !rows.some((tr) => /closing\s*balance/i.test(tr.textContent || ''))) continue;
+        const dataRows = [...table.querySelectorAll('tr')].filter(
+          (tr) => !tr.closest('thead') && tr.querySelectorAll('th').length === 0 && tr.querySelectorAll('td').length > 0
+        );
+        const row = dataRows.find((tr) => re.test(tr.textContent || ''));
+        if (!row) continue;
 
         const tds = [...row.children];
         const vals = [];
@@ -740,12 +747,15 @@
       location.href = 'https://return.gst.gov.in/returns/auth/ledger/revreclaimdetledger';
       return;
     }
-    const bal = await readOpeningBalance();
+    // GST Receivable Reco keeps the OPENING balance: its own closing is computed as
+    // Opening + Net ITC available - ITC utilised, so this must be the start-of-period
+    // figure or that formula double-counts.
+    const bal = await readLedgerBalance('opening');
     debugPanel([
       'STEP: Electronic Credit ledger  (' + location.pathname + ')',
       'requested period : ' + per.from + ' – ' + per.to,
       'page is showing  : ' + (shownPeriod() || '(none)'),
-      'opening row cells: ' + (bal && bal.raw ? JSON.stringify(bal.raw) : '(NO Opening Balance row found)'),
+      'OPENING row cells: ' + (bal && bal.raw ? JSON.stringify(bal.raw) : '(NO Opening Balance data row found)'),
       'parsed           : IGST=' + (bal ? bal.igst : '?') + '  CGST=' + (bal ? bal.cgst : '?') + '  SGST=' + (bal ? bal.sgst : '?') + '  Cess=' + (bal ? bal.cess : '?'),
       '-> GST Receivable Reco gets CGST/SGST/IGST above. (Suspended Reco comes from the NEXT page.)',
     ]);
@@ -788,12 +798,14 @@
       await advance(job);
       return;
     }
-    const bal = await readOpeningBalance();
+    // Suspended Reco takes the CLOSING balance of the month's range (the balance
+    // after the previous month's return was filed) — confirmed by the user.
+    const bal = await readLedgerBalance('closing');
     debugPanel([
       'STEP: ITC-Reversal ledger  (' + location.pathname + ')',
       'requested period : ' + per.from + ' – ' + per.to,
       'page is showing  : ' + (shownPeriod() || '(none)'),
-      'opening row cells: ' + (bal && bal.raw ? JSON.stringify(bal.raw) : '(NO Opening Balance row found)'),
+      'CLOSING row cells: ' + (bal && bal.raw ? JSON.stringify(bal.raw) : '(NO Closing Balance data row found)'),
       'parsed           : IGST=' + (bal ? bal.igst : '?') + '  CGST=' + (bal ? bal.cgst : '?') + '  SGST=' + (bal ? bal.sgst : '?') + '  Cess=' + (bal ? bal.cess : '?'),
       '-> Suspended Reco gets CGST/SGST/IGST above.',
     ]);
