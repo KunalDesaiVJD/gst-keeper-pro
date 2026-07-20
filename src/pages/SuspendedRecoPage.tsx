@@ -243,18 +243,26 @@ const SuspendedRecoPage: React.FC = () => {
         .not('reclaim_month', 'is', null);
 
       const matchingReclaims = (reclaimBills || []).filter(b => monthMatchesFn(b.reclaim_month, patterns));
-      // Only count normal reclaims for row 5.4 (expense out is separate via 4D 1.2)
+      // Split the current-month reclaims into their two accounting buckets so
+      // BOTH row 5.4 (normal reclaim) and row 4(D) 1.2 (expense-out) are
+      // derived from the same source of truth (bills_not_in_2b + subtype flag).
       const normalReclaims = matchingReclaims.filter(b => (b as any).reclaim_subtype !== 'EXPENSE_OUT');
-      const row54 = normalReclaims.reduce((acc, b) => ({
+      const expenseOutReclaims = matchingReclaims.filter(b => (b as any).reclaim_subtype === 'EXPENSE_OUT');
+      const sumHeads = (bills: typeof matchingReclaims) => bills.reduce((acc, b) => ({
         cgst: acc.cgst + (Number(b.input_cgst) || 0),
         sgst: acc.sgst + (Number(b.input_sgst) || 0),
         igst: acc.igst + (Number(b.input_igst) || 0),
       }), { cgst: 0, sgst: 0, igst: 0 });
+      const row54 = sumHeads(normalReclaims);
+      const row4D12FromBills = sumHeads(expenseOutReclaims);
 
       // 4B(2)(ii) and 5.5: read from saved ITC summary (these are editable, not auto-linked)
       let row4B2ii = { cgst: 0, sgst: 0, igst: 0 };
       let row55 = { cgst: 0, sgst: 0, igst: 0 };
-      let row4D12 = { cgst: 0, sgst: 0, igst: 0 };
+      // Manual 4(D)(1.2) entry from ITC Summary. Kept as a fallback so any
+      // legacy hand-typed value isn't silently dropped, but the bills-derived
+      // amount takes over whenever it's present. See row4D12 below.
+      let row4D12FromItc = { cgst: 0, sgst: 0, igst: 0 };
 
       const { data: itcData } = await supabase
         .from('itc_summaries')
@@ -281,12 +289,22 @@ const SuspendedRecoPage: React.FC = () => {
 
         // 4(D) 1.2 - Reclaim of ITC Reversed due to 180 days rule/Others
         const found4D12 = section4D.find((r: any) => r.srNo === '1.2');
-        row4D12 = {
+        row4D12FromItc = {
           cgst: Number(found4D12?.cgst) || 0,
           sgst: Number(found4D12?.sgst) || 0,
           igst: Number(found4D12?.igst) || 0,
         };
       }
+
+      // Effective 4(D)(1.2): take whichever is larger per head. If the user
+      // ticked "Expense out" on some bills, those flow in automatically via
+      // row4D12FromBills — no need to also hand-type into ITC Summary. If they
+      // only entered it in ITC Summary (legacy flow), that still wins.
+      const row4D12 = {
+        cgst: Math.max(row4D12FromBills.cgst, row4D12FromItc.cgst),
+        sgst: Math.max(row4D12FromBills.sgst, row4D12FromItc.sgst),
+        igst: Math.max(row4D12FromBills.igst, row4D12FromItc.igst),
+      };
 
       // Updated formula: (4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5 + 4(D) 1.2)
       setPortalCgst(row4B2i.cgst + row4B2ii.cgst - row54.cgst - row55.cgst - row4D12.cgst);
