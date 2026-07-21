@@ -224,7 +224,10 @@ const AddClientPage: React.FC = () => {
           inactive_at_hand: formData.inactiveAtHand,
           gst_user_id: formData.gstUserId || null,
           gst_password: formData.gstPassword || null,
-          client_password: formData.gstin,
+          // Single client password: the app login uses the same value as the GST
+          // portal password so one change works everywhere. Falls back to the
+          // GSTIN when no GST password is entered.
+          client_password: formData.gstPassword || formData.gstin,
           is_first_login: true,
           regular_sub_type: formData.registrationType === 'Regular' ? formData.regularSubType : null,
           builder_itc_type: formData.regularSubType === 'Builder' ? formData.builderItcType : null,
@@ -722,6 +725,7 @@ const AddClientPage: React.FC = () => {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="gstPassword">GST Password</Label>
+                  <p className="text-xs text-muted-foreground">Used for the GST portal (extension) and this client's app login.</p>
                   <PasswordInput
                     id="gstPassword"
                     value={formData.gstPassword}

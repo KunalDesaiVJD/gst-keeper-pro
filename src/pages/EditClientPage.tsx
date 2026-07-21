@@ -304,6 +304,10 @@ const EditClientPage: React.FC = () => {
           inactive_at_hand: formData.inactiveAtHand,
           gst_user_id: formData.gstUserId || null,
           gst_password: formData.gstPassword || null,
+          // Keep the client's app-login password in sync with the GST password,
+          // so updating it here updates it everywhere (app login + extension).
+          // Only when a password is present, so we never blank an existing one.
+          ...(formData.gstPassword ? { client_password: formData.gstPassword } : {}),
           regular_sub_type: formData.registrationType === 'Regular' ? formData.regularSubType : null,
           builder_itc_type: formData.regularSubType === 'Builder' ? formData.builderItcType : null,
           commercial_area: formData.builderItcType === 'PARTIAL_ITC' ? parseFloat(formData.commercialArea) || 0 : 0,
@@ -817,6 +821,7 @@ const EditClientPage: React.FC = () => {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="gstPassword">GST Password</Label>
+                  <p className="text-xs text-muted-foreground">Used for the GST portal (extension) and this client's app login — changing it updates both.</p>
                   <PasswordInput
                     id="gstPassword"
                     value={formData.gstPassword}

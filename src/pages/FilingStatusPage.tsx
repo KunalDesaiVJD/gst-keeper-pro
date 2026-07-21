@@ -1197,14 +1197,14 @@ const FilingStatusPage: React.FC = () => {
             grid scrolls horizontally instead of crushing columns into each other.
             Tighter px-3/py-2 density (vs .gst-table's roomy px-4/py-3) to fit 11 columns. */}
         <table
-          className="gst-table min-w-[1250px] [&_th]:px-3 [&_th]:py-2 [&_td]:px-3 [&_td]:py-2"
+          className="gst-table min-w-[1320px] [&_th]:px-3 [&_th]:py-2 [&_th]:whitespace-nowrap [&_td]:px-3 [&_td]:py-2"
           style={{ tableLayout: 'fixed' }}
         >
           <thead className="sticky top-0 z-10">
             <tr>
               <th className="w-12">No.</th>
               <th className="w-52">Client Name</th>
-              <th className="w-20">
+              <th className="w-28">
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
@@ -1278,7 +1278,7 @@ const FilingStatusPage: React.FC = () => {
               </th>
               <th className="w-36">ARN</th>
               <th className="w-28">Return PDF</th>
-              <th className="w-16">
+              <th className="w-24">
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
