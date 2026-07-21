@@ -115,6 +115,8 @@ const FilingStatusPage: React.FC = () => {
   const [selectedTargetDates, setSelectedTargetDates] = useState<number[]>([]);
   const [selectedStatuses, setSelectedStatuses] = useState<FilingStatusType[]>([]);
   const [selectedAccountants, setSelectedAccountants] = useState<string[]>([]);
+  const [selectedFrequencies, setSelectedFrequencies] = useState<string[]>([]);
+  const [selectedRemarks, setSelectedRemarks] = useState<string[]>([]); // '__BLANK__' = no remark
   
   // Sync with MonthContext when page loads
   useEffect(() => {
@@ -952,6 +954,16 @@ const FilingStatusPage: React.FC = () => {
       if (selectedStatuses.length > 0 && !selectedStatuses.includes(record.status)) {
         return false;
       }
+      // Multi-select frequency filter (Monthly / Quarterly / IFF)
+      if (selectedFrequencies.length > 0) {
+        const freq = record.filingFrequency === 'Quarterly' ? 'Quarterly' : record.filingFrequency === 'IFF' ? 'IFF' : 'Monthly';
+        if (!selectedFrequencies.includes(freq)) return false;
+      }
+      // Multi-select remarks filter ('__BLANK__' matches rows with no remark)
+      if (selectedRemarks.length > 0) {
+        const rem = (record.remarks || '').trim();
+        if (!selectedRemarks.includes(rem === '' ? '__BLANK__' : rem)) return false;
+      }
       // Late filings filter - show only filings that were filed after due date
       if (lateFilingsFilter) {
         if (record.status !== 'Filed' || !record.filed_date) {
@@ -979,11 +991,19 @@ const FilingStatusPage: React.FC = () => {
 
   // Toggle status selection
   const toggleStatus = (status: FilingStatusType) => {
-    setSelectedStatuses(prev => 
-      prev.includes(status) 
+    setSelectedStatuses(prev =>
+      prev.includes(status)
         ? prev.filter(s => s !== status)
         : [...prev, status]
     );
+  };
+
+  const toggleFrequency = (freq: string) => {
+    setSelectedFrequencies(prev => prev.includes(freq) ? prev.filter(f => f !== freq) : [...prev, freq]);
+  };
+
+  const toggleRemark = (rem: string) => {
+    setSelectedRemarks(prev => prev.includes(rem) ? prev.filter(r => r !== rem) : [...prev, rem]);
   };
 
   // All available statuses
@@ -1161,9 +1181,13 @@ const FilingStatusPage: React.FC = () => {
     const filteredRecords = applyFilters(records);
     const [editingRemarks, setEditingRemarks] = useState<Record<string, string>>({});
     const [editingArn, setEditingArn] = useState<Record<string, string>>({});
-    
+    const [remarkSearch, setRemarkSearch] = useState('');
+
     // Get unique target dates for this return type
     const uniqueTargetDates = Array.from(new Set(records.filter(r => r.target_date !== null).map(r => r.target_date!))).sort((a, b) => a - b);
+    // Distinct non-empty remarks present in this tab, for the Remarks filter.
+    const uniqueRemarks = Array.from(new Set(records.map(r => (r.remarks || '').trim()).filter(r => r !== ''))).sort((a, b) => a.localeCompare(b));
+    const remarkMatches = uniqueRemarks.filter(r => r.toLowerCase().includes(remarkSearch.toLowerCase()));
     
     return (
       <div className="relative">
@@ -1180,7 +1204,33 @@ const FilingStatusPage: React.FC = () => {
             <tr>
               <th className="w-12">No.</th>
               <th className="w-52">Client Name</th>
-              <th className="w-20">Frequency</th>
+              <th className="w-20">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
+                      Frequency
+                      <ChevronDown className="h-3 w-3" />
+                      {selectedFrequencies.length > 0 && (
+                        <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">{selectedFrequencies.length}</Badge>
+                      )}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-44 p-2 bg-background border" align="start">
+                    <div className="space-y-1">
+                      <div className="text-xs font-medium text-muted-foreground mb-2">Filter by Frequency</div>
+                      {[{ v: 'Monthly', l: 'Monthly (M)' }, { v: 'Quarterly', l: 'Quarterly (Q)' }, { v: 'IFF', l: 'IFF' }].map((f) => (
+                        <div key={f.v} className="flex items-center space-x-2 p-1 hover:bg-muted rounded">
+                          <Checkbox id={`freq-${f.v}`} checked={selectedFrequencies.includes(f.v)} onCheckedChange={() => toggleFrequency(f.v)} />
+                          <label htmlFor={`freq-${f.v}`} className="text-xs cursor-pointer flex-1">{f.l}</label>
+                        </div>
+                      ))}
+                      {selectedFrequencies.length > 0 && (
+                        <Button variant="ghost" size="sm" className="w-full mt-2 h-6 text-xs" onClick={() => setSelectedFrequencies([])}>Clear</Button>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </th>
               <th className="w-40">
                 <Popover>
                   <PopoverTrigger asChild>
@@ -1276,7 +1326,48 @@ const FilingStatusPage: React.FC = () => {
                 </Popover>
               </th>
               <th className="w-28">Filed Date</th>
-              <th className="w-48">Remarks</th>
+              <th className="w-48">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
+                      Remarks
+                      <ChevronDown className="h-3 w-3" />
+                      {selectedRemarks.length > 0 && (
+                        <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">{selectedRemarks.length}</Badge>
+                      )}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-64 p-2 bg-background border" align="start">
+                    <div className="space-y-1">
+                      <div className="text-xs font-medium text-muted-foreground mb-2">Filter by Remarks</div>
+                      <Input
+                        value={remarkSearch}
+                        onChange={(e) => setRemarkSearch(e.target.value)}
+                        placeholder="Search remarks..."
+                        className="h-7 text-xs mb-1"
+                      />
+                      <div className="max-h-56 overflow-y-auto space-y-1">
+                        <div className="flex items-center space-x-2 p-1 hover:bg-muted rounded">
+                          <Checkbox id="rem-blank" checked={selectedRemarks.includes('__BLANK__')} onCheckedChange={() => toggleRemark('__BLANK__')} />
+                          <label htmlFor="rem-blank" className="text-xs italic text-muted-foreground cursor-pointer flex-1">(No remark)</label>
+                        </div>
+                        {remarkMatches.map((rem, i) => (
+                          <div key={i} className="flex items-center space-x-2 p-1 hover:bg-muted rounded">
+                            <Checkbox id={`rem-${i}`} checked={selectedRemarks.includes(rem)} onCheckedChange={() => toggleRemark(rem)} />
+                            <label htmlFor={`rem-${i}`} className="text-xs cursor-pointer flex-1 truncate" title={rem}>{rem}</label>
+                          </div>
+                        ))}
+                        {remarkMatches.length === 0 && (
+                          <div className="text-xs text-muted-foreground px-1 py-2">No matching remarks.</div>
+                        )}
+                      </div>
+                      {selectedRemarks.length > 0 && (
+                        <Button variant="ghost" size="sm" className="w-full mt-2 h-6 text-xs" onClick={() => setSelectedRemarks([])}>Clear</Button>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </th>
               <th className="w-16">Login</th>
               {canUnlockSheets() && <th className="w-16">Unlock</th>}
             </tr>
@@ -1599,7 +1690,7 @@ const FilingStatusPage: React.FC = () => {
               searchPlaceholder="Search accountant..."
             />
 
-            {(clientNameFilter || selectedAccountants.length > 0 || selectedTargetDates.length > 0 || selectedStatuses.length > 0) && (
+            {(clientNameFilter || selectedAccountants.length > 0 || selectedTargetDates.length > 0 || selectedStatuses.length > 0 || selectedFrequencies.length > 0 || selectedRemarks.length > 0) && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -1608,6 +1699,8 @@ const FilingStatusPage: React.FC = () => {
                   setSelectedAccountants([]);
                   setSelectedTargetDates([]);
                   setSelectedStatuses([]);
+                  setSelectedFrequencies([]);
+                  setSelectedRemarks([]);
                 }}
               >
                 Clear All Filters
