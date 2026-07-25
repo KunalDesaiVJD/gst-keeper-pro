@@ -8,9 +8,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { Settings, Lock, Users, AlertCircle, Check, X, Loader2, Database, Shield } from 'lucide-react';
+import { Settings, Lock, Users, AlertCircle, Check, X, Loader2, Database, Shield, Mail } from 'lucide-react';
 import ManageMastersPage from '@/pages/ManageMastersPage';
 import UserControlPage from '@/pages/UserControlPage';
+import EmailTemplatesEditor from '@/components/reminders/EmailTemplatesEditor';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
@@ -273,6 +274,12 @@ const SettingsPage: React.FC = () => {
               Masters
             </TabsTrigger>
           )}
+          {isStaffRole() && (
+            <TabsTrigger value="templates" className="flex items-center gap-2">
+              <Mail className="h-4 w-4" />
+              GST Reminders
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="password">
@@ -506,6 +513,12 @@ const SettingsPage: React.FC = () => {
         {isStaffRole() && (
           <TabsContent value="masters">
             <ManageMastersPage embedded />
+          </TabsContent>
+        )}
+
+        {isStaffRole() && (
+          <TabsContent value="templates">
+            <EmailTemplatesEditor />
           </TabsContent>
         )}
       </Tabs>
