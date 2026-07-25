@@ -672,8 +672,12 @@ const TwoBReconciliationPage: React.FC = () => {
           input_cgst: b.inputCgst,
           input_sgst: b.inputSgst,
           period_month: selectedMonth,
-          book_entry_month: sanitizeMonth(b.bookEntryMonth, false),
-          bill_in_2b_month: sanitizeMonth(b.billIn2BMonth, false),
+          // Book Entry and In 2B legitimately hold past-month values (bills
+          // entered / appearing in 2B late), so they're NOT sanitized against
+          // the Jun-26+ current-month restriction. Only Reversal / Reclaim
+          // above go through sanitizeMonth().
+          book_entry_month: (b.bookEntryMonth && String(b.bookEntryMonth).trim() !== '') ? String(b.bookEntryMonth).trim() : null,
+          bill_in_2b_month: (b.billIn2BMonth && String(b.billIn2BMonth).trim() !== '') ? String(b.billIn2BMonth).trim() : null,
         }));
 
         const { error } = await supabase
@@ -1181,6 +1185,10 @@ const TwoBReconciliationPage: React.FC = () => {
   // Render month dropdown for reversal/reclaim - with carried forward check
   // isEditableForCF allows editing certain columns (Reclaim, Book Entry, In 2B) even for carried forward rows
   // isReclaimColumn adds "Expense out" option
+  // allowPastMonths opts a column OUT of the Jun-26+ restriction, so the full
+  //   historical month list is offered even in restricted periods. Use for
+  //   columns whose semantics are "an event happened in a past month" (Book
+  //   Entry, In 2B) rather than "I'm doing X this month" (Reversal, Reclaim).
   const renderMonthDropdown = (
     value: string | null | undefined,
     onChange: (value: string) => void,
@@ -1189,7 +1197,8 @@ const TwoBReconciliationPage: React.FC = () => {
     isEditableForCF: boolean = false,
     isReclaimColumn: boolean = false,
     reclaimSubtype?: string | null,
-    onSubtypeChange?: (subtype: string | null) => void
+    onSubtypeChange?: (subtype: string | null) => void,
+    allowPastMonths: boolean = false,
   ) => {
     // Carried forward rows are non-editable - except columns marked as editable for CF (Reclaim, Book Entry, In 2B)
     const shouldBeReadOnly = isLocked || (isCarriedForward && !isEditableForCF);
@@ -1254,7 +1263,7 @@ const TwoBReconciliationPage: React.FC = () => {
               Expense out
             </SelectItem>
           )}
-          {isRestrictedPeriod
+          {(isRestrictedPeriod && !allowPastMonths)
             ? (currentPeriodMonthLabel && (
                 <SelectItem value={currentPeriodMonthLabel}>{currentPeriodMonthLabel}</SelectItem>
               ))
@@ -1780,7 +1789,11 @@ const TwoBReconciliationPage: React.FC = () => {
                             (val) => handleUpdateBooksField(row.id, 'book_entry_month', val || null),
                             'Entry',
                             row.is_carried_forward || false,
-                            true // isEditableForCF - allow editing Book Entry column for carried forward rows
+                            true, // isEditableForCF - allow editing Book Entry column for carried forward rows
+                            false, // isReclaimColumn — Book Entry doesn't get Expense out
+                            undefined,
+                            undefined,
+                            true, // allowPastMonths — book entry can naturally be a past month
                           )}
                         </td>
                         <td>
@@ -1789,7 +1802,11 @@ const TwoBReconciliationPage: React.FC = () => {
                             (val) => handleUpdateBooksField(row.id, 'bill_in_2b_month', val || null),
                             'In 2B',
                             row.is_carried_forward || false,
-                            true // isEditableForCF - allow editing In 2B column for carried forward rows
+                            true, // isEditableForCF - allow editing In 2B column for carried forward rows
+                            false, // isReclaimColumn — In 2B doesn't get Expense out
+                            undefined,
+                            undefined,
+                            true, // allowPastMonths — a bill can appear in 2B any past month
                           )}
                         </td>
                         {!isLocked && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && (
