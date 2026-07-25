@@ -23,7 +23,8 @@ export interface FilingClient {
   registration_type: string;
   selected_returns: string[] | null;
   registration_date: string;
-  cancellation_date?: string | null;
+  cancellation_date?: string | null; // "GSTR 10 Date" in the UI (final-return date)
+  registration_cancellation_date?: string | null; // "Cancellation Date" — effective cancellation of registration
   inactive_at_hand?: boolean | null;
   target_date_group1?: number | null;
   target_date_group2?: number | null;
@@ -61,8 +62,13 @@ export function isClientVisibleForMonth(client: FilingClient, periodMonth: strin
   const regDate = new Date(client.registration_date);
   const regMonth = new Date(regDate.getFullYear(), regDate.getMonth(), 1);
   if (periodDate < regMonth) return false;
-  if (client.cancellation_date) {
-    const cancelDate = new Date(client.cancellation_date);
+  // A cancelled registration still files its normal returns UP TO AND INCLUDING
+  // the cancellation month, then drops off from the FOLLOWING month. The cutoff
+  // is the effective "Cancellation Date" (registration_cancellation_date); fall
+  // back to the GSTR-10 date only if that's the only cancellation date recorded.
+  const cancelRaw = client.registration_cancellation_date || client.cancellation_date;
+  if (cancelRaw) {
+    const cancelDate = new Date(cancelRaw);
     const cancelMonth = new Date(cancelDate.getFullYear(), cancelDate.getMonth(), 1);
     if (periodDate > cancelMonth) return false;
   }

@@ -116,7 +116,7 @@ const StaffDashboard: React.FC = () => {
     try {
       const { data: clientData, count: clientCount } = await supabase
         .from('clients')
-        .select('id, selected_returns, registration_date, cancellation_date, registration_type, target_date_group1, target_date_group2', { count: 'exact' });
+        .select('id, selected_returns, registration_date, cancellation_date, registration_cancellation_date, registration_type, target_date_group1, target_date_group2', { count: 'exact' });
 
       const { data: filingData } = await supabase
         .from('filing_status')
