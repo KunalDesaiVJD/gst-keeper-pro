@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { enqueueConfirmation } from '@/lib/gstReminders';
 import ClientHoverDetails from '@/components/filing/ClientHoverDetails';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { SchemeHistoryEntry } from '@/utils/schemeResolver';
@@ -750,6 +751,20 @@ const FilingStatusPage: React.FC = () => {
         if (error) throw error;
       }
       
+      // Queue the client filing-confirmation email (a `pending` row in email_outbox;
+      // the gst@vjdesai.com sender delivers it). Best-effort — never blocks filing.
+      if (newStatus === 'Filed') {
+        void enqueueConfirmation({
+          clientId: record.client_id,
+          returnType: record.return_type,
+          periodMonth: record.period_month || selectedMonth,
+          arn: normalizeArn(localArn ?? record.arn) || '',
+          filedDate: new Date().toISOString().split('T')[0],
+          filingStatusId: isNewRecord ? null : record.id,
+          staffName: user?.firstName ?? null,
+        });
+      }
+
       // When GSTR-3B or GSTR-3B (Q) is filed, lock the 2B and ITC sheets AND carry forward data
       if (newStatus === 'Filed' && (record.return_type === 'GSTR-3B' || record.return_type === 'GSTR-3B (Q)')) {
         // Lock bills_not_in_2b
