@@ -25,6 +25,7 @@ import ReportsPage from "@/pages/ReportsPage";
 import ManageEmployeesPage from "@/pages/ManageEmployeesPage";
 import UserControlPage from "@/pages/UserControlPage";
 import SettingsPage from "@/pages/SettingsPage";
+import RemindersPage from "@/pages/RemindersPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -55,6 +56,7 @@ const App = () => (
                   <Route path="/rcm-summary" element={<RCMSummaryPage />} />
                   <Route path="/manage-masters" element={<ManageMastersPage />} />
                   <Route path="/filing-status" element={<FilingStatusPage />} />
+                  <Route path="/reminders" element={<RemindersPage />} />
                   <Route path="/gst-running-update" element={<GSTRunningUpdatePage />} />
                   <Route path="/gstr1-data" element={<GSTR1DataPage />} />
                   <Route path="/reports" element={<ReportsPage />} />
