@@ -54,24 +54,28 @@ export interface GeneratedFilingRecord {
 }
 
 export function isClientVisibleForMonth(client: FilingClient, periodMonth: string): boolean {
-  // Manual "Inactive at hand" toggle wins over every other check — the CA has
-  // explicitly said this client shouldn't appear until they clear the flag.
-  if (client.inactive_at_hand) return false;
   const [monthStr, yearStr] = periodMonth.split('/');
   const periodDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1);
   const regDate = new Date(client.registration_date);
   const regMonth = new Date(regDate.getFullYear(), regDate.getMonth(), 1);
   if (periodDate < regMonth) return false;
-  // A cancelled registration still files its normal returns UP TO AND INCLUDING
-  // the cancellation month, then drops off from the FOLLOWING month. The cutoff
-  // is the effective "Cancellation Date" (registration_cancellation_date); fall
-  // back to the GSTR-10 date only if that's the only cancellation date recorded.
-  const cancelRaw = client.registration_cancellation_date || client.cancellation_date;
+
+  // A cancellation date PHASES THE CLIENT OUT: shown up to AND INCLUDING the
+  // cancellation month, hidden from the following month — so the returns that
+  // were still due right up to cancellation stay visible. This takes precedence
+  // over the "Inactive at hand" toggle (a cancelled client must still show for
+  // the months it had to file). The "GSTR 10 Date" (cancellation_date) is the
+  // field wired to control visibility; fall back to the registration-cancellation
+  // date if that's the only one recorded.
+  const cancelRaw = client.cancellation_date || client.registration_cancellation_date;
   if (cancelRaw) {
     const cancelDate = new Date(cancelRaw);
     const cancelMonth = new Date(cancelDate.getFullYear(), cancelDate.getMonth(), 1);
-    if (periodDate > cancelMonth) return false;
+    return periodDate <= cancelMonth;
   }
+
+  // No cancellation date → the manual "Inactive at hand" toggle hard-hides the client.
+  if (client.inactive_at_hand) return false;
   return true;
 }
 
