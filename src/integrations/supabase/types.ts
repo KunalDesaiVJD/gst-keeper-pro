@@ -10,7 +10,32 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.1"
+    PostgrestVersion: "14.5"
+  }
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
   }
   public: {
     Tables: {
@@ -201,6 +226,71 @@ export type Database = {
           },
         ]
       }
+      books_register: {
+        Row: {
+          book_treatment: string
+          client_id: string
+          created_at: string | null
+          date: string | null
+          id: string
+          input_cgst: number | null
+          input_igst: number | null
+          input_sgst: number | null
+          matched_2b_id: string | null
+          period_month: string
+          supplier_gstin: string | null
+          supplier_invoice_number: string | null
+          supplier_name: string | null
+          taxable_value: number | null
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          book_treatment?: string
+          client_id: string
+          created_at?: string | null
+          date?: string | null
+          id?: string
+          input_cgst?: number | null
+          input_igst?: number | null
+          input_sgst?: number | null
+          matched_2b_id?: string | null
+          period_month: string
+          supplier_gstin?: string | null
+          supplier_invoice_number?: string | null
+          supplier_name?: string | null
+          taxable_value?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          book_treatment?: string
+          client_id?: string
+          created_at?: string | null
+          date?: string | null
+          id?: string
+          input_cgst?: number | null
+          input_igst?: number | null
+          input_sgst?: number | null
+          matched_2b_id?: string | null
+          period_month?: string
+          supplier_gstin?: string | null
+          supplier_invoice_number?: string | null
+          supplier_name?: string | null
+          taxable_value?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "books_register_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chat_channel_members: {
         Row: {
           channel_id: string
@@ -360,6 +450,47 @@ export type Database = {
         }
         Relationships: []
       }
+      client_reminder_settings: {
+        Row: {
+          client_id: string
+          enabled: boolean
+          escalate: boolean
+          interval_days: number
+          max_reminders: number | null
+          send_confirmation: boolean
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          client_id: string
+          enabled?: boolean
+          escalate?: boolean
+          interval_days?: number
+          max_reminders?: number | null
+          send_confirmation?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          client_id?: string
+          enabled?: boolean
+          escalate?: boolean
+          interval_days?: number
+          max_reminders?: number | null
+          send_confirmation?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_reminder_settings_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: true
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       client_scheme_history: {
         Row: {
           changed_at: string
@@ -416,9 +547,11 @@ export type Database = {
           gst_user_id: string | null
           gstin: string
           id: string
+          inactive_at_hand: boolean
           is_first_login: boolean | null
           mobile: string | null
           name: string
+          registration_cancellation_date: string | null
           registration_date: string
           registration_type: Database["public"]["Enums"]["registration_type"]
           regular_sub_type: string | null
@@ -442,9 +575,11 @@ export type Database = {
           gst_user_id?: string | null
           gstin: string
           id?: string
+          inactive_at_hand?: boolean
           is_first_login?: boolean | null
           mobile?: string | null
           name: string
+          registration_cancellation_date?: string | null
           registration_date: string
           registration_type?: Database["public"]["Enums"]["registration_type"]
           regular_sub_type?: string | null
@@ -468,9 +603,11 @@ export type Database = {
           gst_user_id?: string | null
           gstin?: string
           id?: string
+          inactive_at_hand?: boolean
           is_first_login?: boolean | null
           mobile?: string | null
           name?: string
+          registration_cancellation_date?: string | null
           registration_date?: string
           registration_type?: Database["public"]["Enums"]["registration_type"]
           regular_sub_type?: string | null
@@ -479,6 +616,124 @@ export type Database = {
           target_date_group1?: number | null
           target_date_group2?: number | null
           updated_at?: string | null
+        }
+        Relationships: []
+      }
+      email_outbox: {
+        Row: {
+          body: string
+          client_id: string
+          created_at: string
+          created_by: string | null
+          error: string | null
+          filing_status_id: string | null
+          id: string
+          kind: string
+          period_month: string | null
+          reminder_step: number | null
+          return_type: Database["public"]["Enums"]["return_type"] | null
+          sent_at: string | null
+          status: string
+          subject: string
+          template_key: string
+          to_email: string
+        }
+        Insert: {
+          body: string
+          client_id: string
+          created_at?: string
+          created_by?: string | null
+          error?: string | null
+          filing_status_id?: string | null
+          id?: string
+          kind: string
+          period_month?: string | null
+          reminder_step?: number | null
+          return_type?: Database["public"]["Enums"]["return_type"] | null
+          sent_at?: string | null
+          status?: string
+          subject: string
+          template_key: string
+          to_email: string
+        }
+        Update: {
+          body?: string
+          client_id?: string
+          created_at?: string
+          created_by?: string | null
+          error?: string | null
+          filing_status_id?: string | null
+          id?: string
+          kind?: string
+          period_month?: string | null
+          reminder_step?: number | null
+          return_type?: Database["public"]["Enums"]["return_type"] | null
+          sent_at?: string | null
+          status?: string
+          subject?: string
+          template_key?: string
+          to_email?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "email_outbox_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "email_outbox_filing_status_id_fkey"
+            columns: ["filing_status_id"]
+            isOneToOne: false
+            referencedRelation: "filing_status"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "email_outbox_template_key_fkey"
+            columns: ["template_key"]
+            isOneToOne: false
+            referencedRelation: "email_templates"
+            referencedColumns: ["key"]
+          },
+        ]
+      }
+      email_templates: {
+        Row: {
+          body: string
+          is_active: boolean
+          key: string
+          kind: string
+          name: string
+          sort_order: number
+          step: number | null
+          subject: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          body: string
+          is_active?: boolean
+          key: string
+          kind: string
+          name: string
+          sort_order?: number
+          step?: number | null
+          subject: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          body?: string
+          is_active?: boolean
+          key?: string
+          kind?: string
+          name?: string
+          sort_order?: number
+          step?: number | null
+          subject?: string
+          updated_at?: string
+          updated_by?: string | null
         }
         Relationships: []
       }
@@ -531,6 +786,83 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "filing_status_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gst_receivable_reco: {
+        Row: {
+          books_closing_cgst: number | null
+          books_closing_igst: number | null
+          books_closing_sgst: number | null
+          client_id: string
+          id: string
+          opening_cgst: number | null
+          opening_csv_period_month: string | null
+          opening_csv_uploaded_at: string | null
+          opening_csv_uploaded_by: string | null
+          opening_igst: number | null
+          opening_override_at: string | null
+          opening_override_by: string | null
+          opening_override_justification: string | null
+          opening_portal_pulled_at: string | null
+          opening_portal_pulled_by: string | null
+          opening_sgst: number | null
+          opening_source: string
+          period_month: string
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          books_closing_cgst?: number | null
+          books_closing_igst?: number | null
+          books_closing_sgst?: number | null
+          client_id: string
+          id?: string
+          opening_cgst?: number | null
+          opening_csv_period_month?: string | null
+          opening_csv_uploaded_at?: string | null
+          opening_csv_uploaded_by?: string | null
+          opening_igst?: number | null
+          opening_override_at?: string | null
+          opening_override_by?: string | null
+          opening_override_justification?: string | null
+          opening_portal_pulled_at?: string | null
+          opening_portal_pulled_by?: string | null
+          opening_sgst?: number | null
+          opening_source?: string
+          period_month: string
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          books_closing_cgst?: number | null
+          books_closing_igst?: number | null
+          books_closing_sgst?: number | null
+          client_id?: string
+          id?: string
+          opening_cgst?: number | null
+          opening_csv_period_month?: string | null
+          opening_csv_uploaded_at?: string | null
+          opening_csv_uploaded_by?: string | null
+          opening_igst?: number | null
+          opening_override_at?: string | null
+          opening_override_by?: string | null
+          opening_override_justification?: string | null
+          opening_portal_pulled_at?: string | null
+          opening_portal_pulled_by?: string | null
+          opening_sgst?: number | null
+          opening_source?: string
+          period_month?: string
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gst_receivable_reco_client_id_fkey"
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
@@ -734,181 +1066,6 @@ export type Database = {
           },
         ]
       }
-      books_register: {
-        Row: {
-          book_treatment: string | null
-          client_id: string
-          created_at: string | null
-          date: string | null
-          id: string
-          input_cgst: number | null
-          input_igst: number | null
-          input_sgst: number | null
-          matched_2b_id: string | null
-          period_month: string
-          supplier_gstin: string | null
-          supplier_invoice_number: string | null
-          supplier_name: string | null
-          taxable_value: number | null
-          updated_at: string | null
-          updated_by: string | null
-        }
-        Insert: {
-          book_treatment?: string | null
-          client_id: string
-          created_at?: string | null
-          date?: string | null
-          id?: string
-          input_cgst?: number | null
-          input_igst?: number | null
-          input_sgst?: number | null
-          matched_2b_id?: string | null
-          period_month: string
-          supplier_gstin?: string | null
-          supplier_invoice_number?: string | null
-          supplier_name?: string | null
-          taxable_value?: number | null
-          updated_at?: string | null
-          updated_by?: string | null
-        }
-        Update: {
-          book_treatment?: string | null
-          client_id?: string
-          created_at?: string | null
-          date?: string | null
-          id?: string
-          input_cgst?: number | null
-          input_igst?: number | null
-          input_sgst?: number | null
-          matched_2b_id?: string | null
-          period_month?: string
-          supplier_gstin?: string | null
-          supplier_invoice_number?: string | null
-          supplier_name?: string | null
-          taxable_value?: number | null
-          updated_at?: string | null
-          updated_by?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "books_register_client_id_fkey"
-            columns: ["client_id"]
-            isOneToOne: false
-            referencedRelation: "clients"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      twob_import_docs: {
-        Row: {
-          bucket: string
-          cess: number | null
-          client_id: string
-          date: string | null
-          gstr1_filing_date: string | null
-          gstr1_period: string | null
-          id: string
-          import_batch_id: string | null
-          imported_at: string | null
-          imported_by: string | null
-          input_cgst: number | null
-          input_igst: number | null
-          input_sgst: number | null
-          invoice_type: string | null
-          invoice_value: number | null
-          irn: string | null
-          itc_action: string
-          itc_available: boolean | null
-          itc_reason: string | null
-          matched_book_id: string | null
-          period_month: string
-          place_of_supply: string | null
-          reverse_charge: boolean
-          source: string | null
-          source_sheet: string | null
-          supplier_gstin: string | null
-          supplier_invoice_number: string | null
-          supplier_name: string | null
-          taxable_value: number | null
-          updated_at: string | null
-          updated_by: string | null
-        }
-        Insert: {
-          bucket?: string
-          cess?: number | null
-          client_id: string
-          date?: string | null
-          gstr1_filing_date?: string | null
-          gstr1_period?: string | null
-          id?: string
-          import_batch_id?: string | null
-          imported_at?: string | null
-          imported_by?: string | null
-          input_cgst?: number | null
-          input_igst?: number | null
-          input_sgst?: number | null
-          invoice_type?: string | null
-          invoice_value?: number | null
-          irn?: string | null
-          itc_action?: string
-          itc_available?: boolean | null
-          itc_reason?: string | null
-          matched_book_id?: string | null
-          period_month: string
-          place_of_supply?: string | null
-          reverse_charge?: boolean
-          source?: string | null
-          source_sheet?: string | null
-          supplier_gstin?: string | null
-          supplier_invoice_number?: string | null
-          supplier_name?: string | null
-          taxable_value?: number | null
-          updated_at?: string | null
-          updated_by?: string | null
-        }
-        Update: {
-          bucket?: string
-          cess?: number | null
-          client_id?: string
-          date?: string | null
-          gstr1_filing_date?: string | null
-          gstr1_period?: string | null
-          id?: string
-          import_batch_id?: string | null
-          imported_at?: string | null
-          imported_by?: string | null
-          input_cgst?: number | null
-          input_igst?: number | null
-          input_sgst?: number | null
-          invoice_type?: string | null
-          invoice_value?: number | null
-          irn?: string | null
-          itc_action?: string
-          itc_available?: boolean | null
-          itc_reason?: string | null
-          matched_book_id?: string | null
-          period_month?: string
-          place_of_supply?: string | null
-          reverse_charge?: boolean
-          source?: string | null
-          source_sheet?: string | null
-          supplier_gstin?: string | null
-          supplier_invoice_number?: string | null
-          supplier_name?: string | null
-          taxable_value?: number | null
-          updated_at?: string | null
-          updated_by?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "twob_import_docs_client_id_fkey"
-            columns: ["client_id"]
-            isOneToOne: false
-            referencedRelation: "clients"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       itc_summaries: {
         Row: {
           client_id: string
@@ -1018,6 +1175,206 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      portal_agent_heartbeat: {
+        Row: {
+          agent_id: string
+          info: Json | null
+          last_seen: string
+        }
+        Insert: {
+          agent_id: string
+          info?: Json | null
+          last_seen?: string
+        }
+        Update: {
+          agent_id?: string
+          info?: Json | null
+          last_seen?: string
+        }
+        Relationships: []
+      }
+      portal_job_events: {
+        Row: {
+          created_at: string | null
+          id: string
+          job_id: string
+          level: string
+          message: string | null
+          screenshot_path: string | null
+          step: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          job_id: string
+          level?: string
+          message?: string | null
+          screenshot_path?: string | null
+          step?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          job_id?: string
+          level?: string
+          message?: string | null
+          screenshot_path?: string | null
+          step?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "portal_job_events_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "portal_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      portal_jobs: {
+        Row: {
+          attempts: number
+          claimed_by: string | null
+          client_id: string
+          created_at: string | null
+          error: string | null
+          finished_at: string | null
+          human_prompt: Json | null
+          human_response: Json | null
+          id: string
+          job_type: string
+          mode: string
+          payload: Json | null
+          period_month: string | null
+          requested_by: string | null
+          result: Json | null
+          status: string
+          updated_at: string | null
+          verified: boolean | null
+        }
+        Insert: {
+          attempts?: number
+          claimed_by?: string | null
+          client_id: string
+          created_at?: string | null
+          error?: string | null
+          finished_at?: string | null
+          human_prompt?: Json | null
+          human_response?: Json | null
+          id?: string
+          job_type: string
+          mode?: string
+          payload?: Json | null
+          period_month?: string | null
+          requested_by?: string | null
+          result?: Json | null
+          status?: string
+          updated_at?: string | null
+          verified?: boolean | null
+        }
+        Update: {
+          attempts?: number
+          claimed_by?: string | null
+          client_id?: string
+          created_at?: string | null
+          error?: string | null
+          finished_at?: string | null
+          human_prompt?: Json | null
+          human_response?: Json | null
+          id?: string
+          job_type?: string
+          mode?: string
+          payload?: Json | null
+          period_month?: string | null
+          requested_by?: string | null
+          result?: Json | null
+          status?: string
+          updated_at?: string | null
+          verified?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "portal_jobs_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      portal_sessions: {
+        Row: {
+          client_id: string
+          storage_state: Json
+          updated_at: string
+        }
+        Insert: {
+          client_id: string
+          storage_state: Json
+          updated_at?: string
+        }
+        Update: {
+          client_id?: string
+          storage_state?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "portal_sessions_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: true
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      portal_verifications: {
+        Row: {
+          actual: Json | null
+          check_type: string
+          client_id: string | null
+          created_at: string | null
+          diff: Json | null
+          expected: Json | null
+          id: string
+          job_id: string
+          passed: boolean
+          period_month: string | null
+        }
+        Insert: {
+          actual?: Json | null
+          check_type: string
+          client_id?: string | null
+          created_at?: string | null
+          diff?: Json | null
+          expected?: Json | null
+          id?: string
+          job_id: string
+          passed: boolean
+          period_month?: string | null
+        }
+        Update: {
+          actual?: Json | null
+          check_type?: string
+          client_id?: string | null
+          created_at?: string | null
+          diff?: Json | null
+          expected?: Json | null
+          id?: string
+          job_id?: string
+          passed?: boolean
+          period_month?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "portal_verifications_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "portal_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profiles: {
         Row: {
@@ -1201,8 +1558,17 @@ export type Database = {
           client_id: string
           id: string
           opening_cgst: number | null
+          opening_csv_period_month: string | null
+          opening_csv_uploaded_at: string | null
+          opening_csv_uploaded_by: string | null
           opening_igst: number | null
+          opening_override_at: string | null
+          opening_override_by: string | null
+          opening_override_justification: string | null
+          opening_portal_pulled_at: string | null
+          opening_portal_pulled_by: string | null
           opening_sgst: number | null
+          opening_source: string
           period_month: string
           portal_cgst: number | null
           portal_igst: number | null
@@ -1214,8 +1580,17 @@ export type Database = {
           client_id: string
           id?: string
           opening_cgst?: number | null
+          opening_csv_period_month?: string | null
+          opening_csv_uploaded_at?: string | null
+          opening_csv_uploaded_by?: string | null
           opening_igst?: number | null
+          opening_override_at?: string | null
+          opening_override_by?: string | null
+          opening_override_justification?: string | null
+          opening_portal_pulled_at?: string | null
+          opening_portal_pulled_by?: string | null
           opening_sgst?: number | null
+          opening_source?: string
           period_month: string
           portal_cgst?: number | null
           portal_igst?: number | null
@@ -1227,8 +1602,17 @@ export type Database = {
           client_id?: string
           id?: string
           opening_cgst?: number | null
+          opening_csv_period_month?: string | null
+          opening_csv_uploaded_at?: string | null
+          opening_csv_uploaded_by?: string | null
           opening_igst?: number | null
+          opening_override_at?: string | null
+          opening_override_by?: string | null
+          opening_override_justification?: string | null
+          opening_portal_pulled_at?: string | null
+          opening_portal_pulled_by?: string | null
           opening_sgst?: number | null
+          opening_source?: string
           period_month?: string
           portal_cgst?: number | null
           portal_igst?: number | null
@@ -1239,6 +1623,116 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "suspended_reco_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      twob_import_docs: {
+        Row: {
+          bucket: string
+          cess: number | null
+          client_id: string
+          date: string | null
+          gstr1_filing_date: string | null
+          gstr1_period: string | null
+          id: string
+          import_batch_id: string | null
+          imported_at: string | null
+          imported_by: string | null
+          input_cgst: number | null
+          input_igst: number | null
+          input_sgst: number | null
+          invoice_type: string | null
+          invoice_value: number | null
+          irn: string | null
+          itc_action: string
+          itc_available: boolean | null
+          itc_reason: string | null
+          matched_book_id: string | null
+          period_month: string
+          place_of_supply: string | null
+          reverse_charge: boolean
+          source: string | null
+          source_sheet: string | null
+          supplier_gstin: string | null
+          supplier_invoice_number: string | null
+          supplier_name: string | null
+          taxable_value: number | null
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          bucket?: string
+          cess?: number | null
+          client_id: string
+          date?: string | null
+          gstr1_filing_date?: string | null
+          gstr1_period?: string | null
+          id?: string
+          import_batch_id?: string | null
+          imported_at?: string | null
+          imported_by?: string | null
+          input_cgst?: number | null
+          input_igst?: number | null
+          input_sgst?: number | null
+          invoice_type?: string | null
+          invoice_value?: number | null
+          irn?: string | null
+          itc_action?: string
+          itc_available?: boolean | null
+          itc_reason?: string | null
+          matched_book_id?: string | null
+          period_month: string
+          place_of_supply?: string | null
+          reverse_charge?: boolean
+          source?: string | null
+          source_sheet?: string | null
+          supplier_gstin?: string | null
+          supplier_invoice_number?: string | null
+          supplier_name?: string | null
+          taxable_value?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          bucket?: string
+          cess?: number | null
+          client_id?: string
+          date?: string | null
+          gstr1_filing_date?: string | null
+          gstr1_period?: string | null
+          id?: string
+          import_batch_id?: string | null
+          imported_at?: string | null
+          imported_by?: string | null
+          input_cgst?: number | null
+          input_igst?: number | null
+          input_sgst?: number | null
+          invoice_type?: string | null
+          invoice_value?: number | null
+          irn?: string | null
+          itc_action?: string
+          itc_available?: boolean | null
+          itc_reason?: string | null
+          matched_book_id?: string | null
+          period_month?: string
+          place_of_supply?: string | null
+          reverse_charge?: boolean
+          source?: string | null
+          source_sheet?: string | null
+          supplier_gstin?: string | null
+          supplier_invoice_number?: string | null
+          supplier_name?: string | null
+          taxable_value?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "twob_import_docs_client_id_fkey"
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
@@ -1554,6 +2048,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
       app_role: ["superadmin", "gst_manager", "employee", "client"],
