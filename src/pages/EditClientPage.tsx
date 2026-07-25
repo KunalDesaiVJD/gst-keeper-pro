@@ -9,6 +9,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import ReminderSettingsCard from '@/components/reminders/ReminderSettingsCard';
 import { ArrowLeft, Save, AlertTriangle, History, Loader2, UserCog } from 'lucide-react';
 import { toast } from 'sonner';
 import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
@@ -845,6 +846,8 @@ const EditClientPage: React.FC = () => {
           </form>
         </CardContent>
       </Card>
+
+      {clientId && <ReminderSettingsCard clientId={clientId} />}
 
       {/* Scheme Change Confirmation Dialog */}
       <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
