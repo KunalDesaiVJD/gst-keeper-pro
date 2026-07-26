@@ -172,11 +172,18 @@ const EmailTemplatesEditor: React.FC = () => {
                 </div>
               </div>
 
-              {/* Live preview */}
+              {/* Live preview — rendered HTML in a sandboxed iframe */}
               <div className="rounded-lg border bg-muted/30 p-4">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Preview (sample data)</p>
-                <p className="text-sm font-medium">{renderPreview(subject)}</p>
-                <div className="mt-2 whitespace-pre-wrap text-[13px] text-foreground/90">{renderPreview(body)}</div>
+                <p className="text-xs text-muted-foreground">Subject</p>
+                <p className="mb-3 text-sm font-medium">{renderPreview(subject)}</p>
+                <iframe
+                  title="Email preview"
+                  srcDoc={renderPreview(body)}
+                  sandbox=""
+                  className="w-full rounded-md border bg-white"
+                  style={{ height: 540 }}
+                />
               </div>
 
               <div className="flex items-center justify-end gap-2">

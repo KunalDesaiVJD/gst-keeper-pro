@@ -47,8 +47,8 @@ async function sendMail(token: string, to: string, subject: string, body: string
   const payload = {
     message: {
       subject: subject || '(no subject)',
-      // Templates are plain text; 'Text' preserves line breaks faithfully.
-      body: { contentType: 'Text', content: body ?? '' },
+      // Templates are corporate HTML; send as HTML so the layout renders.
+      body: { contentType: 'HTML', content: body ?? '' },
       toRecipients: [{ emailAddress: { address: to } }],
     },
     saveToSentItems: true,
