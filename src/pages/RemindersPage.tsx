@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { prettyPeriod } from '@/lib/gstReminders';
+import EmailTemplatesEditor from '@/components/reminders/EmailTemplatesEditor';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -135,8 +136,8 @@ const RemindersPage: React.FC = () => {
             <BellRing className="h-6 w-6 text-primary" /> GST Reminders
           </h1>
           <p className="text-sm text-muted-foreground">
-            Data-request reminders and filing confirmations queued for clients. Configure per client on their edit page;
-            edit the wording under Settings → GST Reminders.
+            Data-request reminders and filing confirmations for clients. Choose who gets them per client on their edit
+            page; edit the wording in the Email templates section below.
           </p>
         </div>
         <div className="flex items-center gap-2 self-start">
@@ -262,6 +263,17 @@ const RemindersPage: React.FC = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Email templates — edit the wording right here (also under Settings). */}
+      <div className="pt-2">
+        <h2 className="mb-1 flex items-center gap-2 text-lg font-semibold tracking-tight">
+          <Mail className="h-5 w-5 text-primary" /> Email templates
+        </h2>
+        <p className="mb-3 text-sm text-muted-foreground">
+          Edit the wording of each reminder and confirmation. The letterhead, details box and signature are applied automatically.
+        </p>
+        <EmailTemplatesEditor />
+      </div>
     </div>
   );
 };
