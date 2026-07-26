@@ -92,6 +92,7 @@ export async function enqueueConfirmation(opts: {
       period_month: opts.periodMonth,
       subject: renderTemplate(tpl.subject, vars),
       body: renderTemplate(tpl.body, vars),
+      render_vars: vars,
       status: 'pending',
       filing_status_id: opts.filingStatusId ?? null,
     });

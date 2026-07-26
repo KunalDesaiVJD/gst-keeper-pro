@@ -631,6 +631,7 @@ export type Database = {
           kind: string
           period_month: string | null
           reminder_step: number | null
+          render_vars: Json | null
           return_type: Database["public"]["Enums"]["return_type"] | null
           sent_at: string | null
           status: string
@@ -649,6 +650,7 @@ export type Database = {
           kind: string
           period_month?: string | null
           reminder_step?: number | null
+          render_vars?: Json | null
           return_type?: Database["public"]["Enums"]["return_type"] | null
           sent_at?: string | null
           status?: string
@@ -667,6 +669,7 @@ export type Database = {
           kind?: string
           period_month?: string | null
           reminder_step?: number | null
+          render_vars?: Json | null
           return_type?: Database["public"]["Enums"]["return_type"] | null
           sent_at?: string | null
           status?: string

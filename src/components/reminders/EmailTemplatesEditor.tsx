@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { Loader2, Save, Bell, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { buildEmailHtml } from '@/lib/emailTemplate';
 
 interface Tpl {
   key: string;
@@ -157,8 +158,9 @@ const EmailTemplatesEditor: React.FC = () => {
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="tpl-body">Body</Label>
-                <Textarea id="tpl-body" ref={bodyRef} value={body} onChange={e => setBody(e.target.value)} rows={16} className="font-mono text-[13px] leading-relaxed" />
+                <Label htmlFor="tpl-body">Message</Label>
+                <p className="text-xs text-muted-foreground">Just the wording. The letterhead, details box, signature and colours are added automatically — you can't break the layout. Leave a blank line between paragraphs.</p>
+                <Textarea id="tpl-body" ref={bodyRef} value={body} onChange={e => setBody(e.target.value)} rows={9} className="text-[13px] leading-relaxed" />
               </div>
 
               <div className="space-y-1.5">
@@ -179,10 +181,10 @@ const EmailTemplatesEditor: React.FC = () => {
                 <p className="mb-3 text-sm font-medium">{renderPreview(subject)}</p>
                 <iframe
                   title="Email preview"
-                  srcDoc={renderPreview(body)}
+                  srcDoc={buildEmailHtml({ key: selKey, kind: current.kind, message: renderPreview(body), vars: SAMPLE })}
                   sandbox=""
                   className="w-full rounded-md border bg-white"
-                  style={{ height: 540 }}
+                  style={{ height: 620 }}
                 />
               </div>
 

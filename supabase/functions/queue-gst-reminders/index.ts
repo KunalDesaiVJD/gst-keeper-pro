@@ -127,6 +127,7 @@ Deno.serve(async (req) => {
       client_id: row.client_id, to_email: client.email, kind: 'reminder', template_key: key,
       return_type: row.return_type, period_month: row.period_month,
       subject: renderTemplate(tpl.subject, vars), body: renderTemplate(tpl.body, vars),
+      render_vars: vars,
       status: 'pending', reminder_step: step, filing_status_id: row.id,
     });
     if (error) { skipped++; continue; }

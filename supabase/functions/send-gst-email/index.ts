@@ -12,6 +12,7 @@
 //   GRAPH_TENANT_ID, GRAPH_CLIENT_ID, GRAPH_CLIENT_SECRET, GRAPH_SENDER
 // Auto-injected: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { buildEmailHtml } from '../_shared/email.ts';
 
 const TENANT = Deno.env.get('GRAPH_TENANT_ID')!;
 const CLIENT_ID = Deno.env.get('GRAPH_CLIENT_ID')!;
@@ -82,7 +83,7 @@ Deno.serve(async (req) => {
   } catch { /* no body */ }
 
   let q = sb.from('email_outbox')
-    .select('id, to_email, subject, body')
+    .select('id, to_email, subject, body, kind, template_key, render_vars')
     .eq('status', 'pending')
     .order('created_at', { ascending: true })
     .limit(limit);
@@ -114,7 +115,12 @@ Deno.serve(async (req) => {
       continue;
     }
     try {
-      await sendMail(token, row.to_email, row.subject, row.body);
+      // Frame the staff-edited message in the corporate shell (render_vars holds
+      // the client/return values). Legacy rows without render_vars send as-is.
+      const html = row.render_vars
+        ? buildEmailHtml({ key: row.template_key, kind: row.kind, message: row.body ?? '', vars: row.render_vars })
+        : (row.body ?? '');
+      await sendMail(token, row.to_email, row.subject, html);
       await sb.from('email_outbox')
         .update({ status: 'sent', sent_at: new Date().toISOString(), error: null })
         .eq('id', row.id);
