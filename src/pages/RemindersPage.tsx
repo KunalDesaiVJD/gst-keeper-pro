@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
-import { enqueueReminders, prettyPeriod } from '@/lib/gstReminders';
+import { prettyPeriod } from '@/lib/gstReminders';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -66,6 +66,7 @@ const RemindersPage: React.FC = () => {
   const [names, setNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [queueing, setQueueing] = useState(false);
+  const [sending, setSending] = useState(false);
   const [period, setPeriod] = useState(selectedMonth);
   const [filter, setFilter] = useState<FilterKey>('all');
 
@@ -88,10 +89,25 @@ const RemindersPage: React.FC = () => {
 
   const queueDue = async () => {
     setQueueing(true);
-    const { queued, skipped } = await enqueueReminders(period, user?.firstName ?? null);
+    const { data, error } = await supabase.functions.invoke('queue-gst-reminders', {
+      body: { period, staffName: user?.firstName ?? null },
+    });
     setQueueing(false);
-    if (queued > 0) toast.success(`Queued ${queued} reminder${queued === 1 ? '' : 's'} for ${prettyPeriod(period)}.`);
-    else toast.info(`No reminders due for ${prettyPeriod(period)}.${skipped ? ` (${skipped} not yet due / capped)` : ''}`);
+    if (error) { toast.error(`Queue failed: ${error.message}`); return; }
+    const r = (data ?? {}) as { queued?: number; skipped?: number };
+    if ((r.queued ?? 0) > 0) toast.success(`Queued ${r.queued} reminder${r.queued === 1 ? '' : 's'} for ${prettyPeriod(period)}.`);
+    else toast.info(`No reminders due for ${prettyPeriod(period)}.${r.skipped ? ` (${r.skipped} not yet due / capped)` : ''}`);
+    void load();
+  };
+
+  const sendNow = async () => {
+    setSending(true);
+    const { data, error } = await supabase.functions.invoke('send-gst-email', { body: {} });
+    setSending(false);
+    if (error) { toast.error(`Send failed: ${error.message}`); return; }
+    const r = (data ?? {}) as { sent?: number; failed?: number };
+    if ((r.sent ?? 0) === 0 && (r.failed ?? 0) === 0) toast.info('Nothing queued to send.');
+    else toast.success(`Sent ${r.sent ?? 0}${r.failed ? ` · ${r.failed} failed` : ''}.`);
     void load();
   };
 
@@ -123,17 +139,23 @@ const RemindersPage: React.FC = () => {
             edit the wording under Settings → GST Reminders.
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={load} disabled={loading} className="gap-1.5 self-start">
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
-        </Button>
+        <div className="flex items-center gap-2 self-start">
+          <Button size="sm" onClick={sendNow} disabled={sending} className="gap-1.5">
+            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Send queued now
+          </Button>
+          <Button variant="outline" size="sm" onClick={load} disabled={loading} className="gap-1.5">
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
+          </Button>
+        </div>
       </div>
 
-      {/* Sender-not-wired notice */}
-      <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      {/* Sending status */}
+      <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
         <Mail className="mt-0.5 h-4 w-4 shrink-0" />
         <span>
-          Emails are <strong>queued</strong> here and delivered from <strong>gst@vjdesai.com</strong> once its sending
-          API is connected. Until then rows stay <em>Queued</em> — nothing is sent yet.
+          Sending is <strong>live</strong> from <strong>gst@vjdesai.com</strong>. Filing confirmations queue automatically
+          when a return is marked <em>Filed</em>; reminders queue when due. Queued mail goes out on the daily run — or
+          click <strong>Send queued now</strong> to flush it immediately.
         </span>
       </div>
 
