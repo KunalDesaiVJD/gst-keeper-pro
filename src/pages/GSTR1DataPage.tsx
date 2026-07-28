@@ -116,8 +116,10 @@ const GSTR1DataPage: React.FC = () => {
   const [gstr3bOpen, setGstr3bOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   // Per-tab collapse: when a section id is in the set, its table shows only the
-  // header + totals row (data rows hidden).
-  const [collapsedTabs, setCollapsedTabs] = useState<Set<string>>(new Set());
+  // header + totals row (data rows hidden). Every section starts collapsed so
+  // the page opens on a totals-first view.
+  const ALL_TAB_IDS = ['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp', 'hsn', 'nil', 'at', 'txpd', 'doc'];
+  const [collapsedTabs, setCollapsedTabs] = useState<Set<string>>(() => new Set(ALL_TAB_IDS));
   const isCollapsed = (key: string) => collapsedTabs.has(key);
   const toggleCollapse = (key: string) =>
     setCollapsedTabs((prev) => {
