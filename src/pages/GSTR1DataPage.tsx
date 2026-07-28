@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, FileCheck2, Inbox, BarChart3, Download } from 'lucide-react';
 import {
@@ -338,6 +338,11 @@ const GSTR1DataPage: React.FC = () => {
   // Portal-style rupee amount with fixed 2 decimals (matches the GSTR-1 PDF).
   const fmt2 = (num: number | undefined | null) =>
     (num || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // Column total for a detail table (sums a numeric field across its rows).
+  const sumBy = (rows: any[], key: string) =>
+    rows.reduce((s, r) => s + (Number(r[key]) || 0), 0);
+  const footTd = 'border border-border text-right tabular-nums font-semibold';
 
   // Consolidated summary + section tile counts, derived entirely from the
   // imported JSON (see buildGstr1Summary). Drives both the tile grid and the
@@ -802,6 +807,18 @@ const GSTR1DataPage: React.FC = () => {
                           </TableRow>
                         ))}
                       </TableBody>
+                      <TableFooter>
+                        <TableRow className="bg-muted hover:bg-muted">
+                          <TableCell className="border border-border font-semibold" colSpan={4}>Total ({b2bRows.length} rows)</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2bRows, 'val'))}</TableCell>
+                          <TableCell className="border border-border" colSpan={4} />
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2bRows, 'txval'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2bRows, 'iamt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2bRows, 'camt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2bRows, 'samt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2bRows, 'csamt'))}</TableCell>
+                        </TableRow>
+                      </TableFooter>
                     </Table>
                   </div>
                 )}
@@ -840,6 +857,16 @@ const GSTR1DataPage: React.FC = () => {
                           </TableRow>
                         ))}
                       </TableBody>
+                      <TableFooter>
+                        <TableRow className="bg-muted hover:bg-muted">
+                          <TableCell className="border border-border font-semibold" colSpan={4}>Total ({b2clRows.length} rows)</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2clRows, 'val'))}</TableCell>
+                          <TableCell className="border border-border" />
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2clRows, 'txval'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2clRows, 'iamt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2clRows, 'csamt'))}</TableCell>
+                        </TableRow>
+                      </TableFooter>
                     </Table>
                   </div>
                 )}
@@ -878,6 +905,16 @@ const GSTR1DataPage: React.FC = () => {
                           </TableRow>
                         ))}
                       </TableBody>
+                      <TableFooter>
+                        <TableRow className="bg-muted hover:bg-muted">
+                          <TableCell className="border border-border font-semibold" colSpan={4}>Total ({b2csRows.length} rows)</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2csRows, 'txval'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2csRows, 'iamt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2csRows, 'camt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2csRows, 'samt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2csRows, 'csamt'))}</TableCell>
+                        </TableRow>
+                      </TableFooter>
                     </Table>
                   </div>
                 )}
@@ -922,6 +959,18 @@ const GSTR1DataPage: React.FC = () => {
                           </TableRow>
                         ))}
                       </TableBody>
+                      <TableFooter>
+                        <TableRow className="bg-muted hover:bg-muted">
+                          <TableCell className="border border-border font-semibold" colSpan={5}>Total ({cdnrRows.length} rows)</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(cdnrRows, 'val'))}</TableCell>
+                          <TableCell className="border border-border" />
+                          <TableCell className={footTd}>{formatNumber(sumBy(cdnrRows, 'txval'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(cdnrRows, 'iamt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(cdnrRows, 'camt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(cdnrRows, 'samt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(cdnrRows, 'csamt'))}</TableCell>
+                        </TableRow>
+                      </TableFooter>
                     </Table>
                   </div>
                 )}
@@ -962,6 +1011,16 @@ const GSTR1DataPage: React.FC = () => {
                           </TableRow>
                         ))}
                       </TableBody>
+                      <TableFooter>
+                        <TableRow className="bg-muted hover:bg-muted">
+                          <TableCell className="border border-border font-semibold" colSpan={4}>Total ({cdnurRows.length} rows)</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(cdnurRows, 'val'))}</TableCell>
+                          <TableCell className="border border-border" colSpan={2} />
+                          <TableCell className={footTd}>{formatNumber(sumBy(cdnurRows, 'txval'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(cdnurRows, 'iamt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(cdnurRows, 'csamt'))}</TableCell>
+                        </TableRow>
+                      </TableFooter>
                     </Table>
                   </div>
                 )}
@@ -1006,6 +1065,16 @@ const GSTR1DataPage: React.FC = () => {
                           </TableRow>
                         ))}
                       </TableBody>
+                      <TableFooter>
+                        <TableRow className="bg-muted hover:bg-muted">
+                          <TableCell className="border border-border font-semibold" colSpan={4}>Total ({expRows.length} rows)</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(expRows, 'val'))}</TableCell>
+                          <TableCell className="border border-border" colSpan={4} />
+                          <TableCell className={footTd}>{formatNumber(sumBy(expRows, 'txval'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(expRows, 'iamt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(expRows, 'csamt'))}</TableCell>
+                        </TableRow>
+                      </TableFooter>
                     </Table>
                   </div>
                 )}
@@ -1048,6 +1117,18 @@ const GSTR1DataPage: React.FC = () => {
                           </TableRow>
                         ))}
                       </TableBody>
+                      <TableFooter>
+                        <TableRow className="bg-muted hover:bg-muted">
+                          <TableCell className="border border-border font-semibold" colSpan={4}>Total ({hsnRows.length} rows)</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(hsnRows, 'qty'))}</TableCell>
+                          <TableCell className="border border-border" />
+                          <TableCell className={footTd}>{formatNumber(sumBy(hsnRows, 'txval'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(hsnRows, 'iamt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(hsnRows, 'camt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(hsnRows, 'samt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(hsnRows, 'csamt'))}</TableCell>
+                        </TableRow>
+                      </TableFooter>
                     </Table>
                   </div>
                 )}
@@ -1076,6 +1157,14 @@ const GSTR1DataPage: React.FC = () => {
                           </TableRow>
                         ))}
                       </TableBody>
+                      <TableFooter>
+                        <TableRow className="bg-muted hover:bg-muted">
+                          <TableCell className="border border-border font-semibold">Total</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(nilData.inv || [], 'nil_amt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(nilData.inv || [], 'expt_amt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(nilData.inv || [], 'ngsup_amt'))}</TableCell>
+                        </TableRow>
+                      </TableFooter>
                     </Table>
                   </div>
                 )}
@@ -1114,6 +1203,16 @@ const GSTR1DataPage: React.FC = () => {
                           </TableRow>
                         ))}
                       </TableBody>
+                      <TableFooter>
+                        <TableRow className="bg-muted hover:bg-muted">
+                          <TableCell className="border border-border font-semibold" colSpan={4}>Total ({atRows.length} rows)</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(atRows, 'ad_amt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(atRows, 'iamt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(atRows, 'camt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(atRows, 'samt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(atRows, 'csamt'))}</TableCell>
+                        </TableRow>
+                      </TableFooter>
                     </Table>
                   </div>
                 )}
@@ -1152,6 +1251,16 @@ const GSTR1DataPage: React.FC = () => {
                           </TableRow>
                         ))}
                       </TableBody>
+                      <TableFooter>
+                        <TableRow className="bg-muted hover:bg-muted">
+                          <TableCell className="border border-border font-semibold" colSpan={4}>Total ({txpdRows.length} rows)</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(txpdRows, 'ad_amt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(txpdRows, 'iamt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(txpdRows, 'camt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(txpdRows, 'samt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(txpdRows, 'csamt'))}</TableCell>
+                        </TableRow>
+                      </TableFooter>
                     </Table>
                   </div>
                 )}
@@ -1188,6 +1297,14 @@ const GSTR1DataPage: React.FC = () => {
                           </TableRow>
                         ))}
                       </TableBody>
+                      <TableFooter>
+                        <TableRow className="bg-muted hover:bg-muted">
+                          <TableCell className="border border-border font-semibold" colSpan={5}>Total ({docRows.length} rows)</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(docRows, 'totnum'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(docRows, 'cancel'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(docRows, 'net_issue'))}</TableCell>
+                        </TableRow>
+                      </TableFooter>
                     </Table>
                   </div>
                 )}
