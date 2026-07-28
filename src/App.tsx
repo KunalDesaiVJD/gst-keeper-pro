@@ -15,7 +15,7 @@ import ClientsPage from "@/pages/ClientsPage";
 import TwoBReconciliationPage from "@/pages/TwoBReconciliationPage";
 import TwoBAndRCMPage from "@/pages/TwoBAndRCMPage";
 import SuspendedRecoPage from "@/pages/SuspendedRecoPage";
-import ITCSummaryPage from "@/pages/ITCSummaryPage";
+import ITCAndReceivablePage from "@/pages/ITCAndReceivablePage";
 import RCMSummaryPage from "@/pages/RCMSummaryPage";
 import ManageMastersPage from "@/pages/ManageMastersPage";
 import FilingStatusPage from "@/pages/FilingStatusPage";
@@ -52,7 +52,7 @@ const App = () => (
                   <Route path="/2b-reconciliation" element={<TwoBReconciliationPage />} />
                   <Route path="/2b-and-rcm" element={<TwoBAndRCMPage />} />
                   <Route path="/suspended-reco" element={<SuspendedRecoPage />} />
-                  <Route path="/itc-summary" element={<ITCSummaryPage />} />
+                  <Route path="/itc-summary" element={<ITCAndReceivablePage />} />
                   <Route path="/rcm-summary" element={<RCMSummaryPage />} />
                   <Route path="/manage-masters" element={<ManageMastersPage />} />
                   <Route path="/filing-status" element={<FilingStatusPage />} />
