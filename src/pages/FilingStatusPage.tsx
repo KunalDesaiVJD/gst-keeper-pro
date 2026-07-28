@@ -522,10 +522,18 @@ const FilingStatusPage: React.FC = () => {
     }
 
     if (effectiveScheme === 'IFF') {
+      const isQuarterEnd = parts ? isQuarterEndMonth(parts.month) : false;
       return {
-        gstr1Type: 'GSTR-1 (IFF)' as ReturnType,
+        // Under QRMP/IFF, GSTR-1 (IFF) for the first two months of a quarter is
+        // OPTIONAL, so it is not a filing prerequisite — only the mandatory
+        // quarter-end GSTR-1 is. Returning null for the optional months means a
+        // legitimately-skipped IFF month (e.g. no sales) no longer blocks the
+        // quarter-end filing, while the chain across quarter boundaries stays
+        // intact (filing month-1 of a quarter still requires the previous
+        // quarter-end GSTR-1).
+        gstr1Type: isQuarterEnd ? ('GSTR-1 (IFF)' as ReturnType) : null,
         gstr3bType: 'GSTR-3B (Q)' as ReturnType,
-        shouldCheckGstr3b: parts ? isQuarterEndMonth(parts.month) : false,
+        shouldCheckGstr3b: isQuarterEnd,
       };
     }
 
