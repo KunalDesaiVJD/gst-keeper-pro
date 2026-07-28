@@ -3,7 +3,15 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, FileCheck2, Inbox } from 'lucide-react';
+import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, FileCheck2, Inbox, BarChart3 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import { buildGstr1Summary } from '@/utils/buildGstr1Summary';
 import { Gstr3bPreviewDialog } from '@/components/portal/Gstr3bPreviewDialog';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
@@ -105,6 +113,7 @@ const GSTR1DataPage: React.FC = () => {
   const [isPushing, setIsPushing] = useState(false);
   const [pushResult, setPushResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [gstr3bOpen, setGstr3bOpen] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
 
   const isStaff = isStaffRole();
 
@@ -324,6 +333,15 @@ const GSTR1DataPage: React.FC = () => {
     if (!num && num !== 0) return '';
     return num.toLocaleString('en-IN', { maximumFractionDigits: 2 });
   };
+
+  // Portal-style rupee amount with fixed 2 decimals (matches the GSTR-1 PDF).
+  const fmt2 = (num: number | undefined | null) =>
+    (num || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // Consolidated summary + section tile counts, derived entirely from the
+  // imported JSON (see buildGstr1Summary). Drives both the tile grid and the
+  // "Generate Summary" dialog.
+  const summary = useMemo(() => buildGstr1Summary(json), [json]);
 
   // Flatten B2B data
   const b2bRows = useMemo(() => {
@@ -551,6 +569,11 @@ const GSTR1DataPage: React.FC = () => {
               {isImporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
               Import JSON
             </Button>
+            {gstr1Data && (
+              <Button variant="outline" onClick={() => setSummaryOpen(true)}>
+                <BarChart3 className="h-4 w-4 mr-2" /> Generate Summary
+              </Button>
+            )}
             {gstr1Data && canEditFilingStatus() && (
               <Button
                 onClick={() => { setPushResult(null); setPushDialogOpen(true); }}
@@ -675,6 +698,38 @@ const GSTR1DataPage: React.FC = () => {
       ) : (
         <Card>
           <CardContent className="p-4">
+            {/* Portal-style section overview — click a tile to jump to its detail tab */}
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-muted-foreground">Sections in this return</h3>
+                <Button variant="outline" size="sm" onClick={() => setSummaryOpen(true)}>
+                  <BarChart3 className="h-3.5 w-3.5 mr-1.5" /> Generate Summary
+                </Button>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                {summary.tiles.map((t) => {
+                  const isActive = activeTab === t.key;
+                  return (
+                    <button
+                      key={t.key}
+                      onClick={() => setActiveTab(t.key)}
+                      className={`text-left rounded-lg border p-3 transition-colors hover:border-primary/50 hover:bg-primary/5 ${
+                        isActive ? 'border-primary bg-primary/5' : 'border-border'
+                      }`}
+                    >
+                      <div className="text-xs font-medium text-foreground leading-snug min-h-[32px]">{t.label}</div>
+                      <div className="mt-2 flex items-end justify-between gap-2">
+                        <span className="text-lg font-bold text-primary tabular-nums">{t.count.toLocaleString('en-IN')}</span>
+                        {t.value > 0 && (
+                          <span className="text-[11px] text-muted-foreground tabular-nums">₹{fmt2(t.value)}</span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className="flex flex-wrap h-auto gap-1 mb-4">
                 <TabsTrigger value="b2b">B2B ({b2bRows.length})</TabsTrigger>
@@ -1135,6 +1190,64 @@ const GSTR1DataPage: React.FC = () => {
         gstin={clients.find((c) => c.id === selectedClient)?.gstin || ''}
         periodMonth={selectedMonth}
       />
+
+      {/* Consolidated, portal-style GSTR-1 summary (like the system-generated PDF). */}
+      <Dialog open={summaryOpen} onOpenChange={setSummaryOpen}>
+        <DialogContent className="max-w-5xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>
+              GSTR-1 Summary — {selectedClientName || '—'}
+              {selectedMonth ? ` · ${mmYyyyToShort(selectedMonth)}` : ''}
+            </DialogTitle>
+            <DialogDescription>
+              Consolidated summary generated from the imported GSTR-1 data, laid out like the GST portal.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="overflow-auto rounded-md border border-border">
+            <table className="w-full text-sm border-collapse min-w-[900px]">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-primary text-primary-foreground">
+                  <th className="border border-primary-foreground/20 p-2 text-left font-bold">Description</th>
+                  <th className="border border-primary-foreground/20 p-2 text-center font-bold whitespace-nowrap">No. of records</th>
+                  <th className="border border-primary-foreground/20 p-2 text-center font-bold whitespace-nowrap">Document Type</th>
+                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">Value (₹)</th>
+                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">Integrated Tax (₹)</th>
+                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">Central Tax (₹)</th>
+                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">State/UT Tax (₹)</th>
+                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">Cess (₹)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.sections.map((s, i) => (
+                  <tr key={`${s.code}-${i}`} className="odd:bg-muted/30">
+                    <td className="border border-border p-2">
+                      <span className="font-semibold text-foreground">{s.code}</span>
+                      <span className="text-muted-foreground"> — {s.title}</span>
+                    </td>
+                    <td className="border border-border p-2 text-center tabular-nums">{s.count.toLocaleString('en-IN')}</td>
+                    <td className="border border-border p-2 text-center text-muted-foreground">{s.docType}</td>
+                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.value)}</td>
+                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.igst)}</td>
+                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.cgst)}</td>
+                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.sgst)}</td>
+                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.cess)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-muted font-semibold">
+                  <td className="border border-border p-2 text-right" colSpan={3}>Total liability (excl. HSN &amp; Docs)</td>
+                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(summary.totals.value)}</td>
+                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(summary.totals.igst)}</td>
+                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(summary.totals.cgst)}</td>
+                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(summary.totals.sgst)}</td>
+                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(summary.totals.cess)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Push confirmation — submitting to the live GST portal is outward and
           hard to reverse, so require an explicit confirm showing exactly what
