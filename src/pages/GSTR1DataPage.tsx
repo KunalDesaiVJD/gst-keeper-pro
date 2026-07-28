@@ -344,6 +344,15 @@ const GSTR1DataPage: React.FC = () => {
   // "Generate Summary" dialog.
   const summary = useMemo(() => buildGstr1Summary(json), [json]);
 
+  // Portal-style document counts keyed by tab id, so the tab badges show the
+  // same figure as the tiles and the summary (documents/invoices/notes) instead
+  // of the flattened rate-line row count. Keeps every count on the page in sync.
+  const docCount = useMemo(() => {
+    const m: Record<string, number> = {};
+    summary.tiles.forEach((t) => { m[t.key] = t.count; });
+    return m;
+  }, [summary]);
+
   // Flatten B2B data
   const b2bRows = useMemo(() => {
     const rows: any[] = [];
@@ -733,18 +742,22 @@ const GSTR1DataPage: React.FC = () => {
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className="flex flex-wrap h-auto gap-1 mb-4">
-                <TabsTrigger value="b2b">B2B ({b2bRows.length})</TabsTrigger>
-                <TabsTrigger value="b2cl">B2CL ({b2clRows.length})</TabsTrigger>
-                <TabsTrigger value="b2cs">B2CS ({b2csRows.length})</TabsTrigger>
-                <TabsTrigger value="cdnr">CDNR ({cdnrRows.length})</TabsTrigger>
-                <TabsTrigger value="cdnur">CDNUR ({cdnurRows.length})</TabsTrigger>
-                <TabsTrigger value="exp">EXP ({expRows.length})</TabsTrigger>
-                <TabsTrigger value="hsn">HSN ({hsnRows.length})</TabsTrigger>
-                <TabsTrigger value="nil">NIL</TabsTrigger>
-                <TabsTrigger value="at">AT ({atRows.length})</TabsTrigger>
-                <TabsTrigger value="txpd">TXPD ({txpdRows.length})</TabsTrigger>
-                <TabsTrigger value="doc">DOC ({docRows.length})</TabsTrigger>
+                <TabsTrigger value="b2b">B2B ({docCount.b2b ?? 0})</TabsTrigger>
+                <TabsTrigger value="b2cl">B2CL ({docCount.b2cl ?? 0})</TabsTrigger>
+                <TabsTrigger value="b2cs">B2CS ({docCount.b2cs ?? 0})</TabsTrigger>
+                <TabsTrigger value="cdnr">CDNR ({docCount.cdnr ?? 0})</TabsTrigger>
+                <TabsTrigger value="cdnur">CDNUR ({docCount.cdnur ?? 0})</TabsTrigger>
+                <TabsTrigger value="exp">EXP ({docCount.exp ?? 0})</TabsTrigger>
+                <TabsTrigger value="hsn">HSN ({docCount.hsn ?? 0})</TabsTrigger>
+                <TabsTrigger value="nil">NIL ({docCount.nil ?? 0})</TabsTrigger>
+                <TabsTrigger value="at">AT ({docCount.at ?? 0})</TabsTrigger>
+                <TabsTrigger value="txpd">TXPD ({docCount.txpd ?? 0})</TabsTrigger>
+                <TabsTrigger value="doc">DOC ({docCount.doc ?? 0})</TabsTrigger>
               </TabsList>
+              <p className="text-xs text-muted-foreground -mt-2 mb-3">
+                Counts show documents (invoices / notes) like the GST portal. The tables below list each
+                tax-rate line, so a table can have more rows than its badge when a document spans multiple rates.
+              </p>
 
               {/* B2B Tab */}
               <TabsContent value="b2b">

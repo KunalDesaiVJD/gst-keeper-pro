@@ -183,10 +183,12 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
     s12.value += num(h.txval) + num(h.iamt) + num(h.camt) + num(h.samt) + num(h.csamt);
   });
 
-  // 13 — Documents issued. "count" = net documents issued across all series.
+  // 13 — Documents issued. "count" = number of document series entries (this
+  // matches the detail tab, which lists one row per series). The net documents
+  // issued is available per-row in that tab.
   (j.doc_issue?.doc_det || []).forEach((det: any) => {
-    (det.docs || []).forEach((d: any) => {
-      s13.count += num(d.net_issue);
+    (det.docs || []).forEach(() => {
+      s13.count += 1;
     });
   });
 
