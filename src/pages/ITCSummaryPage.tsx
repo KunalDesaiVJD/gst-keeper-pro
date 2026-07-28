@@ -1246,7 +1246,7 @@ const ITCSummaryPage: React.FC = () => {
               <CardContent className="p-4">
                 <h4 className="text-sm font-semibold text-muted-foreground mb-1">Total ITC Excl RCM</h4>
                 <p className="text-[9px] text-muted-foreground mb-1">Total(5) − (5.4 + 5.5 + 4A{'{3}'})</p>
-                <div className="grid grid-cols-4 gap-1 text-xs">
+                <div className="text-xs">
                   {(() => {
                     const r54 = itcData.section4A.find(r => r.srNo === '5.4') || { igst: 0, cgst: 0, sgst: 0 };
                     const r55 = itcData.section4A.find(r => r.srNo === '5.5') || { igst: 0, cgst: 0, sgst: 0 };
@@ -1256,10 +1256,10 @@ const ITCSummaryPage: React.FC = () => {
                     const exclSgst = total5.sgst - (r54.sgst + r55.sgst + r3.sgst);
                     return (
                       <>
-                        <div><span className="text-muted-foreground">IGST</span><p className="font-semibold text-sm">{exclIgst.toLocaleString('en-IN')}</p></div>
-                        <div><span className="text-muted-foreground">CGST</span><p className="font-semibold text-sm">{exclCgst.toLocaleString('en-IN')}</p></div>
-                        <div><span className="text-muted-foreground">SGST</span><p className="font-semibold text-sm">{exclSgst.toLocaleString('en-IN')}</p></div>
-                        <div><span className="text-muted-foreground">Total</span><p className="font-bold text-sm text-primary">{(exclIgst + exclCgst + exclSgst).toLocaleString('en-IN')}</p></div>
+                        <div className="flex items-baseline justify-between py-0.5"><span className="text-muted-foreground">IGST</span><span className="font-semibold tabular-nums">{exclIgst.toLocaleString('en-IN')}</span></div>
+                        <div className="flex items-baseline justify-between py-0.5"><span className="text-muted-foreground">CGST</span><span className="font-semibold tabular-nums">{exclCgst.toLocaleString('en-IN')}</span></div>
+                        <div className="flex items-baseline justify-between py-0.5"><span className="text-muted-foreground">SGST</span><span className="font-semibold tabular-nums">{exclSgst.toLocaleString('en-IN')}</span></div>
+                        <div className="flex items-baseline justify-between py-0.5 mt-0.5 pt-1 border-t border-info/20"><span className="text-muted-foreground font-medium">Total</span><span className="font-bold text-primary tabular-nums">{(exclIgst + exclCgst + exclSgst).toLocaleString('en-IN')}</span></div>
                       </>
                     );
                   })()}
@@ -1270,23 +1270,11 @@ const ITCSummaryPage: React.FC = () => {
             <Card className="bg-primary/5 border-primary/20">
               <CardContent className="p-4">
                 <h4 className="text-sm font-semibold text-muted-foreground mb-2">RCM ITC</h4>
-                <div className="grid grid-cols-4 gap-1 text-xs">
-                  <div>
-                    <span className="text-muted-foreground">IGST</span>
-                    <p className="font-semibold text-sm">{rcmTotals.igst.toLocaleString('en-IN')}</p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">CGST</span>
-                    <p className="font-semibold text-sm">{rcmTotals.cgst.toLocaleString('en-IN')}</p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">SGST</span>
-                    <p className="font-semibold text-sm">{rcmTotals.sgst.toLocaleString('en-IN')}</p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Total</span>
-                    <p className="font-bold text-sm text-primary">{(rcmTotals.igst + rcmTotals.cgst + rcmTotals.sgst).toLocaleString('en-IN')}</p>
-                  </div>
+                <div className="text-xs">
+                  <div className="flex items-baseline justify-between py-0.5"><span className="text-muted-foreground">IGST</span><span className="font-semibold tabular-nums">{rcmTotals.igst.toLocaleString('en-IN')}</span></div>
+                  <div className="flex items-baseline justify-between py-0.5"><span className="text-muted-foreground">CGST</span><span className="font-semibold tabular-nums">{rcmTotals.cgst.toLocaleString('en-IN')}</span></div>
+                  <div className="flex items-baseline justify-between py-0.5"><span className="text-muted-foreground">SGST</span><span className="font-semibold tabular-nums">{rcmTotals.sgst.toLocaleString('en-IN')}</span></div>
+                  <div className="flex items-baseline justify-between py-0.5 mt-0.5 pt-1 border-t border-primary/20"><span className="text-muted-foreground font-medium">Total</span><span className="font-bold text-primary tabular-nums">{(rcmTotals.igst + rcmTotals.cgst + rcmTotals.sgst).toLocaleString('en-IN')}</span></div>
                 </div>
               </CardContent>
             </Card>
