@@ -154,7 +154,15 @@ export function generateFilingRecords(params: {
     const effectiveScheme = getEffectiveScheme(client.id, selectedMonth, client.registration_type, schemeHistoryMap);
     const effectiveReturns = RETURN_TYPES_BY_REGISTRATION[effectiveScheme as RegistrationType] || [];
     const hasSchemeHistory = (schemeHistoryMap[client.id]?.length ?? 0) > 0;
-    const selectedReturns = hasSchemeHistory ? effectiveReturns : (client.selected_returns || []);
+    let selectedReturns = hasSchemeHistory ? effectiveReturns : (client.selected_returns || []);
+    // ITC-04 is optional even for Regular clients (only those sending goods for
+    // job work file it), so it must always follow the master-data checkbox and
+    // never be auto-attached by the scheme template. Without this, any Regular
+    // client with a scheme-history entry took the `effectiveReturns` branch and
+    // was forced into the ITC-04 tab regardless of the unticked box.
+    if (!(client.selected_returns || []).includes('ITC-04')) {
+      selectedReturns = selectedReturns.filter(rt => rt !== 'ITC-04');
+    }
     const isQuarterlyClient = effectiveScheme === 'IFF' || effectiveScheme === 'Composition';
 
     for (const rt of returnTypesToCheck) {
