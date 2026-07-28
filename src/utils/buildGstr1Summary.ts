@@ -113,20 +113,40 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
     s8.value += num(r.nil_amt) + num(r.expt_amt) + num(r.ngsup_amt);
   });
 
-  // 9B — Credit / Debit notes (registered).
+  // 9B — Credit / Debit notes (registered). The portal reports these NET:
+  // "Debit notes − Credit notes", so a credit note reduces the value and tax.
+  // Note type lives in `ntty` (or `typ` on some exports); anything starting
+  // with "D" is a debit note (+), otherwise it's a credit note (−).
+  const noteSign = (nt: any): 1 | -1 =>
+    String(nt?.ntty ?? nt?.typ ?? 'C').toUpperCase().startsWith('D') ? 1 : -1;
+
   (j.cdnr || []).forEach((party: any) => {
     (party.nt || []).forEach((nt: any) => {
       s9BR.count += 1;
-      s9BR.value += num(nt.val);
-      addItems(s9BR, nt.itms);
+      const sign = noteSign(nt);
+      s9BR.value += sign * num(nt.val);
+      (nt.itms || []).forEach((it: any) => {
+        const d = it?.itm_det || it || {};
+        s9BR.igst += sign * num(d.iamt);
+        s9BR.cgst += sign * num(d.camt);
+        s9BR.sgst += sign * num(d.samt);
+        s9BR.cess += sign * num(d.csamt);
+      });
     });
   });
 
-  // 9B — Credit / Debit notes (unregistered).
+  // 9B — Credit / Debit notes (unregistered). Same netting rule.
   (j.cdnur || []).forEach((nt: any) => {
     s9BUR.count += 1;
-    s9BUR.value += num(nt.val);
-    addItems(s9BUR, nt.itms);
+    const sign = noteSign(nt);
+    s9BUR.value += sign * num(nt.val);
+    (nt.itms || []).forEach((it: any) => {
+      const d = it?.itm_det || it || {};
+      s9BUR.igst += sign * num(d.iamt);
+      s9BUR.cgst += sign * num(d.camt);
+      s9BUR.sgst += sign * num(d.samt);
+      s9BUR.cess += sign * num(d.csamt);
+    });
   });
 
   // 11A — Advances received (tax liability).

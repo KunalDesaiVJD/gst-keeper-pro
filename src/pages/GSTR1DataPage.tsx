@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, FileCheck2, Inbox, BarChart3 } from 'lucide-react';
+import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, FileCheck2, Inbox, BarChart3, Download } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -12,6 +12,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { buildGstr1Summary } from '@/utils/buildGstr1Summary';
+import { exportGstr1SummaryToPDF } from '@/utils/gstr1SummaryPdf';
 import { Gstr3bPreviewDialog } from '@/components/portal/Gstr3bPreviewDialog';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
@@ -1195,13 +1196,33 @@ const GSTR1DataPage: React.FC = () => {
       <Dialog open={summaryOpen} onOpenChange={setSummaryOpen}>
         <DialogContent className="max-w-5xl max-h-[85vh] overflow-hidden flex flex-col">
           <DialogHeader>
-            <DialogTitle>
-              GSTR-1 Summary — {selectedClientName || '—'}
-              {selectedMonth ? ` · ${mmYyyyToShort(selectedMonth)}` : ''}
-            </DialogTitle>
-            <DialogDescription>
-              Consolidated summary generated from the imported GSTR-1 data, laid out like the GST portal.
-            </DialogDescription>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <DialogTitle>
+                  GSTR-1 Summary — {selectedClientName || '—'}
+                  {selectedMonth ? ` · ${mmYyyyToShort(selectedMonth)}` : ''}
+                </DialogTitle>
+                <DialogDescription>
+                  Consolidated summary generated from the imported GSTR-1 data, laid out like the GST portal.
+                </DialogDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() =>
+                  exportGstr1SummaryToPDF({
+                    summary,
+                    clientName: selectedClientName || 'Client',
+                    gstin: clients.find((c) => c.id === selectedClient)?.gstin || '',
+                    monthLabel: mmYyyyToShort(selectedMonth),
+                    fileName: gstr1Data?.file_name,
+                  })
+                }
+              >
+                <Download className="h-3.5 w-3.5 mr-1.5" /> Download PDF
+              </Button>
+            </div>
           </DialogHeader>
           <div className="overflow-auto rounded-md border border-border">
             <table className="w-full text-sm border-collapse min-w-[900px]">
@@ -1246,6 +1267,11 @@ const GSTR1DataPage: React.FC = () => {
               </tfoot>
             </table>
           </div>
+          <p className="text-xs text-muted-foreground">
+            "No. of records" counts documents (invoices / notes) like the GST portal, so it can be lower
+            than a detail tab's row count when one document has multiple tax rates. 9B notes are shown net
+            (Debit − Credit), so credit notes reduce the value.
+          </p>
         </DialogContent>
       </Dialog>
 
