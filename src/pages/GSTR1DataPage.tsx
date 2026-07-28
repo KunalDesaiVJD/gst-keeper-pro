@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, FileCheck2, Inbox, BarChart3, Download } from 'lucide-react';
+import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, FileCheck2, Inbox, BarChart3, Download, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -115,6 +115,16 @@ const GSTR1DataPage: React.FC = () => {
   const [pushResult, setPushResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [gstr3bOpen, setGstr3bOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  // Per-tab collapse: when a section id is in the set, its table shows only the
+  // header + totals row (data rows hidden).
+  const [collapsedTabs, setCollapsedTabs] = useState<Set<string>>(new Set());
+  const isCollapsed = (key: string) => collapsedTabs.has(key);
+  const toggleCollapse = (key: string) =>
+    setCollapsedTabs((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
 
   const isStaff = isStaffRole();
 
@@ -759,10 +769,24 @@ const GSTR1DataPage: React.FC = () => {
                 <TabsTrigger value="txpd">TXPD ({docCount.txpd ?? 0})</TabsTrigger>
                 <TabsTrigger value="doc">DOC ({docCount.doc ?? 0})</TabsTrigger>
               </TabsList>
-              <p className="text-xs text-muted-foreground -mt-2 mb-3">
-                Counts show documents (invoices / notes) like the GST portal. The tables below list each
-                tax-rate line, so a table can have more rows than its badge when a document spans multiple rates.
-              </p>
+              <div className="flex items-center justify-between gap-3 -mt-2 mb-3">
+                <p className="text-xs text-muted-foreground">
+                  Counts show documents (invoices / notes) like the GST portal. The tables below list each
+                  tax-rate line, so a table can have more rows than its badge when a document spans multiple rates.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => toggleCollapse(activeTab)}
+                >
+                  {isCollapsed(activeTab) ? (
+                    <><ChevronsUpDown className="h-3.5 w-3.5 mr-1.5" /> Show all rows</>
+                  ) : (
+                    <><ChevronsDownUp className="h-3.5 w-3.5 mr-1.5" /> Show only total</>
+                  )}
+                </Button>
+              </div>
 
               {/* B2B Tab */}
               <TabsContent value="b2b">
@@ -788,7 +812,7 @@ const GSTR1DataPage: React.FC = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {b2bRows.map((row, i) => (
+                        {!isCollapsed('b2b') && b2bRows.map((row, i) => (
                           <TableRow key={i}>
                             <TableCell className="border border-border text-center">{i + 1}</TableCell>
                             <TableCell className="border border-border font-mono text-xs">{row.ctin}</TableCell>
@@ -843,7 +867,7 @@ const GSTR1DataPage: React.FC = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {b2clRows.map((row, i) => (
+                        {!isCollapsed('b2cl') && b2clRows.map((row, i) => (
                           <TableRow key={i}>
                             <TableCell className="border border-border text-center">{i + 1}</TableCell>
                             <TableCell className="border border-border">{row.pos}</TableCell>
@@ -891,7 +915,7 @@ const GSTR1DataPage: React.FC = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {b2csRows.map((row: any, i: number) => (
+                        {!isCollapsed('b2cs') && b2csRows.map((row: any, i: number) => (
                           <TableRow key={i}>
                             <TableCell className="border border-border text-center">{i + 1}</TableCell>
                             <TableCell className="border border-border">{row.pos}</TableCell>
@@ -942,7 +966,7 @@ const GSTR1DataPage: React.FC = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {cdnrRows.map((row, i) => (
+                        {!isCollapsed('cdnr') && cdnrRows.map((row, i) => (
                           <TableRow key={i}>
                             <TableCell className="border border-border text-center">{i + 1}</TableCell>
                             <TableCell className="border border-border font-mono text-xs">{row.ctin}</TableCell>
@@ -996,7 +1020,7 @@ const GSTR1DataPage: React.FC = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {cdnurRows.map((row, i) => (
+                        {!isCollapsed('cdnur') && cdnurRows.map((row, i) => (
                           <TableRow key={i}>
                             <TableCell className="border border-border text-center">{i + 1}</TableCell>
                             <TableCell className="border border-border">{row.ntNum}</TableCell>
@@ -1048,7 +1072,7 @@ const GSTR1DataPage: React.FC = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {expRows.map((row, i) => (
+                        {!isCollapsed('exp') && expRows.map((row, i) => (
                           <TableRow key={i}>
                             <TableCell className="border border-border text-center">{i + 1}</TableCell>
                             <TableCell className="border border-border">{row.expTyp}</TableCell>
@@ -1101,7 +1125,7 @@ const GSTR1DataPage: React.FC = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {hsnRows.map((row: any, i: number) => (
+                        {!isCollapsed('hsn') && hsnRows.map((row: any, i: number) => (
                           <TableRow key={i}>
                             <TableCell className="border border-border text-center">{i + 1}</TableCell>
                             <TableCell className="border border-border font-mono">{row.hsn_sc}</TableCell>
@@ -1148,7 +1172,7 @@ const GSTR1DataPage: React.FC = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {(nilData.inv || []).map((item: any, i: number) => (
+                        {!isCollapsed('nil') && (nilData.inv || []).map((item: any, i: number) => (
                           <TableRow key={i}>
                             <TableCell className="border border-border">{item.sply_ty === 'INTRB2B' ? 'Inter-State B2B' : item.sply_ty === 'INTRAB2B' ? 'Intra-State B2B' : item.sply_ty === 'INTRB2C' ? 'Inter-State B2C' : item.sply_ty === 'INTRAB2C' ? 'Intra-State B2C' : item.sply_ty}</TableCell>
                             <TableCell className="border border-border text-right tabular-nums">{formatNumber(item.nil_amt)}</TableCell>
@@ -1189,7 +1213,7 @@ const GSTR1DataPage: React.FC = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {atRows.map((row: any, i: number) => (
+                        {!isCollapsed('at') && atRows.map((row: any, i: number) => (
                           <TableRow key={i}>
                             <TableCell className="border border-border text-center">{i + 1}</TableCell>
                             <TableCell className="border border-border">{row.pos}</TableCell>
@@ -1237,7 +1261,7 @@ const GSTR1DataPage: React.FC = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {txpdRows.map((row: any, i: number) => (
+                        {!isCollapsed('txpd') && txpdRows.map((row: any, i: number) => (
                           <TableRow key={i}>
                             <TableCell className="border border-border text-center">{i + 1}</TableCell>
                             <TableCell className="border border-border">{row.pos}</TableCell>
@@ -1284,7 +1308,7 @@ const GSTR1DataPage: React.FC = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {docRows.map((row, i) => (
+                        {!isCollapsed('doc') && docRows.map((row, i) => (
                           <TableRow key={i}>
                             <TableCell className="border border-border text-center">{i + 1}</TableCell>
                             <TableCell className="border border-border">{row.doc_typ}</TableCell>
