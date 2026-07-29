@@ -33,9 +33,14 @@ export interface Gstr3bSummary {
   rcmLiability: { txval: number; igst: number; cgst: number; sgst: number }; // 3.1(d)
   nonGst: number;                                                       // 3.1(e) txval
   itcAvailable: TaxHead;  // 4A total
+  // 4(A) ITC Available bifurcation — the five portal rows (1)–(5).
+  itcAvailableRows: { srNo: string; label: string; igst: number; cgst: number; sgst: number }[];
   itcReversed: TaxHead;   // 4B total
   itcNet: TaxHead;        // 4C
   itcIneligible: TaxHead; // 4D(2)
+  // 4(D) Other Details — the four portal rows (D)(1), (1.1), (1.2), (2),
+  // taken straight from the ITC Summary section 4D.
+  itcOtherDetails: { srNo: string; label: string; igst: number; cgst: number; sgst: number }[];
   totalLiability: TaxHead;      // output + RCM
   indicativeNetPayable: TaxHead; // liability − net ITC (indicative; real offset is done on the portal)
 }
@@ -130,11 +135,26 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   const revOth = round3(add3(row(B, '(i)'), row(B, '(ii)'), row(B, '(iii)'))); // 4B(2) others
 
   const inelgOth = row(D, '(2)');                     // 4D(2) 16(4) & PoS
+  // Full 4(D) Other Details, as shown in ITC Summary and the portal GSTR-3B.
+  const itcOtherDetails = [
+    { srNo: '(1)', label: 'ITC reclaimed which was reversed under Table 4(B)(2) in earlier tax period', ...round3(row(D, '(1)')) },
+    { srNo: '(1.1)', label: 'Reclaim of ITC Reversed for Previous months', ...round3(row(D, '1.1')) },
+    { srNo: '(1.2)', label: 'Reclaim of ITC Reversed due to 180 days rule/Others', ...round3(row(D, '1.2')) },
+    { srNo: '(2)', label: 'Ineligible ITC under section 16(4) & ITC restricted due to PoS rules', ...round3(inelgOth) },
+  ];
   // REVIEW: GSTN itc_inelg has ty RUL + OTH; the app has no distinct 4D "RUL" input → 0.
   flags.push('4D itc_inelg: mapped 4D(2) → OTH; RUL defaulted to 0 (confirm with the CA).');
   flags.push('Table 5 (exempt / nil / non-GST INWARD supplies) is not computed by the app → left 0 (fill manually if applicable).');
 
   const itcAvail = round3(add3(impg, imps, isrc, isd, oth4a));
+  // 4(A) ITC Available bifurcation, as shown in ITC Summary and the portal.
+  const itcAvailableRows = [
+    { srNo: '(1)', label: 'Import of goods', ...round3(impg) },
+    { srNo: '(2)', label: 'Import of services', ...round3(imps) },
+    { srNo: '(3)', label: 'Inward supplies liable to reverse charge (other than 1 & 2 above)', ...round3(isrc) },
+    { srNo: '(4)', label: 'Inward supplies from ISD', ...round3(isd) },
+    { srNo: '(5)', label: 'All other ITC', ...round3(oth4a) },
+  ];
   const itcRev = round3(add3(revRul, revOth));
   const itcNet = round3(sub3(itcAvail, itcRev));
 
@@ -193,9 +213,11 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
     rcmLiability: { txval: rcm.txval, igst: rcm.iamt, cgst: rcm.camt, sgst: rcm.samt },
     nonGst: out.nonGst,
     itcAvailable: itcAvail,
+    itcAvailableRows,
     itcReversed: itcRev,
     itcNet,
     itcIneligible: round3(inelgOth),
+    itcOtherDetails,
     totalLiability,
     indicativeNetPayable: round3(sub3(totalLiability, itcNet)),
   };

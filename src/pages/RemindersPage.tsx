@@ -59,7 +59,14 @@ const FILTERS = ['all', 'pending', 'sent', 'failed'] as const;
 type FilterKey = (typeof FILTERS)[number];
 
 // ── Page ───────────────────────────────────────────────────────────────────────
-const RemindersPage: React.FC = () => {
+interface RemindersPageProps {
+  // When rendered inside the Settings "GST Reminders" tab, hide the big page
+  // title/description (Settings already provides the heading) but keep the
+  // Send-queued / Refresh actions.
+  embedded?: boolean;
+}
+
+const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
   const { user, isStaffRole } = useAuth();
   const { selectedMonth } = useMonth();
 
@@ -130,16 +137,18 @@ const RemindersPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-            <BellRing className="h-6 w-6 text-primary" /> GST Reminders
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Data-request reminders and filing confirmations for clients. Choose who gets them per client on their edit
-            page; edit the wording in the Email templates section below.
-          </p>
-        </div>
+      <div className={`flex flex-col gap-3 sm:flex-row sm:items-center ${embedded ? 'sm:justify-end' : 'sm:justify-between'}`}>
+        {!embedded && (
+          <div>
+            <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+              <BellRing className="h-6 w-6 text-primary" /> GST Reminders
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Data-request reminders and filing confirmations for clients. Choose who gets them per client on their edit
+              page; edit the wording in the Email templates section below.
+            </p>
+          </div>
+        )}
         <div className="flex items-center gap-2 self-start">
           <Button size="sm" onClick={sendNow} disabled={sending} className="gap-1.5">
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Send queued now

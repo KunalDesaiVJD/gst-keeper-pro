@@ -21,6 +21,7 @@ import ManageMastersPage from "@/pages/ManageMastersPage";
 import FilingStatusPage from "@/pages/FilingStatusPage";
 import GSTRunningUpdatePage from "@/pages/GSTRunningUpdatePage";
 import GSTR1DataPage from "@/pages/GSTR1DataPage";
+import Gstr3bPage from "@/pages/Gstr3bPage";
 import ReportsPage from "@/pages/ReportsPage";
 import BuilderSettingsPage from "@/pages/BuilderSettingsPage";
 import BuilderProjectsPage from "@/pages/BuilderProjectsPage";
@@ -67,6 +68,7 @@ const App = () => (
                   <Route path="/reminders" element={<RemindersPage />} />
                   <Route path="/gst-running-update" element={<GSTRunningUpdatePage />} />
                   <Route path="/gstr1-data" element={<GSTR1DataPage />} />
+                  <Route path="/gstr3b" element={<Gstr3bPage />} />
                   <Route path="/builder-setup" element={<BuilderSettingsPage />} />
                   <Route path="/builder-projects" element={<BuilderProjectsPage />} />
                   <Route path="/builder-projects/:projectId" element={<BuilderProjectDetailPage />} />

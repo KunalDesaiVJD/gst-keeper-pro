@@ -326,6 +326,45 @@ export const buildCreditClosingPerClient = async (clientId: string, anyMonthInFy
   };
 };
 
+// ─────────────────── REPORT 5: Client login credentials ─────────────────
+
+export interface ClientCredentialRow {
+  name: string;
+  gstin: string | null;
+  gst_user_id: string | null;
+  gst_password: string | null;
+}
+
+// Fetches every client with its GST portal login. Shared by the on-screen
+// live table and the Excel/PDF download so both always show the same data.
+export const fetchClientCredentials = async (): Promise<ClientCredentialRow[]> => {
+  const { data, error } = await supabase
+    .from('clients')
+    .select('name, gstin, gst_user_id, gst_password')
+    .order('name');
+  if (error) throw error;
+  return (data || []) as ClientCredentialRow[];
+};
+
+export const buildClientCredentials = async (): Promise<ReportTable> => {
+  const clients = await fetchClientCredentials();
+  const rows: (string | number)[][] = clients.map((c, i) => [
+    i + 1,
+    c.name || '—',
+    c.gstin || '—',
+    c.gst_user_id || '—',
+    c.gst_password || '—',
+  ]);
+  return {
+    title: 'Client Login Credentials',
+    subtitle: `Total clients: ${clients.length}`,
+    headers: ['#', 'Client Name', 'GSTIN', 'GST User ID', 'GST Password'],
+    rows,
+    fileNameBase: 'Client_Login_Credentials',
+    columnWidths: [6, 42, 22, 22, 22],
+  };
+};
+
 // ─────────────────── Excel renderer (shared) ─────────────────────────────
 
 export const renderReportToExcel = (report: ReportTable) => {

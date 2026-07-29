@@ -1,5 +1,5 @@
-import React from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   LayoutDashboard,
@@ -9,13 +9,15 @@ import {
   LogOut,
   ChevronRight,
   ChevronLeft,
+  ChevronDown,
   Settings,
   FileSpreadsheet,
   FileJson,
   Repeat,
   FolderDown,
   Users,
-  BellRing,
+  Files,
+  FileCheck2,
   Building,
   FileSignature
 } from 'lucide-react';
@@ -52,7 +54,7 @@ const CLIENT_NAV_ITEMS: NavItem[] = [
     icon: <Calculator className="h-5 w-5" />,
   },
   {
-    label: 'GSTR-01',
+    label: 'GSTR-1',
     path: '/gstr1-data',
     icon: <FileJson className="h-5 w-5" />,
   },
@@ -90,9 +92,15 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
   {
-    label: 'GSTR-01',
+    label: 'GSTR-1',
     path: '/gstr1-data',
     icon: <FileJson className="h-5 w-5" />,
+    roles: ['superadmin', 'gst_manager', 'employee'],
+  },
+  {
+    label: 'GSTR-3B',
+    path: '/gstr3b',
+    icon: <FileCheck2 className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
   {
@@ -107,12 +115,7 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     icon: <FileSpreadsheet className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
-  {
-    label: 'GST Reminders',
-    path: '/reminders',
-    icon: <BellRing className="h-5 w-5" />,
-    roles: ['superadmin', 'gst_manager', 'employee'],
-  },
+  // "GST Reminders" now lives inside Settings -> GST Reminders tab (not a top-level nav item).
   {
     label: 'Builder Projects',
     path: '/builder-projects',
@@ -139,6 +142,14 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
 ];
+
+// "2B Reconciliation", "RCM Summary" and "ITC Summary" are the working sheets,
+// presented as a single collapsible "GST Working" group in the expanded rail.
+// Order here defines the order shown inside the group. The minimized (icon-only)
+// rail keeps them as separate icons, so this grouping only affects the expanded
+// sidebar and mobile drawer. (The actual GSTR-3B return is its own page.)
+const GSTR3B_GROUP_LABEL = 'GST Working';
+const GSTR3B_CHILD_PATHS = ['/2b-and-rcm', '/rcm-summary', '/itc-summary'];
 
 const getRoleLabel = (role: string) => {
   switch (role) {
@@ -183,7 +194,19 @@ export const SidebarContents: React.FC<{
 }> = ({ onToggleMinimize, onNavigate }) => {
   const { user, logout, isStaffRole } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const navItems = useSidebarNavItems();
+
+  // The GSTR 3B group holds whichever of its child pages this role can see.
+  const groupChildren = navItems
+    .filter((i) => GSTR3B_CHILD_PATHS.includes(i.path))
+    .sort((a, b) => GSTR3B_CHILD_PATHS.indexOf(a.path) - GSTR3B_CHILD_PATHS.indexOf(b.path));
+  const groupActive = GSTR3B_CHILD_PATHS.includes(location.pathname);
+  const [groupOpen, setGroupOpen] = useState(groupActive);
+  // Auto-open when navigating to one of the group's pages (e.g. after a refresh).
+  useEffect(() => {
+    if (groupActive) setGroupOpen(true);
+  }, [groupActive]);
 
   const handleLogout = () => {
     logout();
@@ -237,17 +260,59 @@ export const SidebarContents: React.FC<{
 
       {/* Navigation */}
       <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
-        {navItems.map((item) => (
-          <NavLink
-            key={item.path}
-            to={item.path}
-            onClick={onNavigate}
-            className={navLinkClasses}
-          >
-            {item.icon}
-            <span>{item.label}</span>
-          </NavLink>
-        ))}
+        {navItems.map((item) => {
+          // Render the collapsible GSTR 3B group once, in place of its first child.
+          if (GSTR3B_CHILD_PATHS.includes(item.path)) {
+            if (!groupChildren.length || item.path !== groupChildren[0].path) return null;
+            return (
+              <div key="gstr3b-group">
+                <button
+                  type="button"
+                  onClick={() => setGroupOpen((o) => !o)}
+                  aria-expanded={groupOpen}
+                  className={cn(
+                    'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200',
+                    groupActive
+                      ? 'text-sidebar-accent-foreground'
+                      : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground'
+                  )}
+                >
+                  <Files className="h-5 w-5" />
+                  <span className="flex-1 text-left">{GSTR3B_GROUP_LABEL}</span>
+                  <ChevronDown
+                    className={cn('h-4 w-4 transition-transform duration-200', groupOpen ? '' : '-rotate-90')}
+                  />
+                </button>
+                {groupOpen && (
+                  <div className="mt-1 ml-4 pl-2 border-l border-sidebar-border/60 space-y-1">
+                    {groupChildren.map((child) => (
+                      <NavLink
+                        key={child.path}
+                        to={child.path}
+                        onClick={onNavigate}
+                        className={navLinkClasses}
+                      >
+                        {child.icon}
+                        <span>{child.label}</span>
+                      </NavLink>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          }
+          return (
+            <NavLink
+              key={item.path}
+              to={item.path}
+              onClick={onNavigate}
+              className={navLinkClasses}
+            >
+              {item.icon}
+              <span>{item.label}</span>
+            </NavLink>
+          );
+        })}
       </nav>
 
       {/* User Section */}

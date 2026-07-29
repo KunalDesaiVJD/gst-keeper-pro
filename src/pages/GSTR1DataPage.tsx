@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
-import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, FileCheck2, Inbox, BarChart3, Download, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
+import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, Inbox, BarChart3, Download, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -13,7 +13,6 @@ import {
 } from '@/components/ui/dialog';
 import { buildGstr1Summary } from '@/utils/buildGstr1Summary';
 import { exportGstr1SummaryToPDF } from '@/utils/gstr1SummaryPdf';
-import { Gstr3bPreviewDialog } from '@/components/portal/Gstr3bPreviewDialog';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useConfirm } from '@/components/ui/confirm-dialog';
@@ -129,7 +128,6 @@ const GSTR1DataPage: React.FC = () => {
   const [pushDialogOpen, setPushDialogOpen] = useState(false);
   const [isPushing, setIsPushing] = useState(false);
   const [pushResult, setPushResult] = useState<{ ok: boolean; message: string } | null>(null);
-  const [gstr3bOpen, setGstr3bOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   // Per-tab collapse: when a section id is in the set, its table shows only the
   // header + totals row (data rows hidden). Every section starts collapsed so
@@ -354,6 +352,27 @@ const GSTR1DataPage: React.FC = () => {
       setIsPushing(false);
       setPushDialogOpen(false);
     }
+  };
+
+  // Re-download the stored GSTR-1 JSON exactly as imported — this is the same
+  // file format the GST portal accepts for upload.
+  const handleDownloadJson = () => {
+    if (!gstr1Data?.raw_json) {
+      toast.error('No GSTR-1 JSON to download.');
+      return;
+    }
+    const blob = new Blob([JSON.stringify(gstr1Data.raw_json)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const base = gstr1Data.file_name?.replace(/\.json$/i, '')
+      || `GSTR1_${(selectedClientName || 'client').replace(/\s+/g, '_')}_${mmYyyyToShort(selectedMonth)}`;
+    a.download = `${base}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast.success('GSTR-1 JSON downloaded.');
   };
 
   const json = gstr1Data?.raw_json || {};
@@ -603,8 +622,8 @@ const GSTR1DataPage: React.FC = () => {
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
       <PageHeader
-        title="GSTR-01"
-        subtitle="Import and view GSTR-01 JSON data client-wise & month-wise"
+        title="GSTR-1"
+        subtitle="Import and view GSTR-1 JSON data client-wise & month-wise"
         icon={<FileJson className="h-6 w-6" />}
         actions={isStaff ? (
           <>
@@ -620,11 +639,6 @@ const GSTR1DataPage: React.FC = () => {
               >
                 {isPushing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
                 Push to GST Portal
-              </Button>
-            )}
-            {selectedClient && canEditFilingStatus() && (
-              <Button variant="outline" onClick={() => setGstr3bOpen(true)} disabled={!selectedClient || !selectedMonth}>
-                <FileCheck2 className="h-4 w-4 mr-2" /> Prepare GSTR-3B
               </Button>
             )}
             {gstr1Data && (
@@ -1347,14 +1361,6 @@ const GSTR1DataPage: React.FC = () => {
         </Card>
       )}
 
-      <Gstr3bPreviewDialog
-        open={gstr3bOpen}
-        onOpenChange={setGstr3bOpen}
-        clientId={selectedClient}
-        gstin={clients.find((c) => c.id === selectedClient)?.gstin || ''}
-        periodMonth={selectedMonth}
-      />
-
       {/* Consolidated, portal-style GSTR-1 summary (like the system-generated PDF). */}
       <Dialog open={summaryOpen} onOpenChange={setSummaryOpen}>
         <DialogContent className="max-w-5xl max-h-[85vh] overflow-hidden flex flex-col">
@@ -1369,22 +1375,26 @@ const GSTR1DataPage: React.FC = () => {
                   Consolidated summary generated from the imported GSTR-1 data, laid out like the GST portal.
                 </DialogDescription>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                onClick={() =>
-                  exportGstr1SummaryToPDF({
-                    summary,
-                    clientName: selectedClientName || 'Client',
-                    gstin: clients.find((c) => c.id === selectedClient)?.gstin || '',
-                    monthLabel: mmYyyyToShort(selectedMonth),
-                    fileName: gstr1Data?.file_name,
-                  })
-                }
-              >
-                <Download className="h-3.5 w-3.5 mr-1.5" /> Download PDF
-              </Button>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button variant="outline" size="sm" onClick={handleDownloadJson}>
+                  <FileJson className="h-3.5 w-3.5 mr-1.5" /> Download JSON
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    exportGstr1SummaryToPDF({
+                      summary,
+                      clientName: selectedClientName || 'Client',
+                      gstin: clients.find((c) => c.id === selectedClient)?.gstin || '',
+                      monthLabel: mmYyyyToShort(selectedMonth),
+                      fileName: gstr1Data?.file_name,
+                    })
+                  }
+                >
+                  <Download className="h-3.5 w-3.5 mr-1.5" /> Download PDF
+                </Button>
+              </div>
             </div>
           </DialogHeader>
           <div className="overflow-auto rounded-md border border-border">
