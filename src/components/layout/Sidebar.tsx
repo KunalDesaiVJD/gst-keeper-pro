@@ -15,7 +15,8 @@ import {
   Repeat,
   FolderDown,
   Users,
-  BellRing
+  BellRing,
+  Building
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
@@ -109,6 +110,12 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     label: 'GST Reminders',
     path: '/reminders',
     icon: <BellRing className="h-5 w-5" />,
+    roles: ['superadmin', 'gst_manager', 'employee'],
+  },
+  {
+    label: 'Builder Projects',
+    path: '/builder-projects',
+    icon: <Building className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
   // "Manage Masters" now lives inside Settings -> Masters tab (not a top-level nav item).

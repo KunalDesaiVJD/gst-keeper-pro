@@ -22,6 +22,9 @@ import FilingStatusPage from "@/pages/FilingStatusPage";
 import GSTRunningUpdatePage from "@/pages/GSTRunningUpdatePage";
 import GSTR1DataPage from "@/pages/GSTR1DataPage";
 import ReportsPage from "@/pages/ReportsPage";
+import BuilderSettingsPage from "@/pages/BuilderSettingsPage";
+import BuilderProjectsPage from "@/pages/BuilderProjectsPage";
+import BuilderProjectDetailPage from "@/pages/BuilderProjectDetailPage";
 import ManageEmployeesPage from "@/pages/ManageEmployeesPage";
 import UserControlPage from "@/pages/UserControlPage";
 import SettingsPage from "@/pages/SettingsPage";
@@ -59,6 +62,9 @@ const App = () => (
                   <Route path="/reminders" element={<RemindersPage />} />
                   <Route path="/gst-running-update" element={<GSTRunningUpdatePage />} />
                   <Route path="/gstr1-data" element={<GSTR1DataPage />} />
+                  <Route path="/builder-setup" element={<BuilderSettingsPage />} />
+                  <Route path="/builder-projects" element={<BuilderProjectsPage />} />
+                  <Route path="/builder-projects/:projectId" element={<BuilderProjectDetailPage />} />
                   <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/manage-employees" element={<ManageEmployeesPage />} />
                   <Route path="/user-control" element={<UserControlPage />} />

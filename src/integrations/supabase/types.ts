@@ -291,6 +291,447 @@ export type Database = {
           },
         ]
       }
+      builder_client_settings: {
+        Row: {
+          client_id: string
+          confirmation_document_url: string | null
+          confirmation_notes: string | null
+          confirmation_outbox_id: string | null
+          confirmation_received_at: string | null
+          confirmation_sent_at: string | null
+          created_at: string
+          default_fsi_treatment: string
+          delay_interest_basis: string
+          excess_tax_treatment: string
+          extra_work_rate: string
+          incl_club: boolean
+          incl_development: boolean
+          incl_legal: boolean
+          incl_maintenance_corpus: boolean
+          incl_other: boolean
+          incl_parking: boolean
+          incl_plc: boolean
+          incl_utility_deposit: boolean
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          client_id: string
+          confirmation_document_url?: string | null
+          confirmation_notes?: string | null
+          confirmation_outbox_id?: string | null
+          confirmation_received_at?: string | null
+          confirmation_sent_at?: string | null
+          created_at?: string
+          default_fsi_treatment?: string
+          delay_interest_basis?: string
+          excess_tax_treatment?: string
+          extra_work_rate?: string
+          incl_club?: boolean
+          incl_development?: boolean
+          incl_legal?: boolean
+          incl_maintenance_corpus?: boolean
+          incl_other?: boolean
+          incl_parking?: boolean
+          incl_plc?: boolean
+          incl_utility_deposit?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          client_id?: string
+          confirmation_document_url?: string | null
+          confirmation_notes?: string | null
+          confirmation_outbox_id?: string | null
+          confirmation_received_at?: string | null
+          confirmation_sent_at?: string | null
+          created_at?: string
+          default_fsi_treatment?: string
+          delay_interest_basis?: string
+          excess_tax_treatment?: string
+          extra_work_rate?: string
+          incl_club?: boolean
+          incl_development?: boolean
+          incl_legal?: boolean
+          incl_maintenance_corpus?: boolean
+          incl_other?: boolean
+          incl_parking?: boolean
+          incl_plc?: boolean
+          incl_utility_deposit?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_client_settings_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: true
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_client_settings_confirmation_outbox_id_fkey"
+            columns: ["confirmation_outbox_id"]
+            isOneToOne: false
+            referencedRelation: "email_outbox"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_opening_balances: {
+        Row: {
+          agreement_value: number
+          as_at_date: string
+          created_at: string
+          cumulative_cgst: number
+          cumulative_receipts: number
+          cumulative_sgst: number
+          cumulative_tds_194ia: number
+          cumulative_value_taxed: number
+          is_affordable_at_opening: boolean | null
+          notes: string | null
+          rate_code_at_opening: string | null
+          unit_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          agreement_value?: number
+          as_at_date: string
+          created_at?: string
+          cumulative_cgst?: number
+          cumulative_receipts?: number
+          cumulative_sgst?: number
+          cumulative_tds_194ia?: number
+          cumulative_value_taxed?: number
+          is_affordable_at_opening?: boolean | null
+          notes?: string | null
+          rate_code_at_opening?: string | null
+          unit_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          agreement_value?: number
+          as_at_date?: string
+          created_at?: string
+          cumulative_cgst?: number
+          cumulative_receipts?: number
+          cumulative_sgst?: number
+          cumulative_tds_194ia?: number
+          cumulative_value_taxed?: number
+          is_affordable_at_opening?: boolean | null
+          notes?: string | null
+          rate_code_at_opening?: string | null
+          unit_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_opening_balances_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: true
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_project_groups: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          project_id: string
+          sort_order: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          project_id: string
+          sort_order?: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          project_id?: string
+          sort_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_project_groups_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_project_areas"
+            referencedColumns: ["project_id"]
+          },
+          {
+            foreignKeyName: "builder_project_groups_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_projects: {
+        Row: {
+          carpet_area_source: string
+          city: string | null
+          client_id: string
+          created_at: string
+          created_by: string | null
+          doc_series_prefix: string | null
+          fsi_treatment: string | null
+          grouping_label: string
+          id: string
+          is_metro: boolean
+          manual_commercial_carpet_sqm: number
+          manual_residential_carpet_sqm: number
+          name: string
+          notes: string | null
+          opening_cutoff_date: string | null
+          rera_number: string | null
+          status: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          carpet_area_source?: string
+          city?: string | null
+          client_id: string
+          created_at?: string
+          created_by?: string | null
+          doc_series_prefix?: string | null
+          fsi_treatment?: string | null
+          grouping_label?: string
+          id?: string
+          is_metro?: boolean
+          manual_commercial_carpet_sqm?: number
+          manual_residential_carpet_sqm?: number
+          name: string
+          notes?: string | null
+          opening_cutoff_date?: string | null
+          rera_number?: string | null
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          carpet_area_source?: string
+          city?: string | null
+          client_id?: string
+          created_at?: string
+          created_by?: string | null
+          doc_series_prefix?: string | null
+          fsi_treatment?: string | null
+          grouping_label?: string
+          id?: string
+          is_metro?: boolean
+          manual_commercial_carpet_sqm?: number
+          manual_residential_carpet_sqm?: number
+          name?: string
+          notes?: string | null
+          opening_cutoff_date?: string | null
+          rera_number?: string | null
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_projects_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_unit_charges: {
+        Row: {
+          amount: number
+          charge_head: string
+          created_at: string
+          id: string
+          include_override: boolean | null
+          label: string | null
+          unit_id: string
+          updated_at: string
+        }
+        Insert: {
+          amount?: number
+          charge_head: string
+          created_at?: string
+          id?: string
+          include_override?: boolean | null
+          label?: string | null
+          unit_id: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          charge_head?: string
+          created_at?: string
+          id?: string
+          include_override?: boolean | null
+          label?: string | null
+          unit_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_unit_charges_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_unit_classification_history: {
+        Row: {
+          area_limit_sqm: number
+          carpet_area_sqm: number
+          created_at: string
+          created_by: string | null
+          effective_from: string
+          effective_rate_pct: number
+          gross_consideration: number
+          id: string
+          is_affordable: boolean
+          is_rrep: boolean
+          note: string | null
+          rate_code: string
+          rate_pct: number
+          reason: string
+          unit_id: string
+        }
+        Insert: {
+          area_limit_sqm?: number
+          carpet_area_sqm?: number
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          effective_rate_pct: number
+          gross_consideration?: number
+          id?: string
+          is_affordable: boolean
+          is_rrep?: boolean
+          note?: string | null
+          rate_code: string
+          rate_pct: number
+          reason?: string
+          unit_id: string
+        }
+        Update: {
+          area_limit_sqm?: number
+          carpet_area_sqm?: number
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          effective_rate_pct?: number
+          gross_consideration?: number
+          id?: string
+          is_affordable?: boolean
+          is_rrep?: boolean
+          note?: string | null
+          rate_code?: string
+          rate_pct?: number
+          reason?: string
+          unit_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_unit_classification_history_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_units: {
+        Row: {
+          base_consideration: number
+          carpet_area_sqm: number
+          created_at: string
+          created_by: string | null
+          dastavej_date: string | null
+          dastavej_value: number | null
+          group_id: string | null
+          id: string
+          notes: string | null
+          project_id: string
+          sort_order: number
+          status: string
+          unit_no: string
+          unit_type: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          base_consideration?: number
+          carpet_area_sqm?: number
+          created_at?: string
+          created_by?: string | null
+          dastavej_date?: string | null
+          dastavej_value?: number | null
+          group_id?: string | null
+          id?: string
+          notes?: string | null
+          project_id: string
+          sort_order?: number
+          status?: string
+          unit_no: string
+          unit_type: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          base_consideration?: number
+          carpet_area_sqm?: number
+          created_at?: string
+          created_by?: string | null
+          dastavej_date?: string | null
+          dastavej_value?: number | null
+          group_id?: string | null
+          id?: string
+          notes?: string | null
+          project_id?: string
+          sort_order?: number
+          status?: string
+          unit_no?: string
+          unit_type?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_units_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "builder_project_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_units_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_project_areas"
+            referencedColumns: ["project_id"]
+          },
+          {
+            foreignKeyName: "builder_units_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chat_channel_members: {
         Row: {
           channel_id: string
@@ -1840,7 +2281,27 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      builder_project_areas: {
+        Row: {
+          carpet_area_source: string | null
+          client_id: string | null
+          commercial_sqm: number | null
+          derived_commercial_sqm: number | null
+          derived_residential_sqm: number | null
+          project_id: string | null
+          residential_sqm: number | null
+          unit_count: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_projects_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       authenticate_client: {
