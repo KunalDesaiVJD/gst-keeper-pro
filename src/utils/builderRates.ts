@@ -26,6 +26,14 @@ export type BuilderRateCode =
   | 'COMMERCIAL_RREP'
   | 'COMMERCIAL_REP';
 
+/**
+ * Rate codes an invoice can carry. The four unit codes above, plus delay
+ * interest — which by the firm's election is billed as a supply SEPARATE from
+ * construction, so the 1/3rd land deduction does not touch it and its notified
+ * rate is also its effective rate.
+ */
+export type InvoiceRateCode = BuilderRateCode | 'DELAY_INTEREST_18';
+
 export type UnitType = 'Residential' | 'Commercial';
 
 export type ChargeHead =
@@ -351,6 +359,34 @@ export const computeTax = (consideration: number, rateCode: BuilderRateCode): Ta
     landDeduction,
     taxableValue,
     ratePct,
+    cgst,
+    sgst,
+    totalTax: round2(cgst + sgst),
+    grossInclusive: round2(amt + cgst + sgst),
+  };
+};
+
+/**
+ * Tax on a supply that carries NO land deduction — the whole amount is the
+ * taxable value.
+ *
+ * Used for delay interest recovered from members where the firm has elected the
+ * flat 18% treatment. Note this is a divergence from s.15(2)(d), which would
+ * include such interest in the value of the principal supply and so carry the
+ * unit's own rate: 18% is at or above every unit rate, so it over-collects
+ * rather than under-declares and carries no exposure to the department.
+ */
+export const computeFlatTax = (amount: number, ratePct: number): TaxBreakup => {
+  const amt = round2(Number(amount) || 0);
+  const rate = Number(ratePct) || 0;
+  const totalTax = round2((amt * rate) / 100);
+  const cgst = round2(totalTax / 2);
+  const sgst = round2(totalTax - cgst);
+  return {
+    consideration: amt,
+    landDeduction: 0,
+    taxableValue: amt,
+    ratePct: rate,
     cgst,
     sgst,
     totalTax: round2(cgst + sgst),

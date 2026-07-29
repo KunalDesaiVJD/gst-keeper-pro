@@ -31,6 +31,7 @@ import {
   dateToPeriod, deriveReceipt, planAdvanceAbsorption, prettyPeriodLabel,
   type ChequeStatus, type InvoiceType, type ReceiptNature,
 } from '@/utils/builderLedger';
+import { computeDelayInterest, type DelayInterestBasis } from '@/utils/builderAdjustments';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
 
 interface ProjectRow {
@@ -106,6 +107,7 @@ const BuilderBookingsPage: React.FC = () => {
   const [adjustments, setAdjustments] = useState<AdjRow[]>([]);
   const [openings, setOpenings] = useState<Record<string, OpeningRow>>({});
   const [settings, setSettings] = useState<ChargeInclusionSettings>(DEFAULT_CHARGE_INCLUSIONS);
+  const [delayInterestBasis, setDelayInterestBasis] = useState<DelayInterestBasis>('FLAT_18');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -135,7 +137,9 @@ const BuilderBookingsPage: React.FC = () => {
       if (!proj) { toast.error('Project not found'); navigate('/builder-projects'); return; }
       const p = proj as unknown as ProjectRow;
       setProject(p);
-      setSettings(await fetchBuilderSettings(p.client_id) as ChargeInclusionSettings);
+      const clientSettings = await fetchBuilderSettings(p.client_id);
+      setSettings(clientSettings as ChargeInclusionSettings);
+      setDelayInterestBasis(clientSettings.delay_interest_basis);
 
       const { data: unt } = await supabase
         .from('builder_units').select('*').eq('project_id', projectId)
@@ -425,7 +429,21 @@ const BuilderBookingsPage: React.FC = () => {
     try {
       const cls = classifyFor(invoiceTarget.unit);
       const { computeTax } = await import('@/utils/builderRates');
-      const t = computeTax(consideration, cls.rateCode);
+      // Delay interest follows the client's election. Under the flat 18% it is
+      // a supply separate from construction, so no 1/3rd land deduction — the
+      // whole amount is the taxable value.
+      const isDelayInterest = invoiceForm.invoice_type === 'DELAY_INTEREST';
+      const di = isDelayInterest
+        ? computeDelayInterest({
+          interestAmount: consideration,
+          basis: delayInterestBasis,
+          unitRateCode: cls.rateCode,
+        })
+        : null;
+      const t = di
+        ? { consideration: di.consideration, ratePct: di.ratePct, taxableValue: di.taxableValue, cgst: di.cgst, sgst: di.sgst }
+        : computeTax(consideration, cls.rateCode);
+      const rateCode = di ? di.rateCode : cls.rateCode;
       const period = dateToPeriod(invoiceForm.invoice_date);
 
       const { data, error } = await supabase.from('builder_invoices').insert({
@@ -435,7 +453,7 @@ const BuilderBookingsPage: React.FC = () => {
         invoice_type: invoiceForm.invoice_type,
         milestone_label: invoiceForm.milestone_label.trim() || null,
         consideration: t.consideration,
-        rate_code: cls.rateCode,
+        rate_code: rateCode,
         rate_pct: t.ratePct,
         taxable_value: t.taxableValue,
         cgst: t.cgst,
@@ -448,8 +466,9 @@ const BuilderBookingsPage: React.FC = () => {
       if (error) throw error;
 
       // The 11B leg: absorb the advances this invoice covers, so the rupees
-      // taxed on receipt are not taxed again inside the invoice.
-      if (invoicePlan.adjustments.length) {
+      // taxed on receipt are not taxed again inside the invoice. Delay interest
+      // is its own supply and never absorbs an advance for the unit.
+      if (!isDelayInterest && invoicePlan.adjustments.length) {
         const { error: aErr } = await supabase.from('builder_advance_adjustments').insert(
           invoicePlan.adjustments.map((a) => ({
             invoice_id: data.id,
