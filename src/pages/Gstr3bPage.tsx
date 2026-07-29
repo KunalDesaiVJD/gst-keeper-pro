@@ -250,7 +250,15 @@ const Gstr3bPage: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    <tr className="odd:bg-muted/20"><td className="border border-border p-2">(A) ITC available (whether in full or part)</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcAvailable.igst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcAvailable.cgst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcAvailable.sgst)}</td></tr>
+                    <tr className="font-semibold bg-muted/40"><td className="border border-border p-2">(A) ITC Available (whether in full or part)</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcAvailable.igst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcAvailable.cgst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcAvailable.sgst)}</td></tr>
+                    {s.itcAvailableRows.map((r) => (
+                      <tr key={r.srNo} className="odd:bg-muted/20">
+                        <td className="border border-border p-2 pl-6">{r.srNo} {r.label}</td>
+                        <td className="border border-border p-2 text-right tabular-nums">{inr(r.igst)}</td>
+                        <td className="border border-border p-2 text-right tabular-nums">{inr(r.cgst)}</td>
+                        <td className="border border-border p-2 text-right tabular-nums">{inr(r.sgst)}</td>
+                      </tr>
+                    ))}
                     <tr className="odd:bg-muted/20"><td className="border border-border p-2">(B) ITC reversed</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcReversed.igst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcReversed.cgst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcReversed.sgst)}</td></tr>
                     <tr className="font-semibold bg-muted/40"><td className="border border-border p-2">(C) Net ITC available (A − B)</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcNet.igst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcNet.cgst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcNet.sgst)}</td></tr>
                     <tr className="bg-muted/30 font-medium"><td className="border border-border p-2" colSpan={4}>(D) Other Details</td></tr>

@@ -33,6 +33,8 @@ export interface Gstr3bSummary {
   rcmLiability: { txval: number; igst: number; cgst: number; sgst: number }; // 3.1(d)
   nonGst: number;                                                       // 3.1(e) txval
   itcAvailable: TaxHead;  // 4A total
+  // 4(A) ITC Available bifurcation — the five portal rows (1)–(5).
+  itcAvailableRows: { srNo: string; label: string; igst: number; cgst: number; sgst: number }[];
   itcReversed: TaxHead;   // 4B total
   itcNet: TaxHead;        // 4C
   itcIneligible: TaxHead; // 4D(2)
@@ -145,6 +147,14 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   flags.push('Table 5 (exempt / nil / non-GST INWARD supplies) is not computed by the app → left 0 (fill manually if applicable).');
 
   const itcAvail = round3(add3(impg, imps, isrc, isd, oth4a));
+  // 4(A) ITC Available bifurcation, as shown in ITC Summary and the portal.
+  const itcAvailableRows = [
+    { srNo: '(1)', label: 'Import of goods', ...round3(impg) },
+    { srNo: '(2)', label: 'Import of services', ...round3(imps) },
+    { srNo: '(3)', label: 'Inward supplies liable to reverse charge (other than 1 & 2 above)', ...round3(isrc) },
+    { srNo: '(4)', label: 'Inward supplies from ISD', ...round3(isd) },
+    { srNo: '(5)', label: 'All other ITC', ...round3(oth4a) },
+  ];
   const itcRev = round3(add3(revRul, revOth));
   const itcNet = round3(sub3(itcAvail, itcRev));
 
@@ -203,6 +213,7 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
     rcmLiability: { txval: rcm.txval, igst: rcm.iamt, cgst: rcm.camt, sgst: rcm.samt },
     nonGst: out.nonGst,
     itcAvailable: itcAvail,
+    itcAvailableRows,
     itcReversed: itcRev,
     itcNet,
     itcIneligible: round3(inelgOth),

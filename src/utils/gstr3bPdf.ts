@@ -53,7 +53,8 @@ export const exportGstr3bToPDF = ({ result, clientName, gstin, monthLabel }: Par
     startY: (doc as any).lastAutoTable.finalY + 6,
     head: [['4. Eligible ITC', 'Integrated tax', 'Central tax', 'State/UT tax']],
     body: [
-      ['(A) ITC available', fmt2(s.itcAvailable.igst), fmt2(s.itcAvailable.cgst), fmt2(s.itcAvailable.sgst)],
+      ['(A) ITC Available (whether in full or part)', fmt2(s.itcAvailable.igst), fmt2(s.itcAvailable.cgst), fmt2(s.itcAvailable.sgst)],
+      ...s.itcAvailableRows.map((r) => [`   ${r.srNo} ${r.label}`, fmt2(r.igst), fmt2(r.cgst), fmt2(r.sgst)]),
       ['(B) ITC reversed', fmt2(s.itcReversed.igst), fmt2(s.itcReversed.cgst), fmt2(s.itcReversed.sgst)],
       ['(C) Net ITC available (A - B)', fmt2(s.itcNet.igst), fmt2(s.itcNet.cgst), fmt2(s.itcNet.sgst)],
       ['(D) Other Details', '', '', ''],
@@ -63,7 +64,11 @@ export const exportGstr3bToPDF = ({ result, clientName, gstin, monthLabel }: Par
     bodyStyles: { fontSize: 8 },
     columnStyles: { 0: { cellWidth: 90 }, 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
     didParseCell: (d) => {
-      if (d.section === 'body' && (d.row.index === 2 || d.row.index === 3)) d.cell.styles.fontStyle = 'bold';
+      if (d.section !== 'body') return;
+      const label = String((d.row.raw as any[])?.[0] ?? '');
+      if (label.startsWith('(A)') || label.startsWith('(C)') || label.startsWith('(D) Other')) {
+        d.cell.styles.fontStyle = 'bold';
+      }
     },
     margin: { left: 12, right: 12 },
   });
