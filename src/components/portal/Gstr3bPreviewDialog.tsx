@@ -5,12 +5,10 @@ import {
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Loader2, Download, AlertTriangle } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { buildGstr3bJson, Gstr3bResult, ItcData, RcmTotals } from '@/utils/buildGstr3bJson';
+import { Gstr3bResult } from '@/utils/buildGstr3bJson';
+import { fetchGstr3b } from '@/utils/fetchGstr3b';
 
-const SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const toShort = (mmYyyy: string) => { const [mm, yyyy] = mmYyyy.split('/'); return `${SHORT[Number(mm) - 1]}-${String(yyyy).slice(-2)}`; };
 const inr = (n: number) => (n || n === 0 ? Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '0');
 
 const Row: React.FC<{ label: string; txval?: number; igst?: number; cgst?: number; sgst?: number; bold?: boolean }> = ({ label, txval, igst, cgst, sgst, bold }) => (
@@ -51,27 +49,7 @@ export const Gstr3bPreviewDialog: React.FC<{
       setLoading(true);
       setResult(null);
       try {
-        const short = toShort(periodMonth);
-        const [g, itcRes, rcmRes] = await Promise.all([
-          supabase.from('gstr1_data').select('raw_json').eq('client_id', clientId).eq('period_month', short).maybeSingle(),
-          supabase.from('itc_summaries').select('data').eq('client_id', clientId).eq('period_month', periodMonth).maybeSingle(),
-          supabase.from('rcm_data').select('taxable_value, cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18').eq('client_id', clientId).eq('month', short),
-        ]);
-
-        let itc: ItcData | null = null;
-        const rawItc = (itcRes.data as any)?.data;
-        const parsed = typeof rawItc === 'string' ? JSON.parse(rawItc) : rawItc;
-        if (parsed) itc = { section4A: parsed.section4A || [], section4B: parsed.section4B || [], section4D: parsed.section4D || [] };
-
-        const rcmRows = ((rcmRes.data as any[]) || []);
-        const rcm: RcmTotals = rcmRows.reduce((a, r) => ({
-          taxable: a.taxable + (r.taxable_value || 0),
-          igst: a.igst + (r.igst_5 || 0) + (r.igst_18 || 0),
-          cgst: a.cgst + (r.cgst_2_5 || 0) + (r.cgst_9 || 0),
-          sgst: a.sgst + (r.sgst_2_5 || 0) + (r.sgst_9 || 0),
-        }), { taxable: 0, igst: 0, cgst: 0, sgst: 0 });
-
-        setResult(buildGstr3bJson({ gstin, periodMonth, gstr1Raw: (g.data as any)?.raw_json ?? null, itc, rcm }));
+        setResult(await fetchGstr3b(clientId, gstin, periodMonth));
       } catch (e: any) {
         toast.error('Failed to build GSTR-3B: ' + (e?.message || 'unknown'));
       } finally {

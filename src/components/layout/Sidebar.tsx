@@ -16,7 +16,8 @@ import {
   Repeat,
   FolderDown,
   Users,
-  Files
+  Files,
+  FileCheck2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
@@ -95,6 +96,12 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
   {
+    label: 'GSTR-3B',
+    path: '/gstr3b',
+    icon: <FileCheck2 className="h-5 w-5" />,
+    roles: ['superadmin', 'gst_manager', 'employee'],
+  },
+  {
     label: 'Filing Status',
     path: '/filing-status',
     icon: <ClipboardList className="h-5 w-5" />,
@@ -116,11 +123,12 @@ const STAFF_NAV_ITEMS: NavItem[] = [
   },
 ];
 
-// "2B Reconciliation", "RCM Summary" and "ITC Summary" are presented as a single
-// collapsible "GSTR 3B" group in the expanded rail. Order here defines the order
-// shown inside the group. The minimized (icon-only) rail keeps them as separate
-// icons, so this grouping only affects the expanded sidebar and mobile drawer.
-const GSTR3B_GROUP_LABEL = 'GSTR-3B';
+// "2B Reconciliation", "RCM Summary" and "ITC Summary" are the working sheets,
+// presented as a single collapsible "GST Working" group in the expanded rail.
+// Order here defines the order shown inside the group. The minimized (icon-only)
+// rail keeps them as separate icons, so this grouping only affects the expanded
+// sidebar and mobile drawer. (The actual GSTR-3B return is its own page.)
+const GSTR3B_GROUP_LABEL = 'GST Working';
 const GSTR3B_CHILD_PATHS = ['/2b-and-rcm', '/rcm-summary', '/itc-summary'];
 
 const getRoleLabel = (role: string) => {
