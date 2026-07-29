@@ -48,21 +48,6 @@ export const exportGstr3bToPDF = ({ result, clientName, gstin, monthLabel }: Par
     margin: { left: 12, right: 12 },
   });
 
-  // Table 3.2 — inter-state supplies to unregistered persons (POS-wise).
-  const unreg: any[] = result.json?.inter_sup?.unreg_details || [];
-  const body32 = unreg.length
-    ? unreg.map((r) => [`POS ${r.pos}`, fmt2(r.txval), fmt2(r.iamt)])
-    : [['—', '0.00', '0.00']];
-  autoTable(doc, {
-    startY: (doc as any).lastAutoTable.finalY + 6,
-    head: [['3.2 Inter-state supplies to unregistered persons', 'Taxable value', 'Integrated tax']],
-    body: body32,
-    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 8 },
-    bodyStyles: { fontSize: 8 },
-    columnStyles: { 0: { cellWidth: 110 }, 1: { halign: 'right' }, 2: { halign: 'right' } },
-    margin: { left: 12, right: 12 },
-  });
-
   // Table 4 — eligible ITC.
   autoTable(doc, {
     startY: (doc as any).lastAutoTable.finalY + 6,

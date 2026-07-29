@@ -97,7 +97,6 @@ const Gstr3bPage: React.FC = () => {
   useEffect(() => { compute(); }, [compute]);
 
   const s = result?.summary;
-  const unreg: any[] = result?.json?.inter_sup?.unreg_details || [];
 
   const handleDownloadJson = () => {
     if (!result) return;
@@ -230,35 +229,6 @@ const Gstr3bPage: React.FC = () => {
                     <TRow label="(d) Inward supplies (liable to reverse charge)" txval={s.rcmLiability.txval} igst={s.rcmLiability.igst} cgst={s.rcmLiability.cgst} sgst={s.rcmLiability.sgst} />
                     <TRow label="(e) Non-GST outward supplies" txval={s.nonGst} igst={0} cgst={0} sgst={0} />
                     <TRow label="Total tax liability (a + d)" igst={s.totalLiability.igst} cgst={s.totalLiability.cgst} sgst={s.totalLiability.sgst} bold />
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* 3.2 Inter-state supplies to unregistered persons */}
-          <Card>
-            <CardContent className="p-4">
-              <h3 className="text-base font-semibold mb-3">3.2 Inter-state supplies made to unregistered persons</h3>
-              <div className="overflow-auto rounded-md border border-border">
-                <table className="w-full text-sm border-collapse min-w-[520px]">
-                  <thead className="sticky top-0 z-10">
-                    <tr className="bg-primary text-primary-foreground">
-                      <th className="border border-primary-foreground/20 p-2 text-left font-bold">Place of supply (POS)</th>
-                      <th className="border border-primary-foreground/20 p-2 text-right font-bold w-32">Taxable value</th>
-                      <th className="border border-primary-foreground/20 p-2 text-right font-bold w-32">Integrated tax</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {unreg.length === 0 ? (
-                      <tr><td colSpan={3} className="border border-border p-3 text-center text-muted-foreground">No inter-state supplies to unregistered persons.</td></tr>
-                    ) : unreg.map((r, i) => (
-                      <tr key={i} className="odd:bg-muted/20">
-                        <td className="border border-border p-2">POS {r.pos}</td>
-                        <td className="border border-border p-2 text-right tabular-nums">{inr(r.txval)}</td>
-                        <td className="border border-border p-2 text-right tabular-nums">{inr(r.iamt)}</td>
-                      </tr>
-                    ))}
                   </tbody>
                 </table>
               </div>
