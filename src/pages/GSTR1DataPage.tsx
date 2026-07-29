@@ -603,8 +603,8 @@ const GSTR1DataPage: React.FC = () => {
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
       <PageHeader
-        title="GSTR-01"
-        subtitle="Import and view GSTR-01 JSON data client-wise & month-wise"
+        title="GSTR-1"
+        subtitle="Import and view GSTR-1 JSON data client-wise & month-wise"
         icon={<FileJson className="h-6 w-6" />}
         actions={isStaff ? (
           <>

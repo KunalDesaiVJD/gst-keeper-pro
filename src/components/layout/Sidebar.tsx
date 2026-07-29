@@ -52,7 +52,7 @@ const CLIENT_NAV_ITEMS: NavItem[] = [
     icon: <Calculator className="h-5 w-5" />,
   },
   {
-    label: 'GSTR-01',
+    label: 'GSTR-1',
     path: '/gstr1-data',
     icon: <FileJson className="h-5 w-5" />,
   },
@@ -90,7 +90,7 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
   {
-    label: 'GSTR-01',
+    label: 'GSTR-1',
     path: '/gstr1-data',
     icon: <FileJson className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager', 'employee'],
@@ -126,7 +126,7 @@ const STAFF_NAV_ITEMS: NavItem[] = [
 // collapsible "GSTR 3B" group in the expanded rail. Order here defines the order
 // shown inside the group. The minimized (icon-only) rail keeps them as separate
 // icons, so this grouping only affects the expanded sidebar and mobile drawer.
-const GSTR3B_GROUP_LABEL = 'GSTR 3B';
+const GSTR3B_GROUP_LABEL = 'GSTR-3B';
 const GSTR3B_CHILD_PATHS = ['/2b-and-rcm', '/rcm-summary', '/itc-summary'];
 
 const getRoleLabel = (role: string) => {
