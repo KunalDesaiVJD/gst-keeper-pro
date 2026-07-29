@@ -149,13 +149,37 @@ const STAFF_NAV_ITEMS: NavItem[] = [
   },
 ];
 
-// "2B Reconciliation", "RCM Summary" and "ITC Summary" are the working sheets,
-// presented as a single collapsible "GST Working" group in the expanded rail.
-// Order here defines the order shown inside the group. The minimized (icon-only)
-// rail keeps them as separate icons, so this grouping only affects the expanded
-// sidebar and mobile drawer. (The actual GSTR-3B return is its own page.)
-const GSTR3B_GROUP_LABEL = 'GST Working';
-const GSTR3B_CHILD_PATHS = ['/2b-and-rcm', '/rcm-summary', '/itc-summary'];
+// Collapsible groups in the expanded rail. Order within `paths` is the order
+// shown inside the group. The minimized (icon-only) rail keeps every page as a
+// separate icon, so grouping only affects the expanded sidebar and the mobile
+// drawer.
+//
+// "GST Working" holds the working sheets — the actual GSTR-3B return is its own
+// page. "Builder" holds the whole real-estate promoter module, which is four
+// pages and would otherwise dominate the rail for the firms that never use it.
+interface NavGroup {
+  key: string;
+  label: string;
+  icon: React.ReactNode;
+  paths: string[];
+}
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    key: 'gst-working',
+    label: 'GST Working',
+    icon: <Files className="h-5 w-5" />,
+    paths: ['/2b-and-rcm', '/rcm-summary', '/itc-summary'],
+  },
+  {
+    key: 'builder',
+    label: 'Builder',
+    icon: <Building className="h-5 w-5" />,
+    paths: ['/builder-projects', '/builder-returns', '/builder-dastavej', '/builder-reports'],
+  },
+];
+
+const GROUPED_PATHS = new Set(NAV_GROUPS.flatMap((g) => g.paths));
 
 const getRoleLabel = (role: string) => {
   switch (role) {
@@ -203,16 +227,31 @@ export const SidebarContents: React.FC<{
   const location = useLocation();
   const navItems = useSidebarNavItems();
 
-  // The GSTR 3B group holds whichever of its child pages this role can see.
-  const groupChildren = navItems
-    .filter((i) => GSTR3B_CHILD_PATHS.includes(i.path))
-    .sort((a, b) => GSTR3B_CHILD_PATHS.indexOf(a.path) - GSTR3B_CHILD_PATHS.indexOf(b.path));
-  const groupActive = GSTR3B_CHILD_PATHS.includes(location.pathname);
-  const [groupOpen, setGroupOpen] = useState(groupActive);
-  // Auto-open when navigating to one of the group's pages (e.g. after a refresh).
+  // Each group holds whichever of its child pages this role can actually see,
+  // in the order declared on the group.
+  const groupsWithChildren = NAV_GROUPS.map((g) => ({
+    ...g,
+    children: navItems
+      .filter((i) => g.paths.includes(i.path))
+      .sort((a, b) => g.paths.indexOf(a.path) - g.paths.indexOf(b.path)),
+    // A group counts as active while the current route is one of its pages —
+    // including nested routes such as /builder-projects/:id/bookings.
+    active: g.paths.some(
+      (p) => location.pathname === p || location.pathname.startsWith(`${p}/`),
+    ),
+  })).filter((g) => g.children.length > 0);
+
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  // Auto-open the group owning the current page (e.g. after a refresh).
+  const activeKeys = groupsWithChildren.filter((g) => g.active).map((g) => g.key).join(',');
   useEffect(() => {
-    if (groupActive) setGroupOpen(true);
-  }, [groupActive]);
+    if (!activeKeys) return;
+    setOpenGroups((prev) => {
+      const next = { ...prev };
+      activeKeys.split(',').forEach((k) => { next[k] = true; });
+      return next;
+    });
+  }, [activeKeys]);
 
   const handleLogout = () => {
     logout();
@@ -267,31 +306,34 @@ export const SidebarContents: React.FC<{
       {/* Navigation */}
       <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
         {navItems.map((item) => {
-          // Render the collapsible GSTR 3B group once, in place of its first child.
-          if (GSTR3B_CHILD_PATHS.includes(item.path)) {
-            if (!groupChildren.length || item.path !== groupChildren[0].path) return null;
+          // Each collapsible group renders once, in place of its first child;
+          // its other children render nothing on their own turn.
+          if (GROUPED_PATHS.has(item.path)) {
+            const group = groupsWithChildren.find((g) => g.paths.includes(item.path));
+            if (!group || item.path !== group.children[0].path) return null;
+            const isOpen = !!openGroups[group.key];
             return (
-              <div key="gstr3b-group">
+              <div key={group.key}>
                 <button
                   type="button"
-                  onClick={() => setGroupOpen((o) => !o)}
-                  aria-expanded={groupOpen}
+                  onClick={() => setOpenGroups((o) => ({ ...o, [group.key]: !o[group.key] }))}
+                  aria-expanded={isOpen}
                   className={cn(
                     'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200',
-                    groupActive
+                    group.active
                       ? 'text-sidebar-accent-foreground'
                       : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground'
                   )}
                 >
-                  <Files className="h-5 w-5" />
-                  <span className="flex-1 text-left">{GSTR3B_GROUP_LABEL}</span>
+                  {group.icon}
+                  <span className="flex-1 text-left">{group.label}</span>
                   <ChevronDown
-                    className={cn('h-4 w-4 transition-transform duration-200', groupOpen ? '' : '-rotate-90')}
+                    className={cn('h-4 w-4 transition-transform duration-200', isOpen ? '' : '-rotate-90')}
                   />
                 </button>
-                {groupOpen && (
+                {isOpen && (
                   <div className="mt-1 ml-4 pl-2 border-l border-sidebar-border/60 space-y-1">
-                    {groupChildren.map((child) => (
+                    {group.children.map((child) => (
                       <NavLink
                         key={child.path}
                         to={child.path}
