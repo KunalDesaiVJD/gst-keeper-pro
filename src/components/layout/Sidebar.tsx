@@ -16,7 +16,6 @@ import {
   Repeat,
   FolderDown,
   Users,
-  BellRing,
   Files
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -107,12 +106,7 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     icon: <FileSpreadsheet className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
-  {
-    label: 'GST Reminders',
-    path: '/reminders',
-    icon: <BellRing className="h-5 w-5" />,
-    roles: ['superadmin', 'gst_manager', 'employee'],
-  },
+  // "GST Reminders" now lives inside Settings -> GST Reminders tab (not a top-level nav item).
   // "Manage Masters" now lives inside Settings -> Masters tab (not a top-level nav item).
   {
     label: 'Reports',

@@ -11,7 +11,7 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { Settings, Lock, Users, AlertCircle, Check, X, Loader2, Database, Shield, Mail } from 'lucide-react';
 import ManageMastersPage from '@/pages/ManageMastersPage';
 import UserControlPage from '@/pages/UserControlPage';
-import EmailTemplatesEditor from '@/components/reminders/EmailTemplatesEditor';
+import RemindersPage from '@/pages/RemindersPage';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
@@ -518,7 +518,7 @@ const SettingsPage: React.FC = () => {
 
         {isStaffRole() && (
           <TabsContent value="templates">
-            <EmailTemplatesEditor />
+            <RemindersPage embedded />
           </TabsContent>
         )}
       </Tabs>
