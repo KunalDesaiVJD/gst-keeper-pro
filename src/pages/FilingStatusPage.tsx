@@ -21,6 +21,7 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { SchemeHistoryEntry } from '@/utils/schemeResolver';
 import { generateFilingRecords } from '@/lib/filingRecords';
 import { MultiSelectPopover } from '@/components/ui/multi-select-popover';
+import { isFsiConsentBlocked } from '@/lib/builderFsiData';
 
 // Normalize an accountant name by stripping the trailing "/<number>" reference
 // (e.g. "PUNITBHAI/16" / "PAVANBHAI /66" / "PRIYA,MUKESHBHAI/ 28") so the same
@@ -584,6 +585,23 @@ const FilingStatusPage: React.FC = () => {
       }
       if (!record.return_pdf_url || record.return_pdf_url.trim() === '') {
         toast.error('Return PDF is mandatory before marking as Filed. Please upload the PDF first.');
+        return;
+      }
+
+      // A builder client who has instructed us not to discharge RCM on TDR/FSI
+      // cannot file that period until the instruction is on record in writing
+      // and a GST Manager has approved it. The position is the client's, and
+      // the file has to show that before anything goes out.
+      const fsiBlocked = await isFsiConsentBlocked(
+        record.client_id,
+        record.period_month || selectedMonth,
+      );
+      if (fsiBlocked) {
+        toast.error(
+          'Cannot file: a TDR/FSI liability is being held back for this period without a complete '
+          + "consent. Attach the client's written instruction and obtain GST Manager approval on the "
+          + "project's TDR/FSI page first.",
+        );
         return;
       }
     }

@@ -19,7 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { toast } from 'sonner';
 import {
   ArrowLeft, Plus, Loader2, Pencil, Trash2, Layers, Home, AlertTriangle, Wallet, Receipt,
-  CalendarCheck, Wrench,
+  CalendarCheck, Wrench, Landmark,
 } from 'lucide-react';
 import {
   DEFAULT_CHARGE_INCLUSIONS, RATE_CODE_LABEL, classifyUnit, formatINR, formatPct,
@@ -448,6 +448,9 @@ const BuilderProjectDetailPage: React.FC = () => {
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => navigate('/builder-projects')}>
               <ArrowLeft className="h-4 w-4 mr-2" /> Back
+            </Button>
+            <Button variant="outline" onClick={() => navigate(`/builder-projects/${projectId}/fsi`)}>
+              <Landmark className="h-4 w-4 mr-2" /> TDR / FSI
             </Button>
             <Button variant="outline" onClick={() => navigate(`/builder-projects/${projectId}/adjustments`)}>
               <Wrench className="h-4 w-4 mr-2" /> Adjustments

@@ -596,6 +596,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "builder_bounce_reversals_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_rcm_postings"
+            referencedColumns: ["project_id"]
+          },
+          {
             foreignKeyName: "builder_bounce_reversals_receipt_id_fkey"
             columns: ["receipt_id"]
             isOneToOne: true
@@ -827,6 +834,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "builder_projects"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_bu_events_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_rcm_postings"
+            referencedColumns: ["project_id"]
           },
         ]
       }
@@ -1223,6 +1237,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "builder_excess_tax_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_rcm_postings"
+            referencedColumns: ["project_id"]
+          },
+          {
             foreignKeyName: "builder_excess_tax_receipt_id_fkey"
             columns: ["receipt_id"]
             isOneToOne: true
@@ -1249,6 +1270,250 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "builder_units"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_fsi_consents: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          client_id: string
+          confirmation_document_url: string | null
+          confirmation_received_at: string | null
+          created_at: string
+          created_by: string | null
+          email_sent_at: string | null
+          fsi_value_at_request: number
+          fsi_working_id: string
+          id: string
+          notes: string | null
+          outbox_id: string | null
+          period_month: string
+          project_id: string
+          rcm_at_request: number
+          received_by: string | null
+          updated_at: string
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          client_id: string
+          confirmation_document_url?: string | null
+          confirmation_received_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          email_sent_at?: string | null
+          fsi_value_at_request?: number
+          fsi_working_id: string
+          id?: string
+          notes?: string | null
+          outbox_id?: string | null
+          period_month: string
+          project_id: string
+          rcm_at_request?: number
+          received_by?: string | null
+          updated_at?: string
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          client_id?: string
+          confirmation_document_url?: string | null
+          confirmation_received_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          email_sent_at?: string | null
+          fsi_value_at_request?: number
+          fsi_working_id?: string
+          id?: string
+          notes?: string | null
+          outbox_id?: string | null
+          period_month?: string
+          project_id?: string
+          rcm_at_request?: number
+          received_by?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_fsi_consents_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_fsi_consents_fsi_working_id_fkey"
+            columns: ["fsi_working_id"]
+            isOneToOne: true
+            referencedRelation: "builder_fsi_workings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_fsi_consents_fsi_working_id_fkey"
+            columns: ["fsi_working_id"]
+            isOneToOne: true
+            referencedRelation: "builder_rcm_postings"
+            referencedColumns: ["source_id"]
+          },
+          {
+            foreignKeyName: "builder_fsi_consents_outbox_id_fkey"
+            columns: ["outbox_id"]
+            isOneToOne: false
+            referencedRelation: "email_outbox"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_fsi_consents_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_project_areas"
+            referencedColumns: ["project_id"]
+          },
+          {
+            foreignKeyName: "builder_fsi_consents_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_fsi_consents_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_rcm_postings"
+            referencedColumns: ["project_id"]
+          },
+        ]
+      }
+      builder_fsi_workings: {
+        Row: {
+          allocated_value: number
+          bu_event_id: string
+          cap_amount: number
+          cap_applied: boolean
+          cgst: number
+          commercial_carpet_sqm: number
+          commercial_portion: number
+          commercial_rcm: number
+          created_at: string
+          created_by: string | null
+          event_carpet_sqm: number
+          id: string
+          notes: string | null
+          period_month: string
+          posted_at: string | null
+          posted_by: string | null
+          project_carpet_sqm: number
+          project_id: string
+          residential_carpet_sqm: number
+          residential_portion: number
+          residential_rcm: number
+          residential_rcm_uncapped: number
+          sgst: number
+          status: string
+          tdr_fsi_total_value: number
+          total_rcm: number
+          treatment: string
+          unbooked_residential_carpet_sqm: number
+          unbooked_residential_value: number
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          allocated_value?: number
+          bu_event_id: string
+          cap_amount?: number
+          cap_applied?: boolean
+          cgst?: number
+          commercial_carpet_sqm?: number
+          commercial_portion?: number
+          commercial_rcm?: number
+          created_at?: string
+          created_by?: string | null
+          event_carpet_sqm?: number
+          id?: string
+          notes?: string | null
+          period_month: string
+          posted_at?: string | null
+          posted_by?: string | null
+          project_carpet_sqm?: number
+          project_id: string
+          residential_carpet_sqm?: number
+          residential_portion?: number
+          residential_rcm?: number
+          residential_rcm_uncapped?: number
+          sgst?: number
+          status?: string
+          tdr_fsi_total_value?: number
+          total_rcm?: number
+          treatment?: string
+          unbooked_residential_carpet_sqm?: number
+          unbooked_residential_value?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          allocated_value?: number
+          bu_event_id?: string
+          cap_amount?: number
+          cap_applied?: boolean
+          cgst?: number
+          commercial_carpet_sqm?: number
+          commercial_portion?: number
+          commercial_rcm?: number
+          created_at?: string
+          created_by?: string | null
+          event_carpet_sqm?: number
+          id?: string
+          notes?: string | null
+          period_month?: string
+          posted_at?: string | null
+          posted_by?: string | null
+          project_carpet_sqm?: number
+          project_id?: string
+          residential_carpet_sqm?: number
+          residential_portion?: number
+          residential_rcm?: number
+          residential_rcm_uncapped?: number
+          sgst?: number
+          status?: string
+          tdr_fsi_total_value?: number
+          total_rcm?: number
+          treatment?: string
+          unbooked_residential_carpet_sqm?: number
+          unbooked_residential_value?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_fsi_workings_bu_event_id_fkey"
+            columns: ["bu_event_id"]
+            isOneToOne: true
+            referencedRelation: "builder_bu_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_fsi_workings_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_project_areas"
+            referencedColumns: ["project_id"]
+          },
+          {
+            foreignKeyName: "builder_fsi_workings_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_fsi_workings_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_rcm_postings"
+            referencedColumns: ["project_id"]
           },
         ]
       }
@@ -1459,6 +1724,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "builder_projects"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_project_groups_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_rcm_postings"
+            referencedColumns: ["project_id"]
           },
         ]
       }
@@ -2042,6 +2314,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "builder_projects"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_units_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_rcm_postings"
+            referencedColumns: ["project_id"]
           },
         ]
       }
@@ -3641,6 +3920,13 @@ export type Database = {
             referencedRelation: "builder_projects"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "builder_units_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_rcm_postings"
+            referencedColumns: ["project_id"]
+          },
         ]
       }
       builder_period_postings: {
@@ -3676,6 +3962,42 @@ export type Database = {
           unit_count: number | null
         }
         Relationships: [
+          {
+            foreignKeyName: "builder_projects_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_rcm_postings: {
+        Row: {
+          allocated_value: number | null
+          bu_date: string | null
+          bu_event_id: string | null
+          cgst: number | null
+          client_id: string | null
+          commercial_rcm: number | null
+          gstr3b_table: string | null
+          period_month: string | null
+          project_id: string | null
+          project_name: string | null
+          residential_rcm: number | null
+          sgst: number | null
+          source_id: string | null
+          source_type: string | null
+          taxable_tax: number | null
+          taxable_value: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_fsi_workings_bu_event_id_fkey"
+            columns: ["bu_event_id"]
+            isOneToOne: true
+            referencedRelation: "builder_bu_events"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "builder_projects_client_id_fkey"
             columns: ["client_id"]
@@ -3722,6 +4044,13 @@ export type Database = {
             referencedRelation: "builder_projects"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "builder_units_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_rcm_postings"
+            referencedColumns: ["project_id"]
+          },
         ]
       }
     }
@@ -3745,6 +4074,10 @@ export type Database = {
           role: Database["public"]["Enums"]["app_role"]
           user_id: string
         }[]
+      }
+      builder_fsi_consent_blocked: {
+        Args: { _client_id: string; _period_month: string }
+        Returns: boolean
       }
       complete_client_first_login: {
         Args: { new_password: string; target_client_id: string }
