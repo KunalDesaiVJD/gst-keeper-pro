@@ -71,12 +71,15 @@ export const exportGstr3bToPDF = ({ result, clientName, gstin, monthLabel }: Par
       ['(A) ITC available', fmt2(s.itcAvailable.igst), fmt2(s.itcAvailable.cgst), fmt2(s.itcAvailable.sgst)],
       ['(B) ITC reversed', fmt2(s.itcReversed.igst), fmt2(s.itcReversed.cgst), fmt2(s.itcReversed.sgst)],
       ['(C) Net ITC available (A - B)', fmt2(s.itcNet.igst), fmt2(s.itcNet.cgst), fmt2(s.itcNet.sgst)],
-      ['(D)(2) Ineligible ITC (16(4) & PoS)', fmt2(s.itcIneligible.igst), fmt2(s.itcIneligible.cgst), fmt2(s.itcIneligible.sgst)],
+      ['(D) Other Details', '', '', ''],
+      ...s.itcOtherDetails.map((d) => [`${d.srNo} ${d.label}`, fmt2(d.igst), fmt2(d.cgst), fmt2(d.sgst)]),
     ],
     headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 8 },
     bodyStyles: { fontSize: 8 },
     columnStyles: { 0: { cellWidth: 90 }, 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
-    didParseCell: (d) => { if (d.section === 'body' && d.row.index === 2) d.cell.styles.fontStyle = 'bold'; },
+    didParseCell: (d) => {
+      if (d.section === 'body' && (d.row.index === 2 || d.row.index === 3)) d.cell.styles.fontStyle = 'bold';
+    },
     margin: { left: 12, right: 12 },
   });
 

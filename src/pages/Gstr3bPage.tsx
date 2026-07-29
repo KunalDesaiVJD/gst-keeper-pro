@@ -283,7 +283,15 @@ const Gstr3bPage: React.FC = () => {
                     <tr className="odd:bg-muted/20"><td className="border border-border p-2">(A) ITC available (whether in full or part)</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcAvailable.igst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcAvailable.cgst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcAvailable.sgst)}</td></tr>
                     <tr className="odd:bg-muted/20"><td className="border border-border p-2">(B) ITC reversed</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcReversed.igst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcReversed.cgst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcReversed.sgst)}</td></tr>
                     <tr className="font-semibold bg-muted/40"><td className="border border-border p-2">(C) Net ITC available (A − B)</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcNet.igst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcNet.cgst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcNet.sgst)}</td></tr>
-                    <tr className="odd:bg-muted/20"><td className="border border-border p-2">(D)(2) Ineligible ITC (section 16(4) &amp; PoS rules)</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcIneligible.igst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcIneligible.cgst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcIneligible.sgst)}</td></tr>
+                    <tr className="bg-muted/30 font-medium"><td className="border border-border p-2" colSpan={4}>(D) Other Details</td></tr>
+                    {s.itcOtherDetails.map((d) => (
+                      <tr key={d.srNo} className="odd:bg-muted/20">
+                        <td className="border border-border p-2">{d.srNo} {d.label}</td>
+                        <td className="border border-border p-2 text-right tabular-nums">{inr(d.igst)}</td>
+                        <td className="border border-border p-2 text-right tabular-nums">{inr(d.cgst)}</td>
+                        <td className="border border-border p-2 text-right tabular-nums">{inr(d.sgst)}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
