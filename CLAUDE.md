@@ -41,3 +41,20 @@ Single-page React 18 + TypeScript app built with Vite (SWC), styled with Tailwin
 **Path alias.** `@/` → `src/` (configured in `vite.config.ts` and `tsconfig`).
 
 **Other notable libs:** `react-hook-form` + `zod` for forms, `recharts` for charts, `jspdf`/`jspdf-autotable` and `xlsx` for PDF/Excel export, `date-fns`, `sonner` + the shadcn toaster for notifications.
+
+## Builder module (GST on real estate promoters)
+
+A self-contained module for promoter clients (`clients.regular_sub_type = 'Builder'`):
+project and unit masters, bookings and receipts, BU events and the unit-wise
+differential, a corrections layer, TDR/FSI reverse charge, and working papers.
+Engines are `src/utils/builder*.ts`, data access `src/lib/builder*.ts`, pages
+`src/pages/Builder*.tsx`, schema `supabase/migrations/*_builder_phase*.sql`.
+
+**Read `docs/BUILDER_GST_POSITIONS.md` before changing anything here.** Several
+behaviours are the firm's elected *positions*, not obvious defaults — the flat
+18% on delay interest departs from s.15(2)(d) deliberately, bounce reversals are
+unavailable on invoiced amounts, the BU cut-off deducts value *taxed* rather than
+value *received*, and the 1%/5% cap on FSI is summed per unit rather than
+blended. Changing one of these without reading why it is that way will produce
+wrong tax, not just a failing test.
+
