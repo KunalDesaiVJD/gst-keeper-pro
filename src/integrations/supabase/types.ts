@@ -291,6 +291,1760 @@ export type Database = {
           },
         ]
       }
+      builder_advance_adjustments: {
+        Row: {
+          cgst: number
+          consideration_adjusted: number
+          created_at: string
+          created_by: string | null
+          id: string
+          invoice_id: string
+          period_month: string
+          rate_code: string
+          rate_pct: number
+          receipt_id: string
+          sgst: number
+          taxable_value_adjusted: number
+        }
+        Insert: {
+          cgst?: number
+          consideration_adjusted?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id: string
+          period_month: string
+          rate_code: string
+          rate_pct?: number
+          receipt_id: string
+          sgst?: number
+          taxable_value_adjusted?: number
+        }
+        Update: {
+          cgst?: number
+          consideration_adjusted?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id?: string
+          period_month?: string
+          rate_code?: string
+          rate_pct?: number
+          receipt_id?: string
+          sgst?: number
+          taxable_value_adjusted?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_advance_adjustments_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "builder_invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_advance_adjustments_receipt_id_fkey"
+            columns: ["receipt_id"]
+            isOneToOne: false
+            referencedRelation: "builder_receipts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_booking_members: {
+        Row: {
+          booking_id: string
+          created_at: string
+          email: string | null
+          id: string
+          is_primary: boolean
+          name: string
+          ownership_ratio: number
+          pan: string | null
+          phone: string | null
+          sort_order: number
+        }
+        Insert: {
+          booking_id: string
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_primary?: boolean
+          name: string
+          ownership_ratio?: number
+          pan?: string | null
+          phone?: string | null
+          sort_order?: number
+        }
+        Update: {
+          booking_id?: string
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_primary?: boolean
+          name?: string
+          ownership_ratio?: number
+          pan?: string | null
+          phone?: string | null
+          sort_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_booking_members_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bookings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_bookings: {
+        Row: {
+          booking_date: string
+          cancellation_reason: string | null
+          cancelled_on: string | null
+          converted_to_booking_id: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          notes: string | null
+          status: string
+          total_consideration: number
+          unit_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          booking_date: string
+          cancellation_reason?: string | null
+          cancelled_on?: string | null
+          converted_to_booking_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          notes?: string | null
+          status?: string
+          total_consideration?: number
+          unit_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          booking_date?: string
+          cancellation_reason?: string | null
+          cancelled_on?: string | null
+          converted_to_booking_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          notes?: string | null
+          status?: string
+          total_consideration?: number
+          unit_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_bookings_converted_to_booking_id_fkey"
+            columns: ["converted_to_booking_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_bookings_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_bookings_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_bookings_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_bounce_offsets: {
+        Row: {
+          cgst: number
+          consideration: number
+          created_at: string
+          created_by: string | null
+          id: string
+          period_month: string
+          reversal_id: string
+          sgst: number
+          taxable_value: number
+        }
+        Insert: {
+          cgst?: number
+          consideration?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          period_month: string
+          reversal_id: string
+          sgst?: number
+          taxable_value?: number
+        }
+        Update: {
+          cgst?: number
+          consideration?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          period_month?: string
+          reversal_id?: string
+          sgst?: number
+          taxable_value?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_bounce_offsets_reversal_id_fkey"
+            columns: ["reversal_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bounce_reversals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_bounce_reversals: {
+        Row: {
+          adjusted_value: number
+          bounced_on: string
+          cgst: number
+          consideration: number
+          created_at: string
+          created_by: string | null
+          id: string
+          notes: string | null
+          original_period: string
+          project_id: string
+          rate_code: string
+          rate_pct: number
+          receipt_id: string
+          sgst: number
+          status: string
+          taxable_value: number
+          unit_id: string
+          updated_at: string
+        }
+        Insert: {
+          adjusted_value?: number
+          bounced_on: string
+          cgst?: number
+          consideration?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          notes?: string | null
+          original_period: string
+          project_id: string
+          rate_code: string
+          rate_pct?: number
+          receipt_id: string
+          sgst?: number
+          status?: string
+          taxable_value?: number
+          unit_id: string
+          updated_at?: string
+        }
+        Update: {
+          adjusted_value?: number
+          bounced_on?: string
+          cgst?: number
+          consideration?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          notes?: string | null
+          original_period?: string
+          project_id?: string
+          rate_code?: string
+          rate_pct?: number
+          receipt_id?: string
+          sgst?: number
+          status?: string
+          taxable_value?: number
+          unit_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_bounce_reversals_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_project_areas"
+            referencedColumns: ["project_id"]
+          },
+          {
+            foreignKeyName: "builder_bounce_reversals_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_bounce_reversals_receipt_id_fkey"
+            columns: ["receipt_id"]
+            isOneToOne: true
+            referencedRelation: "builder_receipts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_bounce_reversals_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_bounce_reversals_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_bounce_reversals_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_bu_event_units: {
+        Row: {
+          agreement_value: number
+          booked_at_cutoff: boolean
+          booking_id: string | null
+          bu_event_id: string
+          carpet_area_sqm: number
+          created_at: string
+          cut_off_date: string
+          cut_off_source: string
+          differential_cgst: number
+          differential_sgst: number
+          differential_taxable_value: number
+          differential_value: number
+          id: string
+          interest_amount: number
+          interest_days: number
+          invoice_id: string | null
+          invoiced_before: number
+          notes: string | null
+          open_advance_before: number
+          rate_code: string
+          rate_pct: number
+          received_upto_cutoff: number
+          subsumed_receipt_count: number
+          tie_out_diff: number
+          unit_id: string
+          unit_type: string
+          value_taxed_upto_opening: number
+        }
+        Insert: {
+          agreement_value?: number
+          booked_at_cutoff?: boolean
+          booking_id?: string | null
+          bu_event_id: string
+          carpet_area_sqm?: number
+          created_at?: string
+          cut_off_date: string
+          cut_off_source?: string
+          differential_cgst?: number
+          differential_sgst?: number
+          differential_taxable_value?: number
+          differential_value?: number
+          id?: string
+          interest_amount?: number
+          interest_days?: number
+          invoice_id?: string | null
+          invoiced_before?: number
+          notes?: string | null
+          open_advance_before?: number
+          rate_code: string
+          rate_pct?: number
+          received_upto_cutoff?: number
+          subsumed_receipt_count?: number
+          tie_out_diff?: number
+          unit_id: string
+          unit_type: string
+          value_taxed_upto_opening?: number
+        }
+        Update: {
+          agreement_value?: number
+          booked_at_cutoff?: boolean
+          booking_id?: string | null
+          bu_event_id?: string
+          carpet_area_sqm?: number
+          created_at?: string
+          cut_off_date?: string
+          cut_off_source?: string
+          differential_cgst?: number
+          differential_sgst?: number
+          differential_taxable_value?: number
+          differential_value?: number
+          id?: string
+          interest_amount?: number
+          interest_days?: number
+          invoice_id?: string | null
+          invoiced_before?: number
+          notes?: string | null
+          open_advance_before?: number
+          rate_code?: string
+          rate_pct?: number
+          received_upto_cutoff?: number
+          subsumed_receipt_count?: number
+          tie_out_diff?: number
+          unit_id?: string
+          unit_type?: string
+          value_taxed_upto_opening?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_bu_event_units_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_bu_event_units_bu_event_id_fkey"
+            columns: ["bu_event_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bu_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_bu_event_units_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "builder_invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_bu_event_units_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: true
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_bu_event_units_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: true
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_bu_event_units_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: true
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_bu_events: {
+        Row: {
+          bu_date: string
+          bu_ref_no: string | null
+          created_at: string
+          created_by: string | null
+          discovered_on: string | null
+          id: string
+          notes: string | null
+          posted_at: string | null
+          posted_by: string | null
+          posting_basis: string
+          posting_period: string
+          project_id: string
+          scope: string
+          status: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          bu_date: string
+          bu_ref_no?: string | null
+          created_at?: string
+          created_by?: string | null
+          discovered_on?: string | null
+          id?: string
+          notes?: string | null
+          posted_at?: string | null
+          posted_by?: string | null
+          posting_basis?: string
+          posting_period: string
+          project_id: string
+          scope?: string
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          bu_date?: string
+          bu_ref_no?: string | null
+          created_at?: string
+          created_by?: string | null
+          discovered_on?: string | null
+          id?: string
+          notes?: string | null
+          posted_at?: string | null
+          posted_by?: string | null
+          posting_basis?: string
+          posting_period?: string
+          project_id?: string
+          scope?: string
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_bu_events_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_project_areas"
+            referencedColumns: ["project_id"]
+          },
+          {
+            foreignKeyName: "builder_bu_events_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_client_settings: {
+        Row: {
+          client_id: string
+          confirmation_document_url: string | null
+          confirmation_notes: string | null
+          confirmation_outbox_id: string | null
+          confirmation_received_at: string | null
+          confirmation_sent_at: string | null
+          created_at: string
+          default_fsi_treatment: string
+          delay_interest_basis: string
+          excess_tax_treatment: string
+          extra_work_rate: string
+          incl_club: boolean
+          incl_development: boolean
+          incl_legal: boolean
+          incl_maintenance_corpus: boolean
+          incl_other: boolean
+          incl_parking: boolean
+          incl_plc: boolean
+          incl_utility_deposit: boolean
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          client_id: string
+          confirmation_document_url?: string | null
+          confirmation_notes?: string | null
+          confirmation_outbox_id?: string | null
+          confirmation_received_at?: string | null
+          confirmation_sent_at?: string | null
+          created_at?: string
+          default_fsi_treatment?: string
+          delay_interest_basis?: string
+          excess_tax_treatment?: string
+          extra_work_rate?: string
+          incl_club?: boolean
+          incl_development?: boolean
+          incl_legal?: boolean
+          incl_maintenance_corpus?: boolean
+          incl_other?: boolean
+          incl_parking?: boolean
+          incl_plc?: boolean
+          incl_utility_deposit?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          client_id?: string
+          confirmation_document_url?: string | null
+          confirmation_notes?: string | null
+          confirmation_outbox_id?: string | null
+          confirmation_received_at?: string | null
+          confirmation_sent_at?: string | null
+          created_at?: string
+          default_fsi_treatment?: string
+          delay_interest_basis?: string
+          excess_tax_treatment?: string
+          extra_work_rate?: string
+          incl_club?: boolean
+          incl_development?: boolean
+          incl_legal?: boolean
+          incl_maintenance_corpus?: boolean
+          incl_other?: boolean
+          incl_parking?: boolean
+          incl_plc?: boolean
+          incl_utility_deposit?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_client_settings_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: true
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_client_settings_confirmation_outbox_id_fkey"
+            columns: ["confirmation_outbox_id"]
+            isOneToOne: false
+            referencedRelation: "email_outbox"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_conversions: {
+        Row: {
+          carried_value: number
+          conversion_date: string
+          created_at: string
+          created_by: string | null
+          credit_note_id: string | null
+          differential_tax: number
+          from_booking_id: string | null
+          from_rate_code: string
+          from_rate_pct: number
+          from_unit_id: string
+          id: string
+          invoice_id: string | null
+          notes: string | null
+          period_month: string
+          status: string
+          to_booking_id: string | null
+          to_rate_code: string
+          to_rate_pct: number
+          to_unit_id: string
+        }
+        Insert: {
+          carried_value?: number
+          conversion_date: string
+          created_at?: string
+          created_by?: string | null
+          credit_note_id?: string | null
+          differential_tax?: number
+          from_booking_id?: string | null
+          from_rate_code: string
+          from_rate_pct?: number
+          from_unit_id: string
+          id?: string
+          invoice_id?: string | null
+          notes?: string | null
+          period_month: string
+          status?: string
+          to_booking_id?: string | null
+          to_rate_code: string
+          to_rate_pct?: number
+          to_unit_id: string
+        }
+        Update: {
+          carried_value?: number
+          conversion_date?: string
+          created_at?: string
+          created_by?: string | null
+          credit_note_id?: string | null
+          differential_tax?: number
+          from_booking_id?: string | null
+          from_rate_code?: string
+          from_rate_pct?: number
+          from_unit_id?: string
+          id?: string
+          invoice_id?: string | null
+          notes?: string | null
+          period_month?: string
+          status?: string
+          to_booking_id?: string | null
+          to_rate_code?: string
+          to_rate_pct?: number
+          to_unit_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_conversions_credit_note_id_fkey"
+            columns: ["credit_note_id"]
+            isOneToOne: false
+            referencedRelation: "builder_credit_notes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_conversions_from_booking_id_fkey"
+            columns: ["from_booking_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_conversions_from_unit_id_fkey"
+            columns: ["from_unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_conversions_from_unit_id_fkey"
+            columns: ["from_unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_conversions_from_unit_id_fkey"
+            columns: ["from_unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_conversions_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "builder_invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_conversions_to_booking_id_fkey"
+            columns: ["to_booking_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_conversions_to_unit_id_fkey"
+            columns: ["to_unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_conversions_to_unit_id_fkey"
+            columns: ["to_unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_conversions_to_unit_id_fkey"
+            columns: ["to_unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_credit_notes: {
+        Row: {
+          booking_id: string | null
+          cgst: number
+          consideration: number
+          created_at: string
+          created_by: string | null
+          doc_no: string | null
+          doc_series: string | null
+          id: string
+          note_date: string
+          note_type: string
+          period_month: string
+          rate_code: string
+          rate_pct: number
+          reason: string | null
+          sgst: number
+          taxable_value: number
+          unit_id: string
+          window_expiry: string | null
+          within_window: boolean
+        }
+        Insert: {
+          booking_id?: string | null
+          cgst?: number
+          consideration?: number
+          created_at?: string
+          created_by?: string | null
+          doc_no?: string | null
+          doc_series?: string | null
+          id?: string
+          note_date: string
+          note_type?: string
+          period_month: string
+          rate_code: string
+          rate_pct?: number
+          reason?: string | null
+          sgst?: number
+          taxable_value?: number
+          unit_id: string
+          window_expiry?: string | null
+          within_window?: boolean
+        }
+        Update: {
+          booking_id?: string | null
+          cgst?: number
+          consideration?: number
+          created_at?: string
+          created_by?: string | null
+          doc_no?: string | null
+          doc_series?: string | null
+          id?: string
+          note_date?: string
+          note_type?: string
+          period_month?: string
+          rate_code?: string
+          rate_pct?: number
+          reason?: string | null
+          sgst?: number
+          taxable_value?: number
+          unit_id?: string
+          window_expiry?: string | null
+          within_window?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_credit_notes_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_credit_notes_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_credit_notes_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_credit_notes_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_excess_tax: {
+        Row: {
+          adjusted_value: number
+          created_at: string
+          created_by: string | null
+          excess_tax: number
+          id: string
+          identified_on: string
+          notes: string | null
+          original_consideration: number
+          original_tax: number
+          project_id: string
+          receipt_id: string
+          restated_consideration: number
+          restated_tax: number
+          status: string
+          treatment: string
+          unit_id: string
+          updated_at: string
+        }
+        Insert: {
+          adjusted_value?: number
+          created_at?: string
+          created_by?: string | null
+          excess_tax?: number
+          id?: string
+          identified_on?: string
+          notes?: string | null
+          original_consideration?: number
+          original_tax?: number
+          project_id: string
+          receipt_id: string
+          restated_consideration?: number
+          restated_tax?: number
+          status?: string
+          treatment?: string
+          unit_id: string
+          updated_at?: string
+        }
+        Update: {
+          adjusted_value?: number
+          created_at?: string
+          created_by?: string | null
+          excess_tax?: number
+          id?: string
+          identified_on?: string
+          notes?: string | null
+          original_consideration?: number
+          original_tax?: number
+          project_id?: string
+          receipt_id?: string
+          restated_consideration?: number
+          restated_tax?: number
+          status?: string
+          treatment?: string
+          unit_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_excess_tax_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_project_areas"
+            referencedColumns: ["project_id"]
+          },
+          {
+            foreignKeyName: "builder_excess_tax_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_excess_tax_receipt_id_fkey"
+            columns: ["receipt_id"]
+            isOneToOne: true
+            referencedRelation: "builder_receipts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_excess_tax_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_excess_tax_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_excess_tax_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_invoices: {
+        Row: {
+          booking_id: string
+          cgst: number
+          consideration: number
+          created_at: string
+          created_by: string | null
+          doc_no: string | null
+          doc_series: string | null
+          id: string
+          invoice_date: string
+          invoice_type: string
+          milestone_label: string | null
+          notes: string | null
+          period_month: string
+          rate_code: string
+          rate_pct: number
+          sgst: number
+          taxable_value: number
+          unit_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          booking_id: string
+          cgst?: number
+          consideration?: number
+          created_at?: string
+          created_by?: string | null
+          doc_no?: string | null
+          doc_series?: string | null
+          id?: string
+          invoice_date: string
+          invoice_type?: string
+          milestone_label?: string | null
+          notes?: string | null
+          period_month: string
+          rate_code: string
+          rate_pct?: number
+          sgst?: number
+          taxable_value?: number
+          unit_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          booking_id?: string
+          cgst?: number
+          consideration?: number
+          created_at?: string
+          created_by?: string | null
+          doc_no?: string | null
+          doc_series?: string | null
+          id?: string
+          invoice_date?: string
+          invoice_type?: string
+          milestone_label?: string | null
+          notes?: string | null
+          period_month?: string
+          rate_code?: string
+          rate_pct?: number
+          sgst?: number
+          taxable_value?: number
+          unit_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_invoices_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_invoices_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_invoices_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_invoices_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_opening_balances: {
+        Row: {
+          agreement_value: number
+          as_at_date: string
+          created_at: string
+          cumulative_cgst: number
+          cumulative_receipts: number
+          cumulative_sgst: number
+          cumulative_tds_194ia: number
+          cumulative_value_taxed: number
+          is_affordable_at_opening: boolean | null
+          notes: string | null
+          rate_code_at_opening: string | null
+          unit_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          agreement_value?: number
+          as_at_date: string
+          created_at?: string
+          cumulative_cgst?: number
+          cumulative_receipts?: number
+          cumulative_sgst?: number
+          cumulative_tds_194ia?: number
+          cumulative_value_taxed?: number
+          is_affordable_at_opening?: boolean | null
+          notes?: string | null
+          rate_code_at_opening?: string | null
+          unit_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          agreement_value?: number
+          as_at_date?: string
+          created_at?: string
+          cumulative_cgst?: number
+          cumulative_receipts?: number
+          cumulative_sgst?: number
+          cumulative_tds_194ia?: number
+          cumulative_value_taxed?: number
+          is_affordable_at_opening?: boolean | null
+          notes?: string | null
+          rate_code_at_opening?: string | null
+          unit_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_opening_balances_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: true
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_opening_balances_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: true
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_opening_balances_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: true
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_project_groups: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          project_id: string
+          sort_order: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          project_id: string
+          sort_order?: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          project_id?: string
+          sort_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_project_groups_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_project_areas"
+            referencedColumns: ["project_id"]
+          },
+          {
+            foreignKeyName: "builder_project_groups_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_projects: {
+        Row: {
+          carpet_area_source: string
+          city: string | null
+          client_id: string
+          created_at: string
+          created_by: string | null
+          doc_series_prefix: string | null
+          fsi_treatment: string | null
+          grouping_label: string
+          id: string
+          is_metro: boolean
+          manual_commercial_carpet_sqm: number
+          manual_residential_carpet_sqm: number
+          name: string
+          notes: string | null
+          opening_cutoff_date: string | null
+          rera_number: string | null
+          status: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          carpet_area_source?: string
+          city?: string | null
+          client_id: string
+          created_at?: string
+          created_by?: string | null
+          doc_series_prefix?: string | null
+          fsi_treatment?: string | null
+          grouping_label?: string
+          id?: string
+          is_metro?: boolean
+          manual_commercial_carpet_sqm?: number
+          manual_residential_carpet_sqm?: number
+          name: string
+          notes?: string | null
+          opening_cutoff_date?: string | null
+          rera_number?: string | null
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          carpet_area_source?: string
+          city?: string | null
+          client_id?: string
+          created_at?: string
+          created_by?: string | null
+          doc_series_prefix?: string | null
+          fsi_treatment?: string | null
+          grouping_label?: string
+          id?: string
+          is_metro?: boolean
+          manual_commercial_carpet_sqm?: number
+          manual_residential_carpet_sqm?: number
+          name?: string
+          notes?: string | null
+          opening_cutoff_date?: string | null
+          rera_number?: string | null
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_projects_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_receipts: {
+        Row: {
+          amount_entered: number
+          amount_is_gst_inclusive: boolean
+          bank_credit: number | null
+          booking_id: string
+          bounced_on: string | null
+          cgst: number
+          cheque_status: string
+          consideration: number
+          created_at: string
+          created_by: string | null
+          doc_no: string | null
+          doc_series: string | null
+          gst_already_discharged: boolean
+          id: string
+          instrument_ref: string | null
+          instrument_type: string
+          notes: string | null
+          period_month: string
+          rate_code: string
+          rate_pct: number
+          receipt_date: string
+          receipt_nature: string
+          replaces_receipt_id: string | null
+          sgst: number
+          subsumed_by_bu_event_id: string | null
+          taxable_value: number
+          tds_194ia: number
+          unit_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          amount_entered?: number
+          amount_is_gst_inclusive?: boolean
+          bank_credit?: number | null
+          booking_id: string
+          bounced_on?: string | null
+          cgst?: number
+          cheque_status?: string
+          consideration?: number
+          created_at?: string
+          created_by?: string | null
+          doc_no?: string | null
+          doc_series?: string | null
+          gst_already_discharged?: boolean
+          id?: string
+          instrument_ref?: string | null
+          instrument_type?: string
+          notes?: string | null
+          period_month: string
+          rate_code: string
+          rate_pct?: number
+          receipt_date: string
+          receipt_nature?: string
+          replaces_receipt_id?: string | null
+          sgst?: number
+          subsumed_by_bu_event_id?: string | null
+          taxable_value?: number
+          tds_194ia?: number
+          unit_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          amount_entered?: number
+          amount_is_gst_inclusive?: boolean
+          bank_credit?: number | null
+          booking_id?: string
+          bounced_on?: string | null
+          cgst?: number
+          cheque_status?: string
+          consideration?: number
+          created_at?: string
+          created_by?: string | null
+          doc_no?: string | null
+          doc_series?: string | null
+          gst_already_discharged?: boolean
+          id?: string
+          instrument_ref?: string | null
+          instrument_type?: string
+          notes?: string | null
+          period_month?: string
+          rate_code?: string
+          rate_pct?: number
+          receipt_date?: string
+          receipt_nature?: string
+          replaces_receipt_id?: string | null
+          sgst?: number
+          subsumed_by_bu_event_id?: string | null
+          taxable_value?: number
+          tds_194ia?: number
+          unit_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_receipts_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_receipts_replaces_receipt_id_fkey"
+            columns: ["replaces_receipt_id"]
+            isOneToOne: false
+            referencedRelation: "builder_receipts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_receipts_subsumed_by_bu_event_id_fkey"
+            columns: ["subsumed_by_bu_event_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bu_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_receipts_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_receipts_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_receipts_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_reclassification_periods: {
+        Row: {
+          created_at: string
+          differential_tax: number
+          due_date: string | null
+          id: string
+          interest_amount: number
+          interest_days: number
+          new_cgst: number
+          new_sgst: number
+          old_cgst: number
+          old_sgst: number
+          period_month: string
+          reclassification_id: string
+          taxable_value: number
+        }
+        Insert: {
+          created_at?: string
+          differential_tax?: number
+          due_date?: string | null
+          id?: string
+          interest_amount?: number
+          interest_days?: number
+          new_cgst?: number
+          new_sgst?: number
+          old_cgst?: number
+          old_sgst?: number
+          period_month: string
+          reclassification_id: string
+          taxable_value?: number
+        }
+        Update: {
+          created_at?: string
+          differential_tax?: number
+          due_date?: string | null
+          id?: string
+          interest_amount?: number
+          interest_days?: number
+          new_cgst?: number
+          new_sgst?: number
+          old_cgst?: number
+          old_sgst?: number
+          period_month?: string
+          reclassification_id?: string
+          taxable_value?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_reclassification_periods_reclassification_id_fkey"
+            columns: ["reclassification_id"]
+            isOneToOne: false
+            referencedRelation: "builder_reclassifications"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_reclassifications: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          from_rate_code: string
+          from_rate_pct: number
+          gross_after: number
+          gross_before: number
+          id: string
+          posted_at: string | null
+          posted_by: string | null
+          posting_period: string
+          reason: string | null
+          status: string
+          to_rate_code: string
+          to_rate_pct: number
+          total_differential_tax: number
+          total_interest: number
+          total_value_retaxed: number
+          triggered_on: string
+          unit_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          from_rate_code: string
+          from_rate_pct: number
+          gross_after?: number
+          gross_before?: number
+          id?: string
+          posted_at?: string | null
+          posted_by?: string | null
+          posting_period: string
+          reason?: string | null
+          status?: string
+          to_rate_code: string
+          to_rate_pct: number
+          total_differential_tax?: number
+          total_interest?: number
+          total_value_retaxed?: number
+          triggered_on?: string
+          unit_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          from_rate_code?: string
+          from_rate_pct?: number
+          gross_after?: number
+          gross_before?: number
+          id?: string
+          posted_at?: string | null
+          posted_by?: string | null
+          posting_period?: string
+          reason?: string | null
+          status?: string
+          to_rate_code?: string
+          to_rate_pct?: number
+          total_differential_tax?: number
+          total_interest?: number
+          total_value_retaxed?: number
+          triggered_on?: string
+          unit_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_reclassifications_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_reclassifications_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_reclassifications_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_unit_charges: {
+        Row: {
+          amount: number
+          charge_head: string
+          created_at: string
+          id: string
+          include_override: boolean | null
+          label: string | null
+          unit_id: string
+          updated_at: string
+        }
+        Insert: {
+          amount?: number
+          charge_head: string
+          created_at?: string
+          id?: string
+          include_override?: boolean | null
+          label?: string | null
+          unit_id: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          charge_head?: string
+          created_at?: string
+          id?: string
+          include_override?: boolean | null
+          label?: string | null
+          unit_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_unit_charges_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_unit_charges_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_unit_charges_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_unit_classification_history: {
+        Row: {
+          area_limit_sqm: number
+          carpet_area_sqm: number
+          created_at: string
+          created_by: string | null
+          effective_from: string
+          effective_rate_pct: number
+          gross_consideration: number
+          id: string
+          is_affordable: boolean
+          is_rrep: boolean
+          note: string | null
+          rate_code: string
+          rate_pct: number
+          reason: string
+          unit_id: string
+        }
+        Insert: {
+          area_limit_sqm?: number
+          carpet_area_sqm?: number
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          effective_rate_pct: number
+          gross_consideration?: number
+          id?: string
+          is_affordable: boolean
+          is_rrep?: boolean
+          note?: string | null
+          rate_code: string
+          rate_pct: number
+          reason?: string
+          unit_id: string
+        }
+        Update: {
+          area_limit_sqm?: number
+          carpet_area_sqm?: number
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          effective_rate_pct?: number
+          gross_consideration?: number
+          id?: string
+          is_affordable?: boolean
+          is_rrep?: boolean
+          note?: string | null
+          rate_code?: string
+          rate_pct?: number
+          reason?: string
+          unit_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_unit_classification_history_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_unit_classification_history_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_unit_classification_history_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_units: {
+        Row: {
+          base_consideration: number
+          bu_event_id: string | null
+          carpet_area_sqm: number
+          created_at: string
+          created_by: string | null
+          dastavej_date: string | null
+          dastavej_value: number | null
+          group_id: string | null
+          id: string
+          notes: string | null
+          project_id: string
+          sort_order: number
+          status: string
+          unit_no: string
+          unit_type: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          base_consideration?: number
+          bu_event_id?: string | null
+          carpet_area_sqm?: number
+          created_at?: string
+          created_by?: string | null
+          dastavej_date?: string | null
+          dastavej_value?: number | null
+          group_id?: string | null
+          id?: string
+          notes?: string | null
+          project_id: string
+          sort_order?: number
+          status?: string
+          unit_no: string
+          unit_type: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          base_consideration?: number
+          bu_event_id?: string | null
+          carpet_area_sqm?: number
+          created_at?: string
+          created_by?: string | null
+          dastavej_date?: string | null
+          dastavej_value?: number | null
+          group_id?: string | null
+          id?: string
+          notes?: string | null
+          project_id?: string
+          sort_order?: number
+          status?: string
+          unit_no?: string
+          unit_type?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_units_bu_event_id_fkey"
+            columns: ["bu_event_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bu_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_units_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "builder_project_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_units_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_project_areas"
+            referencedColumns: ["project_id"]
+          },
+          {
+            foreignKeyName: "builder_units_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chat_channel_members: {
         Row: {
           channel_id: string
@@ -1840,7 +3594,136 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      builder_dastavej_reco: {
+        Row: {
+          booked_at_cutoff: boolean | null
+          bu_date: string | null
+          bu_event_id: string | null
+          client_id: string | null
+          dastavej_date: string | null
+          dastavej_value: number | null
+          opening_agreement_value: number | null
+          project_id: string | null
+          project_name: string | null
+          unit_id: string | null
+          unit_no: string | null
+          unit_status: string | null
+          unit_type: string | null
+          value_taxed: number | null
+          variance: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_bu_event_units_bu_event_id_fkey"
+            columns: ["bu_event_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bu_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_projects_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_units_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_project_areas"
+            referencedColumns: ["project_id"]
+          },
+          {
+            foreignKeyName: "builder_units_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_period_postings: {
+        Row: {
+          booking_id: string | null
+          cgst: number | null
+          client_id: string | null
+          consideration: number | null
+          doc_date: string | null
+          gstr1_table: string | null
+          period_month: string | null
+          project_id: string | null
+          rate_code: string | null
+          rate_pct: number | null
+          sgst: number | null
+          source_id: string | null
+          source_type: string | null
+          taxable_value: number | null
+          unit_id: string | null
+          unit_no: string | null
+        }
+        Relationships: []
+      }
+      builder_project_areas: {
+        Row: {
+          carpet_area_source: string | null
+          client_id: string | null
+          commercial_sqm: number | null
+          derived_commercial_sqm: number | null
+          derived_residential_sqm: number | null
+          project_id: string | null
+          residential_sqm: number | null
+          unit_count: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_projects_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_unit_ledger: {
+        Row: {
+          cgst_discharged: number | null
+          client_id: string | null
+          open_advance: number | null
+          opening_agreement_value: number | null
+          opening_value_taxed: number | null
+          project_id: string | null
+          sgst_discharged: number | null
+          total_received: number | null
+          total_tds_194ia: number | null
+          unit_id: string | null
+          unit_no: string | null
+          value_taxed: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_projects_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_units_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_project_areas"
+            referencedColumns: ["project_id"]
+          },
+          {
+            foreignKeyName: "builder_units_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       authenticate_client: {

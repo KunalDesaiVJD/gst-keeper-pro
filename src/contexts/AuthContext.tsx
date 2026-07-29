@@ -18,6 +18,14 @@ interface UserPermissions {
   edit_update_sheet: boolean;
   import_excel: boolean;
   manual_override: boolean;
+  // Builder module
+  manage_builder_projects: boolean;
+  manage_builder_units: boolean;
+  enter_builder_receipts: boolean;
+  post_bu_event: boolean;
+  post_builder_adjustments: boolean;
+  approve_fsi_consent: boolean;
+  view_builder_reports: boolean;
 }
 
 const DEFAULT_PERMISSIONS: UserPermissions = {
@@ -33,6 +41,13 @@ const DEFAULT_PERMISSIONS: UserPermissions = {
   edit_update_sheet: false,
   import_excel: false,
   manual_override: false,
+  manage_builder_projects: false,
+  manage_builder_units: false,
+  enter_builder_receipts: false,
+  post_bu_event: false,
+  post_builder_adjustments: false,
+  approve_fsi_consent: false,
+  view_builder_reports: false,
 };
 
 interface AppUser {
@@ -66,6 +81,13 @@ interface AuthContextType {
   canEditUpdateSheet: () => boolean;
   canImportExcel: () => boolean;
   canManualOverride: () => boolean;
+  canManageBuilderProjects: () => boolean;
+  canManageBuilderUnits: () => boolean;
+  canEnterBuilderReceipts: () => boolean;
+  canPostBuEvent: () => boolean;
+  canPostBuilderAdjustments: () => boolean;
+  canApproveFsiConsent: () => boolean;
+  canViewBuilderReports: () => boolean;
   hasPermission: (permission: keyof UserPermissions) => boolean;
 }
 
@@ -523,6 +545,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return user.role === 'superadmin' || user.role === 'gst_manager';
   }, [user]);
 
+  // ── Builder module ────────────────────────────────────────────────────────
+  const canManageBuilderProjects = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission('manage_builder_projects');
+  }, [user, hasPermission]);
+
+  const canManageBuilderUnits = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission('manage_builder_units');
+  }, [user, hasPermission]);
+
+  const canEnterBuilderReceipts = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission('enter_builder_receipts');
+  }, [user, hasPermission]);
+
+  const canPostBuEvent = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission('post_bu_event');
+  }, [user, hasPermission]);
+
+  const canPostBuilderAdjustments = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission('post_builder_adjustments');
+  }, [user, hasPermission]);
+
+  // Deliberately NOT grantable to employees. A client's written instruction to
+  // skip RCM on TDR/FSI is signed off by the GST Manager (or superadmin) alone.
+  const canApproveFsiConsent = useCallback((): boolean => {
+    if (!user) return false;
+    return user.role === 'superadmin' || user.role === 'gst_manager';
+  }, [user]);
+
+  const canViewBuilderReports = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission('view_builder_reports');
+  }, [user, hasPermission]);
+
   return (
     <AuthContext.Provider
       value={{
@@ -547,6 +613,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canEditUpdateSheet,
         canImportExcel,
         canManualOverride,
+        canManageBuilderProjects,
+        canManageBuilderUnits,
+        canEnterBuilderReceipts,
+        canPostBuEvent,
+        canPostBuilderAdjustments,
+        canApproveFsiConsent,
+        canViewBuilderReports,
         hasPermission,
       }}
     >

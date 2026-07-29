@@ -17,7 +17,9 @@ import {
   FolderDown,
   Users,
   Files,
-  FileCheck2
+  FileCheck2,
+  Building,
+  FileSignature
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
@@ -114,6 +116,24 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
   // "GST Reminders" now lives inside Settings -> GST Reminders tab (not a top-level nav item).
+  {
+    label: 'Builder Projects',
+    path: '/builder-projects',
+    icon: <Building className="h-5 w-5" />,
+    roles: ['superadmin', 'gst_manager', 'employee'],
+  },
+  {
+    label: 'Builder Returns',
+    path: '/builder-returns',
+    icon: <FileSpreadsheet className="h-5 w-5" />,
+    roles: ['superadmin', 'gst_manager', 'employee'],
+  },
+  {
+    label: 'Dastavej Reco',
+    path: '/builder-dastavej',
+    icon: <FileSignature className="h-5 w-5" />,
+    roles: ['superadmin', 'gst_manager', 'employee'],
+  },
   // "Manage Masters" now lives inside Settings -> Masters tab (not a top-level nav item).
   {
     label: 'Reports',

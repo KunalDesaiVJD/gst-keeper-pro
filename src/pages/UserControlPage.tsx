@@ -73,6 +73,39 @@ const AVAILABLE_PERMISSIONS = [
     label: 'Manual Override',
     description: 'Override opening balance on Suspended Reco and GST Receivable Reco (requires justification)',
   },
+  {
+    key: 'manage_builder_projects',
+    label: 'Manage Builder Projects',
+    description: 'Create and edit builder projects, blocks, and client-level GST elections',
+  },
+  {
+    key: 'manage_builder_units',
+    label: 'Manage Builder Units',
+    description: 'Add and edit units, charge heads, and opening balances',
+  },
+  {
+    key: 'enter_builder_receipts',
+    label: 'Enter Builder Receipts',
+    description: 'Record bookings, advances, receipts, and milestone invoices',
+  },
+  {
+    key: 'post_bu_event',
+    label: 'Post BU Events',
+    description: 'Create BU events and post the unit-wise differential liability',
+  },
+  {
+    key: 'post_builder_adjustments',
+    label: 'Post Builder Adjustments',
+    description: 'Cancellations, conversions, credit notes, refund vouchers, and bounce reversals',
+  },
+  {
+    key: 'view_builder_reports',
+    label: 'View Builder Reports',
+    description: 'Access builder working papers and export them to Excel and PDF',
+  },
+  // Note: approve_fsi_consent is intentionally absent. Signing off a client's
+  // written instruction to skip RCM on TDR/FSI is restricted to GST Manager and
+  // Superadmin by role, and cannot be granted to an employee here.
 ];
 
 interface Employee {
