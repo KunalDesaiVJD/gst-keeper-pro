@@ -32,6 +32,7 @@ import BuilderBuEventsPage from "@/pages/BuilderBuEventsPage";
 import BuilderDastavejPage from "@/pages/BuilderDastavejPage";
 import BuilderAdjustmentsPage from "@/pages/BuilderAdjustmentsPage";
 import BuilderFsiPage from "@/pages/BuilderFsiPage";
+import BuilderReportsPage from "@/pages/BuilderReportsPage";
 import ManageEmployeesPage from "@/pages/ManageEmployeesPage";
 import UserControlPage from "@/pages/UserControlPage";
 import SettingsPage from "@/pages/SettingsPage";
@@ -79,6 +80,7 @@ const App = () => (
                   <Route path="/builder-projects/:projectId/fsi" element={<BuilderFsiPage />} />
                   <Route path="/builder-returns" element={<BuilderReturnsPage />} />
                   <Route path="/builder-dastavej" element={<BuilderDastavejPage />} />
+                  <Route path="/builder-reports" element={<BuilderReportsPage />} />
                   <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/manage-employees" element={<ManageEmployeesPage />} />
                   <Route path="/user-control" element={<UserControlPage />} />
