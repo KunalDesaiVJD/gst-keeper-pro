@@ -134,6 +134,12 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     icon: <FileSignature className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
+  {
+    label: 'Builder Reports',
+    path: '/builder-reports',
+    icon: <FolderDown className="h-5 w-5" />,
+    roles: ['superadmin', 'gst_manager', 'employee'],
+  },
   // "Manage Masters" now lives inside Settings -> Masters tab (not a top-level nav item).
   {
     label: 'Reports',
