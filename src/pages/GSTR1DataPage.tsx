@@ -356,6 +356,27 @@ const GSTR1DataPage: React.FC = () => {
     }
   };
 
+  // Re-download the stored GSTR-1 JSON exactly as imported — this is the same
+  // file format the GST portal accepts for upload.
+  const handleDownloadJson = () => {
+    if (!gstr1Data?.raw_json) {
+      toast.error('No GSTR-1 JSON to download.');
+      return;
+    }
+    const blob = new Blob([JSON.stringify(gstr1Data.raw_json)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const base = gstr1Data.file_name?.replace(/\.json$/i, '')
+      || `GSTR1_${(selectedClientName || 'client').replace(/\s+/g, '_')}_${mmYyyyToShort(selectedMonth)}`;
+    a.download = `${base}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast.success('GSTR-1 JSON downloaded.');
+  };
+
   const json = gstr1Data?.raw_json || {};
 
   const formatNumber = (num: number | undefined | null) => {
@@ -1369,22 +1390,26 @@ const GSTR1DataPage: React.FC = () => {
                   Consolidated summary generated from the imported GSTR-1 data, laid out like the GST portal.
                 </DialogDescription>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                onClick={() =>
-                  exportGstr1SummaryToPDF({
-                    summary,
-                    clientName: selectedClientName || 'Client',
-                    gstin: clients.find((c) => c.id === selectedClient)?.gstin || '',
-                    monthLabel: mmYyyyToShort(selectedMonth),
-                    fileName: gstr1Data?.file_name,
-                  })
-                }
-              >
-                <Download className="h-3.5 w-3.5 mr-1.5" /> Download PDF
-              </Button>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button variant="outline" size="sm" onClick={handleDownloadJson}>
+                  <FileJson className="h-3.5 w-3.5 mr-1.5" /> Download JSON
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    exportGstr1SummaryToPDF({
+                      summary,
+                      clientName: selectedClientName || 'Client',
+                      gstin: clients.find((c) => c.id === selectedClient)?.gstin || '',
+                      monthLabel: mmYyyyToShort(selectedMonth),
+                      fileName: gstr1Data?.file_name,
+                    })
+                  }
+                >
+                  <Download className="h-3.5 w-3.5 mr-1.5" /> Download PDF
+                </Button>
+              </div>
             </div>
           </DialogHeader>
           <div className="overflow-auto rounded-md border border-border">
