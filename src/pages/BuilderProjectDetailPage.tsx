@@ -18,7 +18,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
 import {
-  ArrowLeft, Plus, Loader2, Pencil, Trash2, Layers, Home, AlertTriangle, Wallet,
+  ArrowLeft, Plus, Loader2, Pencil, Trash2, Layers, Home, AlertTriangle, Wallet, Receipt,
 } from 'lucide-react';
 import {
   DEFAULT_CHARGE_INCLUSIONS, RATE_CODE_LABEL, classifyUnit, formatINR, formatPct,
@@ -444,9 +444,14 @@ const BuilderProjectDetailPage: React.FC = () => {
         subtitle={[project.rera_number, project.city].filter(Boolean).join(' · ') || 'Builder project'}
         icon={<Layers className="h-5 w-5" />}
         actions={
-          <Button variant="outline" onClick={() => navigate('/builder-projects')}>
-            <ArrowLeft className="h-4 w-4 mr-2" /> Back
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => navigate('/builder-projects')}>
+              <ArrowLeft className="h-4 w-4 mr-2" /> Back
+            </Button>
+            <Button onClick={() => navigate(`/builder-projects/${projectId}/bookings`)}>
+              <Receipt className="h-4 w-4 mr-2" /> Bookings & Receipts
+            </Button>
+          </div>
         }
       />
 

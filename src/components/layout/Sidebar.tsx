@@ -118,6 +118,12 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     icon: <Building className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
+  {
+    label: 'Builder Returns',
+    path: '/builder-returns',
+    icon: <FileSpreadsheet className="h-5 w-5" />,
+    roles: ['superadmin', 'gst_manager', 'employee'],
+  },
   // "Manage Masters" now lives inside Settings -> Masters tab (not a top-level nav item).
   {
     label: 'Reports',

@@ -291,6 +291,183 @@ export type Database = {
           },
         ]
       }
+      builder_advance_adjustments: {
+        Row: {
+          cgst: number
+          consideration_adjusted: number
+          created_at: string
+          created_by: string | null
+          id: string
+          invoice_id: string
+          period_month: string
+          rate_code: string
+          rate_pct: number
+          receipt_id: string
+          sgst: number
+          taxable_value_adjusted: number
+        }
+        Insert: {
+          cgst?: number
+          consideration_adjusted?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id: string
+          period_month: string
+          rate_code: string
+          rate_pct?: number
+          receipt_id: string
+          sgst?: number
+          taxable_value_adjusted?: number
+        }
+        Update: {
+          cgst?: number
+          consideration_adjusted?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id?: string
+          period_month?: string
+          rate_code?: string
+          rate_pct?: number
+          receipt_id?: string
+          sgst?: number
+          taxable_value_adjusted?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_advance_adjustments_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "builder_invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_advance_adjustments_receipt_id_fkey"
+            columns: ["receipt_id"]
+            isOneToOne: false
+            referencedRelation: "builder_receipts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_booking_members: {
+        Row: {
+          booking_id: string
+          created_at: string
+          email: string | null
+          id: string
+          is_primary: boolean
+          name: string
+          ownership_ratio: number
+          pan: string | null
+          phone: string | null
+          sort_order: number
+        }
+        Insert: {
+          booking_id: string
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_primary?: boolean
+          name: string
+          ownership_ratio?: number
+          pan?: string | null
+          phone?: string | null
+          sort_order?: number
+        }
+        Update: {
+          booking_id?: string
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_primary?: boolean
+          name?: string
+          ownership_ratio?: number
+          pan?: string | null
+          phone?: string | null
+          sort_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_booking_members_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bookings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_bookings: {
+        Row: {
+          booking_date: string
+          cancellation_reason: string | null
+          cancelled_on: string | null
+          converted_to_booking_id: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          notes: string | null
+          status: string
+          total_consideration: number
+          unit_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          booking_date: string
+          cancellation_reason?: string | null
+          cancelled_on?: string | null
+          converted_to_booking_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          notes?: string | null
+          status?: string
+          total_consideration?: number
+          unit_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          booking_date?: string
+          cancellation_reason?: string | null
+          cancelled_on?: string | null
+          converted_to_booking_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          notes?: string | null
+          status?: string
+          total_consideration?: number
+          unit_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_bookings_converted_to_booking_id_fkey"
+            columns: ["converted_to_booking_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_bookings_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_bookings_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_client_settings: {
         Row: {
           client_id: string
@@ -378,6 +555,97 @@ export type Database = {
           },
         ]
       }
+      builder_invoices: {
+        Row: {
+          booking_id: string
+          cgst: number
+          consideration: number
+          created_at: string
+          created_by: string | null
+          doc_no: string | null
+          doc_series: string | null
+          id: string
+          invoice_date: string
+          invoice_type: string
+          milestone_label: string | null
+          notes: string | null
+          period_month: string
+          rate_code: string
+          rate_pct: number
+          sgst: number
+          taxable_value: number
+          unit_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          booking_id: string
+          cgst?: number
+          consideration?: number
+          created_at?: string
+          created_by?: string | null
+          doc_no?: string | null
+          doc_series?: string | null
+          id?: string
+          invoice_date: string
+          invoice_type?: string
+          milestone_label?: string | null
+          notes?: string | null
+          period_month: string
+          rate_code: string
+          rate_pct?: number
+          sgst?: number
+          taxable_value?: number
+          unit_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          booking_id?: string
+          cgst?: number
+          consideration?: number
+          created_at?: string
+          created_by?: string | null
+          doc_no?: string | null
+          doc_series?: string | null
+          id?: string
+          invoice_date?: string
+          invoice_type?: string
+          milestone_label?: string | null
+          notes?: string | null
+          period_month?: string
+          rate_code?: string
+          rate_pct?: number
+          sgst?: number
+          taxable_value?: number
+          unit_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_invoices_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_invoices_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_invoices_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_opening_balances: {
         Row: {
           agreement_value: number
@@ -428,6 +696,13 @@ export type Database = {
           updated_by?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "builder_opening_balances_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: true
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
           {
             foreignKeyName: "builder_opening_balances_unit_id_fkey"
             columns: ["unit_id"]
@@ -550,6 +825,131 @@ export type Database = {
           },
         ]
       }
+      builder_receipts: {
+        Row: {
+          amount_entered: number
+          amount_is_gst_inclusive: boolean
+          bank_credit: number | null
+          booking_id: string
+          bounced_on: string | null
+          cgst: number
+          cheque_status: string
+          consideration: number
+          created_at: string
+          created_by: string | null
+          doc_no: string | null
+          doc_series: string | null
+          gst_already_discharged: boolean
+          id: string
+          instrument_ref: string | null
+          instrument_type: string
+          notes: string | null
+          period_month: string
+          rate_code: string
+          rate_pct: number
+          receipt_date: string
+          receipt_nature: string
+          replaces_receipt_id: string | null
+          sgst: number
+          taxable_value: number
+          tds_194ia: number
+          unit_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          amount_entered?: number
+          amount_is_gst_inclusive?: boolean
+          bank_credit?: number | null
+          booking_id: string
+          bounced_on?: string | null
+          cgst?: number
+          cheque_status?: string
+          consideration?: number
+          created_at?: string
+          created_by?: string | null
+          doc_no?: string | null
+          doc_series?: string | null
+          gst_already_discharged?: boolean
+          id?: string
+          instrument_ref?: string | null
+          instrument_type?: string
+          notes?: string | null
+          period_month: string
+          rate_code: string
+          rate_pct?: number
+          receipt_date: string
+          receipt_nature?: string
+          replaces_receipt_id?: string | null
+          sgst?: number
+          taxable_value?: number
+          tds_194ia?: number
+          unit_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          amount_entered?: number
+          amount_is_gst_inclusive?: boolean
+          bank_credit?: number | null
+          booking_id?: string
+          bounced_on?: string | null
+          cgst?: number
+          cheque_status?: string
+          consideration?: number
+          created_at?: string
+          created_by?: string | null
+          doc_no?: string | null
+          doc_series?: string | null
+          gst_already_discharged?: boolean
+          id?: string
+          instrument_ref?: string | null
+          instrument_type?: string
+          notes?: string | null
+          period_month?: string
+          rate_code?: string
+          rate_pct?: number
+          receipt_date?: string
+          receipt_nature?: string
+          replaces_receipt_id?: string | null
+          sgst?: number
+          taxable_value?: number
+          tds_194ia?: number
+          unit_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_receipts_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_receipts_replaces_receipt_id_fkey"
+            columns: ["replaces_receipt_id"]
+            isOneToOne: false
+            referencedRelation: "builder_receipts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_receipts_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_receipts_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_unit_charges: {
         Row: {
           amount: number
@@ -582,6 +982,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "builder_unit_charges_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
           {
             foreignKeyName: "builder_unit_charges_unit_id_fkey"
             columns: ["unit_id"]
@@ -644,6 +1051,13 @@ export type Database = {
           unit_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "builder_unit_classification_history_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
           {
             foreignKeyName: "builder_unit_classification_history_unit_id_fkey"
             columns: ["unit_id"]
@@ -2281,6 +2695,27 @@ export type Database = {
       }
     }
     Views: {
+      builder_period_postings: {
+        Row: {
+          booking_id: string | null
+          cgst: number | null
+          client_id: string | null
+          consideration: number | null
+          doc_date: string | null
+          gstr1_table: string | null
+          period_month: string | null
+          project_id: string | null
+          rate_code: string | null
+          rate_pct: number | null
+          sgst: number | null
+          source_id: string | null
+          source_type: string | null
+          taxable_value: number | null
+          unit_id: string | null
+          unit_no: string | null
+        }
+        Relationships: []
+      }
       builder_project_areas: {
         Row: {
           carpet_area_source: string | null
@@ -2298,6 +2733,45 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_unit_ledger: {
+        Row: {
+          cgst_discharged: number | null
+          client_id: string | null
+          open_advance: number | null
+          opening_agreement_value: number | null
+          opening_value_taxed: number | null
+          project_id: string | null
+          sgst_discharged: number | null
+          total_received: number | null
+          total_tds_194ia: number | null
+          unit_id: string | null
+          unit_no: string | null
+          value_taxed: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_projects_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_units_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_project_areas"
+            referencedColumns: ["project_id"]
+          },
+          {
+            foreignKeyName: "builder_units_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
             referencedColumns: ["id"]
           },
         ]
