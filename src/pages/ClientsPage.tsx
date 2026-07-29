@@ -50,7 +50,10 @@ type TabId = 'clients' | 'credentials';
 
 const ClientsPage: React.FC = () => {
   const navigate = useNavigate();
-  const { canAddEditClients, canDeleteClients } = useAuth();
+  const { canAddEditClients, canDeleteClients, user } = useAuth();
+  // Exporting the full credentials list (plain-text passwords) is limited to
+  // Superadmin and GST Manager; other staff can still view the table on screen.
+  const canExportCreds = user?.role === 'superadmin' || user?.role === 'gst_manager';
   const confirm = useConfirm();
   const [activeTab, setActiveTab] = useState<TabId>('clients');
   const [searchTerm, setSearchTerm] = useState('');
@@ -118,6 +121,10 @@ const ClientsPage: React.FC = () => {
   };
 
   const handleExportCreds = async (format: 'xlsx' | 'pdf') => {
+    if (!canExportCreds) {
+      toast.error('Only Superadmin or GST Manager can export credentials.');
+      return;
+    }
     setExporting(format);
     try {
       const table = await buildClientCredentials();
@@ -176,7 +183,7 @@ const ClientsPage: React.FC = () => {
                   </Button>
                 </>
               ) : undefined)
-            : (
+            : (canExportCreds ? (
               <>
                 <Button
                   variant="default"
@@ -199,7 +206,7 @@ const ClientsPage: React.FC = () => {
                   PDF
                 </Button>
               </>
-            )
+            ) : undefined)
         }
       />
 
