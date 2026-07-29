@@ -596,11 +596,6 @@ const GSTR1DataPage: React.FC = () => {
               {isImporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
               Import JSON
             </Button>
-            {gstr1Data && (
-              <Button variant="outline" onClick={() => setSummaryOpen(true)}>
-                <BarChart3 className="h-4 w-4 mr-2" /> Generate Summary
-              </Button>
-            )}
             {gstr1Data && canEditFilingStatus() && (
               <Button
                 onClick={() => { setPushResult(null); setPushDialogOpen(true); }}
