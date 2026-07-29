@@ -456,6 +456,13 @@ export type Database = {
             foreignKeyName: "builder_bookings_unit_id_fkey"
             columns: ["unit_id"]
             isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_bookings_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
             referencedRelation: "builder_unit_ledger"
             referencedColumns: ["unit_id"]
           },
@@ -464,6 +471,211 @@ export type Database = {
             columns: ["unit_id"]
             isOneToOne: false
             referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_bu_event_units: {
+        Row: {
+          agreement_value: number
+          booked_at_cutoff: boolean
+          booking_id: string | null
+          bu_event_id: string
+          carpet_area_sqm: number
+          created_at: string
+          cut_off_date: string
+          cut_off_source: string
+          differential_cgst: number
+          differential_sgst: number
+          differential_taxable_value: number
+          differential_value: number
+          id: string
+          interest_amount: number
+          interest_days: number
+          invoice_id: string | null
+          invoiced_before: number
+          notes: string | null
+          open_advance_before: number
+          rate_code: string
+          rate_pct: number
+          received_upto_cutoff: number
+          subsumed_receipt_count: number
+          tie_out_diff: number
+          unit_id: string
+          unit_type: string
+          value_taxed_upto_opening: number
+        }
+        Insert: {
+          agreement_value?: number
+          booked_at_cutoff?: boolean
+          booking_id?: string | null
+          bu_event_id: string
+          carpet_area_sqm?: number
+          created_at?: string
+          cut_off_date: string
+          cut_off_source?: string
+          differential_cgst?: number
+          differential_sgst?: number
+          differential_taxable_value?: number
+          differential_value?: number
+          id?: string
+          interest_amount?: number
+          interest_days?: number
+          invoice_id?: string | null
+          invoiced_before?: number
+          notes?: string | null
+          open_advance_before?: number
+          rate_code: string
+          rate_pct?: number
+          received_upto_cutoff?: number
+          subsumed_receipt_count?: number
+          tie_out_diff?: number
+          unit_id: string
+          unit_type: string
+          value_taxed_upto_opening?: number
+        }
+        Update: {
+          agreement_value?: number
+          booked_at_cutoff?: boolean
+          booking_id?: string | null
+          bu_event_id?: string
+          carpet_area_sqm?: number
+          created_at?: string
+          cut_off_date?: string
+          cut_off_source?: string
+          differential_cgst?: number
+          differential_sgst?: number
+          differential_taxable_value?: number
+          differential_value?: number
+          id?: string
+          interest_amount?: number
+          interest_days?: number
+          invoice_id?: string | null
+          invoiced_before?: number
+          notes?: string | null
+          open_advance_before?: number
+          rate_code?: string
+          rate_pct?: number
+          received_upto_cutoff?: number
+          subsumed_receipt_count?: number
+          tie_out_diff?: number
+          unit_id?: string
+          unit_type?: string
+          value_taxed_upto_opening?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_bu_event_units_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_bu_event_units_bu_event_id_fkey"
+            columns: ["bu_event_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bu_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_bu_event_units_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "builder_invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_bu_event_units_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: true
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_bu_event_units_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: true
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_bu_event_units_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: true
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_bu_events: {
+        Row: {
+          bu_date: string
+          bu_ref_no: string | null
+          created_at: string
+          created_by: string | null
+          discovered_on: string | null
+          id: string
+          notes: string | null
+          posted_at: string | null
+          posted_by: string | null
+          posting_basis: string
+          posting_period: string
+          project_id: string
+          scope: string
+          status: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          bu_date: string
+          bu_ref_no?: string | null
+          created_at?: string
+          created_by?: string | null
+          discovered_on?: string | null
+          id?: string
+          notes?: string | null
+          posted_at?: string | null
+          posted_by?: string | null
+          posting_basis?: string
+          posting_period: string
+          project_id: string
+          scope?: string
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          bu_date?: string
+          bu_ref_no?: string | null
+          created_at?: string
+          created_by?: string | null
+          discovered_on?: string | null
+          id?: string
+          notes?: string | null
+          posted_at?: string | null
+          posted_by?: string | null
+          posting_basis?: string
+          posting_period?: string
+          project_id?: string
+          scope?: string
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_bu_events_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_project_areas"
+            referencedColumns: ["project_id"]
+          },
+          {
+            foreignKeyName: "builder_bu_events_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
             referencedColumns: ["id"]
           },
         ]
@@ -634,6 +846,13 @@ export type Database = {
             foreignKeyName: "builder_invoices_unit_id_fkey"
             columns: ["unit_id"]
             isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_invoices_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
             referencedRelation: "builder_unit_ledger"
             referencedColumns: ["unit_id"]
           },
@@ -696,6 +915,13 @@ export type Database = {
           updated_by?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "builder_opening_balances_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: true
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
           {
             foreignKeyName: "builder_opening_balances_unit_id_fkey"
             columns: ["unit_id"]
@@ -851,6 +1077,7 @@ export type Database = {
           receipt_nature: string
           replaces_receipt_id: string | null
           sgst: number
+          subsumed_by_bu_event_id: string | null
           taxable_value: number
           tds_194ia: number
           unit_id: string
@@ -882,6 +1109,7 @@ export type Database = {
           receipt_nature?: string
           replaces_receipt_id?: string | null
           sgst?: number
+          subsumed_by_bu_event_id?: string | null
           taxable_value?: number
           tds_194ia?: number
           unit_id: string
@@ -913,6 +1141,7 @@ export type Database = {
           receipt_nature?: string
           replaces_receipt_id?: string | null
           sgst?: number
+          subsumed_by_bu_event_id?: string | null
           taxable_value?: number
           tds_194ia?: number
           unit_id?: string
@@ -933,6 +1162,20 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "builder_receipts"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_receipts_subsumed_by_bu_event_id_fkey"
+            columns: ["subsumed_by_bu_event_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bu_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_receipts_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
           },
           {
             foreignKeyName: "builder_receipts_unit_id_fkey"
@@ -982,6 +1225,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "builder_unit_charges_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
           {
             foreignKeyName: "builder_unit_charges_unit_id_fkey"
             columns: ["unit_id"]
@@ -1055,6 +1305,13 @@ export type Database = {
             foreignKeyName: "builder_unit_classification_history_unit_id_fkey"
             columns: ["unit_id"]
             isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_unit_classification_history_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
             referencedRelation: "builder_unit_ledger"
             referencedColumns: ["unit_id"]
           },
@@ -1070,6 +1327,7 @@ export type Database = {
       builder_units: {
         Row: {
           base_consideration: number
+          bu_event_id: string | null
           carpet_area_sqm: number
           created_at: string
           created_by: string | null
@@ -1088,6 +1346,7 @@ export type Database = {
         }
         Insert: {
           base_consideration?: number
+          bu_event_id?: string | null
           carpet_area_sqm?: number
           created_at?: string
           created_by?: string | null
@@ -1106,6 +1365,7 @@ export type Database = {
         }
         Update: {
           base_consideration?: number
+          bu_event_id?: string | null
           carpet_area_sqm?: number
           created_at?: string
           created_by?: string | null
@@ -1123,6 +1383,13 @@ export type Database = {
           updated_by?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "builder_units_bu_event_id_fkey"
+            columns: ["bu_event_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bu_events"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "builder_units_group_id_fkey"
             columns: ["group_id"]
@@ -2695,6 +2962,55 @@ export type Database = {
       }
     }
     Views: {
+      builder_dastavej_reco: {
+        Row: {
+          booked_at_cutoff: boolean | null
+          bu_date: string | null
+          bu_event_id: string | null
+          client_id: string | null
+          dastavej_date: string | null
+          dastavej_value: number | null
+          opening_agreement_value: number | null
+          project_id: string | null
+          project_name: string | null
+          unit_id: string | null
+          unit_no: string | null
+          unit_status: string | null
+          unit_type: string | null
+          value_taxed: number | null
+          variance: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_bu_event_units_bu_event_id_fkey"
+            columns: ["bu_event_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bu_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_projects_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_units_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_project_areas"
+            referencedColumns: ["project_id"]
+          },
+          {
+            foreignKeyName: "builder_units_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_period_postings: {
         Row: {
           booking_id: string | null

@@ -27,6 +27,8 @@ import BuilderProjectsPage from "@/pages/BuilderProjectsPage";
 import BuilderProjectDetailPage from "@/pages/BuilderProjectDetailPage";
 import BuilderBookingsPage from "@/pages/BuilderBookingsPage";
 import BuilderReturnsPage from "@/pages/BuilderReturnsPage";
+import BuilderBuEventsPage from "@/pages/BuilderBuEventsPage";
+import BuilderDastavejPage from "@/pages/BuilderDastavejPage";
 import ManageEmployeesPage from "@/pages/ManageEmployeesPage";
 import UserControlPage from "@/pages/UserControlPage";
 import SettingsPage from "@/pages/SettingsPage";
@@ -68,7 +70,9 @@ const App = () => (
                   <Route path="/builder-projects" element={<BuilderProjectsPage />} />
                   <Route path="/builder-projects/:projectId" element={<BuilderProjectDetailPage />} />
                   <Route path="/builder-projects/:projectId/bookings" element={<BuilderBookingsPage />} />
+                  <Route path="/builder-projects/:projectId/bu-events" element={<BuilderBuEventsPage />} />
                   <Route path="/builder-returns" element={<BuilderReturnsPage />} />
+                  <Route path="/builder-dastavej" element={<BuilderDastavejPage />} />
                   <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/manage-employees" element={<ManageEmployeesPage />} />
                   <Route path="/user-control" element={<UserControlPage />} />
