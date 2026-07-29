@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, FileCheck2, Inbox, BarChart3, Download, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
 import {
   Dialog,
@@ -37,6 +37,22 @@ import { toast } from 'sonner';
 // the app shares a single MonthContext value in "MM/YYYY" form, so convert
 // here when reading/writing the table. Keeps existing rows readable.
 const MONTH_SHORT_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Descriptive header shown above the active section's table (the tiles are the
+// navigation, so the table needs its own label of what's being viewed).
+const SECTION_LABELS: Record<string, string> = {
+  b2b: 'B2B — 4A, 4B, 6B, 6C',
+  b2cl: 'B2CL — 5 (B2C Large)',
+  b2cs: 'B2CS — 7 (B2C Others)',
+  cdnr: 'CDNR — 9B (Registered)',
+  cdnur: 'CDNUR — 9B (Unregistered)',
+  exp: 'EXP — 6A (Exports)',
+  hsn: 'HSN — 12',
+  nil: 'NIL — 8',
+  at: 'AT — 11A (Advances)',
+  txpd: 'TXPD — 11B (Adjustment)',
+  doc: 'DOC — 13 (Documents)',
+};
 const mmYyyyToShort = (mmYyyy: string): string => {
   if (!mmYyyy) return '';
   const [mm, yyyy] = mmYyyy.split('/').map(Number);
@@ -753,24 +769,17 @@ const GSTR1DataPage: React.FC = () => {
             </div>
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList className="flex flex-wrap h-auto gap-1 mb-4">
-                <TabsTrigger value="b2b">B2B ({docCount.b2b ?? 0})</TabsTrigger>
-                <TabsTrigger value="b2cl">B2CL ({docCount.b2cl ?? 0})</TabsTrigger>
-                <TabsTrigger value="b2cs">B2CS ({docCount.b2cs ?? 0})</TabsTrigger>
-                <TabsTrigger value="cdnr">CDNR ({docCount.cdnr ?? 0})</TabsTrigger>
-                <TabsTrigger value="cdnur">CDNUR ({docCount.cdnur ?? 0})</TabsTrigger>
-                <TabsTrigger value="exp">EXP ({docCount.exp ?? 0})</TabsTrigger>
-                <TabsTrigger value="hsn">HSN ({docCount.hsn ?? 0})</TabsTrigger>
-                <TabsTrigger value="nil">NIL ({docCount.nil ?? 0})</TabsTrigger>
-                <TabsTrigger value="at">AT ({docCount.at ?? 0})</TabsTrigger>
-                <TabsTrigger value="txpd">TXPD ({docCount.txpd ?? 0})</TabsTrigger>
-                <TabsTrigger value="doc">DOC ({docCount.doc ?? 0})</TabsTrigger>
-              </TabsList>
-              <div className="flex items-center justify-between gap-3 -mt-2 mb-3">
-                <p className="text-xs text-muted-foreground">
-                  Counts show documents (invoices / notes) like the GST portal. The tables below list each
-                  tax-rate line, so a table can have more rows than its badge when a document spans multiple rates.
-                </p>
+              {/* The tiles above are the section navigation; this header names the
+                  section whose table is shown and carries the collapse toggle. */}
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-sm font-semibold text-foreground truncate">
+                    {SECTION_LABELS[activeTab] ?? activeTab.toUpperCase()}
+                  </span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary tabular-nums shrink-0">
+                    {(docCount[activeTab] ?? 0).toLocaleString('en-IN')}
+                  </span>
+                </div>
                 <Button
                   variant="outline"
                   size="sm"
@@ -784,6 +793,9 @@ const GSTR1DataPage: React.FC = () => {
                   )}
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground mb-3">
+                Counts are documents (invoices / notes) like the GST portal; the table lists each tax-rate line, so it can have more rows than the count.
+              </p>
 
               {/* B2B Tab */}
               <TabsContent value="b2b">
