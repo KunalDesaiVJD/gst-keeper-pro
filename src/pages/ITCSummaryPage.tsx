@@ -6,7 +6,7 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Badge } from '@/components/ui/badge';
 import { isQuarterEndMonth } from '@/types';
-import { Lock, AlertCircle, Save, FileText, History, AlertTriangle, Trash2, Receipt } from 'lucide-react';
+import { Lock, AlertCircle, Save, FileText, History, AlertTriangle, Trash2, Receipt, Loader2 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useAuth } from '@/contexts/AuthContext';
@@ -181,6 +181,13 @@ const ITCSummaryPage: React.FC = () => {
 
   // Check if client is a Partial ITC Builder client
   const isPartialITCClient = selectedClientData?.builder_itc_type === 'PARTIAL_ITC';
+  // Carpet areas derived from the builder project master. The apportionment
+  // key is a fact about the projects, so it is better read from them than
+  // hand-keyed onto the client record and left to drift.
+  const [projectAreas, setProjectAreas] = useState<{
+    residential: number; commercial: number; projects: number;
+  } | null>(null);
+  const [isSyncingAreas, setIsSyncingAreas] = useState(false);
   const commercialArea = selectedClientData?.commercial_area || 0;
   const residentialArea = selectedClientData?.residential_area || 0;
 
@@ -678,6 +685,47 @@ const ITCSummaryPage: React.FC = () => {
       row2Calculated,
     };
   }, [isPartialITCClient, commercialArea, residentialArea, itcData.section4A, itcData.section4B]);
+
+  // Pull the derived split whenever a partial-ITC client is selected.
+  useEffect(() => {
+    if (!isPartialITCClient || !selectedClient) { setProjectAreas(null); return; }
+    (async () => {
+      const { data } = await supabase
+        .from('builder_project_areas')
+        .select('residential_sqm, commercial_sqm')
+        .eq('client_id', selectedClient);
+      const rows = (data || []) as unknown as { residential_sqm: number; commercial_sqm: number }[];
+      if (!rows.length) { setProjectAreas(null); return; }
+      setProjectAreas({
+        residential: rows.reduce((s2, r) => s2 + (Number(r.residential_sqm) || 0), 0),
+        commercial: rows.reduce((s2, r) => s2 + (Number(r.commercial_sqm) || 0), 0),
+        projects: rows.length,
+      });
+    })();
+  }, [isPartialITCClient, selectedClient]);
+
+  // Adopting the derived figures is a deliberate act, not automatic: the areas
+  // drive a real reversal, so changing them silently under a filed period would
+  // be the wrong default.
+  const handleSyncAreas = async () => {
+    if (!selectedClient || !projectAreas) return;
+    setIsSyncingAreas(true);
+    try {
+      const { error } = await supabase.from('clients').update({
+        commercial_area: projectAreas.commercial,
+        residential_area: projectAreas.residential,
+      }).eq('id', selectedClient);
+      if (error) throw error;
+      setClients(prev => prev.map(c => c.id === selectedClient
+        ? { ...c, commercial_area: projectAreas.commercial, residential_area: projectAreas.residential }
+        : c));
+      toast.success('Carpet areas updated from the project master');
+    } catch (e) {
+      toast.error(`Could not sync: ${(e as Error).message}`);
+    } finally {
+      setIsSyncingAreas(false);
+    }
+  };
 
   // Real-time subscription
   useEffect(() => {
@@ -1670,8 +1718,63 @@ const ITCSummaryPage: React.FC = () => {
                           {(commercialArea + residentialArea).toLocaleString('en-IN')}
                         </td>
                       </tr>
+                      {commercialArea + residentialArea > 0 && (
+                        <tr>
+                          <td className="border border-border px-4 py-2 text-muted-foreground text-sm">
+                            Reversal share (residential)
+                          </td>
+                          <td className="border border-border px-4 py-2 text-right tabular-nums text-sm">
+                            {((residentialArea / (commercialArea + residentialArea)) * 100).toFixed(2)}%
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
+                </div>
+              )}
+
+              {/* Derived from the builder project master — offered, not imposed. */}
+              {isPartialITCClient && projectAreas && (
+                <div className="mt-4 rounded-lg border p-3">
+                  {(() => {
+                    const derivedTotal = projectAreas.residential + projectAreas.commercial;
+                    const matches = Math.abs(projectAreas.commercial - commercialArea) < 0.01
+                      && Math.abs(projectAreas.residential - residentialArea) < 0.01;
+                    return (
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="text-sm">
+                          <p className="font-medium">
+                            From the project master
+                            <span className="text-muted-foreground font-normal">
+                              {' '}({projectAreas.projects} project{projectAreas.projects > 1 ? 's' : ''})
+                            </span>
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Commercial {projectAreas.commercial.toLocaleString('en-IN')} ·
+                            {' '}Residential {projectAreas.residential.toLocaleString('en-IN')} sq m
+                            {derivedTotal > 0 && (
+                              <> · reversal share{' '}
+                                {((projectAreas.residential / derivedTotal) * 100).toFixed(2)}%</>
+                            )}
+                          </p>
+                        </div>
+                        {matches ? (
+                          <span className="text-xs text-emerald-700 font-medium">
+                            Matches the figures in use
+                          </span>
+                        ) : canUnlockSheets() && !isLocked ? (
+                          <Button size="sm" variant="outline" onClick={handleSyncAreas} disabled={isSyncingAreas}>
+                            {isSyncingAreas && <Loader2 className="h-3 w-3 mr-2 animate-spin" />}
+                            Use project figures
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-amber-700">
+                            Differs from the figures in use
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </CardContent>
