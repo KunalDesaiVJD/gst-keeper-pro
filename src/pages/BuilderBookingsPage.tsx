@@ -19,10 +19,18 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import BuilderProjectDetailPage from './BuilderProjectDetailPage';
+import BuilderAdjustmentsPage from './BuilderAdjustmentsPage';
+import BuilderDastavejPage from './BuilderDastavejPage';
+import { AFFORDABLE_VALUE_LIMIT } from '@/utils/builderRates';
 import BulkReceiptsDialog, { type BulkReceiptUnit } from '@/components/builder/BulkReceiptsDialog';
 import {
   ArrowLeft, Loader2, ChevronDown, ChevronRight, Plus, Receipt, FileText,
-  AlertTriangle, UserPlus, Trash2, Users, Pencil, Wallet, CheckSquare,
+  AlertTriangle, UserPlus, Trash2, Users, Pencil, Wallet, CheckSquare, MoreHorizontal, Layers, ArrowUpDown,
 } from 'lucide-react';
 import {
   DEFAULT_CHARGE_INCLUSIONS, RATE_CODE_LABEL, classifyUnit, computeTds194IA,
@@ -46,6 +54,8 @@ interface ProjectRow {
 interface UnitRow {
   id: string; unit_no: string; unit_type: UnitType; carpet_area_sqm: number;
   base_consideration: number; status: string;
+  /** The registered sale deed. Half of the BU cut-off, so it belongs on the row. */
+  dastavej_date: string | null;
 }
 interface ChargeRow { unit_id: string; charge_head: string; amount: number; include_override: boolean | null }
 interface BookingRow {
@@ -122,6 +132,19 @@ const BuilderBookingsPage: React.FC = () => {
   const [bookingMembers, setBookingMembers] = useState([{ ...emptyMember }]);
 
   const [bulkReceipts, setBulkReceipts] = useState(false);
+  /**
+   * The surfaces the row menu opens. They are dialogs over the table rather
+   * than destinations, so dismissing one returns you to the row you were on —
+   * which is the whole reason the sub-tab strip was wrong.
+   */
+  const [surface, setSurface] = useState<'' | 'masters' | 'corrections' | 'dastavej'>('');
+  /**
+   * Sorting by ₹45 lakh headroom puts the units closest to losing the
+   * affordable concession at the top. That is the review order that matters:
+   * a unit ₹10,000 under the limit is one charge head from a retrospective
+   * re-rating on everything already collected.
+   */
+  const [byHeadroom, setByHeadroom] = useState(false);
   // Selected receipt ids, for bulk delete. Kept as ids rather than rows so a
   // reload cannot leave the selection pointing at stale objects.
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -566,6 +589,31 @@ const BuilderBookingsPage: React.FC = () => {
     }];
   }), [units, bookings, classifyFor, ledgerFor]);
 
+  /** Headroom for a residential unit; null where affordability cannot apply. */
+  const headroomOf = useCallback((u: UnitRow) => (
+    u.unit_type === 'Residential'
+      ? AFFORDABLE_VALUE_LIMIT - classifyFor(u).gross.gross
+      : null
+  ), [classifyFor]);
+
+  const sortedUnits = useMemo(() => {
+    if (!byHeadroom) return units;
+    return [...units].sort((a, b) => {
+      const ha = headroomOf(a), hb = headroomOf(b);
+      if (ha === null) return 1;          // commercial last — never affordable
+      if (hb === null) return -1;
+      return ha - hb;
+    });
+  }, [units, byHeadroom, headroomOf]);
+
+  const atRisk = useMemo(
+    () => units.filter((u) => {
+      const h = headroomOf(u);
+      return h !== null && h >= 0 && h < 100000;
+    }).length,
+    [units, headroomOf],
+  );
+
   const toggleSelect = (id: string) => setSelected((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -637,6 +685,25 @@ const BuilderBookingsPage: React.FC = () => {
                 <Wallet className="mr-2 h-4 w-4" /> Record receipts
               </Button>
             )}
+            {canEdit && (
+              <Button variant="outline" onClick={() => setSurface('masters')}>
+                <Layers className="mr-2 h-4 w-4" /> Units &amp; masters
+              </Button>
+            )}
+            <Button
+              variant={byHeadroom ? 'default' : 'outline'}
+              onClick={() => setByHeadroom((v) => !v)}
+              title="Put the units closest to the ₹45 lakh limit first"
+            >
+              <ArrowUpDown className="mr-2 h-4 w-4" />
+              ₹45L headroom
+            </Button>
+            {atRisk > 0 && (
+              <Badge variant="outline" className="gap-1 self-center border-amber-500/50 text-amber-700 dark:text-amber-500">
+                <AlertTriangle className="h-3 w-3" />
+                {atRisk} within ₹1 lakh of the limit
+              </Badge>
+            )}
             {!embedded && (
               <Button variant="outline" onClick={() => navigate(`/builder-projects/${projectId}`)}>
                 <ArrowLeft className="h-4 w-4 mr-2" /> Project
@@ -683,17 +750,20 @@ const BuilderBookingsPage: React.FC = () => {
                     <TableHead className="w-8" />
                     <TableHead>Unit</TableHead>
                     <TableHead>Member(s)</TableHead>
+                    <TableHead className="text-right">Carpet</TableHead>
                     <TableHead>Rate</TableHead>
+                    <TableHead className="text-right">₹45L headroom</TableHead>
                     <TableHead className="text-right">Agreement</TableHead>
                     <TableHead className="text-right">Value taxed</TableHead>
                     <TableHead className="text-right">Open advance</TableHead>
                     <TableHead className="text-right">Received</TableHead>
                     <TableHead className="text-right">Balance to tax</TableHead>
-                    <TableHead className="w-32" />
+                    <TableHead>Dastavej</TableHead>
+                    <TableHead className="w-36" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {units.map((u) => {
+                  {sortedUnits.map((u) => {
                     const cls = classifyFor(u);
                     const booking = activeBookingFor(u.id);
                     const led = ledgerFor(u);
@@ -728,9 +798,26 @@ const BuilderBookingsPage: React.FC = () => {
                               </>
                             )}
                           </TableCell>
+                          <TableCell className="text-right text-sm tabular-nums">
+                            {u.carpet_area_sqm || '—'}
+                          </TableCell>
                           <TableCell className="text-sm">
                             {cls.ratePct}%
                             <span className="block text-xs text-muted-foreground">eff. {cls.effectiveRatePct}%</span>
+                          </TableCell>
+                          <TableCell className="text-right text-sm tabular-nums">
+                            {u.unit_type !== 'Residential' ? (
+                              <span className="text-muted-foreground">n/a</span>
+                            ) : (() => {
+                              // Distance to the ₹45 lakh limit. Negative means the
+                              // concession is already gone; a small positive number
+                              // means one charge head would end it.
+                              const room = AFFORDABLE_VALUE_LIMIT - cls.gross.gross;
+                              const tone = room < 0
+                                ? 'text-destructive'
+                                : room < 100000 ? 'text-amber-600 dark:text-amber-500' : '';
+                              return <span className={tone}>{formatINR(room)}</span>;
+                            })()}
                           </TableCell>
                           <TableCell className="text-right text-sm">{formatINR(agreement)}</TableCell>
                           <TableCell className="text-right text-sm font-medium">
@@ -746,6 +833,9 @@ const BuilderBookingsPage: React.FC = () => {
                           </TableCell>
                           <TableCell className="text-right text-sm">{formatINR(led.totalReceived)}</TableCell>
                           <TableCell className="text-right text-sm">{formatINR(led.balanceToTax)}</TableCell>
+                          <TableCell className="text-sm tabular-nums">
+                            {u.dastavej_date || <span className="text-muted-foreground">—</span>}
+                          </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-0.5">
                               {canEdit && !booking && u.status !== 'Cancelled' && (
@@ -763,13 +853,53 @@ const BuilderBookingsPage: React.FC = () => {
                                   </Button>
                                 </>
                               )}
+                              {canEdit && (
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="icon" className="h-7 w-7">
+                                      <MoreHorizontal className="h-4 w-4" />
+                                      <span className="sr-only">More actions for unit {u.unit_no}</span>
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end" className="w-60">
+                                    <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                      Corrections
+                                    </DropdownMenuLabel>
+                                    <DropdownMenuItem onSelect={() => setSurface('corrections')}>
+                                      Credit note
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onSelect={() => setSurface('corrections')}>
+                                      Re-rate (Table 10)
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onSelect={() => setSurface('corrections')}>
+                                      Bounce reversal
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onSelect={() => setSurface('corrections')}>
+                                      Convert to another unit
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                      Records
+                                    </DropdownMenuLabel>
+                                    <DropdownMenuItem onSelect={() => setSurface('dastavej')}>
+                                      Record dastavej
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onSelect={() => setSurface('masters')}>
+                                      Edit unit &amp; charge heads
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onSelect={() => setSurface('masters')}>
+                                      Opening balance
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              )}
                             </div>
                           </TableCell>
                         </TableRow>
 
                         {isOpen && (
                           <TableRow>
-                            <TableCell colSpan={10} className="bg-muted/30 p-4">
+                            <TableCell colSpan={13} className="bg-muted/30 p-4">
                               {months.length === 0 ? (
                                 <p className="text-sm text-muted-foreground">
                                   No receipts or invoices for this unit yet.
@@ -1057,6 +1187,21 @@ const BuilderBookingsPage: React.FC = () => {
       </Dialog>
 
       {/* ── Receipt dialog ───────────────────────────────────────────────── */}
+      <Dialog open={!!surface} onOpenChange={(o) => !o && setSurface('')}>
+        <DialogContent className="max-w-[95vw] max-h-[92vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {surface === 'masters' ? 'Units, charge heads & opening balances'
+                : surface === 'corrections' ? 'Corrections — re-rating, credit notes, bounces, conversions'
+                : 'Dastavej register'}
+            </DialogTitle>
+          </DialogHeader>
+          {surface === 'masters' && <BuilderProjectDetailPage />}
+          {surface === 'corrections' && <BuilderAdjustmentsPage />}
+          {surface === 'dastavej' && <BuilderDastavejPage />}
+        </DialogContent>
+      </Dialog>
+
       {project && (
         <BulkReceiptsDialog
           open={bulkReceipts}

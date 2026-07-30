@@ -1,24 +1,22 @@
 /**
- * The Builder workspace — Option A.
+ * The Builder workspace.
  *
- * Three horizontal tabs, because that is the real shape of the work:
+ * Four horizontal tabs and nothing else — no rail, no chips, no sub-strip.
  *
- *   Ledger      everything about the project as it stands — the unit grid, and
- *               the flows that write to it (receipts, adjustments, TDR/FSI,
- *               dastavej) reached from inside it rather than from a menu.
- *   BU Working  the cut-off event and the differential. Separate because it is
- *               a one-off per project that fires a large liability, and burying
- *               it inside the ledger would make it easy to miss.
+ *   Ledger      one table, one row per unit, every derived column on it, every
+ *               action on the row. Masters, corrections and the deed register
+ *               are not places you go: they are things you do to a row.
+ *   BU Working  the cut-off event and the differential.
+ *   TDR / FSI   project-level reverse charge and the consent gate. It is the one
+ *               thing with no unit row to live on, so it keeps a tab.
  *   Returns     assemble the period and hand it to GSTR-1.
  *
- * The earlier vertical rail was replaced for a plain reason: it cost a fifth of
- * the screen width permanently, on a module whose central object is a wide
- * table. Eight steps down the side also implied a wizard the work does not
- * follow — a staffer keying June's receipts is not "on step 3".
- *
- * The grid is the front door of the Ledger tab because the question asked most
- * often is "where does this project stand", not "what happened to unit 101".
- * Sub-views sit behind chips inside the tab, so steps 2–7 are one destination.
+ * The sub-navigation is gone because it was never navigation. "Unit overview"
+ * was derived columns, "Units & masters" was editing two of them, "Dastavej"
+ * was a single date field, and "Corrections" were things that had happened to a
+ * unit. All four were facets of one row, split apart because that was how the
+ * code was organised rather than how the work is. Putting per-unit facts on the
+ * unit row and per-unit actions on the row menu leaves nothing to navigate to.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -38,54 +36,24 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  Building, Layers, CalendarCheck, FileSpreadsheet, AlertTriangle, Settings2,
+  Building, Layers, CalendarCheck, FileSpreadsheet, AlertTriangle, Settings2, Landmark,
 } from 'lucide-react';
 import { prettyPeriodLabel } from '@/utils/builderLedger';
 import { formatINR } from '@/utils/builderRates';
 import { isFsiConsentBlocked } from '@/lib/builderFsiData';
-import BuilderUnitGrid from '@/components/builder/BuilderUnitGrid';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
 
 import BuilderSettingsPage from './BuilderSettingsPage';
 import BuilderProjectsPage from './BuilderProjectsPage';
-import BuilderProjectDetailPage from './BuilderProjectDetailPage';
 import BuilderBookingsPage from './BuilderBookingsPage';
 import BuilderBuEventsPage from './BuilderBuEventsPage';
-import BuilderDastavejPage from './BuilderDastavejPage';
-import BuilderAdjustmentsPage from './BuilderAdjustmentsPage';
 import BuilderFsiPage from './BuilderFsiPage';
 import BuilderReturnsPage from './BuilderReturnsPage';
 
-/** Primary tabs. Three, horizontal, always visible. */
 const TABS = [
   { key: 'ledger', label: 'Ledger', icon: <Layers className="h-4 w-4" /> },
   { key: 'bu', label: 'BU Working', icon: <CalendarCheck className="h-4 w-4" /> },
+  { key: 'fsi', label: 'TDR / FSI', icon: <Landmark className="h-4 w-4" /> },
   { key: 'returns', label: 'Returns', icon: <FileSpreadsheet className="h-4 w-4" /> },
-];
-
-/**
- * Sub-views inside Ledger. `units` is the grid; the rest are the existing
- * flows, now reached from within the tab instead of from the sidebar.
- * `needsInvoicing` marks what disappears for a client that raises no invoices.
- */
-/**
- * Two views, not six.
- *
- * Units, project masters, receipts, invoices, adjustments and dastavej were six
- * chips over what is one object: a unit and the things that happened to it.
- * Ledger now carries all of them — the unit table expands to its own entries,
- * and masters, corrections and the deed are reached from the row rather than
- * from a chip that made you lose your place.
- *
- * TDR/FSI stays separate on purpose, and it is the one thing that genuinely is
- * separate: it hangs off a posted BU event at *project* level, has no unit row
- * to live on, and gates the return through the consent workflow.
- */
-const LEDGER_VIEWS = [
-  { key: 'ledger', label: 'Ledger', needsProject: true },
-  { key: 'fsi', label: 'TDR / FSI', needsProject: true },
 ];
 
 interface ClientRow { id: string; name: string; gstin: string | null }
@@ -104,14 +72,10 @@ const BuilderWorkspacePage: React.FC = () => {
   const [periodTax, setPeriodTax] = useState(0);
   const [showSetup, setShowSetup] = useState(false);
 
-  // Tab, sub-view and project live in the URL, so a workspace view is linkable
-  // and survives a refresh — an employee mid-period keeps their place.
+  // Tab and project live in the URL, so a view is linkable and survives a
+  // refresh — an employee mid-period keeps their place.
   const tab = params.get('tab') || 'ledger';
-  const view = params.get('view') || 'ledger';
   const projectId = params.get('project') || '';
-  // Masters, corrections and the deed register open as panels over the ledger.
-  // They are part of the same tab — you come back to the row you were on.
-  const panel = params.get('panel') || '';
 
   const patch = useCallback((kv: Record<string, string>) => {
     setParams((prev) => {
@@ -122,7 +86,7 @@ const BuilderWorkspacePage: React.FC = () => {
   }, [setParams]);
 
   const selectProject = useCallback(
-    (id: string) => patch({ project: id, tab: 'ledger', view: 'ledger' }),
+    (id: string) => patch({ project: id, tab: 'ledger' }),
     [patch],
   );
 
@@ -144,7 +108,7 @@ const BuilderWorkspacePage: React.FC = () => {
       const rows = (data || []) as ProjectRow[];
       setProjects(rows);
       // A project belonging to another client must not survive a client change,
-      // or a view would quietly render foreign data under the new heading.
+      // or a tab would quietly render foreign data under the new heading.
       if (projectId && !rows.some((p) => p.id === projectId)) patch({ project: '' });
       else if (!projectId && rows.length === 1) patch({ project: rows[0].id });
     })();
@@ -179,20 +143,6 @@ const BuilderWorkspacePage: React.FC = () => {
     return out;
   }, []);
 
-  const project = projects.find((p) => p.id === projectId) || null;
-
-  /**
-   * Row actions on the grid. They deep-link into the sub-view that owns the
-   * flow rather than duplicating its dialog — the adjustment engine has one
-   * implementation and it stays there.
-   */
-  const PANELS: Record<string, { title: string; body: React.ReactNode }> = {
-    masters: { title: 'Units & project masters', body: <BuilderProjectDetailPage /> },
-    adjustments: { title: 'Corrections — re-rating, credit notes, bounces, conversions', body: <BuilderAdjustmentsPage /> },
-    dastavej: { title: 'Dastavej register', body: <BuilderDastavejPage /> },
-    overview: { title: 'Unit overview — rates and ₹45 lakh headroom', body: null },
-  };
-
   if (!canViewBuilderReports()) {
     return (
       <Card>
@@ -203,39 +153,11 @@ const BuilderWorkspacePage: React.FC = () => {
     );
   }
 
-  const needsProject = (v: string) => LEDGER_VIEWS.find((x) => x.key === v)?.needsProject;
-
-  const renderLedger = () => {
-    if (!projectId) {
-      // With no project chosen, the project list is the useful thing to show —
-      // not an empty state telling you to go and find one.
-      return <BuilderProjectsPage />;
-    }
-    if (view === 'fsi') return <BuilderFsiPage />;
-    return (
-      <>
-        <div className="flex flex-wrap items-center gap-1.5 border-b bg-muted/20 px-3 py-2">
-          <span className="mr-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Open
-          </span>
-          {[
-            ['overview', 'Unit overview'],
-            ['masters', 'Units & masters'],
-            ['adjustments', 'Corrections'],
-            ['dastavej', 'Dastavej'],
-          ].map(([k, label]) => (
-            <Button
-              key={k} variant="outline" size="sm" className="h-7 text-xs"
-              onClick={() => patch({ panel: k })}
-            >
-              {label}
-            </Button>
-          ))}
-        </div>
-        <BuilderBookingsPage />
-      </>
-    );
-  };
+  const needsProject = (
+    <div className="p-10 text-center text-sm text-muted-foreground">
+      This works on one project. Choose one above.
+    </div>
+  );
 
   return (
     <BuilderWorkspaceProvider projectId={projectId || undefined} selectProject={selectProject}>
@@ -318,7 +240,6 @@ const BuilderWorkspacePage: React.FC = () => {
           </Card>
         ) : (
           <Card className="overflow-hidden">
-            {/* ── Primary tabs, horizontal ──────────────────────────────── */}
             <div className="flex overflow-x-auto border-b bg-card px-2" role="tablist" aria-label="Builder">
               {TABS.map((t) => {
                 const on = t.key === tab;
@@ -333,7 +254,7 @@ const BuilderWorkspacePage: React.FC = () => {
                     {t.key === 'returns' && postingCount > 0 && (
                       <Badge variant="outline" className="ml-1 text-[10px]">{formatINR(periodTax)}</Badge>
                     )}
-                    {t.key === 'returns' && fsiBlocked && (
+                    {(t.key === 'returns' || t.key === 'fsi') && fsiBlocked && (
                       <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
                     )}
                   </button>
@@ -341,62 +262,14 @@ const BuilderWorkspacePage: React.FC = () => {
               })}
             </div>
 
-            {/* ── Ledger sub-views: steps 2–7, one destination ──────────── */}
-            {tab === 'ledger' && (
-              <div className="flex flex-wrap items-center gap-1.5 border-b bg-muted/30 px-3 py-2">
-                {LEDGER_VIEWS.map((v) => {
-                  const on = v.key === view;
-                  const locked = v.needsProject && !projectId;
-                  return (
-                    <button
-                      key={v.key} type="button"
-                      onClick={() => patch({ view: v.key })}
-                      className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors
-                        ${on ? 'bg-primary text-primary-foreground'
-                          : locked ? 'text-muted-foreground/60 hover:bg-muted'
-                          : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-                    >
-                      {v.label}
-                    </button>
-                  );
-                })}
-                {!projectId && (
-                  <span className="ml-2 text-xs text-muted-foreground">
-                    Pick a project above, or open one from the list.
-                  </span>
-                )}
-              </div>
-            )}
-
             <CardContent className="p-0">
-              {tab === 'ledger' && renderLedger()}
-              {tab === 'bu' && (projectId
-                ? <BuilderBuEventsPage />
-                : <div className="p-10 text-center text-sm text-muted-foreground">
-                    A BU event belongs to one project. Choose a project above.
-                  </div>)}
+              {tab === 'ledger' && (projectId ? <BuilderBookingsPage /> : <BuilderProjectsPage />)}
+              {tab === 'bu' && (projectId ? <BuilderBuEventsPage /> : needsProject)}
+              {tab === 'fsi' && (projectId ? <BuilderFsiPage /> : needsProject)}
               {tab === 'returns' && <BuilderReturnsPage />}
             </CardContent>
           </Card>
         )}
-        {/* Secondary surfaces. Full-width so a wide table still reads, and
-            dismissing returns you to the ledger row you came from. */}
-        <Dialog open={!!panel} onOpenChange={(o) => !o && patch({ panel: '' })}>
-          <DialogContent className="max-w-[95vw] max-h-[92vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>{PANELS[panel]?.title || ''}</DialogTitle>
-            </DialogHeader>
-            {panel === 'overview' && project
-              ? (
-                <BuilderUnitGrid
-                  projectId={project.id}
-                  isMetro={project.is_metro}
-                  onAddUnits={() => patch({ panel: 'masters' })}
-                />
-              )
-              : PANELS[panel]?.body}
-          </DialogContent>
-        </Dialog>
       </div>
     </BuilderWorkspaceProvider>
   );
