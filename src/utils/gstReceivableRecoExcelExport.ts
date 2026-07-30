@@ -9,7 +9,6 @@ interface GstReceivableExportData {
   availedCgst: number; availedSgst: number; availedIgst: number;
   utilizedCgst: number; utilizedSgst: number; utilizedIgst: number;
   portalClosingCgst: number; portalClosingSgst: number; portalClosingIgst: number;
-  payableCgst: number; payableSgst: number; payableIgst: number;
   booksClosingCgst: number; booksClosingSgst: number; booksClosingIgst: number;
   diffCgst: number; diffSgst: number; diffIgst: number;
 }
@@ -23,8 +22,8 @@ export const exportGstReceivableRecoToExcel = (d: GstReceivableExportData) => {
     ? `ADD: NET ITC AVAILABLE (4C) — ${d.prevMonthLabel} ITC Summary`
     : 'ADD: NET ITC AVAILABLE (4C)';
   const utilizedLabel = d.prevMonthLabel
-    ? `LESS: ITC UTILIZED — ${d.prevMonthLabel} GSTR-1 output (capped at Available ITC)`
-    : 'LESS: ITC UTILIZED (min of GSTR-1 output and Available ITC)';
+    ? `LESS: ITC UTILIZED — ${d.prevMonthLabel} GSTR-3B output, Table 3.1a (capped at Available ITC)`
+    : 'LESS: ITC UTILIZED (min of GSTR-3B output and Available ITC)';
 
   const rows: (string | number)[][] = [
     ['GST Receivable Reconciliation'],
@@ -36,7 +35,6 @@ export const exportGstReceivableRecoToExcel = (d: GstReceivableExportData) => {
     [utilizedLabel, d.utilizedCgst, d.utilizedSgst, d.utilizedIgst, sumT(d.utilizedCgst, d.utilizedSgst, d.utilizedIgst)],
     [],
     ['CLOSING BALANCE AS PER PORTAL', d.portalClosingCgst, d.portalClosingSgst, d.portalClosingIgst, sumT(d.portalClosingCgst, d.portalClosingSgst, d.portalClosingIgst)],
-    ['GST PAYABLE (CASH)', d.payableCgst, d.payableSgst, d.payableIgst, sumT(d.payableCgst, d.payableSgst, d.payableIgst)],
     [],
     ['CLOSING BALANCE AS PER BOOKS', d.booksClosingCgst, d.booksClosingSgst, d.booksClosingIgst, sumT(d.booksClosingCgst, d.booksClosingSgst, d.booksClosingIgst)],
     [],

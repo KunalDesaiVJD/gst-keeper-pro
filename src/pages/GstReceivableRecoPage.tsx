@@ -21,7 +21,7 @@ import {
   openingBalancePeriodKey,
   formatPeriodLabel,
 } from '@/utils/parseElectronicCreditLedgerCsv';
-import { computeGstr1OutputTax } from '@/utils/computeGstr1OutputTax';
+import { buildGstr3bJson } from '@/utils/buildGstr3bJson';
 
 type OpeningSource = 'manual' | 'csv' | 'not_applicable';
 
@@ -310,10 +310,16 @@ const GstReceivableRecoPage: React.FC = () => {
       setHasGstr1(!!gstr1Data?.raw_json);
       if (!hasUtilizedFromCsv) {
         if (gstr1Data?.raw_json) {
-          const out = computeGstr1OutputTax(gstr1Data.raw_json);
-          setUtilizedCgst(out.cgst);
-          setUtilizedSgst(out.sgst);
-          setUtilizedIgst(out.igst);
+          // ITC utilized fallback = the GSTR-3B output liability (Table 3.1a),
+          // computed from M-1's GSTR-1 exactly like the GSTR-3B module. Capped
+          // at Available ITC in the closing math below.
+          const { summary } = buildGstr3bJson({
+            gstin: '', periodMonth: prevMonth || '', gstr1Raw: gstr1Data.raw_json,
+            itc: null, rcm: { taxable: 0, igst: 0, cgst: 0, sgst: 0 },
+          });
+          setUtilizedCgst(summary.outward.cgst);
+          setUtilizedSgst(summary.outward.sgst);
+          setUtilizedIgst(summary.outward.igst);
         } else {
           setUtilizedCgst(0); setUtilizedSgst(0); setUtilizedIgst(0);
         }
@@ -597,18 +603,15 @@ const GstReceivableRecoPage: React.FC = () => {
 
   // When utilized comes from the credit ledger CSV, it's the actual per-head
   // debit the portal applied, so we use it as-is and the closing matches the
-  // portal exactly. When utilized falls back to GSTR-1 output we cap at
-  // available (cross-head set-off isn't visible to that path) and surface the
-  // shortfall as GST Payable (Cash) for awareness.
+  // portal exactly. When utilized falls back to the GSTR-3B output we cap at
+  // available (cross-head set-off isn't visible to that path) so the closing
+  // credit-ledger balance never goes negative.
   const safeAvailableCgst = Math.max(0, availableCgst);
   const safeAvailableSgst = Math.max(0, availableSgst);
   const safeAvailableIgst = Math.max(0, availableIgst);
   const actualUtilizedCgst = utilizedFromCsv ? utilizedCgst : Math.min(safeAvailableCgst, utilizedCgst);
   const actualUtilizedSgst = utilizedFromCsv ? utilizedSgst : Math.min(safeAvailableSgst, utilizedSgst);
   const actualUtilizedIgst = utilizedFromCsv ? utilizedIgst : Math.min(safeAvailableIgst, utilizedIgst);
-  const payableCgst = utilizedFromCsv ? 0 : Math.max(0, utilizedCgst - safeAvailableCgst);
-  const payableSgst = utilizedFromCsv ? 0 : Math.max(0, utilizedSgst - safeAvailableSgst);
-  const payableIgst = utilizedFromCsv ? 0 : Math.max(0, utilizedIgst - safeAvailableIgst);
 
   // Closing per portal = Available − ITC actually utilized
   const portalClosingCgst = utilizedFromCsv
@@ -624,10 +627,8 @@ const GstReceivableRecoPage: React.FC = () => {
   const openingTotal = openingCgst + openingSgst + openingIgst;
   const availedTotal = availedCgst + availedSgst + availedIgst;
   const utilizedDisplayTotal = actualUtilizedCgst + actualUtilizedSgst + actualUtilizedIgst;
-  const payableTotal = payableCgst + payableSgst + payableIgst;
   const portalClosingTotal = portalClosingCgst + portalClosingSgst + portalClosingIgst;
   const booksClosingTotal = booksClosingCgst + booksClosingSgst + booksClosingIgst;
-  const hasPayable = payableTotal > 0;
 
   // Diff with Rs.10 tolerance — display 0 if |diff| <= 10
   const applyTolerance = (v: number) => (Math.abs(v) <= 10 ? 0 : v);
@@ -721,7 +722,6 @@ const GstReceivableRecoPage: React.FC = () => {
                   utilizedSgst: actualUtilizedSgst,
                   utilizedIgst: actualUtilizedIgst,
                   portalClosingCgst, portalClosingSgst, portalClosingIgst,
-                  payableCgst, payableSgst, payableIgst,
                   booksClosingCgst, booksClosingSgst, booksClosingIgst,
                   diffCgst, diffSgst, diffIgst,
                 });
@@ -890,7 +890,7 @@ const GstReceivableRecoPage: React.FC = () => {
                   <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">{formatNumber(availedTotal)}</TableCell>
                 </TableRow>
 
-                {/* ITC Utilized — actual per-head debit from credit ledger CSV when available, GSTR-1 output otherwise */}
+                {/* ITC Utilized — actual per-head debit from credit ledger CSV when available, GSTR-3B output otherwise */}
                 <TableRow>
                   <TableCell className="font-medium border border-border">
                     <div>LESS: ITC UTILIZED</div>
@@ -898,8 +898,8 @@ const GstReceivableRecoPage: React.FC = () => {
                       {utilizedFromCsv
                         ? `Actual per-head debit from ${prevMonthLabel || 'M-1'} row of Credit Ledger (covers cross-head set-off)`
                         : prevMonthLabel
-                          ? `From ${prevMonthLabel} GSTR-1 output — capped at Available ITC; excess shown in GST Payable`
-                          : 'From previous month GSTR-1 output — capped at Available ITC'}
+                          ? `From ${prevMonthLabel} GSTR-3B output (Table 3.1a) — capped at Available ITC`
+                          : 'From previous month GSTR-3B output (Table 3.1a) — capped at Available ITC'}
                     </p>
                     {!utilizedFromCsv && !hasGstr1 && (
                       <p className="text-[10px] text-muted-foreground font-normal mt-0.5">
@@ -934,20 +934,6 @@ const GstReceivableRecoPage: React.FC = () => {
                   <TableCell className="text-right tabular-nums font-bold border border-border">{formatNumber(portalClosingIgst)}</TableCell>
                   <TableCell className="text-right tabular-nums font-bold border border-border">{formatNumber(portalClosingTotal)}</TableCell>
                 </TableRow>
-
-                {/* GST Payable — only when output > available ITC (cash leg) */}
-                {hasPayable && (
-                  <TableRow className="bg-destructive/5 hover:bg-destructive/5">
-                    <TableCell className="font-medium border border-border">
-                      <div>GST PAYABLE (CASH)</div>
-                      <p className="text-[10px] text-muted-foreground font-normal mt-0.5">Output liability not covered by Available ITC — settle in cash</p>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums font-medium border border-border text-destructive">{formatNumber(payableCgst)}</TableCell>
-                    <TableCell className="text-right tabular-nums font-medium border border-border text-destructive">{formatNumber(payableSgst)}</TableCell>
-                    <TableCell className="text-right tabular-nums font-medium border border-border text-destructive">{formatNumber(payableIgst)}</TableCell>
-                    <TableCell className="text-right tabular-nums font-bold border border-border text-destructive">{formatNumber(payableTotal)}</TableCell>
-                  </TableRow>
-                )}
 
                 {/* Closing per books — manual */}
                 <TableRow>
