@@ -225,6 +225,11 @@
         job.step = 'filing';
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      } else if (job.mode === 'login') {
+        // Simple login from the Clients → Credentials "Login" button: log in and
+        // stop on the portal, no return/ledger navigation.
+        banner('Logged in ✓ — ' + cur.creds.name + '. You are on the GST portal; this tab is yours now.', '#16a34a');
+        await clearJob();
       } else {
         banner('Logged in — reading ledgers…' + progress);
         job.step = 'ledger';

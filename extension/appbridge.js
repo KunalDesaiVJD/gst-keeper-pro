@@ -58,6 +58,19 @@ window.addEventListener('message', (e) => {
     return;
   }
 
+  // The Clients → Credentials "Login" button asked to just log a client into the
+  // GST portal (no return/ledger navigation). Human does the CAPTCHA.
+  if (d.__gstkPortalLogin) {
+    const info = d.__gstkPortalLogin;
+    if (!info.clientId) return;
+    chrome.runtime.sendMessage({ gstk: true, fn: 'startPortalLogin', args: [info] }, (resp) => {
+      const ok = resp && resp.ok;
+      const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
+      window.postMessage({ __gstkPortalLoginResult: ok ? { ok: true } : { ok: false, error } }, '*');
+    });
+    return;
+  }
+
   // A reco page "Pull" button asked to fetch the ledger opening balances.
   if (d.__gstkPullLedgers) {
     const info = d.__gstkPullLedgers;

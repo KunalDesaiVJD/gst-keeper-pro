@@ -329,6 +329,7 @@ export const buildCreditClosingPerClient = async (clientId: string, anyMonthInFy
 // ─────────────────── REPORT 5: Client login credentials ─────────────────
 
 export interface ClientCredentialRow {
+  id: string;
   name: string;
   gstin: string | null;
   gst_user_id: string | null;
@@ -340,7 +341,7 @@ export interface ClientCredentialRow {
 export const fetchClientCredentials = async (): Promise<ClientCredentialRow[]> => {
   const { data, error } = await supabase
     .from('clients')
-    .select('name, gstin, gst_user_id, gst_password')
+    .select('id, name, gstin, gst_user_id, gst_password')
     .order('name');
   if (error) throw error;
   return (data || []) as ClientCredentialRow[];

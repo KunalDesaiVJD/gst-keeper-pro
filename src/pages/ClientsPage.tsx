@@ -19,6 +19,7 @@ import {
   EyeOff,
   FileSpreadsheet,
   FileText,
+  LogIn,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
@@ -65,6 +66,7 @@ const ClientsPage: React.FC = () => {
   const [showPasswords, setShowPasswords] = useState(true);
   const [credSearch, setCredSearch] = useState('');
   const [exporting, setExporting] = useState<null | 'xlsx' | 'pdf'>(null);
+  const [extReady, setExtReady] = useState(false);
 
   const fetchClients = useCallback(async () => {
     const { data, error } = await supabase
@@ -103,6 +105,33 @@ const ClientsPage: React.FC = () => {
       supabase.removeChannel(channel);
     };
   }, [fetchClients, loadCreds]);
+
+  // Detect the GST Keeper browser extension (for the Credentials "Login" button).
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      const d = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkPortalLoginResult) {
+        if (d.__gstkPortalLoginResult.ok) toast.success('Portal opening in a new tab — type the CAPTCHA there to finish logging in.');
+        else toast.error('Could not start login: ' + d.__gstkPortalLoginResult.error);
+      }
+    };
+    window.addEventListener('message', onMsg);
+    const ping = () => window.postMessage({ __gstkAppReady: true }, '*');
+    ping();
+    const t = setInterval(ping, 1000);
+    const stop = setTimeout(() => clearInterval(t), 6000);
+    return () => { window.removeEventListener('message', onMsg); clearInterval(t); clearTimeout(stop); };
+  }, []);
+
+  const handlePortalLogin = (clientId: string) => {
+    if (!extReady) {
+      toast.error('Install/enable the GST Keeper browser extension to log in from here.');
+      return;
+    }
+    window.postMessage({ __gstkPortalLogin: { clientId } }, '*');
+  };
 
   const handleDeleteClient = async (id: string, name: string) => {
     if (!(await confirm({ title: 'Delete client?', description: `This permanently deletes "${name}" and all of its data.`, destructive: true, confirmText: 'Delete' }))) return;
@@ -364,6 +393,7 @@ const ClientsPage: React.FC = () => {
                       <th className="border border-primary-foreground/20 p-2 text-left">GSTIN</th>
                       <th className="border border-primary-foreground/20 p-2 text-left">GST User ID</th>
                       <th className="border border-primary-foreground/20 p-2 text-left">GST Password</th>
+                      <th className="border border-primary-foreground/20 p-2 text-center w-16">Login</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -376,11 +406,27 @@ const ClientsPage: React.FC = () => {
                         <td className="border border-border p-2 font-mono text-xs">
                           {c.gst_password ? (showPasswords ? c.gst_password : '••••••••') : '—'}
                         </td>
+                        <td className="border border-border p-2 text-center">
+                          <button
+                            onClick={() => handlePortalLogin(c.id)}
+                            disabled={!c.gst_user_id}
+                            className={`inline-flex items-center justify-center h-7 w-7 rounded ${
+                              !c.gst_user_id ? 'text-muted-foreground/40 cursor-not-allowed'
+                                : extReady ? 'text-primary hover:bg-primary/10' : 'text-muted-foreground hover:bg-muted'
+                            }`}
+                            title={!c.gst_user_id ? 'No GST credentials saved'
+                              : extReady ? `Log ${c.name} into the GST portal (you do the CAPTCHA)`
+                                : 'GST Keeper extension not detected yet — install/enable it and reload this page'}
+                            aria-label={`Log ${c.name} into the GST portal`}
+                          >
+                            <LogIn className="h-4 w-4" />
+                          </button>
+                        </td>
                       </tr>
                     ))}
                     {filteredCreds.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="text-center p-6 text-muted-foreground">
+                        <td colSpan={6} className="text-center p-6 text-muted-foreground">
                           {creds.length === 0 ? 'No clients found.' : 'No clients match your search.'}
                         </td>
                       </tr>
