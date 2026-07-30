@@ -45,6 +45,7 @@ const SECTION_LABELS: Record<string, string> = {
   b2b: 'B2B — 4A, 4B, 6B, 6C',
   b2cl: 'B2CL — 5 (B2C Large)',
   b2cs: 'B2CS — 7 (B2C Others)',
+  b2csa: 'B2CSA — 10 (Amended B2C Others)',
   cdnr: 'CDNR — 9B (Registered)',
   cdnur: 'CDNUR — 9B (Unregistered)',
   exp: 'EXP — 6A (Exports)',
@@ -138,7 +139,7 @@ const GSTR1DataPage: React.FC = () => {
   // Per-tab collapse: when a section id is in the set, its table shows only the
   // header + totals row (data rows hidden). Every section starts collapsed so
   // the page opens on a totals-first view.
-  const ALL_TAB_IDS = ['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp', 'hsn', 'nil', 'at', 'txpd', 'doc'];
+  const ALL_TAB_IDS = ['b2b', 'b2cl', 'b2cs', 'b2csa', 'cdnr', 'cdnur', 'exp', 'hsn', 'nil', 'at', 'txpd', 'doc'];
   const [collapsedTabs, setCollapsedTabs] = useState<Set<string>>(() => new Set(ALL_TAB_IDS));
   const isCollapsed = (key: string) => collapsedTabs.has(key);
   const toggleCollapse = (key: string) =>
@@ -498,6 +499,15 @@ const GSTR1DataPage: React.FC = () => {
       csamt: item.csamt,
     }));
   }, [json.b2cs]);
+
+  // B2CSA — Table 10 amendments. Same shape as B2CS plus `omon`, the original
+  // month being amended, which is the whole point of the table.
+  const b2csaRows = useMemo(() => {
+    return (json.b2csa || []).map((item: any) => ({
+      pos: item.pos, typ: item.typ, omon: item.omon, rt: item.rt,
+      txval: item.txval, iamt: item.iamt, camt: item.camt, samt: item.samt, csamt: item.csamt,
+    }));
+  }, [json.b2csa]);
 
   // CDNR data
   const cdnrRows = useMemo(() => {
@@ -1029,6 +1039,56 @@ const GSTR1DataPage: React.FC = () => {
                           <TableCell className={footTd}>{formatNumber(sumBy(b2csRows, 'camt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2csRows, 'samt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2csRows, 'csamt'))}</TableCell>
+                        </TableRow>
+                      </TableFooter>
+                    </Table>
+                  </div>
+                )}
+              </TabsContent>
+
+              {/* B2CSA Tab — Table 10 */}
+              <TabsContent value="b2csa">
+                {b2csaRows.length === 0 ? renderEmptyState('B2CSA') : (
+                  <div className={TABLE_SHELL}>
+                    <Table>
+                      <TableHeader className="sticky top-0 z-10">
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Original Month</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Type</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Taxable Value</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {!isCollapsed('b2csa') && b2csaRows.map((row: any, i: number) => (
+                          <TableRow key={i}>
+                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
+                            <TableCell className="border border-border">{row.omon}</TableCell>
+                            <TableCell className="border border-border">{row.pos}</TableCell>
+                            <TableCell className="border border-border">{row.typ}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.txval)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                      <TableFooter>
+                        <TableRow className="bg-muted hover:bg-muted">
+                          <TableCell className="border border-border font-semibold" colSpan={5}>Total ({b2csaRows.length} rows)</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2csaRows, 'txval'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2csaRows, 'iamt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2csaRows, 'camt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2csaRows, 'samt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(b2csaRows, 'csamt'))}</TableCell>
                         </TableRow>
                       </TableFooter>
                     </Table>

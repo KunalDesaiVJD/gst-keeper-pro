@@ -82,9 +82,27 @@ function computeOutward(g: any) {
     // Credit note subtracts, debit note adds (same convention as computeGstr1OutputTax).
     (g.cdnr || []).forEach((p: any) => (p.nt || []).forEach((nt: any) => (nt.itms || []).forEach((i: any) => addDet(i.itm_det || {}, nt.typ === 'C' ? -1 : 1))));
     (g.cdnur || []).forEach((nt: any) => (nt.itms || []).forEach((i: any) => addDet(i.itm_det || {}, nt.typ === 'C' ? -1 : 1)));
-    // Advances: tax only (no taxable value), AT adds / TXPD subtracts — mirrors the app's output-tax util.
-    (g.at || []).forEach((a: any) => { const it = a.itms?.[0] || a; det.iamt += num(it.iamt); det.camt += num(it.camt); det.samt += num(it.samt); });
-    (g.txpd || []).forEach((a: any) => { const it = a.itms?.[0] || a; det.iamt -= num(it.iamt); det.camt -= num(it.camt); det.samt -= num(it.samt); });
+    // Table 10 — amendments to earlier B2CS entries. Same shape as b2cs, and
+    // they carry a real liability (a retrospective re-rating is reported here,
+    // not as a debit note), so they belong in 3.1(a) like any other outward row.
+    (g.b2csa || []).forEach((i: Record<string, unknown>) => addDet(i));
+    // Advances. The advance amount IS the value being offered to tax when the
+    // supply is a service — construction is, so Notification 66/2017 does not
+    // apply and tax falls due on receipt. Carrying only the tax and not the
+    // value left 3.1(a) internally inconsistent, and materially so for a
+    // builder, where most of the consideration arrives as advances long before
+    // any invoice. AT adds value and tax; TXPD takes both back out when an
+    // invoice later absorbs the advance and reports the full value in Table 7.
+    (g.at || []).forEach((a: any) => {
+      const it = a.itms?.[0] || a;
+      det.txval += num(it.ad_amt);
+      det.iamt += num(it.iamt); det.camt += num(it.camt); det.samt += num(it.samt);
+    });
+    (g.txpd || []).forEach((a: any) => {
+      const it = a.itms?.[0] || a;
+      det.txval -= num(it.ad_amt);
+      det.iamt -= num(it.iamt); det.camt -= num(it.camt); det.samt -= num(it.samt);
+    });
     // Exports = zero-rated.
     (g.exp || []).forEach((e: any) => (e.inv || []).forEach((inv: any) => (inv.itms || []).forEach((i: any) => { zero.txval += num(i.txval); zero.iamt += num(i.iamt); })));
     // Nil / exempt / non-GST.

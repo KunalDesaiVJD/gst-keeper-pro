@@ -65,6 +65,8 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
 
   const s4A = acc(), s4B = acc(), s5 = acc(), s6A = acc(), s6B = acc(), s6C = acc();
   const s7 = acc(), s8 = acc(), s9BR = acc(), s9BUR = acc(), s11A = acc(), s11B = acc();
+  // Table 10 — amendments to earlier B2CS entries (retrospective re-rating).
+  const s10 = acc();
   const s12 = acc(), s13 = acc();
 
   // 4A / 4B / 6B / 6C — B2B (registered), split by type.
@@ -105,6 +107,18 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
     s7.cgst += num(r.camt);
     s7.sgst += num(r.samt);
     s7.cess += num(r.csamt);
+  });
+
+  // 10 — Amendments to earlier B2CS entries. Same shape as b2cs, one row per
+  // (amended month, POS, rate). A retrospective re-rating is reported here
+  // rather than as a debit note, because every buyer is unregistered.
+  (j.b2csa || []).forEach((r: Record<string, unknown>) => {
+    s10.count += 1;
+    s10.value += num(r.txval);
+    s10.igst += num(r.iamt);
+    s10.cgst += num(r.camt);
+    s10.sgst += num(r.samt);
+    s10.cess += num(r.csamt);
   });
 
   // 8 — Nil rated / exempted / non-GST. Value only, no tax.
@@ -220,6 +234,7 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
     row('8', 'Nil rated, exempted and non-GST outward supplies', s8, '-'),
     row('9B', 'Credit / Debit Notes (Registered) — CDNR', s9BR, 'Note'),
     row('9B', 'Credit / Debit Notes (Unregistered) — CDNUR', s9BUR, 'Note'),
+    row('10', 'Amendments to taxable outward supplies to unregistered persons — B2CS Amended', s10, 'Net Value'),
     row('11A', 'Tax liability on advances received', s11A, 'Advance'),
     row('11B', 'Adjustment of advances', s11B, 'Advance'),
     row('12', 'HSN-wise summary of outward supplies', s12, '-'),
@@ -229,7 +244,7 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
   // Liability-bearing sections only, for the grand total (HSN is a memo of the
   // above, Documents carries no value, so both are excluded to avoid double
   // counting).
-  const forTotal = [s4A, s4B, s5, s6A, s6B, s6C, s7, s9BR, s9BUR, s11A];
+  const forTotal = [s4A, s4B, s5, s6A, s6B, s6C, s7, s10, s9BR, s9BUR, s11A];
   const totals = forTotal.reduce(
     (t, a) => ({
       value: t.value + a.value,
@@ -252,6 +267,7 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
     { key: 'nil', label: '8A, 8B, 8C, 8D - Nil Rated Supplies', count: s8.count, value: s8.value },
     { key: 'cdnr', label: '9B - Credit / Debit Notes (Registered)', count: s9BR.count, value: s9BR.value },
     { key: 'cdnur', label: '9B - Credit / Debit Notes (Unregistered)', count: s9BUR.count, value: s9BUR.value },
+    { key: 'b2csa', label: '10 - Amended B2C (Others)', count: s10.count, value: s10.value },
     { key: 'at', label: '11A(1), 11A(2) - Tax Liability (Advances Received)', count: s11A.count, value: s11A.value },
     { key: 'txpd', label: '11B(1), 11B(2) - Adjustment of Advances', count: s11B.count, value: s11B.value },
     { key: 'hsn', label: '12 - HSN-wise summary of outward supplies', count: s12.count, value: s12.value },

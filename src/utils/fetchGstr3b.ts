@@ -18,10 +18,20 @@ export async function fetchGstr3b(
   periodMonth: string, // MM/YYYY
 ): Promise<Gstr3bResult> {
   const short = toShort(periodMonth);
-  const [g, itcRes, rcmRes] = await Promise.all([
+  const [g, itcRes, rcmRes, fsiRes] = await Promise.all([
     supabase.from('gstr1_data').select('raw_json').eq('client_id', clientId).eq('period_month', short).maybeSingle(),
     supabase.from('itc_summaries').select('data').eq('client_id', clientId).eq('period_month', periodMonth).maybeSingle(),
     supabase.from('rcm_data').select('taxable_value, cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18').eq('client_id', clientId).eq('month', short),
+    // Builder TDR/FSI reverse charge. It is a second, independent source of
+    // 3.1(d) that never passes through rcm_data — the working is computed from
+    // a posted BU event and lives in its own view. Reading only rcm_data left a
+    // posted, approved FSI liability out of the return entirely, and because
+    // the credit is blocked under the 1%/5% scheme this is cash, not paperwork.
+    // Only PAY-treatment postings appear here; anything the client has elected
+    // to ignore is excluded by the view itself.
+    supabase.from('builder_rcm_postings')
+      .select('taxable_value, cgst, sgst')
+      .eq('client_id', clientId).eq('period_month', periodMonth),
   ]);
 
   let itc: ItcData | null = null;
@@ -36,6 +46,16 @@ export async function fetchGstr3b(
     cgst: a.cgst + (r.cgst_2_5 || 0) + (r.cgst_9 || 0),
     sgst: a.sgst + (r.sgst_2_5 || 0) + (r.sgst_9 || 0),
   }), { taxable: 0, igst: 0, cgst: 0, sgst: 0 });
+
+  // Fold the builder FSI legs in. Always intra-state — the place of supply for
+  // development rights follows the land under s.12(3)(a) IGST Act — so they add
+  // to CGST and SGST and never to IGST.
+  type FsiLeg = { taxable_value: number | null; cgst: number | null; sgst: number | null };
+  (((fsiRes.data as unknown) as FsiLeg[]) || []).forEach((r) => {
+    rcm.taxable += Number(r.taxable_value) || 0;
+    rcm.cgst += Number(r.cgst) || 0;
+    rcm.sgst += Number(r.sgst) || 0;
+  });
 
   return buildGstr3bJson({ gstin, periodMonth, gstr1Raw: (g.data as any)?.raw_json ?? null, itc, rcm });
 }
