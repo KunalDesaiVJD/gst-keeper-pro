@@ -894,9 +894,9 @@ const GstReceivableRecoPage: React.FC = () => {
               <TableHeader>
                 <TableRow className="bg-primary hover:bg-primary">
                   <TableHead className="font-bold text-primary-foreground border border-primary">PARTICULARS</TableHead>
+                  <TableHead className="font-bold text-primary-foreground text-center border border-primary">IGST</TableHead>
                   <TableHead className="font-bold text-primary-foreground text-center border border-primary">CGST</TableHead>
                   <TableHead className="font-bold text-primary-foreground text-center border border-primary">SGST</TableHead>
-                  <TableHead className="font-bold text-primary-foreground text-center border border-primary">IGST</TableHead>
                   <TableHead className="font-bold text-primary-foreground text-center border border-primary">TOTAL</TableHead>
                 </TableRow>
               </TableHeader>
@@ -962,9 +962,9 @@ const GstReceivableRecoPage: React.FC = () => {
                       )}
                     </div>
                   </TableCell>
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(openingIgst)}</TableCell>
                   <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(openingCgst)}</TableCell>
                   <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(openingSgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(openingIgst)}</TableCell>
                   <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">{formatNumber(openingTotal)}</TableCell>
                 </TableRow>
 
@@ -975,9 +975,9 @@ const GstReceivableRecoPage: React.FC = () => {
                     <p className="text-[10px] text-muted-foreground font-normal mt-0.5">{prevMonthLabel ? `From ${prevMonthLabel} ITC Summary (4A − 4B)` : '4A − 4B from previous month'}</p>
                     {!hasItcSummary && <p className="text-[10px] text-muted-foreground font-normal mt-0.5">{prevMonthLabel ? `ITC Summary not saved for ${prevMonthLabel} — showing 0` : 'ITC Summary not saved — showing 0'}</p>}
                   </TableCell>
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(availedIgst)}</TableCell>
                   <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(availedCgst)}</TableCell>
                   <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(availedSgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(availedIgst)}</TableCell>
                   <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">{formatNumber(availedTotal)}</TableCell>
                 </TableRow>
 
@@ -1003,9 +1003,9 @@ const GstReceivableRecoPage: React.FC = () => {
                       </p>
                     )}
                   </TableCell>
+                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(actualUtilizedIgst)}</TableCell>
                   <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(actualUtilizedCgst)}</TableCell>
                   <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(actualUtilizedSgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(actualUtilizedIgst)}</TableCell>
                   <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">{formatNumber(utilizedDisplayTotal)}</TableCell>
                 </TableRow>
 
@@ -1017,9 +1017,9 @@ const GstReceivableRecoPage: React.FC = () => {
                       Demand / appeal / interest / penalty paid through the credit ledger — auto-detected from the CSV; editable
                     </p>
                   </TableCell>
+                  <TableCell className="p-0 border border-border">{renderBooksCell(drcIgst, setDrcIgst)}</TableCell>
                   <TableCell className="p-0 border border-border">{renderBooksCell(drcCgst, setDrcCgst)}</TableCell>
                   <TableCell className="p-0 border border-border">{renderBooksCell(drcSgst, setDrcSgst)}</TableCell>
-                  <TableCell className="p-0 border border-border">{renderBooksCell(drcIgst, setDrcIgst)}</TableCell>
                   <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">{formatNumber(drcTotal)}</TableCell>
                 </TableRow>
 
@@ -1034,18 +1034,18 @@ const GstReceivableRecoPage: React.FC = () => {
                     <div>CLOSING BALANCE AS PER PORTAL</div>
                     <p className="text-[10px] text-muted-foreground font-normal mt-0.5">Opening + Net ITC Available − ITC Utilized − DRC-03 (clamped at 0)</p>
                   </TableCell>
+                  <TableCell className="text-right tabular-nums font-bold border border-border">{formatNumber(portalClosingIgst)}</TableCell>
                   <TableCell className="text-right tabular-nums font-bold border border-border">{formatNumber(portalClosingCgst)}</TableCell>
                   <TableCell className="text-right tabular-nums font-bold border border-border">{formatNumber(portalClosingSgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums font-bold border border-border">{formatNumber(portalClosingIgst)}</TableCell>
                   <TableCell className="text-right tabular-nums font-bold border border-border">{formatNumber(portalClosingTotal)}</TableCell>
                 </TableRow>
 
                 {/* Closing per books — manual */}
                 <TableRow>
                   <TableCell className="font-medium border border-border">CLOSING BALANCE AS PER BOOKS</TableCell>
+                  <TableCell className="p-0 border border-border">{renderBooksCell(booksClosingIgst, setBooksClosingIgst)}</TableCell>
                   <TableCell className="p-0 border border-border">{renderBooksCell(booksClosingCgst, setBooksClosingCgst)}</TableCell>
                   <TableCell className="p-0 border border-border">{renderBooksCell(booksClosingSgst, setBooksClosingSgst)}</TableCell>
-                  <TableCell className="p-0 border border-border">{renderBooksCell(booksClosingIgst, setBooksClosingIgst)}</TableCell>
                   <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">{formatNumber(booksClosingTotal)}</TableCell>
                 </TableRow>
 
@@ -1057,9 +1057,9 @@ const GstReceivableRecoPage: React.FC = () => {
                 {/* Difference */}
                 <TableRow className="bg-warning/10 hover:bg-warning/10">
                   <TableCell className="font-bold border border-border">DIFFERENCE</TableCell>
+                  <TableCell className={`text-right tabular-nums font-medium border border-border ${diffIgst !== 0 ? 'text-destructive' : ''}`}>{formatNumber(diffIgst)}</TableCell>
                   <TableCell className={`text-right tabular-nums font-medium border border-border ${diffCgst !== 0 ? 'text-destructive' : ''}`}>{formatNumber(diffCgst)}</TableCell>
                   <TableCell className={`text-right tabular-nums font-medium border border-border ${diffSgst !== 0 ? 'text-destructive' : ''}`}>{formatNumber(diffSgst)}</TableCell>
-                  <TableCell className={`text-right tabular-nums font-medium border border-border ${diffIgst !== 0 ? 'text-destructive' : ''}`}>{formatNumber(diffIgst)}</TableCell>
                   <TableCell className={`text-right tabular-nums font-bold border border-border ${diffTotal !== 0 ? 'text-destructive' : ''}`}>{formatNumber(diffTotal)}</TableCell>
                 </TableRow>
               </TableBody>
