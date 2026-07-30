@@ -734,6 +734,66 @@
     return Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
   }
 
+  // Read EVERY data row of the loaded credit-ledger table (not just the Opening
+  // Balance row), so a Pull can capture the ITC utilised and DRC-03 / other
+  // debits the same way the manual CSV upload does. A month's return set-off is
+  // DATED in the following month (e.g. the May return debits post on 20-Jun), so
+  // the reco month's date range already contains M-1's Debit rows. Returns
+  // [{ isDebit, text, igst, cgst, sgst }] for each Credit/Debit data row.
+  function readLedgerRows() {
+    const clean = (el) => (el.textContent || '').replace(/[,\s₹]/g, '');
+    const isNum = (raw) => raw !== '' && raw !== '-' && /^-?\d+(\.\d+)?$/.test(raw);
+    for (const table of $$('table')) {
+      const dataRows = [...table.querySelectorAll('tr')].filter(
+        (tr) => !tr.closest('thead') && tr.querySelectorAll('th').length === 0 && tr.querySelectorAll('td').length > 0
+      );
+      // The ledger grid is the one whose rows carry a Debit/Credit transaction type.
+      if (!dataRows.some((tr) => /\b(debit|credit)\b/i.test(tr.textContent || ''))) continue;
+      const out = [];
+      for (const tr of dataRows) {
+        const text = tr.textContent || '';
+        if (/opening\s*balance|closing\s*balance/i.test(text)) continue;
+        const isDebit = /\bdebit\b/i.test(text);
+        if (!isDebit && !/\bcredit\b/i.test(text)) continue;
+        // The transaction amounts and running balance are the TRAILING contiguous
+        // run of numeric cells: [amount block | balance block]. The leading S.No is
+        // a separate numeric run and is cut off by the non-numeric gap before it.
+        const tds = [...tr.children];
+        const run = [];
+        for (let i = tds.length - 1; i >= 0; i--) {
+          const raw = clean(tds[i]);
+          if (isNum(raw)) run.unshift(Number(raw));
+          else if (run.length) break;
+        }
+        if (run.length < 6 || run.length % 2 !== 0) continue; // need equal amount + balance blocks
+        const amt = run.slice(0, run.length / 2); // [IGST, CGST, SGST, Cess, (Total)]
+        out.push({ isDebit, text, igst: amt[0] || 0, cgst: amt[1] || 0, sgst: amt[2] || 0 });
+      }
+      return out;
+    }
+    return [];
+  }
+
+  // Classify the scraped rows into ITC utilised (the "Other than reverse charge"
+  // return set-off Debit) and DRC-03 / other debits (any other Debit that isn't a
+  // reverse-charge set-off) — mirrors the app's CSV-upload detection. `utilised`
+  // is null when no return set-off Debit is present, so the app keeps its estimate.
+  function classifyLedgerRows(rows) {
+    let utilised = { igst: 0, cgst: 0, sgst: 0 }, sawReturnDebit = false;
+    const drc = { igst: 0, cgst: 0, sgst: 0 };
+    for (const r of rows) {
+      if (!r.isDebit) continue;
+      if (/other than reverse charge/i.test(r.text)) {
+        sawReturnDebit = true;
+        utilised.igst += r.igst; utilised.cgst += r.cgst; utilised.sgst += r.sgst;
+      } else if (!/reverse charge/i.test(r.text)) {
+        drc.igst += r.igst; drc.cgst += r.cgst; drc.sgst += r.sgst;
+      }
+    }
+    if (!sawReturnDebit) utilised = null;
+    return { utilised, drc };
+  }
+
   async function handleLedger(job, cur, progress) {
     if (!/detailedledger/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/ledger/detailedledger'; return; }
     banner('Reading credit-ledger opening balance…' + progress);
@@ -751,23 +811,40 @@
     // Opening + Net ITC available - ITC utilised, so this must be the start-of-period
     // figure or that formula double-counts.
     const bal = await readLedgerBalance('opening');
+    // Also scrape the Debit rows to capture ITC utilised + DRC-03 (the month's
+    // return set-off posts in the following month, so it's already in this range).
+    const ledgerRows = readLedgerRows();
+    const { utilised, drc } = classifyLedgerRows(ledgerRows);
     debugPanel([
       'STEP: Electronic Credit ledger  (' + location.pathname + ')',
       'requested period : ' + per.from + ' – ' + per.to,
       'page is showing  : ' + (shownPeriod() || '(none)'),
       'OPENING row cells: ' + (bal && bal.raw ? JSON.stringify(bal.raw) : '(NO Opening Balance data row found)'),
-      'parsed           : IGST=' + (bal ? bal.igst : '?') + '  CGST=' + (bal ? bal.cgst : '?') + '  SGST=' + (bal ? bal.sgst : '?') + '  Cess=' + (bal ? bal.cess : '?'),
-      '-> GST Receivable Reco gets CGST/SGST/IGST above. (Suspended Reco comes from the NEXT page.)',
+      'parsed opening   : IGST=' + (bal ? bal.igst : '?') + '  CGST=' + (bal ? bal.cgst : '?') + '  SGST=' + (bal ? bal.sgst : '?') + '  Cess=' + (bal ? bal.cess : '?'),
+      'ledger rows read : ' + ledgerRows.length,
+      'ITC utilised     : ' + (utilised ? ('IGST=' + utilised.igst + '  CGST=' + utilised.cgst + '  SGST=' + utilised.sgst) : '(no return set-off Debit found — app keeps its estimate)'),
+      'DRC-03 / other   : IGST=' + drc.igst + '  CGST=' + drc.cgst + '  SGST=' + drc.sgst,
+      '-> GST Receivable Reco gets Opening + ITC utilised + DRC-03 above.',
     ]);
     if (bal) {
-      const opening = {
+      const patch = {
         opening_igst: bal.igst, opening_cgst: bal.cgst, opening_sgst: bal.sgst,
         opening_source: 'portal', opening_portal_pulled_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        drc_igst: drc.igst, drc_cgst: drc.cgst, drc_sgst: drc.sgst,
       };
-      // Credit-ledger opening -> GST Receivable Reco.
-      await GSTKdb.upsertReco('gst_receivable_reco', cur.clientId, job.period, opening);
+      // Only set utilised when a return set-off Debit was actually seen; otherwise
+      // leave it null so the app falls back to its GSTR-3B estimate.
+      if (utilised) {
+        patch.utilized_igst = utilised.igst;
+        patch.utilized_cgst = utilised.cgst;
+        patch.utilized_sgst = utilised.sgst;
+      }
+      // Credit-ledger opening + utilised + DRC -> GST Receivable Reco.
+      await GSTKdb.upsertReco('gst_receivable_reco', cur.clientId, job.period, patch);
       // Echo the figures so they can be checked against the portal at a glance.
-      banner('Credit ledger → IGST ' + inr(bal.igst) + ' · CGST ' + inr(bal.cgst) + ' · SGST ' + inr(bal.sgst) + ' — saved. Now the reversal ledger…' + progress, '#16a34a');
+      const utilNote = utilised ? (' · utilised CGST ' + inr(utilised.cgst)) : '';
+      const drcNote = (drc.cgst || drc.sgst || drc.igst) ? (' · DRC-03 CGST ' + inr(drc.cgst)) : '';
+      banner('Credit ledger → opening CGST ' + inr(bal.cgst) + utilNote + drcNote + ' — saved. Now the reversal ledger…' + progress, '#16a34a');
       await sleep(1200);
     } else {
       banner('No credit-ledger opening row — now the reversal ledger…' + progress, '#f59e0b');
