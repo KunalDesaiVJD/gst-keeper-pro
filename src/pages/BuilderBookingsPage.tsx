@@ -18,9 +18,11 @@ import {
 } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
+import { Checkbox } from '@/components/ui/checkbox';
+import BulkReceiptsDialog, { type BulkReceiptUnit } from '@/components/builder/BulkReceiptsDialog';
 import {
   ArrowLeft, Loader2, ChevronDown, ChevronRight, Plus, Receipt, FileText,
-  AlertTriangle, UserPlus, Trash2, Users,
+  AlertTriangle, UserPlus, Trash2, Users, Pencil, Wallet, CheckSquare,
 } from 'lucide-react';
 import {
   DEFAULT_CHARGE_INCLUSIONS, RATE_CODE_LABEL, classifyUnit, computeTds194IA,
@@ -119,7 +121,14 @@ const BuilderBookingsPage: React.FC = () => {
   const [bookingForm, setBookingForm] = useState(emptyBooking);
   const [bookingMembers, setBookingMembers] = useState([{ ...emptyMember }]);
 
+  const [bulkReceipts, setBulkReceipts] = useState(false);
+  // Selected receipt ids, for bulk delete. Kept as ids rather than rows so a
+  // reload cannot leave the selection pointing at stale objects.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
   const [receiptDialog, setReceiptDialog] = useState(false);
+  /** Set when the receipt dialog is editing rather than creating. */
+  const [editingReceipt, setEditingReceipt] = useState<ReceiptRow | null>(null);
   const [receiptTarget, setReceiptTarget] = useState<{ unit: UnitRow; booking: BookingRow } | null>(null);
   const [receiptForm, setReceiptForm] = useState(emptyReceipt);
 
@@ -344,6 +353,7 @@ const BuilderBookingsPage: React.FC = () => {
 
   // ── Receipt ──────────────────────────────────────────────────────────────
   const openReceipt = (u: UnitRow, b: BookingRow) => {
+    setEditingReceipt(null);
     setReceiptTarget({ unit: u, booking: b });
     setReceiptForm({ ...emptyReceipt });
     setReceiptDialog(true);
@@ -366,6 +376,26 @@ const BuilderBookingsPage: React.FC = () => {
     return isTds194IAApplicable(receiptTarget.booking.total_consideration);
   }, [receiptTarget]);
 
+  /** Reopen an existing receipt in the same dialog that created it. */
+  const openEditReceipt = (u: UnitRow, b: BookingRow, r: ReceiptRow) => {
+    setReceiptTarget({ unit: u, booking: b });
+    setEditingReceipt(r);
+    setReceiptForm({
+      receipt_date: r.receipt_date,
+      receipt_nature: r.receipt_nature,
+      amount_entered: String(r.amount_entered ?? ''),
+      amount_is_gst_inclusive: !!r.amount_is_gst_inclusive,
+      tds_194ia: String(r.tds_194ia ?? ''),
+      bank_credit: r.bank_credit === null || r.bank_credit === undefined ? '' : String(r.bank_credit),
+      instrument_type: r.instrument_type || 'NEFT',
+      instrument_ref: r.instrument_ref || '',
+      cheque_status: r.cheque_status,
+      gst_already_discharged: !!r.gst_already_discharged,
+      doc_no: r.doc_no || '',
+    });
+    setReceiptDialog(true);
+  };
+
   const handleSaveReceipt = async () => {
     if (!receiptTarget || !receiptPreview) return;
     if (!(parseFloat(receiptForm.amount_entered) > 0)) { toast.error('Amount is required'); return; }
@@ -373,7 +403,7 @@ const BuilderBookingsPage: React.FC = () => {
     try {
       const cls = classifyFor(receiptTarget.unit);
       const t = receiptPreview.tax;
-      const { error } = await supabase.from('builder_receipts').insert({
+      const payload = {
         booking_id: receiptTarget.booking.id,
         unit_id: receiptTarget.unit.id,
         receipt_date: receiptForm.receipt_date,
@@ -396,9 +426,16 @@ const BuilderBookingsPage: React.FC = () => {
         doc_series: project?.doc_series_prefix ?? null,
         doc_no: receiptForm.doc_no.trim() || null,
         created_by: user?.id ?? null,
-      });
+      };
+      // Editing rewrites the derived tax as well as the entered amount — the
+      // rate could have moved since, and a receipt carrying its old tax against
+      // a new amount is worse than one that was never edited.
+      const { error } = editingReceipt
+        ? await supabase.from('builder_receipts').update(payload).eq('id', editingReceipt.id)
+        : await supabase.from('builder_receipts').insert(payload);
       if (error) throw error;
-      toast.success('Receipt recorded');
+      toast.success(editingReceipt ? 'Receipt updated' : 'Receipt recorded');
+      setEditingReceipt(null);
       setReceiptDialog(false);
       await load();
     } catch (e) {
@@ -509,6 +546,46 @@ const BuilderBookingsPage: React.FC = () => {
     await load();
   };
 
+  /**
+   * Units a collection run can touch. A receipt hangs off a booking, so a unit
+   * without an active one is not offered rather than being offered and failing.
+   */
+  const bulkReceiptUnits: BulkReceiptUnit[] = useMemo(() => units.flatMap((u) => {
+    const booking = bookings.find((b) => b.unit_id === u.id && b.status === 'Active');
+    if (!booking) return [];
+    const cls = classifyFor(u);
+    const led = ledgerFor(u);
+    return [{
+      unitId: u.id,
+      unitNo: u.unit_no,
+      bookingId: booking.id,
+      rateCode: cls.rateCode,
+      ratePct: cls.ratePct,
+      totalConsideration: Number(booking.total_consideration) || 0,
+      balanceToTax: Math.max(0, (Number(booking.total_consideration) || 0) - (led?.valueTaxed || 0)),
+    }];
+  }), [units, bookings, classifyFor, ledgerFor]);
+
+  const toggleSelect = (id: string) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const handleDeleteSelected = async () => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    if (!window.confirm(
+      `Delete ${ids.length} receipt${ids.length === 1 ? '' : 's'}? `
+      + 'Any advance adjustment against them goes too, and a filed period would need a reversal.',
+    )) return;
+    const { error } = await supabase.from('builder_receipts').delete().in('id', ids);
+    if (error) { toast.error(error.message); return; }
+    toast.success(`${ids.length} receipt${ids.length === 1 ? '' : 's'} deleted`);
+    setSelected(new Set());
+    await load();
+  };
+
   const setChequeStatus = async (r: ReceiptRow, status: ChequeStatus) => {
     const { error } = await supabase.from('builder_receipts')
       .update({ cheque_status: status, bounced_on: status === 'Bounced' ? today() : null })
@@ -553,12 +630,36 @@ const BuilderBookingsPage: React.FC = () => {
         title={`${project.name} — Bookings & Receipts`}
         subtitle="Advances bear tax on receipt (Table 11A); milestone invoices absorb them (Table 11B)"
         icon={<Receipt className="h-5 w-5" />}
-        actions={embedded ? undefined : (
-          <Button variant="outline" onClick={() => navigate(`/builder-projects/${projectId}`)}>
-            <ArrowLeft className="h-4 w-4 mr-2" /> Project
-          </Button>
-        )}
+        actions={
+          <div className="flex gap-2">
+            {canEdit && bulkReceiptUnits.length > 0 && (
+              <Button onClick={() => setBulkReceipts(true)}>
+                <Wallet className="mr-2 h-4 w-4" /> Record receipts
+              </Button>
+            )}
+            {!embedded && (
+              <Button variant="outline" onClick={() => navigate(`/builder-projects/${projectId}`)}>
+                <ArrowLeft className="h-4 w-4 mr-2" /> Project
+              </Button>
+            )}
+          </div>
+        }
       />
+
+      {/* Appears only once something is selected, so it never occupies space
+          during ordinary entry. */}
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2">
+          <CheckSquare className="h-4 w-4 text-primary" />
+          <span className="text-sm font-medium">
+            {selected.size} receipt{selected.size === 1 ? '' : 's'} selected
+          </span>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
+          <Button variant="destructive" size="sm" className="ml-auto" onClick={handleDeleteSelected}>
+            <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete selected
+          </Button>
+        </div>
+      )}
 
       <Card>
         <CardHeader>
@@ -744,7 +845,20 @@ const BuilderBookingsPage: React.FC = () => {
                                                   </TableCell>
                                                   <TableCell className="py-1">
                                                     {canEdit && (
-                                                      <div className="flex gap-0.5">
+                                                      <div className="flex items-center gap-0.5">
+                                                        <Checkbox
+                                                          className="mr-1 h-3.5 w-3.5"
+                                                          checked={selected.has(r.id)}
+                                                          onCheckedChange={() => toggleSelect(r.id)}
+                                                          aria-label={`Select receipt of ${formatINR(r.amount_entered)}`}
+                                                        />
+                                                        <Button
+                                                          variant="ghost" size="icon" className="h-6 w-6"
+                                                          title="Edit receipt"
+                                                          onClick={() => openEditReceipt(u, booking, r)}
+                                                        >
+                                                          <Pencil className="h-3 w-3" />
+                                                        </Button>
                                                         {r.cheque_status !== 'Bounced' && (
                                                           <Button
                                                             variant="ghost" size="icon" className="h-6 w-6"
@@ -943,6 +1057,16 @@ const BuilderBookingsPage: React.FC = () => {
       </Dialog>
 
       {/* ── Receipt dialog ───────────────────────────────────────────────── */}
+      {project && (
+        <BulkReceiptsDialog
+          open={bulkReceipts}
+          onOpenChange={setBulkReceipts}
+          units={bulkReceiptUnits}
+          docSeriesPrefix={project.doc_series_prefix}
+          onSaved={load}
+        />
+      )}
+
       <Dialog open={receiptDialog} onOpenChange={setReceiptDialog}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
