@@ -25,6 +25,36 @@ import { buildGstr3bJson } from '@/utils/buildGstr3bJson';
 
 type OpeningSource = 'manual' | 'csv' | 'not_applicable';
 
+interface HeadTriple { igst: number; cgst: number; sgst: number }
+
+// Simulates the GST portal's cross-head ITC set-off so the fallback closing
+// (when the Credit Ledger CSV isn't loaded) lands on the portal figure rather
+// than leaving IGST credit unused. Order (cash-minimising, matches how the
+// portal auto-sets-off): IGST credit → IGST liability; then IGST fills the
+// CGST/SGST shortfall their OWN credit can't cover; any remaining IGST reduces
+// CGST-then-SGST own-credit usage (so the excess credit is left where the
+// portal usually leaves it); own-head credit pays own-head liability; finally
+// CGST/SGST credit clears any residual IGST liability (Rule 88A). CGST and SGST
+// credit never pay each other. Returns the per-head debit and the closing.
+function simulateCrossHeadSetOff(liability: HeadTriple, credit: HeadTriple): { debit: HeadTriple; closing: HeadTriple } {
+  let Li = Math.max(0, liability.igst), Lc = Math.max(0, liability.cgst), Ls = Math.max(0, liability.sgst);
+  let Ci = Math.max(0, credit.igst), Cc = Math.max(0, credit.cgst), Cs = Math.max(0, credit.sgst);
+  const take = (avail: number, need: number) => Math.min(Math.max(0, avail), Math.max(0, need));
+  let x = take(Ci, Li); Ci -= x; Li -= x;                    // IGST → IGST
+  x = take(Ci, Math.max(0, Lc - Cc)); Ci -= x; Lc -= x;      // IGST → CGST shortfall
+  x = take(Ci, Math.max(0, Ls - Cs)); Ci -= x; Ls -= x;      // IGST → SGST shortfall
+  x = take(Ci, Lc); Ci -= x; Lc -= x;                        // IGST → remaining CGST
+  x = take(Ci, Ls); Ci -= x; Ls -= x;                        // IGST → remaining SGST
+  x = take(Cc, Lc); Cc -= x; Lc -= x;                        // CGST → CGST
+  x = take(Cs, Ls); Cs -= x; Ls -= x;                        // SGST → SGST
+  x = take(Cc, Li); Cc -= x; Li -= x;                        // CGST → residual IGST (88A)
+  x = take(Cs, Li); Cs -= x; Li -= x;                        // SGST → residual IGST (88A)
+  return {
+    debit: { igst: Math.max(0, credit.igst) - Ci, cgst: Math.max(0, credit.cgst) - Cc, sgst: Math.max(0, credit.sgst) - Cs },
+    closing: { igst: Ci, cgst: Cc, sgst: Cs },
+  };
+}
+
 interface Client {
   id: string;
   name: string;
@@ -603,26 +633,34 @@ const GstReceivableRecoPage: React.FC = () => {
 
   // When utilized comes from the credit ledger CSV, it's the actual per-head
   // debit the portal applied, so we use it as-is and the closing matches the
-  // portal exactly. When utilized falls back to the GSTR-3B output we cap at
-  // available (cross-head set-off isn't visible to that path) so the closing
-  // credit-ledger balance never goes negative.
+  // portal exactly. Otherwise we SIMULATE the portal's cross-head set-off
+  // (IGST credit pays IGST, then CGST/SGST) so the fallback closing lands on
+  // the portal figure — see simulateCrossHeadSetOff.
   const safeAvailableCgst = Math.max(0, availableCgst);
   const safeAvailableSgst = Math.max(0, availableSgst);
   const safeAvailableIgst = Math.max(0, availableIgst);
-  const actualUtilizedCgst = utilizedFromCsv ? utilizedCgst : Math.min(safeAvailableCgst, utilizedCgst);
-  const actualUtilizedSgst = utilizedFromCsv ? utilizedSgst : Math.min(safeAvailableSgst, utilizedSgst);
-  const actualUtilizedIgst = utilizedFromCsv ? utilizedIgst : Math.min(safeAvailableIgst, utilizedIgst);
 
-  // Closing per portal = Available − ITC actually utilized
-  const portalClosingCgst = utilizedFromCsv
-    ? availableCgst - actualUtilizedCgst
-    : safeAvailableCgst - actualUtilizedCgst;
-  const portalClosingSgst = utilizedFromCsv
-    ? availableSgst - actualUtilizedSgst
-    : safeAvailableSgst - actualUtilizedSgst;
-  const portalClosingIgst = utilizedFromCsv
-    ? availableIgst - actualUtilizedIgst
-    : safeAvailableIgst - actualUtilizedIgst;
+  let actualUtilizedCgst: number, actualUtilizedSgst: number, actualUtilizedIgst: number;
+  let portalClosingCgst: number, portalClosingSgst: number, portalClosingIgst: number;
+  if (utilizedFromCsv) {
+    actualUtilizedCgst = utilizedCgst;
+    actualUtilizedSgst = utilizedSgst;
+    actualUtilizedIgst = utilizedIgst;
+    portalClosingCgst = availableCgst - actualUtilizedCgst;
+    portalClosingSgst = availableSgst - actualUtilizedSgst;
+    portalClosingIgst = availableIgst - actualUtilizedIgst;
+  } else {
+    const sim = simulateCrossHeadSetOff(
+      { igst: utilizedIgst, cgst: utilizedCgst, sgst: utilizedSgst },
+      { igst: safeAvailableIgst, cgst: safeAvailableCgst, sgst: safeAvailableSgst },
+    );
+    actualUtilizedIgst = sim.debit.igst;
+    actualUtilizedCgst = sim.debit.cgst;
+    actualUtilizedSgst = sim.debit.sgst;
+    portalClosingIgst = sim.closing.igst;
+    portalClosingCgst = sim.closing.cgst;
+    portalClosingSgst = sim.closing.sgst;
+  }
 
   const openingTotal = openingCgst + openingSgst + openingIgst;
   const availedTotal = availedCgst + availedSgst + availedIgst;
@@ -898,8 +936,8 @@ const GstReceivableRecoPage: React.FC = () => {
                       {utilizedFromCsv
                         ? `Actual per-head debit from ${prevMonthLabel || 'M-1'} row of Credit Ledger (covers cross-head set-off)`
                         : prevMonthLabel
-                          ? `From ${prevMonthLabel} GSTR-3B output (Table 3.1a) — capped at Available ITC`
-                          : 'From previous month GSTR-3B output (Table 3.1a) — capped at Available ITC'}
+                          ? `From ${prevMonthLabel} GSTR-3B output (Table 3.1a), set off cross-head like the portal (estimate)`
+                          : 'From previous month GSTR-3B output (Table 3.1a), set off cross-head like the portal (estimate)'}
                     </p>
                     {!utilizedFromCsv && !hasGstr1 && (
                       <p className="text-[10px] text-muted-foreground font-normal mt-0.5">
