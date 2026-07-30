@@ -228,7 +228,36 @@ const BuilderWorkspacePage: React.FC = () => {
         {/* Setup is a panel, not a step — opened when something changes, which
             for most clients is once, at onboarding. */}
         {showSetup && selectedClientId && (
-          <Card><CardContent className="p-0"><BuilderSettingsPage /></CardContent></Card>
+          <Card>
+            <CardContent className="p-0">
+              {/* Project masters belong here rather than on the ledger toolbar:
+                  importing units, naming phases and keying opening balances are
+                  onboarding jobs done once, and a button for them sat on screen
+                  every day for the sake of a few minutes at the start. Editing a
+                  single unit's charge heads is still on that unit's row menu,
+                  which is where it is actually needed — a charge added later is
+                  what pushes a unit past ₹45 lakh. */}
+              {projectId && (
+                <div className="flex flex-wrap items-center gap-3 border-b bg-muted/30 px-4 py-3">
+                  <Layers className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">Project masters</p>
+                    <p className="text-xs text-muted-foreground">
+                      Units, phases and opening balances for{' '}
+                      {projects.find((p) => p.id === projectId)?.name || 'this project'}.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline" size="sm"
+                    onClick={() => window.dispatchEvent(new CustomEvent('builder:open-masters'))}
+                  >
+                    Open
+                  </Button>
+                </div>
+              )}
+              <BuilderSettingsPage />
+            </CardContent>
+          </Card>
         )}
 
         {!selectedClientId ? (

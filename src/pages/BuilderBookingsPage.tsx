@@ -138,6 +138,18 @@ const BuilderBookingsPage: React.FC = () => {
    * which is the whole reason the sub-tab strip was wrong.
    */
   const [surface, setSurface] = useState<'' | 'masters' | 'corrections' | 'dastavej'>('');
+
+  /**
+   * Client setup opens the masters surface too, so the one-time job lives with
+   * the other one-time jobs. A custom event rather than lifted state because
+   * the two are siblings under the workspace and threading a prop through
+   * would give the ledger a second owner for a dialog it already owns.
+   */
+  useEffect(() => {
+    const open = () => setSurface('masters');
+    window.addEventListener('builder:open-masters', open);
+    return () => window.removeEventListener('builder:open-masters', open);
+  }, []);
   /**
    * Sorting by ₹45 lakh headroom puts the units closest to losing the
    * affordable concession at the top. That is the review order that matters:
@@ -685,11 +697,6 @@ const BuilderBookingsPage: React.FC = () => {
                 <Wallet className="mr-2 h-4 w-4" /> Record receipts
               </Button>
             )}
-            {canEdit && (
-              <Button variant="outline" onClick={() => setSurface('masters')}>
-                <Layers className="mr-2 h-4 w-4" /> Units &amp; masters
-              </Button>
-            )}
             <Button
               variant={byHeadroom ? 'default' : 'outline'}
               onClick={() => setByHeadroom((v) => !v)}
@@ -741,6 +748,17 @@ const BuilderBookingsPage: React.FC = () => {
             <div className="p-10 text-center text-muted-foreground">
               <Users className="h-8 w-8 mx-auto mb-3 opacity-40" />
               <p className="text-sm">No units in this project yet.</p>
+              {canEdit && (
+                <>
+                  <p className="mx-auto mt-1 max-w-md text-xs">
+                    Import the unit list to begin. Afterwards this is reached from Client setup —
+                    it is an onboarding job, not a monthly one.
+                  </p>
+                  <Button size="sm" className="mt-4" onClick={() => setSurface('masters')}>
+                    <Layers className="mr-2 h-4 w-4" /> Units &amp; masters
+                  </Button>
+                </>
+              )}
             </div>
           ) : (
             <div className="overflow-x-auto">
