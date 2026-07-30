@@ -8,6 +8,7 @@ interface GstReceivableExportData {
   openingCgst: number; openingSgst: number; openingIgst: number;
   availedCgst: number; availedSgst: number; availedIgst: number;
   utilizedCgst: number; utilizedSgst: number; utilizedIgst: number;
+  drcCgst: number; drcSgst: number; drcIgst: number;
   portalClosingCgst: number; portalClosingSgst: number; portalClosingIgst: number;
   booksClosingCgst: number; booksClosingSgst: number; booksClosingIgst: number;
   diffCgst: number; diffSgst: number; diffIgst: number;
@@ -33,6 +34,7 @@ export const exportGstReceivableRecoToExcel = (d: GstReceivableExportData) => {
     ['OPENING BALANCE AS PER PORTAL', d.openingCgst, d.openingSgst, d.openingIgst, sumT(d.openingCgst, d.openingSgst, d.openingIgst)],
     [availedLabel, d.availedCgst, d.availedSgst, d.availedIgst, sumT(d.availedCgst, d.availedSgst, d.availedIgst)],
     [utilizedLabel, d.utilizedCgst, d.utilizedSgst, d.utilizedIgst, sumT(d.utilizedCgst, d.utilizedSgst, d.utilizedIgst)],
+    ['LESS: DRC-03 / OTHER LEDGER DEBITS', d.drcCgst, d.drcSgst, d.drcIgst, sumT(d.drcCgst, d.drcSgst, d.drcIgst)],
     [],
     ['CLOSING BALANCE AS PER PORTAL', d.portalClosingCgst, d.portalClosingSgst, d.portalClosingIgst, sumT(d.portalClosingCgst, d.portalClosingSgst, d.portalClosingIgst)],
     [],

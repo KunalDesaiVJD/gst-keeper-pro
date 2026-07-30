@@ -119,6 +119,13 @@ const GstReceivableRecoPage: React.FC = () => {
   const [utilizedIgst, setUtilizedIgst] = useState(0);
   const [utilizedFromCsv, setUtilizedFromCsv] = useState(false);
 
+  // DRC-03 / other credit-ledger debits (demand, appeal, interest, penalty)
+  // paid THROUGH the credit ledger in the reco window. Persisted; auto-detected
+  // from the Credit Ledger CSV and manually editable.
+  const [drcCgst, setDrcCgst] = useState(0);
+  const [drcSgst, setDrcSgst] = useState(0);
+  const [drcIgst, setDrcIgst] = useState(0);
+
   // Source-availability flags (drive the small notes on the row labels)
   const [hasItcSummary, setHasItcSummary] = useState(false);
   const [hasGstr1, setHasGstr1] = useState(false);
@@ -212,6 +219,9 @@ const GstReceivableRecoPage: React.FC = () => {
           setUtilizedSgst(Number(r.utilized_sgst) || 0);
           setUtilizedIgst(Number(r.utilized_igst) || 0);
         }
+        setDrcCgst(Number((r as any).drc_cgst) || 0);
+        setDrcSgst(Number((r as any).drc_sgst) || 0);
+        setDrcIgst(Number((r as any).drc_igst) || 0);
 
         // Resolve names for hover popover
         const ids: string[] = [];
@@ -249,6 +259,7 @@ const GstReceivableRecoPage: React.FC = () => {
         setOpeningOverriderName(null);
         setBooksClosingCgst(0); setBooksClosingSgst(0); setBooksClosingIgst(0);
         setUtilizedFromCsv(false);
+        setDrcCgst(0); setDrcSgst(0); setDrcIgst(0);
         setLastSavedBy(null);
       }
 
@@ -419,6 +430,24 @@ const GstReceivableRecoPage: React.FC = () => {
           ? { cgst: prevRow.amountCgst, sgst: prevRow.amountSgst, igst: prevRow.amountIgst }
           : null;
 
+      // DRC-03 / other ledger debits in the reco window = Debit rows between the
+      // opening (M-2) row and period M's first entry whose description is NOT a
+      // monthly return set-off (anything without "reverse charge"). Captures
+      // demand / appeal / interest / penalty paid through the credit ledger.
+      const periodMFirstSrNo = parsed.rows
+        .filter((r) => r.periodMonthKey === selectedMonth)
+        .reduce((min, r) => Math.min(min, r.srNo), Infinity);
+      const drcFromCsv = parsed.rows
+        .filter((r) =>
+          r.transactionType.toLowerCase() === 'debit' &&
+          !r.description.toLowerCase().includes('reverse charge') &&
+          r.srNo > row.srNo &&
+          r.srNo < periodMFirstSrNo)
+        .reduce(
+          (a, r) => ({ cgst: a.cgst + r.amountCgst, sgst: a.sgst + r.amountSgst, igst: a.igst + r.amountIgst }),
+          { cgst: 0, sgst: 0, igst: 0 },
+        );
+
       const now = new Date().toISOString();
       const { error } = await supabase
         .from('gst_receivable_reco' as any)
@@ -438,6 +467,9 @@ const GstReceivableRecoPage: React.FC = () => {
           utilized_cgst: utilizedFromCsvRow?.cgst ?? null,
           utilized_sgst: utilizedFromCsvRow?.sgst ?? null,
           utilized_igst: utilizedFromCsvRow?.igst ?? null,
+          drc_cgst: drcFromCsv.cgst,
+          drc_sgst: drcFromCsv.sgst,
+          drc_igst: drcFromCsv.igst,
           books_closing_cgst: booksClosingCgst,
           books_closing_sgst: booksClosingSgst,
           books_closing_igst: booksClosingIgst,
@@ -466,6 +498,9 @@ const GstReceivableRecoPage: React.FC = () => {
       } else {
         setUtilizedFromCsv(false);
       }
+      setDrcCgst(drcFromCsv.cgst);
+      setDrcSgst(drcFromCsv.sgst);
+      setDrcIgst(drcFromCsv.igst);
 
       const utilizedNote = utilizedFromCsvRow
         ? ` ITC utilized captured from ${prevKey ? formatPeriodLabel(prevKey) : 'M-1'} Debit row.`
@@ -499,6 +534,9 @@ const GstReceivableRecoPage: React.FC = () => {
           utilized_cgst: null,
           utilized_sgst: null,
           utilized_igst: null,
+          drc_cgst: 0,
+          drc_sgst: 0,
+          drc_igst: 0,
           books_closing_cgst: booksClosingCgst,
           books_closing_sgst: booksClosingSgst,
           books_closing_igst: booksClosingIgst,
@@ -508,6 +546,7 @@ const GstReceivableRecoPage: React.FC = () => {
       if (error) throw error;
 
       setOpeningCgst(0); setOpeningSgst(0); setOpeningIgst(0);
+      setDrcCgst(0); setDrcSgst(0); setDrcIgst(0);
       setOpeningSource('not_applicable');
       setOpeningCsvPeriodMonth(null);
       setOpeningCsvUploadedAt(null);
@@ -550,6 +589,9 @@ const GstReceivableRecoPage: React.FC = () => {
           utilized_cgst: utilizedFromCsv ? utilizedCgst : null,
           utilized_sgst: utilizedFromCsv ? utilizedSgst : null,
           utilized_igst: utilizedFromCsv ? utilizedIgst : null,
+          drc_cgst: drcCgst,
+          drc_sgst: drcSgst,
+          drc_igst: drcIgst,
           books_closing_cgst: booksClosingCgst,
           books_closing_sgst: booksClosingSgst,
           books_closing_igst: booksClosingIgst,
@@ -599,6 +641,9 @@ const GstReceivableRecoPage: React.FC = () => {
           utilized_cgst: utilizedFromCsv ? utilizedCgst : null,
           utilized_sgst: utilizedFromCsv ? utilizedSgst : null,
           utilized_igst: utilizedFromCsv ? utilizedIgst : null,
+          drc_cgst: drcCgst,
+          drc_sgst: drcSgst,
+          drc_igst: drcIgst,
           books_closing_cgst: booksClosingCgst,
           books_closing_sgst: booksClosingSgst,
           books_closing_igst: booksClosingIgst,
@@ -662,7 +707,14 @@ const GstReceivableRecoPage: React.FC = () => {
     portalClosingSgst = sim.closing.sgst;
   }
 
+  // DRC-03 / other ledger debits (demand, appeal, interest, penalty) are paid
+  // out of the credit ledger too, so they reduce the closing balance further.
+  portalClosingCgst = Math.max(0, portalClosingCgst - drcCgst);
+  portalClosingSgst = Math.max(0, portalClosingSgst - drcSgst);
+  portalClosingIgst = Math.max(0, portalClosingIgst - drcIgst);
+
   const openingTotal = openingCgst + openingSgst + openingIgst;
+  const drcTotal = drcCgst + drcSgst + drcIgst;
   const availedTotal = availedCgst + availedSgst + availedIgst;
   const utilizedDisplayTotal = actualUtilizedCgst + actualUtilizedSgst + actualUtilizedIgst;
   const portalClosingTotal = portalClosingCgst + portalClosingSgst + portalClosingIgst;
@@ -759,6 +811,7 @@ const GstReceivableRecoPage: React.FC = () => {
                   utilizedCgst: actualUtilizedCgst,
                   utilizedSgst: actualUtilizedSgst,
                   utilizedIgst: actualUtilizedIgst,
+                  drcCgst, drcSgst, drcIgst,
                   portalClosingCgst, portalClosingSgst, portalClosingIgst,
                   booksClosingCgst, booksClosingSgst, booksClosingIgst,
                   diffCgst, diffSgst, diffIgst,
@@ -956,6 +1009,20 @@ const GstReceivableRecoPage: React.FC = () => {
                   <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">{formatNumber(utilizedDisplayTotal)}</TableCell>
                 </TableRow>
 
+                {/* DRC-03 / other ledger debits — auto-detected from the CSV, editable */}
+                <TableRow>
+                  <TableCell className="font-medium border border-border">
+                    <div>LESS: DRC-03 / OTHER LEDGER DEBITS</div>
+                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">
+                      Demand / appeal / interest / penalty paid through the credit ledger — auto-detected from the CSV; editable
+                    </p>
+                  </TableCell>
+                  <TableCell className="p-0 border border-border">{renderBooksCell(drcCgst, setDrcCgst)}</TableCell>
+                  <TableCell className="p-0 border border-border">{renderBooksCell(drcSgst, setDrcSgst)}</TableCell>
+                  <TableCell className="p-0 border border-border">{renderBooksCell(drcIgst, setDrcIgst)}</TableCell>
+                  <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">{formatNumber(drcTotal)}</TableCell>
+                </TableRow>
+
                 {/* Spacer */}
                 <TableRow className="h-2 hover:bg-transparent">
                   <TableCell colSpan={5} className="border-0 p-0"></TableCell>
@@ -965,7 +1032,7 @@ const GstReceivableRecoPage: React.FC = () => {
                 <TableRow className="bg-secondary/30 hover:bg-secondary/30">
                   <TableCell className="font-bold border border-border">
                     <div>CLOSING BALANCE AS PER PORTAL</div>
-                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">Opening + Net ITC Available − ITC Utilized (clamped at 0)</p>
+                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">Opening + Net ITC Available − ITC Utilized − DRC-03 (clamped at 0)</p>
                   </TableCell>
                   <TableCell className="text-right tabular-nums font-bold border border-border">{formatNumber(portalClosingCgst)}</TableCell>
                   <TableCell className="text-right tabular-nums font-bold border border-border">{formatNumber(portalClosingSgst)}</TableCell>
