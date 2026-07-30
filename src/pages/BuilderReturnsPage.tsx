@@ -6,6 +6,7 @@ import { useMonth } from '@/contexts/MonthContext';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
@@ -14,16 +15,28 @@ import {
 } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { FileSpreadsheet, Loader2, Info } from 'lucide-react';
+import {
+  FileSpreadsheet, Loader2, Info, CheckCircle2, AlertTriangle, ShieldAlert, Send, ExternalLink,
+} from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { formatINR, type BuilderRateCode } from '@/utils/builderRates';
 import {
   prettyPeriodLabel, summarisePeriod,
   type PostingRow, type RateBucket,
 } from '@/utils/builderLedger';
+import type { BuilderGstr1Result } from '@/utils/builderGstr1';
+import {
+  previewBuilderGstr1, saveBuilderGstr1, fetchGstr1Status, type Gstr1Status,
+} from '@/lib/builderGstr1Data';
+import { isFsiConsentBlocked } from '@/lib/builderFsiData';
+
+type PostingSource =
+  | 'ADVANCE_11A' | 'ADVANCE_11B' | 'INVOICE_B2CS'
+  | 'CREDIT_NOTE' | 'RECLASS_10_OLD' | 'RECLASS_10_NEW' | 'BOUNCE_REVERSAL';
 
 interface PostingDbRow {
   source_id: string;
-  source_type: 'ADVANCE_11A' | 'ADVANCE_11B' | 'INVOICE_B2CS';
+  source_type: PostingSource;
   gstr1_table: string;
   client_id: string;
   project_id: string;
@@ -39,10 +52,14 @@ interface PostingDbRow {
   sgst: number;
 }
 
-const SOURCE_LABEL: Record<PostingDbRow['source_type'], string> = {
+const SOURCE_LABEL: Record<PostingSource, string> = {
   ADVANCE_11A: 'Advance received',
   ADVANCE_11B: 'Advance adjusted',
   INVOICE_B2CS: 'Invoice',
+  CREDIT_NOTE: 'Credit note',
+  RECLASS_10_OLD: 'Re-rating — old rate reversed',
+  RECLASS_10_NEW: 'Re-rating — at correct rate',
+  BOUNCE_REVERSAL: 'Bounce reversal',
 };
 
 /** Rate-wise table shared by all four sections. */
@@ -113,15 +130,25 @@ const BucketTable: React.FC<{ buckets: RateBucket[]; emptyText: string }> = ({ b
  * (B2CL), CDNUR and 3B Table 3.2 are all unreachable.
  */
 const BuilderReturnsPage: React.FC = () => {
-  const { canViewBuilderReports } = useAuth();
+  const { canViewBuilderReports, user } = useAuth();
   const { selectedClientId, setSelectedClientId } = useClient();
   const { selectedMonth, setSelectedMonth } = useMonth();
+  const navigate = useNavigate();
 
   const [clients, setClients] = useState<{ id: string; name: string; gstin: string | null }[]>([]);
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [projectFilter, setProjectFilter] = useState<string>('ALL');
   const [rows, setRows] = useState<PostingDbRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+
+  // ── Return preparation state ──────────────────────────────────────────────
+  // The preview is always built for the whole client, never the project filter:
+  // GSTR-1 is filed per GSTIN, so the filter reads the workpaper but must not
+  // shape what gets filed.
+  const [preview, setPreview] = useState<BuilderGstr1Result | null>(null);
+  const [fsiBlocked, setFsiBlocked] = useState(false);
+  const [gstr1Status, setGstr1Status] = useState<Gstr1Status | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -162,6 +189,79 @@ const BuilderReturnsPage: React.FC = () => {
   }, [selectedClientId, selectedMonth, projectFilter]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const selectedClient = useMemo(
+    () => clients.find((c) => c.id === selectedClientId) || null,
+    [clients, selectedClientId],
+  );
+
+  /**
+   * Refresh everything the "prepare" panel needs: what the return would contain,
+   * whether an FSI consent is still outstanding, and what GSTR-1 already holds.
+   */
+  const refreshPrepare = useCallback(async () => {
+    if (!selectedClientId || !selectedMonth) {
+      setPreview(null); setFsiBlocked(false); setGstr1Status(null);
+      return;
+    }
+    try {
+      const [built, blocked, status] = await Promise.all([
+        previewBuilderGstr1({
+          clientId: selectedClientId,
+          gstin: selectedClient?.gstin ?? null,
+          period: selectedMonth,
+        }),
+        isFsiConsentBlocked(selectedClientId, selectedMonth),
+        fetchGstr1Status(selectedClientId, selectedMonth),
+      ]);
+      setPreview(built);
+      setFsiBlocked(blocked);
+      setGstr1Status(status);
+    } catch (e) {
+      toast.error(`Could not prepare the return: ${(e as Error).message}`);
+    }
+  }, [selectedClientId, selectedMonth, selectedClient?.gstin]);
+
+  useEffect(() => { void refreshPrepare(); }, [refreshPrepare]);
+
+  const handleGenerate = async () => {
+    if (!selectedClientId || !selectedMonth) return;
+    setIsGenerating(true);
+    try {
+      const { result, blocked } = await saveBuilderGstr1({
+        clientId: selectedClientId,
+        gstin: selectedClient?.gstin ?? null,
+        period: selectedMonth,
+        userId: user?.id ?? null,
+      });
+      if (blocked.length) {
+        toast.error(blocked[0].message);
+        setPreview(result);
+        return;
+      }
+      toast.success(`GSTR-1 generated for ${prettyPeriodLabel(selectedMonth)}.`);
+      await refreshPrepare();
+    } catch (e) {
+      toast.error(`Could not generate: ${(e as Error).message}`);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const blockers = useMemo(() => {
+    const out: string[] = [];
+    if (fsiBlocked) {
+      out.push('A TDR/FSI liability for this period is marked to be ignored, and the client\'s '
+        + 'written consent is not yet on record and approved.');
+    }
+    (preview?.warnings || []).filter((w) => w.severity === 'BLOCK').forEach((w) => out.push(w.message));
+    return out;
+  }, [fsiBlocked, preview]);
+
+  const cautions = useMemo(
+    () => (preview?.warnings || []).filter((w) => w.severity === 'WARN').map((w) => w.message),
+    [preview],
+  );
 
   const summary = useMemo(
     () => summarisePeriod(rows.map((r) => ({
@@ -242,6 +342,126 @@ const BuilderReturnsPage: React.FC = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* ── Prepare and hand off to GSTR-1 ─────────────────────────────────── */}
+      {selectedClientId && (
+        <Card className="border-primary/30">
+          <CardHeader>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <CardTitle className="text-base">Prepare GSTR-1 for {prettyPeriodLabel(selectedMonth)}</CardTitle>
+                <CardDescription>
+                  Figures come from bookings, receipts, BU events and adjustments — nothing is
+                  keyed here. Generating writes the return into GSTR-1, where it is reviewed and
+                  pushed to the portal. ITC is untouched: that stays in GST Working.
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline" size="sm"
+                  onClick={() => navigate('/gstr1-data')}
+                >
+                  Open GSTR-1 <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleGenerate}
+                  disabled={isGenerating || blockers.length > 0 || !preview}
+                >
+                  {isGenerating
+                    ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                    : <Send className="mr-1.5 h-4 w-4" />}
+                  {gstr1Status?.fromBuilder ? 'Regenerate' : 'Generate'}
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* What the return would carry. */}
+            {preview && (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                {[
+                  { label: 'Table 7 — B2CS', n: preview.counts.b2cs },
+                  { label: 'Table 11A — advances', n: preview.counts.at },
+                  { label: 'Table 11B — adjusted', n: preview.counts.txpd },
+                  { label: 'Table 10 — amendments', n: preview.counts.b2csa },
+                ].map((s) => (
+                  <div key={s.label} className="rounded-lg border bg-muted/30 p-3">
+                    <p className="text-xs text-muted-foreground">{s.label}</p>
+                    <p className="text-lg font-semibold">{s.n}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {s.n === 1 ? 'rate line' : 'rate lines'}
+                    </p>
+                  </div>
+                ))}
+                <div className="rounded-lg border bg-primary/5 p-3">
+                  <p className="text-xs text-muted-foreground">Tax in the return</p>
+                  <p className="text-lg font-semibold">{formatINR(preview.totalTax)}</p>
+                  <p className="text-xs text-muted-foreground">CGST + SGST</p>
+                </div>
+              </div>
+            )}
+
+            {/* Blockers stop generation; cautions do not. */}
+            {blockers.length > 0 && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+                <p className="flex items-center gap-1.5 text-sm font-medium text-destructive">
+                  <ShieldAlert className="h-4 w-4" /> Cannot generate yet
+                </p>
+                <ul className="mt-1.5 space-y-1 pl-6 text-xs text-muted-foreground list-disc">
+                  {blockers.map((b) => <li key={b}>{b}</li>)}
+                </ul>
+              </div>
+            )}
+            {cautions.length > 0 && blockers.length === 0 && (
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
+                <p className="flex items-center gap-1.5 text-sm font-medium text-amber-700 dark:text-amber-500">
+                  <AlertTriangle className="h-4 w-4" /> Worth checking first
+                </p>
+                <ul className="mt-1.5 space-y-1 pl-6 text-xs text-muted-foreground list-disc">
+                  {cautions.map((c) => <li key={c}>{c}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {/* Where GSTR-1 currently stands for this period. */}
+            <div className="flex items-start gap-2 text-xs text-muted-foreground">
+              {gstr1Status?.fromBuilder ? (
+                <>
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                  <span>
+                    GSTR-1 holds a return generated here
+                    {gstr1Status.importedAt
+                      ? ` on ${new Date(gstr1Status.importedAt).toLocaleString('en-IN')}`
+                      : ''}. Regenerating replaces it.
+                  </span>
+                </>
+              ) : gstr1Status ? (
+                <>
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+                  <span>
+                    GSTR-1 already holds an uploaded file for this period
+                    {gstr1Status.fileName ? ` (${gstr1Status.fileName})` : ''}. Generating replaces it
+                    with the figures computed here.
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Info className="h-4 w-4 shrink-0" />
+                  <span>Nothing in GSTR-1 for this period yet.</span>
+                </>
+              )}
+            </div>
+
+            {projectFilter !== 'ALL' && (
+              <p className="text-xs text-muted-foreground">
+                The workpaper below is filtered to one project, but the return covers every project
+                under this GSTIN — a GSTR-1 is filed per registration, not per project.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {isLoading && (
         <div className="flex items-center gap-2 text-muted-foreground text-sm">
@@ -361,8 +581,9 @@ const BuilderReturnsPage: React.FC = () => {
             <p className="text-xs">
               Taxable value is shown after the 1/3rd deemed land deduction, at the notified rate
               (1.5% / 7.5% / 18%). Tax is always CGST + SGST in equal halves. HSN for Table 12 is SAC 9954.
-              BU differentials, conversions and bounce reversals will post into these same tables once
-              later phases are built.
+              BU differentials, credit notes, re-ratings and bounce reversals all post into these same
+              tables. TDR/FSI reverse charge is not here by design — the credit is blocked under the
+              1%/5% scheme, so it is paid in cash through 3B Table 3.1(d) and never reaches GSTR-1.
             </p>
           </div>
         </>

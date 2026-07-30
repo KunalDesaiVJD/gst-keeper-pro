@@ -228,7 +228,7 @@ const BuilderBuEventsPage: React.FC = () => {
         posting_period: effectivePeriod,
         status: 'PREPARED',
         notes: form.notes.trim() || null,
-        created_by: user?.userId ?? null,
+        created_by: user?.id ?? null,
       }).select('id').single();
       if (error) throw error;
 
@@ -296,7 +296,7 @@ const BuilderBuEventsPage: React.FC = () => {
         postingPeriod: ev.posting_period,
         postingDate: ev.posting_basis === 'BU_MONTH' ? ev.bu_date : today(),
         docSeries: project?.doc_series_prefix ?? null,
-        userId: user?.userId ?? null,
+        userId: user?.id ?? null,
       });
       toast.success(
         `Posted: ${res.invoicesCreated} differential invoice(s), ${res.adjustmentsCreated} advance `

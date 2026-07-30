@@ -313,7 +313,7 @@ const BuilderBookingsPage: React.FC = () => {
         booking_date: bookingForm.booking_date,
         total_consideration: parseFloat(bookingForm.total_consideration) || 0,
         notes: bookingForm.notes.trim() || null,
-        created_by: user?.userId ?? null,
+        created_by: user?.id ?? null,
       }).select('id').single();
       if (error) throw error;
 
@@ -393,7 +393,7 @@ const BuilderBookingsPage: React.FC = () => {
         period_month: dateToPeriod(receiptForm.receipt_date),
         doc_series: project?.doc_series_prefix ?? null,
         doc_no: receiptForm.doc_no.trim() || null,
-        created_by: user?.userId ?? null,
+        created_by: user?.id ?? null,
       });
       if (error) throw error;
       toast.success('Receipt recorded');
@@ -461,7 +461,7 @@ const BuilderBookingsPage: React.FC = () => {
         period_month: period,
         doc_series: project?.doc_series_prefix ?? null,
         doc_no: invoiceForm.doc_no.trim() || null,
-        created_by: user?.userId ?? null,
+        created_by: user?.id ?? null,
       }).select('id').single();
       if (error) throw error;
 
@@ -480,7 +480,7 @@ const BuilderBookingsPage: React.FC = () => {
             rate_code: a.rateCode,
             rate_pct: a.ratePct,
             period_month: period,
-            created_by: user?.userId ?? null,
+            created_by: user?.id ?? null,
           })),
         );
         if (aErr) throw aErr;

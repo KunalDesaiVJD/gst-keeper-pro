@@ -231,7 +231,7 @@ const BuilderAdjustmentsPage: React.FC = () => {
         schedule: previewSchedule,
         postingPeriod: reclassPeriod,
         reason: reclassReason,
-        userId: user?.userId ?? null,
+        userId: user?.id ?? null,
       });
       toast.success('Re-rating schedule saved — post it to feed Table 10');
       setReclassDialog(null);
@@ -250,7 +250,7 @@ const BuilderAdjustmentsPage: React.FC = () => {
       + 're-reported at the correct rate. Interest u/s 50 is payable in cash separately.',
     )) return;
     const { error } = await supabase.from('builder_reclassifications')
-      .update({ status: 'POSTED', posted_at: new Date().toISOString(), posted_by: user?.userId ?? null })
+      .update({ status: 'POSTED', posted_at: new Date().toISOString(), posted_by: user?.id ?? null })
       .eq('id', r.id);
     if (error) { toast.error(error.message); return; }
     toast.success('Re-rating posted to Table 10');
@@ -269,7 +269,7 @@ const BuilderAdjustmentsPage: React.FC = () => {
     setIsSaving(true);
     try {
       await raiseBounceReversal({
-        receipt: r, projectId: projectId!, bouncedOn: today(), userId: user?.userId ?? null,
+        receipt: r, projectId: projectId!, bouncedOn: today(), userId: user?.id ?? null,
       });
       toast.success('Reversal raised — offset it against later months at the same rate');
       await load();
@@ -294,7 +294,7 @@ const BuilderAdjustmentsPage: React.FC = () => {
         candidates: cands,
         alreadyAdjusted: Number(b.adjusted_value),
         totalConsideration: Number(b.consideration),
-        userId: user?.userId ?? null,
+        userId: user?.id ?? null,
       });
       if (res.applied <= 0) {
         toast.warning('No later month has advances at this rate in this project — carried forward.');
@@ -338,7 +338,7 @@ const BuilderAdjustmentsPage: React.FC = () => {
         docSeries: project?.doc_series_prefix ?? null,
         docNo: cnForm.doc_no.trim() || null,
         reason: cnForm.reason.trim() || null,
-        userId: user?.userId ?? null,
+        userId: user?.id ?? null,
       });
       if (res.withinWindow) toast.success('Credit note raised');
       else toast.warning(
@@ -393,7 +393,7 @@ const BuilderAdjustmentsPage: React.FC = () => {
         to_rate_code: to.rateCode,
         to_rate_pct: to.ratePct,
         differential_tax: calc.differentialTax,
-        created_by: user?.userId ?? null,
+        created_by: user?.id ?? null,
       });
       if (error) throw error;
       toast.success(
@@ -430,7 +430,7 @@ const BuilderAdjustmentsPage: React.FC = () => {
         projectId: projectId!,
         restated: restatePreview,
         treatment: restateTreatment,
-        userId: user?.userId ?? null,
+        userId: user?.id ?? null,
       });
       toast.success(
         `Restated — excess tax ${formatINR(restatePreview.excessTax)} booked; `
