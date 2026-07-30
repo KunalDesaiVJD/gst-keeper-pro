@@ -178,7 +178,7 @@ const BuilderFsiPage: React.FC = () => {
         tdrFsiTotalValue: parseFloat(fsiValue) || 0,
         treatment,
         notes: notes.trim() || null,
-        userId: user?.userId ?? null,
+        userId: user?.id ?? null,
       });
       toast.success('FSI working saved — commit it when you are satisfied');
       setDialog(null);
@@ -200,7 +200,7 @@ const BuilderFsiPage: React.FC = () => {
     if (!window.confirm(msg)) return;
     setIsSaving(true);
     try {
-      await postFsiWorking({ workingId: w.id, treatment: w.treatment, userId: user?.userId ?? null });
+      await postFsiWorking({ workingId: w.id, treatment: w.treatment, userId: user?.id ?? null });
       toast.success(w.treatment === 'PAY' ? 'Posted to Table 3.1(d)' : 'Held back — consent now required');
       await load();
     } catch (e) {
@@ -224,7 +224,7 @@ const BuilderFsiPage: React.FC = () => {
         fsiValue: w.allocated_value,
         rcmAmount: w.total_rcm,
         staffName: user?.firstName ?? null,
-        userId: user?.userId ?? null,
+        userId: user?.id ?? null,
       });
       if (!res.ok) { toast.error(res.reason || 'Could not send.'); return; }
       toast.success('Instruction request queued to the client from gst@vjdesai.com');
@@ -244,7 +244,7 @@ const BuilderFsiPage: React.FC = () => {
         workingId: confirmDialog.id,
         documentUrl: docUrl.trim() || null,
         notes: confirmNotes.trim() || null,
-        userId: user?.userId ?? null,
+        userId: user?.id ?? null,
       });
       toast.success('Confirmation recorded — awaiting GST Manager approval');
       setConfirmDialog(null);
@@ -264,7 +264,7 @@ const BuilderFsiPage: React.FC = () => {
     )) return;
     setIsSaving(true);
     try {
-      await approveFsiConsent({ workingId: w.id, userId: user?.userId ?? null });
+      await approveFsiConsent({ workingId: w.id, userId: user?.id ?? null });
       toast.success('Approved — the period is released for filing');
       await load();
     } catch (e) {

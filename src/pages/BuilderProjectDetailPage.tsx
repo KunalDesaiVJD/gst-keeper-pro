@@ -29,6 +29,7 @@ import {
 } from '@/utils/builderRates';
 import { CHARGE_HEADS, fetchBuilderSettings } from '@/lib/builderSettings';
 import { CHARGE_HEAD_LABEL } from '@/utils/builderRates';
+import BulkAddUnitsDialog from '@/components/builder/BulkAddUnitsDialog';
 
 interface ProjectRow {
   id: string;
@@ -115,6 +116,7 @@ const BuilderProjectDetailPage: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
 
   const [unitDialog, setUnitDialog] = useState(false);
+  const [bulkDialog, setBulkDialog] = useState(false);
   const [editingUnit, setEditingUnit] = useState<UnitRow | null>(null);
   const [unitForm, setUnitForm] = useState(emptyUnitForm);
   const [unitCharges, setUnitCharges] = useState<UnitCharge[]>([]);
@@ -275,7 +277,7 @@ const BuilderProjectDetailPage: React.FC = () => {
       area_limit_sqm: cls.areaLimitSqM,
       is_rrep: cls.isRrep,
       reason: last ? reason : 'INITIAL',
-      created_by: user?.userId ?? null,
+      created_by: user?.id ?? null,
     });
   };
 
@@ -292,7 +294,7 @@ const BuilderProjectDetailPage: React.FC = () => {
         carpet_area_sqm: parseFloat(unitForm.carpet_area_sqm) || 0,
         base_consideration: parseFloat(unitForm.base_consideration) || 0,
         status: unitForm.status,
-        updated_by: user?.userId ?? null,
+        updated_by: user?.id ?? null,
       };
 
       let unitId = editingUnit?.id;
@@ -302,7 +304,7 @@ const BuilderProjectDetailPage: React.FC = () => {
       } else {
         const { data, error } = await supabase
           .from('builder_units')
-          .insert({ ...payload, created_by: user?.userId ?? null })
+          .insert({ ...payload, created_by: user?.id ?? null })
           .select('id').single();
         if (error) throw error;
         unitId = data.id;
@@ -412,7 +414,7 @@ const BuilderProjectDetailPage: React.FC = () => {
         cumulative_tds_194ia: parseFloat(openingForm.cumulative_tds_194ia) || 0,
         is_affordable_at_opening: cls.affordable.isAffordable,
         rate_code_at_opening: cls.rateCode,
-        updated_by: user?.userId ?? null,
+        updated_by: user?.id ?? null,
       }, { onConflict: 'unit_id' });
       if (error) throw error;
       toast.success('Opening balance saved');
@@ -534,7 +536,12 @@ const BuilderProjectDetailPage: React.FC = () => {
                 </CardDescription>
               </div>
               {canEditUnits && (
-                <Button onClick={openCreateUnit}><Plus className="h-4 w-4 mr-2" /> Add unit</Button>
+                <div className="flex shrink-0 gap-2">
+                  <Button variant="outline" onClick={() => setBulkDialog(true)}>
+                    <Layers className="h-4 w-4 mr-2" /> Add many
+                  </Button>
+                  <Button onClick={openCreateUnit}><Plus className="h-4 w-4 mr-2" /> Add unit</Button>
+                </div>
               )}
             </CardHeader>
             <CardContent className="p-0">
@@ -692,6 +699,21 @@ const BuilderProjectDetailPage: React.FC = () => {
       </Tabs>
 
       {/* ── Unit dialog ──────────────────────────────────────────────────── */}
+      {project && (
+        <BulkAddUnitsDialog
+          open={bulkDialog}
+          onOpenChange={setBulkDialog}
+          projectId={project.id}
+          groups={groups}
+          groupingLabel={project.grouping_label}
+          isMetro={project.is_metro}
+          isRrep={rrep.isRrep}
+          settings={settings}
+          existingUnitNos={units.map((u) => u.unit_no)}
+          onSaved={load}
+        />
+      )}
+
       <Dialog open={unitDialog} onOpenChange={setUnitDialog}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>

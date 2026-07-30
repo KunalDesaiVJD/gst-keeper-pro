@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
-import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, Inbox, BarChart3, Download, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
+import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, Inbox, BarChart3, Download, ChevronsDownUp, ChevronsUpDown, FileSpreadsheet } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -31,6 +31,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
+import { useNavigate } from 'react-router-dom';
+import { isBuilderGenerated as isBuilderSourced } from '@/utils/builderGstr1';
 
 // gstr1_data stores period_month as the short label ("Jun-26"). The rest of
 // the app shares a single MonthContext value in "MM/YYYY" form, so convert
@@ -63,6 +65,9 @@ interface Client {
   id: string;
   name: string;
   gstin: string;
+  // Promoters file from the builder module: their outward side is computed from
+  // bookings, receipts and BU events, so there is no JSON to upload.
+  regular_sub_type?: string | null;
 }
 
 interface GSTR1Record {
@@ -117,6 +122,7 @@ const GSTR1DataPage: React.FC = () => {
   // another page (e.g. ITC Summary, Suspended Reco) preserves the context.
   const { selectedClientId: selectedClient, setSelectedClientId: setSelectedClient } = useClient();
   const { selectedMonth, setSelectedMonth } = useMonth();
+  const navigate = useNavigate();
   const [clients, setClients] = useState<Client[]>([]);
   const [gstr1Data, setGstr1Data] = useState<GSTR1Record | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -188,9 +194,28 @@ const GSTR1DataPage: React.FC = () => {
   }, [selectedMonth]);
 
   const fetchClients = useCallback(async () => {
-    const { data } = await supabase.from('clients').select('id, name, gstin').order('name');
-    setClients(data || []);
+    const { data } = await supabase
+      .from('clients').select('id, name, gstin, regular_sub_type').order('name');
+    setClients((data || []) as Client[]);
   }, []);
+
+  /**
+   * Promoters do not upload a GSTR-1. Their outward side is computed in the
+   * builder module from bookings, receipts, BU events and adjustments, and
+   * written here by "Generate" on Builder Returns — so for these clients the
+   * import path is closed rather than merely discouraged. Uploading a file
+   * alongside the computed return is how the two quietly diverge.
+   */
+  const isBuilderClient = useMemo(
+    () => clients.find((c) => c.id === selectedClient)?.regular_sub_type === 'Builder',
+    [clients, selectedClient],
+  );
+
+  /** Was the stored return produced by Builder Returns rather than uploaded? */
+  const isBuilderGenerated = useMemo(
+    () => isBuilderSourced(gstr1Data?.raw_json),
+    [gstr1Data],
+  );
 
   const fetchGSTR1Data = useCallback(async () => {
     if (!selectedClient || !selectedMonth) { setGstr1Data(null); return; }
@@ -226,6 +251,12 @@ const GSTR1DataPage: React.FC = () => {
   const handleImportClick = () => {
     if (!selectedClient || !selectedMonth) {
       toast.error('Please select a client and month first');
+      return;
+    }
+    // Belt as well as braces: the button is already swapped out for builder
+    // clients, but the handler refuses too so no future caller can slip past it.
+    if (isBuilderClient) {
+      toast.error('This is a builder client — generate the return from Builder Returns instead.');
       return;
     }
     fileInputRef.current?.click();
@@ -627,10 +658,17 @@ const GSTR1DataPage: React.FC = () => {
         icon={<FileJson className="h-6 w-6" />}
         actions={isStaff ? (
           <>
-            <Button onClick={handleImportClick} disabled={isImporting || !selectedClient || !selectedMonth}>
-              {isImporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
-              Import JSON
-            </Button>
+            {isBuilderClient ? (
+              <Button variant="outline" onClick={() => navigate('/builder-returns')}>
+                <FileSpreadsheet className="h-4 w-4 mr-2" />
+                Prepare in Builder Returns
+              </Button>
+            ) : (
+              <Button onClick={handleImportClick} disabled={isImporting || !selectedClient || !selectedMonth}>
+                {isImporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
+                Import JSON
+              </Button>
+            )}
             {gstr1Data && canEditFilingStatus() && (
               <Button
                 onClick={() => { setPushResult(null); setPushDialogOpen(true); }}
@@ -741,15 +779,46 @@ const GSTR1DataPage: React.FC = () => {
         <Card>
           <CardContent className="p-4">
             <TableEmptyState
-              icon={<Upload className="h-6 w-6" />}
+              icon={isBuilderClient ? <FileSpreadsheet className="h-6 w-6" /> : <Upload className="h-6 w-6" />}
               title={`No GSTR-1 data for ${selectedClientName} — ${mmYyyyToShort(selectedMonth)}`}
-              description={isStaff ? 'Click "Import JSON" above to upload the GSTR-1 file for this period.' : undefined}
+              description={!isStaff ? undefined : isBuilderClient
+                ? 'This is a builder client. Open Builder Returns and generate the period — the '
+                  + 'figures are computed from bookings, receipts and BU events, not uploaded.'
+                : 'Click "Import JSON" above to upload the GSTR-1 file for this period.'}
             />
           </CardContent>
         </Card>
       ) : (
         <Card>
           <CardContent className="p-4">
+            {/* Provenance. A computed return and an uploaded one look identical
+                once stored, so say which this is before anyone reconciles it. */}
+            {isBuilderGenerated && (
+              <div className="mb-4 flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
+                <FileSpreadsheet className="h-4 w-4 shrink-0 mt-0.5 text-primary" />
+                <p className="text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">Generated from Builder Returns.</span>{' '}
+                  These figures were computed from bookings, receipts, BU events and adjustments —
+                  not uploaded. To change them, correct the underlying records and regenerate.
+                  {' '}
+                  <button
+                    type="button"
+                    className="text-primary underline underline-offset-2"
+                    onClick={() => navigate('/builder-returns')}
+                  >
+                    Open Builder Returns
+                  </button>
+                  {(json as { b2csa?: unknown[] }).b2csa?.length ? (
+                    <>
+                      {' '}This return also carries {(json as { b2csa: unknown[] }).b2csa.length}{' '}
+                      Table 10 amendment line(s) from a retrospective re-rating. They are included
+                      in the JSON and in the portal push, but there is no Table 10 tile below yet.
+                    </>
+                  ) : null}
+                </p>
+              </div>
+            )}
+
             {/* Portal-style section overview — click a tile to jump to its detail tab */}
             <div className="mb-6">
               <div className="flex items-center justify-between mb-3">

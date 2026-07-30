@@ -129,7 +129,7 @@ const BuilderSettingsPage: React.FC = () => {
           confirmation_received_at: settings.confirmation_received_at,
           confirmation_document_url: settings.confirmation_document_url,
           confirmation_notes: settings.confirmation_notes,
-          updated_by: user?.userId ?? null,
+          updated_by: user?.id ?? null,
         }, { onConflict: 'client_id' });
       if (error) throw error;
       toast.success('Settings saved');
