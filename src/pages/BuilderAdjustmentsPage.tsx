@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorkspaceContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -88,7 +89,8 @@ const currentPeriod = () => {
 };
 
 const BuilderAdjustmentsPage: React.FC = () => {
-  const { projectId } = useParams<{ projectId: string }>();
+  const projectId = useBuilderProjectId();
+  const embedded = useBuilderEmbedded();
   const navigate = useNavigate();
   const { canPostBuilderAdjustments, user } = useAuth();
 
@@ -465,11 +467,11 @@ const BuilderAdjustmentsPage: React.FC = () => {
         title={`${project.name} — Adjustments`}
         subtitle="Re-rating, conversions, credit notes, bounce reversals and excess tax"
         icon={<Wrench className="h-5 w-5" />}
-        actions={
+        actions={embedded ? undefined : (
           <Button variant="outline" onClick={() => navigate(`/builder-projects/${projectId}`)}>
             <ArrowLeft className="h-4 w-4 mr-2" /> Project
           </Button>
-        }
+        )}
       />
 
       <div className="flex gap-2 rounded-lg border bg-muted/30 p-3 text-muted-foreground">

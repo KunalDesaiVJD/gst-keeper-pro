@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useBuilderEmbedded, useOpenBuilderProject } from '@/contexts/BuilderWorkspaceContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClient } from '@/contexts/ClientContext';
@@ -78,6 +79,8 @@ const emptyForm = {
  */
 const BuilderProjectsPage: React.FC = () => {
   const navigate = useNavigate();
+  const openProject = useOpenBuilderProject();
+  const embedded = useBuilderEmbedded();
   const { canManageBuilderProjects } = useAuth();
   const { selectedClientId, setSelectedClientId } = useClient();
 
@@ -205,7 +208,7 @@ const BuilderProjectsPage: React.FC = () => {
         icon={<Building className="h-5 w-5" />}
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => navigate('/builder-setup')}>
+            <Button variant="outline" onClick={() => navigate('/builder-setup')} hidden={embedded}>
               <Settings2 className="h-4 w-4 mr-2" /> Client setup
             </Button>
             {selectedClientId && !readOnly && (
@@ -277,7 +280,7 @@ const BuilderProjectsPage: React.FC = () => {
                       const a = areas[p.id];
                       const rrep = testRrep(a?.residential_sqm || 0, a?.commercial_sqm || 0);
                       return (
-                        <TableRow key={p.id} className="cursor-pointer" onClick={() => navigate(`/builder-projects/${p.id}`)}>
+                        <TableRow key={p.id} className="cursor-pointer" onClick={() => openProject(p.id)}>
                           <TableCell className="font-medium">
                             {p.name}
                             {p.city && <span className="block text-xs text-muted-foreground">{p.city}</span>}
@@ -311,7 +314,7 @@ const BuilderProjectsPage: React.FC = () => {
                                   <Pencil className="h-4 w-4" />
                                 </Button>
                               )}
-                              <Button variant="ghost" size="icon" onClick={() => navigate(`/builder-projects/${p.id}`)}>
+                              <Button variant="ghost" size="icon" onClick={() => openProject(p.id)}>
                                 <ChevronRight className="h-4 w-4" />
                               </Button>
                             </div>

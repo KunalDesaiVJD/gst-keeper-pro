@@ -1,6 +1,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import { GST_FIRM, renderTemplate } from '@/lib/gstReminders';
 import {
+  CHARGE_HEADS,
   CHARGE_HEAD_LABEL,
   CHARGE_HEAD_SETTING_KEY,
   type ChargeHead,
@@ -49,10 +50,9 @@ export const DEFAULT_BUILDER_SETTINGS: Omit<BuilderClientSettings, 'client_id'> 
   confirmation_notes: null,
 };
 
-export const CHARGE_HEADS: ChargeHead[] = [
-  'PLC', 'DEVELOPMENT', 'PARKING', 'CLUB',
-  'UTILITY_DEPOSIT', 'LEGAL', 'MAINTENANCE_CORPUS', 'OTHER',
-];
+// Re-exported so existing importers keep working; the list itself now lives in
+// builderRates.ts so pure modules can use it without pulling in the DB client.
+export { CHARGE_HEADS } from '@/utils/builderRates';
 
 export const EXTRA_WORK_LABEL: Record<ExtraWorkRate, string> = {
   UNIT_RATE: "At the unit's own rate (1.5% / 7.5% / 18% on 2/3rd value)",

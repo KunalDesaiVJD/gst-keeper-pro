@@ -69,6 +69,14 @@ export const RATE_CODE_LABEL: Record<BuilderRateCode, string> = {
   COMMERCIAL_REP: 'Commercial in REP other than RREP — 18% (eff. 12%)',
 };
 
+/** Canonical order of the charge heads — drives every questionnaire, template
+ *  column and working paper, so it lives here with the other pure rate data
+ *  rather than in the data-access layer. */
+export const CHARGE_HEADS: ChargeHead[] = [
+  'PLC', 'DEVELOPMENT', 'PARKING', 'CLUB',
+  'UTILITY_DEPOSIT', 'LEGAL', 'MAINTENANCE_CORPUS', 'OTHER',
+];
+
 export const CHARGE_HEAD_LABEL: Record<ChargeHead, string> = {
   PLC: 'Preferential location / floor rise',
   DEVELOPMENT: 'Development / infrastructure charges',

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorkspaceContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -75,7 +76,8 @@ const emptyEvent = {
 };
 
 const BuilderBuEventsPage: React.FC = () => {
-  const { projectId } = useParams<{ projectId: string }>();
+  const projectId = useBuilderProjectId();
+  const embedded = useBuilderEmbedded();
   const navigate = useNavigate();
   const { canPostBuEvent, user } = useAuth();
 
@@ -353,9 +355,11 @@ const BuilderBuEventsPage: React.FC = () => {
         icon={<CalendarCheck className="h-5 w-5" />}
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => navigate(`/builder-projects/${projectId}`)}>
-              <ArrowLeft className="h-4 w-4 mr-2" /> Project
-            </Button>
+            {!embedded && (
+              <Button variant="outline" onClick={() => navigate(`/builder-projects/${projectId}`)}>
+                <ArrowLeft className="h-4 w-4 mr-2" /> Project
+              </Button>
+            )}
             {canPost && availableUnits.length > 0 && (
               <Button onClick={() => { setForm(emptyEvent); setSelectedUnits(new Set()); setDialog(true); }}>
                 <Plus className="h-4 w-4 mr-2" /> New BU event
