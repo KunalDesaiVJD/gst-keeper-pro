@@ -402,6 +402,40 @@ const BuilderReturnsPage: React.FC = () => {
               </div>
             )}
 
+            {/* Table 13 — the series actually issued this period, with the SAC
+                stated rather than remembered. */}
+            {preview && preview.docSeries.length > 0 && (
+              <div className="overflow-x-auto rounded-lg border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Document series — GSTR-1 Table 13</TableHead>
+                      <TableHead>SAC</TableHead>
+                      <TableHead>From</TableHead>
+                      <TableHead>To</TableHead>
+                      <TableHead className="text-right">Issued</TableHead>
+                      <TableHead className="text-right">Cancelled</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {preview.docSeries.map((s) => (
+                      <TableRow key={s.docNum}>
+                        <TableCell className="text-sm font-medium">
+                          {s.label}
+                          <span className="ml-1.5 text-xs text-muted-foreground">#{s.docNum}</span>
+                        </TableCell>
+                        <TableCell><Badge variant="outline" className="text-xs">{s.sac}</Badge></TableCell>
+                        <TableCell className="text-sm font-mono">{s.from}</TableCell>
+                        <TableCell className="text-sm font-mono">{s.to}</TableCell>
+                        <TableCell className="text-right text-sm">{s.totalIssued}</TableCell>
+                        <TableCell className="text-right text-sm">0</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+
             {/* Blockers stop generation; cautions do not. */}
             {blockers.length > 0 && (
               <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">

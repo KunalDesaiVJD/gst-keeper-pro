@@ -42,7 +42,37 @@ export interface Gstr1PostingRow {
   sgst: number;
   /** Only set on Table 10 legs: the month being amended. */
   original_period?: string | null;
+  /** Only set on legs that issue their own document — drives Table 13. */
+  doc_no?: string | null;
   rate_code?: BuilderRateCode;
+}
+
+/**
+ * SAC for construction services. Carried on every document series and on the
+ * HSN summary so the classification is stated on the return rather than
+ * remembered — it is the same code for the whole module.
+ */
+export const BUILDER_SAC = '9954';
+
+/**
+ * GSTR-1 Table 13 document classes, by the portal's own numbering.
+ * Only these three can arise here: a promoter issues receipt vouchers against
+ * advances (s.31(3)(d)), tax invoices at milestones, and credit notes.
+ */
+const DOC_CLASS: Record<string, { num: number; label: string }> = {
+  INVOICE_B2CS: { num: 1, label: 'Invoices for outward supply' },
+  ADVANCE_11A: { num: 4, label: 'Receipt voucher' },
+  CREDIT_NOTE: { num: 8, label: 'Credit note' },
+};
+
+export interface DocSeriesLine {
+  docNum: number;
+  label: string;
+  from: string;
+  to: string;
+  totalIssued: number;
+  /** SAC the series relates to. One code for the whole module. */
+  sac: string;
 }
 
 export interface Gstr1Warning {
@@ -57,6 +87,44 @@ export interface BuilderGstr1Result {
   counts: { b2cs: number; at: number; txpd: number; b2csa: number };
   /** Total tax the return carries, for tying back to the workpaper. */
   totalTax: number;
+  /** Table 13 series, surfaced so the workpaper can show them with the SAC. */
+  docSeries: DocSeriesLine[];
+}
+
+/**
+ * Build GSTR-1 Table 13 from the documents actually issued in the period.
+ *
+ * A serial range wants a natural sort, not a lexical one: "BSD/SH/9" must come
+ * before "BSD/SH/10", which a plain string compare gets backwards and would
+ * report as a range running from 10 down to 9.
+ */
+function buildDocSeries(postings: Gstr1PostingRow[]): DocSeriesLine[] {
+  const natural = (a: string, b: string) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+
+  const byClass = new Map<string, string[]>();
+  for (const r of postings) {
+    const cls = DOC_CLASS[r.source_type];
+    const no = (r.doc_no || '').trim();
+    if (!cls || !no) continue;
+    byClass.set(r.source_type, [...(byClass.get(r.source_type) || []), no]);
+  }
+
+  return [...byClass.entries()]
+    .map(([src, nums]) => {
+      // A document number can appear on more than one posting — an invoice
+      // covering two units is one document, not two — so count distinct.
+      const distinct = [...new Set(nums)].sort(natural);
+      return {
+        docNum: DOC_CLASS[src].num,
+        label: DOC_CLASS[src].label,
+        from: distinct[0],
+        to: distinct[distinct.length - 1],
+        totalIssued: distinct.length,
+        sac: BUILDER_SAC,
+      };
+    })
+    .sort((a, b) => a.docNum - b.docNum);
 }
 
 /** 2-dp money. Everything the portal accepts is rounded here, once. */
@@ -192,7 +260,7 @@ export function buildBuilderGstr1(params: {
   // period, and an advance has no invoice behind it yet.
   const hsnData = bucketByRate(of('Table 7')).map((b, i) => ({
     num: i + 1,
-    hsn_sc: '9954',
+    hsn_sc: BUILDER_SAC,
     desc: 'Construction services of buildings',
     uqc: 'OTH',
     qty: 0,
@@ -256,11 +324,38 @@ export function buildBuilderGstr1(params: {
   if (b2csa.length) json.b2csa = b2csa;
   if (hsnData.length) json.hsn = { data: hsnData };
 
+  // ── Table 13 — documents issued ──────────────────────────────────────────
+  const docSeries = buildDocSeries(postings);
+  if (docSeries.length) {
+    json.doc = {
+      doc_det: docSeries.map((s) => ({
+        doc_num: s.docNum,
+        doc_typ: s.label,
+        docs: [{
+          num: 1,
+          from: s.from,
+          to: s.to,
+          totnum: s.totalIssued,
+          cancel: 0,
+          net_issue: s.totalIssued,
+        }],
+      })),
+    };
+  } else {
+    warnings.push({
+      severity: 'WARN',
+      message: 'No document numbers on this period\'s receipts or invoices, so Table 13 '
+        + '(documents issued) will be empty. Receipt vouchers are required under s.31(3)(d) '
+        + 'for advances against a construction service.',
+    });
+  }
+
   return {
     json,
     warnings,
     counts: { b2cs: b2cs.length, at: at.length, txpd: txpd.length, b2csa: b2csa.length },
     totalTax,
+    docSeries,
   };
 }
 

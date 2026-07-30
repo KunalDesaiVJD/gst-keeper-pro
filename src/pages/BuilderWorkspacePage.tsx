@@ -1,32 +1,24 @@
 /**
- * The Builder workspace — one place, eight steps, in the order the work
- * actually happens.
+ * The Builder workspace — Option A.
  *
- * Before this, the module was seven separate destinations reached from four
- * different places, and the thing that makes builder GST hard — that it is a
- * *sequence*, where each month's return depends on masters set up once and on
- * events posted in order — was invisible. Splitting it across a menu asked the
- * employee to hold that sequence in their head.
+ * Three horizontal tabs, because that is the real shape of the work:
  *
- * Three ideas hold it together:
+ *   Ledger      everything about the project as it stands — the unit grid, and
+ *               the flows that write to it (receipts, adjustments, TDR/FSI,
+ *               dastavej) reached from inside it rather than from a menu.
+ *   BU Working  the cut-off event and the differential. Separate because it is
+ *               a one-off per project that fires a large liability, and burying
+ *               it inside the ledger would make it easy to miss.
+ *   Returns     assemble the period and hand it to GSTR-1.
  *
- *   One context, hoisted. Client, project and period are chosen once at the top
- *   and every step inherits them. Previously each page picked its own, so
- *   moving between them meant re-selecting, and it was possible to look at one
- *   client's bookings next to another's return without noticing.
+ * The earlier vertical rail was replaced for a plain reason: it cost a fifth of
+ * the screen width permanently, on a module whose central object is a wide
+ * table. Eight steps down the side also implied a wizard the work does not
+ * follow — a staffer keying June's receipts is not "on step 3".
  *
- *   The sequence is the navigation. Steps run setup → masters → money in →
- *   BU → deed → corrections → FSI → return. That is the actual dependency
- *   order: you cannot post a BU differential before the receipts exist, and you
- *   cannot file before the FSI consent is resolved.
- *
- *   State on the step, not in a manual. Each step reports what it is waiting
- *   for — no charge elections confirmed, no units, nothing posted this period,
- *   an FSI consent outstanding — so the next action is visible without opening
- *   anything.
- *
- * Reports stays outside deliberately: it is the output of a finished period,
- * read by a different person at a different time, not a step in preparing one.
+ * The grid is the front door of the Ledger tab because the question asked most
+ * often is "where does this project stand", not "what happened to unit 101".
+ * Sub-views sit behind chips inside the tab, so steps 2–7 are one destination.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -46,11 +38,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  Settings2, Layers, Receipt, CalendarCheck, FileSignature, Wrench, Landmark,
-  FileSpreadsheet, ChevronLeft, ChevronRight, Building, AlertTriangle, Check,
+  Building, Layers, CalendarCheck, FileSpreadsheet, AlertTriangle, Settings2,
 } from 'lucide-react';
 import { prettyPeriodLabel } from '@/utils/builderLedger';
+import { formatINR } from '@/utils/builderRates';
 import { isFsiConsentBlocked } from '@/lib/builderFsiData';
+import BuilderUnitGrid, { type UnitGridAction } from '@/components/builder/BuilderUnitGrid';
 
 import BuilderSettingsPage from './BuilderSettingsPage';
 import BuilderProjectsPage from './BuilderProjectsPage';
@@ -62,38 +55,29 @@ import BuilderAdjustmentsPage from './BuilderAdjustmentsPage';
 import BuilderFsiPage from './BuilderFsiPage';
 import BuilderReturnsPage from './BuilderReturnsPage';
 
-interface StepDef {
-  key: string;
-  label: string;
-  /** One line on what this step is for — shown under the rail on wide screens. */
-  hint: string;
-  icon: React.ReactNode;
-  /** Steps that operate on one project cannot open without one. */
-  needsProject: boolean;
-}
+/** Primary tabs. Three, horizontal, always visible. */
+const TABS = [
+  { key: 'ledger', label: 'Ledger', icon: <Layers className="h-4 w-4" /> },
+  { key: 'bu', label: 'BU Working', icon: <CalendarCheck className="h-4 w-4" /> },
+  { key: 'returns', label: 'Returns', icon: <FileSpreadsheet className="h-4 w-4" /> },
+];
 
-const STEPS: StepDef[] = [
-  { key: 'setup', label: 'Client setup', hint: 'Charge heads, FSI and interest elections', icon: <Settings2 className="h-4 w-4" />, needsProject: false },
-  { key: 'project', label: 'Project & units', hint: 'Masters, the 15% test, opening balances', icon: <Layers className="h-4 w-4" />, needsProject: false },
-  { key: 'bookings', label: 'Bookings & receipts', hint: 'Advances, invoices, TDS', icon: <Receipt className="h-4 w-4" />, needsProject: true },
-  { key: 'bu', label: 'BU events', hint: 'The cut-off and the differential', icon: <CalendarCheck className="h-4 w-4" />, needsProject: true },
-  { key: 'dastavej', label: 'Dastavej reco', hint: 'Registered sale deeds against the ledger', icon: <FileSignature className="h-4 w-4" />, needsProject: false },
-  { key: 'adjustments', label: 'Adjustments', hint: 'Re-rating, credit notes, bounces', icon: <Wrench className="h-4 w-4" />, needsProject: true },
-  { key: 'fsi', label: 'TDR / FSI', hint: 'Reverse charge and the consent gate', icon: <Landmark className="h-4 w-4" />, needsProject: true },
-  { key: 'returns', label: 'Returns', hint: 'Assemble and push to GSTR-1', icon: <FileSpreadsheet className="h-4 w-4" />, needsProject: false },
+/**
+ * Sub-views inside Ledger. `units` is the grid; the rest are the existing
+ * flows, now reached from within the tab instead of from the sidebar.
+ * `needsInvoicing` marks what disappears for a client that raises no invoices.
+ */
+const LEDGER_VIEWS = [
+  { key: 'units', label: 'Units', needsProject: true },
+  { key: 'masters', label: 'Project masters', needsProject: true },
+  { key: 'money', label: 'Receipts & invoices', needsProject: true },
+  { key: 'adjustments', label: 'Adjustments', needsProject: true },
+  { key: 'fsi', label: 'TDR / FSI', needsProject: true },
+  { key: 'dastavej', label: 'Dastavej reco', needsProject: false },
 ];
 
 interface ClientRow { id: string; name: string; gstin: string | null }
-interface ProjectRow { id: string; name: string; rera_number: string | null }
-
-/** What each step is waiting for, so the rail can say it without being opened. */
-interface Readiness {
-  settingsConfirmed: boolean;
-  projectCount: number;
-  unitCount: number;
-  postingCount: number;
-  fsiBlocked: boolean;
-}
+interface ProjectRow { id: string; name: string; is_metro: boolean }
 
 const BuilderWorkspacePage: React.FC = () => {
   const { canViewBuilderReports } = useAuth();
@@ -103,40 +87,29 @@ const BuilderWorkspacePage: React.FC = () => {
 
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
-  const [readiness, setReadiness] = useState<Readiness>({
-    settingsConfirmed: false, projectCount: 0, unitCount: 0, postingCount: 0, fsiBlocked: false,
-  });
+  const [fsiBlocked, setFsiBlocked] = useState(false);
+  const [postingCount, setPostingCount] = useState(0);
+  const [periodTax, setPeriodTax] = useState(0);
+  const [showSetup, setShowSetup] = useState(false);
 
-  // Step and project live in the URL so a workspace view is linkable and
-  // survives a refresh — an employee mid-period should not lose their place.
-  const step = params.get('step') || 'setup';
+  // Tab, sub-view and project live in the URL, so a workspace view is linkable
+  // and survives a refresh — an employee mid-period keeps their place.
+  const tab = params.get('tab') || 'ledger';
+  const view = params.get('view') || 'units';
   const projectId = params.get('project') || '';
 
-  const setStep = useCallback((k: string) => {
+  const patch = useCallback((kv: Record<string, string>) => {
     setParams((prev) => {
       const next = new URLSearchParams(prev);
-      next.set('step', k);
+      Object.entries(kv).forEach(([k, v]) => (v ? next.set(k, v) : next.delete(k)));
       return next;
     }, { replace: true });
   }, [setParams]);
 
-  const setProjectId = useCallback((id: string) => {
-    setParams((prev) => {
-      const next = new URLSearchParams(prev);
-      if (id) next.set('project', id); else next.delete('project');
-      return next;
-    }, { replace: true });
-  }, [setParams]);
-
-  /** Opening a project from the list selects it and moves on to its masters. */
-  const selectProject = useCallback((id: string) => {
-    setParams((prev) => {
-      const next = new URLSearchParams(prev);
-      next.set('project', id);
-      next.set('step', 'project');
-      return next;
-    }, { replace: true });
-  }, [setParams]);
+  const selectProject = useCallback(
+    (id: string) => patch({ project: id, tab: 'ledger', view: 'units' }),
+    [patch],
+  );
 
   useEffect(() => {
     (async () => {
@@ -151,50 +124,34 @@ const BuilderWorkspacePage: React.FC = () => {
     if (!selectedClientId) { setProjects([]); return; }
     (async () => {
       const { data } = await supabase
-        .from('builder_projects').select('id, name, rera_number')
+        .from('builder_projects').select('id, name, is_metro')
         .eq('client_id', selectedClientId).order('name');
       const rows = (data || []) as ProjectRow[];
       setProjects(rows);
-      // Keep the selection honest: a project from another client must not
-      // survive a client change, or a step would silently show foreign data.
-      if (projectId && !rows.some((p) => p.id === projectId)) setProjectId('');
-      else if (!projectId && rows.length === 1) setProjectId(rows[0].id);
+      // A project belonging to another client must not survive a client change,
+      // or a view would quietly render foreign data under the new heading.
+      if (projectId && !rows.some((p) => p.id === projectId)) patch({ project: '' });
+      else if (!projectId && rows.length === 1) patch({ project: rows[0].id });
     })();
   }, [selectedClientId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Readiness, one cheap pass ────────────────────────────────────────────
   useEffect(() => {
-    if (!selectedClientId) {
-      setReadiness({ settingsConfirmed: false, projectCount: 0, unitCount: 0, postingCount: 0, fsiBlocked: false });
+    if (!selectedClientId || !selectedMonth) {
+      setFsiBlocked(false); setPostingCount(0); setPeriodTax(0);
       return;
     }
     (async () => {
-      const [settings, projs, units, postings, blocked] = await Promise.all([
-        supabase.from('builder_client_settings')
-          .select('confirmation_received_at').eq('client_id', selectedClientId).maybeSingle(),
-        supabase.from('builder_projects')
-          .select('id', { count: 'exact', head: true }).eq('client_id', selectedClientId),
-        projectId
-          ? supabase.from('builder_units').select('id', { count: 'exact', head: true }).eq('project_id', projectId)
-          : Promise.resolve({ count: 0 }),
-        selectedMonth
-          ? supabase.from('builder_period_postings').select('source_id', { count: 'exact', head: true })
-            .eq('client_id', selectedClientId).eq('period_month', selectedMonth)
-          : Promise.resolve({ count: 0 }),
-        selectedMonth ? isFsiConsentBlocked(selectedClientId, selectedMonth) : Promise.resolve(false),
+      const [{ data: rows }, blocked] = await Promise.all([
+        supabase.from('builder_period_postings').select('cgst, sgst')
+          .eq('client_id', selectedClientId).eq('period_month', selectedMonth),
+        isFsiConsentBlocked(selectedClientId, selectedMonth),
       ]);
-      setReadiness({
-        // Confirmed means the client replied in writing, not merely that we asked:
-        // the elections change the GST charged to their members.
-        settingsConfirmed: !!(settings as { data?: { confirmation_received_at?: string } })
-          ?.data?.confirmation_received_at,
-        projectCount: (projs as { count?: number }).count || 0,
-        unitCount: (units as { count?: number }).count || 0,
-        postingCount: (postings as { count?: number }).count || 0,
-        fsiBlocked: blocked === true,
-      });
+      const list = (rows || []) as { cgst: number; sgst: number }[];
+      setPostingCount(list.length);
+      setPeriodTax(list.reduce((s, r) => s + (Number(r.cgst) || 0) + (Number(r.sgst) || 0), 0));
+      setFsiBlocked(blocked === true);
     })();
-  }, [selectedClientId, projectId, selectedMonth, step]);
+  }, [selectedClientId, selectedMonth, tab]);
 
   const monthOptions = useMemo(() => {
     const out: { value: string; label: string }[] = [];
@@ -207,34 +164,23 @@ const BuilderWorkspacePage: React.FC = () => {
     return out;
   }, []);
 
-  /** A short status word per step, and whether it wants attention. */
-  const statusOf = useCallback((k: string): { text: string; tone: 'ok' | 'warn' | 'idle' } => {
-    switch (k) {
-      case 'setup':
-        return readiness.settingsConfirmed
-          ? { text: 'Confirmed', tone: 'ok' }
-          : { text: 'Not confirmed', tone: 'warn' };
-      case 'project':
-        if (!readiness.projectCount) return { text: 'No projects', tone: 'warn' };
-        if (projectId && !readiness.unitCount) return { text: 'No units', tone: 'warn' };
-        return { text: `${readiness.projectCount} project${readiness.projectCount === 1 ? '' : 's'}`, tone: 'ok' };
-      case 'fsi':
-        return readiness.fsiBlocked
-          ? { text: 'Consent pending', tone: 'warn' }
-          : { text: '', tone: 'idle' };
-      case 'returns':
-        if (readiness.fsiBlocked) return { text: 'Blocked', tone: 'warn' };
-        return readiness.postingCount
-          ? { text: `${readiness.postingCount} posting${readiness.postingCount === 1 ? '' : 's'}`, tone: 'ok' }
-          : { text: 'Nothing posted', tone: 'idle' };
-      default:
-        return { text: '', tone: 'idle' };
-    }
-  }, [readiness, projectId]);
+  const project = projects.find((p) => p.id === projectId) || null;
 
-  const activeIdx = Math.max(0, STEPS.findIndex((s) => s.key === step));
-  const activeStep = STEPS[activeIdx];
-  const needsProjectNow = activeStep?.needsProject && !projectId;
+  /**
+   * Row actions on the grid. They deep-link into the sub-view that owns the
+   * flow rather than duplicating its dialog — the adjustment engine has one
+   * implementation and it stays there.
+   */
+  const gridActions: UnitGridAction[] = useMemo(() => [
+    { key: 'receipt', group: 'Money in', label: 'Add receipt or invoice', onSelect: () => patch({ view: 'money' }) },
+    { key: 'ledger', group: 'Money in', label: 'Open unit ledger', onSelect: () => patch({ view: 'money' }) },
+    { key: 'credit', group: 'Corrections', label: 'Credit note', onSelect: () => patch({ view: 'adjustments' }) },
+    { key: 'rerate', group: 'Corrections', label: 'Re-rate (Table 10)', onSelect: () => patch({ view: 'adjustments' }) },
+    { key: 'bounce', group: 'Corrections', label: 'Bounce reversal', onSelect: () => patch({ view: 'adjustments' }) },
+    { key: 'convert', group: 'Corrections', label: 'Convert to another unit', onSelect: () => patch({ view: 'adjustments' }) },
+    { key: 'masters', group: 'Masters', label: 'Edit unit & charge heads', onSelect: () => patch({ view: 'masters' }) },
+    { key: 'dastavej', group: 'Masters', label: 'Record dastavej', onSelect: () => patch({ view: 'dastavej' }) },
+  ], [patch]);
 
   if (!canViewBuilderReports()) {
     return (
@@ -246,186 +192,177 @@ const BuilderWorkspacePage: React.FC = () => {
     );
   }
 
-  const renderStep = () => {
-    if (!selectedClientId) {
-      return (
-        <Card>
-          <CardContent className="p-10 text-center text-muted-foreground">
-            <Building className="mx-auto mb-3 h-8 w-8 opacity-40" />
-            <p className="text-sm">Choose a builder client above to begin.</p>
-          </CardContent>
-        </Card>
-      );
+  const needsProject = (v: string) => LEDGER_VIEWS.find((x) => x.key === v)?.needsProject;
+
+  const renderLedger = () => {
+    if (!projectId && needsProject(view)) {
+      // No project chosen: the project list *is* the useful thing to show, not
+      // an empty state telling you to go and find one.
+      return <BuilderProjectsPage />;
     }
-    if (needsProjectNow) {
-      return (
-        <Card>
-          <CardContent className="p-10 text-center text-muted-foreground">
-            <Layers className="mx-auto mb-3 h-8 w-8 opacity-40" />
-            <p className="text-sm">
-              {activeStep.label} works on one project. Pick one above
-              {readiness.projectCount === 0 ? ', or create one first.' : '.'}
-            </p>
-            <Button variant="outline" size="sm" className="mt-4" onClick={() => setStep('project')}>
-              Go to Project &amp; units
-            </Button>
-          </CardContent>
-        </Card>
-      );
-    }
-    switch (step) {
-      case 'setup': return <BuilderSettingsPage />;
-      case 'project': return projectId ? <BuilderProjectDetailPage /> : <BuilderProjectsPage />;
-      case 'bookings': return <BuilderBookingsPage />;
-      case 'bu': return <BuilderBuEventsPage />;
-      case 'dastavej': return <BuilderDastavejPage />;
+    switch (view) {
+      case 'units':
+        return project
+          ? (
+            <BuilderUnitGrid
+              projectId={project.id}
+              isMetro={project.is_metro}
+              actions={gridActions}
+              onAddUnits={() => patch({ view: 'masters' })}
+            />
+          )
+          : <BuilderProjectsPage />;
+      case 'masters': return <BuilderProjectDetailPage />;
+      case 'money': return <BuilderBookingsPage />;
       case 'adjustments': return <BuilderAdjustmentsPage />;
       case 'fsi': return <BuilderFsiPage />;
-      case 'returns': return <BuilderReturnsPage />;
+      case 'dastavej': return <BuilderDastavejPage />;
       default: return null;
     }
   };
 
   return (
     <BuilderWorkspaceProvider projectId={projectId || undefined} selectProject={selectProject}>
-      <div className="space-y-5">
-        {/* ── Context bar. Chosen once; every step inherits it. ───────────── */}
-        <Card className="sticky top-0 z-20 border-primary/20 bg-card/95 backdrop-blur">
-          <CardContent className="p-3">
-            <div className="flex flex-wrap items-end gap-3">
-              <div className="flex items-center gap-2 pr-1">
-                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-                  <Building className="h-4 w-4 text-primary" />
-                </span>
-                <span className="text-sm font-semibold">Builder</span>
-              </div>
-              <div className="min-w-[200px] flex-1 max-w-xs">
-                <Label className="mb-1 block text-xs">Client</Label>
-                <SearchableSelect
-                  options={clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin || undefined }))}
-                  value={selectedClientId || ''}
-                  onValueChange={setSelectedClientId}
-                  placeholder="Search builder client..."
-                  searchPlaceholder="Type to search..."
-                  emptyText="No builder clients found."
-                />
-              </div>
-              <div className="w-56">
-                <Label className="mb-1 block text-xs">Project</Label>
-                <Select
-                  value={projectId || 'NONE'}
-                  onValueChange={(v) => setProjectId(v === 'NONE' ? '' : v)}
-                  disabled={!selectedClientId}
-                >
-                  <SelectTrigger><SelectValue placeholder="All / none" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="NONE">
-                      {projects.length ? 'No project selected' : 'No projects yet'}
-                    </SelectItem>
-                    {projects.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="w-44">
-                <Label className="mb-1 block text-xs">Period</Label>
-                <SearchableMonthSelect
-                  options={monthOptions}
-                  value={selectedMonth}
-                  onValueChange={setSelectedMonth}
-                  placeholder="Select period"
-                />
-              </div>
-              {readiness.fsiBlocked && (
-                <Badge variant="outline" className="mb-1 gap-1 border-amber-500/50 text-amber-700 dark:text-amber-500">
+      <div className="space-y-4">
+        {/* ── Context, chosen once and inherited by every tab ─────────────── */}
+        <Card>
+          <CardContent className="flex flex-wrap items-end gap-3 p-3">
+            <span className="flex items-center gap-2 pb-1 pr-1">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
+                <Building className="h-4 w-4 text-primary" />
+              </span>
+              <span className="text-sm font-semibold">Builder</span>
+            </span>
+            <div className="min-w-[200px] max-w-xs flex-1">
+              <Label className="mb-1 block text-xs">Client</Label>
+              <SearchableSelect
+                options={clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin || undefined }))}
+                value={selectedClientId || ''}
+                onValueChange={setSelectedClientId}
+                placeholder="Search builder client..."
+                searchPlaceholder="Type to search..."
+                emptyText="No builder clients found."
+              />
+            </div>
+            <div className="w-52">
+              <Label className="mb-1 block text-xs">Project</Label>
+              <Select
+                value={projectId || 'NONE'}
+                onValueChange={(v) => patch({ project: v === 'NONE' ? '' : v })}
+                disabled={!selectedClientId}
+              >
+                <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="NONE">
+                    {projects.length ? 'All projects' : 'No projects yet'}
+                  </SelectItem>
+                  {projects.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="w-40">
+              <Label className="mb-1 block text-xs">Period</Label>
+              <SearchableMonthSelect
+                options={monthOptions}
+                value={selectedMonth}
+                onValueChange={setSelectedMonth}
+                placeholder="Period"
+              />
+            </div>
+            <div className="ml-auto flex items-center gap-2 pb-0.5">
+              {fsiBlocked && (
+                <Badge variant="outline" className="gap-1 border-amber-500/50 text-amber-700 dark:text-amber-500">
                   <AlertTriangle className="h-3 w-3" /> FSI consent pending
                 </Badge>
               )}
+              <Button
+                variant={showSetup ? 'default' : 'outline'} size="sm"
+                onClick={() => setShowSetup((v) => !v)}
+                disabled={!selectedClientId}
+              >
+                <Settings2 className="mr-1.5 h-4 w-4" />
+                Client setup
+              </Button>
             </div>
           </CardContent>
         </Card>
 
-        <div className="flex flex-col gap-5 lg:flex-row">
-          {/* ── Step rail ───────────────────────────────────────────────── */}
-          <nav className="lg:w-64 lg:shrink-0" aria-label="Builder steps">
-            <ol className="flex gap-2 overflow-x-auto pb-2 lg:flex-col lg:overflow-visible lg:pb-0">
-              {STEPS.map((s, i) => {
-                const isActive = s.key === step;
-                const status = statusOf(s.key);
-                const locked = s.needsProject && !projectId;
+        {/* Setup is a panel, not a step — opened when something changes, which
+            for most clients is once, at onboarding. */}
+        {showSetup && selectedClientId && (
+          <Card><CardContent className="p-0"><BuilderSettingsPage /></CardContent></Card>
+        )}
+
+        {!selectedClientId ? (
+          <Card>
+            <CardContent className="p-10 text-center text-muted-foreground">
+              <Building className="mx-auto mb-3 h-8 w-8 opacity-40" />
+              <p className="text-sm">Choose a builder client above to begin.</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card className="overflow-hidden">
+            {/* ── Primary tabs, horizontal ──────────────────────────────── */}
+            <div className="flex overflow-x-auto border-b bg-card px-2" role="tablist" aria-label="Builder">
+              {TABS.map((t) => {
+                const on = t.key === tab;
                 return (
-                  <li key={s.key} className="shrink-0 lg:shrink">
-                    <button
-                      type="button"
-                      onClick={() => setStep(s.key)}
-                      aria-current={isActive ? 'step' : undefined}
-                      className={`flex w-full items-start gap-2.5 rounded-lg border p-2.5 text-left transition-colors
-                        ${isActive
-                          ? 'border-primary bg-primary/5'
-                          : 'border-transparent hover:border-border hover:bg-muted/50'}`}
-                    >
-                      <span
-                        className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold
-                          ${isActive ? 'bg-primary text-primary-foreground'
-                            : status.tone === 'ok' ? 'bg-emerald-500/15 text-emerald-600'
-                            : status.tone === 'warn' ? 'bg-amber-500/15 text-amber-600'
-                            : 'bg-muted text-muted-foreground'}`}
-                      >
-                        {status.tone === 'ok' && !isActive ? <Check className="h-3 w-3" /> : i + 1}
-                      </span>
-                      <span className="min-w-0">
-                        <span className={`block whitespace-nowrap text-sm lg:whitespace-normal
-                          ${isActive ? 'font-semibold' : 'font-medium'} ${locked ? 'text-muted-foreground' : ''}`}
-                        >
-                          {s.label}
-                        </span>
-                        <span className="hidden text-xs text-muted-foreground lg:block">{s.hint}</span>
-                        {status.text && (
-                          <span className={`hidden text-xs lg:block
-                            ${status.tone === 'warn' ? 'text-amber-600' : 'text-muted-foreground'}`}
-                          >
-                            {status.text}
-                          </span>
-                        )}
-                      </span>
-                    </button>
-                  </li>
+                  <button
+                    key={t.key} type="button" role="tab" aria-selected={on}
+                    onClick={() => patch({ tab: t.key })}
+                    className={`flex items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-semibold transition-colors
+                      ${on ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                  >
+                    {t.icon}{t.label}
+                    {t.key === 'returns' && postingCount > 0 && (
+                      <Badge variant="outline" className="ml-1 text-[10px]">{formatINR(periodTax)}</Badge>
+                    )}
+                    {t.key === 'returns' && fsiBlocked && (
+                      <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                    )}
+                  </button>
                 );
               })}
-            </ol>
-          </nav>
+            </div>
 
-          {/* ── Step content ────────────────────────────────────────────── */}
-          <div className="min-w-0 flex-1 space-y-5">
-            {renderStep()}
-
-            {/* Sequential movement, because the steps are a sequence. */}
-            {selectedClientId && (
-              <div className="flex items-center justify-between border-t pt-4">
-                <Button
-                  variant="outline" size="sm"
-                  disabled={activeIdx <= 0}
-                  onClick={() => setStep(STEPS[activeIdx - 1].key)}
-                >
-                  <ChevronLeft className="mr-1 h-4 w-4" />
-                  {activeIdx > 0 ? STEPS[activeIdx - 1].label : 'Back'}
-                </Button>
-                <span className="text-xs text-muted-foreground">
-                  Step {activeIdx + 1} of {STEPS.length}
-                </span>
-                <Button
-                  variant="outline" size="sm"
-                  disabled={activeIdx >= STEPS.length - 1}
-                  onClick={() => setStep(STEPS[activeIdx + 1].key)}
-                >
-                  {activeIdx < STEPS.length - 1 ? STEPS[activeIdx + 1].label : 'Next'}
-                  <ChevronRight className="ml-1 h-4 w-4" />
-                </Button>
+            {/* ── Ledger sub-views: steps 2–7, one destination ──────────── */}
+            {tab === 'ledger' && (
+              <div className="flex flex-wrap items-center gap-1.5 border-b bg-muted/30 px-3 py-2">
+                {LEDGER_VIEWS.map((v) => {
+                  const on = v.key === view;
+                  const locked = v.needsProject && !projectId;
+                  return (
+                    <button
+                      key={v.key} type="button"
+                      onClick={() => patch({ view: v.key })}
+                      className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors
+                        ${on ? 'bg-primary text-primary-foreground'
+                          : locked ? 'text-muted-foreground/60 hover:bg-muted'
+                          : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                    >
+                      {v.label}
+                    </button>
+                  );
+                })}
+                {!projectId && (
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    Pick a project above, or open one from the list.
+                  </span>
+                )}
               </div>
             )}
-          </div>
-        </div>
+
+            <CardContent className="p-0">
+              {tab === 'ledger' && renderLedger()}
+              {tab === 'bu' && (projectId
+                ? <BuilderBuEventsPage />
+                : <div className="p-10 text-center text-sm text-muted-foreground">
+                    A BU event belongs to one project. Choose a project above.
+                  </div>)}
+              {tab === 'returns' && <BuilderReturnsPage />}
+            </CardContent>
+          </Card>
+        )}
       </div>
     </BuilderWorkspaceProvider>
   );
