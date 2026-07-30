@@ -62,7 +62,7 @@ const ClientsPage: React.FC = () => {
 
   // Credentials tab state.
   const [creds, setCreds] = useState<ClientCredentialRow[]>([]);
-  const [showPasswords, setShowPasswords] = useState(false);
+  const [showPasswords, setShowPasswords] = useState(true);
   const [credSearch, setCredSearch] = useState('');
   const [exporting, setExporting] = useState<null | 'xlsx' | 'pdf'>(null);
 
