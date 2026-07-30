@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorkspaceContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -93,7 +94,8 @@ const emptyInvoice = {
 };
 
 const BuilderBookingsPage: React.FC = () => {
-  const { projectId } = useParams<{ projectId: string }>();
+  const projectId = useBuilderProjectId();
+  const embedded = useBuilderEmbedded();
   const navigate = useNavigate();
   const { canEnterBuilderReceipts, user } = useAuth();
 
@@ -551,11 +553,11 @@ const BuilderBookingsPage: React.FC = () => {
         title={`${project.name} — Bookings & Receipts`}
         subtitle="Advances bear tax on receipt (Table 11A); milestone invoices absorb them (Table 11B)"
         icon={<Receipt className="h-5 w-5" />}
-        actions={
+        actions={embedded ? undefined : (
           <Button variant="outline" onClick={() => navigate(`/builder-projects/${projectId}`)}>
             <ArrowLeft className="h-4 w-4 mr-2" /> Project
           </Button>
-        }
+        )}
       />
 
       <Card>

@@ -3,22 +3,26 @@
  *
  * A tower is entered once, at onboarding, and it is hundreds of rows: typing
  * them one dialog at a time is the single biggest cost of putting a promoter on
- * the system. Two ways in, because clients supply their inventory in two shapes:
+ * the system. Three ways in, because inventory arrives in three shapes:
  *
+ *   Template — download a workbook shaped for this project, fill it, upload it
+ *              back. The only route that carries **charge heads**, which is why
+ *              it leads: a charge head is what pushes a unit past ₹45 lakh and
+ *              out of the 1.5% bracket, so a list imported without its charges
+ *              can look right today and be wrong once they are keyed in.
  *   Generate — floors × units per floor, for a regular tower. The firm knows
  *              the shape and the numbering convention; nothing needs typing per
  *              unit except the exceptions.
- *   Paste    — straight from the client's Excel. Most clients already hold the
- *              unit list in a sheet, and re-keying it is both slow and a way to
- *              introduce errors that only surface at BU.
+ *   Paste    — a quick tab- or comma-separated dump for a handful of units,
+ *              when opening a spreadsheet would be the slower path.
  *
- * Both land in the same preview, where every row shows its derived rate and
+ * All three land in the same preview, where every row shows its derived rate and
  * affordability before anything is written. That preview is the point: rate is
  * derived from type, area and value, so a mis-typed carpet area is a wrong rate
  * on every receipt that follows, and it is far cheaper to catch here.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -35,14 +39,19 @@ import {
 } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { Loader2, Layers, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import {
+  Loader2, Layers, AlertTriangle, CheckCircle2, Download, Upload, FileSpreadsheet,
+} from 'lucide-react';
 import {
   RATE_CODE_LABEL, classifyUnit, formatINR,
   type ChargeInclusionSettings, type UnitType,
 } from '@/utils/builderRates';
 import {
-  BULK_UNIT_STATUSES, generateUnits, parsePastedUnits, type DraftUnit,
+  BULK_UNIT_STATUSES, generateUnits, parsePastedUnits,
 } from '@/utils/builderBulkUnits';
+import {
+  downloadUnitTemplate, parseUnitWorkbook, type DraftUnitWithCharges,
+} from '@/utils/builderUnitTemplate';
 
 const UNIT_TYPES: UnitType[] = ['Residential', 'Commercial'];
 const UNIT_STATUSES = [...BULK_UNIT_STATUSES];
@@ -51,6 +60,7 @@ interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   projectId: string;
+  projectName?: string;
   groups: { id: string; name: string }[];
   groupingLabel: string;
   isMetro: boolean;
@@ -62,12 +72,12 @@ interface Props {
 }
 
 const BulkAddUnitsDialog: React.FC<Props> = ({
-  open, onOpenChange, projectId, groups, groupingLabel, isMetro, isRrep,
+  open, onOpenChange, projectId, projectName, groups, groupingLabel, isMetro, isRrep,
   settings, existingUnitNos, onSaved,
 }) => {
   const { user } = useAuth();
   const [isSaving, setIsSaving] = useState(false);
-  const [mode, setMode] = useState('generate');
+  const [mode, setMode] = useState('template');
 
   // Generate mode
   const [gen, setGen] = useState({
@@ -80,8 +90,19 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
   // Paste mode
   const [pasted, setPasted] = useState('');
 
-  const drafts: DraftUnit[] = useMemo(() => {
-    if (mode === 'paste') return parsePastedUnits(pasted, groups);
+  // Template mode — rows read back from a filled workbook.
+  const [uploaded, setUploaded] = useState<DraftUnitWithCharges[]>([]);
+  const [uploadNote, setUploadNote] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const drafts: DraftUnitWithCharges[] = useMemo(() => {
+    // Only the template can express charge heads; the other two paths produce
+    // units with none, to be added per unit afterwards where they apply.
+    if (mode === 'template') return uploaded;
+    if (mode === 'paste') {
+      return parsePastedUnits(pasted, groups).map((d) => ({ ...d, charges: [] }));
+    }
     return generateUnits({
       floorFrom: parseInt(gen.floorFrom, 10),
       floorTo: parseInt(gen.floorTo, 10),
@@ -94,8 +115,8 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
       baseConsideration: parseFloat(gen.consideration) || 0,
       status: gen.status,
       groupId: gen.group_id || null,
-    });
-  }, [mode, pasted, groups, gen]);
+    }).map((d) => ({ ...d, charges: [] }));
+  }, [mode, pasted, uploaded, groups, gen]);
 
   /** Derived rate per row, plus the two things that make a row unsaveable. */
   const previewed = useMemo(() => {
@@ -113,7 +134,7 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
         unitType: d.unit_type,
         carpetAreaSqM: d.carpet_area_sqm,
         baseConsideration: d.base_consideration,
-        charges: [],
+        charges: d.charges,
         isMetro,
         isRrep,
         settings,
@@ -124,6 +145,27 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
 
   const okRows = previewed.filter((r) => !r.problem);
   const badRows = previewed.filter((r) => r.problem);
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (fileRef.current) fileRef.current.value = '';
+    if (!file) return;
+    setUploadError(null); setUploadNote(null);
+    try {
+      const parsed = parseUnitWorkbook(await file.arrayBuffer(), groups);
+      if (parsed.error) { setUploaded([]); setUploadError(parsed.error); return; }
+      setUploaded(parsed.drafts);
+      const charged = parsed.drafts.filter((d) => d.charges.length).length;
+      setUploadNote(
+        `${file.name} — ${parsed.drafts.length} unit${parsed.drafts.length === 1 ? '' : 's'} read`
+        + (charged ? `, ${charged} carrying charge heads` : '')
+        + (parsed.skippedRows ? `. ${parsed.skippedRows} row(s) had no unit number and were skipped.` : '.'),
+      );
+    } catch (err) {
+      setUploaded([]);
+      setUploadError(`Could not read the file: ${(err as Error).message}`);
+    }
+  };
 
   const handleSave = async () => {
     if (!okRows.length) return;
@@ -178,9 +220,36 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
         if (histErr) toast.warning(`Units added, but classification history failed: ${histErr.message}`);
       }
 
-      toast.success(`${data.length} unit${data.length === 1 ? '' : 's'} added.`);
+      // Charge heads, where the template supplied them. Written after the units
+      // because they hang off the unit id, and in one call for the same reason
+      // the units were.
+      const chargeRows = (data as { id: string; unit_no: string }[]).flatMap((u) => {
+        const r = byNo.get(u.unit_no);
+        return (r?.charges || []).map((c) => ({
+          unit_id: u.id,
+          charge_head: c.charge_head,
+          amount: c.amount,
+          include_override: c.include_override ?? null,
+        }));
+      });
+      if (chargeRows.length) {
+        const { error: chErr } = await supabase.from('builder_unit_charges').insert(chargeRows);
+        // The units exist and are correct on their base value; say plainly that
+        // the charges did not land, because the derived rate depends on them.
+        if (chErr) {
+          toast.warning(`Units added, but charge heads failed: ${chErr.message}. `
+            + 'Add them per unit — they affect the ₹45 lakh test.');
+        }
+      }
+
+      toast.success(
+        `${data.length} unit${data.length === 1 ? '' : 's'} added`
+        + (chargeRows.length ? ` with ${chargeRows.length} charge head rows.` : '.'),
+      );
       onOpenChange(false);
       setPasted('');
+      setUploaded([]);
+      setUploadNote(null);
       await onSaved();
     } catch (e) {
       toast.error(`Could not add units: ${(e as Error).message}`);
@@ -207,9 +276,77 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
 
         <Tabs value={mode} onValueChange={setMode}>
           <TabsList>
+            <TabsTrigger value="template">Excel template</TabsTrigger>
             <TabsTrigger value="generate">Generate a tower</TabsTrigger>
-            <TabsTrigger value="paste">Paste from Excel</TabsTrigger>
+            <TabsTrigger value="paste">Quick paste</TabsTrigger>
           </TabsList>
+
+          {/* ── Template ──────────────────────────────────────────────────── */}
+          <TabsContent value="template" className="space-y-4 pt-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-lg border p-4">
+                <p className="flex items-center gap-2 text-sm font-medium">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">1</span>
+                  Download the template
+                </p>
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  Pre-filled with this project&apos;s {groupingLabel.toLowerCase()}s, your client&apos;s
+                  confirmed charge-head elections, and a reference sheet explaining what drives the rate.
+                </p>
+                <Button
+                  variant="outline" size="sm" className="mt-3"
+                  onClick={() => {
+                    downloadUnitTemplate({
+                      projectName, groupingLabel,
+                      groupNames: groups.map((g) => g.name),
+                      settings, isMetro,
+                    });
+                    toast.success('Template downloaded.');
+                  }}
+                >
+                  <Download className="mr-1.5 h-3.5 w-3.5" /> Download template
+                </Button>
+              </div>
+
+              <div className="rounded-lg border p-4">
+                <p className="flex items-center gap-2 text-sm font-medium">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">2</span>
+                  Upload it back
+                </p>
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  Columns are matched by name, so reordering, deleting unused columns or adding your
+                  own is fine. .xlsx, .xls or .csv.
+                </p>
+                <Button variant="outline" size="sm" className="mt-3" onClick={() => fileRef.current?.click()}>
+                  <Upload className="mr-1.5 h-3.5 w-3.5" /> Choose file
+                </Button>
+                <input
+                  ref={fileRef} type="file" className="hidden"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={handleFile}
+                />
+              </div>
+            </div>
+
+            {uploadNote && (
+              <p className="flex items-start gap-2 text-xs text-muted-foreground">
+                <FileSpreadsheet className="h-3.5 w-3.5 shrink-0 mt-0.5 text-primary" />
+                {uploadNote}
+              </p>
+            )}
+            {uploadError && (
+              <p className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                {uploadError}
+              </p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              This is the only route that carries charge heads. That matters: a charge head is what
+              pushes a unit past ₹45 lakh and out of the 1.5% bracket, so importing the unit list
+              without its charges can classify correctly today and be wrong once the charges are
+              keyed in later.
+            </p>
+          </TabsContent>
 
           {/* ── Generate ──────────────────────────────────────────────────── */}
           <TabsContent value="generate" className="space-y-4 pt-4">
@@ -361,6 +498,7 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
                     <TableHead>Unit</TableHead>
                     <TableHead>Type</TableHead>
                     <TableHead className="text-right">Carpet</TableHead>
+                    <TableHead className="text-right">Charges</TableHead>
                     <TableHead className="text-right">Gross</TableHead>
                     <TableHead>Affordable</TableHead>
                     <TableHead>Rate</TableHead>
@@ -378,6 +516,11 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
                       </TableCell>
                       <TableCell className="text-sm">{r.unit_type}</TableCell>
                       <TableCell className="text-right text-sm">{r.carpet_area_sqm || '—'}</TableCell>
+                      <TableCell className="text-right text-sm">
+                        {r.charges.length
+                          ? formatINR(r.charges.reduce((s2, c) => s2 + c.amount, 0))
+                          : <span className="text-muted-foreground">—</span>}
+                      </TableCell>
                       <TableCell className="text-right text-sm">{formatINR(r.cls.gross.gross)}</TableCell>
                       <TableCell className="text-sm">
                         {r.unit_type === 'Commercial'

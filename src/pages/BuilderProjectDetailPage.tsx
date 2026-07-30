@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorkspaceContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -102,7 +103,8 @@ const emptyOpeningForm = {
 };
 
 const BuilderProjectDetailPage: React.FC = () => {
-  const { projectId } = useParams<{ projectId: string }>();
+  const projectId = useBuilderProjectId();
+  const embedded = useBuilderEmbedded();
   const navigate = useNavigate();
   const { canManageBuilderProjects, canManageBuilderUnits, user } = useAuth();
 
@@ -446,7 +448,7 @@ const BuilderProjectDetailPage: React.FC = () => {
         title={project.name}
         subtitle={[project.rera_number, project.city].filter(Boolean).join(' · ') || 'Builder project'}
         icon={<Layers className="h-5 w-5" />}
-        actions={
+        actions={embedded ? undefined : (
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => navigate('/builder-projects')}>
               <ArrowLeft className="h-4 w-4 mr-2" /> Back
@@ -464,7 +466,7 @@ const BuilderProjectDetailPage: React.FC = () => {
               <Receipt className="h-4 w-4 mr-2" /> Bookings & Receipts
             </Button>
           </div>
-        }
+        )}
       />
 
       {/* ── The 15% test ─────────────────────────────────────────────────── */}
@@ -704,6 +706,7 @@ const BuilderProjectDetailPage: React.FC = () => {
           open={bulkDialog}
           onOpenChange={setBulkDialog}
           projectId={project.id}
+          projectName={project.name}
           groups={groups}
           groupingLabel={project.grouping_label}
           isMetro={project.is_metro}

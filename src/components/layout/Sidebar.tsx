@@ -116,22 +116,14 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
   // "GST Reminders" now lives inside Settings -> GST Reminders tab (not a top-level nav item).
+  // The whole promoter module is one destination: /builder is a sequential
+  // workspace over setup, masters, receipts, BU, dastavej, adjustments, FSI and
+  // the return. Reports stays separate — it is the output of a finished period,
+  // read by a different person at a different time.
   {
-    label: 'Builder Projects',
-    path: '/builder-projects',
+    label: 'Builder',
+    path: '/builder',
     icon: <Building className="h-5 w-5" />,
-    roles: ['superadmin', 'gst_manager', 'employee'],
-  },
-  {
-    label: 'Builder Returns',
-    path: '/builder-returns',
-    icon: <FileSpreadsheet className="h-5 w-5" />,
-    roles: ['superadmin', 'gst_manager', 'employee'],
-  },
-  {
-    label: 'Dastavej Reco',
-    path: '/builder-dastavej',
-    icon: <FileSignature className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
   {
@@ -155,8 +147,8 @@ const STAFF_NAV_ITEMS: NavItem[] = [
 // drawer.
 //
 // "GST Working" holds the working sheets — the actual GSTR-3B return is its own
-// page. "Builder" holds the whole real-estate promoter module, which is four
-// pages and would otherwise dominate the rail for the firms that never use it.
+// page. The builder module no longer needs a group: it collapsed into the single
+// /builder workspace, leaving only it and Builder Reports.
 interface NavGroup {
   key: string;
   label: string;
@@ -170,12 +162,6 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'GST Working',
     icon: <Files className="h-5 w-5" />,
     paths: ['/2b-and-rcm', '/rcm-summary', '/itc-summary'],
-  },
-  {
-    key: 'builder',
-    label: 'Builder',
-    icon: <Building className="h-5 w-5" />,
-    paths: ['/builder-projects', '/builder-returns', '/builder-dastavej', '/builder-reports'],
   },
 ];
 
