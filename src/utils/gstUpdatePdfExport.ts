@@ -17,6 +17,8 @@ interface GSTUpdateRow {
   interest: number;
   remarks: string;
   remarks_checked: boolean;
+  itc_section?: string;
+  itc_sr_no?: string;
 }
 
 export const exportGSTUpdateToPDF = (
@@ -57,12 +59,13 @@ export const exportGSTUpdateToPDF = (
     r.igst || 0,
     r.interest || 0,
     r.remarks || '-',
+    (r.itc_section && r.itc_sr_no) ? `${r.itc_section} ${r.itc_sr_no}` : '',
     r.remarks_checked ? '✓' : '',
   ]);
 
   autoTable(doc, {
     startY: 42,
-    head: [['Sr.', 'Client', 'Mistake Month', 'Update Effect', 'Return', 'Type', 'Instructions By', 'Matter Brief', 'Taxable', 'CGST', 'SGST', 'IGST', 'Interest', 'Remarks', '✓']],
+    head: [['Sr.', 'Client', 'Mistake Month', 'Update Effect', 'Return', 'Type', 'Instructions By', 'Matter Brief', 'Taxable', 'CGST', 'SGST', 'IGST', 'Interest', 'Remarks', 'ITC Sr No', '✓']],
     body: tableData,
     headStyles: {
       fillColor: [74, 144, 164],
@@ -87,7 +90,8 @@ export const exportGSTUpdateToPDF = (
       11: { cellWidth: 14, halign: 'right' },
       12: { cellWidth: 14, halign: 'right' },
       13: { cellWidth: 'auto' },
-      14: { cellWidth: 8, halign: 'center' },
+      14: { cellWidth: 20 },
+      15: { cellWidth: 8, halign: 'center' },
     },
     margin: { top: 42, left: 5, right: 5 },
   });

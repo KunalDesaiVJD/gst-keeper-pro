@@ -49,11 +49,46 @@ interface GSTUpdate {
   effect_month: string;
   remarks: string;
   remarks_checked: boolean;
+  itc_section: string;
+  itc_sr_no: string;
   isNew?: boolean;
 }
 
 const RETURN_OPTIONS = ['GSTR-1', 'GSTR-3B', 'GSTR-7', 'GSTR-1 & 3B'];
 const UPDATE_TYPE_OPTIONS = ['Claim ITC', 'Reversal ITC', 'Liability', 'RCM Liability', 'Reclaim', 'Reclaim (Expense out)'];
+
+// Cascading "ITC Sr No." dropdown: pick the ITC Summary section, then its row.
+// Mirrors the ITC Summary structure so the effect can be traced to the exact line.
+const ITC_SECTIONS = ['4A', '4B', '4D'];
+const ITC_SR_NO_BY_SECTION: Record<string, { value: string; label: string }[]> = {
+  '4A': [
+    { value: '(1)', label: '(1) Import of Goods' },
+    { value: '(2)', label: '(2) Import of Services' },
+    { value: '(3)', label: '(3) RCM ITC' },
+    { value: '(4)', label: '(4) Inward Supplies from ISD' },
+    { value: '(5)', label: '(5) All other ITC' },
+    { value: '5.1', label: '5.1 ITC for the Month' },
+    { value: '5.2', label: '5.2 ITC for Previous Month' },
+    { value: '5.3', label: '5.3 Debit Note' },
+    { value: '5.4', label: '5.4 Reclaim of ITC Reversed (prev months)' },
+    { value: '5.5', label: '5.5 Reclaim due to 180 days / Others' },
+  ],
+  '4B': [
+    { value: '(1)', label: '(1) Reversal Rule 38, 42, 43 & 17(5)' },
+    { value: '(2)', label: '(2) Others' },
+    { value: '(i)', label: '(i) Reversal current month (2B Reco)' },
+    { value: '(ii)', label: '(ii) Reversal previous months' },
+    { value: '(iii)', label: '(iii) Reversal due to 180 days' },
+  ],
+  '4D': [
+    { value: '(1)', label: '(1) ITC reclaimed reversed under 4(B)(2)' },
+    { value: '1.1', label: '1.1 Reclaim of ITC Reversed (prev months)' },
+    { value: '1.2', label: '1.2 Reclaim due to 180 days / Others' },
+    { value: '(2)', label: '(2) Ineligible ITC u/s 16(4) & PoS' },
+  ],
+};
+// ITC Sr No is mandatory (once remarks are written) for these correction types.
+const ITC_SR_NO_REQUIRED_TYPES = ['Reversal ITC', 'Claim ITC', 'Reclaim', 'Reclaim (Expense out)'];
 
 const GSTRunningUpdatePage: React.FC = () => {
   const { user, isStaffRole, canEditUpdateSheet } = useAuth();
@@ -162,6 +197,8 @@ const GSTRunningUpdatePage: React.FC = () => {
         effect_month: d.effect_month || '',
         remarks: d.remarks || '',
         remarks_checked: !!(d.remarks && d.remarks.trim().length > 0),
+        itc_section: (d as any).itc_section || '',
+        itc_sr_no: (d as any).itc_sr_no || '',
       }));
 
       setUpdates(formattedData);
@@ -260,6 +297,8 @@ const GSTRunningUpdatePage: React.FC = () => {
         effect_month: '',
         remarks: '',
         remarks_checked: false,
+        itc_section: '',
+        itc_sr_no: '',
         isNew: true,
       },
       ...updates,
@@ -288,6 +327,14 @@ const GSTRunningUpdatePage: React.FC = () => {
     setUpdates(newUpdates);
   };
 
+  // Section change resets the sub-head in the same update (handleFieldChange
+  // reads state non-functionally, so two calls would clobber each other).
+  const handleItcSectionChange = (index: number, section: string) => {
+    const newUpdates = [...updates];
+    newUpdates[index] = { ...newUpdates[index], itc_section: section, itc_sr_no: '' };
+    setUpdates(newUpdates);
+  };
+
   const handleSave = async () => {
     if (!canEdit) return;
 
@@ -309,6 +356,28 @@ const GSTRunningUpdatePage: React.FC = () => {
 
     if (uncheckedWithRemarks.length > 0) {
       toast.error('Some rows have remarks but the checkbox is not ticked. Please tick the checkbox to confirm.');
+      return;
+    }
+
+    // ITC Sr No is mandatory for Reversal/Claim/Reclaim rows once remarks are
+    // written — but only for NEW or EDITED rows ("from now"), so the existing
+    // backlog isn't blocked.
+    const origById = new Map(originalUpdates.filter(u => u.id).map(u => [u.id, u] as const));
+    const isChanged = (u: GSTUpdate) => {
+      if (!u.id || u.isNew) return true;
+      const o = origById.get(u.id);
+      if (!o) return true;
+      const keys: (keyof GSTUpdate)[] = ['update_type', 'remarks', 'itc_section', 'itc_sr_no', 'cgst', 'sgst', 'igst', 'taxable_value', 'interest', 'matter_brief', 'update_effect_month', 'update_in_return', 'effect_month', 'update_instructions_by'];
+      return keys.some(k => (u[k] ?? '') !== (o[k] ?? ''));
+    };
+    const missingItcSrNo = updates.filter(u =>
+      isChanged(u) &&
+      ITC_SR_NO_REQUIRED_TYPES.includes(u.update_type) &&
+      !!(u.remarks && u.remarks.trim().length > 0) &&
+      (!u.itc_section || !u.itc_sr_no),
+    );
+    if (missingItcSrNo.length > 0) {
+      toast.error(`Select the ITC Sr No (section + row) on ${missingItcSrNo.length} row(s): it's required for Reversal/Claim/Reclaim corrections once remarks are written.`);
       return;
     }
 
@@ -350,6 +419,8 @@ const GSTRunningUpdatePage: React.FC = () => {
           interest: update.interest,
           effect_month: update.effect_month,
           remarks: update.remarks,
+          itc_section: update.itc_section || null,
+          itc_sr_no: update.itc_sr_no || null,
           updated_by: user?.id,
           updated_at: new Date().toISOString(),
         };
@@ -372,7 +443,7 @@ const GSTRunningUpdatePage: React.FC = () => {
       // Row-wise version tracking
       try {
         const groupVersionId = crypto.randomUUID();
-        const fieldsToTrack = ['client_id', 'update_effect_month', 'update_in_return', 'update_type', 'update_instructions_by', 'instructions_by_employee_id', 'matter_brief', 'taxable_value', 'cgst', 'sgst', 'igst', 'interest', 'effect_month', 'remarks'];
+        const fieldsToTrack = ['client_id', 'update_effect_month', 'update_in_return', 'update_type', 'update_instructions_by', 'instructions_by_employee_id', 'matter_brief', 'taxable_value', 'cgst', 'sgst', 'igst', 'interest', 'effect_month', 'remarks', 'itc_section', 'itc_sr_no'];
         
         for (const update of updates) {
           if (!update.id || update.isNew) continue;
@@ -656,10 +727,10 @@ const GSTRunningUpdatePage: React.FC = () => {
               ['GST Update Sheet - Version ' + version.versionNumber],
               [`Saved: ${new Date(version.updatedAt).toLocaleString()}`, '', `By: ${version.updatedBy}`],
               [],
-              ['Sr.', 'Client', 'Mistake Month', 'Update Effect Month', 'Return', 'Type', 'Instructions By', 'Matter Brief', 'Taxable', 'CGST', 'SGST', 'IGST', 'Interest', 'Remarks', '✓'],
+              ['Sr.', 'Client', 'Mistake Month', 'Update Effect Month', 'Return', 'Type', 'Instructions By', 'Matter Brief', 'Taxable', 'CGST', 'SGST', 'IGST', 'Interest', 'Remarks', 'ITC Sr No', '✓'],
             ];
             (versionData || []).forEach((r: any, idx: number) => {
-              sheetData.push([idx+1, r.client_name||'', r.effect_month||'', r.update_effect_month||'', r.update_in_return||'', r.update_type||'', r.update_instructions_by||'', r.matter_brief||'', r.taxable_value||0, r.cgst||0, r.sgst||0, r.igst||0, r.interest||0, r.remarks||'', r.remarks_checked?'✓':'']);
+              sheetData.push([idx+1, r.client_name||'', r.effect_month||'', r.update_effect_month||'', r.update_in_return||'', r.update_type||'', r.update_instructions_by||'', r.matter_brief||'', r.taxable_value||0, r.cgst||0, r.sgst||0, r.igst||0, r.interest||0, r.remarks||'', (r.itc_section && r.itc_sr_no ? `${r.itc_section} ${r.itc_sr_no}` : ''), r.remarks_checked?'✓':'']);
             });
             const sheet = XLSX.utils.aoa_to_sheet(sheetData);
             XLSX.utils.book_append_sheet(workbook, sheet, 'GST Updates');
@@ -676,10 +747,10 @@ const GSTRunningUpdatePage: React.FC = () => {
               ['GST Update Sheet - Version ' + version.versionNumber],
               [`Saved: ${new Date(version.updatedAt).toLocaleString()}`, '', `By: ${version.updatedBy}`],
               [],
-              ['Sr.', 'Client', 'Mistake Month', 'Update Effect Month', 'Return', 'Type', 'Instructions By', 'Matter Brief', 'Taxable', 'CGST', 'SGST', 'IGST', 'Interest', 'Remarks', '✓'],
+              ['Sr.', 'Client', 'Mistake Month', 'Update Effect Month', 'Return', 'Type', 'Instructions By', 'Matter Brief', 'Taxable', 'CGST', 'SGST', 'IGST', 'Interest', 'Remarks', 'ITC Sr No', '✓'],
             ];
             (versionData || []).forEach((r: any, idx: number) => {
-              sheetData.push([idx+1, r.client_name||'', r.effect_month||'', r.update_effect_month||'', r.update_in_return||'', r.update_type||'', r.update_instructions_by||'', r.matter_brief||'', r.taxable_value||0, r.cgst||0, r.sgst||0, r.igst||0, r.interest||0, r.remarks||'', r.remarks_checked?'✓':'']);
+              sheetData.push([idx+1, r.client_name||'', r.effect_month||'', r.update_effect_month||'', r.update_in_return||'', r.update_type||'', r.update_instructions_by||'', r.matter_brief||'', r.taxable_value||0, r.cgst||0, r.sgst||0, r.igst||0, r.interest||0, r.remarks||'', (r.itc_section && r.itc_sr_no ? `${r.itc_section} ${r.itc_sr_no}` : ''), r.remarks_checked?'✓':'']);
             });
             const sheet = XLSX.utils.aoa_to_sheet(sheetData);
             XLSX.utils.book_append_sheet(workbook, sheet, 'GST Updates');
@@ -719,6 +790,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                     <col style={{ width: columnWidths['igst'] || 100 }} />
                     <col style={{ width: columnWidths['interest'] || 80 }} />
                     <col style={{ width: columnWidths['remarks'] || 200 }} />
+                    <col style={{ width: columnWidths['itcsr'] || 180 }} />
                     <col style={{ width: columnWidths['check'] || 40 }} />
                     {canDeleteGSTRows && <col style={{ width: columnWidths['delete'] || 48 }} />}
                     <col style={{ width: 40 }} />
@@ -739,6 +811,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                       <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-right relative">IGST<ResizeHandle colKey="igst" /></TableHead>
                       <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-right relative">Interest<ResizeHandle colKey="interest" /></TableHead>
                       <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">Remarks<ResizeHandle colKey="remarks" /></TableHead>
+                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">ITC Sr No.<ResizeHandle colKey="itcsr" /></TableHead>
                       <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-center relative">✓<ResizeHandle colKey="check" /></TableHead>
                       {canDeleteGSTRows && <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary"></TableHead>}
                       <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-center">
@@ -902,6 +975,38 @@ const GSTRunningUpdatePage: React.FC = () => {
                               className="w-full min-h-[32px] max-h-[80px] text-xs px-2 py-1 border-0 shadow-none bg-transparent resize-y"
                               disabled={!canEdit}
                             />
+                          </TableCell>
+                          <TableCell className="p-0 border border-border align-top">
+                            {(() => {
+                              const needsItcSrNo = ITC_SR_NO_REQUIRED_TYPES.includes(update.update_type)
+                                && !!(update.remarks && update.remarks.trim().length > 0)
+                                && (!update.itc_section || !update.itc_sr_no);
+                              if (!canEdit) {
+                                return <span className="px-2 text-xs">{update.itc_section && update.itc_sr_no ? `${update.itc_section} ${update.itc_sr_no}` : ''}</span>;
+                              }
+                              return (
+                                <div className={`flex flex-col gap-1 p-1 ${needsItcSrNo ? 'bg-destructive/5' : ''}`}>
+                                  <Select value={update.itc_section} onValueChange={(val) => handleItcSectionChange(originalIndex, val)}>
+                                    <SelectTrigger className="h-7 text-xs w-full"><SelectValue placeholder="Section" /></SelectTrigger>
+                                    <SelectContent>
+                                      {ITC_SECTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                                    </SelectContent>
+                                  </Select>
+                                  <Select
+                                    value={update.itc_sr_no}
+                                    onValueChange={(val) => handleFieldChange(originalIndex, 'itc_sr_no', val)}
+                                    disabled={!update.itc_section}
+                                  >
+                                    <SelectTrigger className="h-7 text-xs w-full"><SelectValue placeholder="Sr No" /></SelectTrigger>
+                                    <SelectContent>
+                                      {(ITC_SR_NO_BY_SECTION[update.itc_section] || []).map(o => (
+                                        <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              );
+                            })()}
                           </TableCell>
                           <TableCell className="border border-border text-center">
                             <Checkbox
