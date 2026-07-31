@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import {
   Gstr1Section, ManualRow, ColumnDef, SECTION_COLUMNS, NIL_SUPPLY_TYPES, DOC_TYPES,
-  gstinHomeState, recomputeRowTax, assembleGstr1Json, hydrateManualEntriesFromJson,
+  gstinHomeState, recomputeRowTax, assembleGstr1Json, hydrateManualEntriesFromJson, findMissingHsnRows,
 } from '@/utils/gstr1ManualBuild';
 import { buildGstr1Summary } from '@/utils/buildGstr1Summary';
 
@@ -217,6 +217,20 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
   };
 
   const handleGenerate = async () => {
+    // GSTN has made HSN-wise reporting mandatory on GSTR-1 — a return with
+    // real taxable value but zero HSN entries gets rejected by the portal's
+    // upload validator with a generic "download the latest offline tool"
+    // message that gives no hint HSN is the actual problem. Catch it here so
+    // the operator fixes it before wasting a portal round-trip.
+    const missingHsn = findMissingHsnRows(rowsBySection);
+    if (missingHsn.length > 0) {
+      const preview = missingHsn.slice(0, 5).map((m) => `${SECTION_LABELS[m.section]}: ${m.inum}`).join('; ');
+      toast.error(
+        `${missingHsn.length} row(s) have a taxable value but no HSN code — the portal will reject the upload. ` +
+        `Fix these first: ${preview}${missingHsn.length > 5 ? '…' : ''}`
+      );
+      return;
+    }
     setIsGenerating(true);
     try {
       await persistRows();

@@ -357,10 +357,15 @@ export function assembleGstr1Json(params: {
       existing.txval += num(r.txval); existing.iamt += num(r.iamt);
       existing.camt += num(r.camt); existing.samt += num(r.samt); existing.csamt += num(r.csamt);
     } else {
-      hsnMap.set(key, { hsn_sc: code, rt: num(r.rt), txval: num(r.txval), iamt: num(r.iamt), camt: num(r.camt), samt: num(r.samt), csamt: num(r.csamt), uqc: 'NA', qty: 0, desc: '' });
+      hsnMap.set(key, { hsn_sc: code, rt: num(r.rt), txval: num(r.txval), iamt: num(r.iamt), camt: num(r.camt), samt: num(r.samt), csamt: num(r.csamt), uqc: 'NA', qty: 0, desc: '', user_desc: '' });
     }
   });
-  const hsnData = Array.from(hsnMap.values());
+  // Real portal-exported JSON keys this "hsn_b2b" (with a serial "num" per
+  // row), never "data" — confirmed against an actual downloaded GSTR-1 JSON.
+  // The portal's upload validator is strict about this; using the wrong key
+  // name here produces the exact generic "download the latest offline tool"
+  // rejection regardless of how correct the rest of the file is.
+  const hsnData = Array.from(hsnMap.values()).map((h, i) => ({ num: i + 1, ...h }));
 
   // --- Table 13 (Documents Issued) ---
   const docDet = (docRows || [])
@@ -375,13 +380,42 @@ export function assembleGstr1Json(params: {
       };
     });
 
-  return {
-    gstin, fp,
-    b2b, b2cl, b2cs, cdnr, cdnur, exp,
-    nil: { inv: nilInv },
-    hsn: { data: hsnData },
-    doc_issue: { doc_det: docDet },
-  };
+  // Real portal-exported JSON omits a section's key entirely when there's
+  // nothing in it (confirmed against actual downloads — a return with no
+  // exports simply has no "exp" key, not "exp": []). Match that shape as
+  // closely as possible rather than emitting empty arrays everywhere, since
+  // we don't know which of these the portal's strict validator tolerates.
+  const out: any = { gstin, fp };
+  if (b2b.length) out.b2b = b2b;
+  if (b2cl.length) out.b2cl = b2cl;
+  if (b2cs.length) out.b2cs = b2cs;
+  if (cdnr.length) out.cdnr = cdnr;
+  if (cdnur.length) out.cdnur = cdnur;
+  if (exp.length) out.exp = exp;
+  if (nilInv.length) out.nil = { inv: nilInv };
+  if (hsnData.length) out.hsn = { hsn_b2b: hsnData };
+  if (docDet.length) out.doc_issue = { doc_det: docDet };
+  return out;
+}
+
+/**
+ * Pre-flight check before Generate JSON: GSTN has made HSN-wise reporting
+ * mandatory on GSTR-1, so a return with real taxable supplies but zero HSN
+ * entries is very likely to be rejected by the portal's upload validator
+ * with the same generic "download the latest offline tool" message —
+ * regardless of how correct everything else is. Flag rows missing an HSN
+ * code so the operator can fix them before wasting an upload attempt.
+ */
+export function findMissingHsnRows(rowsBySection: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, ManualRow[]>): { section: Gstr1Section; inum: string }[] {
+  const missing: { section: Gstr1Section; inum: string }[] = [];
+  (Object.keys(rowsBySection) as Exclude<Gstr1Section, 'nil' | 'doc'>[]).forEach((section) => {
+    rowsBySection[section].forEach((r) => {
+      const hasValue = num(r.txval) > 0;
+      const hasHsn = !!(r.hsnCode || '').trim();
+      if (hasValue && !hasHsn) missing.push({ section, inum: r.inum || r.ntNum || '(row without invoice no.)' });
+    });
+  });
+  return missing;
 }
 
 // ---------------------------------------------------------------------------
