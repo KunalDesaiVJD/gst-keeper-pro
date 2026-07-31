@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorkspaceContext';
+import { useMonth } from '@/contexts/MonthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -16,7 +17,9 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow,
+} from '@/components/ui/table';
 import { toast } from 'sonner';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -31,6 +34,7 @@ import BulkReceiptsDialog, { type BulkReceiptUnit } from '@/components/builder/B
 import {
   ArrowLeft, Loader2, ChevronDown, ChevronRight, Plus, Receipt, FileText,
   AlertTriangle, UserPlus, Trash2, Users, Pencil, Wallet, CheckSquare, MoreHorizontal, Layers, ArrowUpDown,
+  History, ListChecks,
 } from 'lucide-react';
 import {
   DEFAULT_CHARGE_INCLUSIONS, RATE_CODE_LABEL, classifyUnit, computeTds194IA,
@@ -39,10 +43,11 @@ import {
 } from '@/utils/builderRates';
 import {
   CHEQUE_STATUS_LABEL, INVOICE_TYPE_LABEL, checkTieOut, computeUnitLedger,
-  dateToPeriod, deriveReceipt, planAdvanceAbsorption, prettyPeriodLabel,
+  dateToPeriod, deriveReceipt, planAdvanceAbsorption, prettyPeriodLabel, receiptPostsTax,
   type ChequeStatus, type InvoiceType, type ReceiptNature,
 } from '@/utils/builderLedger';
 import { computeDelayInterest, type DelayInterestBasis } from '@/utils/builderAdjustments';
+import { periodKey } from '@/utils/builderBuEvent';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
 
 interface ProjectRow {
@@ -73,6 +78,7 @@ interface ReceiptRow {
   cgst: number; sgst: number; tds_194ia: number; bank_credit: number | null;
   instrument_type: string; instrument_ref: string | null; cheque_status: ChequeStatus;
   gst_already_discharged: boolean; period_month: string; doc_no: string | null;
+  subsumed_by_bu_event_id: string | null;
 }
 interface InvoiceRow {
   id: string; booking_id: string; unit_id: string; invoice_date: string;
@@ -110,6 +116,17 @@ const BuilderBookingsPage: React.FC = () => {
   const embedded = useBuilderEmbedded();
   const navigate = useNavigate();
   const { canEnterBuilderReceipts, user } = useAuth();
+  const { selectedMonth } = useMonth();
+
+  /**
+   * Two different questions, easy to conflate: "where does this unit stand"
+   * (cumulative, as of a period-end) and "what happened this month" (a flat
+   * register to tally against a bank statement or Tally). Up-to-mode reuses
+   * the unit table; month-mode replaces it with the register below. Neither
+   * touches the entry dialogs — those always act on the true, current
+   * position, never on a historical snapshot.
+   */
+  const [viewMode, setViewMode] = useState<'upto' | 'month'>('upto');
 
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [units, setUnits] = useState<UnitRow[]>([]);
@@ -301,6 +318,7 @@ const BuilderBookingsPage: React.FC = () => {
         tds_194ia: r.tds_194ia, bank_credit: r.bank_credit,
         receipt_nature: r.receipt_nature, cheque_status: r.cheque_status,
         gst_already_discharged: r.gst_already_discharged,
+        subsumed_by_bu_event_id: r.subsumed_by_bu_event_id,
       })),
       invoices: (invoices[u.id] || []).map((i) => ({
         consideration: i.consideration, cgst: i.cgst, sgst: i.sgst,
@@ -311,11 +329,43 @@ const BuilderBookingsPage: React.FC = () => {
     });
   }, [classifyFor, openings, receipts, invoices, adjustmentsForUnit]);
 
+  /**
+   * The same ledger, frozen at the end of a given period — what the table
+   * shows in "Up to [period]" mode. Never used by the entry dialogs: adding a
+   * receipt always acts on the true, current balance, not a historical one.
+   */
+  const ledgerForAsOf = useCallback((u: UnitRow, asOfPeriod: string) => {
+    const cls = classifyFor(u);
+    const opening = openings[u.id];
+    const cutoff = periodKey(asOfPeriod);
+    return computeUnitLedger({
+      agreementValue: opening?.agreement_value || cls.gross.gross,
+      opening,
+      receipts: (receipts[u.id] || [])
+        .filter((r) => periodKey(r.period_month) <= cutoff)
+        .map((r) => ({
+          consideration: r.consideration, cgst: r.cgst, sgst: r.sgst,
+          tds_194ia: r.tds_194ia, bank_credit: r.bank_credit,
+          receipt_nature: r.receipt_nature, cheque_status: r.cheque_status,
+          gst_already_discharged: r.gst_already_discharged,
+          subsumed_by_bu_event_id: r.subsumed_by_bu_event_id,
+        })),
+      invoices: (invoices[u.id] || [])
+        .filter((i) => periodKey(i.period_month) <= cutoff)
+        .map((i) => ({ consideration: i.consideration, cgst: i.cgst, sgst: i.sgst })),
+      adjustments: adjustmentsForUnit(u.id)
+        .filter((a) => periodKey(a.period_month) <= cutoff)
+        .map((a) => ({
+          consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst,
+        })),
+    });
+  }, [classifyFor, openings, receipts, invoices, adjustmentsForUnit]);
+
   /** Open advances on a unit, net of what invoices have already absorbed. */
   const openAdvancesFor = useCallback((unitId: string) => {
     const unitAdj = adjustmentsForUnit(unitId);
     return (receipts[unitId] || [])
-      .filter((r) => r.receipt_nature === 'ADVANCE' && r.cheque_status !== 'Bounced' && !r.gst_already_discharged)
+      .filter((r) => receiptPostsTax(r))
       .map((r) => {
         const used = unitAdj
           .filter((a) => a.receipt_id === r.id)
@@ -629,6 +679,84 @@ const BuilderBookingsPage: React.FC = () => {
     [units, headroomOf],
   );
 
+  /**
+   * The register view: every receipt and invoice dated in the selected month,
+   * across every unit, in one chronological list — the shape that tallies
+   * against a bank statement or Tally, not the per-unit cumulative table.
+   *
+   * "Bank amount" and "GST tax" are kept as two separate totals rather than
+   * one grand total. An invoice absorbing an old advance carries GST this
+   * month but moved no new cash; folding it into a single sum would make
+   * neither total reconcile against anything real.
+   */
+  interface RegisterRow {
+    key: string; date: string; unitNo: string; memberLabel: string;
+    docType: string; tableTag: string; ref: string | null;
+    bankAmount: number | null; taxableValue: number; cgst: number; sgst: number;
+  }
+  const monthRegister = useMemo<RegisterRow[]>(() => {
+    if (viewMode !== 'month') return [];
+    const rows: RegisterRow[] = [];
+    units.forEach((u) => {
+      const booking = activeBookingFor(u.id);
+      const mem = booking ? members[booking.id] || [] : [];
+      const memberLabel = mem.length === 0 ? 'Unbooked'
+        : mem.length === 1 ? mem[0].name : `${mem[0].name} +${mem.length - 1} joint`;
+
+      (receipts[u.id] || []).filter((r) => r.period_month === selectedMonth).forEach((r) => {
+        const posts = receiptPostsTax(r);
+        const tag = posts ? '11A'
+          : r.cheque_status === 'Bounced' ? 'Bounced — excluded'
+            : r.subsumed_by_bu_event_id ? 'Subsumed by BU event'
+              : r.gst_already_discharged ? 'GST discharged elsewhere'
+                : 'Against invoice — no fresh tax';
+        rows.push({
+          key: `r-${r.id}`, date: r.receipt_date, unitNo: u.unit_no, memberLabel,
+          docType: `Receipt ${r.doc_no || ''}`.trim(), tableTag: tag, ref: r.instrument_ref,
+          bankAmount: r.cheque_status === 'Bounced' ? null : (r.bank_credit ?? (
+            (Number(r.consideration) || 0) + (Number(r.cgst) || 0) + (Number(r.sgst) || 0) - (Number(r.tds_194ia) || 0)
+          )),
+          taxableValue: posts ? Number(r.taxable_value) || 0 : 0,
+          cgst: posts ? Number(r.cgst) || 0 : 0,
+          sgst: posts ? Number(r.sgst) || 0 : 0,
+        });
+      });
+
+      (invoices[u.id] || []).filter((i) => i.period_month === selectedMonth).forEach((i) => {
+        rows.push({
+          key: `i-${i.id}`, date: i.invoice_date, unitNo: u.unit_no, memberLabel,
+          docType: `${INVOICE_TYPE_LABEL[i.invoice_type]} ${i.doc_no || ''}`.trim(),
+          tableTag: 'Table 7', ref: null,
+          // Not fresh cash — an invoice bills value already received as an
+          // advance, or value not yet received at all (a BU differential).
+          bankAmount: null,
+          taxableValue: Number(i.taxable_value) || 0, cgst: Number(i.cgst) || 0, sgst: Number(i.sgst) || 0,
+        });
+      });
+
+      adjustmentsForUnit(u.id)
+        .filter((a) => a.period_month === selectedMonth)
+        .forEach((a) => {
+          const inv = (invoices[u.id] || []).find((i) => i.id === a.invoice_id);
+          rows.push({
+            key: `a-${a.id}`, date: inv?.invoice_date || '', unitNo: u.unit_no, memberLabel,
+            docType: `Advance adjusted${inv?.doc_no ? ` (${inv.doc_no})` : ''}`,
+            tableTag: '11B', ref: null, bankAmount: null,
+            taxableValue: -(Number(a.consideration_adjusted) || 0) * (2 / 3),
+            cgst: -(Number(a.cgst) || 0), sgst: -(Number(a.sgst) || 0),
+          });
+        });
+    });
+    return rows.sort((x, y) => x.date.localeCompare(y.date));
+  }, [viewMode, units, activeBookingFor, members, receipts, invoices, adjustmentsForUnit, selectedMonth]);
+
+  const registerTotals = useMemo(() => monthRegister.reduce((t, r) => ({
+    bank: t.bank + (r.bankAmount || 0),
+    taxable: t.taxable + r.taxableValue,
+    cgst: t.cgst + r.cgst,
+    sgst: t.sgst + r.sgst,
+  }), { bank: 0, taxable: 0, cgst: 0, sgst: 0 }), [monthRegister]);
+
   const toggleSelect = (id: string) => setSelected((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -694,21 +822,39 @@ const BuilderBookingsPage: React.FC = () => {
         subtitle="Advances bear tax on receipt (Table 11A); milestone invoices absorb them (Table 11B)"
         icon={<Receipt className="h-5 w-5" />}
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {canEdit && bulkReceiptUnits.length > 0 && (
               <Button onClick={() => setBulkReceipts(true)}>
                 <Wallet className="mr-2 h-4 w-4" /> Record receipts
               </Button>
             )}
-            <Button
-              variant={byHeadroom ? 'default' : 'outline'}
-              onClick={() => setByHeadroom((v) => !v)}
-              title="Put the units closest to the ₹45 lakh limit first"
-            >
-              <ArrowUpDown className="mr-2 h-4 w-4" />
-              ₹45L headroom
-            </Button>
-            {atRisk > 0 && (
+            <div className="flex rounded-md border p-0.5">
+              <Button
+                variant={viewMode === 'upto' ? 'secondary' : 'ghost'} size="sm" className="h-8"
+                onClick={() => setViewMode('upto')}
+                title="Cumulative position as of the end of the selected period"
+              >
+                <History className="mr-1.5 h-3.5 w-3.5" /> Up to {prettyPeriodLabel(selectedMonth)}
+              </Button>
+              <Button
+                variant={viewMode === 'month' ? 'secondary' : 'ghost'} size="sm" className="h-8"
+                onClick={() => setViewMode('month')}
+                title="Every receipt and invoice dated in this period, across all units — tally against your bank statement or Tally"
+              >
+                <ListChecks className="mr-1.5 h-3.5 w-3.5" /> {prettyPeriodLabel(selectedMonth)} register
+              </Button>
+            </div>
+            {viewMode === 'upto' && (
+              <Button
+                variant={byHeadroom ? 'default' : 'outline'}
+                onClick={() => setByHeadroom((v) => !v)}
+                title="Put the units closest to the ₹45 lakh limit first"
+              >
+                <ArrowUpDown className="mr-2 h-4 w-4" />
+                ₹45L headroom
+              </Button>
+            )}
+            {viewMode === 'upto' && atRisk > 0 && (
               <Badge variant="outline" className="gap-1 self-center border-amber-500/50 text-amber-700 dark:text-amber-500">
                 <AlertTriangle className="h-3 w-3" />
                 {atRisk} within ₹1 lakh of the limit
@@ -740,14 +886,89 @@ const BuilderBookingsPage: React.FC = () => {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Units</CardTitle>
+          <CardTitle className="text-base">{viewMode === 'upto' ? 'Units' : `${prettyPeriodLabel(selectedMonth)} register`}</CardTitle>
           <CardDescription>
-            "Value taxed" is what a BU event will deduct from — the value offered to tax, not the money
-            received. Expand a unit to see its month-wise ledger.
+            {viewMode === 'upto' ? (
+              <>
+                "Value taxed" is what a BU event will deduct from — the value offered to tax, not the
+                money received, as of the end of {prettyPeriodLabel(selectedMonth)}. Expand a unit to see
+                its month-wise ledger.
+              </>
+            ) : (
+              <>
+                Every receipt and invoice dated in {prettyPeriodLabel(selectedMonth)}, across every unit,
+                oldest first — tally "Bank amount" against your bank statement or Tally, and "GST tax"
+                against this period's return.
+              </>
+            )}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          {units.length === 0 ? (
+          {viewMode === 'month' ? (
+            monthRegister.length === 0 ? (
+              <div className="p-10 text-center text-muted-foreground">
+                <ListChecks className="h-8 w-8 mx-auto mb-3 opacity-40" />
+                <p className="text-sm">No receipts or invoices dated in {prettyPeriodLabel(selectedMonth)}.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Unit</TableHead>
+                      <TableHead>Document</TableHead>
+                      <TableHead>Reference</TableHead>
+                      <TableHead>Table</TableHead>
+                      <TableHead className="text-right">Bank amount</TableHead>
+                      <TableHead className="text-right">Taxable</TableHead>
+                      <TableHead className="text-right">CGST</TableHead>
+                      <TableHead className="text-right">SGST</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {monthRegister.map((r) => (
+                      <TableRow key={r.key}>
+                        <TableCell className="text-sm tabular-nums">{r.date}</TableCell>
+                        <TableCell className="text-sm">
+                          {r.unitNo}
+                          <span className="block text-xs text-muted-foreground">{r.memberLabel}</span>
+                        </TableCell>
+                        <TableCell className="text-sm">{r.docType}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{r.ref || '—'}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs">{r.tableTag}</Badge>
+                        </TableCell>
+                        <TableCell className="text-right text-sm tabular-nums">
+                          {r.bankAmount === null ? <span className="text-muted-foreground">—</span> : formatINR(r.bankAmount)}
+                        </TableCell>
+                        <TableCell className="text-right text-sm tabular-nums">{formatINR(r.taxableValue)}</TableCell>
+                        <TableCell className="text-right text-sm tabular-nums">{formatINR(r.cgst)}</TableCell>
+                        <TableCell className="text-right text-sm tabular-nums">{formatINR(r.sgst)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                  <TableFooter>
+                    <TableRow>
+                      <TableCell colSpan={5} className="font-semibold">
+                        Bank total — tally against your statement or Tally
+                      </TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">{formatINR(registerTotals.bank)}</TableCell>
+                      <TableCell colSpan={3} />
+                    </TableRow>
+                    <TableRow>
+                      <TableCell colSpan={6} className="font-semibold">
+                        GST tax posted this period — tally against the return
+                      </TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">{formatINR(registerTotals.taxable)}</TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">{formatINR(registerTotals.cgst)}</TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">{formatINR(registerTotals.sgst)}</TableCell>
+                    </TableRow>
+                  </TableFooter>
+                </Table>
+              </div>
+            )
+          ) : units.length === 0 ? (
             <div className="p-10 text-center text-muted-foreground">
               <Users className="h-8 w-8 mx-auto mb-3 opacity-40" />
               <p className="text-sm">No units in this project yet.</p>
@@ -787,7 +1008,7 @@ const BuilderBookingsPage: React.FC = () => {
                   {sortedUnits.map((u) => {
                     const cls = classifyFor(u);
                     const booking = activeBookingFor(u.id);
-                    const led = ledgerFor(u);
+                    const led = ledgerForAsOf(u, selectedMonth);
                     const agreement = openings[u.id]?.agreement_value || cls.gross.gross;
                     const tie = checkTieOut(agreement, led.valueTaxed);
                     const mem = booking ? members[booking.id] || [] : [];

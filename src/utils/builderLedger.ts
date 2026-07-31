@@ -97,22 +97,27 @@ export const deriveReceipt = (input: ReceiptInput): ReceiptDerivation => {
 /**
  * Does this receipt carry tax in its period?
  *
- * Three reasons it might not:
+ * Four reasons it might not:
  *  - it is a collection against an invoice already raised, so the tax went out
  *    with that invoice;
  *  - the cheque bounced, so no consideration was ever received;
  *  - it replaces an earlier receipt whose GST already went out — a funding swap
  *    (own money returned, bank disbursement received for the same unit) changes
- *    how the money arrived, not what was sold.
+ *    how the money arrived, not what was sold;
+ *  - a BU event has since subsumed it — the differential invoice now carries
+ *    this rupee's tax instead, so counting the receipt here too would tax it
+ *    twice: once as an open advance, once inside the differential.
  */
 export const receiptPostsTax = (r: {
   receipt_nature: ReceiptNature;
   cheque_status: ChequeStatus;
   gst_already_discharged: boolean;
+  subsumed_by_bu_event_id?: string | null;
 }): boolean =>
   r.receipt_nature === 'ADVANCE'
   && r.cheque_status !== 'Bounced'
-  && !r.gst_already_discharged;
+  && !r.gst_already_discharged
+  && !r.subsumed_by_bu_event_id;
 
 // ─── Per-unit ledger ────────────────────────────────────────────────────────
 
@@ -125,6 +130,7 @@ export interface LedgerReceipt {
   receipt_nature: ReceiptNature;
   cheque_status: ChequeStatus;
   gst_already_discharged: boolean;
+  subsumed_by_bu_event_id?: string | null;
 }
 
 export interface LedgerInvoice { consideration: number; cgst: number; sgst: number }
