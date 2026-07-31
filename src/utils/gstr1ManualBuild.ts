@@ -337,7 +337,7 @@ export function assembleGstr1Json(params: {
   // --- Table 12 (HSN): rolled up from every line across all sections that
   // carries an hsnCode, grouped by (hsn_sc, rate). ---
   const hsnMap = new Map<string, any>();
-  const allLines: { hsnCode?: string; rt?: any; txval?: any; iamt?: any; camt?: any; samt?: any; csamt?: any }[] = [
+  const allLines: ManualRow[] = [
     ...(rowsBySection.b2b || []), ...(rowsBySection.b2cl || []), ...(rowsBySection.b2cs || []),
     ...(rowsBySection.cdnr || []), ...(rowsBySection.cdnur || []), ...(rowsBySection.exp || []),
   ];

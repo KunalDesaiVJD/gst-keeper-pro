@@ -1035,7 +1035,8 @@ const GSTR1DataPage: React.FC = () => {
     />
   );
 
-  const selectedClientName = clients.find(c => c.id === selectedClient)?.name || '';
+  const selectedClientData = clients.find(c => c.id === selectedClient);
+  const selectedClientName = selectedClientData?.name || '';
 
   return (
     <div className="space-y-6 animate-fade-in">
