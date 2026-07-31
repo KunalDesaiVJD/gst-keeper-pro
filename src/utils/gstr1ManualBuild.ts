@@ -226,6 +226,19 @@ export function recomputeRowTax(section: Gstr1Section, row: ManualRow, homeState
 
 const num = (v: any) => Number(v) || 0;
 
+// HTML <input type="date"> always stores/emits ISO format (YYYY-MM-DD)
+// regardless of locale display — but every real portal-exported GSTR-1 JSON
+// (confirmed against actual downloads) uses DD-MM-YYYY for idt/nt_dt/sbdt.
+// Passing the raw ISO string through is a guaranteed schema rejection
+// independent of anything else being correct. Convert at assembly time only
+// — the grid itself keeps storing ISO so the date input keeps working.
+const toPortalDate = (iso: string): string => {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return iso || ''; // already DD-MM-YYYY or empty — pass through
+  const [, yyyy, mm, dd] = m;
+  return `${dd}-${mm}-${yyyy}`;
+};
+
 export function assembleGstr1Json(params: {
   gstin: string;
   periodShort: string; // "Jul-26"
@@ -251,7 +264,7 @@ export function assembleGstr1Json(params: {
     const invMap = b2bMap.get(r.ctin)!;
     if (!invMap.has(r.inum)) {
       invMap.set(r.inum, {
-        inum: r.inum, idt: r.idt, val: num(r.val), pos: r.pos,
+        inum: r.inum, idt: toPortalDate(r.idt), val: num(r.val), pos: r.pos,
         rchrg: r.rchrg || 'N', inv_typ: r.inv_typ || 'R', itms: [],
       });
     }
@@ -270,7 +283,7 @@ export function assembleGstr1Json(params: {
     if (!r.pos || !r.inum) return;
     if (!b2clMap.has(r.pos)) b2clMap.set(r.pos, new Map());
     const invMap = b2clMap.get(r.pos)!;
-    if (!invMap.has(r.inum)) invMap.set(r.inum, { inum: r.inum, idt: r.idt, val: num(r.val), itms: [] });
+    if (!invMap.has(r.inum)) invMap.set(r.inum, { inum: r.inum, idt: toPortalDate(r.idt), val: num(r.val), itms: [] });
     invMap.get(r.inum)!.itms.push({
       num: invMap.get(r.inum)!.itms.length + 1,
       itm_det: { rt: num(r.rt), txval: num(r.txval), iamt: num(r.iamt), csamt: num(r.csamt) },
@@ -299,7 +312,7 @@ export function assembleGstr1Json(params: {
     if (!cdnrMap.has(r.ctin)) cdnrMap.set(r.ctin, new Map());
     const ntMap = cdnrMap.get(r.ctin)!;
     if (!ntMap.has(r.ntNum)) {
-      ntMap.set(r.ntNum, { nt_num: r.ntNum, nt_dt: r.ntDt, ntty: r.ntTyp || 'C', val: num(r.val), pos: r.pos, itms: [] });
+      ntMap.set(r.ntNum, { nt_num: r.ntNum, nt_dt: toPortalDate(r.ntDt), ntty: r.ntTyp || 'C', val: num(r.val), pos: r.pos, itms: [] });
     }
     ntMap.get(r.ntNum)!.itms.push({
       num: ntMap.get(r.ntNum)!.itms.length + 1,
@@ -313,7 +326,7 @@ export function assembleGstr1Json(params: {
   (rowsBySection.cdnur || []).forEach((r) => {
     if (!r.ntNum) return;
     if (!cdnurMap.has(r.ntNum)) {
-      cdnurMap.set(r.ntNum, { nt_num: r.ntNum, nt_dt: r.ntDt, ntty: r.ntTyp || 'C', val: num(r.val), pos: r.pos, typ: 'B2CL', itms: [] });
+      cdnurMap.set(r.ntNum, { nt_num: r.ntNum, nt_dt: toPortalDate(r.ntDt), ntty: r.ntTyp || 'C', val: num(r.val), pos: r.pos, typ: 'B2CL', itms: [] });
     }
     cdnurMap.get(r.ntNum)!.itms.push({
       num: cdnurMap.get(r.ntNum)!.itms.length + 1,
@@ -330,7 +343,7 @@ export function assembleGstr1Json(params: {
     if (!expMap.has(typKey)) expMap.set(typKey, new Map());
     const invMap = expMap.get(typKey)!;
     if (!invMap.has(r.inum)) {
-      invMap.set(r.inum, { inum: r.inum, idt: r.idt, val: num(r.val), sbpcode: r.sbpcode || '', sbnum: r.sbnum || '', sbdt: r.sbdt || '', itms: [] });
+      invMap.set(r.inum, { inum: r.inum, idt: toPortalDate(r.idt), val: num(r.val), sbpcode: r.sbpcode || '', sbnum: r.sbnum || '', sbdt: toPortalDate(r.sbdt), itms: [] });
     }
     invMap.get(r.inum)!.itms.push({ rt: num(r.rt), txval: num(r.txval), iamt: num(r.iamt), csamt: num(r.csamt) });
   });
@@ -425,6 +438,16 @@ export function findMissingHsnRows(rowsBySection: Record<Exclude<Gstr1Section, '
 let _idSeq = 0;
 const nextId = () => `row_${Date.now()}_${_idSeq++}`;
 
+// Reverse of toPortalDate — a portal JSON's DD-MM-YYYY needs to become ISO
+// (YYYY-MM-DD) for the grid's <input type="date"> to display it, otherwise
+// re-opening a generated return shows blank date pickers.
+const fromPortalDate = (d: string): string => {
+  const m = String(d || '').match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (!m) return d || '';
+  const [, dd, mm, yyyy] = m;
+  return `${yyyy}-${mm}-${dd}`;
+};
+
 export function hydrateManualEntriesFromJson(json: any): {
   rowsBySection: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, ManualRow[]>;
   nilRows: ManualRow[];
@@ -434,7 +457,7 @@ export function hydrateManualEntriesFromJson(json: any): {
   const b2b: ManualRow[] = [];
   (j.b2b || []).forEach((party: any) => (party.inv || []).forEach((inv: any) => (inv.itms || []).forEach((itm: any) => {
     b2b.push({
-      id: nextId(), ctin: party.ctin, inum: inv.inum, idt: inv.idt, val: inv.val, pos: inv.pos,
+      id: nextId(), ctin: party.ctin, inum: inv.inum, idt: fromPortalDate(inv.idt), val: inv.val, pos: inv.pos,
       rchrg: inv.rchrg, inv_typ: inv.inv_typ, hsnCode: '', rt: itm.itm_det?.rt, txval: itm.itm_det?.txval,
       iamt: itm.itm_det?.iamt, camt: itm.itm_det?.camt, samt: itm.itm_det?.samt, csamt: itm.itm_det?.csamt,
     });
@@ -442,24 +465,24 @@ export function hydrateManualEntriesFromJson(json: any): {
 
   const b2cl: ManualRow[] = [];
   (j.b2cl || []).forEach((state: any) => (state.inv || []).forEach((inv: any) => (inv.itms || []).forEach((itm: any) => {
-    b2cl.push({ id: nextId(), pos: state.pos, inum: inv.inum, idt: inv.idt, val: inv.val, hsnCode: '', rt: itm.itm_det?.rt, txval: itm.itm_det?.txval, iamt: itm.itm_det?.iamt, csamt: itm.itm_det?.csamt });
+    b2cl.push({ id: nextId(), pos: state.pos, inum: inv.inum, idt: fromPortalDate(inv.idt), val: inv.val, hsnCode: '', rt: itm.itm_det?.rt, txval: itm.itm_det?.txval, iamt: itm.itm_det?.iamt, csamt: itm.itm_det?.csamt });
   })));
 
   const b2cs: ManualRow[] = (j.b2cs || []).map((item: any) => ({ id: nextId(), pos: item.pos, typ: item.typ, hsnCode: '', rt: item.rt, txval: item.txval, iamt: item.iamt, camt: item.camt, samt: item.samt, csamt: item.csamt }));
 
   const cdnr: ManualRow[] = [];
   (j.cdnr || []).forEach((party: any) => (party.nt || []).forEach((nt: any) => (nt.itms || []).forEach((itm: any) => {
-    cdnr.push({ id: nextId(), ctin: party.ctin, ntNum: nt.nt_num, ntDt: nt.nt_dt, ntTyp: nt.ntty || nt.typ, val: nt.val, pos: nt.pos, hsnCode: '', rt: itm.itm_det?.rt, txval: itm.itm_det?.txval, iamt: itm.itm_det?.iamt, camt: itm.itm_det?.camt, samt: itm.itm_det?.samt, csamt: itm.itm_det?.csamt });
+    cdnr.push({ id: nextId(), ctin: party.ctin, ntNum: nt.nt_num, ntDt: fromPortalDate(nt.nt_dt), ntTyp: nt.ntty || nt.typ, val: nt.val, pos: nt.pos, hsnCode: '', rt: itm.itm_det?.rt, txval: itm.itm_det?.txval, iamt: itm.itm_det?.iamt, camt: itm.itm_det?.camt, samt: itm.itm_det?.samt, csamt: itm.itm_det?.csamt });
   })));
 
   const cdnur: ManualRow[] = [];
   (j.cdnur || []).forEach((nt: any) => (nt.itms || []).forEach((itm: any) => {
-    cdnur.push({ id: nextId(), ntNum: nt.nt_num, ntDt: nt.nt_dt, ntTyp: nt.ntty || nt.typ, val: nt.val, pos: nt.pos, hsnCode: '', rt: itm.itm_det?.rt, txval: itm.itm_det?.txval, iamt: itm.itm_det?.iamt, csamt: itm.itm_det?.csamt });
+    cdnur.push({ id: nextId(), ntNum: nt.nt_num, ntDt: fromPortalDate(nt.nt_dt), ntTyp: nt.ntty || nt.typ, val: nt.val, pos: nt.pos, hsnCode: '', rt: itm.itm_det?.rt, txval: itm.itm_det?.txval, iamt: itm.itm_det?.iamt, csamt: itm.itm_det?.csamt });
   }));
 
   const exp: ManualRow[] = [];
   (j.exp || []).forEach((e: any) => (e.inv || []).forEach((inv: any) => (inv.itms || []).forEach((itm: any) => {
-    exp.push({ id: nextId(), expTyp: e.exp_typ, inum: inv.inum, idt: inv.idt, val: inv.val, sbpcode: inv.sbpcode, sbnum: inv.sbnum, sbdt: inv.sbdt, hsnCode: '', rt: itm.rt, txval: itm.txval, iamt: itm.iamt, csamt: itm.csamt });
+    exp.push({ id: nextId(), expTyp: e.exp_typ, inum: inv.inum, idt: fromPortalDate(inv.idt), val: inv.val, sbpcode: inv.sbpcode, sbnum: inv.sbnum, sbdt: fromPortalDate(inv.sbdt), hsnCode: '', rt: itm.rt, txval: itm.txval, iamt: itm.iamt, csamt: itm.csamt });
   })));
 
   const nilRows: ManualRow[] = (j.nil?.inv || []).map((r: any) => ({ id: nextId(), sply_ty: r.sply_ty, nil_amt: r.nil_amt, expt_amt: r.expt_amt, ngsup_amt: r.ngsup_amt }));
