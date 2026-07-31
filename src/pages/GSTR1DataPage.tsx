@@ -1051,13 +1051,15 @@ const GSTR1DataPage: React.FC = () => {
                 Prepare in Builder Returns
               </Button>
             ) : isManualClient ? (
-              <span
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border bg-muted text-xs text-muted-foreground"
-                title="This client is set to Manual GSTR-1 mode — prepared outside this app. Change in Edit Client."
+              <Button
+                variant="outline"
+                onClick={() => navigate('/gstr1-manual-entry')}
+                disabled={!selectedClient || !selectedMonth || isFiled}
+                title={isFiled ? 'GSTR-1 already Filed — manual entry locked' : 'Key in invoices; Generate JSON produces the same file an import would have'}
               >
-                <FileJson className="h-3.5 w-3.5" />
-                Manual GSTR-1 — prepared outside this app
-              </span>
+                <Upload className="h-4 w-4 mr-2" />
+                {gstr1Data ? 'Edit Manual Entry' : 'Prepare Manually'}
+              </Button>
             ) : (
               <Button
                 onClick={handleImportClick}
@@ -1085,7 +1087,9 @@ const GSTR1DataPage: React.FC = () => {
                 Version History{versions.length > 0 ? ` (${versions.length})` : ''}
               </Button>
             )}
-            {gstr1Data && !isManualClient && canEditFilingStatus() && (
+            {/* Once a manual client's JSON has been generated via Prepare
+                Manually, it uploads exactly like an imported return. */}
+            {gstr1Data && canEditFilingStatus() && (
               <Button
                 onClick={() => { setUploadResult(null); setUploadDialogOpen(true); }}
                 disabled={isUploading || !extReady || !!gstinMismatch || isFiled}
