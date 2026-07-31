@@ -471,6 +471,93 @@ const GSTR1DataPage: React.FC = () => {
     toast.info('Opening the GST portal in a new tab — clear the CAPTCHA and let the upload run. Progress will appear here.');
   };
 
+  // Manual fallback for when the extension can't auto-fetch the Error Report
+  // (or the operator would rather just download it themselves): paste-in via
+  // a file picker. Uses the SAME parser the extension uses, so the resulting
+  // per-invoice list is identical to the auto path.
+  const errorReportInputRef = useRef<HTMLInputElement>(null);
+  const parseGstnErrorReport = (obj: any): UploadErrorRow[] => {
+    const rows: UploadErrorRow[] = [];
+    const root = obj?.error_report || obj || {};
+    if (typeof root !== 'object') return rows;
+    for (const sectionKey of Object.keys(root)) {
+      const section = (root as any)[sectionKey];
+      if (!Array.isArray(section)) continue;
+      for (const party of section) {
+        const partyGstin: string = party?.ctin || party?.gstin || '';
+        const errMsgRaw = party?.error_msg || party?.err_msg || party?.error || party?.errors;
+        const errCd = party?.error_cd ? ` [${party.error_cd}]` : '';
+        const partyReason = errMsgRaw
+          ? (Array.isArray(errMsgRaw) ? errMsgRaw.join('; ') : String(errMsgRaw)) + errCd
+          : '';
+        const list: any[] = Array.isArray(party?.inv) ? party.inv
+                          : Array.isArray(party?.nt) ? party.nt
+                          : [];
+        if (list.length && partyReason) {
+          for (const inv of list) {
+            const invoiceNo = String(inv?.inum || inv?.nt_num || inv?.doc_num || '');
+            if (!invoiceNo) continue;
+            rows.push({ invoiceNo, gstin: partyGstin, reason: partyReason });
+          }
+          continue;
+        }
+        if (partyReason) {
+          rows.push({
+            invoiceNo: `[${sectionKey}] ${party?.pos ? 'POS ' + party.pos : ''}`.trim(),
+            gstin: partyGstin,
+            reason: partyReason,
+          });
+        }
+      }
+    }
+    return rows;
+  };
+
+  const handleImportErrorReport = () => errorReportInputRef.current?.click();
+  const handleErrorReportChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (errorReportInputRef.current) errorReportInputRef.current.value = '';
+    if (!file || !gstr1Data) return;
+    try {
+      const text = await file.text();
+      const obj = JSON.parse(text);
+      const rows = parseGstnErrorReport(obj);
+      // Sanity check: warn if the report's GSTIN + fp don't match this row.
+      const reportGstin = String(obj?.gstin || '').toUpperCase();
+      const reportFp = String(obj?.fp || '');
+      const clientGstin = (clients.find((c) => c.id === selectedClient)?.gstin || '').toUpperCase();
+      const [mm, yyyy] = (selectedMonth || '').split('/');
+      const expectedFp = `${(mm || '').padStart(2, '0')}${yyyy || ''}`;
+      if (reportGstin && clientGstin && reportGstin !== clientGstin) {
+        toast.error(`This error report is for ${reportGstin} but this client is ${clientGstin}.`);
+        return;
+      }
+      if (reportFp && expectedFp && reportFp !== expectedFp) {
+        toast.warning(`Note: this error report is for period ${reportFp} but this page is ${expectedFp}. Loading anyway.`);
+      }
+      const summary = rows.length
+        ? `Parsed ${rows.length} per-invoice validation error(s) from imported Error Report.`
+        : 'No per-invoice errors found in the imported Error Report file (structure may differ from expected).';
+      // Persist so the "View errors" button + the sidebar indicator survive a refresh.
+      const { error } = await supabase
+        .from('gstr1_data')
+        .update({
+          last_upload_status: 'partial',
+          last_upload_summary: summary,
+          last_upload_errors: rows as any,
+          last_uploaded_at: gstr1Data.last_uploaded_at || new Date().toISOString(),
+        })
+        .eq('id', gstr1Data.id);
+      if (error) throw error;
+      setUploadResult({ ok: false, message: summary, errors: rows });
+      setErrorsDialogOpen(true);
+      await fetchGSTR1Data();
+      toast.success(summary);
+    } catch (err: any) {
+      toast.error('Could not parse Error Report: ' + (err?.message || 'Unknown error'));
+    }
+  };
+
   // "Refresh errors" — after a "Processed with Error" upload, GSTN generates
   // the per-invoice Error Report asynchronously (up to 20 min). Ask the
   // extension to re-open the portal and fetch the now-available report so we
@@ -815,15 +902,25 @@ const GSTR1DataPage: React.FC = () => {
             {/* Only meaningful right after a "Processed with Error" upload,
                 while GSTN is still generating the per-invoice Error Report. */}
             {gstr1Data && canEditFilingStatus() && gstr1Data.last_upload_status === 'partial' && (
-              <Button
-                variant="outline"
-                onClick={handleRefreshErrors}
-                disabled={isUploading || !extReady}
-                title="Re-open the portal and fetch the per-invoice Error Report (GSTN takes up to 20 min to generate it)"
-              >
-                {isUploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
-                Refresh errors
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  onClick={handleRefreshErrors}
+                  disabled={isUploading || !extReady}
+                  title="Re-open the portal and fetch the per-invoice Error Report (GSTN takes up to 20 min to generate it)"
+                >
+                  {isUploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+                  Refresh errors
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleImportErrorReport}
+                  title="Manually import the Error Report JSON you downloaded from the portal's Download tab"
+                >
+                  <Upload className="h-4 w-4 mr-2" />
+                  Import Error Report
+                </Button>
+              </>
             )}
             {gstr1Data && (
               <Button variant="destructive" onClick={handleDelete} disabled={isUploading}>
@@ -839,6 +936,13 @@ const GSTR1DataPage: React.FC = () => {
         accept=".json,application/json"
         className="hidden"
         onChange={handleFileChange}
+      />
+      <input
+        ref={errorReportInputRef}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={handleErrorReportChange}
       />
 
       {/* Filters */}
