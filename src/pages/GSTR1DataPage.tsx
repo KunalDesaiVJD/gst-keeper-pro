@@ -296,17 +296,62 @@ const GSTR1DataPage: React.FC = () => {
   }, [selectedClient, selectedMonth]);
 
   // Upload history — all IMPORT / UPLOAD / REFRESH_ERRORS actions for this
-  // (client, period), with the actor's name resolved from profiles.
+  // (client, period), with the actor's name resolved from profiles. If the
+  // versions table is empty but the underlying gstr1_data row already has
+  // import / upload timestamps (i.e., it predates this feature), backfill a
+  // synthetic history from those columns so the audit trail isn't blank for
+  // returns imported before the migration.
   const fetchVersions = useCallback(async () => {
     if (!selectedClient || !selectedMonth) { setVersions([]); return; }
     const periodMonthKey = mmYyyyToShort(selectedMonth);
-    const { data } = await supabase
-      .from('gstr1_upload_versions')
-      .select('*')
-      .eq('client_id', selectedClient)
-      .eq('period_month', periodMonthKey)
-      .order('version_number', { ascending: false });
-    const rows = (data as UploadVersion[] | null) || [];
+
+    const load = async () => {
+      const { data } = await supabase
+        .from('gstr1_upload_versions')
+        .select('*')
+        .eq('client_id', selectedClient)
+        .eq('period_month', periodMonthKey)
+        .order('version_number', { ascending: false });
+      return (data as UploadVersion[] | null) || [];
+    };
+
+    let rows = await load();
+
+    if (rows.length === 0 && gstr1Data) {
+      const backfill: any[] = [];
+      if (gstr1Data.imported_at) {
+        backfill.push({
+          client_id: selectedClient,
+          period_month: periodMonthKey,
+          action_type: 'IMPORT',
+          actor_id: null, // pre-migration — we didn't record who
+          action_at: gstr1Data.imported_at,
+          file_name: gstr1Data.file_name,
+          status: 'imported',
+          summary: `Imported ${gstr1Data.file_name || '(no filename)'} · backfilled from existing record`,
+        });
+      }
+      if (gstr1Data.last_uploaded_at) {
+        backfill.push({
+          client_id: selectedClient,
+          period_month: periodMonthKey,
+          action_type: 'UPLOAD',
+          actor_id: gstr1Data.last_uploaded_by || null,
+          action_at: gstr1Data.last_uploaded_at,
+          file_name: null,
+          status: gstr1Data.last_upload_status || null,
+          summary: gstr1Data.last_upload_summary
+            ? `${gstr1Data.last_upload_summary} · backfilled from existing record`
+            : 'Uploaded to portal · backfilled from existing record',
+          errors: gstr1Data.last_upload_errors || null,
+        });
+      }
+      if (backfill.length > 0) {
+        await supabase.from('gstr1_upload_versions').insert(backfill);
+        rows = await load();
+      }
+    }
+
     const actorIds = Array.from(new Set(rows.map((r) => r.actor_id).filter(Boolean))) as string[];
     let nameMap = new Map<string, string>();
     if (actorIds.length > 0) {
@@ -315,7 +360,7 @@ const GSTR1DataPage: React.FC = () => {
       nameMap = new Map((profiles || []).map((p) => [p.user_id, p.first_name || 'Unknown']));
     }
     setVersions(rows.map((r) => ({ ...r, actor_name: r.actor_id ? (nameMap.get(r.actor_id) || 'Unknown') : 'System' })));
-  }, [selectedClient, selectedMonth]);
+  }, [selectedClient, selectedMonth, gstr1Data]);
 
   // Filing status for the (client, GSTR-1, period). 'Filed' → block edits.
   const fetchFilingStatus = useCallback(async () => {
