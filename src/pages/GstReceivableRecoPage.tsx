@@ -312,23 +312,27 @@ const GstReceivableRecoPage: React.FC = () => {
           igst: rows1To4.igst + total5.igst,
         };
         // Partial-ITC (Builder) clients have a different section 4B shape:
-        // rows (1) and (2) are auto-calculated headers (they already contain
-        // i+ii+iii and the sub-row sums) but aren't tagged isHeader, so a
-        // blind non-isHeader sum double-counts them. Detect that layout and
-        // sum (1)+(2) directly instead, matching ITC Summary's own formula.
+        // rows (1) and (2) are auto-derived aggregators (computed at ITC
+        // Summary render time from their sub-rows). They aren't tagged
+        // isHeader AND aren't persisted with their computed values (stored as
+        // 0), so neither a blind non-isHeader sum (double-counts subs) nor a
+        // direct (1)+(2) lookup (reads zeros) is correct. Detect the layout
+        // and sum ONLY the sub-rows — which is exactly what ITC Summary uses
+        // to derive (1) and (2).
         const isPartialITC =
           typeof rowsB[0]?.particular === 'string' &&
           rowsB[0].particular.toLowerCase().includes('calculation of ineligible');
         const total4B = isPartialITC
-          ? (() => {
-              const r1 = findRow(rowsB, '(1)');
-              const r2 = findRow(rowsB, '(2)');
-              return {
-                cgst: num(r1.cgst) + num(r2.cgst),
-                sgst: num(r1.sgst) + num(r2.sgst),
-                igst: num(r1.igst) + num(r2.igst),
-              };
-            })()
+          ? rowsB
+              .filter(r => r?.srNo !== '(1)' && r?.srNo !== '(2)')
+              .reduce(
+                (acc, r) => ({
+                  cgst: acc.cgst + num(r?.cgst),
+                  sgst: acc.sgst + num(r?.sgst),
+                  igst: acc.igst + num(r?.igst),
+                }),
+                { cgst: 0, sgst: 0, igst: 0 }
+              )
           : rowsB
               .filter(r => !r?.isHeader)
               .reduce(
