@@ -1,18 +1,20 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Trash2, Save, Send, Loader2, Lock } from 'lucide-react';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Plus, Trash2, Save, Send, Loader2, Lock, BarChart3, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import {
   Gstr1Section, ManualRow, ColumnDef, SECTION_COLUMNS, NIL_SUPPLY_TYPES, DOC_TYPES,
   gstinHomeState, recomputeRowTax, assembleGstr1Json, hydrateManualEntriesFromJson,
 } from '@/utils/gstr1ManualBuild';
+import { buildGstr1Summary } from '@/utils/buildGstr1Summary';
 
 const INVOICE_SECTIONS: Exclude<Gstr1Section, 'nil' | 'doc'>[] = ['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp'];
 
@@ -46,6 +48,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeTab, setActiveTab] = useState<Gstr1Section>('b2b');
   const [collapsed, setCollapsed] = useState(hasGeneratedJson); // start collapsed once a JSON already exists
+  const [summaryOpen, setSummaryOpen] = useState(false);
 
   const [rowsBySection, setRowsBySection] = useState<Record<Exclude<Gstr1Section, 'nil' | 'doc'>, ManualRow[]>>({
     b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [],
@@ -54,6 +57,17 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
   const [docRows, setDocRows] = useState<ManualRow[]>([]);
 
   const homeState = gstinHomeState(clientGstin);
+
+  // Live preview — assembled from whatever is currently in the grid (not yet
+  // saved/generated), so the tile counts/values and "Generate Summary" always
+  // reflect what's on screen right now, same shape a real import would use.
+  const liveJson = useMemo(
+    () => assembleGstr1Json({ gstin: clientGstin, periodShort, rowsBySection, nilRows, docRows }),
+    [clientGstin, periodShort, rowsBySection, nilRows, docRows],
+  );
+  const liveSummary = useMemo(() => buildGstr1Summary(liveJson), [liveJson]);
+  const tileFor = (key: Gstr1Section) => liveSummary.tiles.find((t) => t.key === key);
+  const fmt2 = (n: number | undefined | null) => (n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const fetchEntries = useCallback(async () => {
     if (!clientId || !periodShort) return;
@@ -291,6 +305,11 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
             <p className="text-xs text-muted-foreground">Key in invoices directly — Generate JSON produces the same file an imported return would have.</p>
           </div>
           <div className="flex items-center gap-2">
+            {!collapsed && (
+              <Button variant="outline" size="sm" onClick={() => setSummaryOpen(true)}>
+                <BarChart3 className="h-3.5 w-3.5 mr-1.5" /> Generate Summary
+              </Button>
+            )}
             {hasGeneratedJson && (
               <Button variant="ghost" size="sm" onClick={() => setCollapsed((c) => !c)}>
                 {collapsed ? 'Edit Entries' : 'Hide'}
@@ -321,13 +340,37 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
         {collapsed ? null : isLoading ? (
           <div className="py-8 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" /></div>
         ) : (
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Gstr1Section)}>
-            <TabsList className="flex-wrap h-auto">
-              {(['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp', 'nil', 'doc'] as Gstr1Section[]).map((s) => (
-                <TabsTrigger key={s} value={s} className="text-xs">{SECTION_LABELS[s]}</TabsTrigger>
-              ))}
-            </TabsList>
+          <>
+            {/* Section picker — same tile-grid style as the imported-JSON page's
+                "Sections in this return": click a tile to open that section's
+                editable table below. Counts/values are live, computed from
+                whatever is currently in the grid. */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mb-4">
+              {(['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp', 'nil', 'doc'] as Gstr1Section[]).map((s) => {
+                const isActive = activeTab === s;
+                const tile = tileFor(s);
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setActiveTab(s)}
+                    className={`text-left rounded-lg border p-3 transition-colors hover:border-primary/50 hover:bg-primary/5 ${
+                      isActive ? 'border-primary bg-primary/5' : 'border-border'
+                    }`}
+                  >
+                    <div className="text-xs font-medium text-foreground leading-snug min-h-[32px]">{SECTION_LABELS[s]}</div>
+                    <div className="mt-2 flex items-end justify-between gap-2">
+                      <span className="text-lg font-bold text-primary tabular-nums">{(tile?.count ?? 0).toLocaleString('en-IN')}</span>
+                      {!!tile?.value && (
+                        <span className="text-[11px] text-muted-foreground tabular-nums">₹{fmt2(tile.value)}</span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
 
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Gstr1Section)}>
             {INVOICE_SECTIONS.map((section) => (
               <TabsContent key={section} value={section} className="mt-4">
                 <div className="flex items-center justify-between mb-2">
@@ -478,8 +521,86 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
               </div>
             </TabsContent>
           </Tabs>
+          </>
         )}
       </CardContent>
+
+      {/* Live "Generate Summary" preview — assembled from the current grid,
+          same table layout as the imported-JSON page's summary dialog. */}
+      <Dialog open={summaryOpen} onOpenChange={setSummaryOpen}>
+        <DialogContent className="max-w-5xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <DialogTitle>GSTR-1 Summary (preview) — {clientName || '—'} · {periodShort}</DialogTitle>
+                <DialogDescription>
+                  Computed live from the entries currently in the grid — not yet saved. Click Generate JSON to persist.
+                </DialogDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const blob = new Blob([JSON.stringify(liveJson)], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `GSTR1_preview_${(clientName || 'client').replace(/\s+/g, '_')}_${periodShort}.json`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                }}
+              >
+                <Download className="h-3.5 w-3.5 mr-1.5" /> Download JSON (preview)
+              </Button>
+            </div>
+          </DialogHeader>
+          <div className="overflow-auto rounded-md border border-border">
+            <table className="w-full text-sm border-collapse min-w-[900px]">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-primary text-primary-foreground">
+                  <th className="border border-primary-foreground/20 p-2 text-left font-bold">Description</th>
+                  <th className="border border-primary-foreground/20 p-2 text-center font-bold whitespace-nowrap">No. of records</th>
+                  <th className="border border-primary-foreground/20 p-2 text-center font-bold whitespace-nowrap">Document Type</th>
+                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">Value (₹)</th>
+                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">Integrated Tax (₹)</th>
+                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">Central Tax (₹)</th>
+                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">State/UT Tax (₹)</th>
+                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">Cess (₹)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {liveSummary.sections.map((s, i) => (
+                  <tr key={`${s.code}-${i}`} className="odd:bg-muted/30">
+                    <td className="border border-border p-2">
+                      <span className="font-semibold text-foreground">{s.code}</span>
+                      <span className="text-muted-foreground"> — {s.title}</span>
+                    </td>
+                    <td className="border border-border p-2 text-center tabular-nums">{s.count.toLocaleString('en-IN')}</td>
+                    <td className="border border-border p-2 text-center text-muted-foreground">{s.docType}</td>
+                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.value)}</td>
+                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.igst)}</td>
+                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.cgst)}</td>
+                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.sgst)}</td>
+                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.cess)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-muted font-semibold">
+                  <td className="border border-border p-2 text-right" colSpan={3}>Total liability (excl. HSN &amp; Docs)</td>
+                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(liveSummary.totals.value)}</td>
+                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(liveSummary.totals.igst)}</td>
+                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(liveSummary.totals.cgst)}</td>
+                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(liveSummary.totals.sgst)}</td>
+                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(liveSummary.totals.cess)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 };
