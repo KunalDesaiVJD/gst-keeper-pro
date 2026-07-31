@@ -60,6 +60,10 @@ interface Client {
   name: string;
   gstin: string;
   registration_date?: string;
+  // Needed to replicate ITC Summary's Partial-ITC 4B formula
+  builder_itc_type?: string | null;
+  commercial_area?: number | null;
+  residential_area?: number | null;
 }
 
 // Cutoff: GST Receivable Reco is only meaningful from Jun-26 (06/2026) onward
@@ -175,7 +179,10 @@ const GstReceivableRecoPage: React.FC = () => {
   }, [clients, selectedClientId]);
 
   const fetchClients = useCallback(async () => {
-    let query = supabase.from('clients').select('id, name, gstin, registration_date').order('name');
+    let query = supabase
+      .from('clients')
+      .select('id, name, gstin, registration_date, builder_itc_type, commercial_area, residential_area')
+      .order('name');
     if (user && !isStaff) query = query.eq('id', user.id);
     const { data } = await query;
     setClients(data || []);
@@ -311,38 +318,80 @@ const GstReceivableRecoPage: React.FC = () => {
           sgst: rows1To4.sgst + total5.sgst,
           igst: rows1To4.igst + total5.igst,
         };
-        // Partial-ITC (Builder) clients have a different section 4B shape:
-        // rows (1) and (2) are auto-derived aggregators (computed at ITC
-        // Summary render time from their sub-rows). They aren't tagged
-        // isHeader AND aren't persisted with their computed values (stored as
-        // 0), so neither a blind non-isHeader sum (double-counts subs) nor a
-        // direct (1)+(2) lookup (reads zeros) is correct. Detect the layout
-        // and sum ONLY the sub-rows — which is exactly what ITC Summary uses
-        // to derive (1) and (2).
-        const isPartialITC =
-          typeof rowsB[0]?.particular === 'string' &&
-          rowsB[0].particular.toLowerCase().includes('calculation of ineligible');
-        const total4B = isPartialITC
-          ? rowsB
-              .filter(r => r?.srNo !== '(1)' && r?.srNo !== '(2)')
-              .reduce(
-                (acc, r) => ({
-                  cgst: acc.cgst + num(r?.cgst),
-                  sgst: acc.sgst + num(r?.sgst),
-                  igst: acc.igst + num(r?.igst),
-                }),
-                { cgst: 0, sgst: 0, igst: 0 }
-              )
-          : rowsB
-              .filter(r => !r?.isHeader)
-              .reduce(
-                (acc, r) => ({
-                  cgst: acc.cgst + num(r?.cgst),
-                  sgst: acc.sgst + num(r?.sgst),
-                  igst: acc.igst + num(r?.igst),
-                }),
-                { cgst: 0, sgst: 0, igst: 0 }
-              );
+        // Partial-ITC (Builder) clients: rows (1), (2), (i), (iii) are
+        // display-only auto-computed at ITC Summary render time from client
+        // area ratios; the DB persists them as 0. Reading them here (or the
+        // sub-rows) gives the wrong 4B. Replicate ITC Summary's exact formula
+        // so both pages produce the identical 4C.
+        const clientForCalc = clients.find(c => c.id === selectedClientId);
+        const isPartialITC = clientForCalc?.builder_itc_type === 'PARTIAL_ITC';
+
+        let total4B: { cgst: number; sgst: number; igst: number };
+        if (isPartialITC) {
+          const commercialArea = Number(clientForCalc?.commercial_area) || 0;
+          const residentialArea = Number(clientForCalc?.residential_area) || 0;
+          const totalArea = commercialArea + residentialArea;
+          const residentialRatio = totalArea > 0 ? residentialArea / totalArea : 0;
+
+          // ii) Previous Month Adjustment — editable stored value
+          const prevMonthAdjRow = rowsB.find((r: any) =>
+            typeof r?.particular === 'string' && r.particular.includes('Previous Month Adjustment')
+          );
+          const ii = {
+            cgst: num(prevMonthAdjRow?.cgst),
+            sgst: num(prevMonthAdjRow?.sgst),
+            igst: num(prevMonthAdjRow?.igst),
+          };
+          // (2)'s sub-rows: current month per 2B RECO + previous months
+          const recoReversalRow = rowsB.find((r: any) =>
+            typeof r?.particular === 'string' && r.particular.includes('current month as per 2B RECO')
+          );
+          const prevMonthsReversalRow = rowsB.find((r: any) =>
+            typeof r?.particular === 'string' && r.particular.includes('previous months, if any')
+          );
+          const row2 = {
+            cgst: num(recoReversalRow?.cgst) + num(prevMonthsReversalRow?.cgst),
+            sgst: num(recoReversalRow?.sgst) + num(prevMonthsReversalRow?.sgst),
+            igst: num(recoReversalRow?.igst) + num(prevMonthsReversalRow?.igst),
+          };
+          // i) = Total 4A × residentialRatio
+          const rIn = (x: number) => Math.round(x * 100) / 100;
+          const i_row = {
+            cgst: rIn(total4A.cgst * residentialRatio),
+            sgst: rIn(total4A.sgst * residentialRatio),
+            igst: rIn(total4A.igst * residentialRatio),
+          };
+          // iii) = -(2) × residentialRatio
+          const iii_row = {
+            cgst: rIn(-row2.cgst * residentialRatio),
+            sgst: rIn(-row2.sgst * residentialRatio),
+            igst: rIn(-row2.igst * residentialRatio),
+          };
+          // (1) = i + ii + iii
+          const row1 = {
+            cgst: rIn(i_row.cgst + ii.cgst + iii_row.cgst),
+            sgst: rIn(i_row.sgst + ii.sgst + iii_row.sgst),
+            igst: rIn(i_row.igst + ii.igst + iii_row.igst),
+          };
+          // Total 4B = (1) + (2)
+          total4B = {
+            cgst: row1.cgst + row2.cgst,
+            sgst: row1.sgst + row2.sgst,
+            igst: row1.igst + row2.igst,
+          };
+        } else {
+          // Regular clients: sum non-header rows (matches ITC Summary)
+          total4B = rowsB
+            .filter(r => !r?.isHeader)
+            .reduce(
+              (acc, r) => ({
+                cgst: acc.cgst + num(r?.cgst),
+                sgst: acc.sgst + num(r?.sgst),
+                igst: acc.igst + num(r?.igst),
+              }),
+              { cgst: 0, sgst: 0, igst: 0 }
+            );
+        }
         // Net ITC Available (4C) = 4A − 4B
         setAvailedCgst(total4A.cgst - total4B.cgst);
         setAvailedSgst(total4A.sgst - total4B.sgst);
@@ -391,7 +440,7 @@ const GstReceivableRecoPage: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedClientId, selectedMonth, isEligibleMonth]);
+  }, [selectedClientId, selectedMonth, isEligibleMonth, clients]);
 
   useEffect(() => { fetchClients(); }, [fetchClients]);
   useEffect(() => {
