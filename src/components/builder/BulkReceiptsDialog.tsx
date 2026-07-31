@@ -17,7 +17,7 @@
  * differently is how a reconciliation becomes unexplainable.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -33,7 +33,7 @@ import {
 } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { Loader2, Wallet, AlertTriangle } from 'lucide-react';
+import { Loader2, Wallet, AlertTriangle, Users } from 'lucide-react';
 import { formatINR, computeTds194IA, isTds194IAApplicable, type BuilderRateCode } from '@/utils/builderRates';
 import { deriveReceipt, dateToPeriod, prettyPeriodLabel } from '@/utils/builderLedger';
 
@@ -49,6 +49,8 @@ export interface BulkReceiptUnit {
   /** Agreement value, for the 194-IA threshold test. */
   totalConsideration: number;
   balanceToTax: number;
+  /** Joint holders, for the per-member split entry. A solo booking has one. */
+  members: { name: string; ratio: number }[];
 }
 
 interface Props {
@@ -76,9 +78,37 @@ const BulkReceiptsDialog: React.FC<Props> = ({
   /** unitId → typed amount. Absent or blank means "not collected from this unit". */
   const [amounts, setAmounts] = useState<Record<string, string>>({});
   const [refs, setRefs] = useState<Record<string, string>>({});
+  /**
+   * A joint unit sometimes arrives as two bank credits, not one — each member
+   * paying their own share separately. Splitting lets that be typed as it
+   * happened instead of added up by hand first. Tax is still derived once off
+   * the sum: 194-IA is a flat 1% of the amount paid, so summing members first
+   * and deducting once gives the identical figure as deducting per member and
+   * summing after.
+   */
+  const [splits, setSplits] = useState<Record<string, boolean>>({});
+  const [memberAmounts, setMemberAmounts] = useState<Record<string, Record<string, string>>>({});
+  const [memberRefs, setMemberRefs] = useState<Record<string, Record<string, string>>>({});
+
+  const unitAmountFor = useCallback((u: BulkReceiptUnit) => {
+    if (!splits[u.unitId]) return amounts[u.unitId] || '';
+    const byMember = memberAmounts[u.unitId] || {};
+    const sum = u.members.reduce((s, m) => s + (parseFloat(byMember[m.name] || '') || 0), 0);
+    return sum > 0 ? String(sum) : '';
+  }, [splits, amounts, memberAmounts]);
+
+  /** One instrument_ref field on the receipt, so a split unit's several references are joined. */
+  const unitRefFor = useCallback((u: BulkReceiptUnit) => {
+    if (!splits[u.unitId]) return refs[u.unitId] || '';
+    const byRef = memberRefs[u.unitId] || {};
+    return u.members
+      .map((m) => (byRef[m.name] || '').trim())
+      .filter(Boolean)
+      .join(' · ');
+  }, [splits, refs, memberRefs]);
 
   const rows = useMemo(() => units.map((u) => {
-    const entered = parseFloat(amounts[u.unitId] || '') || 0;
+    const entered = parseFloat(unitAmountFor(u)) || 0;
     if (entered <= 0) return { u, entered, derived: null, tds: 0 };
     const tdsApplies = common.deduct_tds && isTds194IAApplicable(u.totalConsideration);
     const tds = tdsApplies ? computeTds194IA(u.totalConsideration, entered) : 0;
@@ -90,7 +120,7 @@ const BulkReceiptsDialog: React.FC<Props> = ({
       bankCredit: null,
     });
     return { u, entered, derived, tds };
-  }), [units, amounts, common.amount_is_gst_inclusive, common.deduct_tds]);
+  }), [units, unitAmountFor, common.amount_is_gst_inclusive, common.deduct_tds]);
 
   const active = rows.filter((r) => r.entered > 0);
   const totals = active.reduce((t, r) => ({
@@ -103,6 +133,49 @@ const BulkReceiptsDialog: React.FC<Props> = ({
 
   /** Units taking more than their remaining balance — worth flagging, not blocking. */
   const overCollected = active.filter((r) => (r.derived?.tax.consideration || 0) > r.u.balanceToTax);
+
+  /**
+   * Every visible amount box — unit-level or, once split, per-member — in the
+   * order it's drawn, so Enter and paste both walk the grid top to bottom
+   * regardless of which rows happen to be expanded this render.
+   */
+  const amountRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const orderMeta: { unitId: string; member: string | null }[] = [];
+  let orderIndex = 0;
+  const registerAmount = (unitId: string, member: string | null) => {
+    const idx = orderIndex;
+    orderIndex += 1;
+    orderMeta[idx] = { unitId, member };
+    return {
+      ref: (el: HTMLInputElement | null) => { amountRefs.current[idx] = el; },
+      onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        amountRefs.current[idx + 1]?.focus();
+      },
+      onPaste: (e: React.ClipboardEvent<HTMLInputElement>) => {
+        const text = e.clipboardData.getData('text');
+        const lines = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+        if (lines.length <= 1) return; // a single value pastes the normal way
+        e.preventDefault();
+        lines.forEach((val, k) => {
+          const meta = orderMeta[idx + k];
+          if (!meta) return;
+          const cleaned = val.replace(/[^0-9.]/g, '');
+          if (meta.member) {
+            setMemberAmounts((prev) => ({
+              ...prev,
+              [meta.unitId]: { ...(prev[meta.unitId] || {}), [meta.member as string]: cleaned },
+            }));
+          } else {
+            setAmounts((prev) => ({ ...prev, [meta.unitId]: cleaned }));
+          }
+        });
+        const lastIdx = idx + lines.length - 1;
+        requestAnimationFrame(() => amountRefs.current[lastIdx]?.focus());
+      },
+    };
+  };
 
   const handleSave = async () => {
     if (!active.length) return;
@@ -126,7 +199,7 @@ const BulkReceiptsDialog: React.FC<Props> = ({
           tds_194ia: r.tds,
           bank_credit: null,
           instrument_type: common.instrument_type,
-          instrument_ref: (refs[r.u.unitId] || '').trim() || null,
+          instrument_ref: unitRefFor(r.u).trim() || null,
           cheque_status: 'Cleared',
           gst_already_discharged: false,
           period_month: period,
@@ -142,7 +215,7 @@ const BulkReceiptsDialog: React.FC<Props> = ({
       toast.success(
         `${data.length} receipt${data.length === 1 ? '' : 's'} recorded for ${prettyPeriodLabel(period)}.`,
       );
-      setAmounts({}); setRefs({});
+      setAmounts({}); setRefs({}); setSplits({}); setMemberAmounts({}); setMemberRefs({});
       onOpenChange(false);
       await onSaved();
     } catch (e) {
@@ -160,9 +233,10 @@ const BulkReceiptsDialog: React.FC<Props> = ({
             <Wallet className="h-4 w-4" /> Record receipts across units
           </DialogTitle>
           <DialogDescription>
-            Set the date and instrument once, then type down the amount column. Each unit derives
-            its own rate and tax — leave a unit blank to skip it. Only units with an active booking
-            are listed, because a receipt has to hang off one.
+            Set the date and instrument once, then type down the amount column — <kbd className="rounded border px-1 text-[10px]">Enter</kbd> moves
+            to the next unit, and pasting a copied column fills it straight down. Only units with an
+            active booking are listed, because a receipt has to hang off one. A joint unit paid in
+            more than one transfer can be split by member instead of added up by hand.
           </DialogDescription>
         </DialogHeader>
 
@@ -246,49 +320,125 @@ const BulkReceiptsDialog: React.FC<Props> = ({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((r) => (
-                <TableRow key={r.u.unitId} className={r.entered > 0 ? 'bg-primary/5' : undefined}>
-                  <TableCell className="font-medium">{r.u.unitNo}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="text-xs">{r.u.ratePct}%</Badge>
-                  </TableCell>
-                  <TableCell className="text-right text-sm tabular-nums">
-                    {formatINR(r.u.balanceToTax)}
-                  </TableCell>
-                  <TableCell>
-                    <Input
-                      inputMode="decimal"
-                      className="h-8 text-right tabular-nums"
-                      value={amounts[r.u.unitId] || ''}
-                      onChange={(e) => setAmounts({ ...amounts, [r.u.unitId]: e.target.value })}
-                      placeholder="—"
-                    />
-                  </TableCell>
-                  <TableCell className="text-right text-sm tabular-nums">
-                    {r.derived ? formatINR(r.derived.tax.consideration) : <span className="text-muted-foreground">—</span>}
-                  </TableCell>
-                  <TableCell className="text-right text-sm tabular-nums">
-                    {r.derived ? formatINR(r.derived.tax.cgst) : <span className="text-muted-foreground">—</span>}
-                  </TableCell>
-                  <TableCell className="text-right text-sm tabular-nums">
-                    {r.derived ? formatINR(r.derived.tax.sgst) : <span className="text-muted-foreground">—</span>}
-                  </TableCell>
-                  {common.deduct_tds && (
-                    <TableCell className="text-right text-sm tabular-nums">
-                      {r.tds ? formatINR(r.tds) : <span className="text-muted-foreground">—</span>}
-                    </TableCell>
-                  )}
-                  <TableCell>
-                    <Input
-                      className="h-8 text-xs"
-                      value={refs[r.u.unitId] || ''}
-                      onChange={(e) => setRefs({ ...refs, [r.u.unitId]: e.target.value })}
-                      placeholder="UTR / chq"
-                      disabled={r.entered <= 0}
-                    />
-                  </TableCell>
-                </TableRow>
-              ))}
+              {rows.map((r) => {
+                const isSplit = !!splits[r.u.unitId];
+                const hasJoint = r.u.members.length > 1;
+                const colCount = common.deduct_tds ? 9 : 8;
+                return (
+                  <React.Fragment key={r.u.unitId}>
+                    <TableRow className={r.entered > 0 ? 'bg-primary/5' : undefined}>
+                      <TableCell className="font-medium">
+                        {r.u.unitNo}
+                        {hasJoint && (
+                          <span className="block text-xs text-muted-foreground">
+                            {r.u.members[0].name} +{r.u.members.length - 1} joint
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="text-xs">{r.u.ratePct}%</Badge>
+                      </TableCell>
+                      <TableCell className="text-right text-sm tabular-nums">
+                        {formatINR(r.u.balanceToTax)}
+                      </TableCell>
+                      <TableCell>
+                        {!isSplit ? (
+                          <>
+                            <Input
+                              {...registerAmount(r.u.unitId, null)}
+                              inputMode="decimal"
+                              className="h-8 text-right tabular-nums"
+                              value={amounts[r.u.unitId] || ''}
+                              onChange={(e) => setAmounts({ ...amounts, [r.u.unitId]: e.target.value })}
+                              placeholder="—"
+                            />
+                            {hasJoint && (
+                              <button
+                                type="button"
+                                className="mt-1 flex w-full items-center justify-end gap-1 text-xs font-medium text-primary hover:underline"
+                                onClick={() => setSplits((prev) => ({ ...prev, [r.u.unitId]: true }))}
+                              >
+                                <Users className="h-3 w-3" /> split by member
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            className="flex w-full items-center justify-end gap-1 text-xs font-medium text-primary hover:underline"
+                            onClick={() => setSplits((prev) => ({ ...prev, [r.u.unitId]: false }))}
+                          >
+                            {r.entered > 0 ? formatINR(r.entered) : 'split'} · {r.u.members.length} members
+                          </button>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right text-sm tabular-nums">
+                        {r.derived ? formatINR(r.derived.tax.consideration) : <span className="text-muted-foreground">—</span>}
+                      </TableCell>
+                      <TableCell className="text-right text-sm tabular-nums">
+                        {r.derived ? formatINR(r.derived.tax.cgst) : <span className="text-muted-foreground">—</span>}
+                      </TableCell>
+                      <TableCell className="text-right text-sm tabular-nums">
+                        {r.derived ? formatINR(r.derived.tax.sgst) : <span className="text-muted-foreground">—</span>}
+                      </TableCell>
+                      {common.deduct_tds && (
+                        <TableCell className="text-right text-sm tabular-nums">
+                          {r.tds ? formatINR(r.tds) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                      )}
+                      <TableCell>
+                        {!isSplit ? (
+                          <Input
+                            className="h-8 text-xs"
+                            value={refs[r.u.unitId] || ''}
+                            onChange={(e) => setRefs({ ...refs, [r.u.unitId]: e.target.value })}
+                            placeholder="UTR / chq"
+                            disabled={r.entered <= 0}
+                          />
+                        ) : (
+                          <span className="text-xs text-muted-foreground">per member</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+
+                    {isSplit && (
+                      <TableRow className="bg-muted/20 hover:bg-muted/20">
+                        <TableCell colSpan={colCount} className="py-2 pl-8">
+                          <div className="space-y-1.5">
+                            {r.u.members.map((m) => (
+                              <div key={m.name} className="grid grid-cols-[1fr_140px_140px] items-center gap-3">
+                                <span className="text-xs text-muted-foreground">
+                                  {m.name} <span className="text-[10px]">({m.ratio}%)</span>
+                                </span>
+                                <Input
+                                  {...registerAmount(r.u.unitId, m.name)}
+                                  inputMode="decimal"
+                                  className="h-7 text-right text-xs tabular-nums"
+                                  value={(memberAmounts[r.u.unitId] || {})[m.name] || ''}
+                                  onChange={(e) => setMemberAmounts((prev) => ({
+                                    ...prev,
+                                    [r.u.unitId]: { ...(prev[r.u.unitId] || {}), [m.name]: e.target.value },
+                                  }))}
+                                  placeholder="—"
+                                />
+                                <Input
+                                  className="h-7 text-xs"
+                                  value={(memberRefs[r.u.unitId] || {})[m.name] || ''}
+                                  onChange={(e) => setMemberRefs((prev) => ({
+                                    ...prev,
+                                    [r.u.unitId]: { ...(prev[r.u.unitId] || {}), [m.name]: e.target.value },
+                                  }))}
+                                  placeholder="UTR / chq"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </TableBody>
             <TableFooter>
               <TableRow>

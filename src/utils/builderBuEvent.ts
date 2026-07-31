@@ -319,6 +319,13 @@ export const buildEventWorking = (params: {
       carpetAreaSqM: Number(u.carpetAreaSqM) || 0,
       rateCode: u.rateCode,
       ratePct: u.ratePct,
+      // computeDifferential zeroes agreementValue for an unbooked unit so its
+      // OWN tax/invoice fields collapse to nothing (Schedule III) — but that
+      // zero must not leak past this object. The FSI/TDR cap reads this same
+      // field to strike the 1%/5% cap against an unbooked unit's true value
+      // (computeFsiCap in builderFsi.ts), and silently zeroing it there forces
+      // the residential RCM leg to 0 on every event with an unbooked unit.
+      agreementValue: round2(Number(u.agreementValue) || 0),
       cutOffDate: cut.date,
       cutOffSource: cut.source,
       bookedAtCutOff: booked,
