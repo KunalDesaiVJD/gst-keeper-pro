@@ -471,6 +471,31 @@ const GSTR1DataPage: React.FC = () => {
     toast.info('Opening the GST portal in a new tab — clear the CAPTCHA and let the upload run. Progress will appear here.');
   };
 
+  // "Refresh errors" — after a "Processed with Error" upload, GSTN generates
+  // the per-invoice Error Report asynchronously (up to 20 min). Ask the
+  // extension to re-open the portal and fetch the now-available report so we
+  // can populate the errors dialog and DB without re-uploading the JSON.
+  const handleRefreshErrors = () => {
+    if (!gstr1Data || !selectedClient || !selectedMonth) return;
+    if (!extReady) {
+      toast.error('Install / enable the GST Keeper browser extension to refresh errors.');
+      return;
+    }
+    setIsUploading(true);
+    setUploadResult(null);
+    window.postMessage(
+      {
+        __gstkRefreshGstr1Errors: {
+          clientId: selectedClient,
+          period_month: selectedMonth,
+          actorId: user?.id ?? null,
+        },
+      },
+      '*'
+    );
+    toast.info('Opening the GST portal to fetch the latest error report — clear the CAPTCHA in the new tab.');
+  };
+
   // Re-download the stored GSTR-1 JSON exactly as imported — this is the same
   // file format the GST portal accepts for upload.
   const handleDownloadJson = () => {
@@ -785,6 +810,19 @@ const GSTR1DataPage: React.FC = () => {
               >
                 {isUploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
                 Upload to GST Portal
+              </Button>
+            )}
+            {/* Only meaningful right after a "Processed with Error" upload,
+                while GSTN is still generating the per-invoice Error Report. */}
+            {gstr1Data && canEditFilingStatus() && gstr1Data.last_upload_status === 'partial' && (
+              <Button
+                variant="outline"
+                onClick={handleRefreshErrors}
+                disabled={isUploading || !extReady}
+                title="Re-open the portal and fetch the per-invoice Error Report (GSTN takes up to 20 min to generate it)"
+              >
+                {isUploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+                Refresh errors
               </Button>
             )}
             {gstr1Data && (
