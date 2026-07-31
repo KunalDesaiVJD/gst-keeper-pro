@@ -33,6 +33,7 @@ import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { isBuilderGenerated as isBuilderSourced } from '@/utils/builderGstr1';
+import Gstr1ManualEntryPanel from '@/components/gstr1/Gstr1ManualEntryPanel';
 
 // gstr1_data stores period_month as the short label ("Jun-26"). The rest of
 // the app shares a single MonthContext value in "MM/YYYY" form, so convert
@@ -1050,17 +1051,7 @@ const GSTR1DataPage: React.FC = () => {
                 <FileSpreadsheet className="h-4 w-4 mr-2" />
                 Prepare in Builder Returns
               </Button>
-            ) : isManualClient ? (
-              <Button
-                variant="outline"
-                onClick={() => navigate('/gstr1-manual-entry')}
-                disabled={!selectedClient || !selectedMonth || isFiled}
-                title={isFiled ? 'GSTR-1 already Filed — manual entry locked' : 'Key in invoices; Generate JSON produces the same file an import would have'}
-              >
-                <Upload className="h-4 w-4 mr-2" />
-                {gstr1Data ? 'Edit Manual Entry' : 'Prepare Manually'}
-              </Button>
-            ) : (
+            ) : isManualClient ? null : (
               <Button
                 onClick={handleImportClick}
                 disabled={isImporting || !selectedClient || !selectedMonth || isFiled}
@@ -1412,7 +1403,26 @@ const GSTR1DataPage: React.FC = () => {
           </CardContent>
         </Card>
       ) : !gstr1Data ? (
-        <Card>
+        <div className="space-y-6">
+          {/* Manual clients: the entry grid IS the primary GSTR-1 workflow,
+              shown directly — no extra click, no separate page. Once Generate
+              JSON runs, gstr1Data appears and the normal parsed-sections view
+              (tiles, detail tables, Upload button) takes over below, exactly
+              like an imported client's return. */}
+          {isManualClient && (
+            <Gstr1ManualEntryPanel
+              clientId={selectedClient}
+              clientGstin={selectedClientData?.gstin || ''}
+              clientName={selectedClientName}
+              periodShort={mmYyyyToShort(selectedMonth)}
+              isFiled={isFiled}
+              canEdit={isStaff && canEditFilingStatus()}
+              actorId={user?.id ?? null}
+              hasGeneratedJson={false}
+              onGenerated={() => { fetchGSTR1Data(); fetchVersions(); }}
+            />
+          )}
+          <Card>
           <CardContent className="p-4">
             <TableEmptyState
               icon={isBuilderClient ? <FileSpreadsheet className="h-6 w-6" /> : <Upload className="h-6 w-6" />}
@@ -1420,11 +1430,28 @@ const GSTR1DataPage: React.FC = () => {
               description={!isStaff ? undefined : isBuilderClient
                 ? 'This is a builder client. Open Builder Returns and generate the period — the '
                   + 'figures are computed from bookings, receipts and BU events, not uploaded.'
-                : 'Click "Import JSON" above to upload the GSTR-1 file for this period.'}
+                : isManualClient
+                  ? 'Enter invoices above, then click Generate JSON.'
+                  : 'Click "Import JSON" above to upload the GSTR-1 file for this period.'}
             />
           </CardContent>
-        </Card>
+          </Card>
+        </div>
       ) : (
+        <div className="space-y-6">
+          {isManualClient && (
+            <Gstr1ManualEntryPanel
+              clientId={selectedClient}
+              clientGstin={selectedClientData?.gstin || ''}
+              clientName={selectedClientName}
+              periodShort={mmYyyyToShort(selectedMonth)}
+              isFiled={isFiled}
+              canEdit={isStaff && canEditFilingStatus()}
+              actorId={user?.id ?? null}
+              hasGeneratedJson={true}
+              onGenerated={() => { fetchGSTR1Data(); fetchVersions(); }}
+            />
+          )}
         <Card>
           <CardContent className="p-4">
             {/* Provenance. A computed return and an uploaded one look identical
@@ -2114,6 +2141,7 @@ const GSTR1DataPage: React.FC = () => {
             </Tabs>
           </CardContent>
         </Card>
+        </div>
       )}
 
       {/* Consolidated, portal-style GSTR-1 summary (like the system-generated PDF). */}
