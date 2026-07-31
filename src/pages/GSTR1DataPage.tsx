@@ -236,6 +236,21 @@ const GSTR1DataPage: React.FC = () => {
     [gstr1Data],
   );
 
+  /**
+   * True when the currently loaded GSTR-1 JSON was originally generated for a
+   * different taxpayer than the client selected here. Common cause: an older
+   * import that predates the import-time GSTIN check. The Upload button will
+   * refuse in this state; the banner tells the operator why up front so they
+   * can delete and re-import the correct file.
+   */
+  const gstinMismatch = useMemo(() => {
+    const clientGstin = (clients.find((c) => c.id === selectedClient)?.gstin || '').toUpperCase().trim();
+    const jsonGstin = String(gstr1Data?.raw_json?.gstin || '').toUpperCase().trim();
+    if (!clientGstin || !jsonGstin) return null;
+    if (clientGstin === jsonGstin) return null;
+    return { clientGstin, jsonGstin };
+  }, [clients, selectedClient, gstr1Data]);
+
   const fetchGSTR1Data = useCallback(async () => {
     if (!selectedClient || !selectedMonth) { setGstr1Data(null); return; }
     setIsLoading(true);
@@ -343,6 +358,18 @@ const GSTR1DataPage: React.FC = () => {
         json = JSON.parse(text);
       } catch {
         throw new Error('Selected file is not valid JSON.');
+      }
+
+      // Refuse an import whose GSTIN doesn't match the selected client. Loading
+      // client A's file into client B's slot is almost always an operator slip
+      // — and once it's saved, later actions (portal upload, summary review)
+      // silently reference the wrong taxpayer.
+      const clientGstin = (clients.find((c) => c.id === selectedClient)?.gstin || '').toUpperCase().trim();
+      const jsonGstin = String(json?.gstin || '').toUpperCase().trim();
+      if (clientGstin && jsonGstin && clientGstin !== jsonGstin) {
+        throw new Error(
+          `GSTIN mismatch — the file is for ${jsonGstin} but this client is ${clientGstin}. Pick the right client and try again.`
+        );
       }
 
       const periodMonthKey = mmYyyyToShort(selectedMonth);
@@ -746,11 +773,15 @@ const GSTR1DataPage: React.FC = () => {
             {gstr1Data && canEditFilingStatus() && (
               <Button
                 onClick={() => { setUploadResult(null); setUploadDialogOpen(true); }}
-                disabled={isUploading || !extReady}
+                disabled={isUploading || !extReady || !!gstinMismatch}
                 className="bg-success text-success-foreground hover:bg-success/90"
-                title={extReady
-                  ? 'Upload this GSTR-1 JSON to the GST portal (filing / signing stays manual)'
-                  : 'GST Keeper browser extension not detected — install / enable it and reload this page'}
+                title={
+                  gstinMismatch
+                    ? `Cannot upload: JSON GSTIN ${gstinMismatch.jsonGstin} doesn't match client GSTIN ${gstinMismatch.clientGstin}`
+                    : extReady
+                      ? 'Upload this GSTR-1 JSON to the GST portal (filing / signing stays manual)'
+                      : 'GST Keeper browser extension not detected — install / enable it and reload this page'
+                }
               >
                 {isUploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
                 Upload to GST Portal
@@ -844,6 +875,22 @@ const GSTR1DataPage: React.FC = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Loaded JSON is for a different taxpayer — refuse Upload and surface
+          the mismatch so the operator can delete + re-import the right file. */}
+      {gstinMismatch && (
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+          <XCircle className="h-4 w-4 mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <p className="font-medium">GSTIN mismatch — this file belongs to a different taxpayer.</p>
+            <p className="text-xs mt-0.5 text-destructive/90">
+              File GSTIN: <span className="font-mono">{gstinMismatch.jsonGstin}</span> · Client GSTIN:{' '}
+              <span className="font-mono">{gstinMismatch.clientGstin}</span>. Upload is blocked. Delete this
+              import and re-import the correct client's JSON.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Last upload result banner */}
       {uploadResult && (
