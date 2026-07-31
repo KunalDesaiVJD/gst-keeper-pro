@@ -125,8 +125,17 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
       ...prev,
       [section]: prev[section].map((r) => {
         if (r.id !== id) return r;
-        const next = { ...r, [field]: value };
-        if (['rt', 'txval', 'pos', 'typ'].includes(field)) return recomputeRowTax(section, next, homeState);
+        let next = { ...r, [field]: value };
+        // Auto-derive POS from the customer GSTIN's state-code prefix (first
+        // 2 digits) — POS is the party's home state for the overwhelming
+        // majority of B2B/CDNR invoices, so typing it twice is needless
+        // friction. Still editable afterward for the rare bill-to/ship-to
+        // mismatch (b2cl/b2cs/cdnur/exp have no ctin column, so this never
+        // fires there).
+        if (field === 'ctin' && typeof value === 'string' && value.length >= 2) {
+          next.pos = value.slice(0, 2).toUpperCase();
+        }
+        if (['rt', 'txval', 'pos', 'typ', 'ctin'].includes(field)) next = recomputeRowTax(section, next, homeState);
         return next;
       }),
     }));
