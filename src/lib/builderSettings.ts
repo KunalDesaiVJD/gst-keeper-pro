@@ -19,6 +19,14 @@ export type FsiTreatment = 'PAY' | 'IGNORE';
 
 export interface BuilderClientSettings extends ChargeInclusionSettings {
   client_id: string;
+  /**
+   * False for a promoter who never raises a milestone tax invoice — every
+   * rupee is either an advance (Table 11A) or falls due at the BU/dastavej
+   * differential. Hides the manual invoicing controls on the ledger; the
+   * automatic BU differential invoice still fires regardless, since that one
+   * isn't something staff raise by hand.
+   */
+  raises_invoices: boolean;
   extra_work_rate: ExtraWorkRate;
   delay_interest_basis: DelayInterestBasis;
   excess_tax_treatment: ExcessTaxTreatment;
@@ -31,6 +39,7 @@ export interface BuilderClientSettings extends ChargeInclusionSettings {
 }
 
 export const DEFAULT_BUILDER_SETTINGS: Omit<BuilderClientSettings, 'client_id'> = {
+  raises_invoices: true,
   incl_plc: true,
   incl_development: true,
   incl_parking: true,

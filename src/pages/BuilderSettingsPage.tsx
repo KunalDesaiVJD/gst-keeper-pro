@@ -114,6 +114,7 @@ const BuilderSettingsPage: React.FC = () => {
         .from('builder_client_settings')
         .upsert({
           client_id: selectedClientId,
+          raises_invoices: settings.raises_invoices,
           incl_plc: settings.incl_plc,
           incl_development: settings.incl_development,
           incl_parking: settings.incl_parking,
@@ -231,10 +232,42 @@ const BuilderSettingsPage: React.FC = () => {
 
       {settings && !isLoading && (
         <>
+          {/* ── Invoicing model ──────────────────────────────────────────── */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">1. How this client bills members</CardTitle>
+              <CardDescription>
+                Most promoters raise a milestone tax invoice as construction progresses. Some never do —
+                they collect strictly against the agreement, and the whole balance falls due only at the
+                BU (or an earlier dastavej) cut-off. Get this right first: it decides whether "Raise
+                invoice" appears on the ledger at all.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between py-2">
+                <div className="min-w-0 pr-4">
+                  <p className="text-sm font-medium">Raises milestone invoices</p>
+                  <p className="text-xs text-muted-foreground">
+                    {settings.raises_invoices
+                      ? 'Milestone, delay-interest and other manual invoices are available on the ledger.'
+                      : 'Invoicing hidden on the ledger. Tax is charged only on advances (Table 11A) and '
+                        + "at the BU/dastavej differential — the two events this client actually uses. "
+                        + 'The automatic BU differential invoice still fires when that event posts.'}
+                  </p>
+                </div>
+                <Switch
+                  checked={settings.raises_invoices}
+                  disabled={readOnly}
+                  onCheckedChange={(v) => patch({ raises_invoices: v })}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
           {/* ── Charge heads ─────────────────────────────────────────────── */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">1. Charges forming part of the unit price</CardTitle>
+              <CardTitle className="text-base">2. Charges forming part of the unit price</CardTitle>
               <CardDescription>
                 Whatever is switched on here forms the "gross amount charged" for the apartment. That one
                 base decides both the ₹45 lakh affordable limit and the taxable value — they are the same
@@ -273,7 +306,7 @@ const BuilderSettingsPage: React.FC = () => {
           {/* ── Extra work ───────────────────────────────────────────────── */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">2. Extra / additional work billed to members</CardTitle>
+              <CardTitle className="text-base">3. Extra / additional work billed to members</CardTitle>
               <CardDescription>Modifications and upgrades charged over and above the unit price.</CardDescription>
             </CardHeader>
             <CardContent>
@@ -302,7 +335,7 @@ const BuilderSettingsPage: React.FC = () => {
           {/* ── Delay interest ───────────────────────────────────────────── */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">3. Interest recovered on delayed instalments</CardTitle>
+              <CardTitle className="text-base">4. Interest recovered on delayed instalments</CardTitle>
               <CardDescription>
                 Section 15(2)(d) includes such interest in the value of the principal supply, which would
                 carry the unit's own rate. A flat 18% is the more conservative election — it never
@@ -335,7 +368,7 @@ const BuilderSettingsPage: React.FC = () => {
           {/* ── Excess tax ───────────────────────────────────────────────── */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">4. Excess tax paid on GST-inclusive receipts</CardTitle>
+              <CardTitle className="text-base">5. Excess tax paid on GST-inclusive receipts</CardTitle>
               <CardDescription>
                 Where a receipt was inclusive of GST but tax was computed on the whole figure, tax has been
                 paid on the tax. This is how the excess is dealt with once the receipt is restated.
@@ -367,7 +400,7 @@ const BuilderSettingsPage: React.FC = () => {
           {/* ── FSI ──────────────────────────────────────────────────────── */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">5. TDR / FSI under reverse charge — default</CardTitle>
+              <CardTitle className="text-base">6. TDR / FSI under reverse charge — default</CardTitle>
               <CardDescription>
                 Overridable per project. Choosing not to pay requires the client's written instruction on
                 file and GST Manager sign-off before the affected return can be filed.
