@@ -17,8 +17,9 @@ import {
 } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { FileSignature, Loader2, Pencil, Info, AlertTriangle } from 'lucide-react';
+import { FileSignature, Loader2, Pencil, Info, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { formatINR } from '@/utils/builderRates';
+import { autoPostDastavejDifferential } from '@/lib/builderBuPosting';
 
 interface RecoRow {
   unit_id: string;
@@ -47,6 +48,7 @@ interface PendingUnit {
 
 type Action =
   | { kind: 'NONE'; label: string; tone: 'ok' }
+  | { kind: 'AUTO_TAXED'; label: string; tone: 'info' }
   | { kind: 'SCHEDULE_III'; label: string; tone: 'muted' }
   | { kind: 'SUPPLEMENTARY'; label: string; tone: 'warn' }
   | { kind: 'CREDIT_NOTE'; label: string; tone: 'warn' }
@@ -56,8 +58,12 @@ type Action =
  * What a variance calls for.
  *
  * Registration is not itself a taxable event under the firm's model — by the
- * time the deed is executed the unit is already fully taxed. The deed's job is
- * to reconcile: deed value against value actually offered to tax.
+ * time the deed is executed the unit is normally already fully taxed through
+ * ordinary advances. Where that wasn't true, saving the date posts the
+ * shortfall automatically (`autoPostDastavejDifferential`) — AUTO_TAXED is
+ * that case made visible, so a receipt on this unit afterward reads as a
+ * plain collection, not a fresh advance, and nobody has to wonder why it
+ * didn't add tax.
  */
 const resolveAction = (r: RecoRow): Action => {
   // Unbooked at its cut-off: Schedule III para 5, sale of a building after
@@ -69,7 +75,15 @@ const resolveAction = (r: RecoRow): Action => {
     return { kind: 'PENDING', label: 'Deed value not captured', tone: 'muted' };
   }
   const v = Number(r.variance) || 0;
-  if (Math.abs(v) <= 1) return { kind: 'NONE', label: 'Reconciled', tone: 'ok' };
+  // The event this row's bu_event_id points at was dated exactly at this
+  // deed — the signature of the automatic post rather than a later, separate
+  // BU sweep that happened to cover the same unit.
+  const autoTaxed = !!r.bu_event_id && !!r.bu_date && r.bu_date === r.dastavej_date;
+  if (Math.abs(v) <= 1) {
+    return autoTaxed
+      ? { kind: 'AUTO_TAXED', label: 'Taxed in full at registration — posted automatically, not owed again', tone: 'info' }
+      : { kind: 'NONE', label: 'Reconciled', tone: 'ok' };
+  }
   if (v > 0) {
     return {
       kind: 'SUPPLEMENTARY',
@@ -82,12 +96,13 @@ const resolveAction = (r: RecoRow): Action => {
 
 const TONE_CLASS: Record<Action['tone'], string> = {
   ok: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+  info: 'bg-sky-100 text-sky-800 border-sky-200',
   warn: 'bg-amber-100 text-amber-800 border-amber-200',
   muted: '',
 };
 
 const BuilderDastavejPage: React.FC = () => {
-  const { canManageBuilderUnits } = useAuth();
+  const { canManageBuilderUnits, user } = useAuth();
   const { selectedClientId, setSelectedClientId } = useClient();
 
   const [clients, setClients] = useState<{ id: string; name: string; gstin: string | null }[]>([]);
@@ -168,7 +183,35 @@ const BuilderDastavejPage: React.FC = () => {
         dastavej_value: form.dastavej_value === '' ? null : parseFloat(form.dastavej_value),
       }).eq('id', editUnit.id);
       if (error) throw error;
-      toast.success('Dastavej details saved');
+
+      // A date was actually set (not cleared) — the deed is a completed
+      // transfer either way, so check whether it's still owed anything.
+      if (form.dastavej_date) {
+        try {
+          const result = await autoPostDastavejDifferential({
+            unitId: editUnit.id, dastavejDate: form.dastavej_date, userId: user?.id ?? null,
+          });
+          if (result.action === 'POSTED') {
+            toast.success(
+              `Dastavej saved — ${formatINR(result.differentialValue)} taxed at registration `
+              + `(CGST ${formatINR(result.cgst)}, SGST ${formatINR(result.sgst)}), since it wasn't `
+              + 'fully covered by advances yet.',
+            );
+          } else if (result.action === 'SCHEDULE_III') {
+            toast.info('Dastavej saved — this unit was unbooked at that date, recorded under Schedule III.');
+          } else if (result.action === 'ALREADY_TAXED') {
+            toast.success('Dastavej saved — already fully taxed by advances, nothing further to post.');
+          } else {
+            toast.success('Dastavej details saved');
+          }
+        } catch (autoErr) {
+          // The date is saved regardless; only the automatic differential
+          // failed, and that's worth surfacing rather than swallowing.
+          toast.error(`Dastavej saved, but the automatic differential failed: ${(autoErr as Error).message}`);
+        }
+      } else {
+        toast.success('Dastavej details saved');
+      }
       setDialog(false);
       await load();
     } catch (e) {
@@ -179,10 +222,11 @@ const BuilderDastavejPage: React.FC = () => {
   };
 
   const summary = useMemo(() => {
-    const acc = { reconciled: 0, supplementary: 0, creditNote: 0, scheduleIII: 0, pending: 0 };
+    const acc = { reconciled: 0, autoTaxed: 0, supplementary: 0, creditNote: 0, scheduleIII: 0, pending: 0 };
     rows.forEach((r) => {
       const a = resolveAction(r);
       if (a.kind === 'NONE') acc.reconciled += 1;
+      else if (a.kind === 'AUTO_TAXED') acc.autoTaxed += 1;
       else if (a.kind === 'SUPPLEMENTARY') acc.supplementary += 1;
       else if (a.kind === 'CREDIT_NOTE') acc.creditNote += 1;
       else if (a.kind === 'SCHEDULE_III') acc.scheduleIII += 1;
@@ -230,10 +274,12 @@ const BuilderDastavejPage: React.FC = () => {
       <div className="flex gap-2 rounded-lg border bg-muted/30 p-3 text-muted-foreground">
         <Info className="h-4 w-4 shrink-0 mt-0.5" />
         <p className="text-xs">
-          Registration itself creates no GST — by the time the deed is executed the unit is already fully
-          taxed. This page exists to catch variances. Where the deed is registered at a jantri value above
-          the agreement value, GST still follows the actual transaction value u/s 15; the reconciliation
-          just needs to be documented, because it is a standard audit query.
+          Registration usually creates no fresh GST — by the time the deed is executed the unit is normally
+          already fully taxed through ordinary advances, and this page exists to catch variances. Where it
+          isn't — the unit registered before advances caught up — saving the date taxes the shortfall
+          automatically, right here, so nothing is left open until some future BU event. Where the deed is
+          registered at a jantri value above the agreement value, GST still follows the actual transaction
+          value u/s 15; the reconciliation just needs to be documented, because it is a standard audit query.
         </p>
       </div>
 
@@ -247,10 +293,14 @@ const BuilderDastavejPage: React.FC = () => {
         <>
           <Card>
             <CardContent className="p-4">
-              <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+              <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
                 <div>
                   <p className="text-xs text-muted-foreground">Reconciled</p>
                   <p className="text-sm font-semibold">{summary.reconciled}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Taxed at registration</p>
+                  <p className="text-sm font-semibold">{summary.autoTaxed}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Supplementary due</p>
@@ -435,8 +485,10 @@ const BuilderDastavejPage: React.FC = () => {
           <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
             <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
             <p className="text-xs">
-              Changing this on a unit already covered by a posted BU event does not re-run that working.
-              Unpost the event and prepare it again if the cut-off moves.
+              Saving a date on a unit not yet closed against any event checks it immediately: fully taxed
+              already → nothing happens; a shortfall → it's posted right now, dated to this deed. Changing
+              the date on a unit <strong>already</strong> covered by a posted event does not re-run that
+              working — unpost it and prepare it again if the cut-off should move.
             </p>
           </div>
 

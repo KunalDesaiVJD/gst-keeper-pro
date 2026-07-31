@@ -61,6 +61,8 @@ interface UnitRow {
   base_consideration: number; status: string;
   /** The registered sale deed. Half of the BU cut-off, so it belongs on the row. */
   dastavej_date: string | null;
+  /** Set once this unit has gone through its BU/dastavej differential — the whole balance is taxed. */
+  bu_event_id: string | null;
 }
 interface ChargeRow { unit_id: string; charge_head: string; amount: number; include_override: boolean | null }
 interface BookingRow {
@@ -139,6 +141,8 @@ const BuilderBookingsPage: React.FC = () => {
   const [openings, setOpenings] = useState<Record<string, OpeningRow>>({});
   const [settings, setSettings] = useState<ChargeInclusionSettings>(DEFAULT_CHARGE_INCLUSIONS);
   const [delayInterestBasis, setDelayInterestBasis] = useState<DelayInterestBasis>('FLAT_18');
+  /** False for a client who never raises a milestone invoice — hides that control on the ledger. */
+  const [raisesInvoices, setRaisesInvoices] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -203,6 +207,7 @@ const BuilderBookingsPage: React.FC = () => {
       const clientSettings = await fetchBuilderSettings(p.client_id);
       setSettings(clientSettings as ChargeInclusionSettings);
       setDelayInterestBasis(clientSettings.delay_interest_basis);
+      setRaisesInvoices(clientSettings.raises_invoices !== false);
 
       const { data: unt } = await supabase
         .from('builder_units').select('*').eq('project_id', projectId)
@@ -440,7 +445,11 @@ const BuilderBookingsPage: React.FC = () => {
   const openReceipt = (u: UnitRow, b: BookingRow) => {
     setEditingReceipt(null);
     setReceiptTarget({ unit: u, booking: b });
-    setReceiptForm({ ...emptyReceipt });
+    // A unit that has already been through its BU/dastavej differential was
+    // taxed on its whole balance at that cut-off — a receipt arriving after
+    // that is a plain collection, not a fresh advance. Defaulted, not forced:
+    // an unpost or a genuine edge case can still override it.
+    setReceiptForm({ ...emptyReceipt, gst_already_discharged: !!u.bu_event_id });
     setReceiptDialog(true);
   };
 
@@ -638,6 +647,12 @@ const BuilderBookingsPage: React.FC = () => {
   const bulkReceiptUnits: BulkReceiptUnit[] = useMemo(() => units.flatMap((u) => {
     const booking = bookings.find((b) => b.unit_id === u.id && b.status === 'Active');
     if (!booking) return [];
+    // Already through its BU/dastavej differential — the whole balance is
+    // taxed. Anything collected from here is a plain collection, not a fresh
+    // advance, so it doesn't belong in a "record this month's advances" run.
+    // The rare late payment still goes through the single-receipt dialog,
+    // which defaults "GST already discharged" on for exactly this unit.
+    if (u.bu_event_id) return [];
     const cls = classifyFor(u);
     const led = ledgerFor(u);
     return [{
@@ -690,18 +705,31 @@ const BuilderBookingsPage: React.FC = () => {
    * neither total reconcile against anything real.
    */
   interface RegisterRow {
-    key: string; date: string; unitNo: string; memberLabel: string;
+    key: string; date: string; unitId: string; unitNo: string; memberLabel: string;
     docType: string; tableTag: string; ref: string | null;
     bankAmount: number | null; taxableValue: number; cgst: number; sgst: number;
+    /** Only a receipt is directly editable/deletable here — an invoice or an
+     * 11B adjustment is a derived posting, changed only by undoing its source. */
+    receipt?: ReceiptRow; unit?: UnitRow; booking?: BookingRow;
   }
-  const monthRegister = useMemo<RegisterRow[]>(() => {
+  interface RegisterGroup {
+    unitId: string; unitNo: string; memberLabel: string; unit: UnitRow; booking: BookingRow | null;
+    rows: RegisterRow[];
+    bank: number; taxable: number; cgst: number; sgst: number;
+  }
+  const monthRegisterGroups = useMemo<RegisterGroup[]>(() => {
     if (viewMode !== 'month') return [];
-    const rows: RegisterRow[] = [];
+    const groups: RegisterGroup[] = [];
     units.forEach((u) => {
-      const booking = activeBookingFor(u.id);
+      // Prefer the active booking for display; a cancelled one still names
+      // who was involved historically, but must never be the add-receipt
+      // target, so that gate checks status again below rather than truthiness.
+      const booking = bookings.find((b) => b.unit_id === u.id && b.status === 'Active')
+        || bookings.find((b) => b.unit_id === u.id) || null;
       const mem = booking ? members[booking.id] || [] : [];
       const memberLabel = mem.length === 0 ? 'Unbooked'
         : mem.length === 1 ? mem[0].name : `${mem[0].name} +${mem.length - 1} joint`;
+      const rows: RegisterRow[] = [];
 
       (receipts[u.id] || []).filter((r) => r.period_month === selectedMonth).forEach((r) => {
         const posts = receiptPostsTax(r);
@@ -710,8 +738,9 @@ const BuilderBookingsPage: React.FC = () => {
             : r.subsumed_by_bu_event_id ? 'Subsumed by BU event'
               : r.gst_already_discharged ? 'GST discharged elsewhere'
                 : 'Against invoice — no fresh tax';
+        const rBooking = bookings.find((b) => b.id === r.booking_id);
         rows.push({
-          key: `r-${r.id}`, date: r.receipt_date, unitNo: u.unit_no, memberLabel,
+          key: `r-${r.id}`, date: r.receipt_date, unitId: u.id, unitNo: u.unit_no, memberLabel,
           docType: `Receipt ${r.doc_no || ''}`.trim(), tableTag: tag, ref: r.instrument_ref,
           bankAmount: r.cheque_status === 'Bounced' ? null : (r.bank_credit ?? (
             (Number(r.consideration) || 0) + (Number(r.cgst) || 0) + (Number(r.sgst) || 0) - (Number(r.tds_194ia) || 0)
@@ -719,12 +748,13 @@ const BuilderBookingsPage: React.FC = () => {
           taxableValue: posts ? Number(r.taxable_value) || 0 : 0,
           cgst: posts ? Number(r.cgst) || 0 : 0,
           sgst: posts ? Number(r.sgst) || 0 : 0,
+          receipt: r, unit: u, booking: rBooking,
         });
       });
 
       (invoices[u.id] || []).filter((i) => i.period_month === selectedMonth).forEach((i) => {
         rows.push({
-          key: `i-${i.id}`, date: i.invoice_date, unitNo: u.unit_no, memberLabel,
+          key: `i-${i.id}`, date: i.invoice_date, unitId: u.id, unitNo: u.unit_no, memberLabel,
           docType: `${INVOICE_TYPE_LABEL[i.invoice_type]} ${i.doc_no || ''}`.trim(),
           tableTag: 'Table 7', ref: null,
           // Not fresh cash — an invoice bills value already received as an
@@ -739,23 +769,38 @@ const BuilderBookingsPage: React.FC = () => {
         .forEach((a) => {
           const inv = (invoices[u.id] || []).find((i) => i.id === a.invoice_id);
           rows.push({
-            key: `a-${a.id}`, date: inv?.invoice_date || '', unitNo: u.unit_no, memberLabel,
+            key: `a-${a.id}`, date: inv?.invoice_date || '', unitId: u.id, unitNo: u.unit_no, memberLabel,
             docType: `Advance adjusted${inv?.doc_no ? ` (${inv.doc_no})` : ''}`,
             tableTag: '11B', ref: null, bankAmount: null,
             taxableValue: -(Number(a.consideration_adjusted) || 0) * (2 / 3),
             cgst: -(Number(a.cgst) || 0), sgst: -(Number(a.sgst) || 0),
           });
         });
-    });
-    return rows.sort((x, y) => x.date.localeCompare(y.date));
-  }, [viewMode, units, activeBookingFor, members, receipts, invoices, adjustmentsForUnit, selectedMonth]);
 
-  const registerTotals = useMemo(() => monthRegister.reduce((t, r) => ({
-    bank: t.bank + (r.bankAmount || 0),
-    taxable: t.taxable + r.taxableValue,
-    cgst: t.cgst + r.cgst,
-    sgst: t.sgst + r.sgst,
-  }), { bank: 0, taxable: 0, cgst: 0, sgst: 0 }), [monthRegister]);
+      if (!rows.length) return;
+      rows.sort((x, y) => x.date.localeCompare(y.date));
+      groups.push({
+        unitId: u.id, unitNo: u.unit_no, memberLabel, unit: u, booking,
+        rows,
+        bank: rows.reduce((s, r) => s + (r.bankAmount || 0), 0),
+        taxable: rows.reduce((s, r) => s + r.taxableValue, 0),
+        cgst: rows.reduce((s, r) => s + r.cgst, 0),
+        sgst: rows.reduce((s, r) => s + r.sgst, 0),
+      });
+    });
+    return groups.sort((x, y) => x.rows[0].date.localeCompare(y.rows[0].date));
+  }, [viewMode, units, bookings, members, receipts, invoices, adjustmentsForUnit, selectedMonth]);
+
+  const registerTotals = useMemo(() => monthRegisterGroups.reduce((t, g) => ({
+    bank: t.bank + g.bank, taxable: t.taxable + g.taxable, cgst: t.cgst + g.cgst, sgst: t.sgst + g.sgst,
+  }), { bank: 0, taxable: 0, cgst: 0, sgst: 0 }), [monthRegisterGroups]);
+
+  const [registerExpanded, setRegisterExpanded] = useState<Set<string>>(new Set());
+  const toggleRegisterExpanded = (unitId: string) => setRegisterExpanded((prev) => {
+    const next = new Set(prev);
+    if (next.has(unitId)) next.delete(unitId); else next.add(unitId);
+    return next;
+  });
 
   const toggleSelect = (id: string) => setSelected((prev) => {
     const next = new Set(prev);
@@ -905,7 +950,7 @@ const BuilderBookingsPage: React.FC = () => {
         </CardHeader>
         <CardContent className="p-0">
           {viewMode === 'month' ? (
-            monthRegister.length === 0 ? (
+            monthRegisterGroups.length === 0 ? (
               <div className="p-10 text-center text-muted-foreground">
                 <ListChecks className="h-8 w-8 mx-auto mb-3 opacity-40" />
                 <p className="text-sm">No receipts or invoices dated in {prettyPeriodLabel(selectedMonth)}.</p>
@@ -924,29 +969,130 @@ const BuilderBookingsPage: React.FC = () => {
                       <TableHead className="text-right">Taxable</TableHead>
                       <TableHead className="text-right">CGST</TableHead>
                       <TableHead className="text-right">SGST</TableHead>
+                      <TableHead className="w-24" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {monthRegister.map((r) => (
-                      <TableRow key={r.key}>
-                        <TableCell className="text-sm tabular-nums">{r.date}</TableCell>
-                        <TableCell className="text-sm">
-                          {r.unitNo}
-                          <span className="block text-xs text-muted-foreground">{r.memberLabel}</span>
-                        </TableCell>
-                        <TableCell className="text-sm">{r.docType}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground">{r.ref || '—'}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="text-xs">{r.tableTag}</Badge>
-                        </TableCell>
-                        <TableCell className="text-right text-sm tabular-nums">
-                          {r.bankAmount === null ? <span className="text-muted-foreground">—</span> : formatINR(r.bankAmount)}
-                        </TableCell>
-                        <TableCell className="text-right text-sm tabular-nums">{formatINR(r.taxableValue)}</TableCell>
-                        <TableCell className="text-right text-sm tabular-nums">{formatINR(r.cgst)}</TableCell>
-                        <TableCell className="text-right text-sm tabular-nums">{formatINR(r.sgst)}</TableCell>
-                      </TableRow>
-                    ))}
+                    {monthRegisterGroups.map((g) => {
+                      const isMulti = g.rows.length > 1;
+                      const lineActions = (r: RegisterRow) => (
+                        <div className="flex items-center gap-0.5">
+                          {canEdit && r.receipt && r.unit && r.booking && (
+                            <Button
+                              variant="ghost" size="icon" className="h-6 w-6" title="Edit receipt"
+                              onClick={() => openEditReceipt(r.unit as UnitRow, r.booking as BookingRow, r.receipt as ReceiptRow)}
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </Button>
+                          )}
+                          {canEdit && r.receipt && (
+                            <Button
+                              variant="ghost" size="icon" className="h-6 w-6" title="Delete receipt"
+                              onClick={() => handleDeleteReceipt(r.receipt as ReceiptRow)}
+                            >
+                              <Trash2 className="h-3 w-3 text-destructive" />
+                            </Button>
+                          )}
+                        </div>
+                      );
+                      if (!isMulti) {
+                        const r = g.rows[0];
+                        return (
+                          <TableRow key={r.key}>
+                            <TableCell className="text-sm tabular-nums">{r.date}</TableCell>
+                            <TableCell className="text-sm">
+                              {r.unitNo}
+                              <span className="block text-xs text-muted-foreground">{r.memberLabel}</span>
+                            </TableCell>
+                            <TableCell className="text-sm">{r.docType}</TableCell>
+                            <TableCell className="text-xs text-muted-foreground">{r.ref || '—'}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="text-xs">{r.tableTag}</Badge>
+                            </TableCell>
+                            <TableCell className="text-right text-sm tabular-nums">
+                              {r.bankAmount === null ? <span className="text-muted-foreground">—</span> : formatINR(r.bankAmount)}
+                            </TableCell>
+                            <TableCell className="text-right text-sm tabular-nums">{formatINR(r.taxableValue)}</TableCell>
+                            <TableCell className="text-right text-sm tabular-nums">{formatINR(r.cgst)}</TableCell>
+                            <TableCell className="text-right text-sm tabular-nums">{formatINR(r.sgst)}</TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-0.5">
+                                {lineActions(r)}
+                                {canEdit && g.booking && g.booking.status === 'Active' && (
+                                  <Button
+                                    variant="ghost" size="icon" className="h-6 w-6" title="Add receipt"
+                                    onClick={() => openReceipt(g.unit, g.booking as BookingRow)}
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                  </Button>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      }
+                      const isOpen = registerExpanded.has(g.unitId);
+                      const tags = [...new Set(g.rows.map((r) => r.tableTag))];
+                      return (
+                        <React.Fragment key={g.unitId}>
+                          <TableRow
+                            className="cursor-pointer bg-muted/30 hover:bg-muted/40"
+                            onClick={() => toggleRegisterExpanded(g.unitId)}
+                          >
+                            <TableCell className="text-sm">
+                              <span className="flex items-center gap-1">
+                                {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                                {g.rows.length} postings
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-sm font-medium">
+                              {g.unitNo}
+                              <span className="block text-xs font-normal text-muted-foreground">{g.memberLabel}</span>
+                            </TableCell>
+                            <TableCell colSpan={2} />
+                            <TableCell>
+                              <div className="flex flex-wrap gap-1">
+                                {tags.map((t) => <Badge key={t} variant="outline" className="text-xs">{t}</Badge>)}
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right text-sm font-semibold tabular-nums">
+                              {g.bank ? formatINR(g.bank) : <span className="text-muted-foreground">—</span>}
+                            </TableCell>
+                            <TableCell className="text-right text-sm font-semibold tabular-nums">{formatINR(g.taxable)}</TableCell>
+                            <TableCell className="text-right text-sm font-semibold tabular-nums">{formatINR(g.cgst)}</TableCell>
+                            <TableCell className="text-right text-sm font-semibold tabular-nums">{formatINR(g.sgst)}</TableCell>
+                            <TableCell onClick={(e) => e.stopPropagation()}>
+                              {canEdit && g.booking && g.booking.status === 'Active' && (
+                                <Button
+                                  variant="ghost" size="icon" className="h-6 w-6" title="Add receipt"
+                                  onClick={() => openReceipt(g.unit, g.booking as BookingRow)}
+                                >
+                                  <Plus className="h-3 w-3" />
+                                </Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                          {isOpen && g.rows.map((r) => (
+                            <TableRow key={r.key} className="bg-muted/10">
+                              <TableCell className="pl-8 text-sm tabular-nums">{r.date}</TableCell>
+                              <TableCell />
+                              <TableCell className="text-sm">{r.docType}</TableCell>
+                              <TableCell className="text-xs text-muted-foreground">{r.ref || '—'}</TableCell>
+                              <TableCell>
+                                <Badge variant="outline" className="text-xs">{r.tableTag}</Badge>
+                              </TableCell>
+                              <TableCell className="text-right text-sm tabular-nums">
+                                {r.bankAmount === null ? <span className="text-muted-foreground">—</span> : formatINR(r.bankAmount)}
+                              </TableCell>
+                              <TableCell className="text-right text-sm tabular-nums">{formatINR(r.taxableValue)}</TableCell>
+                              <TableCell className="text-right text-sm tabular-nums">{formatINR(r.cgst)}</TableCell>
+                              <TableCell className="text-right text-sm tabular-nums">{formatINR(r.sgst)}</TableCell>
+                              <TableCell>{lineActions(r)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </React.Fragment>
+                      );
+                    })}
                   </TableBody>
                   <TableFooter>
                     <TableRow>
@@ -954,7 +1100,7 @@ const BuilderBookingsPage: React.FC = () => {
                         Bank total — tally against your statement or Tally
                       </TableCell>
                       <TableCell className="text-right font-semibold tabular-nums">{formatINR(registerTotals.bank)}</TableCell>
-                      <TableCell colSpan={3} />
+                      <TableCell colSpan={4} />
                     </TableRow>
                     <TableRow>
                       <TableCell colSpan={6} className="font-semibold">
@@ -963,6 +1109,7 @@ const BuilderBookingsPage: React.FC = () => {
                       <TableCell className="text-right font-semibold tabular-nums">{formatINR(registerTotals.taxable)}</TableCell>
                       <TableCell className="text-right font-semibold tabular-nums">{formatINR(registerTotals.cgst)}</TableCell>
                       <TableCell className="text-right font-semibold tabular-nums">{formatINR(registerTotals.sgst)}</TableCell>
+                      <TableCell />
                     </TableRow>
                   </TableFooter>
                 </Table>
@@ -1090,9 +1237,11 @@ const BuilderBookingsPage: React.FC = () => {
                                   <Button variant="ghost" size="icon" title="Add receipt" onClick={() => openReceipt(u, booking)}>
                                     <Plus className="h-4 w-4" />
                                   </Button>
-                                  <Button variant="ghost" size="icon" title="Raise invoice" onClick={() => openInvoice(u, booking)}>
-                                    <FileText className="h-4 w-4" />
-                                  </Button>
+                                  {raisesInvoices && (
+                                    <Button variant="ghost" size="icon" title="Raise invoice" onClick={() => openInvoice(u, booking)}>
+                                      <FileText className="h-4 w-4" />
+                                    </Button>
+                                  )}
                                 </>
                               )}
                               {canEdit && (
@@ -1577,6 +1726,15 @@ const BuilderBookingsPage: React.FC = () => {
               />
             </div>
           </div>
+
+          {receiptTarget?.unit.bu_event_id && (
+            <p className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              This unit already went through its BU/dastavej differential — its whole balance was taxed
+              at that cut-off. "GST already discharged" is switched on by default so this receipt is
+              recorded as a plain collection, not taxed a second time. Turn it off only if that's wrong.
+            </p>
+          )}
 
           <div className="flex items-center justify-between rounded-lg border p-3">
             <div>
