@@ -581,9 +581,15 @@ const GSTR1DataPage: React.FC = () => {
     return rows;
   }, [json.exp]);
 
-  // HSN data
+  // HSN data. The portal JSON has used two shapes:
+  //  - older: hsn.data (single flat list)
+  //  - newer: hsn.hsn_b2b + hsn.hsn_b2c (split by supply type)
+  // Accept both so files pulled from either era populate the HSN tab.
   const hsnRows = useMemo(() => {
-    return (json.hsn?.data || []).map((item: any) => ({
+    const raw: any[] = json.hsn?.data
+      ? json.hsn.data
+      : [...(json.hsn?.hsn_b2b || []), ...(json.hsn?.hsn_b2c || [])];
+    return raw.map((item: any) => ({
       hsn_sc: item.hsn_sc,
       desc: item.desc,
       uqc: item.uqc,

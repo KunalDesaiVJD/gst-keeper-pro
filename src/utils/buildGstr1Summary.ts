@@ -188,7 +188,14 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
   });
 
   // 12 — HSN summary. Value = taxable + tax.
-  (j.hsn?.data || []).forEach((h: any) => {
+  // The portal JSON has used two shapes over time:
+  //  - older: hsn.data (single flat list)
+  //  - newer: hsn.hsn_b2b + hsn.hsn_b2c (split by supply type)
+  // Accept both so files pulled from either era populate the HSN section.
+  const hsnRowsRaw: any[] = j.hsn?.data
+    ? j.hsn.data
+    : [...(j.hsn?.hsn_b2b || []), ...(j.hsn?.hsn_b2c || [])];
+  hsnRowsRaw.forEach((h: any) => {
     s12.count += 1;
     s12.igst += num(h.iamt);
     s12.cgst += num(h.camt);
