@@ -169,6 +169,7 @@ const GSTR1DataPage: React.FC = () => {
     errors?: UploadErrorRow[];
   } | null>(null);
   const [errorsDialogOpen, setErrorsDialogOpen] = useState(false);
+  const [showUploadReport, setShowUploadReport] = useState(false);
   const [extReady, setExtReady] = useState(false);
 
   // Upload history (versions) + per-version error dialog.
@@ -419,7 +420,7 @@ const GSTR1DataPage: React.FC = () => {
   useEffect(() => { fetchVersions(); }, [fetchVersions]);
   useEffect(() => { fetchFilingStatus(); }, [fetchFilingStatus]);
   // Clear the transient upload banner when the operator switches client/month.
-  useEffect(() => { setUploadResult(null); }, [selectedClient, selectedMonth]);
+  useEffect(() => { setUploadResult(null); setShowUploadReport(false); }, [selectedClient, selectedMonth]);
 
   // Extension bridge: detect the GST Keeper browser extension and receive the
   // upload result it posts back after driving the portal. Mirrors the pattern
@@ -1194,6 +1195,14 @@ const GSTR1DataPage: React.FC = () => {
                         : 'Upload failed')}
                     {' · '}
                     {new Date(gstr1Data.last_uploaded_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-5 px-1.5 text-[10px]"
+                      onClick={() => setShowUploadReport((v) => !v)}
+                    >
+                      {showUploadReport ? 'Hide report' : 'View report'}
+                    </Button>
                     {gstr1Data.last_upload_errors && gstr1Data.last_upload_errors.length > 0 && (
                       <Button
                         variant="ghost"
@@ -1255,12 +1264,14 @@ const GSTR1DataPage: React.FC = () => {
         </div>
       )}
 
-      {/* Portal Upload Report — persistent, visible summary of the most recent
-          upload for this (client, period). Shows the status prominently and,
-          when the portal rejected any invoices, lists the per-invoice reasons
-          right on the page (no dialog to click into). Survives page refresh
-          because it reads from last_upload_* columns on gstr1_data. */}
-      {gstr1Data && gstr1Data.last_uploaded_at && (
+      {/* Portal Upload Report — full summary of the most recent upload for this
+          (client, period), behind the "View report" toggle above so it isn't
+          taking up page space by default. When open, it shows the status
+          prominently and, when the portal rejected any invoices, lists the
+          per-invoice reasons right on the page (no dialog to click into).
+          Survives page refresh because it reads from last_upload_* columns on
+          gstr1_data — only the open/closed state resets on navigation. */}
+      {gstr1Data && gstr1Data.last_uploaded_at && showUploadReport && (
         <Card
           className={
             gstr1Data.last_upload_status === 'accepted'
