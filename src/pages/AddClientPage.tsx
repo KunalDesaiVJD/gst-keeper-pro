@@ -42,6 +42,7 @@ const AddClientPage: React.FC = () => {
     defaultTargetDate: '', // Optional - for GSTR-1, GSTR-7
     otherTargetDate: '', // Optional - for GSTR-3B, ITC-04
     selectedReturns: [] as ReturnType[],
+    gstr1ImportMode: 'json' as 'json' | 'manual', // How this client's GSTR-1 is prepared
     cancellationDate: '', // Optional — labeled "GSTR 10 Date" in UI
     registrationCancellationDate: '', // Optional — actual registration cancellation date
     inactiveAtHand: false, // Optional — hides client from Filing Status when true
@@ -218,6 +219,7 @@ const AddClientPage: React.FC = () => {
           email: formData.email || null,
           assigned_accountant: formData.assignedAccountant || null,
           selected_returns: formData.selectedReturns,
+          gstr1_import_mode: formData.gstr1ImportMode,
           client_user_id: clientCredentials?.userId || null,
           cancellation_date: formData.cancellationDate || null,
           registration_cancellation_date: formData.registrationCancellationDate || null,
@@ -548,6 +550,46 @@ const AddClientPage: React.FC = () => {
                   {formData.registrationType === 'ISD' && 'Input Service Distributors file GSTR-6 monthly'}
                   {formData.registrationType === 'IFF' && 'IFF: GSTR-1 (IFF) monthly, GSTR-3B (Q) quarterly (last month of quarter)'}
                 </p>
+              </div>
+            )}
+
+            {formData.registrationType && formData.selectedReturns.includes('GSTR-1') && (
+              <div className="space-y-3">
+                <Label>GSTR-1 Import Mode</Label>
+                <RadioGroup
+                  value={formData.gstr1ImportMode}
+                  onValueChange={(v) => setFormData(prev => ({ ...prev, gstr1ImportMode: v as 'json' | 'manual' }))}
+                  className="grid grid-cols-1 md:grid-cols-2 gap-3"
+                >
+                  <label
+                    htmlFor="gstr1ModeJson"
+                    className={`flex items-start gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                      formData.gstr1ImportMode === 'json' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                    }`}
+                  >
+                    <RadioGroupItem value="json" id="gstr1ModeJson" className="mt-0.5" />
+                    <div>
+                      <span className="text-sm font-normal block">JSON (from Tally)</span>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Client sends a GSTR-1 JSON export — import + portal upload buttons shown on the GSTR-1 page.
+                      </p>
+                    </div>
+                  </label>
+                  <label
+                    htmlFor="gstr1ModeManual"
+                    className={`flex items-start gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                      formData.gstr1ImportMode === 'manual' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                    }`}
+                  >
+                    <RadioGroupItem value="manual" id="gstr1ModeManual" className="mt-0.5" />
+                    <div>
+                      <span className="text-sm font-normal block">Manual (bills only)</span>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Client only sends bills — GSTR-1 is prepared outside this app. Import/Upload buttons are hidden.
+                      </p>
+                    </div>
+                  </label>
+                </RadioGroup>
               </div>
             )}
 

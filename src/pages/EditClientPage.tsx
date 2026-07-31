@@ -37,6 +37,7 @@ interface ClientData {
   email: string | null;
   assigned_accountant: string | null;
   selected_returns: ReturnType[] | null;
+  gstr1_import_mode?: 'json' | 'manual' | null;
   cancellation_date?: string | null;
   registration_cancellation_date?: string | null;
   inactive_at_hand?: boolean | null;
@@ -61,6 +62,7 @@ const EditClientPage: React.FC = () => {
     email: '',
     assignedAccountant: '',
     selectedReturns: [] as ReturnType[],
+    gstr1ImportMode: 'json' as 'json' | 'manual',
     cancellationDate: '',
     registrationCancellationDate: '',
     inactiveAtHand: false,
@@ -117,6 +119,7 @@ const EditClientPage: React.FC = () => {
         email: data.email || '',
         assignedAccountant: data.assigned_accountant || '',
         selectedReturns: (data.selected_returns || []) as ReturnType[],
+        gstr1ImportMode: ((data as any).gstr1_import_mode as 'json' | 'manual') || 'json',
         cancellationDate: (data as any).cancellation_date || '',
         registrationCancellationDate: (data as any).registration_cancellation_date || '',
         inactiveAtHand: !!(data as any).inactive_at_hand,
@@ -300,6 +303,7 @@ const EditClientPage: React.FC = () => {
           email: formData.email || null,
           assigned_accountant: formData.assignedAccountant || null,
           selected_returns: formData.selectedReturns,
+          gstr1_import_mode: formData.gstr1ImportMode,
           cancellation_date: formData.cancellationDate || null,
           registration_cancellation_date: formData.registrationCancellationDate || null,
           inactive_at_hand: formData.inactiveAtHand,
@@ -657,6 +661,46 @@ const EditClientPage: React.FC = () => {
                   ))}
                 </div>
                 {errors.returns && <p className="text-sm text-destructive">{errors.returns}</p>}
+              </div>
+            )}
+
+            {formData.registrationType && formData.selectedReturns.includes('GSTR-1') && (
+              <div className="space-y-3">
+                <Label>GSTR-1 Import Mode</Label>
+                <RadioGroup
+                  value={formData.gstr1ImportMode}
+                  onValueChange={(v) => setFormData(prev => ({ ...prev, gstr1ImportMode: v as 'json' | 'manual' }))}
+                  className="grid grid-cols-1 md:grid-cols-2 gap-3"
+                >
+                  <label
+                    htmlFor="gstr1ModeJson"
+                    className={`flex items-start gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                      formData.gstr1ImportMode === 'json' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                    }`}
+                  >
+                    <RadioGroupItem value="json" id="gstr1ModeJson" className="mt-0.5" />
+                    <div>
+                      <span className="text-sm font-normal block">JSON (from Tally)</span>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Client sends a GSTR-1 JSON export — import + portal upload buttons shown on the GSTR-1 page.
+                      </p>
+                    </div>
+                  </label>
+                  <label
+                    htmlFor="gstr1ModeManual"
+                    className={`flex items-start gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                      formData.gstr1ImportMode === 'manual' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                    }`}
+                  >
+                    <RadioGroupItem value="manual" id="gstr1ModeManual" className="mt-0.5" />
+                    <div>
+                      <span className="text-sm font-normal block">Manual (bills only)</span>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Client only sends bills — GSTR-1 is prepared outside this app. Import/Upload buttons are hidden.
+                      </p>
+                    </div>
+                  </label>
+                </RadioGroup>
               </div>
             )}
 

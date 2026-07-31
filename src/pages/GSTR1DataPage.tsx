@@ -69,6 +69,9 @@ interface Client {
   // Promoters file from the builder module: their outward side is computed from
   // bookings, receipts and BU events, so there is no JSON to upload.
   regular_sub_type?: string | null;
+  // 'manual' clients only send bills — their GSTR-1 is prepared entirely
+  // outside this app, so the Import/Upload actions don't apply to them.
+  gstr1_import_mode?: 'json' | 'manual' | null;
 }
 
 interface UploadErrorRow {
@@ -238,7 +241,7 @@ const GSTR1DataPage: React.FC = () => {
 
   const fetchClients = useCallback(async () => {
     const { data } = await supabase
-      .from('clients').select('id, name, gstin, regular_sub_type').order('name');
+      .from('clients').select('id, name, gstin, regular_sub_type, gstr1_import_mode').order('name');
     setClients((data || []) as Client[]);
   }, []);
 
@@ -251,6 +254,16 @@ const GSTR1DataPage: React.FC = () => {
    */
   const isBuilderClient = useMemo(
     () => clients.find((c) => c.id === selectedClient)?.regular_sub_type === 'Builder',
+    [clients, selectedClient],
+  );
+
+  /**
+   * 'Manual' clients only send bills — their GSTR-1 is prepared entirely
+   * outside this app (Excel / portal online entry), so Import JSON and Upload
+   * to GST Portal don't apply. Set per-client on the client form.
+   */
+  const isManualClient = useMemo(
+    () => clients.find((c) => c.id === selectedClient)?.gstr1_import_mode === 'manual',
     [clients, selectedClient],
   );
 
@@ -468,6 +481,10 @@ const GSTR1DataPage: React.FC = () => {
     // clients, but the handler refuses too so no future caller can slip past it.
     if (isBuilderClient) {
       toast.error('This is a builder client — generate the return from Builder Returns instead.');
+      return;
+    }
+    if (isManualClient) {
+      toast.error('This client is set to Manual GSTR-1 mode — JSON import is not applicable. Change it in Edit Client if this is wrong.');
       return;
     }
     if (isFiled) {
@@ -1033,6 +1050,14 @@ const GSTR1DataPage: React.FC = () => {
                 <FileSpreadsheet className="h-4 w-4 mr-2" />
                 Prepare in Builder Returns
               </Button>
+            ) : isManualClient ? (
+              <span
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border bg-muted text-xs text-muted-foreground"
+                title="This client is set to Manual GSTR-1 mode — prepared outside this app. Change in Edit Client."
+              >
+                <FileJson className="h-3.5 w-3.5" />
+                Manual GSTR-1 — prepared outside this app
+              </span>
             ) : (
               <Button
                 onClick={handleImportClick}
@@ -1060,7 +1085,7 @@ const GSTR1DataPage: React.FC = () => {
                 Version History{versions.length > 0 ? ` (${versions.length})` : ''}
               </Button>
             )}
-            {gstr1Data && canEditFilingStatus() && (
+            {gstr1Data && !isManualClient && canEditFilingStatus() && (
               <Button
                 onClick={() => { setUploadResult(null); setUploadDialogOpen(true); }}
                 disabled={isUploading || !extReady || !!gstinMismatch || isFiled}
