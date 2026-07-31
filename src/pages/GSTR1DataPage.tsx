@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
-import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, Inbox, BarChart3, Download, ChevronsDownUp, ChevronsUpDown, FileSpreadsheet } from 'lucide-react';
+import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, Inbox, BarChart3, Download, ChevronsDownUp, ChevronsUpDown, FileSpreadsheet, History, Lock } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -75,6 +75,19 @@ interface UploadErrorRow {
   invoiceNo?: string;
   gstin?: string;
   reason: string;
+}
+
+interface UploadVersion {
+  id: string;
+  version_number: number;
+  action_type: 'IMPORT' | 'UPLOAD' | 'REFRESH_ERRORS';
+  actor_id: string | null;
+  actor_name?: string;
+  action_at: string;
+  file_name: string | null;
+  status: string | null;
+  summary: string | null;
+  errors: UploadErrorRow[] | null;
 }
 
 interface GSTR1Record {
@@ -153,6 +166,17 @@ const GSTR1DataPage: React.FC = () => {
   } | null>(null);
   const [errorsDialogOpen, setErrorsDialogOpen] = useState(false);
   const [extReady, setExtReady] = useState(false);
+
+  // Upload history (versions) + per-version error dialog.
+  const [versions, setVersions] = useState<UploadVersion[]>([]);
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
+  const [expandedVersionId, setExpandedVersionId] = useState<string | null>(null);
+
+  // Filing status for this (client, period, GSTR-1). Once 'Filed', all edits
+  // and portal actions are blocked so the record we hold matches what was
+  // actually filed with GSTN.
+  const [filingStatus, setFilingStatus] = useState<string | null>(null);
+  const isFiled = filingStatus === 'Filed';
   const [summaryOpen, setSummaryOpen] = useState(false);
   // Per-tab collapse: when a section id is in the set, its table shows only the
   // header + totals row (data rows hidden). Every section starts collapsed so
@@ -271,8 +295,70 @@ const GSTR1DataPage: React.FC = () => {
     }
   }, [selectedClient, selectedMonth]);
 
+  // Upload history — all IMPORT / UPLOAD / REFRESH_ERRORS actions for this
+  // (client, period), with the actor's name resolved from profiles.
+  const fetchVersions = useCallback(async () => {
+    if (!selectedClient || !selectedMonth) { setVersions([]); return; }
+    const periodMonthKey = mmYyyyToShort(selectedMonth);
+    const { data } = await supabase
+      .from('gstr1_upload_versions')
+      .select('*')
+      .eq('client_id', selectedClient)
+      .eq('period_month', periodMonthKey)
+      .order('version_number', { ascending: false });
+    const rows = (data as UploadVersion[] | null) || [];
+    const actorIds = Array.from(new Set(rows.map((r) => r.actor_id).filter(Boolean))) as string[];
+    let nameMap = new Map<string, string>();
+    if (actorIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles').select('user_id, first_name').in('user_id', actorIds);
+      nameMap = new Map((profiles || []).map((p) => [p.user_id, p.first_name || 'Unknown']));
+    }
+    setVersions(rows.map((r) => ({ ...r, actor_name: r.actor_id ? (nameMap.get(r.actor_id) || 'Unknown') : 'System' })));
+  }, [selectedClient, selectedMonth]);
+
+  // Filing status for the (client, GSTR-1, period). 'Filed' → block edits.
+  const fetchFilingStatus = useCallback(async () => {
+    if (!selectedClient || !selectedMonth) { setFilingStatus(null); return; }
+    // filing_status.period_month uses MM/YYYY format across the app.
+    const { data } = await supabase
+      .from('filing_status')
+      .select('status')
+      .eq('client_id', selectedClient)
+      .eq('return_type', 'GSTR-1')
+      .eq('period_month', selectedMonth)
+      .maybeSingle();
+    setFilingStatus(((data as any)?.status || null) as string | null);
+  }, [selectedClient, selectedMonth]);
+
+  // One-liner used by every mutation path (import, upload result received,
+  // manual error-report import) to record what happened, by whom, when.
+  const recordVersion = useCallback(async (v: {
+    action_type: 'IMPORT' | 'UPLOAD' | 'REFRESH_ERRORS';
+    file_name?: string | null;
+    status?: string | null;
+    summary?: string | null;
+    errors?: UploadErrorRow[] | null;
+  }) => {
+    if (!selectedClient || !selectedMonth) return;
+    const periodMonthKey = mmYyyyToShort(selectedMonth);
+    await supabase.from('gstr1_upload_versions').insert({
+      client_id: selectedClient,
+      period_month: periodMonthKey,
+      action_type: v.action_type,
+      actor_id: user?.id ?? null,
+      file_name: v.file_name ?? null,
+      status: v.status ?? null,
+      summary: v.summary ?? null,
+      errors: (v.errors as any) ?? null,
+    });
+    fetchVersions();
+  }, [selectedClient, selectedMonth, user?.id, fetchVersions]);
+
   useEffect(() => { fetchClients(); }, [fetchClients]);
   useEffect(() => { fetchGSTR1Data(); }, [fetchGSTR1Data]);
+  useEffect(() => { fetchVersions(); }, [fetchVersions]);
+  useEffect(() => { fetchFilingStatus(); }, [fetchFilingStatus]);
   // Clear the transient upload banner when the operator switches client/month.
   useEffect(() => { setUploadResult(null); }, [selectedClient, selectedMonth]);
 
@@ -308,6 +394,7 @@ const GSTR1DataPage: React.FC = () => {
           setUploadResult({ ok: false, message: msg, errors: r.errors });
         }
         fetchGSTR1Data();
+        fetchVersions();
       }
     };
     window.addEventListener('message', onMsg);
@@ -320,7 +407,7 @@ const GSTR1DataPage: React.FC = () => {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, [fetchGSTR1Data]);
+  }, [fetchGSTR1Data, fetchVersions]);
 
   // Opens the persistent hidden <input type="file"> below. Using a stable ref
   // (instead of a dynamically-created input with an onchange closure) means
@@ -336,6 +423,10 @@ const GSTR1DataPage: React.FC = () => {
     // clients, but the handler refuses too so no future caller can slip past it.
     if (isBuilderClient) {
       toast.error('This is a builder client — generate the return from Builder Returns instead.');
+      return;
+    }
+    if (isFiled) {
+      toast.error('GSTR-1 for this period is already Filed — imports are locked to preserve the record of what was actually filed.');
       return;
     }
     fileInputRef.current?.click();
@@ -396,6 +487,12 @@ const GSTR1DataPage: React.FC = () => {
 
       toast.success(`GSTR-1 JSON imported for ${periodMonthKey}.`);
       await fetchGSTR1Data();
+      await recordVersion({
+        action_type: 'IMPORT',
+        file_name: file.name,
+        status: 'imported',
+        summary: `Imported ${file.name}`,
+      });
     } catch (err: any) {
       toast.error('Failed to import: ' + (err?.message || 'Unknown error'));
     } finally {
@@ -405,6 +502,10 @@ const GSTR1DataPage: React.FC = () => {
 
   const handleDelete = async () => {
     if (!gstr1Data) return;
+    if (isFiled) {
+      toast.error('GSTR-1 for this period is already Filed — the imported JSON is locked and cannot be deleted.');
+      return;
+    }
     if (!(await confirm({ title: 'Delete GSTR-1 data?', description: 'This removes the imported GSTR-1 data for this client and period.', destructive: true, confirmText: 'Delete' }))) return;
     try {
       await supabase.from('gstr1_data').delete().eq('id', gstr1Data.id);
@@ -422,6 +523,10 @@ const GSTR1DataPage: React.FC = () => {
   // or a structured error list. Filing / signing stays manual by design.
   const handleUpload = async () => {
     if (!gstr1Data || !selectedClient || !selectedMonth) return;
+    if (isFiled) {
+      toast.error('GSTR-1 for this period is already Filed — portal upload is locked.');
+      return;
+    }
     if (!extReady) {
       toast.error('Install / enable the GST Keeper browser extension to upload from this page.');
       return;
@@ -552,6 +657,13 @@ const GSTR1DataPage: React.FC = () => {
       setUploadResult({ ok: false, message: summary, errors: rows });
       setErrorsDialogOpen(true);
       await fetchGSTR1Data();
+      await recordVersion({
+        action_type: 'REFRESH_ERRORS',
+        file_name: file.name,
+        status: 'partial',
+        summary,
+        errors: rows,
+      });
       toast.success(summary);
     } catch (err: any) {
       toast.error('Could not parse Error Report: ' + (err?.message || 'Unknown error'));
@@ -877,22 +989,37 @@ const GSTR1DataPage: React.FC = () => {
                 Prepare in Builder Returns
               </Button>
             ) : (
-              <Button onClick={handleImportClick} disabled={isImporting || !selectedClient || !selectedMonth}>
+              <Button
+                onClick={handleImportClick}
+                disabled={isImporting || !selectedClient || !selectedMonth || isFiled}
+                title={isFiled ? 'GSTR-1 already Filed — import locked to preserve the filed record' : undefined}
+              >
                 {isImporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
                 Import JSON
+              </Button>
+            )}
+            {/* Version History — every Import / Upload / Refresh_Errors action
+                is recorded, so operators can audit who touched what and see
+                per-attempt error reports. */}
+            {selectedClient && selectedMonth && versions.length > 0 && (
+              <Button variant="outline" onClick={() => setVersionHistoryOpen(true)}>
+                <History className="h-4 w-4 mr-2" />
+                Version History ({versions.length})
               </Button>
             )}
             {gstr1Data && canEditFilingStatus() && (
               <Button
                 onClick={() => { setUploadResult(null); setUploadDialogOpen(true); }}
-                disabled={isUploading || !extReady || !!gstinMismatch}
+                disabled={isUploading || !extReady || !!gstinMismatch || isFiled}
                 className="bg-success text-success-foreground hover:bg-success/90"
                 title={
-                  gstinMismatch
-                    ? `Cannot upload: JSON GSTIN ${gstinMismatch.jsonGstin} doesn't match client GSTIN ${gstinMismatch.clientGstin}`
-                    : extReady
-                      ? 'Upload this GSTR-1 JSON to the GST portal (filing / signing stays manual)'
-                      : 'GST Keeper browser extension not detected — install / enable it and reload this page'
+                  isFiled
+                    ? 'GSTR-1 already Filed — portal upload is locked to preserve the filed record'
+                    : gstinMismatch
+                      ? `Cannot upload: JSON GSTIN ${gstinMismatch.jsonGstin} doesn't match client GSTIN ${gstinMismatch.clientGstin}`
+                      : extReady
+                        ? 'Upload this GSTR-1 JSON to the GST portal (filing / signing stays manual)'
+                        : 'GST Keeper browser extension not detected — install / enable it and reload this page'
                 }
               >
                 {isUploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
@@ -923,7 +1050,12 @@ const GSTR1DataPage: React.FC = () => {
               </>
             )}
             {gstr1Data && (
-              <Button variant="destructive" onClick={handleDelete} disabled={isUploading}>
+              <Button
+                variant="destructive"
+                onClick={handleDelete}
+                disabled={isUploading || isFiled}
+                title={isFiled ? 'GSTR-1 already Filed — delete is locked' : undefined}
+              >
                 <Trash2 className="h-4 w-4 mr-2" /> Delete
               </Button>
             )}
@@ -1017,6 +1149,21 @@ const GSTR1DataPage: React.FC = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Return is Filed — hard lock on Import / Upload / Delete so nobody can
+          alter the JSON that backs a filed return retroactively. */}
+      {isFiled && (
+        <div className="flex items-start gap-2 rounded-lg border border-success/40 bg-success/10 p-3 text-sm text-success-foreground">
+          <Lock className="h-4 w-4 mt-0.5 shrink-0 text-success" />
+          <div className="flex-1">
+            <p className="font-medium text-success">GSTR-1 already Filed for this period</p>
+            <p className="text-xs mt-0.5 text-foreground/80">
+              Import JSON, Upload to Portal and Delete are locked to preserve the record of what was actually filed
+              with GSTN. Version History and Error Reports remain viewable.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Loaded JSON is for a different taxpayer — refuse Upload and surface
           the mismatch so the operator can delete + re-import the right file. */}
@@ -2086,6 +2233,118 @@ const GSTR1DataPage: React.FC = () => {
             >
               Copy list
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* Upload version history — every Import, Upload attempt and Refresh
+          Errors is recorded here so operators can see who touched what and
+          why any given upload was rejected. */}
+      <Dialog open={versionHistoryOpen} onOpenChange={setVersionHistoryOpen}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>GSTR-1 upload history — {selectedClientName || '—'} · {mmYyyyToShort(selectedMonth)}</DialogTitle>
+            <DialogDescription>
+              Every Import, Portal Upload and Error Report fetch for this return. Click "Errors" on a row
+              that captured per-invoice validation reasons to see the list for that specific attempt.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[65vh] overflow-auto rounded-md border">
+            <Table>
+              <TableHeader className="sticky top-0 bg-muted">
+                <TableRow>
+                  <TableHead className="w-16">V#</TableHead>
+                  <TableHead>Action</TableHead>
+                  <TableHead>By</TableHead>
+                  <TableHead>When</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Summary</TableHead>
+                  <TableHead className="w-24">Errors</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {versions.map((v) => (
+                  <React.Fragment key={v.id}>
+                    <TableRow>
+                      <TableCell className="font-mono">v{v.version_number}</TableCell>
+                      <TableCell>
+                        {v.action_type === 'IMPORT' && 'Imported'}
+                        {v.action_type === 'UPLOAD' && 'Uploaded to portal'}
+                        {v.action_type === 'REFRESH_ERRORS' && 'Errors report'}
+                        {v.file_name && (
+                          <div className="text-[10px] text-muted-foreground font-mono truncate max-w-xs">{v.file_name}</div>
+                        )}
+                      </TableCell>
+                      <TableCell>{v.actor_name || '—'}</TableCell>
+                      <TableCell className="text-xs whitespace-nowrap">
+                        {new Date(v.action_at).toLocaleString('en-IN', {
+                          day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                        })}
+                      </TableCell>
+                      <TableCell>
+                        <span className={
+                          v.status === 'accepted' ? 'text-success font-medium' :
+                          v.status === 'partial' ? 'text-warning font-medium' :
+                          v.status === 'failed' ? 'text-destructive font-medium' :
+                          'text-muted-foreground'
+                        }>
+                          {v.status || '—'}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-xs max-w-md">{v.summary || '—'}</TableCell>
+                      <TableCell>
+                        {v.errors && v.errors.length > 0 ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => setExpandedVersionId(expandedVersionId === v.id ? null : v.id)}
+                          >
+                            {expandedVersionId === v.id ? 'Hide' : `View (${v.errors.length})`}
+                          </Button>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                    {expandedVersionId === v.id && v.errors && v.errors.length > 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="bg-muted/40 p-3">
+                          <div className="rounded border bg-background">
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead className="w-12">#</TableHead>
+                                  <TableHead>Invoice No.</TableHead>
+                                  <TableHead>Customer GSTIN</TableHead>
+                                  <TableHead>Reason</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {v.errors.map((e, i) => (
+                                  <TableRow key={i}>
+                                    <TableCell className="text-muted-foreground text-xs">{i + 1}</TableCell>
+                                    <TableCell className="font-mono text-xs">{e.invoiceNo || '—'}</TableCell>
+                                    <TableCell className="font-mono text-xs">{e.gstin || '—'}</TableCell>
+                                    <TableCell className="text-xs">{e.reason}</TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </React.Fragment>
+                ))}
+                {versions.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center text-muted-foreground py-6">
+                      No upload history yet for this return.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
           </div>
         </DialogContent>
       </Dialog>
