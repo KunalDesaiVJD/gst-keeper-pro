@@ -1000,11 +1000,19 @@ const GSTR1DataPage: React.FC = () => {
             )}
             {/* Version History — every Import / Upload / Refresh_Errors action
                 is recorded, so operators can audit who touched what and see
-                per-attempt error reports. */}
-            {selectedClient && selectedMonth && versions.length > 0 && (
-              <Button variant="outline" onClick={() => setVersionHistoryOpen(true)}>
+                per-attempt error reports. Always visible when a client + month
+                are selected so the audit trail is discoverable even before
+                any post-migration actions have been recorded. */}
+            {selectedClient && selectedMonth && (
+              <Button
+                variant="outline"
+                onClick={() => setVersionHistoryOpen(true)}
+                title={versions.length === 0
+                  ? 'No upload history yet for this return — imports and uploads from now on are tracked here'
+                  : `${versions.length} recorded action(s) for this return`}
+              >
                 <History className="h-4 w-4 mr-2" />
-                Version History ({versions.length})
+                Version History{versions.length > 0 ? ` (${versions.length})` : ''}
               </Button>
             )}
             {gstr1Data && canEditFilingStatus() && (
