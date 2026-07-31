@@ -142,7 +142,28 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
   };
 
   const updateNilRow = (id: string, field: string, value: any) => setNilRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
-  const updateDocRow = (id: string, field: string, value: any) => setDocRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
+
+  // Total Issued auto-calculates from From/To (e.g. 15 to 15 => 1 document),
+  // extracting the trailing numeric run so series like "INV001".."INV015"
+  // still work, not just plain numbers. Stays a normal editable field —
+  // typing directly into Total Issued overrides it until From/To changes again.
+  const docSeriesCount = (from: string, to: string): number | null => {
+    const f = String(from ?? '').match(/(\d+)\s*$/)?.[1];
+    const t = String(to ?? '').match(/(\d+)\s*$/)?.[1];
+    if (!f || !t) return null;
+    const diff = parseInt(t, 10) - parseInt(f, 10) + 1;
+    return diff > 0 ? diff : null;
+  };
+  const updateDocRow = (id: string, field: string, value: any) =>
+    setDocRows((prev) => prev.map((r) => {
+      if (r.id !== id) return r;
+      const next = { ...r, [field]: value };
+      if (field === 'from' || field === 'to') {
+        const count = docSeriesCount(next.from, next.to);
+        if (count !== null) next.totnum = count;
+      }
+      return next;
+    }));
 
   const persistRows = async () => {
     await supabase.from('gstr1_manual_entries' as any)
@@ -228,7 +249,10 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
   const renderCell = (section: Exclude<Gstr1Section, 'nil' | 'doc'>, row: ManualRow, col: ColumnDef) => {
     const value = row[col.key] ?? '';
     if (!canEdit || isFiled) return <span className="text-xs px-1 tabular-nums">{value}</span>;
-    if (col.computed) return <span className="text-xs px-1 tabular-nums text-muted-foreground">{Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>;
+    // Auto-computed tax columns (IGST/CGST/SGST) are pre-filled from rate +
+    // taxable value + POS, rounded to the nearest rupee, but remain plain
+    // editable number inputs — typing over one sticks until rt/txval/pos
+    // changes again and recomputes it.
     if (col.type === 'state') {
       return (
         <SearchableSelect

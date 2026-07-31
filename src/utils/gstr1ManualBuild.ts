@@ -29,16 +29,23 @@ export interface ManualRow {
 
 export const gstinHomeState = (gstin: string): string => (gstin || '').slice(0, 2);
 
+// GST portal tax figures are whole rupees on virtually every real invoice
+// (paisa-level splits are a rounding artifact, not something anyone files
+// on) — round every auto-computed amount to the nearest rupee.
+const roundRupee = (n: number): number => Math.round(n);
+
 /**
  * Auto-split a line's tax into IGST vs CGST+SGST based on POS vs the client's
  * home state. Intra-state (pos === home) => CGST+SGST split evenly; inter-
  * state => IGST only. Cess is never auto-computed (rare, left to the operator).
+ * All amounts computed here are still plain editable fields in the UI — this
+ * only supplies the starting value.
  */
 export function computeTaxSplit(rt: number, txval: number, pos: string, homeState: string) {
-  const taxAmt = Math.round(((Number(rt) || 0) / 100) * (Number(txval) || 0) * 100) / 100;
+  const taxAmt = roundRupee(((Number(rt) || 0) / 100) * (Number(txval) || 0));
   const isIntraState = !!pos && !!homeState && pos === homeState;
   if (isIntraState) {
-    const half = Math.round((taxAmt / 2) * 100) / 100;
+    const half = roundRupee(taxAmt / 2);
     return { iamt: 0, camt: half, samt: taxAmt - half };
   }
   return { iamt: taxAmt, camt: 0, samt: 0 };
@@ -194,16 +201,16 @@ export const DOC_TYPES = [
 
 export function recomputeRowTax(section: Gstr1Section, row: ManualRow, homeState: string): ManualRow {
   if (section === 'b2cl' || section === 'cdnur' || section === 'exp') {
-    const taxAmt = Math.round(((Number(row.rt) || 0) / 100) * (Number(row.txval) || 0) * 100) / 100;
+    const taxAmt = roundRupee(((Number(row.rt) || 0) / 100) * (Number(row.txval) || 0));
     return { ...row, iamt: taxAmt };
   }
   if (section === 'b2cs') {
     if (row.typ === 'INTRA') {
-      const taxAmt = Math.round(((Number(row.rt) || 0) / 100) * (Number(row.txval) || 0) * 100) / 100;
-      const half = Math.round((taxAmt / 2) * 100) / 100;
+      const taxAmt = roundRupee(((Number(row.rt) || 0) / 100) * (Number(row.txval) || 0));
+      const half = roundRupee(taxAmt / 2);
       return { ...row, iamt: 0, camt: half, samt: taxAmt - half };
     }
-    const taxAmt = Math.round(((Number(row.rt) || 0) / 100) * (Number(row.txval) || 0) * 100) / 100;
+    const taxAmt = roundRupee(((Number(row.rt) || 0) / 100) * (Number(row.txval) || 0));
     return { ...row, iamt: taxAmt, camt: 0, samt: 0 };
   }
   if (section === 'b2b' || section === 'cdnr') {
