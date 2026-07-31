@@ -598,8 +598,11 @@ const BuilderBookingsPage: React.FC = () => {
       ratePct: cls.ratePct,
       totalConsideration: Number(booking.total_consideration) || 0,
       balanceToTax: Math.max(0, (Number(booking.total_consideration) || 0) - (led?.valueTaxed || 0)),
+      members: (members[booking.id] || []).map((m) => ({
+        name: m.name, ratio: Number(m.ownership_ratio) || 0,
+      })),
     }];
-  }), [units, bookings, classifyFor, ledgerFor]);
+  }), [units, bookings, classifyFor, ledgerFor, members]);
 
   /** Headroom for a residential unit; null where affordability cannot apply. */
   const headroomOf = useCallback((u: UnitRow) => (
