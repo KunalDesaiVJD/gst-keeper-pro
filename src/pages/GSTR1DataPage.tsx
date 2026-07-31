@@ -399,6 +399,35 @@ const GSTR1DataPage: React.FC = () => {
       toast.error('Install / enable the GST Keeper browser extension to upload from this page.');
       return;
     }
+    // Pre-flight: the portal only accepts a JSON whose GSTIN matches the
+    // logged-in taxpayer. If the imported JSON's GSTIN doesn't match this
+    // client's GSTIN, the upload will be rejected with a misleading portal
+    // error ("Download the latest offline tool…"). Refuse here so the operator
+    // sees the real reason instead of debugging blind on the portal tab.
+    const clientGstin = (clients.find((c) => c.id === selectedClient)?.gstin || '').toUpperCase().trim();
+    const jsonGstin = String(gstr1Data.raw_json?.gstin || '').toUpperCase().trim();
+    if (clientGstin && jsonGstin && clientGstin !== jsonGstin) {
+      toast.error(
+        `GSTIN mismatch — the imported JSON is for ${jsonGstin} but this client is ${clientGstin}. Import the correct client's JSON before uploading.`
+      );
+      setUploadDialogOpen(false);
+      return;
+    }
+    // Similar for period — portal binds the upload to whichever return period
+    // is open on the offline page, but if the JSON's fp doesn't match the
+    // period we selected here, our tracking (last_uploaded_at, etc.) would
+    // record it against the wrong month. Warn but don't block.
+    const jsonFp = String(gstr1Data.raw_json?.fp || '');
+    const expectedFp = (() => {
+      const [mm, yyyy] = selectedMonth.split('/');
+      return `${(mm || '').padStart(2, '0')}${yyyy || ''}`;
+    })();
+    if (jsonFp && expectedFp && jsonFp !== expectedFp) {
+      toast.warning(
+        `Period note: the JSON's fp is ${jsonFp} but this page is filing ${expectedFp}. Uploading anyway.`
+      );
+    }
+
     setIsUploading(true);
     setUploadResult(null);
     setUploadDialogOpen(false);
