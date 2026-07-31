@@ -49,6 +49,12 @@ const addItems = (a: Acc, itms: any[]) => {
   });
 };
 
+// Portal reports Value as *taxable* value (sum of itm_det.txval), NOT the
+// invoice value (inv.val which includes tax). Matches Table 4A/4B/5/6A/6B/6C
+// on the system-generated GSTR-1 PDF.
+const sumTaxable = (itms: any[]): number =>
+  (itms || []).reduce((t: number, it: any) => t + num((it?.itm_det || it || {}).txval), 0);
+
 // A B2B invoice belongs to exactly one portal table, decided by its type and
 // reverse-charge flag: SEZ (SEWP/SEWOP) -> 6B, Deemed Export -> 6C, reverse
 // charge -> 4B, everything else -> 4A.
@@ -69,32 +75,32 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
   const s10 = acc();
   const s12 = acc(), s13 = acc();
 
-  // 4A / 4B / 6B / 6C — B2B (registered), split by type.
+  // 4A / 4B / 6B / 6C — B2B (registered), split by type. Value = taxable.
   (j.b2b || []).forEach((party: any) => {
     (party.inv || []).forEach((inv: any) => {
       const bucket = classifyB2b(inv) === '4A' ? s4A
         : classifyB2b(inv) === '4B' ? s4B
         : classifyB2b(inv) === '6B' ? s6B : s6C;
       bucket.count += 1;
-      bucket.value += num(inv.val);
+      bucket.value += sumTaxable(inv.itms);
       addItems(bucket, inv.itms);
     });
   });
 
-  // 5 — B2CL (inter-state, large). Only IGST + cess apply.
+  // 5 — B2CL (inter-state, large). Value = taxable. Only IGST + cess apply.
   (j.b2cl || []).forEach((state: any) => {
     (state.inv || []).forEach((inv: any) => {
       s5.count += 1;
-      s5.value += num(inv.val);
+      s5.value += sumTaxable(inv.itms);
       addItems(s5, inv.itms);
     });
   });
 
-  // 6A — Exports.
+  // 6A — Exports. Value = taxable.
   (j.exp || []).forEach((exp: any) => {
     (exp.inv || []).forEach((inv: any) => {
       s6A.count += 1;
-      s6A.value += num(inv.val);
+      s6A.value += sumTaxable(inv.itms);
       addItems(s6A, inv.itms);
     });
   });
@@ -187,29 +193,33 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
     });
   });
 
-  // 12 — HSN summary. Value = taxable + tax.
-  // The portal JSON has used two shapes over time:
-  //  - older: hsn.data (single flat list)
-  //  - newer: hsn.hsn_b2b + hsn.hsn_b2c (split by supply type)
-  // Accept both so files pulled from either era populate the HSN section.
+  // 12 — HSN summary. Portal shows Value = taxable ONLY (not taxable + tax),
+  // and counts UNIQUE non-blank HSN codes (rate/UQC variants of the same HSN
+  // collapse into one; blank hsn_sc rows contribute to Value but not to
+  // count). Matches Table 12 on the system-generated GSTR-1 PDF.
+  // Two JSON shapes: hsn.data (older) or hsn.hsn_b2b + hsn.hsn_b2c (newer).
   const hsnRowsRaw: any[] = j.hsn?.data
     ? j.hsn.data
     : [...(j.hsn?.hsn_b2b || []), ...(j.hsn?.hsn_b2c || [])];
+  const distinctHsnCodes = new Set<string>();
   hsnRowsRaw.forEach((h: any) => {
-    s12.count += 1;
+    const code = String(h?.hsn_sc || '').trim();
+    if (code) distinctHsnCodes.add(code);
     s12.igst += num(h.iamt);
     s12.cgst += num(h.camt);
     s12.sgst += num(h.samt);
     s12.cess += num(h.csamt);
-    s12.value += num(h.txval) + num(h.iamt) + num(h.camt) + num(h.samt) + num(h.csamt);
+    s12.value += num(h.txval);
   });
+  s12.count = distinctHsnCodes.size;
 
-  // 13 — Documents issued. "count" = number of document series entries (this
-  // matches the detail tab, which lists one row per series). The net documents
-  // issued is available per-row in that tab.
+  // 13 — Documents issued. Portal reports the NET number of documents
+  // (totnum − cancel, i.e. the `net_issue` per series row), not the count of
+  // series entries. Falls back to totnum − cancel when net_issue is absent.
   (j.doc_issue?.doc_det || []).forEach((det: any) => {
-    (det.docs || []).forEach(() => {
-      s13.count += 1;
+    (det.docs || []).forEach((d: any) => {
+      const net = d?.net_issue != null ? num(d.net_issue) : num(d?.totnum) - num(d?.cancel);
+      s13.count += net;
     });
   });
 
