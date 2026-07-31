@@ -1034,6 +1034,111 @@ const GSTR1DataPage: React.FC = () => {
         </div>
       )}
 
+      {/* Portal Upload Report — persistent, visible summary of the most recent
+          upload for this (client, period). Shows the status prominently and,
+          when the portal rejected any invoices, lists the per-invoice reasons
+          right on the page (no dialog to click into). Survives page refresh
+          because it reads from last_upload_* columns on gstr1_data. */}
+      {gstr1Data && gstr1Data.last_uploaded_at && (
+        <Card
+          className={
+            gstr1Data.last_upload_status === 'accepted'
+              ? 'border-success/40 bg-success/5'
+              : gstr1Data.last_upload_status === 'partial'
+                ? 'border-warning/40 bg-warning/5'
+                : 'border-destructive/40 bg-destructive/5'
+          }
+        >
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-2">
+                {gstr1Data.last_upload_status === 'accepted' ? (
+                  <CheckCircle2 className="h-5 w-5 mt-0.5 text-success shrink-0" />
+                ) : (
+                  <XCircle
+                    className={`h-5 w-5 mt-0.5 shrink-0 ${gstr1Data.last_upload_status === 'partial' ? 'text-warning' : 'text-destructive'}`}
+                  />
+                )}
+                <div>
+                  <p className="text-sm font-semibold">
+                    Portal Upload Report — {gstr1Data.last_upload_status === 'accepted'
+                      ? 'All records accepted'
+                      : gstr1Data.last_upload_status === 'partial'
+                        ? 'Some records rejected by GSTN'
+                        : 'Upload rejected by GSTN'}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {gstr1Data.last_upload_summary || '—'}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Last uploaded: {new Date(gstr1Data.last_uploaded_at).toLocaleString('en-IN', {
+                      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                    })}
+                    {gstr1Data.last_upload_errors && gstr1Data.last_upload_errors.length > 0 && (
+                      <> · <span className="font-medium">{gstr1Data.last_upload_errors.length}</span> invoice error(s)</>
+                    )}
+                  </p>
+                </div>
+              </div>
+              {gstr1Data.last_upload_errors && gstr1Data.last_upload_errors.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (!gstr1Data?.last_upload_errors?.length) return;
+                    const text = gstr1Data.last_upload_errors
+                      .map((e, i) => `${i + 1}. ${e.invoiceNo || '-'} | ${e.gstin || '-'} | ${e.reason}`)
+                      .join('\n');
+                    navigator.clipboard.writeText(text);
+                    toast.success('Copied error list to clipboard');
+                  }}
+                >
+                  Copy list
+                </Button>
+              )}
+            </div>
+
+            {/* Inline per-invoice error table — the reason each rejection
+                happened, no clicking required. */}
+            {gstr1Data.last_upload_errors && gstr1Data.last_upload_errors.length > 0 && (
+              <div className="rounded-md border bg-background max-h-[50vh] overflow-auto">
+                <Table>
+                  <TableHeader className="sticky top-0 bg-muted">
+                    <TableRow>
+                      <TableHead className="w-12">#</TableHead>
+                      <TableHead>Invoice No.</TableHead>
+                      <TableHead>Customer GSTIN</TableHead>
+                      <TableHead>Reason (portal message)</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {gstr1Data.last_upload_errors.map((e, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="text-muted-foreground">{i + 1}</TableCell>
+                        <TableCell className="font-mono text-xs">{e.invoiceNo || '—'}</TableCell>
+                        <TableCell className="font-mono text-xs">{e.gstin || '—'}</TableCell>
+                        <TableCell className="text-sm">{e.reason}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+
+            {/* If the upload was 'partial' but GSTN hasn't returned the
+                per-invoice report yet (or it didn't parse), tell the operator
+                what to do next. */}
+            {gstr1Data.last_upload_status === 'partial' && (!gstr1Data.last_upload_errors || gstr1Data.last_upload_errors.length === 0) && (
+              <p className="text-xs text-warning">
+                GSTN accepted the file but flagged some records. The per-invoice reasons haven't been fetched
+                yet — click <span className="font-medium">Refresh errors</span> (fetches from the portal) or{' '}
+                <span className="font-medium">Import Error Report</span> (paste the JSON you download manually).
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Last upload result banner */}
       {uploadResult && (
         <div
