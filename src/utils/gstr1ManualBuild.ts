@@ -121,7 +121,7 @@ export const SECTION_COLUMNS: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, Colum
   ],
   b2cs: [
     { key: 'pos', label: 'POS', type: 'state', width: 'w-24' },
-    { key: 'typ', label: 'Supply', type: 'select', options: [{ value: 'OE', label: 'Inter-state (OE)' }, { value: 'INTRA', label: 'Intra-state' }], width: 'w-28' },
+    { key: 'typ', label: 'E-Comm?', type: 'select', options: [{ value: 'OE', label: 'No (Own Supply)' }, { value: 'E', label: 'Via E-comm Operator' }], width: 'w-32' },
     { key: 'hsnCode', label: 'HSN Code', type: 'text', width: 'w-24' },
     { key: 'rt', label: 'Rate %', type: 'number', width: 'w-16' },
     { key: 'txval', label: 'Taxable Value', type: 'number', width: 'w-28' },
@@ -247,6 +247,7 @@ export function assembleGstr1Json(params: {
   docRows: ManualRow[];   // { doc_typ, from, to, totnum, cancel }
 }): any {
   const { gstin, periodShort, rowsBySection, nilRows, docRows } = params;
+  const homeState = gstinHomeState(gstin);
 
   // fp: MMYYYY from a short label like "Jul-26"
   const MONTH_MAP: Record<string, string> = {
@@ -292,6 +293,11 @@ export function assembleGstr1Json(params: {
   const b2cl = Array.from(b2clMap.entries()).map(([pos, invMap]) => ({ pos, inv: Array.from(invMap.values()) }));
 
   // --- b2cs: dedupe/sum by (pos, typ, rt) ---
+  // Real portal-exported JSON carries a "sply_ty" field (INTRA/INTER) on every
+  // b2cs row — confirmed against a real downloaded GSTR-1 JSON
+  // (24AAKFV4897J1ZF, Jul-2026): {"typ":"OE","sply_ty":"INTRA","rt":18,...}.
+  // We were omitting it entirely. It's derivable from pos vs. home state, the
+  // same way pos itself is derived from the customer GSTIN.
   const b2csMap = new Map<string, any>();
   (rowsBySection.b2cs || []).forEach((r) => {
     const key = `${r.pos}__${r.typ}__${r.rt}`;
@@ -300,7 +306,8 @@ export function assembleGstr1Json(params: {
       existing.txval += num(r.txval); existing.iamt += num(r.iamt);
       existing.camt += num(r.camt); existing.samt += num(r.samt); existing.csamt += num(r.csamt);
     } else {
-      b2csMap.set(key, { pos: r.pos, typ: r.typ, rt: num(r.rt), txval: num(r.txval), iamt: num(r.iamt), camt: num(r.camt), samt: num(r.samt), csamt: num(r.csamt) });
+      const sply_ty = r.pos && homeState && r.pos === homeState ? 'INTRA' : 'INTER';
+      b2csMap.set(key, { pos: r.pos, typ: r.typ || 'OE', sply_ty, rt: num(r.rt), txval: num(r.txval), iamt: num(r.iamt), camt: num(r.camt), samt: num(r.samt), csamt: num(r.csamt) });
     }
   });
   const b2cs = Array.from(b2csMap.values());
@@ -354,33 +361,42 @@ export function assembleGstr1Json(params: {
     .filter((r) => num(r.nil_amt) || num(r.expt_amt) || num(r.ngsup_amt))
     .map((r) => ({ sply_ty: r.sply_ty, nil_amt: num(r.nil_amt), expt_amt: num(r.expt_amt), ngsup_amt: num(r.ngsup_amt) }));
 
-  // --- Table 12 (HSN): rolled up from every line across all sections that
-  // carries an hsnCode, grouped by (hsn_sc, rate). ---
-  const hsnMap = new Map<string, any>();
-  const allLines: ManualRow[] = [
-    ...(rowsBySection.b2b || []), ...(rowsBySection.b2cl || []), ...(rowsBySection.b2cs || []),
-    ...(rowsBySection.cdnr || []), ...(rowsBySection.cdnur || []), ...(rowsBySection.exp || []),
-  ];
-  allLines.forEach((r) => {
-    const code = (r.hsnCode || '').trim();
-    if (!code) return;
-    const key = `${code}__${r.rt}`;
-    const existing = hsnMap.get(key);
-    if (existing) {
-      existing.txval += num(r.txval); existing.iamt += num(r.iamt);
-      existing.camt += num(r.camt); existing.samt += num(r.samt); existing.csamt += num(r.csamt);
-    } else {
-      hsnMap.set(key, { hsn_sc: code, rt: num(r.rt), txval: num(r.txval), iamt: num(r.iamt), camt: num(r.camt), samt: num(r.samt), csamt: num(r.csamt), uqc: 'NA', qty: 0, desc: '', user_desc: '' });
-    }
-  });
-  // Real portal-exported JSON keys this "hsn_b2b" (with a serial "num" per
-  // row), never "data" — confirmed against an actual downloaded GSTR-1 JSON.
-  // The portal's upload validator is strict about this; using the wrong key
-  // name here produces the exact generic "download the latest offline tool"
-  // rejection regardless of how correct the rest of the file is.
-  const hsnData = Array.from(hsnMap.values()).map((h, i) => ({ num: i + 1, ...h }));
+  // --- Table 12 (HSN): rolled up from every line that carries an hsnCode,
+  // grouped by (hsn_sc, rate). Real portal-exported JSON splits this into TWO
+  // separate arrays, not one — confirmed against a real downloaded GSTR-1
+  // JSON (24AAKFV4897J1ZF, Jul-2026): "hsn_b2b" totals matched exactly the
+  // b2b-invoice lines, and a SEPARATE "hsn_b2c" totalled exactly the b2cs
+  // lines (265000 txval in both). Emitting every line into a single
+  // "hsn_b2b" array (as before) is a schema-shape mismatch on its own,
+  // independent of the doc_issue/date/key-name fixes: hsn_b2b covers supplies
+  // to registered recipients (b2b, cdnr), hsn_b2c covers everything else
+  // (b2cl, b2cs, cdnur, exp).
+  const buildHsnRollup = (lines: ManualRow[]) => {
+    const map = new Map<string, any>();
+    lines.forEach((r) => {
+      const code = (r.hsnCode || '').trim();
+      if (!code) return;
+      const key = `${code}__${r.rt}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing.txval += num(r.txval); existing.iamt += num(r.iamt);
+        existing.camt += num(r.camt); existing.samt += num(r.samt); existing.csamt += num(r.csamt);
+      } else {
+        map.set(key, { hsn_sc: code, rt: num(r.rt), txval: num(r.txval), iamt: num(r.iamt), camt: num(r.camt), samt: num(r.samt), csamt: num(r.csamt), uqc: 'NA', qty: 0, desc: '', user_desc: '' });
+      }
+    });
+    return Array.from(map.values()).map((h, i) => ({ num: i + 1, ...h }));
+  };
+  const hsnB2b = buildHsnRollup([...(rowsBySection.b2b || []), ...(rowsBySection.cdnr || [])]);
+  const hsnB2c = buildHsnRollup([...(rowsBySection.b2cl || []), ...(rowsBySection.b2cs || []), ...(rowsBySection.cdnur || []), ...(rowsBySection.exp || [])]);
 
   // --- Table 13 (Documents Issued) ---
+  // Real portal-exported JSON (confirmed against an actual download) puts a
+  // "num" (serial within the doc_num group) on EVERY docs[] entry:
+  //   {"cancel":0,"from":"...","net_issue":47,"num":1,"to":"...","totnum":47}
+  // We only ever emit one docs[] row per doc_num group, so num is always 1 —
+  // but omitting the field entirely (as before) is a schema mismatch on its
+  // own, independent of the HSN/date fixes.
   const docDet = (docRows || [])
     .filter((r) => r.doc_typ)
     .map((r, i) => {
@@ -389,7 +405,7 @@ export function assembleGstr1Json(params: {
       const cancel = num(r.cancel);
       return {
         doc_num: meta?.doc_num || i + 1,
-        docs: [{ from: r.from || '', to: r.to || '', totnum, cancel, net_issue: totnum - cancel }],
+        docs: [{ num: 1, from: r.from || '', to: r.to || '', totnum, cancel, net_issue: totnum - cancel }],
       };
     });
 
@@ -406,7 +422,11 @@ export function assembleGstr1Json(params: {
   if (cdnur.length) out.cdnur = cdnur;
   if (exp.length) out.exp = exp;
   if (nilInv.length) out.nil = { inv: nilInv };
-  if (hsnData.length) out.hsn = { hsn_b2b: hsnData };
+  if (hsnB2b.length || hsnB2c.length) {
+    out.hsn = {};
+    if (hsnB2b.length) out.hsn.hsn_b2b = hsnB2b;
+    if (hsnB2c.length) out.hsn.hsn_b2c = hsnB2c;
+  }
   if (docDet.length) out.doc_issue = { doc_det: docDet };
   return out;
 }
