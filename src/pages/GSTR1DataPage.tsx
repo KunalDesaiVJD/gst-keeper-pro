@@ -71,6 +71,12 @@ interface Client {
   regular_sub_type?: string | null;
 }
 
+interface UploadErrorRow {
+  invoiceNo?: string;
+  gstin?: string;
+  reason: string;
+}
+
 interface GSTR1Record {
   id: string;
   client_id: string;
@@ -78,13 +84,19 @@ interface GSTR1Record {
   raw_json: any;
   file_name: string | null;
   imported_at: string;
-  // Populated by the gst-push edge function after a portal push (nullable:
-  // absent until the first push, or until the migration adding these columns
-  // is applied).
+  // Legacy Humonex "push" columns — kept readable for historical rows, no
+  // longer written to. The extension writes the new last_upload_* set below.
   last_pushed_at?: string | null;
   last_push_status?: string | null;
   last_push_by?: string | null;
   last_push_message?: string | null;
+  // Portal upload result (extension writes these after the portal processes
+  // the JSON). status: 'accepted' | 'partial' | 'failed'.
+  last_uploaded_at?: string | null;
+  last_uploaded_by?: string | null;
+  last_upload_status?: 'accepted' | 'partial' | 'failed' | null;
+  last_upload_summary?: string | null;
+  last_upload_errors?: UploadErrorRow[] | null;
 }
 
 // Shared scroll shell for the eleven tab tables. shadcn's <Table> renders its
@@ -131,10 +143,16 @@ const GSTR1DataPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState('b2b');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // "Push to GST Portal" (Humonex) flow.
-  const [pushDialogOpen, setPushDialogOpen] = useState(false);
-  const [isPushing, setIsPushing] = useState(false);
-  const [pushResult, setPushResult] = useState<{ ok: boolean; message: string } | null>(null);
+  // "Upload to GST Portal" flow — extension-driven.
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<{
+    ok: boolean;
+    message: string;
+    errors?: UploadErrorRow[];
+  } | null>(null);
+  const [errorsDialogOpen, setErrorsDialogOpen] = useState(false);
+  const [extReady, setExtReady] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   // Per-tab collapse: when a section id is in the set, its table shows only the
   // header + totals row (data rows hidden). Every section starts collapsed so
@@ -240,9 +258,54 @@ const GSTR1DataPage: React.FC = () => {
 
   useEffect(() => { fetchClients(); }, [fetchClients]);
   useEffect(() => { fetchGSTR1Data(); }, [fetchGSTR1Data]);
-  // Clear the transient push banner when the operator switches client/month
-  // (but not on a post-push refetch of the same selection).
-  useEffect(() => { setPushResult(null); }, [selectedClient, selectedMonth]);
+  // Clear the transient upload banner when the operator switches client/month.
+  useEffect(() => { setUploadResult(null); }, [selectedClient, selectedMonth]);
+
+  // Extension bridge: detect the GST Keeper browser extension and receive the
+  // upload result it posts back after driving the portal. Mirrors the pattern
+  // used on the reco pages for the "Pull" button.
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      const d: any = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkUploadGstr1Result) {
+        const r = d.__gstkUploadGstr1Result as {
+          ok: boolean;
+          status?: 'accepted' | 'partial' | 'failed';
+          summary?: string;
+          errors?: UploadErrorRow[];
+          error?: string;
+        };
+        setIsUploading(false);
+        if (r.ok) {
+          const summary = r.summary || 'Uploaded to portal.';
+          const isPartial = r.status === 'partial' || (r.errors && r.errors.length > 0);
+          if (isPartial) {
+            toast.error(summary + ' Click "View errors" for details.');
+          } else {
+            toast.success(summary);
+          }
+          setUploadResult({ ok: !isPartial, message: summary, errors: r.errors });
+        } else {
+          const msg = r.error || 'Portal upload failed.';
+          toast.error('Upload failed: ' + msg);
+          setUploadResult({ ok: false, message: msg, errors: r.errors });
+        }
+        fetchGSTR1Data();
+      }
+    };
+    window.addEventListener('message', onMsg);
+    const ping = () => window.postMessage({ __gstkAppReady: true }, '*');
+    ping();
+    const t1 = setTimeout(ping, 400);
+    const t2 = setTimeout(ping, 1200);
+    return () => {
+      window.removeEventListener('message', onMsg);
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [fetchGSTR1Data]);
 
   // Opens the persistent hidden <input type="file"> below. Using a stable ref
   // (instead of a dynamically-created input with an onchange closure) means
@@ -325,65 +388,31 @@ const GSTR1DataPage: React.FC = () => {
     }
   };
 
-  // Sends the stored GSTR-1 JSON to the GST portal through the server-side
-  // Humonex proxy (the gst-push edge function). The client's GST-portal login
-  // and the secret Humonex token are handled entirely on the server; the app
-  // only sends which client + period to push.
-  const handlePush = async () => {
+  // Sends the stored GSTR-1 JSON to the GST portal by asking the browser
+  // extension to drive the portal from the user's own machine. The extension
+  // logs in (human clears CAPTCHA), navigates to the return, uploads the JSON,
+  // waits for the portal to finish processing, and posts back either success
+  // or a structured error list. Filing / signing stays manual by design.
+  const handleUpload = async () => {
     if (!gstr1Data || !selectedClient || !selectedMonth) return;
-    setIsPushing(true);
-    setPushResult(null);
-    try {
-      const { data, error } = await supabase.functions.invoke('gst-push', {
-        body: {
-          clientId: selectedClient,
-          periodMonth: selectedMonth,
-          actorId: user?.id,
-          actorRole: user?.role,
-        },
-      });
-
-      // supabase-js only populates `data` on a 2xx response; the function
-      // returns 200 for every handled outcome, so a non-null `error` means a
-      // network failure or an unexpected 500 (which may carry a body message).
-      if (error) {
-        let message = error.message || 'Request to the push service failed.';
-        try {
-          const ctx = (error as any).context;
-          if (ctx && typeof ctx.json === 'function') {
-            const body = await ctx.json();
-            if (body?.error) message = body.error;
-          }
-        } catch { /* keep the original message */ }
-        throw new Error(message);
-      }
-
-      const pushedAt = new Date().toISOString();
-      if (data?.ok) {
-        const msg = `Pushed to GST portal — ${selectedClientName}, ${data.period} ${data.financialYear}.`;
-        toast.success(msg);
-        setPushResult({ ok: true, message: msg });
-        // Mirror what the edge function persisted so the "last pushed" indicator
-        // updates immediately without waiting for a reload.
-        setGstr1Data((prev) => prev ? { ...prev, last_pushed_at: pushedAt, last_push_status: 'success', last_push_by: user?.id ?? null, last_push_message: null } : prev);
-      } else {
-        const remote =
-          (data?.response && typeof data.response === 'object' && (data.response.message || data.response.error)) ||
-          (typeof data?.response === 'string' ? data.response : '') ||
-          data?.error ||
-          'The GST portal push was not accepted.';
-        toast.error(`Push failed: ${remote}`);
-        setPushResult({ ok: false, message: remote });
-        setGstr1Data((prev) => prev ? { ...prev, last_pushed_at: pushedAt, last_push_status: 'failed', last_push_by: user?.id ?? null, last_push_message: remote } : prev);
-      }
-    } catch (err: any) {
-      const message = err?.message || 'Unknown error';
-      toast.error('Push failed: ' + message);
-      setPushResult({ ok: false, message });
-    } finally {
-      setIsPushing(false);
-      setPushDialogOpen(false);
+    if (!extReady) {
+      toast.error('Install / enable the GST Keeper browser extension to upload from this page.');
+      return;
     }
+    setIsUploading(true);
+    setUploadResult(null);
+    setUploadDialogOpen(false);
+    window.postMessage(
+      {
+        __gstkUploadGstr1: {
+          clientId: selectedClient,
+          period_month: selectedMonth,
+          actorId: user?.id ?? null,
+        },
+      },
+      '*'
+    );
+    toast.info('Opening the GST portal in a new tab — clear the CAPTCHA and let the upload run. Progress will appear here.');
   };
 
   // Re-download the stored GSTR-1 JSON exactly as imported — this is the same
@@ -687,16 +716,19 @@ const GSTR1DataPage: React.FC = () => {
             )}
             {gstr1Data && canEditFilingStatus() && (
               <Button
-                onClick={() => { setPushResult(null); setPushDialogOpen(true); }}
-                disabled={isPushing}
+                onClick={() => { setUploadResult(null); setUploadDialogOpen(true); }}
+                disabled={isUploading || !extReady}
                 className="bg-success text-success-foreground hover:bg-success/90"
+                title={extReady
+                  ? 'Upload this GSTR-1 JSON to the GST portal (filing / signing stays manual)'
+                  : 'GST Keeper browser extension not detected — install / enable it and reload this page'}
               >
-                {isPushing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
-                Push to GST Portal
+                {isUploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+                Upload to GST Portal
               </Button>
             )}
             {gstr1Data && (
-              <Button variant="destructive" onClick={handleDelete} disabled={isPushing}>
+              <Button variant="destructive" onClick={handleDelete} disabled={isUploading}>
                 <Trash2 className="h-4 w-4 mr-2" /> Delete
               </Button>
             )}
@@ -742,12 +774,38 @@ const GSTR1DataPage: React.FC = () => {
                 <div className="text-xs text-muted-foreground">
                   File: <span className="font-medium">{gstr1Data.file_name}</span> • Imported: {new Date(gstr1Data.imported_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                 </div>
-                {gstr1Data.last_pushed_at && (
+                {gstr1Data.last_uploaded_at ? (
+                  <div className={`text-xs flex items-center gap-1 font-medium ${gstr1Data.last_upload_status === 'accepted' ? 'text-success' : 'text-destructive'}`}>
+                    {gstr1Data.last_upload_status === 'accepted'
+                      ? <CheckCircle2 className="h-3.5 w-3.5" />
+                      : <XCircle className="h-3.5 w-3.5" />}
+                    {gstr1Data.last_upload_summary || (gstr1Data.last_upload_status === 'accepted'
+                      ? 'Uploaded to portal'
+                      : gstr1Data.last_upload_status === 'partial'
+                        ? 'Uploaded with errors'
+                        : 'Upload failed')}
+                    {' · '}
+                    {new Date(gstr1Data.last_uploaded_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    {gstr1Data.last_upload_errors && gstr1Data.last_upload_errors.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-5 px-1.5 text-[10px]"
+                        onClick={() => {
+                          setUploadResult({ ok: false, message: gstr1Data.last_upload_summary || 'Upload had errors.', errors: gstr1Data.last_upload_errors || [] });
+                          setErrorsDialogOpen(true);
+                        }}
+                      >
+                        View errors
+                      </Button>
+                    )}
+                  </div>
+                ) : gstr1Data.last_pushed_at && (
                   <div className={`text-xs flex items-center gap-1 font-medium ${gstr1Data.last_push_status === 'success' ? 'text-success' : 'text-destructive'}`}>
                     {gstr1Data.last_push_status === 'success'
                       ? <CheckCircle2 className="h-3.5 w-3.5" />
                       : <XCircle className="h-3.5 w-3.5" />}
-                    {gstr1Data.last_push_status === 'success' ? 'Pushed to GST portal' : 'Last push failed'}
+                    {gstr1Data.last_push_status === 'success' ? 'Pushed to GST portal (legacy)' : 'Last push failed (legacy)'}
                     {' · '}
                     {new Date(gstr1Data.last_pushed_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                   </div>
@@ -758,21 +816,31 @@ const GSTR1DataPage: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Last push result */}
-      {pushResult && (
+      {/* Last upload result banner */}
+      {uploadResult && (
         <div
           className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${
-            pushResult.ok
+            uploadResult.ok
               ? 'border-success/30 bg-success/10 text-success'
               : 'border-destructive/30 bg-destructive/10 text-destructive'
           }`}
         >
-          {pushResult.ok ? (
+          {uploadResult.ok ? (
             <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-success" />
           ) : (
             <XCircle className="h-4 w-4 mt-0.5 shrink-0" />
           )}
-          <span className="break-words">{pushResult.message}</span>
+          <span className="break-words flex-1">{uploadResult.message}</span>
+          {uploadResult.errors && uploadResult.errors.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 text-xs"
+              onClick={() => setErrorsDialogOpen(true)}
+            >
+              View {uploadResult.errors.length} error{uploadResult.errors.length === 1 ? '' : 's'}
+            </Button>
+          )}
         </div>
       )}
 
@@ -1583,18 +1651,17 @@ const GSTR1DataPage: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Push confirmation — submitting to the live GST portal is outward and
-          hard to reverse, so require an explicit confirm showing exactly what
-          period is being filed. */}
-      <AlertDialog open={pushDialogOpen} onOpenChange={(o) => { if (!isPushing) setPushDialogOpen(o); }}>
+      {/* Upload confirmation — the extension will open the GST portal in a
+          new tab; the human clears the CAPTCHA. Filing / signing stays manual. */}
+      <AlertDialog open={uploadDialogOpen} onOpenChange={(o) => { if (!isUploading) setUploadDialogOpen(o); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Push GSTR-1 to the GST portal?</AlertDialogTitle>
+            <AlertDialogTitle>Upload GSTR-1 to the GST portal?</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3">
                 <p>
-                  This submits the imported GSTR-1 data to the live GST portal via Humonex.
-                  Review the details before continuing:
+                  The extension will open the GST portal in a new tab, log this client in,
+                  and upload the JSON to the selected return.
                 </p>
                 <div className="rounded-md border bg-muted/40 p-3 text-sm text-foreground space-y-1">
                   <div className="flex justify-between gap-4">
@@ -1615,27 +1682,90 @@ const GSTR1DataPage: React.FC = () => {
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  The client's stored GST portal login is used to file. Make sure the data on this page
-                  is final — this action cannot be undone from here.
+                  You will need to solve the portal CAPTCHA in the new tab. Preview, Submit and
+                  EVC / DSC signing stay manual — this action only populates the return draft
+                  on the portal. Any invoice validation errors will be listed here once processing finishes.
                 </p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <Button variant="outline" onClick={() => setPushDialogOpen(false)} disabled={isPushing}>
+            <Button variant="outline" onClick={() => setUploadDialogOpen(false)} disabled={isUploading}>
               Cancel
             </Button>
             <Button
-              onClick={handlePush}
-              disabled={isPushing}
+              onClick={handleUpload}
+              disabled={isUploading || !extReady}
               className="bg-success text-success-foreground hover:bg-success/90"
             >
-              {isPushing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
-              {isPushing ? 'Pushing…' : 'Confirm & Push'}
+              {isUploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+              {isUploading ? 'Uploading…' : 'Confirm & Upload'}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Portal upload errors — per-invoice list captured from the portal's
+          Error Report so the operator can fix the source data without leaving
+          this page. */}
+      <Dialog open={errorsDialogOpen} onOpenChange={setErrorsDialogOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Portal upload — validation errors</DialogTitle>
+            <DialogDescription>
+              {uploadResult?.message || 'The portal returned validation errors for the invoices listed below.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-auto rounded-md border">
+            <Table>
+              <TableHeader className="sticky top-0 bg-muted">
+                <TableRow>
+                  <TableHead className="w-16">#</TableHead>
+                  <TableHead>Invoice No.</TableHead>
+                  <TableHead>GSTIN</TableHead>
+                  <TableHead>Reason</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(uploadResult?.errors || []).map((e, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="text-muted-foreground">{i + 1}</TableCell>
+                    <TableCell className="font-mono text-xs">{e.invoiceNo || '—'}</TableCell>
+                    <TableCell className="font-mono text-xs">{e.gstin || '—'}</TableCell>
+                    <TableCell className="text-sm">{e.reason}</TableCell>
+                  </TableRow>
+                ))}
+                {(!uploadResult?.errors || uploadResult.errors.length === 0) && (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-center text-muted-foreground py-6">
+                      No per-invoice errors captured.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="flex justify-between items-center pt-2">
+            <p className="text-xs text-muted-foreground">
+              Fix the offending invoices in your source (Tally / accounts), regenerate the JSON, re-import here, then upload again.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (!uploadResult?.errors?.length) return;
+                const text = uploadResult.errors
+                  .map((e, i) => `${i + 1}. ${e.invoiceNo || '-'} | ${e.gstin || '-'} | ${e.reason}`)
+                  .join('\n');
+                navigator.clipboard.writeText(text);
+                toast.success('Copied to clipboard');
+              }}
+            >
+              Copy list
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
