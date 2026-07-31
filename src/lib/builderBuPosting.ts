@@ -1,5 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
-import { computeTax } from '@/utils/builderRates';
+import { classifyUnit, computeTax, DEFAULT_CHARGE_INCLUSIONS, testRrep } from '@/utils/builderRates';
+import { fetchBuilderSettings } from '@/lib/builderSettings';
 import {
   buildEventWorking, isPeriodBefore, periodOfDate,
   type EventWorking, type PostingBasis, type WorkingUnitInput,
@@ -316,4 +317,153 @@ export async function unpostBuEvent(eventId: string): Promise<void> {
   await supabase.from('builder_bu_event_units').update({ invoice_id: null }).eq('bu_event_id', eventId);
   await supabase.from('builder_bu_events')
     .update({ status: 'PREPARED', posted_at: null, posted_by: null }).eq('id', eventId);
+}
+
+// ─── Auto-post at dastavej ─────────────────────────────────────────────────
+//
+// The Dastavej Reconciliation page's own premise is that registration itself
+// creates no GST — by the time the deed is executed, the unit is normally
+// already fully taxed through ordinary advances. That is true for most units.
+// It stops being true the moment a unit registers EARLY, before its advances
+// catch up to the agreement value: the deed is a completed transfer either
+// way, so the remaining balance has to be taxed at that point, not left open
+// until some future BU event that may be a long way off.
+//
+// This runs the same differential math a BU event does, scoped to the one
+// unit, dated at the dastavej date, and only acts when there is something to
+// act on:
+//   - already fully taxed (the normal case) → does nothing, silently;
+//   - unbooked at this date → Schedule III, recorded so it shows immediately;
+//   - a real shortfall → posts it, so the deed's own assumption becomes true
+//     instead of merely hoped for.
+// Setting bu_event_id here is what keeps a LATER real BU event from taxing
+// the same unit again — BuilderBuEventsPage already excludes any unit that
+// already carries one.
+
+export type DastavejAutoPostResult =
+  | { action: 'ALREADY_DONE' }
+  | { action: 'ALREADY_TAXED' }
+  | { action: 'SCHEDULE_III' }
+  | { action: 'POSTED'; differentialValue: number; cgst: number; sgst: number };
+
+export async function autoPostDastavejDifferential(params: {
+  unitId: string;
+  dastavejDate: string;
+  userId: string | null;
+}): Promise<DastavejAutoPostResult> {
+  const { data: unitRow, error: uErr } = await supabase
+    .from('builder_units').select('*').eq('id', params.unitId).single();
+  if (uErr || !unitRow) throw new Error(uErr?.message || 'Unit not found');
+  const unit = unitRow as unknown as {
+    id: string; project_id: string; unit_no: string; unit_type: 'Residential' | 'Commercial';
+    carpet_area_sqm: number; base_consideration: number; status: string; dastavej_date: string | null;
+    bu_event_id: string | null;
+  };
+  // A re-save of the same (or an edited) date on a unit already closed
+  // against an event never re-runs it here — unposting is a deliberate,
+  // separate action on the BU Working page.
+  if (unit.bu_event_id) return { action: 'ALREADY_DONE' };
+
+  const { data: projectRow, error: pErr } = await supabase
+    .from('builder_projects').select('*').eq('id', unit.project_id).single();
+  if (pErr || !projectRow) throw new Error(pErr?.message || 'Project not found');
+  const project = projectRow as unknown as {
+    id: string; client_id: string; is_metro: boolean; carpet_area_source: 'DERIVED' | 'MANUAL';
+    manual_residential_carpet_sqm: number; manual_commercial_carpet_sqm: number;
+  };
+
+  const [{ data: chargeRows }, { data: allUnits }, settings] = await Promise.all([
+    supabase.from('builder_unit_charges').select('*').eq('unit_id', unit.id),
+    supabase.from('builder_units').select('unit_type, carpet_area_sqm, status').eq('project_id', unit.project_id),
+    fetchBuilderSettings(project.client_id),
+  ]);
+
+  const rrep = project.carpet_area_source === 'MANUAL'
+    ? testRrep(project.manual_residential_carpet_sqm, project.manual_commercial_carpet_sqm)
+    : testRrep(
+      ((allUnits || []) as { unit_type: string; carpet_area_sqm: number; status: string }[])
+        .filter((u) => u.unit_type === 'Residential' && u.status !== 'Cancelled')
+        .reduce((s, u) => s + (Number(u.carpet_area_sqm) || 0), 0),
+      ((allUnits || []) as { unit_type: string; carpet_area_sqm: number; status: string }[])
+        .filter((u) => u.unit_type === 'Commercial' && u.status !== 'Cancelled')
+        .reduce((s, u) => s + (Number(u.carpet_area_sqm) || 0), 0),
+    );
+
+  const cls = classifyUnit({
+    unitType: unit.unit_type,
+    carpetAreaSqM: Number(unit.carpet_area_sqm) || 0,
+    baseConsideration: Number(unit.base_consideration) || 0,
+    charges: ((chargeRows || []) as { charge_head: string; amount: number; include_override: boolean | null }[])
+      .map((c) => ({ charge_head: c.charge_head as never, amount: Number(c.amount) || 0, include_override: c.include_override })),
+    isMetro: !!project.is_metro,
+    isRrep: rrep.isRrep,
+    settings: settings || DEFAULT_CHARGE_INCLUSIONS,
+  });
+
+  const postingPeriod = periodOfDate(params.dastavejDate);
+  const prepared = await prepareBuEvent({
+    buDate: params.dastavejDate,
+    postingPeriod,
+    postingBasis: 'DISCOVERY', // posted the moment its own trigger happens — no lag, no s.50 interest
+    units: [{
+      id: unit.id, unit_no: unit.unit_no, unit_type: unit.unit_type,
+      carpet_area_sqm: unit.carpet_area_sqm, dastavej_date: params.dastavejDate, status: unit.status,
+    }],
+    classification: { [unit.id]: { agreementValue: cls.gross.gross, rateCode: cls.rateCode, ratePct: cls.ratePct } },
+  });
+
+  const wu = prepared.working.units[0];
+  if (!wu.bookedAtCutOff) {
+    // Still worth recording: sets bu_event_id so the Dastavej page's
+    // Schedule III detection fires now rather than waiting on a future
+    // project-wide sweep to happen to notice this unit.
+    const { data: ev, error: evErr } = await supabase.from('builder_bu_events').insert({
+      project_id: unit.project_id, bu_date: params.dastavejDate, scope: 'UNITS',
+      posting_basis: 'DISCOVERY', posting_period: postingPeriod, status: 'PREPARED',
+      notes: 'Auto-posted at dastavej registration', created_by: params.userId,
+    }).select('id').single();
+    if (evErr || !ev) throw new Error(evErr?.message || 'Could not record the event');
+    await insertEventUnitRow(ev.id, wu);
+    await postBuEvent({
+      eventId: ev.id, projectId: unit.project_id, prepared, postingPeriod,
+      postingDate: params.dastavejDate, docSeries: null, userId: params.userId,
+    });
+    return { action: 'SCHEDULE_III' };
+  }
+
+  if (wu.differentialValue <= 0) {
+    // The normal case the Dastavej page already assumes: ordinary advances
+    // already cover the agreement value by the time the deed is executed.
+    // Nothing to post — dastavej stays pure reconciliation.
+    return { action: 'ALREADY_TAXED' };
+  }
+
+  const { data: ev, error: evErr } = await supabase.from('builder_bu_events').insert({
+    project_id: unit.project_id, bu_date: params.dastavejDate, scope: 'UNITS',
+    posting_basis: 'DISCOVERY', posting_period: postingPeriod, status: 'PREPARED',
+    notes: 'Auto-posted at dastavej registration', created_by: params.userId,
+  }).select('id').single();
+  if (evErr || !ev) throw new Error(evErr?.message || 'Could not record the event');
+  await insertEventUnitRow(ev.id, wu);
+  await postBuEvent({
+    eventId: ev.id, projectId: unit.project_id, prepared, postingPeriod,
+    postingDate: params.dastavejDate, docSeries: null, userId: params.userId,
+  });
+
+  return { action: 'POSTED', differentialValue: wu.differentialValue, cgst: wu.differentialCgst, sgst: wu.differentialSgst };
+}
+
+async function insertEventUnitRow(eventId: string, w: EventWorking['units'][number]): Promise<void> {
+  const { error } = await supabase.from('builder_bu_event_units').insert({
+    bu_event_id: eventId, unit_id: w.unitId, cut_off_date: w.cutOffDate, cut_off_source: w.cutOffSource,
+    booked_at_cutoff: w.bookedAtCutOff, booking_id: w.bookingId, unit_type: w.unitType,
+    carpet_area_sqm: w.carpetAreaSqM, rate_code: w.rateCode, rate_pct: w.ratePct,
+    agreement_value: w.agreementValue, value_taxed_upto_opening: w.valueTaxedUptoOpening,
+    invoiced_before: w.invoicedBefore, open_advance_before: w.openAdvanceBefore,
+    received_upto_cutoff: w.receivedUptoCutOff, differential_value: w.differentialValue,
+    differential_taxable_value: w.differentialTaxableValue, differential_cgst: w.differentialCgst,
+    differential_sgst: w.differentialSgst, interest_days: w.interestDays, interest_amount: w.interestAmount,
+    tie_out_diff: w.tieOutDiff, subsumed_receipt_count: w.subsumedReceiptCount,
+  });
+  if (error) throw error;
 }
