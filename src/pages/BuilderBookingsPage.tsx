@@ -61,6 +61,7 @@ interface UnitRow {
   base_consideration: number; status: string;
   /** The registered sale deed. Half of the BU cut-off, so it belongs on the row. */
   dastavej_date: string | null;
+  dastavej_value: number | null;
   /** Set once this unit has gone through its BU/dastavej differential — the whole balance is taxed. */
   bu_event_id: string | null;
 }
@@ -156,9 +157,17 @@ const BuilderBookingsPage: React.FC = () => {
   /**
    * The surfaces the row menu opens. They are dialogs over the table rather
    * than destinations, so dismissing one returns you to the row you were on —
-   * which is the whole reason the sub-tab strip was wrong.
+   * which is the whole reason the sub-tab strip was wrong. A menu click also
+   * carries which unit and which action it was for, so the surface opens
+   * straight into that unit's dialog instead of a generic, unscoped page the
+   * unit has to be found in again.
    */
-  const [surface, setSurface] = useState<'' | 'masters' | 'corrections' | 'dastavej'>('');
+  interface SurfaceState {
+    type: '' | 'masters' | 'corrections' | 'dastavej';
+    unitId?: string;
+    action?: 'editUnit' | 'openingBalance' | 'creditNote' | 'reRate' | 'bounceReversal' | 'convert' | 'recordDastavej';
+  }
+  const [surface, setSurface] = useState<SurfaceState>({ type: '' });
 
   /**
    * Client setup opens the masters surface too, so the one-time job lives with
@@ -167,7 +176,7 @@ const BuilderBookingsPage: React.FC = () => {
    * would give the ledger a second owner for a dialog it already owns.
    */
   useEffect(() => {
-    const open = () => setSurface('masters');
+    const open = () => setSurface({ type: 'masters' });
     window.addEventListener('builder:open-masters', open);
     return () => window.removeEventListener('builder:open-masters', open);
   }, []);
@@ -1125,7 +1134,7 @@ const BuilderBookingsPage: React.FC = () => {
                     Import the unit list to begin. Afterwards this is reached from Client setup —
                     it is an onboarding job, not a monthly one.
                   </p>
-                  <Button size="sm" className="mt-4" onClick={() => setSurface('masters')}>
+                  <Button size="sm" className="mt-4" onClick={() => setSurface({ type: 'masters' })}>
                     <Layers className="mr-2 h-4 w-4" /> Units &amp; masters
                   </Button>
                 </>
@@ -1252,33 +1261,51 @@ const BuilderBookingsPage: React.FC = () => {
                                       <span className="sr-only">More actions for unit {u.unit_no}</span>
                                     </Button>
                                   </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end" className="w-60">
+                                  <DropdownMenuContent align="end" className="w-64">
                                     <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                                      Corrections
+                                      This month
                                     </DropdownMenuLabel>
-                                    <DropdownMenuItem onSelect={() => setSurface('corrections')}>
+                                    <DropdownMenuItem
+                                      onSelect={() => setSurface({ type: 'dastavej', unitId: u.id, action: 'recordDastavej' })}
+                                    >
+                                      Record dastavej
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                      Rare — occasional corrections
+                                    </DropdownMenuLabel>
+                                    <DropdownMenuItem
+                                      onSelect={() => setSurface({ type: 'corrections', unitId: u.id, action: 'creditNote' })}
+                                    >
                                       Credit note
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onSelect={() => setSurface('corrections')}>
+                                    <DropdownMenuItem
+                                      onSelect={() => setSurface({ type: 'corrections', unitId: u.id, action: 'reRate' })}
+                                    >
                                       Re-rate (Table 10)
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onSelect={() => setSurface('corrections')}>
+                                    <DropdownMenuItem
+                                      onSelect={() => setSurface({ type: 'corrections', unitId: u.id, action: 'bounceReversal' })}
+                                    >
                                       Bounce reversal
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onSelect={() => setSurface('corrections')}>
+                                    <DropdownMenuItem
+                                      onSelect={() => setSurface({ type: 'corrections', unitId: u.id, action: 'convert' })}
+                                    >
                                       Convert to another unit
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                                      Records
+                                      Setup
                                     </DropdownMenuLabel>
-                                    <DropdownMenuItem onSelect={() => setSurface('dastavej')}>
-                                      Record dastavej
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem onSelect={() => setSurface('masters')}>
+                                    <DropdownMenuItem
+                                      onSelect={() => setSurface({ type: 'masters', unitId: u.id, action: 'editUnit' })}
+                                    >
                                       Edit unit &amp; charge heads
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onSelect={() => setSurface('masters')}>
+                                    <DropdownMenuItem
+                                      onSelect={() => setSurface({ type: 'masters', unitId: u.id, action: 'openingBalance' })}
+                                    >
                                       Opening balance
                                     </DropdownMenuItem>
                                   </DropdownMenuContent>
@@ -1577,19 +1604,41 @@ const BuilderBookingsPage: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      {/* ── Receipt dialog ───────────────────────────────────────────────── */}
-      <Dialog open={!!surface} onOpenChange={(o) => !o && setSurface('')}>
+      {/* ── Masters / corrections / dastavej surfaces ───────────────────────── */}
+      <Dialog open={!!surface.type} onOpenChange={(o) => !o && setSurface({ type: '' })}>
         <DialogContent className="max-w-[95vw] max-h-[92vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              {surface === 'masters' ? 'Units, charge heads & opening balances'
-                : surface === 'corrections' ? 'Corrections — re-rating, credit notes, bounces, conversions'
+              {surface.type === 'masters' ? 'Units, charge heads & opening balances'
+                : surface.type === 'corrections' ? 'Corrections — re-rating, credit notes, bounces, conversions'
                 : 'Dastavej register'}
             </DialogTitle>
           </DialogHeader>
-          {surface === 'masters' && <BuilderProjectDetailPage />}
-          {surface === 'corrections' && <BuilderAdjustmentsPage />}
-          {surface === 'dastavej' && <BuilderDastavejPage />}
+          {surface.type === 'masters' && (
+            <BuilderProjectDetailPage
+              focusUnitId={surface.unitId}
+              focusAction={surface.action === 'editUnit' || surface.action === 'openingBalance' ? surface.action : undefined}
+            />
+          )}
+          {surface.type === 'corrections' && (
+            <BuilderAdjustmentsPage
+              focusUnitId={surface.unitId}
+              focusAction={
+                surface.action === 'creditNote' || surface.action === 'reRate'
+                || surface.action === 'bounceReversal' || surface.action === 'convert'
+                  ? surface.action : undefined
+              }
+            />
+          )}
+          {surface.type === 'dastavej' && (
+            <BuilderDastavejPage
+              focusProjectId={projectId ?? undefined}
+              focusUnit={(() => {
+                const u = units.find((x) => x.id === surface.unitId);
+                return u ? { id: u.id, unit_no: u.unit_no, dastavej_date: u.dastavej_date, dastavej_value: u.dastavej_value } : undefined;
+              })()}
+            />
+          )}
         </DialogContent>
       </Dialog>
 

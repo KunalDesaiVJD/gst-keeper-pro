@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClient } from '@/contexts/ClientContext';
@@ -101,7 +101,13 @@ const TONE_CLASS: Record<Action['tone'], string> = {
   muted: '',
 };
 
-const BuilderDastavejPage: React.FC = () => {
+interface Props {
+  /** Jump straight into recording the deed for one unit, instead of the full register. */
+  focusUnit?: { id: string; unit_no: string; dastavej_date: string | null; dastavej_value: number | null };
+  focusProjectId?: string;
+}
+
+const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => {
   const { canManageBuilderUnits, user } = useAuth();
   const { selectedClientId, setSelectedClientId } = useClient();
 
@@ -167,6 +173,21 @@ const BuilderDastavejPage: React.FC = () => {
   }, [selectedClientId, projectFilter, projects]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Scope the project select once its options are in, rather than racing the
+  // client-change effect above that resets it to "All projects".
+  useEffect(() => {
+    if (focusProjectId && projects.some((p) => p.id === focusProjectId)) {
+      setProjectFilter(focusProjectId);
+    }
+  }, [projects, focusProjectId]);
+
+  const handledFocusRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusUnit || handledFocusRef.current === focusUnit.id) return;
+    handledFocusRef.current = focusUnit.id;
+    openEdit(focusUnit.id, focusUnit.unit_no, focusUnit.dastavej_date, focusUnit.dastavej_value);
+  }, [focusUnit]);
 
   const openEdit = (unitId: string, unitNo: string, date: string | null, value: number | null) => {
     setEditUnit({ id: unitId, unit_no: unitNo });

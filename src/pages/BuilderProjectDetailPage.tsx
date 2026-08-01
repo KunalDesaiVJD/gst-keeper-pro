@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorkspaceContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -103,7 +103,13 @@ const emptyOpeningForm = {
   cumulative_tds_194ia: '',
 };
 
-const BuilderProjectDetailPage: React.FC = () => {
+interface Props {
+  /** Jump straight into a unit's edit or opening-balance dialog, instead of the full unit master. */
+  focusUnitId?: string;
+  focusAction?: 'editUnit' | 'openingBalance';
+}
+
+const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction }) => {
   const projectId = useBuilderProjectId();
   const embedded = useBuilderEmbedded();
   const navigate = useNavigate();
@@ -181,6 +187,19 @@ const BuilderProjectDetailPage: React.FC = () => {
   }, [projectId, navigate]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const handledFocusRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusUnitId || !focusAction || isLoading) return;
+    const key = `${focusUnitId}:${focusAction}`;
+    if (handledFocusRef.current === key) return;
+    const u = units.find((x) => x.id === focusUnitId);
+    if (!u) return;
+    handledFocusRef.current = key;
+    if (focusAction === 'editUnit') openEditUnit(u);
+    else openOpening(u);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusUnitId, focusAction, isLoading, units]);
 
   // ── The 15% test, from whichever source the project elected ──────────────
   const rrep = useMemo(() => {
