@@ -50,6 +50,8 @@ interface ProjectRow {
 
 interface GroupRow { id: string; project_id: string; name: string; sort_order: number }
 
+type OnboardingStatus = 'LIVE' | 'CLOSED_PRE_ONBOARDING';
+
 interface UnitRow {
   id: string;
   project_id: string;
@@ -60,6 +62,7 @@ interface UnitRow {
   base_consideration: number;
   status: string;
   sort_order: number;
+  onboarding_status: OnboardingStatus;
 }
 
 interface ChargeRow {
@@ -91,6 +94,7 @@ const emptyUnitForm = {
   carpet_area_sqm: '',
   base_consideration: '',
   status: 'Available',
+  onboarding_status: 'LIVE' as OnboardingStatus,
 };
 
 const emptyOpeningForm = {
@@ -280,6 +284,7 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
       carpet_area_sqm: String(u.carpet_area_sqm ?? ''),
       base_consideration: String(u.base_consideration ?? ''),
       status: u.status,
+      onboarding_status: u.onboarding_status || 'LIVE',
     });
     setUnitCharges((charges[u.id] || []).map((c) => ({
       charge_head: c.charge_head, amount: Number(c.amount) || 0, include_override: c.include_override,
@@ -340,6 +345,7 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
         carpet_area_sqm: parseFloat(unitForm.carpet_area_sqm) || 0,
         base_consideration: parseFloat(unitForm.base_consideration) || 0,
         status: unitForm.status,
+        onboarding_status: unitForm.onboarding_status,
         updated_by: user?.id ?? null,
       };
 
@@ -624,7 +630,12 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
                         const opening = openings[u.id];
                         return (
                           <TableRow key={u.id}>
-                            <TableCell className="font-medium">{u.unit_no}</TableCell>
+                            <TableCell className="font-medium">
+                              {u.unit_no}
+                              {u.onboarding_status === 'CLOSED_PRE_ONBOARDING' && (
+                                <Badge variant="outline" className="ml-1.5 text-[10px]">Closed pre-onboarding</Badge>
+                              )}
+                            </TableCell>
                             <TableCell className="text-sm text-muted-foreground">{groupName_(u.group_id)}</TableCell>
                             <TableCell className="text-sm">{u.unit_type}</TableCell>
                             <TableCell className="text-right text-sm">{Number(u.carpet_area_sqm).toFixed(3)}</TableCell>
@@ -834,6 +845,32 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
                 value={unitForm.base_consideration}
                 onChange={(e) => setUnitForm({ ...unitForm, base_consideration: e.target.value })}
               />
+            </div>
+            <div className="sm:col-span-2">
+              <Label>Onboarding status</Label>
+              <Select
+                value={unitForm.onboarding_status}
+                onValueChange={(v) => setUnitForm({ ...unitForm, onboarding_status: v as OnboardingStatus })}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="LIVE">Live — this software runs its BU/dastavej working on it</SelectItem>
+                  <SelectItem value="CLOSED_PRE_ONBOARDING">
+                    Closed before onboarding — already fully resolved elsewhere
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              {unitForm.onboarding_status === 'CLOSED_PRE_ONBOARDING' && (
+                <div className="mt-2 flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <p className="text-xs">
+                    This unit is skipped by every BU-event sweep and by the dastavej auto-post differential —
+                    this software will never compute or post GST for it. It still counts toward the project's
+                    carpet area for the 15% test. Only set this where the firm's own records already show the
+                    unit fully and correctly taxed before this project was onboarded here.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 

@@ -220,6 +220,11 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
             );
           } else if (result.action === 'SCHEDULE_III') {
             toast.info('Dastavej saved — this unit was unbooked at that date, recorded under Schedule III.');
+          } else if (result.action === 'EXCLUDED') {
+            toast.info(
+              'Dastavej saved for the register — this unit is flagged closed before onboarding, so no '
+              + 'automatic differential is computed for it.',
+            );
           } else if (result.action === 'ALREADY_TAXED') {
             toast.success('Dastavej saved — already fully taxed by advances, nothing further to post.');
           } else {

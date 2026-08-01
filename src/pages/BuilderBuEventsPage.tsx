@@ -42,6 +42,7 @@ interface UnitRow {
   id: string; unit_no: string; unit_type: UnitType; carpet_area_sqm: number;
   base_consideration: number; status: string; dastavej_date: string | null;
   bu_event_id: string | null; group_id: string | null;
+  onboarding_status: 'LIVE' | 'CLOSED_PRE_ONBOARDING';
 }
 interface ChargeRow { unit_id: string; charge_head: string; amount: number; include_override: boolean | null }
 interface EventRow {
@@ -181,8 +182,21 @@ const BuilderBuEventsPage: React.FC = () => {
     return out;
   }, [units, charges, project, rrep.isRrep, settings]);
 
-  /** Units not already closed against an earlier event. */
-  const availableUnits = useMemo(() => units.filter((u) => !u.bu_event_id), [units]);
+  /**
+   * Units not already closed against an earlier event, and not flagged as
+   * resolved before this project was onboarded here — those were fully
+   * taxed under the firm's earlier records and this software has no reliable
+   * pre-onboarding history to sweep them against. See
+   * docs/BUILDER_GST_POSITIONS.md §14.
+   */
+  const availableUnits = useMemo(
+    () => units.filter((u) => !u.bu_event_id && u.onboarding_status !== 'CLOSED_PRE_ONBOARDING'),
+    [units],
+  );
+  const closedPreOnboardingCount = useMemo(
+    () => units.filter((u) => !u.bu_event_id && u.onboarding_status === 'CLOSED_PRE_ONBOARDING').length,
+    [units],
+  );
 
   const unitsInScope = useMemo(
     () => (form.scope === 'FULL' ? availableUnits : availableUnits.filter((u) => selectedUnits.has(u.id))),
@@ -376,8 +390,15 @@ const BuilderBuEventsPage: React.FC = () => {
           booked before it are taxed on their entire balance; units unbooked at cut-off fall under
           Schedule III and are omitted from GSTR-1 and 3B altogether, feeding the TDR/FSI working instead.
           {availableUnits.length < units.length && (
-            <> {units.length - availableUnits.length} of {units.length} units are already closed against
-            an earlier event.</>
+            <>
+              {' '}{units.filter((u) => !!u.bu_event_id).length} of {units.length} units are already closed
+              against an earlier event
+              {closedPreOnboardingCount > 0 && (
+                <>, and {closedPreOnboardingCount} {closedPreOnboardingCount === 1 ? 'is' : 'are'} flagged
+                closed before onboarding — resolved under the firm's earlier records, so this software
+                never sweeps them</>
+              )}.
+            </>
           )}
         </p>
       </div>

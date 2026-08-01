@@ -64,6 +64,7 @@ interface UnitRow {
   dastavej_value: number | null;
   /** Set once this unit has gone through its BU/dastavej differential — the whole balance is taxed. */
   bu_event_id: string | null;
+  onboarding_status: 'LIVE' | 'CLOSED_PRE_ONBOARDING';
 }
 interface ChargeRow { unit_id: string; charge_head: string; amount: number; include_override: boolean | null }
 interface BookingRow {
@@ -1181,6 +1182,11 @@ const BuilderBookingsPage: React.FC = () => {
                           <TableCell className="font-medium">
                             {u.unit_no}
                             <span className="block text-xs text-muted-foreground">{u.unit_type}</span>
+                            {u.onboarding_status === 'CLOSED_PRE_ONBOARDING' && (
+                              <Badge variant="outline" className="mt-1 text-[10px]" title="Resolved before this project was onboarded here — no BU/dastavej working is computed for it">
+                                Closed pre-onboarding
+                              </Badge>
+                            )}
                           </TableCell>
                           <TableCell className="text-sm">
                             {mem.length === 0 ? (

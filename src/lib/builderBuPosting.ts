@@ -344,7 +344,8 @@ export type DastavejAutoPostResult =
   | { action: 'ALREADY_DONE' }
   | { action: 'ALREADY_TAXED' }
   | { action: 'SCHEDULE_III' }
-  | { action: 'POSTED'; differentialValue: number; cgst: number; sgst: number };
+  | { action: 'POSTED'; differentialValue: number; cgst: number; sgst: number }
+  | { action: 'EXCLUDED' };
 
 export async function autoPostDastavejDifferential(params: {
   unitId: string;
@@ -357,12 +358,18 @@ export async function autoPostDastavejDifferential(params: {
   const unit = unitRow as unknown as {
     id: string; project_id: string; unit_no: string; unit_type: 'Residential' | 'Commercial';
     carpet_area_sqm: number; base_consideration: number; status: string; dastavej_date: string | null;
-    bu_event_id: string | null;
+    bu_event_id: string | null; onboarding_status: 'LIVE' | 'CLOSED_PRE_ONBOARDING';
   };
   // A re-save of the same (or an edited) date on a unit already closed
   // against an event never re-runs it here — unposting is a deliberate,
   // separate action on the BU Working page.
   if (unit.bu_event_id) return { action: 'ALREADY_DONE' };
+  // Resolved under the firm's earlier records before this project was
+  // onboarded here — this software has no reliable pre-onboarding history to
+  // compute a differential against. The date is still saved by the caller for
+  // the register; only the automatic posting is skipped. See
+  // docs/BUILDER_GST_POSITIONS.md §14.
+  if (unit.onboarding_status === 'CLOSED_PRE_ONBOARDING') return { action: 'EXCLUDED' };
 
   const { data: projectRow, error: pErr } = await supabase
     .from('builder_projects').select('*').eq('id', unit.project_id).single();
