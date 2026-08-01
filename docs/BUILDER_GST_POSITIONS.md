@@ -48,7 +48,10 @@ Only the value limb can move. Carpet area is physical; a charge head added
 after booking is what pushes a unit over — see §8.
 
 *`testAffordable()`, with the ₹45 lakh headroom shown live as charge heads are
-entered.*
+entered. Metro/non-metro is elected per project (`builder_projects.is_metro`),
+with a client-level default (`builder_client_settings.default_is_metro`) that
+only pre-fills a **new** project's form — every one of this firm's clients
+builds on Gujarat property, so that default is almost always non-metro.*
 
 ## 3. Gross amount charged
 

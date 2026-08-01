@@ -94,8 +94,17 @@ const BuilderProjectSettingsDialog: React.FC<Props> = ({
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    if (open) setForm(project ? toForm(project) : emptyForm);
-  }, [open, project]);
+    if (!open) return;
+    if (project) { setForm(toForm(project)); return; }
+    // A new project starts from the client's own metro default (almost
+    // always non-metro — Gujarat property) rather than a hardcoded false.
+    (async () => {
+      const { data } = await supabase
+        .from('builder_client_settings').select('default_is_metro').eq('client_id', clientId).maybeSingle();
+      const row = data as unknown as { default_is_metro: boolean } | null;
+      setForm({ ...emptyForm, is_metro: row?.default_is_metro ?? false });
+    })();
+  }, [open, project, clientId]);
 
   const formRrep = useMemo(
     () => testRrep(

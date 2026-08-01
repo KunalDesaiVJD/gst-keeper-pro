@@ -27,6 +27,14 @@ export interface BuilderClientSettings extends ChargeInclusionSettings {
    * isn't something staff raise by hand.
    */
   raises_invoices: boolean;
+  /**
+   * Default metro/non-metro for a NEW project created for this client — set
+   * once here instead of re-selected on every project, since every one of
+   * this firm's clients builds on Gujarat property and no Gujarat city is on
+   * the metro list. An existing project's own election is never touched by
+   * changing this.
+   */
+  default_is_metro: boolean;
   extra_work_rate: ExtraWorkRate;
   delay_interest_basis: DelayInterestBasis;
   excess_tax_treatment: ExcessTaxTreatment;
@@ -40,6 +48,7 @@ export interface BuilderClientSettings extends ChargeInclusionSettings {
 
 export const DEFAULT_BUILDER_SETTINGS: Omit<BuilderClientSettings, 'client_id'> = {
   raises_invoices: true,
+  default_is_metro: false,
   incl_plc: true,
   incl_development: true,
   incl_parking: true,
