@@ -31,6 +31,7 @@ import {
 import { CHARGE_HEADS, fetchBuilderSettings } from '@/lib/builderSettings';
 import { CHARGE_HEAD_LABEL } from '@/utils/builderRates';
 import BulkAddUnitsDialog from '@/components/builder/BulkAddUnitsDialog';
+import BulkOpeningBalancesDialog, { type BulkOpeningUnit } from '@/components/builder/BulkOpeningBalancesDialog';
 
 interface ProjectRow {
   id: string;
@@ -119,6 +120,7 @@ const BuilderProjectDetailPage: React.FC = () => {
 
   const [unitDialog, setUnitDialog] = useState(false);
   const [bulkDialog, setBulkDialog] = useState(false);
+  const [bulkOpeningDialog, setBulkOpeningDialog] = useState(false);
   const [editingUnit, setEditingUnit] = useState<UnitRow | null>(null);
   const [unitForm, setUnitForm] = useState(emptyUnitForm);
   const [unitCharges, setUnitCharges] = useState<UnitCharge[]>([]);
@@ -207,6 +209,29 @@ const BuilderProjectDetailPage: React.FC = () => {
     isRrep: rrep.isRrep,
     settings,
   }), [charges, project, rrep.isRrep, settings]);
+
+  /** Feed for the bulk opening-balances grid — one row per unit, in table order. */
+  const bulkOpeningUnits: BulkOpeningUnit[] = useMemo(() => units.map((u) => {
+    const cls = classifyStored(u);
+    const existing = openings[u.id];
+    return {
+      unitId: u.id,
+      unitNo: u.unit_no,
+      rateCode: cls.rateCode,
+      ratePct: cls.ratePct,
+      isAffordable: cls.affordable.isAffordable,
+      defaultAgreementValue: cls.gross.gross,
+      existing: existing ? {
+        as_at_date: existing.as_at_date,
+        agreement_value: existing.agreement_value,
+        cumulative_receipts: existing.cumulative_receipts,
+        cumulative_value_taxed: existing.cumulative_value_taxed,
+        cumulative_cgst: existing.cumulative_cgst,
+        cumulative_sgst: existing.cumulative_sgst,
+        cumulative_tds_194ia: existing.cumulative_tds_194ia,
+      } : undefined,
+    };
+  }), [units, openings, classifyStored]);
 
   /** Live classification for whatever is currently in the unit dialog. */
   const formClassification = useMemo(() => classifyUnit({
@@ -542,6 +567,9 @@ const BuilderProjectDetailPage: React.FC = () => {
                   <Button variant="outline" onClick={() => setBulkDialog(true)}>
                     <Layers className="h-4 w-4 mr-2" /> Add many
                   </Button>
+                  <Button variant="outline" onClick={() => setBulkOpeningDialog(true)} disabled={!units.length}>
+                    <Wallet className="h-4 w-4 mr-2" /> Opening balances
+                  </Button>
                   <Button onClick={openCreateUnit}><Plus className="h-4 w-4 mr-2" /> Add unit</Button>
                 </div>
               )}
@@ -716,6 +744,14 @@ const BuilderProjectDetailPage: React.FC = () => {
           onSaved={load}
         />
       )}
+
+      <BulkOpeningBalancesDialog
+        open={bulkOpeningDialog}
+        onOpenChange={setBulkOpeningDialog}
+        units={bulkOpeningUnits}
+        defaultAsAtDate={project?.opening_cutoff_date ?? null}
+        onSaved={load}
+      />
 
       <Dialog open={unitDialog} onOpenChange={setUnitDialog}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">

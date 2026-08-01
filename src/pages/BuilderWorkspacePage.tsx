@@ -48,6 +48,9 @@ import BuilderBookingsPage from './BuilderBookingsPage';
 import BuilderBuEventsPage from './BuilderBuEventsPage';
 import BuilderFsiPage from './BuilderFsiPage';
 import BuilderReturnsPage from './BuilderReturnsPage';
+import BuilderProjectSettingsDialog, {
+  type BuilderProjectFormRow,
+} from '@/components/builder/BuilderProjectSettingsDialog';
 
 const TABS = [
   { key: 'ledger', label: 'Ledger', icon: <Layers className="h-4 w-4" /> },
@@ -57,10 +60,10 @@ const TABS = [
 ];
 
 interface ClientRow { id: string; name: string; gstin: string | null }
-interface ProjectRow { id: string; name: string; is_metro: boolean }
+type ProjectRow = BuilderProjectFormRow;
 
 const BuilderWorkspacePage: React.FC = () => {
-  const { canViewBuilderReports } = useAuth();
+  const { canViewBuilderReports, canManageBuilderProjects } = useAuth();
   const { selectedClientId, setSelectedClientId } = useClient();
   const { selectedMonth, setSelectedMonth } = useMonth();
   const [params, setParams] = useSearchParams();
@@ -71,6 +74,7 @@ const BuilderWorkspacePage: React.FC = () => {
   const [postingCount, setPostingCount] = useState(0);
   const [periodTax, setPeriodTax] = useState(0);
   const [showSetup, setShowSetup] = useState(false);
+  const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
 
   // Tab and project live in the URL, so a view is linkable and survives a
   // refresh — an employee mid-period keeps their place.
@@ -99,13 +103,17 @@ const BuilderWorkspacePage: React.FC = () => {
     })();
   }, []);
 
+  const loadProjects = useCallback(async (clientId: string) => {
+    const { data } = await supabase
+      .from('builder_projects').select('*')
+      .eq('client_id', clientId).order('name');
+    return (data || []) as unknown as ProjectRow[];
+  }, []);
+
   useEffect(() => {
     if (!selectedClientId) { setProjects([]); return; }
     (async () => {
-      const { data } = await supabase
-        .from('builder_projects').select('id, name, is_metro')
-        .eq('client_id', selectedClientId).order('name');
-      const rows = (data || []) as ProjectRow[];
+      const rows = await loadProjects(selectedClientId);
       setProjects(rows);
       // A project belonging to another client must not survive a client change,
       // or a tab would quietly render foreign data under the new heading.
@@ -255,6 +263,21 @@ const BuilderWorkspacePage: React.FC = () => {
                   </Button>
                 </div>
               )}
+              {projectId && (
+                <div className="flex flex-wrap items-center gap-3 border-b bg-muted/30 px-4 py-3">
+                  <Settings2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">Project settings</p>
+                    <p className="text-xs text-muted-foreground">
+                      Metro status, carpet-area source, doc series, opening cut-off and FSI treatment for{' '}
+                      {projects.find((p) => p.id === projectId)?.name || 'this project'}.
+                    </p>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => setProjectSettingsOpen(true)}>
+                    Edit
+                  </Button>
+                </div>
+              )}
               <BuilderSettingsPage />
             </CardContent>
           </Card>
@@ -299,6 +322,17 @@ const BuilderWorkspacePage: React.FC = () => {
             </CardContent>
           </Card>
         )}
+
+        <BuilderProjectSettingsDialog
+          open={projectSettingsOpen}
+          onOpenChange={setProjectSettingsOpen}
+          clientId={selectedClientId || ''}
+          project={projects.find((p) => p.id === projectId) || null}
+          readOnly={!canManageBuilderProjects()}
+          onSaved={async () => {
+            if (selectedClientId) setProjects(await loadProjects(selectedClientId));
+          }}
+        />
       </div>
     </BuilderWorkspaceProvider>
   );
