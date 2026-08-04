@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorkspaceContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -88,12 +88,20 @@ const currentPeriod = () => {
   return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
 };
 
-const BuilderAdjustmentsPage: React.FC = () => {
+interface Props {
+  /** Jump straight into one unit's correction dialog, instead of the full register. */
+  focusUnitId?: string;
+  focusAction?: 'creditNote' | 'reRate' | 'bounceReversal' | 'convert';
+}
+
+const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) => {
   const projectId = useBuilderProjectId();
   const embedded = useBuilderEmbedded();
   const navigate = useNavigate();
   const { canPostBuilderAdjustments, user } = useAuth();
 
+  const [tab, setTab] = useState('reclass');
+  const [bounceFocusUnitId, setBounceFocusUnitId] = useState<string | null>(null);
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [units, setUnits] = useState<UnitRow[]>([]);
   const [charges, setCharges] = useState<Record<string, ChargeRow[]>>({});
@@ -210,14 +218,48 @@ const BuilderAdjustmentsPage: React.FC = () => {
   }, [units, charges, project, rrep.isRrep, settings]);
 
   // Re-rating candidates are derived from what was actually posted at 1.5%.
+  const [candidatesReady, setCandidatesReady] = useState(false);
   useEffect(() => {
-    if (!projectId || !units.length) { setCandidates([]); return; }
+    if (!projectId || !units.length) { setCandidates([]); setCandidatesReady(true); return; }
+    setCandidatesReady(false);
     (async () => {
       const done = new Set(reclasses.map((r) => r.unit_id));
       const found = await findReclassCandidates(projectId, classification);
       setCandidates(found.filter((c) => !done.has(c.unitId)));
+      setCandidatesReady(true);
     })();
   }, [projectId, units.length, classification, reclasses]);
+
+  /** Route the row-menu click straight to the right tab and dialog. */
+  const handledFocusRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusUnitId || !focusAction || isLoading) return;
+    if (focusAction === 'reRate' && !candidatesReady) return;
+    const key = `${focusUnitId}:${focusAction}`;
+    if (handledFocusRef.current === key) return;
+    handledFocusRef.current = key;
+    if (focusAction === 'creditNote') {
+      setTab('notes');
+      setCnForm((f) => ({ ...f, unit_id: focusUnitId }));
+      setCnDialog(true);
+    } else if (focusAction === 'convert') {
+      setTab('conversions');
+      setConvForm((f) => ({ ...f, from_unit_id: focusUnitId }));
+      setConvDialog(true);
+    } else if (focusAction === 'bounceReversal') {
+      setTab('bounce');
+      setBounceFocusUnitId(focusUnitId);
+    } else if (focusAction === 'reRate') {
+      setTab('reclass');
+      const candidate = candidates.find((c) => c.unitId === focusUnitId);
+      if (candidate) {
+        setReclassDialog(candidate);
+        setReclassPeriod(currentPeriod());
+      } else {
+        toast.info(`${unitNo(focusUnitId)} is not currently due for re-rating.`);
+      }
+    }
+  }, [focusUnitId, focusAction, isLoading, candidatesReady, candidates, unitNo]);
 
   const previewSchedule = useMemo(
     () => (reclassDialog ? scheduleFor(reclassDialog, reclassPeriod) : null),
@@ -447,6 +489,17 @@ const BuilderAdjustmentsPage: React.FC = () => {
     }
   };
 
+  const bouncedNeedingReversalFiltered = useMemo(
+    () => (bounceFocusUnitId
+      ? bouncedNeedingReversal.filter((r) => r.unit_id === bounceFocusUnitId)
+      : bouncedNeedingReversal),
+    [bouncedNeedingReversal, bounceFocusUnitId],
+  );
+  const bouncesFiltered = useMemo(
+    () => (bounceFocusUnitId ? bounces.filter((b) => b.unit_id === bounceFocusUnitId) : bounces),
+    [bounces, bounceFocusUnitId],
+  );
+
   const restatable = useMemo(() => {
     const done = new Set(excess.map((e) => e.receipt_id));
     return receipts.filter((r) => !r.amount_is_gst_inclusive && !done.has(r.id));
@@ -483,7 +536,7 @@ const BuilderAdjustmentsPage: React.FC = () => {
         </p>
       </div>
 
-      <Tabs defaultValue="reclass">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="reclass">
             Re-rating {candidates.length > 0 && <Badge className="ml-2 bg-amber-100 text-amber-800 border-amber-200">{candidates.length}</Badge>}
@@ -711,7 +764,15 @@ const BuilderAdjustmentsPage: React.FC = () => {
 
         {/* ── Bounce register ───────────────────────────────────────────── */}
         <TabsContent value="bounce" className="mt-4 space-y-4">
-          {bouncedNeedingReversal.length > 0 && (
+          {bounceFocusUnitId && (
+            <div className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+              <span>Showing only unit {unitNo(bounceFocusUnitId)}.</span>
+              <Button variant="ghost" size="sm" className="ml-auto h-7" onClick={() => setBounceFocusUnitId(null)}>
+                Show all units
+              </Button>
+            </div>
+          )}
+          {bouncedNeedingReversalFiltered.length > 0 && (
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Bounced advances without a reversal</CardTitle>
@@ -733,7 +794,7 @@ const BuilderAdjustmentsPage: React.FC = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {bouncedNeedingReversal.map((r) => (
+                    {bouncedNeedingReversalFiltered.map((r) => (
                       <TableRow key={r.id}>
                         <TableCell className="font-medium">{unitNo(r.unit_id)}</TableCell>
                         <TableCell className="text-sm">{r.receipt_date}</TableCell>
@@ -765,8 +826,10 @@ const BuilderAdjustmentsPage: React.FC = () => {
               </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
-              {bounces.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-4 py-6">No reversals raised.</p>
+              {bouncesFiltered.length === 0 ? (
+                <p className="text-sm text-muted-foreground px-4 py-6">
+                  {bounceFocusUnitId ? 'No reversals raised for this unit.' : 'No reversals raised.'}
+                </p>
               ) : (
                 <Table>
                   <TableHeader>
@@ -783,7 +846,7 @@ const BuilderAdjustmentsPage: React.FC = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {bounces.map((b) => {
+                    {bouncesFiltered.map((b) => {
                       const carried = Number(b.consideration) - Number(b.adjusted_value);
                       return (
                         <TableRow key={b.id}>

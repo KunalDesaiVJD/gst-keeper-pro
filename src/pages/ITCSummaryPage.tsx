@@ -20,6 +20,9 @@ import GSTPortalLink from '@/components/clients/GSTPortalLink';
 import GenericVersionHistoryDialog, { GenericVersion } from '@/components/dialogs/GenericVersionHistoryDialog';
 import ClearDataDialog from '@/components/dialogs/ClearDataDialog';
 import * as XLSX from 'xlsx';
+import {
+  computeNet4C, computePartialItcSplit, computeSection4ATotal5, computeTotal4A, computeTotal4B,
+} from '@/utils/builderPartialItc';
 
 interface ITCRow {
   srNo: string;
@@ -590,100 +593,12 @@ const ITCSummaryPage: React.FC = () => {
   // - 4(B)(2) = SUM of sub-rows - AUTO-CALCULATED
   const partialITCCalculatedValues = useMemo(() => {
     if (!isPartialITCClient) return null;
-    
-    const totalArea = commercialArea + residentialArea;
-    if (totalArea === 0) return null;
-
-    // Calculate Total 4A first
-    const rows1To4Values = itcData.section4A.slice(0, 4).reduce((acc, row) => ({
-      igst: acc.igst + row.igst,
-      cgst: acc.cgst + row.cgst,
-      sgst: acc.sgst + row.sgst,
-    }), { igst: 0, cgst: 0, sgst: 0 });
-
-    const total5Values = {
-      igst: (itcData.section4A.find(r => r.srNo === '5.1')?.igst || 0)
-          + (itcData.section4A.find(r => r.srNo === '5.2')?.igst || 0)
-          - (itcData.section4A.find(r => r.srNo === '5.3')?.igst || 0)
-          + (itcData.section4A.find(r => r.srNo === '5.4')?.igst || 0)
-          + (itcData.section4A.find(r => r.srNo === '5.5')?.igst || 0),
-      cgst: (itcData.section4A.find(r => r.srNo === '5.1')?.cgst || 0)
-          + (itcData.section4A.find(r => r.srNo === '5.2')?.cgst || 0)
-          - (itcData.section4A.find(r => r.srNo === '5.3')?.cgst || 0)
-          + (itcData.section4A.find(r => r.srNo === '5.4')?.cgst || 0)
-          + (itcData.section4A.find(r => r.srNo === '5.5')?.cgst || 0),
-      sgst: (itcData.section4A.find(r => r.srNo === '5.1')?.sgst || 0)
-          + (itcData.section4A.find(r => r.srNo === '5.2')?.sgst || 0)
-          - (itcData.section4A.find(r => r.srNo === '5.3')?.sgst || 0)
-          + (itcData.section4A.find(r => r.srNo === '5.4')?.sgst || 0)
-          + (itcData.section4A.find(r => r.srNo === '5.5')?.sgst || 0),
-    };
-
-    const total4AValues = {
-      igst: rows1To4Values.igst + total5Values.igst,
-      cgst: rows1To4Values.cgst + total5Values.cgst,
-      sgst: rows1To4Values.sgst + total5Values.sgst,
-    };
-
-    // Residential ratio for ineligible ITC calculation
-    const residentialRatio = residentialArea / totalArea;
-
-    // i) On ITC as per 4A = Total 4A × (Residential Area / Total Area) - AUTO-CALCULATED
-    const onITCAsPerA = {
-      igst: Math.round((total4AValues.igst * residentialRatio) * 100) / 100,
-      cgst: Math.round((total4AValues.cgst * residentialRatio) * 100) / 100,
-      sgst: Math.round((total4AValues.sgst * residentialRatio) * 100) / 100,
-    };
-
-    // ii) Previous Month Adjustment - EDITABLE (get from data)
-    const prevMonthAdjRow = itcData.section4B.find(r => r.particular.includes('Previous Month Adjustment'));
-    const prevMonthAdj = {
-      igst: prevMonthAdjRow?.igst || 0,
-      cgst: prevMonthAdjRow?.cgst || 0,
-      sgst: prevMonthAdjRow?.sgst || 0,
-    };
-
-    // Calculate 4(B)(2) first = SUM of sub-rows (ITC Reversal current month + previous months)
-    const recoReversalRow = itcData.section4B.find(r => r.particular.includes('current month as per 2B RECO'));
-    const prevMonthsReversalRow = itcData.section4B.find(r => r.particular.includes('previous months, if any'));
-    
-    const row2Calculated = {
-      igst: (recoReversalRow?.igst || 0) + (prevMonthsReversalRow?.igst || 0),
-      cgst: (recoReversalRow?.cgst || 0) + (prevMonthsReversalRow?.cgst || 0),
-      sgst: (recoReversalRow?.sgst || 0) + (prevMonthsReversalRow?.sgst || 0),
-    };
-
-    // iii) On Other reversal = -Total(4B)(2) × (Residential / Total Area) - AUTO-CALCULATED
-    // This is NEGATIVE of (row 2 × residential ratio)
-    const onOtherReversal = {
-      igst: Math.round((-row2Calculated.igst * residentialRatio) * 100) / 100,
-      cgst: Math.round((-row2Calculated.cgst * residentialRatio) * 100) / 100,
-      sgst: Math.round((-row2Calculated.sgst * residentialRatio) * 100) / 100,
-    };
-
-    // 4(B)(1) = SUM(i + ii + iii) - AUTO-CALCULATED
-    const main1Calculated = {
-      igst: Math.round((onITCAsPerA.igst + prevMonthAdj.igst + onOtherReversal.igst) * 100) / 100,
-      cgst: Math.round((onITCAsPerA.cgst + prevMonthAdj.cgst + onOtherReversal.cgst) * 100) / 100,
-      sgst: Math.round((onITCAsPerA.sgst + prevMonthAdj.sgst + onOtherReversal.sgst) * 100) / 100,
-    };
-
-    console.log('Partial ITC Calculations:', {
-      total4AValues,
-      residentialRatio,
-      onITCAsPerA,
-      prevMonthAdj,
-      row2Calculated,
-      onOtherReversal,
-      main1Calculated,
+    return computePartialItcSplit({
+      section4A: itcData.section4A,
+      section4B: itcData.section4B,
+      commercialArea,
+      residentialArea,
     });
-
-    return {
-      onITCAsPerA,
-      onOtherReversal,
-      main1Calculated,
-      row2Calculated,
-    };
   }, [isPartialITCClient, commercialArea, residentialArea, itcData.section4A, itcData.section4B]);
 
   // Pull the derived split whenever a partial-ITC client is selected.
@@ -1025,69 +940,23 @@ const ITCSummaryPage: React.FC = () => {
     }
   };
 
-  // Calculate Total (5) = 5.1 + 5.2 - 5.3 + 5.4 + 5.5
-  const total5 = {
-    igst: (itcData.section4A.find(r => r.srNo === '5.1')?.igst || 0)
-        + (itcData.section4A.find(r => r.srNo === '5.2')?.igst || 0)
-        - (itcData.section4A.find(r => r.srNo === '5.3')?.igst || 0)
-        + (itcData.section4A.find(r => r.srNo === '5.4')?.igst || 0)
-        + (itcData.section4A.find(r => r.srNo === '5.5')?.igst || 0),
-    cgst: (itcData.section4A.find(r => r.srNo === '5.1')?.cgst || 0)
-        + (itcData.section4A.find(r => r.srNo === '5.2')?.cgst || 0)
-        - (itcData.section4A.find(r => r.srNo === '5.3')?.cgst || 0)
-        + (itcData.section4A.find(r => r.srNo === '5.4')?.cgst || 0)
-        + (itcData.section4A.find(r => r.srNo === '5.5')?.cgst || 0),
-    sgst: (itcData.section4A.find(r => r.srNo === '5.1')?.sgst || 0)
-        + (itcData.section4A.find(r => r.srNo === '5.2')?.sgst || 0)
-        - (itcData.section4A.find(r => r.srNo === '5.3')?.sgst || 0)
-        + (itcData.section4A.find(r => r.srNo === '5.4')?.sgst || 0)
-        + (itcData.section4A.find(r => r.srNo === '5.5')?.sgst || 0),
-  };
+  // Total (5) of section 4A, shown as its own row on screen and in exports.
+  const total5 = computeSection4ATotal5(itcData.section4A);
 
   // Total 4A = rows 1-4 + Total (5)
-  const rows1To4 = itcData.section4A.slice(0, 4).reduce((acc, row) => ({
-    igst: acc.igst + row.igst,
-    cgst: acc.cgst + row.cgst,
-    sgst: acc.sgst + row.sgst,
-  }), { igst: 0, cgst: 0, sgst: 0 });
-
-  const total4A = {
-    igst: rows1To4.igst + total5.igst,
-    cgst: rows1To4.cgst + total5.cgst,
-    sgst: rows1To4.sgst + total5.sgst,
-  };
+  const total4A = computeTotal4A(itcData.section4A);
 
   // Total 4B calculation differs for Partial ITC clients
   // For Partial ITC: Total 4B = (1) calculated + (2) calculated
-  const total4B = useMemo(() => {
-    if (isPartialITCClient && partialITCCalculatedValues) {
-      // Use auto-calculated values for (1) and (2)
-      const row1Vals = partialITCCalculatedValues.main1Calculated;
-      const row2Vals = partialITCCalculatedValues.row2Calculated;
-      
-      return {
-        igst: row1Vals.igst + row2Vals.igst,
-        cgst: row1Vals.cgst + row2Vals.cgst,
-        sgst: row1Vals.sgst + row2Vals.sgst,
-      };
-    } else {
-      // For regular clients: sum all non-header rows
-      return itcData.section4B
-        .filter(row => !row.isHeader)
-        .reduce((acc, row) => ({
-          igst: acc.igst + row.igst,
-          cgst: acc.cgst + row.cgst,
-          sgst: acc.sgst + row.sgst,
-        }), { igst: 0, cgst: 0, sgst: 0 });
-    }
-  }, [itcData.section4B, isPartialITCClient, partialITCCalculatedValues]);
+  const total4B = useMemo(
+    () => computeTotal4B({
+      isPartialITCClient, section4B: itcData.section4B, partial: partialITCCalculatedValues,
+    }),
+    [itcData.section4B, isPartialITCClient, partialITCCalculatedValues],
+  );
 
   // Net ITC (4C) = 4A - 4B
-  const net4C = {
-    igst: total4A.igst - total4B.igst,
-    cgst: total4A.cgst - total4B.cgst,
-    sgst: total4A.sgst - total4B.sgst,
-  };
+  const net4C = computeNet4C(total4A, total4B);
 
   const totalReclaimed = itcData.section4A
     .filter(r => r.srNo === '5.4' || r.srNo === '5.5')

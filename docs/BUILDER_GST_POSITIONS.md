@@ -48,7 +48,10 @@ Only the value limb can move. Carpet area is physical; a charge head added
 after booking is what pushes a unit over — see §8.
 
 *`testAffordable()`, with the ₹45 lakh headroom shown live as charge heads are
-entered.*
+entered. Metro/non-metro is elected per project (`builder_projects.is_metro`),
+with a client-level default (`builder_client_settings.default_is_metro`) that
+only pre-fills a **new** project's form — every one of this firm's clients
+builds on Gujarat property, so that default is almost always non-metro.*
 
 ## 3. Gross amount charged
 
@@ -231,6 +234,46 @@ GST TDS under **s.51** applies only to government and PSU recipients and is out
 of scope.
 
 ---
+
+## 14. Onboarding status — units closed before this software saw the project
+
+A project is not always onboarded into this software at inception. Some
+units in it may already be **fully resolved under the firm's earlier
+records** by the time it is — BU received, the dastavej registered, tax
+accounted for — with no reliable pre-onboarding trail of advances and
+invoices for this software to reconstruct. Running the BU/dastavej engines
+on such a unit would recompute tax against a history this software never
+actually held, which is worse than not computing it at all.
+
+**The flag.** `builder_units.onboarding_status`: `'LIVE'` (default) or
+`'CLOSED_PRE_ONBOARDING'`.
+
+**What it excludes.** A unit marked `CLOSED_PRE_ONBOARDING` is:
+- Omitted from BU-event sweep candidates (`BuilderBuEventsPage`'s
+  `availableUnits`) — a project-wide or block-wide sweep will never select
+  it, whatever the sweep's own cut-off date.
+- Skipped by the dastavej auto-post differential
+  (`autoPostDastavejDifferential`) — its deed date and value can still be
+  **recorded** on the Dastavej Reconciliation page for the register, but no
+  automatic BU-differential posting follows from saving it.
+
+**What it does *not* exclude — and why.** The unit still counts toward the
+project's carpet area for the **15% RREP test** (§4). That test classifies
+the *project*, by its physical mix of residential and commercial area; it
+has nothing to do with which units this software tracks tax for. Excluding
+a closed unit's area would misstate the project's classification for every
+other unit still live in the software.
+
+**What the firm still owes it.** Nothing, by design — a
+`CLOSED_PRE_ONBOARDING` unit is asserted to be already fully and correctly
+taxed outside this software. If that assertion turns out to be wrong for a
+given unit, the fix is to flip it back to `LIVE` and, if needed, capture an
+opening balance (§the opening-balance grid on the project's unit master) so
+the ordinary engines can pick up from the true position — not to leave it
+flagged while trying to tax it here.
+
+*Set on the unit's row in the unit master; read in
+`src/pages/BuilderBuEventsPage.tsx` and `src/lib/builderBuPosting.ts`.*
 
 ## Out of scope by election
 

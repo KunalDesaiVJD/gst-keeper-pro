@@ -16,7 +16,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
 import {
-  FileSpreadsheet, Loader2, Info, CheckCircle2, AlertTriangle, ShieldAlert, Send, ExternalLink,
+  FileSpreadsheet, Loader2, Info, CheckCircle2, AlertTriangle, ShieldAlert, Send, ExternalLink, Wallet,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { formatINR, type BuilderRateCode } from '@/utils/builderRates';
@@ -29,6 +29,8 @@ import {
   previewBuilderGstr1, saveBuilderGstr1, fetchGstr1Status, type Gstr1Status,
 } from '@/lib/builderGstr1Data';
 import { isFsiConsentBlocked } from '@/lib/builderFsiData';
+import { fetchBuilderOutputTaxSplit, fetchNetItcAvailable } from '@/lib/builderItcCashData';
+import { computeItcCashWorkingPaper, type ItcCashWorkingPaper } from '@/utils/builderItcCash';
 
 type PostingSource =
   | 'ADVANCE_11A' | 'ADVANCE_11B' | 'INVOICE_B2CS'
@@ -150,6 +152,10 @@ const BuilderReturnsPage: React.FC = () => {
   const [gstr1Status, setGstr1Status] = useState<Gstr1Status | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
 
+  // ── ITC & cash working paper — firm policy, not portal mechanics ─────────
+  const [itcCashPaper, setItcCashPaper] = useState<ItcCashWorkingPaper | null>(null);
+  const [isLoadingItcCash, setIsLoadingItcCash] = useState(false);
+
   useEffect(() => {
     (async () => {
       const { data } = await supabase
@@ -223,6 +229,40 @@ const BuilderReturnsPage: React.FC = () => {
   }, [selectedClientId, selectedMonth, selectedClient?.gstin]);
 
   useEffect(() => { void refreshPrepare(); }, [refreshPrepare]);
+
+  /**
+   * The working paper only has something to say for a Partial-ITC client with
+   * a saved ITC summary for the period — fetchNetItcAvailable returns null
+   * otherwise, and the card below stays hidden rather than showing a
+   * misleading zero.
+   */
+  useEffect(() => {
+    if (!selectedClientId || !selectedMonth) { setItcCashPaper(null); return; }
+    setIsLoadingItcCash(true);
+    (async () => {
+      try {
+        const [netItc, split] = await Promise.all([
+          fetchNetItcAvailable({ clientId: selectedClientId, periodMonth: selectedMonth }),
+          fetchBuilderOutputTaxSplit({
+            clientId: selectedClientId,
+            periodMonth: selectedMonth,
+            projectId: projectFilter !== 'ALL' ? projectFilter : null,
+          }),
+        ]);
+        if (netItc === null) { setItcCashPaper(null); return; }
+        setItcCashPaper(computeItcCashWorkingPaper({
+          commercialOutputTax: split.commercialCgst + split.commercialSgst,
+          residentialOutputTax: split.residentialCgst + split.residentialSgst,
+          netItcAvailable: netItc.cgst + netItc.sgst,
+        }));
+      } catch (e) {
+        toast.error(`Could not build the ITC & cash working paper: ${(e as Error).message}`);
+        setItcCashPaper(null);
+      } finally {
+        setIsLoadingItcCash(false);
+      }
+    })();
+  }, [selectedClientId, selectedMonth, projectFilter]);
 
   const handleGenerate = async () => {
     if (!selectedClientId || !selectedMonth) return;
@@ -518,6 +558,80 @@ const BuilderReturnsPage: React.FC = () => {
               <BucketTable buckets={summary.outward} emptyText="Nothing posted for this period." />
             </CardContent>
           </Card>
+
+          {/* ── ITC & cash working paper — firm policy ────────────────────── */}
+          {isLoadingItcCash && (
+            <div className="flex items-center gap-2 text-muted-foreground text-sm">
+              <Loader2 className="h-4 w-4 animate-spin" /> Building the ITC &amp; cash working paper…
+            </div>
+          )}
+          {!isLoadingItcCash && itcCashPaper && (
+            <Card className="border-primary/30">
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Wallet className="h-4 w-4" /> ITC &amp; cash working paper — firm policy
+                </CardTitle>
+                <CardDescription>
+                  <strong>Not portal mechanics.</strong> The GST portal nets all available credit against
+                  the aggregate CGST/SGST liability regardless of which supply generated either side — it
+                  does not know or care that this project has a residential and a commercial leg. The firm
+                  elects, as a matter of internal discipline, to set off input tax credit only against
+                  commercial output tax and to pay residential output tax in cash every period, even where
+                  surplus credit remains. This table shows what that policy calls for; it changes nothing
+                  in ITC Working or GSTR-3B on its own.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead />
+                        <TableHead className="text-right">Commercial (18%, with credit)</TableHead>
+                        <TableHead className="text-right">Residential (no ITC)</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      <TableRow>
+                        <TableCell className="font-medium">Output tax for the period</TableCell>
+                        <TableCell className="text-right text-sm">{formatINR(itcCashPaper.commercialOutputTax)}</TableCell>
+                        <TableCell className="text-right text-sm">{formatINR(itcCashPaper.residentialOutputTax)}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell className="font-medium">Net ITC available (4C)</TableCell>
+                        <TableCell className="text-right text-sm">{formatINR(itcCashPaper.netItcAvailable)}</TableCell>
+                        <TableCell className="text-right text-sm text-muted-foreground">Never applied here</TableCell>
+                      </TableRow>
+                      <TableRow className="bg-muted/30">
+                        <TableCell className="font-medium">Suggested set-off</TableCell>
+                        <TableCell className="text-right text-sm font-semibold">{formatINR(itcCashPaper.commercialSetOff)}</TableCell>
+                        <TableCell className="text-right text-sm text-muted-foreground">—</TableCell>
+                      </TableRow>
+                      <TableRow className="bg-primary/5">
+                        <TableCell className="font-semibold">Cash required</TableCell>
+                        <TableCell className="text-right text-sm font-semibold">{formatINR(itcCashPaper.commercialCashDue)}</TableCell>
+                        <TableCell className="text-right text-sm font-semibold">{formatINR(itcCashPaper.residentialCashDue)}</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3">
+                  <span className="text-sm">
+                    Total cash to arrange this period, under this policy
+                  </span>
+                  <span className="text-lg font-semibold">{formatINR(itcCashPaper.totalCashRequired)}</span>
+                </div>
+                {itcCashPaper.itcCarriedForward > 0 && (
+                  <p className="flex items-start gap-2 text-xs text-muted-foreground">
+                    <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    {formatINR(itcCashPaper.itcCarriedForward)} of credit is left after commercial is fully
+                    set off. Under this policy it is carried forward for a future month's commercial
+                    liability — not applied against residential, even though the portal would allow it.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* ── GSTR-1 legs ────────────────────────────────────────────── */}
           <Card>

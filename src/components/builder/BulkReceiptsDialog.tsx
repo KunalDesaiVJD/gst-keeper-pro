@@ -51,6 +51,10 @@ export interface BulkReceiptUnit {
   balanceToTax: number;
   /** Joint holders, for the per-member split entry. A solo booking has one. */
   members: { name: string; ratio: number }[];
+  /** Block/Wing/Tower/Phase — units are grouped by this (and by project, if given) rather than listed flat. */
+  groupLabel?: string | null;
+  /** Set when the caller spans more than one project (a client-wide run). */
+  projectName?: string;
 }
 
 interface Props {
@@ -133,6 +137,25 @@ const BulkReceiptsDialog: React.FC<Props> = ({
 
   /** Units taking more than their remaining balance — worth flagging, not blocking. */
   const overCollected = active.filter((r) => (r.derived?.tax.consideration || 0) > r.u.balanceToTax);
+
+  /**
+   * Block/Phase-wise sections instead of one flat list — essential once a
+   * project (or a client-wide run across several) has more than a handful of
+   * units. Only turned on when there is actually more than one group, so a
+   * small single-block project stays a plain list.
+   */
+  const groupKeyOf = (u: BulkReceiptUnit) => `${u.projectName ?? ''}::${u.groupLabel ?? 'Ungrouped'}`;
+  const groupLabelOf = (u: BulkReceiptUnit) => [u.projectName, u.groupLabel || 'Ungrouped'].filter(Boolean).join(' — ');
+  const hasGrouping = useMemo(() => new Set(units.map(groupKeyOf)).size > 1, [units]);
+  const groupTotals = useMemo(() => {
+    const map = new Map<string, { count: number; entered: number }>();
+    rows.forEach((r) => {
+      const key = groupKeyOf(r.u);
+      const cur = map.get(key) || { count: 0, entered: 0 };
+      map.set(key, { count: cur.count + (r.entered > 0 ? 1 : 0), entered: cur.entered + r.entered });
+    });
+    return map;
+  }, [rows]);
 
   /**
    * Every visible amount box — unit-level or, once split, per-member — in the
@@ -300,7 +323,9 @@ const BulkReceiptsDialog: React.FC<Props> = ({
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
             {overCollected.length} unit{overCollected.length === 1 ? '' : 's'} would be collected
             beyond the balance still to be taxed ({overCollected.map((r) => r.u.unitNo).join(', ')}).
-            That is legitimate where the agreement value has changed — but worth a look first.
+            That is legitimate where the customer's price has increased — but update that unit's value in
+            Unit Master first, so the ₹45 lakh test and rate stay correct (a residential unit crossing
+            ₹45,00,000 is re-rated on everything already taxed).
           </p>
         )}
 
@@ -320,12 +345,27 @@ const BulkReceiptsDialog: React.FC<Props> = ({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((r) => {
+              {rows.map((r, idx) => {
                 const isSplit = !!splits[r.u.unitId];
                 const hasJoint = r.u.members.length > 1;
                 const colCount = common.deduct_tds ? 9 : 8;
+                const groupKey = groupKeyOf(r.u);
+                const showGroupHeader = hasGrouping && (idx === 0 || groupKeyOf(rows[idx - 1].u) !== groupKey);
+                const gt = groupTotals.get(groupKey);
                 return (
                   <React.Fragment key={r.u.unitId}>
+                    {showGroupHeader && (
+                      <TableRow className="bg-muted/50 hover:bg-muted/50">
+                        <TableCell colSpan={colCount} className="py-1.5 text-xs font-semibold text-muted-foreground">
+                          {groupLabelOf(r.u)}
+                          {gt && gt.count > 0 && (
+                            <span className="ml-2 font-normal">
+                              ({gt.count} collected, {formatINR(gt.entered)})
+                            </span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    )}
                     <TableRow className={r.entered > 0 ? 'bg-primary/5' : undefined}>
                       <TableCell className="font-medium">
                         {r.u.unitNo}

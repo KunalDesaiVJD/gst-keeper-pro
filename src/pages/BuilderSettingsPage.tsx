@@ -14,7 +14,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { toast } from 'sonner';
 import {
-  Building2, Save, Loader2, Mail, CheckCircle2, AlertTriangle, Paperclip,
+  Building2, Save, Loader2, Mail, CheckCircle2, AlertTriangle, Paperclip, MapPin,
 } from 'lucide-react';
 import {
   CHARGE_HEADS,
@@ -115,6 +115,7 @@ const BuilderSettingsPage: React.FC = () => {
         .upsert({
           client_id: selectedClientId,
           raises_invoices: settings.raises_invoices,
+          default_is_metro: settings.default_is_metro,
           incl_plc: settings.incl_plc,
           incl_development: settings.incl_development,
           incl_parking: settings.incl_parking,
@@ -264,10 +265,43 @@ const BuilderSettingsPage: React.FC = () => {
             </CardContent>
           </Card>
 
+          {/* ── Metro / non-metro ────────────────────────────────────────── */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <MapPin className="h-4 w-4" /> 2. Metropolitan city
+              </CardTitle>
+              <CardDescription>
+                Decides the affordable-housing carpet limit: 60 sq m in a metropolitan city, 90 sq m
+                elsewhere. The metro list is Bengaluru, Chennai, Delhi NCR, Hyderabad, Kolkata and MMR —
+                Gujarat cities are never metro. This is only a default for a <strong>new</strong> project
+                created for this client; it is set per project (a client could in principle build in more
+                than one city) and never changes an existing project's own election.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between py-2">
+                <div className="min-w-0 pr-4">
+                  <p className="text-sm font-medium">New projects default to metropolitan</p>
+                  <p className="text-xs text-muted-foreground">
+                    {settings.default_is_metro
+                      ? 'New projects for this client start as metro (60 sq m affordable limit). Override per project if one falls outside the metro list.'
+                      : 'New projects for this client start as non-metro (90 sq m affordable limit) — the default for Gujarat property.'}
+                  </p>
+                </div>
+                <Switch
+                  checked={settings.default_is_metro}
+                  disabled={readOnly}
+                  onCheckedChange={(v) => patch({ default_is_metro: v })}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
           {/* ── Charge heads ─────────────────────────────────────────────── */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">2. Charges forming part of the unit price</CardTitle>
+              <CardTitle className="text-base">3. Charges forming part of the unit price</CardTitle>
               <CardDescription>
                 Whatever is switched on here forms the "gross amount charged" for the apartment. That one
                 base decides both the ₹45 lakh affordable limit and the taxable value — they are the same
@@ -306,7 +340,7 @@ const BuilderSettingsPage: React.FC = () => {
           {/* ── Extra work ───────────────────────────────────────────────── */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">3. Extra / additional work billed to members</CardTitle>
+              <CardTitle className="text-base">4. Extra / additional work billed to members</CardTitle>
               <CardDescription>Modifications and upgrades charged over and above the unit price.</CardDescription>
             </CardHeader>
             <CardContent>
@@ -335,7 +369,7 @@ const BuilderSettingsPage: React.FC = () => {
           {/* ── Delay interest ───────────────────────────────────────────── */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">4. Interest recovered on delayed instalments</CardTitle>
+              <CardTitle className="text-base">5. Interest recovered on delayed instalments</CardTitle>
               <CardDescription>
                 Section 15(2)(d) includes such interest in the value of the principal supply, which would
                 carry the unit's own rate. A flat 18% is the more conservative election — it never
@@ -368,7 +402,7 @@ const BuilderSettingsPage: React.FC = () => {
           {/* ── Excess tax ───────────────────────────────────────────────── */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">5. Excess tax paid on GST-inclusive receipts</CardTitle>
+              <CardTitle className="text-base">6. Excess tax paid on GST-inclusive receipts</CardTitle>
               <CardDescription>
                 Where a receipt was inclusive of GST but tax was computed on the whole figure, tax has been
                 paid on the tax. This is how the excess is dealt with once the receipt is restated.
@@ -400,7 +434,7 @@ const BuilderSettingsPage: React.FC = () => {
           {/* ── FSI ──────────────────────────────────────────────────────── */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">6. TDR / FSI under reverse charge — default</CardTitle>
+              <CardTitle className="text-base">7. TDR / FSI under reverse charge — default</CardTitle>
               <CardDescription>
                 Overridable per project. Choosing not to pay requires the client's written instruction on
                 file and GST Manager sign-off before the affected return can be filed.
@@ -443,7 +477,7 @@ const BuilderSettingsPage: React.FC = () => {
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
-                6. Client confirmation
+                8. Client confirmation
                 {confirmationState === 'received' && (
                   <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">
                     <CheckCircle2 className="h-3 w-3 mr-1" /> Confirmed

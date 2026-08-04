@@ -56,13 +56,16 @@ interface ProjectRow {
   manual_residential_carpet_sqm: number; manual_commercial_carpet_sqm: number;
   doc_series_prefix: string | null;
 }
+interface GroupRow { id: string; project_id: string; name: string; sort_order: number }
 interface UnitRow {
   id: string; unit_no: string; unit_type: UnitType; carpet_area_sqm: number;
-  base_consideration: number; status: string;
+  base_consideration: number; status: string; group_id: string | null;
   /** The registered sale deed. Half of the BU cut-off, so it belongs on the row. */
   dastavej_date: string | null;
+  dastavej_value: number | null;
   /** Set once this unit has gone through its BU/dastavej differential — the whole balance is taxed. */
   bu_event_id: string | null;
+  onboarding_status: 'LIVE' | 'CLOSED_PRE_ONBOARDING';
 }
 interface ChargeRow { unit_id: string; charge_head: string; amount: number; include_override: boolean | null }
 interface BookingRow {
@@ -132,6 +135,7 @@ const BuilderBookingsPage: React.FC = () => {
 
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [units, setUnits] = useState<UnitRow[]>([]);
+  const [groups, setGroups] = useState<GroupRow[]>([]);
   const [charges, setCharges] = useState<Record<string, ChargeRow[]>>({});
   const [bookings, setBookings] = useState<BookingRow[]>([]);
   const [members, setMembers] = useState<Record<string, MemberRow[]>>({});
@@ -156,9 +160,17 @@ const BuilderBookingsPage: React.FC = () => {
   /**
    * The surfaces the row menu opens. They are dialogs over the table rather
    * than destinations, so dismissing one returns you to the row you were on —
-   * which is the whole reason the sub-tab strip was wrong.
+   * which is the whole reason the sub-tab strip was wrong. A menu click also
+   * carries which unit and which action it was for, so the surface opens
+   * straight into that unit's dialog instead of a generic, unscoped page the
+   * unit has to be found in again.
    */
-  const [surface, setSurface] = useState<'' | 'masters' | 'corrections' | 'dastavej'>('');
+  interface SurfaceState {
+    type: '' | 'masters' | 'corrections' | 'dastavej';
+    unitId?: string;
+    action?: 'editUnit' | 'openingBalance' | 'creditNote' | 'reRate' | 'bounceReversal' | 'convert' | 'recordDastavej';
+  }
+  const [surface, setSurface] = useState<SurfaceState>({ type: '' });
 
   /**
    * Client setup opens the masters surface too, so the one-time job lives with
@@ -167,7 +179,7 @@ const BuilderBookingsPage: React.FC = () => {
    * would give the ledger a second owner for a dialog it already owns.
    */
   useEffect(() => {
-    const open = () => setSurface('masters');
+    const open = () => setSurface({ type: 'masters' });
     window.addEventListener('builder:open-masters', open);
     return () => window.removeEventListener('builder:open-masters', open);
   }, []);
@@ -209,11 +221,15 @@ const BuilderBookingsPage: React.FC = () => {
       setDelayInterestBasis(clientSettings.delay_interest_basis);
       setRaisesInvoices(clientSettings.raises_invoices !== false);
 
-      const { data: unt } = await supabase
-        .from('builder_units').select('*').eq('project_id', projectId)
-        .order('sort_order').order('unit_no');
+      const [{ data: unt }, { data: grp }] = await Promise.all([
+        supabase.from('builder_units').select('*').eq('project_id', projectId)
+          .order('sort_order').order('unit_no'),
+        supabase.from('builder_project_groups').select('*').eq('project_id', projectId)
+          .order('sort_order').order('name'),
+      ]);
       const unitRows = (unt || []) as unknown as UnitRow[];
       setUnits(unitRows);
+      setGroups((grp || []) as unknown as GroupRow[]);
       const unitIds = unitRows.map((u) => u.id);
       if (!unitIds.length) {
         setCharges({}); setBookings([]); setMembers({}); setReceipts({});
@@ -470,6 +486,30 @@ const BuilderBookingsPage: React.FC = () => {
     return isTds194IAApplicable(receiptTarget.booking.total_consideration);
   }, [receiptTarget]);
 
+  /**
+   * When this receipt takes the unit past its recorded agreement value, the
+   * customer's price has almost certainly changed. The firm's rule: update the
+   * unit's value in the master FIRST (so the ₹45 lakh test and rate are right),
+   * and a residential unit crossing ₹45 lakh is re-rated on everything already
+   * taxed, in the month it crosses. This surfaces that at the point of entry
+   * rather than leaving it to be caught later.
+   */
+  const agreementWarning = useMemo(() => {
+    if (!receiptTarget || !receiptPreview) return null;
+    if (!(receiptPreview.tax.consideration > 0)) return null;
+    if (receiptForm.receipt_nature === 'AGAINST_INVOICE') return null; // not fresh consideration
+    const u = receiptTarget.unit;
+    const cls = classifyFor(u);
+    const agreement = openings[u.id]?.agreement_value || cls.gross.gross;
+    const led = ledgerFor(u);
+    const newValueTaxed = (led?.valueTaxed || 0) + receiptPreview.tax.consideration;
+    if (newValueTaxed <= agreement + 1) return null;
+    const crosses45L = u.unit_type === 'Residential'
+      && cls.affordable.isAffordable
+      && newValueTaxed > AFFORDABLE_VALUE_LIMIT;
+    return { agreement, newValueTaxed, crosses45L };
+  }, [receiptTarget, receiptPreview, receiptForm.receipt_nature, classifyFor, openings, ledgerFor]);
+
   /** Reopen an existing receipt in the same dialog that created it. */
   const openEditReceipt = (u: UnitRow, b: BookingRow, r: ReceiptRow) => {
     setReceiptTarget({ unit: u, booking: b });
@@ -644,7 +684,15 @@ const BuilderBookingsPage: React.FC = () => {
    * Units a collection run can touch. A receipt hangs off a booking, so a unit
    * without an active one is not offered rather than being offered and failing.
    */
-  const bulkReceiptUnits: BulkReceiptUnit[] = useMemo(() => units.flatMap((u) => {
+  const bulkReceiptUnits: BulkReceiptUnit[] = useMemo(() => {
+    // Group order first (units within a block stay together for the section
+    // headers), then the project's own sort within each block.
+    const orderOf = (u: UnitRow) => {
+      const g = groups.find((x) => x.id === u.group_id);
+      return g ? g.sort_order : Number.MAX_SAFE_INTEGER;
+    };
+    const ordered = [...units].sort((a, b) => orderOf(a) - orderOf(b));
+    return ordered.flatMap((u) => {
     const booking = bookings.find((b) => b.unit_id === u.id && b.status === 'Active');
     if (!booking) return [];
     // Already through its BU/dastavej differential — the whole balance is
@@ -666,8 +714,10 @@ const BuilderBookingsPage: React.FC = () => {
       members: (members[booking.id] || []).map((m) => ({
         name: m.name, ratio: Number(m.ownership_ratio) || 0,
       })),
+      groupLabel: groups.find((g) => g.id === u.group_id)?.name || null,
     }];
-  }), [units, bookings, classifyFor, ledgerFor, members]);
+    });
+  }, [units, bookings, classifyFor, ledgerFor, members, groups]);
 
   /** Headroom for a residential unit; null where affordability cannot apply. */
   const headroomOf = useCallback((u: UnitRow) => (
@@ -692,6 +742,22 @@ const BuilderBookingsPage: React.FC = () => {
       return h !== null && h >= 0 && h < 100000;
     }).length,
     [units, headroomOf],
+  );
+
+  /**
+   * Units that have already crossed ₹45 lakh while carrying receipts taxed at
+   * the affordable 1.5% rate — the concession never applied, so everything
+   * already taxed at 1.5% is due at 7.5%. This is the re-rating the firm has
+   * to raise in the month it crosses; surfacing it here, on the page staff
+   * work every day, rather than only on the Adjustments tab.
+   */
+  const reRatingDue = useMemo(
+    () => units.filter((u) => {
+      if (u.unit_type !== 'Residential') return false;
+      if (classifyFor(u).affordable.isAffordable) return false; // now over ₹45L
+      return (receipts[u.id] || []).some((r) => r.rate_code === 'AFFORDABLE');
+    }),
+    [units, classifyFor, receipts],
   );
 
   /**
@@ -914,6 +980,26 @@ const BuilderBookingsPage: React.FC = () => {
         }
       />
 
+      {/* Re-rating due: a unit crossed ₹45 lakh while carrying 1.5% receipts.
+          On the page staff work daily, not buried in the Adjustments tab. */}
+      {canEdit && reRatingDue.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-400 bg-amber-50 px-3 py-2 text-amber-900">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span className="text-sm">
+            <strong>{reRatingDue.length} unit{reRatingDue.length === 1 ? '' : 's'}</strong>
+            {' '}crossed ₹45,00,000 while taxed as affordable
+            {' '}({reRatingDue.map((u) => u.unit_no).join(', ')}). The concession never applied — everything
+            already taxed at 1.5% is due at 7.5%, in the month it crossed.
+          </span>
+          <Button
+            variant="outline" size="sm" className="ml-auto h-7"
+            onClick={() => setSurface({ type: 'corrections', unitId: reRatingDue[0].id, action: 'reRate' })}
+          >
+            Re-rate now
+          </Button>
+        </div>
+      )}
+
       {/* Appears only once something is selected, so it never occupies space
           during ordinary entry. */}
       {selected.size > 0 && (
@@ -1125,7 +1211,7 @@ const BuilderBookingsPage: React.FC = () => {
                     Import the unit list to begin. Afterwards this is reached from Client setup —
                     it is an onboarding job, not a monthly one.
                   </p>
-                  <Button size="sm" className="mt-4" onClick={() => setSurface('masters')}>
+                  <Button size="sm" className="mt-4" onClick={() => setSurface({ type: 'masters' })}>
                     <Layers className="mr-2 h-4 w-4" /> Units &amp; masters
                   </Button>
                 </>
@@ -1172,6 +1258,11 @@ const BuilderBookingsPage: React.FC = () => {
                           <TableCell className="font-medium">
                             {u.unit_no}
                             <span className="block text-xs text-muted-foreground">{u.unit_type}</span>
+                            {u.onboarding_status === 'CLOSED_PRE_ONBOARDING' && (
+                              <Badge variant="outline" className="mt-1 text-[10px]" title="Resolved before this project was onboarded here — no BU/dastavej working is computed for it">
+                                Closed pre-onboarding
+                              </Badge>
+                            )}
                           </TableCell>
                           <TableCell className="text-sm">
                             {mem.length === 0 ? (
@@ -1252,33 +1343,51 @@ const BuilderBookingsPage: React.FC = () => {
                                       <span className="sr-only">More actions for unit {u.unit_no}</span>
                                     </Button>
                                   </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end" className="w-60">
+                                  <DropdownMenuContent align="end" className="w-64">
                                     <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                                      Corrections
+                                      This month
                                     </DropdownMenuLabel>
-                                    <DropdownMenuItem onSelect={() => setSurface('corrections')}>
+                                    <DropdownMenuItem
+                                      onSelect={() => setSurface({ type: 'dastavej', unitId: u.id, action: 'recordDastavej' })}
+                                    >
+                                      Record dastavej
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                      Rare — occasional corrections
+                                    </DropdownMenuLabel>
+                                    <DropdownMenuItem
+                                      onSelect={() => setSurface({ type: 'corrections', unitId: u.id, action: 'creditNote' })}
+                                    >
                                       Credit note
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onSelect={() => setSurface('corrections')}>
+                                    <DropdownMenuItem
+                                      onSelect={() => setSurface({ type: 'corrections', unitId: u.id, action: 'reRate' })}
+                                    >
                                       Re-rate (Table 10)
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onSelect={() => setSurface('corrections')}>
+                                    <DropdownMenuItem
+                                      onSelect={() => setSurface({ type: 'corrections', unitId: u.id, action: 'bounceReversal' })}
+                                    >
                                       Bounce reversal
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onSelect={() => setSurface('corrections')}>
+                                    <DropdownMenuItem
+                                      onSelect={() => setSurface({ type: 'corrections', unitId: u.id, action: 'convert' })}
+                                    >
                                       Convert to another unit
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                                      Records
+                                      Setup
                                     </DropdownMenuLabel>
-                                    <DropdownMenuItem onSelect={() => setSurface('dastavej')}>
-                                      Record dastavej
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem onSelect={() => setSurface('masters')}>
+                                    <DropdownMenuItem
+                                      onSelect={() => setSurface({ type: 'masters', unitId: u.id, action: 'editUnit' })}
+                                    >
                                       Edit unit &amp; charge heads
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onSelect={() => setSurface('masters')}>
+                                    <DropdownMenuItem
+                                      onSelect={() => setSurface({ type: 'masters', unitId: u.id, action: 'openingBalance' })}
+                                    >
                                       Opening balance
                                     </DropdownMenuItem>
                                   </DropdownMenuContent>
@@ -1577,19 +1686,41 @@ const BuilderBookingsPage: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      {/* ── Receipt dialog ───────────────────────────────────────────────── */}
-      <Dialog open={!!surface} onOpenChange={(o) => !o && setSurface('')}>
+      {/* ── Masters / corrections / dastavej surfaces ───────────────────────── */}
+      <Dialog open={!!surface.type} onOpenChange={(o) => !o && setSurface({ type: '' })}>
         <DialogContent className="max-w-[95vw] max-h-[92vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              {surface === 'masters' ? 'Units, charge heads & opening balances'
-                : surface === 'corrections' ? 'Corrections — re-rating, credit notes, bounces, conversions'
+              {surface.type === 'masters' ? 'Units, charge heads & opening balances'
+                : surface.type === 'corrections' ? 'Corrections — re-rating, credit notes, bounces, conversions'
                 : 'Dastavej register'}
             </DialogTitle>
           </DialogHeader>
-          {surface === 'masters' && <BuilderProjectDetailPage />}
-          {surface === 'corrections' && <BuilderAdjustmentsPage />}
-          {surface === 'dastavej' && <BuilderDastavejPage />}
+          {surface.type === 'masters' && (
+            <BuilderProjectDetailPage
+              focusUnitId={surface.unitId}
+              focusAction={surface.action === 'editUnit' || surface.action === 'openingBalance' ? surface.action : undefined}
+            />
+          )}
+          {surface.type === 'corrections' && (
+            <BuilderAdjustmentsPage
+              focusUnitId={surface.unitId}
+              focusAction={
+                surface.action === 'creditNote' || surface.action === 'reRate'
+                || surface.action === 'bounceReversal' || surface.action === 'convert'
+                  ? surface.action : undefined
+              }
+            />
+          )}
+          {surface.type === 'dastavej' && (
+            <BuilderDastavejPage
+              focusProjectId={projectId ?? undefined}
+              focusUnit={(() => {
+                const u = units.find((x) => x.id === surface.unitId);
+                return u ? { id: u.id, unit_no: u.unit_no, dastavej_date: u.dastavej_date, dastavej_value: u.dastavej_value } : undefined;
+              })()}
+            />
+          )}
         </DialogContent>
       </Dialog>
 
@@ -1787,6 +1918,39 @@ const BuilderBookingsPage: React.FC = () => {
                   </p>
                 </div>
               )}
+            </div>
+          )}
+
+          {agreementWarning && (
+            <div className="flex gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-1">
+                <p>
+                  This receipt takes the unit's value taxed to{' '}
+                  <strong>{formatINR(agreementWarning.newValueTaxed)}</strong>, beyond its recorded agreement
+                  value of <strong>{formatINR(agreementWarning.agreement)}</strong>. If the customer's price
+                  has actually increased, <strong>update the unit's value in Unit Master first</strong> — the
+                  ₹45 lakh test and the rate are read from it.
+                </p>
+                {agreementWarning.crosses45L && (
+                  <p>
+                    It also takes a unit currently taxed as affordable past <strong>₹45,00,000</strong>. Once
+                    the master reflects that, the unit is re-rated to 7.5% on everything already taxed, in the
+                    month it crosses — raise that from the row menu → Re-rate (Table 10).
+                  </p>
+                )}
+                {receiptTarget && (
+                  <Button
+                    variant="outline" size="sm" className="mt-1 h-7"
+                    onClick={() => {
+                      setReceiptDialog(false);
+                      setSurface({ type: 'masters', unitId: receiptTarget.unit.id, action: 'editUnit' });
+                    }}
+                  >
+                    <Pencil className="mr-1.5 h-3 w-3" /> Update unit value now
+                  </Button>
+                )}
+              </div>
             </div>
           )}
 

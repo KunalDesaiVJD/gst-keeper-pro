@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorkspaceContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -31,6 +31,7 @@ import {
 import { CHARGE_HEADS, fetchBuilderSettings } from '@/lib/builderSettings';
 import { CHARGE_HEAD_LABEL } from '@/utils/builderRates';
 import BulkAddUnitsDialog from '@/components/builder/BulkAddUnitsDialog';
+import BulkOpeningBalancesDialog, { type BulkOpeningUnit } from '@/components/builder/BulkOpeningBalancesDialog';
 
 interface ProjectRow {
   id: string;
@@ -49,6 +50,8 @@ interface ProjectRow {
 
 interface GroupRow { id: string; project_id: string; name: string; sort_order: number }
 
+type OnboardingStatus = 'LIVE' | 'CLOSED_PRE_ONBOARDING';
+
 interface UnitRow {
   id: string;
   project_id: string;
@@ -59,6 +62,7 @@ interface UnitRow {
   base_consideration: number;
   status: string;
   sort_order: number;
+  onboarding_status: OnboardingStatus;
 }
 
 interface ChargeRow {
@@ -90,6 +94,7 @@ const emptyUnitForm = {
   carpet_area_sqm: '',
   base_consideration: '',
   status: 'Available',
+  onboarding_status: 'LIVE' as OnboardingStatus,
 };
 
 const emptyOpeningForm = {
@@ -102,7 +107,13 @@ const emptyOpeningForm = {
   cumulative_tds_194ia: '',
 };
 
-const BuilderProjectDetailPage: React.FC = () => {
+interface Props {
+  /** Jump straight into a unit's edit or opening-balance dialog, instead of the full unit master. */
+  focusUnitId?: string;
+  focusAction?: 'editUnit' | 'openingBalance';
+}
+
+const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction }) => {
   const projectId = useBuilderProjectId();
   const embedded = useBuilderEmbedded();
   const navigate = useNavigate();
@@ -119,6 +130,7 @@ const BuilderProjectDetailPage: React.FC = () => {
 
   const [unitDialog, setUnitDialog] = useState(false);
   const [bulkDialog, setBulkDialog] = useState(false);
+  const [bulkOpeningDialog, setBulkOpeningDialog] = useState(false);
   const [editingUnit, setEditingUnit] = useState<UnitRow | null>(null);
   const [unitForm, setUnitForm] = useState(emptyUnitForm);
   const [unitCharges, setUnitCharges] = useState<UnitCharge[]>([]);
@@ -180,6 +192,19 @@ const BuilderProjectDetailPage: React.FC = () => {
 
   useEffect(() => { void load(); }, [load]);
 
+  const handledFocusRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusUnitId || !focusAction || isLoading) return;
+    const key = `${focusUnitId}:${focusAction}`;
+    if (handledFocusRef.current === key) return;
+    const u = units.find((x) => x.id === focusUnitId);
+    if (!u) return;
+    handledFocusRef.current = key;
+    if (focusAction === 'editUnit') openEditUnit(u);
+    else openOpening(u);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusUnitId, focusAction, isLoading, units]);
+
   // ── The 15% test, from whichever source the project elected ──────────────
   const rrep = useMemo(() => {
     if (!project) return testRrep(0, 0);
@@ -207,6 +232,37 @@ const BuilderProjectDetailPage: React.FC = () => {
     isRrep: rrep.isRrep,
     settings,
   }), [charges, project, rrep.isRrep, settings]);
+
+  /** Feed for the bulk opening-balances grid — one row per unit, block by block. */
+  const bulkOpeningUnits: BulkOpeningUnit[] = useMemo(() => {
+    const orderOf = (u: UnitRow) => {
+      const g = groups.find((x) => x.id === u.group_id);
+      return g ? g.sort_order : Number.MAX_SAFE_INTEGER;
+    };
+    const ordered = [...units].sort((a, b) => orderOf(a) - orderOf(b));
+    return ordered.map((u) => {
+    const cls = classifyStored(u);
+    const existing = openings[u.id];
+    return {
+      unitId: u.id,
+      unitNo: u.unit_no,
+      rateCode: cls.rateCode,
+      ratePct: cls.ratePct,
+      isAffordable: cls.affordable.isAffordable,
+      defaultAgreementValue: cls.gross.gross,
+      groupLabel: groups.find((g) => g.id === u.group_id)?.name || null,
+      existing: existing ? {
+        as_at_date: existing.as_at_date,
+        agreement_value: existing.agreement_value,
+        cumulative_receipts: existing.cumulative_receipts,
+        cumulative_value_taxed: existing.cumulative_value_taxed,
+        cumulative_cgst: existing.cumulative_cgst,
+        cumulative_sgst: existing.cumulative_sgst,
+        cumulative_tds_194ia: existing.cumulative_tds_194ia,
+      } : undefined,
+    };
+    });
+  }, [units, openings, classifyStored, groups]);
 
   /** Live classification for whatever is currently in the unit dialog. */
   const formClassification = useMemo(() => classifyUnit({
@@ -236,6 +292,7 @@ const BuilderProjectDetailPage: React.FC = () => {
       carpet_area_sqm: String(u.carpet_area_sqm ?? ''),
       base_consideration: String(u.base_consideration ?? ''),
       status: u.status,
+      onboarding_status: u.onboarding_status || 'LIVE',
     });
     setUnitCharges((charges[u.id] || []).map((c) => ({
       charge_head: c.charge_head, amount: Number(c.amount) || 0, include_override: c.include_override,
@@ -296,6 +353,7 @@ const BuilderProjectDetailPage: React.FC = () => {
         carpet_area_sqm: parseFloat(unitForm.carpet_area_sqm) || 0,
         base_consideration: parseFloat(unitForm.base_consideration) || 0,
         status: unitForm.status,
+        onboarding_status: unitForm.onboarding_status,
         updated_by: user?.id ?? null,
       };
 
@@ -542,6 +600,9 @@ const BuilderProjectDetailPage: React.FC = () => {
                   <Button variant="outline" onClick={() => setBulkDialog(true)}>
                     <Layers className="h-4 w-4 mr-2" /> Add many
                   </Button>
+                  <Button variant="outline" onClick={() => setBulkOpeningDialog(true)} disabled={!units.length}>
+                    <Wallet className="h-4 w-4 mr-2" /> Opening balances
+                  </Button>
                   <Button onClick={openCreateUnit}><Plus className="h-4 w-4 mr-2" /> Add unit</Button>
                 </div>
               )}
@@ -577,7 +638,12 @@ const BuilderProjectDetailPage: React.FC = () => {
                         const opening = openings[u.id];
                         return (
                           <TableRow key={u.id}>
-                            <TableCell className="font-medium">{u.unit_no}</TableCell>
+                            <TableCell className="font-medium">
+                              {u.unit_no}
+                              {u.onboarding_status === 'CLOSED_PRE_ONBOARDING' && (
+                                <Badge variant="outline" className="ml-1.5 text-[10px]">Closed pre-onboarding</Badge>
+                              )}
+                            </TableCell>
                             <TableCell className="text-sm text-muted-foreground">{groupName_(u.group_id)}</TableCell>
                             <TableCell className="text-sm">{u.unit_type}</TableCell>
                             <TableCell className="text-right text-sm">{Number(u.carpet_area_sqm).toFixed(3)}</TableCell>
@@ -717,6 +783,14 @@ const BuilderProjectDetailPage: React.FC = () => {
         />
       )}
 
+      <BulkOpeningBalancesDialog
+        open={bulkOpeningDialog}
+        onOpenChange={setBulkOpeningDialog}
+        units={bulkOpeningUnits}
+        defaultAsAtDate={project?.opening_cutoff_date ?? null}
+        onSaved={load}
+      />
+
       <Dialog open={unitDialog} onOpenChange={setUnitDialog}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -779,6 +853,32 @@ const BuilderProjectDetailPage: React.FC = () => {
                 value={unitForm.base_consideration}
                 onChange={(e) => setUnitForm({ ...unitForm, base_consideration: e.target.value })}
               />
+            </div>
+            <div className="sm:col-span-2">
+              <Label>Onboarding status</Label>
+              <Select
+                value={unitForm.onboarding_status}
+                onValueChange={(v) => setUnitForm({ ...unitForm, onboarding_status: v as OnboardingStatus })}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="LIVE">Live — this software runs its BU/dastavej working on it</SelectItem>
+                  <SelectItem value="CLOSED_PRE_ONBOARDING">
+                    Closed before onboarding — already fully resolved elsewhere
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              {unitForm.onboarding_status === 'CLOSED_PRE_ONBOARDING' && (
+                <div className="mt-2 flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <p className="text-xs">
+                    This unit is skipped by every BU-event sweep and by the dastavej auto-post differential —
+                    this software will never compute or post GST for it. It still counts toward the project's
+                    carpet area for the 15% test. Only set this where the firm's own records already show the
+                    unit fully and correctly taxed before this project was onboarded here.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
