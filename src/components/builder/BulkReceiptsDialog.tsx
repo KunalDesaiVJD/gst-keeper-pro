@@ -37,19 +37,27 @@ import { Loader2, Wallet, AlertTriangle, Users } from 'lucide-react';
 import { formatINR, computeTds194IA, isTds194IAApplicable, type BuilderRateCode } from '@/utils/builderRates';
 import { deriveReceipt, dateToPeriod, prettyPeriodLabel } from '@/utils/builderLedger';
 
-const INSTRUMENTS = ['NEFT', 'RTGS', 'IMPS', 'Cheque', 'Cash', 'UPI', 'Other'];
+// Must match the builder_receipts_instrument_type_check DB constraint exactly,
+// or every save fails — 'NEFT'/'RTGS'/'IMPS' are NOT valid values there.
+const INSTRUMENTS = ['NEFT/RTGS', 'Cheque', 'UPI', 'Cash', 'Bank Transfer', 'Adjustment', 'Other'];
 
 /** One line the caller offers for collection. */
 export interface BulkReceiptUnit {
   unitId: string;
   unitNo: string;
-  bookingId: string;
+  /**
+   * The unit's active booking, or null for an unbooked unit. When null, a
+   * receipt entered against the unit auto-creates its booking on save — the
+   * builder reality being that money received IS the moment of sale, so the
+   * booking follows the receipt rather than blocking it.
+   */
+  bookingId: string | null;
   rateCode: BuilderRateCode;
   ratePct: number;
-  /** Agreement value, for the 194-IA threshold test. */
+  /** Agreement value, for the 194-IA threshold test and the auto-booking's total consideration. */
   totalConsideration: number;
   balanceToTax: number;
-  /** Joint holders, for the per-member split entry. A solo booking has one. */
+  /** Joint holders, for the per-member split entry. Empty for an unbooked unit. */
   members: { name: string; ratio: number }[];
   /** Block/Wing/Tower/Phase — units are grouped by this (and by project, if given) rather than listed flat. */
   groupLabel?: string | null;
@@ -75,7 +83,7 @@ const BulkReceiptsDialog: React.FC<Props> = ({
   const [common, setCommon] = useState({
     receipt_date: today,
     receipt_nature: 'ADVANCE',
-    instrument_type: 'NEFT',
+    instrument_type: 'NEFT/RTGS',
     amount_is_gst_inclusive: false,
     deduct_tds: false,
   });
@@ -93,6 +101,8 @@ const BulkReceiptsDialog: React.FC<Props> = ({
   const [splits, setSplits] = useState<Record<string, boolean>>({});
   const [memberAmounts, setMemberAmounts] = useState<Record<string, Record<string, string>>>({});
   const [memberRefs, setMemberRefs] = useState<Record<string, Record<string, string>>>({});
+  /** Buyer name for an unbooked unit, captured inline so the auto-created booking has a holder. */
+  const [buyerNames, setBuyerNames] = useState<Record<string, string>>({});
 
   const unitAmountFor = useCallback((u: BulkReceiptUnit) => {
     if (!splits[u.unitId]) return amounts[u.unitId] || '';
@@ -205,9 +215,40 @@ const BulkReceiptsDialog: React.FC<Props> = ({
     setIsSaving(true);
     try {
       const period = dateToPeriod(common.receipt_date);
+
+      // A receipt has to hang off a booking, so any unbooked unit that received
+      // money is booked here first — money in is the moment of sale. The booking
+      // takes the unit's agreement value as its consideration and a single
+      // primary holder, named inline or left "To be named" to complete later.
+      const bookingIdByUnit: Record<string, string> = {};
+      let autoBooked = 0;
+      for (const r of active) {
+        if (r.u.bookingId) { bookingIdByUnit[r.u.unitId] = r.u.bookingId; continue; }
+        const { data: bk, error: bErr } = await supabase.from('builder_bookings').insert({
+          unit_id: r.u.unitId,
+          booking_date: common.receipt_date,
+          total_consideration: r.u.totalConsideration || 0,
+          status: 'Active',
+          created_by: user?.id ?? null,
+        }).select('id').single();
+        if (bErr || !bk) throw new Error(bErr?.message || 'Could not create the booking');
+        const { error: mErr } = await supabase.from('builder_booking_members').insert({
+          booking_id: bk.id,
+          name: (buyerNames[r.u.unitId] || '').trim() || 'To be named',
+          pan: null,
+          ownership_ratio: 100,
+          is_primary: true,
+          sort_order: 0,
+        });
+        if (mErr) throw mErr;
+        await supabase.from('builder_units').update({ status: 'Booked' }).eq('id', r.u.unitId);
+        bookingIdByUnit[r.u.unitId] = bk.id;
+        autoBooked += 1;
+      }
+
       const { data, error } = await supabase.from('builder_receipts').insert(
         active.map((r) => ({
-          booking_id: r.u.bookingId,
+          booking_id: bookingIdByUnit[r.u.unitId],
           unit_id: r.u.unitId,
           receipt_date: common.receipt_date,
           receipt_nature: common.receipt_nature,
@@ -236,9 +277,10 @@ const BulkReceiptsDialog: React.FC<Props> = ({
         throw new Error('Write was rejected by the database (no rows returned).');
       }
       toast.success(
-        `${data.length} receipt${data.length === 1 ? '' : 's'} recorded for ${prettyPeriodLabel(period)}.`,
+        `${data.length} receipt${data.length === 1 ? '' : 's'} recorded for ${prettyPeriodLabel(period)}`
+        + (autoBooked ? `; ${autoBooked} unit${autoBooked === 1 ? '' : 's'} auto-booked` : '') + '.',
       );
-      setAmounts({}); setRefs({}); setSplits({}); setMemberAmounts({}); setMemberRefs({});
+      setAmounts({}); setRefs({}); setSplits({}); setMemberAmounts({}); setMemberRefs({}); setBuyerNames({});
       onOpenChange(false);
       await onSaved();
     } catch (e) {
@@ -257,9 +299,9 @@ const BulkReceiptsDialog: React.FC<Props> = ({
           </DialogTitle>
           <DialogDescription>
             Set the date and instrument once, then type down the amount column — <kbd className="rounded border px-1 text-[10px]">Enter</kbd> moves
-            to the next unit, and pasting a copied column fills it straight down. Only units with an
-            active booking are listed, because a receipt has to hang off one. A joint unit paid in
-            more than one transfer can be split by member instead of added up by hand.
+            to the next unit, and pasting a copied column fills it straight down. An <strong>unbooked</strong> unit
+            you collect against is booked automatically on save (name the buyer inline, or fill it in later).
+            A joint unit paid in more than one transfer can be split by member instead of added up by hand.
           </DialogDescription>
         </DialogHeader>
 
@@ -373,6 +415,18 @@ const BulkReceiptsDialog: React.FC<Props> = ({
                           <span className="block text-xs text-muted-foreground">
                             {r.u.members[0].name} +{r.u.members.length - 1} joint
                           </span>
+                        )}
+                        {!r.u.bookingId && (
+                          r.entered > 0 ? (
+                            <Input
+                              className="mt-1 h-6 text-xs"
+                              value={buyerNames[r.u.unitId] || ''}
+                              onChange={(e) => setBuyerNames({ ...buyerNames, [r.u.unitId]: e.target.value })}
+                              placeholder="Buyer name (optional)"
+                            />
+                          ) : (
+                            <span className="block text-[10px] text-muted-foreground">Unbooked — books on save</span>
+                          )
                         )}
                       </TableCell>
                       <TableCell>

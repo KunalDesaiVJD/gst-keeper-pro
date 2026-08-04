@@ -93,7 +93,7 @@ const BuilderWorkspacePage: React.FC = () => {
     setBulkLoading('receipts');
     try {
       const { units } = await fetchClientBulkReceiptUnits(selectedClientId);
-      if (!units.length) { toast.info('No units with an active booking to collect against yet.'); return; }
+      if (!units.length) { toast.info('No units available to collect against yet — add units to a project first.'); return; }
       setClientReceiptUnits(units);
       setClientReceiptsOpen(true);
     } catch (e) {

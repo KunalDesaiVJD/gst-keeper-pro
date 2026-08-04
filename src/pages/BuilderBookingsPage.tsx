@@ -521,7 +521,7 @@ const BuilderBookingsPage: React.FC = () => {
       amount_is_gst_inclusive: !!r.amount_is_gst_inclusive,
       tds_194ia: String(r.tds_194ia ?? ''),
       bank_credit: r.bank_credit === null || r.bank_credit === undefined ? '' : String(r.bank_credit),
-      instrument_type: r.instrument_type || 'NEFT',
+      instrument_type: r.instrument_type || 'NEFT/RTGS',
       instrument_ref: r.instrument_ref || '',
       cheque_status: r.cheque_status,
       gst_already_discharged: !!r.gst_already_discharged,
@@ -681,8 +681,10 @@ const BuilderBookingsPage: React.FC = () => {
   };
 
   /**
-   * Units a collection run can touch. A receipt hangs off a booking, so a unit
-   * without an active one is not offered rather than being offered and failing.
+   * Units a collection run can touch. Every unit is offered — a booked one
+   * collects against its booking; an unbooked one is auto-booked on save (money
+   * in is the moment of sale), so the grid never leaves a unit out just because
+   * nobody has keyed a booking for it yet.
    */
   const bulkReceiptUnits: BulkReceiptUnit[] = useMemo(() => {
     // Group order first (units within a block stay together for the section
@@ -693,31 +695,33 @@ const BuilderBookingsPage: React.FC = () => {
     };
     const ordered = [...units].sort((a, b) => orderOf(a) - orderOf(b));
     return ordered.flatMap((u) => {
-    const booking = bookings.find((b) => b.unit_id === u.id && b.status === 'Active');
-    if (!booking) return [];
     // Already through its BU/dastavej differential — the whole balance is
     // taxed. Anything collected from here is a plain collection, not a fresh
     // advance, so it doesn't belong in a "record this month's advances" run.
     // The rare late payment still goes through the single-receipt dialog,
     // which defaults "GST already discharged" on for exactly this unit.
     if (u.bu_event_id) return [];
+    if (u.status === 'Cancelled') return [];
+    const booking = bookings.find((b) => b.unit_id === u.id && b.status === 'Active');
     const cls = classifyFor(u);
     const led = ledgerFor(u);
+    const agreement = openings[u.id]?.agreement_value || cls.gross.gross;
+    const total = booking ? Number(booking.total_consideration) || 0 : agreement;
     return [{
       unitId: u.id,
       unitNo: u.unit_no,
-      bookingId: booking.id,
+      bookingId: booking ? booking.id : null,
       rateCode: cls.rateCode,
       ratePct: cls.ratePct,
-      totalConsideration: Number(booking.total_consideration) || 0,
-      balanceToTax: Math.max(0, (Number(booking.total_consideration) || 0) - (led?.valueTaxed || 0)),
-      members: (members[booking.id] || []).map((m) => ({
-        name: m.name, ratio: Number(m.ownership_ratio) || 0,
-      })),
+      totalConsideration: total,
+      balanceToTax: Math.max(0, total - (led?.valueTaxed || 0)),
+      members: booking
+        ? (members[booking.id] || []).map((m) => ({ name: m.name, ratio: Number(m.ownership_ratio) || 0 }))
+        : [],
       groupLabel: groups.find((g) => g.id === u.group_id)?.name || null,
     }];
     });
-  }, [units, bookings, classifyFor, ledgerFor, members, groups]);
+  }, [units, bookings, classifyFor, ledgerFor, members, groups, openings]);
 
   /** Headroom for a residential unit; null where affordability cannot apply. */
   const headroomOf = useCallback((u: UnitRow) => (
