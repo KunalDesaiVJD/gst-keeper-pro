@@ -186,7 +186,12 @@ function sortUnits(ctx: ClientBulkContext): UnitRow[] {
     || a.unit_no.localeCompare(b.unit_no));
 }
 
-/** Every active-booking, not-yet-BU-closed unit across a client's projects, ready for a bulk receipt run. */
+/**
+ * Every not-yet-BU-closed unit across a client's projects, ready for a bulk
+ * receipt run. Unbooked units are included with a null bookingId — the dialog
+ * auto-books them on save, so a client-wide collection run never skips a unit
+ * merely because no booking has been keyed for it yet.
+ */
 export async function fetchClientBulkReceiptUnits(clientId: string): Promise<{
   units: BulkReceiptUnit[]; docSeriesPrefix: string | null;
 }> {
@@ -198,19 +203,23 @@ export async function fetchClientBulkReceiptUnits(clientId: string): Promise<{
   const out: BulkReceiptUnit[] = [];
   sortUnits(ctx).forEach((u) => {
     if (u.bu_event_id) return;
+    if (u.status === 'Cancelled') return;
     const booking = (ctx.bookingsByUnit[u.id] || []).find((b) => b.status === 'Active');
-    if (!booking) return;
     const cls = classifyOne(ctx, u);
     const led = ledgerOne(ctx, u, cls.gross.gross);
+    const agreement = ctx.openingsByUnit[u.id]?.agreement_value || cls.gross.gross;
+    const total = booking ? Number(booking.total_consideration) || 0 : agreement;
     out.push({
       unitId: u.id,
       unitNo: u.unit_no,
-      bookingId: booking.id,
+      bookingId: booking ? booking.id : null,
       rateCode: cls.rateCode,
       ratePct: cls.ratePct,
-      totalConsideration: Number(booking.total_consideration) || 0,
-      balanceToTax: Math.max(0, (Number(booking.total_consideration) || 0) - (led?.valueTaxed || 0)),
-      members: (ctx.membersByBooking[booking.id] || []).map((m) => ({ name: m.name, ratio: Number(m.ownership_ratio) || 0 })),
+      totalConsideration: total,
+      balanceToTax: Math.max(0, total - (led?.valueTaxed || 0)),
+      members: booking
+        ? (ctx.membersByBooking[booking.id] || []).map((m) => ({ name: m.name, ratio: Number(m.ownership_ratio) || 0 }))
+        : [],
       groupLabel: groupName(u),
       projectName: projName.get(u.project_id),
     });
