@@ -10,7 +10,7 @@
  * per row — a unit with nothing typed into it is left alone, not zeroed.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -33,6 +33,10 @@ export interface BulkOpeningUnit {
   isAffordable: boolean;
   /** The unit's derived gross consideration, used to prefill Agreement value when nothing is on file yet. */
   defaultAgreementValue: number;
+  /** Block/Wing/Tower/Phase — units are sectioned by this (and by project, if given) rather than listed flat. */
+  groupLabel?: string | null;
+  /** Set when the caller spans more than one project (a client-wide run). */
+  projectName?: string;
   existing?: {
     as_at_date: string;
     agreement_value: number;
@@ -108,6 +112,11 @@ const BulkOpeningBalancesDialog: React.FC<Props> = ({
     sgst: t.sgst + (parseFloat(r.form.cumulative_sgst) || 0),
   }), { agreement: 0, taxed: 0, cgst: 0, sgst: 0 });
 
+  // Block/Phase-wise sections, shown only when there is more than one group.
+  const groupKeyOf = (u: BulkOpeningUnit) => `${u.projectName ?? ''}::${u.groupLabel ?? 'Ungrouped'}`;
+  const groupLabelOf = (u: BulkOpeningUnit) => [u.projectName, u.groupLabel || 'Ungrouped'].filter(Boolean).join(' — ');
+  const hasGrouping = useMemo(() => new Set(units.map(groupKeyOf)).size > 1, [units]);
+
   const handleSave = async () => {
     if (!asAtDate) { toast.error('As-at date is required'); return; }
     if (!active.length) return;
@@ -174,11 +183,21 @@ const BulkOpeningBalancesDialog: React.FC<Props> = ({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {units.map((u) => {
+              {units.map((u, idx) => {
                 const form = rows[u.unitId] || toRowForm(u);
                 const isActive = (parseFloat(form.agreement_value) || 0) > 0;
+                const showGroupHeader = hasGrouping
+                  && (idx === 0 || groupKeyOf(units[idx - 1]) !== groupKeyOf(u));
                 return (
-                  <TableRow key={u.unitId} className={isActive ? 'bg-primary/5' : undefined}>
+                  <React.Fragment key={u.unitId}>
+                  {showGroupHeader && (
+                    <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      <TableCell colSpan={8} className="py-1.5 text-xs font-semibold text-muted-foreground">
+                        {groupLabelOf(u)}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  <TableRow className={isActive ? 'bg-primary/5' : undefined}>
                     <TableCell className="font-medium">
                       {u.unitNo}
                       {u.existing && <span className="block text-xs text-muted-foreground">on file</span>}
@@ -235,6 +254,7 @@ const BulkOpeningBalancesDialog: React.FC<Props> = ({
                       />
                     </TableCell>
                   </TableRow>
+                  </React.Fragment>
                 );
               })}
             </TableBody>

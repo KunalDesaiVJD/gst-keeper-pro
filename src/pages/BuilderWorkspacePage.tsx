@@ -37,10 +37,13 @@ import {
 } from '@/components/ui/select';
 import {
   Building, Layers, CalendarCheck, FileSpreadsheet, AlertTriangle, Settings2, Landmark,
+  Wallet, Loader2,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { prettyPeriodLabel } from '@/utils/builderLedger';
 import { formatINR } from '@/utils/builderRates';
 import { isFsiConsentBlocked } from '@/lib/builderFsiData';
+import { fetchClientBulkOpeningUnits, fetchClientBulkReceiptUnits } from '@/lib/builderClientBulkData';
 
 import BuilderSettingsPage from './BuilderSettingsPage';
 import BuilderProjectsPage from './BuilderProjectsPage';
@@ -51,6 +54,8 @@ import BuilderReturnsPage from './BuilderReturnsPage';
 import BuilderProjectSettingsDialog, {
   type BuilderProjectFormRow,
 } from '@/components/builder/BuilderProjectSettingsDialog';
+import BulkReceiptsDialog, { type BulkReceiptUnit } from '@/components/builder/BulkReceiptsDialog';
+import BulkOpeningBalancesDialog, { type BulkOpeningUnit } from '@/components/builder/BulkOpeningBalancesDialog';
 
 const TABS = [
   { key: 'ledger', label: 'Ledger', icon: <Layers className="h-4 w-4" /> },
@@ -63,7 +68,7 @@ interface ClientRow { id: string; name: string; gstin: string | null }
 type ProjectRow = BuilderProjectFormRow;
 
 const BuilderWorkspacePage: React.FC = () => {
-  const { canViewBuilderReports, canManageBuilderProjects } = useAuth();
+  const { canViewBuilderReports, canManageBuilderProjects, canEnterBuilderReceipts, canManageBuilderUnits } = useAuth();
   const { selectedClientId, setSelectedClientId } = useClient();
   const { selectedMonth, setSelectedMonth } = useMonth();
   const [params, setParams] = useSearchParams();
@@ -75,6 +80,43 @@ const BuilderWorkspacePage: React.FC = () => {
   const [periodTax, setPeriodTax] = useState(0);
   const [showSetup, setShowSetup] = useState(false);
   const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
+
+  // Client-wide bulk runs — every project the client has, in one grid.
+  const [clientReceiptsOpen, setClientReceiptsOpen] = useState(false);
+  const [clientReceiptUnits, setClientReceiptUnits] = useState<BulkReceiptUnit[]>([]);
+  const [clientOpeningsOpen, setClientOpeningsOpen] = useState(false);
+  const [clientOpeningUnits, setClientOpeningUnits] = useState<BulkOpeningUnit[]>([]);
+  const [bulkLoading, setBulkLoading] = useState<'' | 'receipts' | 'openings'>('');
+
+  const openClientReceipts = useCallback(async () => {
+    if (!selectedClientId) return;
+    setBulkLoading('receipts');
+    try {
+      const { units } = await fetchClientBulkReceiptUnits(selectedClientId);
+      if (!units.length) { toast.info('No units with an active booking to collect against yet.'); return; }
+      setClientReceiptUnits(units);
+      setClientReceiptsOpen(true);
+    } catch (e) {
+      toast.error(`Could not load receipts: ${(e as Error).message}`);
+    } finally {
+      setBulkLoading('');
+    }
+  }, [selectedClientId]);
+
+  const openClientOpenings = useCallback(async () => {
+    if (!selectedClientId) return;
+    setBulkLoading('openings');
+    try {
+      const units = await fetchClientBulkOpeningUnits(selectedClientId);
+      if (!units.length) { toast.info('No units on any project for this client yet.'); return; }
+      setClientOpeningUnits(units);
+      setClientOpeningsOpen(true);
+    } catch (e) {
+      toast.error(`Could not load opening balances: ${(e as Error).message}`);
+    } finally {
+      setBulkLoading('');
+    }
+  }, [selectedClientId]);
 
   // Tab and project live in the URL, so a view is linkable and survives a
   // refresh — an employee mid-period keeps their place.
@@ -221,6 +263,32 @@ const BuilderWorkspacePage: React.FC = () => {
                   <AlertTriangle className="h-3 w-3" /> FSI consent pending
                 </Badge>
               )}
+              {canEnterBuilderReceipts() && (
+                <Button
+                  variant="outline" size="sm"
+                  onClick={openClientReceipts}
+                  disabled={!selectedClientId || bulkLoading !== ''}
+                  title="Record this month's receipts across every project this client has, block by block"
+                >
+                  {bulkLoading === 'receipts'
+                    ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                    : <Wallet className="mr-1.5 h-4 w-4" />}
+                  Record receipts
+                </Button>
+              )}
+              {canManageBuilderUnits() && (
+                <Button
+                  variant="outline" size="sm"
+                  onClick={openClientOpenings}
+                  disabled={!selectedClientId || bulkLoading !== ''}
+                  title="Set opening balances across every project this client has, block by block"
+                >
+                  {bulkLoading === 'openings'
+                    ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                    : <Layers className="mr-1.5 h-4 w-4" />}
+                  Opening balances
+                </Button>
+              )}
               <Button
                 variant={showSetup ? 'default' : 'outline'} size="sm"
                 onClick={() => setShowSetup((v) => !v)}
@@ -331,6 +399,30 @@ const BuilderWorkspacePage: React.FC = () => {
           readOnly={!canManageBuilderProjects()}
           onSaved={async () => {
             if (selectedClientId) setProjects(await loadProjects(selectedClientId));
+          }}
+        />
+
+        <BulkReceiptsDialog
+          open={clientReceiptsOpen}
+          onOpenChange={setClientReceiptsOpen}
+          units={clientReceiptUnits}
+          docSeriesPrefix={null}
+          onSaved={async () => {
+            // Re-pull so a re-opened dialog reflects the balances just recorded.
+            if (selectedClientId) {
+              const { units } = await fetchClientBulkReceiptUnits(selectedClientId);
+              setClientReceiptUnits(units);
+            }
+          }}
+        />
+
+        <BulkOpeningBalancesDialog
+          open={clientOpeningsOpen}
+          onOpenChange={setClientOpeningsOpen}
+          units={clientOpeningUnits}
+          defaultAsAtDate={null}
+          onSaved={async () => {
+            if (selectedClientId) setClientOpeningUnits(await fetchClientBulkOpeningUnits(selectedClientId));
           }}
         />
       </div>

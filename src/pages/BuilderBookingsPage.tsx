@@ -56,9 +56,10 @@ interface ProjectRow {
   manual_residential_carpet_sqm: number; manual_commercial_carpet_sqm: number;
   doc_series_prefix: string | null;
 }
+interface GroupRow { id: string; project_id: string; name: string; sort_order: number }
 interface UnitRow {
   id: string; unit_no: string; unit_type: UnitType; carpet_area_sqm: number;
-  base_consideration: number; status: string;
+  base_consideration: number; status: string; group_id: string | null;
   /** The registered sale deed. Half of the BU cut-off, so it belongs on the row. */
   dastavej_date: string | null;
   dastavej_value: number | null;
@@ -134,6 +135,7 @@ const BuilderBookingsPage: React.FC = () => {
 
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [units, setUnits] = useState<UnitRow[]>([]);
+  const [groups, setGroups] = useState<GroupRow[]>([]);
   const [charges, setCharges] = useState<Record<string, ChargeRow[]>>({});
   const [bookings, setBookings] = useState<BookingRow[]>([]);
   const [members, setMembers] = useState<Record<string, MemberRow[]>>({});
@@ -219,11 +221,15 @@ const BuilderBookingsPage: React.FC = () => {
       setDelayInterestBasis(clientSettings.delay_interest_basis);
       setRaisesInvoices(clientSettings.raises_invoices !== false);
 
-      const { data: unt } = await supabase
-        .from('builder_units').select('*').eq('project_id', projectId)
-        .order('sort_order').order('unit_no');
+      const [{ data: unt }, { data: grp }] = await Promise.all([
+        supabase.from('builder_units').select('*').eq('project_id', projectId)
+          .order('sort_order').order('unit_no'),
+        supabase.from('builder_project_groups').select('*').eq('project_id', projectId)
+          .order('sort_order').order('name'),
+      ]);
       const unitRows = (unt || []) as unknown as UnitRow[];
       setUnits(unitRows);
+      setGroups((grp || []) as unknown as GroupRow[]);
       const unitIds = unitRows.map((u) => u.id);
       if (!unitIds.length) {
         setCharges({}); setBookings([]); setMembers({}); setReceipts({});
@@ -480,6 +486,30 @@ const BuilderBookingsPage: React.FC = () => {
     return isTds194IAApplicable(receiptTarget.booking.total_consideration);
   }, [receiptTarget]);
 
+  /**
+   * When this receipt takes the unit past its recorded agreement value, the
+   * customer's price has almost certainly changed. The firm's rule: update the
+   * unit's value in the master FIRST (so the ₹45 lakh test and rate are right),
+   * and a residential unit crossing ₹45 lakh is re-rated on everything already
+   * taxed, in the month it crosses. This surfaces that at the point of entry
+   * rather than leaving it to be caught later.
+   */
+  const agreementWarning = useMemo(() => {
+    if (!receiptTarget || !receiptPreview) return null;
+    if (!(receiptPreview.tax.consideration > 0)) return null;
+    if (receiptForm.receipt_nature === 'AGAINST_INVOICE') return null; // not fresh consideration
+    const u = receiptTarget.unit;
+    const cls = classifyFor(u);
+    const agreement = openings[u.id]?.agreement_value || cls.gross.gross;
+    const led = ledgerFor(u);
+    const newValueTaxed = (led?.valueTaxed || 0) + receiptPreview.tax.consideration;
+    if (newValueTaxed <= agreement + 1) return null;
+    const crosses45L = u.unit_type === 'Residential'
+      && cls.affordable.isAffordable
+      && newValueTaxed > AFFORDABLE_VALUE_LIMIT;
+    return { agreement, newValueTaxed, crosses45L };
+  }, [receiptTarget, receiptPreview, receiptForm.receipt_nature, classifyFor, openings, ledgerFor]);
+
   /** Reopen an existing receipt in the same dialog that created it. */
   const openEditReceipt = (u: UnitRow, b: BookingRow, r: ReceiptRow) => {
     setReceiptTarget({ unit: u, booking: b });
@@ -654,7 +684,15 @@ const BuilderBookingsPage: React.FC = () => {
    * Units a collection run can touch. A receipt hangs off a booking, so a unit
    * without an active one is not offered rather than being offered and failing.
    */
-  const bulkReceiptUnits: BulkReceiptUnit[] = useMemo(() => units.flatMap((u) => {
+  const bulkReceiptUnits: BulkReceiptUnit[] = useMemo(() => {
+    // Group order first (units within a block stay together for the section
+    // headers), then the project's own sort within each block.
+    const orderOf = (u: UnitRow) => {
+      const g = groups.find((x) => x.id === u.group_id);
+      return g ? g.sort_order : Number.MAX_SAFE_INTEGER;
+    };
+    const ordered = [...units].sort((a, b) => orderOf(a) - orderOf(b));
+    return ordered.flatMap((u) => {
     const booking = bookings.find((b) => b.unit_id === u.id && b.status === 'Active');
     if (!booking) return [];
     // Already through its BU/dastavej differential — the whole balance is
@@ -676,8 +714,10 @@ const BuilderBookingsPage: React.FC = () => {
       members: (members[booking.id] || []).map((m) => ({
         name: m.name, ratio: Number(m.ownership_ratio) || 0,
       })),
+      groupLabel: groups.find((g) => g.id === u.group_id)?.name || null,
     }];
-  }), [units, bookings, classifyFor, ledgerFor, members]);
+    });
+  }, [units, bookings, classifyFor, ledgerFor, members, groups]);
 
   /** Headroom for a residential unit; null where affordability cannot apply. */
   const headroomOf = useCallback((u: UnitRow) => (
@@ -702,6 +742,22 @@ const BuilderBookingsPage: React.FC = () => {
       return h !== null && h >= 0 && h < 100000;
     }).length,
     [units, headroomOf],
+  );
+
+  /**
+   * Units that have already crossed ₹45 lakh while carrying receipts taxed at
+   * the affordable 1.5% rate — the concession never applied, so everything
+   * already taxed at 1.5% is due at 7.5%. This is the re-rating the firm has
+   * to raise in the month it crosses; surfacing it here, on the page staff
+   * work every day, rather than only on the Adjustments tab.
+   */
+  const reRatingDue = useMemo(
+    () => units.filter((u) => {
+      if (u.unit_type !== 'Residential') return false;
+      if (classifyFor(u).affordable.isAffordable) return false; // now over ₹45L
+      return (receipts[u.id] || []).some((r) => r.rate_code === 'AFFORDABLE');
+    }),
+    [units, classifyFor, receipts],
   );
 
   /**
@@ -923,6 +979,26 @@ const BuilderBookingsPage: React.FC = () => {
           </div>
         }
       />
+
+      {/* Re-rating due: a unit crossed ₹45 lakh while carrying 1.5% receipts.
+          On the page staff work daily, not buried in the Adjustments tab. */}
+      {canEdit && reRatingDue.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-400 bg-amber-50 px-3 py-2 text-amber-900">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span className="text-sm">
+            <strong>{reRatingDue.length} unit{reRatingDue.length === 1 ? '' : 's'}</strong>
+            {' '}crossed ₹45,00,000 while taxed as affordable
+            {' '}({reRatingDue.map((u) => u.unit_no).join(', ')}). The concession never applied — everything
+            already taxed at 1.5% is due at 7.5%, in the month it crossed.
+          </span>
+          <Button
+            variant="outline" size="sm" className="ml-auto h-7"
+            onClick={() => setSurface({ type: 'corrections', unitId: reRatingDue[0].id, action: 'reRate' })}
+          >
+            Re-rate now
+          </Button>
+        </div>
+      )}
 
       {/* Appears only once something is selected, so it never occupies space
           during ordinary entry. */}
@@ -1842,6 +1918,39 @@ const BuilderBookingsPage: React.FC = () => {
                   </p>
                 </div>
               )}
+            </div>
+          )}
+
+          {agreementWarning && (
+            <div className="flex gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-1">
+                <p>
+                  This receipt takes the unit's value taxed to{' '}
+                  <strong>{formatINR(agreementWarning.newValueTaxed)}</strong>, beyond its recorded agreement
+                  value of <strong>{formatINR(agreementWarning.agreement)}</strong>. If the customer's price
+                  has actually increased, <strong>update the unit's value in Unit Master first</strong> — the
+                  ₹45 lakh test and the rate are read from it.
+                </p>
+                {agreementWarning.crosses45L && (
+                  <p>
+                    It also takes a unit currently taxed as affordable past <strong>₹45,00,000</strong>. Once
+                    the master reflects that, the unit is re-rated to 7.5% on everything already taxed, in the
+                    month it crosses — raise that from the row menu → Re-rate (Table 10).
+                  </p>
+                )}
+                {receiptTarget && (
+                  <Button
+                    variant="outline" size="sm" className="mt-1 h-7"
+                    onClick={() => {
+                      setReceiptDialog(false);
+                      setSurface({ type: 'masters', unitId: receiptTarget.unit.id, action: 'editUnit' });
+                    }}
+                  >
+                    <Pencil className="mr-1.5 h-3 w-3" /> Update unit value now
+                  </Button>
+                )}
+              </div>
             </div>
           )}
 

@@ -233,8 +233,14 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
     settings,
   }), [charges, project, rrep.isRrep, settings]);
 
-  /** Feed for the bulk opening-balances grid — one row per unit, in table order. */
-  const bulkOpeningUnits: BulkOpeningUnit[] = useMemo(() => units.map((u) => {
+  /** Feed for the bulk opening-balances grid — one row per unit, block by block. */
+  const bulkOpeningUnits: BulkOpeningUnit[] = useMemo(() => {
+    const orderOf = (u: UnitRow) => {
+      const g = groups.find((x) => x.id === u.group_id);
+      return g ? g.sort_order : Number.MAX_SAFE_INTEGER;
+    };
+    const ordered = [...units].sort((a, b) => orderOf(a) - orderOf(b));
+    return ordered.map((u) => {
     const cls = classifyStored(u);
     const existing = openings[u.id];
     return {
@@ -244,6 +250,7 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
       ratePct: cls.ratePct,
       isAffordable: cls.affordable.isAffordable,
       defaultAgreementValue: cls.gross.gross,
+      groupLabel: groups.find((g) => g.id === u.group_id)?.name || null,
       existing: existing ? {
         as_at_date: existing.as_at_date,
         agreement_value: existing.agreement_value,
@@ -254,7 +261,8 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
         cumulative_tds_194ia: existing.cumulative_tds_194ia,
       } : undefined,
     };
-  }), [units, openings, classifyStored]);
+    });
+  }, [units, openings, classifyStored, groups]);
 
   /** Live classification for whatever is currently in the unit dialog. */
   const formClassification = useMemo(() => classifyUnit({

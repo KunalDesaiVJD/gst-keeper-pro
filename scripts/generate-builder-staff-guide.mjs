@@ -127,8 +127,11 @@ const doc = new Document({
       H2('2.1 Booking and receipts'),
       bullet('Book unit — capture the member(s) and ownership split for a newly sold unit.'),
       bullet('Add receipt (+ icon) — a single collection, with rate/tax derived live from the unit.'),
-      bullet('Record receipts (bulk) — one grid for the whole month’s collection run: set date and instrument once, then type down the amount column. Enter moves to the next unit; pasting a copied column fills it straight down. A jointly-held unit can be split by member.'),
+      bullet('Record receipts (bulk, per project) — one grid for the whole month’s collection run: set date and instrument once, then type down the amount column. Enter moves to the next unit; pasting a copied column fills it straight down. A jointly-held unit can be split by member. Rows are sectioned Block/Phase-wise.'),
+      bullet('Record receipts (client-wide) — the "Record receipts" button on the workspace toolbar (visible the moment a client is selected, before picking a project) opens the same grid across EVERY project the client has at once, sectioned project → block. Use this when one bank statement spans several of the client’s projects.'),
+      bullet('Opening balances (client-wide) — the toolbar’s "Opening balances" button does the same for onboarding: every unit across every project of the client in one grid, block by block, one shared as-at date.'),
       bullet('Raise invoice (document icon) — a milestone invoice, which absorbs open advances into Table 11B automatically.'),
+      note('Agreement value changes: staff may record a receipt that takes a unit beyond its recorded value or past ₹45 lakh — it is never blocked. But update the unit’s value in Unit Master FIRST (the dialog reminds you, with an "Update unit value now" shortcut), because the ₹45 lakh test and rate are read from the master. A residential unit crossing ₹45 lakh is re-rated to 7.5% on everything already taxed, in the month it crosses — the Bookings page shows a "Re-rate now" banner for exactly those units.'),
 
       H2('2.2 The row menu (⋯) — reorganised by how often you’ll actually use it'),
       P('Every item deep-links straight into that unit’s own dialog — none of them drop you into a blank, unscoped page you have to search again.'),
