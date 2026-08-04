@@ -24,6 +24,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Checkbox } from '@/components/ui/checkbox';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { supabase } from '@/integrations/supabase/client';
@@ -182,6 +183,11 @@ const GSTR1DataPage: React.FC = () => {
   // actually filed with GSTN.
   const [filingStatus, setFilingStatus] = useState<string | null>(null);
   const isFiled = filingStatus === 'Filed';
+  // NIL Return: staff-ticked flag meaning this period had zero activity, so
+  // Table 13 (Documents Issued) — normally mandatory before portal push,
+  // since it can never be auto-filled — is not required.
+  const [isNilReturn, setIsNilReturn] = useState(false);
+  const [isTogglingNil, setIsTogglingNil] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   // Per-tab collapse: when a section id is in the set, its table shows only the
   // header + totals row (data rows hidden). Every section starts collapsed so
@@ -379,17 +385,41 @@ const GSTR1DataPage: React.FC = () => {
 
   // Filing status for the (client, GSTR-1, period). 'Filed' → block edits.
   const fetchFilingStatus = useCallback(async () => {
-    if (!selectedClient || !selectedMonth) { setFilingStatus(null); return; }
+    if (!selectedClient || !selectedMonth) { setFilingStatus(null); setIsNilReturn(false); return; }
     // filing_status.period_month uses MM/YYYY format across the app.
     const { data } = await supabase
       .from('filing_status')
-      .select('status')
+      .select('status, is_nil')
       .eq('client_id', selectedClient)
       .eq('return_type', 'GSTR-1')
       .eq('period_month', selectedMonth)
       .maybeSingle();
     setFilingStatus(((data as any)?.status || null) as string | null);
+    setIsNilReturn(!!(data as any)?.is_nil);
   }, [selectedClient, selectedMonth]);
+
+  // Ticking NIL Return upserts filing_status so the flag survives even before
+  // any other action (Prepared/Filed status, etc.) has touched this row.
+  const handleToggleNilReturn = async (checked: boolean) => {
+    if (!selectedClient || !selectedMonth) return;
+    setIsTogglingNil(true);
+    setIsNilReturn(checked); // optimistic — matches the rest of this page's UX
+    try {
+      const { error } = await supabase
+        .from('filing_status')
+        .upsert(
+          { client_id: selectedClient, return_type: 'GSTR-1', period_month: selectedMonth, is_nil: checked, updated_by: user?.id ?? null },
+          { onConflict: 'client_id,return_type,period_month' },
+        );
+      if (error) throw error;
+      toast.success(checked ? 'Marked as NIL Return — Documents Issued (Table 13) is no longer required for upload.' : 'NIL Return unmarked — Table 13 is required again before upload.');
+    } catch (err: any) {
+      setIsNilReturn(!checked);
+      toast.error('Failed to update NIL Return: ' + err.message);
+    } finally {
+      setIsTogglingNil(false);
+    }
+  };
 
   // One-liner used by every mutation path (import, upload result received,
   // manual error-report import) to record what happened, by whom, when.
@@ -622,6 +652,18 @@ const GSTR1DataPage: React.FC = () => {
       toast.warning(
         `Period note: the JSON's fp is ${jsonFp} but this page is filing ${expectedFp}. Uploading anyway.`
       );
+    }
+    // Documents Issued (Table 13) can't be derived from invoice content — it's
+    // about serial-number continuity, including cancelled numbers — so it is
+    // never auto-filled by import or by Builder Returns. Require it by hand
+    // before every push, unless the period is explicitly marked NIL.
+    const doc_det = gstr1Data.raw_json?.doc_issue?.doc_det;
+    if (!isNilReturn && (!Array.isArray(doc_det) || doc_det.length === 0)) {
+      toast.error(
+        'Documents Issued (Table 13) is empty. Enter it in the manual entry grid before uploading — it is never '
+        + 'prefilled — or tick "NIL Return" above if this period had no activity.'
+      );
+      return;
     }
 
     setIsUploading(true);
@@ -1178,6 +1220,22 @@ const GSTR1DataPage: React.FC = () => {
                 />
               </div>
             </div>
+            {isStaff && selectedClient && selectedMonth && (
+              <div
+                className="flex items-center gap-2"
+                title="This period had zero activity — Documents Issued (Table 13) will not be required before uploading to the portal."
+              >
+                <Checkbox
+                  id="gstr1-nil-return"
+                  checked={isNilReturn}
+                  disabled={!canEditFilingStatus() || isFiled || isTogglingNil}
+                  onCheckedChange={(v) => handleToggleNilReturn(!!v)}
+                />
+                <label htmlFor="gstr1-nil-return" className="text-sm font-medium cursor-pointer select-none">
+                  NIL Return
+                </label>
+              </div>
+            )}
             {gstr1Data && (
               <div className="ml-auto flex flex-col items-end gap-0.5">
                 <div className="text-xs text-muted-foreground">
@@ -1451,7 +1509,12 @@ const GSTR1DataPage: React.FC = () => {
         </div>
       ) : (
         <div className="space-y-6">
-          {isManualClient && (
+          {/* Builder clients land here too, once Builder Returns has generated
+              a JSON: the grid hydrates from it (prefilled Table 7/11A/11B,
+              Table 13 always blank — see hydrateManualEntriesFromJson) so
+              staff can review, add Documents Issued by hand, and re-Generate
+              before the Upload button above will allow a push. */}
+          {(isManualClient || isBuilderClient) && (
             <Gstr1ManualEntryPanel
               clientId={selectedClient}
               clientGstin={selectedClientData?.gstin || ''}

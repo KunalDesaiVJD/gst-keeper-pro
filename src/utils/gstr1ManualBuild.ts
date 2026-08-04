@@ -16,7 +16,9 @@
 //    serial-number continuity, including cancelled numbers) — entered as its
 //    own small fixed-shape table.
 
-export type Gstr1Section = 'b2b' | 'b2cl' | 'b2cs' | 'cdnr' | 'cdnur' | 'exp' | 'nil' | 'doc';
+import { BUILDER_SAC } from './builderGstr1';
+
+export type Gstr1Section = 'b2b' | 'b2cl' | 'b2cs' | 'cdnr' | 'cdnur' | 'exp' | 'at' | 'txpd' | 'nil' | 'doc';
 
 export interface ManualRow {
   id: string;           // client-side row id (uuid), stable across edits
@@ -171,6 +173,24 @@ export const SECTION_COLUMNS: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, Colum
     { key: 'iamt', label: 'IGST', type: 'number', width: 'w-24', computed: true },
     { key: 'csamt', label: 'Cess', type: 'number', width: 'w-20' },
   ],
+  at: [
+    { key: 'pos', label: 'POS', type: 'state', width: 'w-24' },
+    { key: 'rt', label: 'Rate %', type: 'number', width: 'w-16' },
+    { key: 'ad_amt', label: 'Advance Received', type: 'number', width: 'w-32' },
+    { key: 'iamt', label: 'IGST', type: 'number', width: 'w-24', computed: true },
+    { key: 'camt', label: 'CGST', type: 'number', width: 'w-24', computed: true },
+    { key: 'samt', label: 'SGST', type: 'number', width: 'w-24', computed: true },
+    { key: 'csamt', label: 'Cess', type: 'number', width: 'w-20' },
+  ],
+  txpd: [
+    { key: 'pos', label: 'POS', type: 'state', width: 'w-24' },
+    { key: 'rt', label: 'Rate %', type: 'number', width: 'w-16' },
+    { key: 'ad_amt', label: 'Advance Adjusted', type: 'number', width: 'w-32' },
+    { key: 'iamt', label: 'IGST', type: 'number', width: 'w-24', computed: true },
+    { key: 'camt', label: 'CGST', type: 'number', width: 'w-24', computed: true },
+    { key: 'samt', label: 'SGST', type: 'number', width: 'w-24', computed: true },
+    { key: 'csamt', label: 'Cess', type: 'number', width: 'w-20' },
+  ],
 };
 
 export const NIL_SUPPLY_TYPES = [
@@ -215,6 +235,10 @@ export function recomputeRowTax(section: Gstr1Section, row: ManualRow, homeState
   }
   if (section === 'b2b' || section === 'cdnr') {
     const split = computeTaxSplit(row.rt, row.txval, row.pos, homeState);
+    return { ...row, ...split };
+  }
+  if (section === 'at' || section === 'txpd') {
+    const split = computeTaxSplit(row.rt, row.ad_amt, row.pos, homeState);
     return { ...row, ...split };
   }
   return row;
@@ -356,6 +380,21 @@ export function assembleGstr1Json(params: {
   });
   const exp = Array.from(expMap.entries()).map(([exp_typ, invMap]) => ({ exp_typ, inv: Array.from(invMap.values()) }));
 
+  // --- at / txpd: group by (pos, sply_ty) -> itms per rate ---
+  const buildAdvanceGroups = (rows: ManualRow[]) => {
+    const map = new Map<string, any>();
+    rows.forEach((r) => {
+      if (!r.pos || !num(r.ad_amt)) return;
+      const sply_ty = r.pos && homeState && r.pos === homeState ? 'INTRA' : 'INTER';
+      const key = `${r.pos}__${sply_ty}`;
+      if (!map.has(key)) map.set(key, { pos: r.pos, sply_ty, itms: [] });
+      map.get(key)!.itms.push({ rt: num(r.rt), ad_amt: num(r.ad_amt), iamt: num(r.iamt), camt: num(r.camt), samt: num(r.samt), csamt: num(r.csamt) });
+    });
+    return Array.from(map.values());
+  };
+  const at = buildAdvanceGroups(rowsBySection.at || []);
+  const txpd = buildAdvanceGroups(rowsBySection.txpd || []);
+
   // --- nil: pass through, only non-empty rows ---
   const nilInv = (nilRows || [])
     .filter((r) => num(r.nil_amt) || num(r.expt_amt) || num(r.ngsup_amt))
@@ -421,6 +460,8 @@ export function assembleGstr1Json(params: {
   if (cdnr.length) out.cdnr = cdnr;
   if (cdnur.length) out.cdnur = cdnur;
   if (exp.length) out.exp = exp;
+  if (at.length) out.at = at;
+  if (txpd.length) out.txpd = txpd;
   if (nilInv.length) out.nil = { inv: nilInv };
   if (hsnB2b.length || hsnB2c.length) {
     out.hsn = {};
@@ -488,7 +529,11 @@ export function hydrateManualEntriesFromJson(json: any): {
     b2cl.push({ id: nextId(), pos: state.pos, inum: inv.inum, idt: fromPortalDate(inv.idt), val: inv.val, hsnCode: '', rt: itm.itm_det?.rt, txval: itm.itm_det?.txval, iamt: itm.itm_det?.iamt, csamt: itm.itm_det?.csamt });
   })));
 
-  const b2cs: ManualRow[] = (j.b2cs || []).map((item: any) => ({ id: nextId(), pos: item.pos, typ: item.typ, hsnCode: '', rt: item.rt, txval: item.txval, iamt: item.iamt, camt: item.camt, samt: item.samt, csamt: item.csamt }));
+  // Builder Returns has no per-line HSN (the whole return is one SAC), so
+  // default it here for those prefilled rows only — a manually-uploaded
+  // JSON still hydrates with a blank hsnCode as before.
+  const defaultHsn = j._source === 'BUILDER_RETURNS' ? BUILDER_SAC : '';
+  const b2cs: ManualRow[] = (j.b2cs || []).map((item: any) => ({ id: nextId(), pos: item.pos, typ: item.typ, hsnCode: defaultHsn, rt: item.rt, txval: item.txval, iamt: item.iamt, camt: item.camt, samt: item.samt, csamt: item.csamt }));
 
   const cdnr: ManualRow[] = [];
   (j.cdnr || []).forEach((party: any) => (party.nt || []).forEach((nt: any) => (nt.itms || []).forEach((itm: any) => {
@@ -505,13 +550,28 @@ export function hydrateManualEntriesFromJson(json: any): {
     exp.push({ id: nextId(), expTyp: e.exp_typ, inum: inv.inum, idt: fromPortalDate(inv.idt), val: inv.val, sbpcode: inv.sbpcode, sbnum: inv.sbnum, sbdt: fromPortalDate(inv.sbdt), hsnCode: '', rt: itm.rt, txval: itm.txval, iamt: itm.iamt, csamt: itm.csamt });
   })));
 
+  const at: ManualRow[] = [];
+  (j.at || []).forEach((group: any) => (group.itms || []).forEach((itm: any) => {
+    at.push({ id: nextId(), pos: group.pos, rt: itm.rt, ad_amt: itm.ad_amt, iamt: itm.iamt, camt: itm.camt, samt: itm.samt, csamt: itm.csamt });
+  }));
+
+  const txpd: ManualRow[] = [];
+  (j.txpd || []).forEach((group: any) => (group.itms || []).forEach((itm: any) => {
+    txpd.push({ id: nextId(), pos: group.pos, rt: itm.rt, ad_amt: itm.ad_amt, iamt: itm.iamt, camt: itm.camt, samt: itm.samt, csamt: itm.csamt });
+  }));
+
   const nilRows: ManualRow[] = (j.nil?.inv || []).map((r: any) => ({ id: nextId(), sply_ty: r.sply_ty, nil_amt: r.nil_amt, expt_amt: r.expt_amt, ngsup_amt: r.ngsup_amt }));
 
+  // Table 13 is intentionally never hydrated from a Builder-generated return:
+  // Builder Returns emits its document series under the "doc" key (not
+  // "doc_issue"), and that mismatch is deliberate — document summary must
+  // always start blank for staff to enter by hand, even when everything else
+  // in the grid is prefilled. Do not "fix" the key name here.
   const docRows: ManualRow[] = [];
   (j.doc_issue?.doc_det || []).forEach((det: any) => (det.docs || []).forEach((d: any) => {
     const meta = DOC_TYPES.find((dt) => dt.doc_num === det.doc_num);
     docRows.push({ id: nextId(), doc_typ: meta?.value || '', from: d.from, to: d.to, totnum: d.totnum, cancel: d.cancel });
   }));
 
-  return { rowsBySection: { b2b, b2cl, b2cs, cdnr, cdnur, exp }, nilRows, docRows };
+  return { rowsBySection: { b2b, b2cl, b2cs, cdnr, cdnur, exp, at, txpd }, nilRows, docRows };
 }

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { FileCheck2, Download, FileText, Loader2, FileJson } from 'lucide-react';
@@ -8,6 +9,7 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { fetchGstr3b } from '@/utils/fetchGstr3b';
@@ -51,9 +53,51 @@ const THead: React.FC<{ first: string }> = ({ first }) => (
 const Gstr3bPage: React.FC = () => {
   const { selectedClientId: selectedClient, setSelectedClientId: setSelectedClient } = useClient();
   const { selectedMonth, setSelectedMonth } = useMonth();
+  const { user, isStaffRole, canEditFilingStatus } = useAuth();
+  const isStaff = isStaffRole();
   const [clients, setClients] = useState<Client[]>([]);
   const [result, setResult] = useState<Gstr3bResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // NIL Return flag, shared with GSTR-1's filing_status.is_nil mechanism —
+  // this page has no portal-push action of its own, but the flag records
+  // that this period had zero activity for whatever downstream consumes it
+  // (Filing Status page, future portal integration).
+  const [isNilReturn, setIsNilReturn] = useState(false);
+  const [isTogglingNil, setIsTogglingNil] = useState(false);
+
+  const fetchIsNil = useCallback(async () => {
+    if (!selectedClient || !selectedMonth) { setIsNilReturn(false); return; }
+    const { data } = await supabase
+      .from('filing_status')
+      .select('is_nil')
+      .eq('client_id', selectedClient)
+      .eq('return_type', 'GSTR-3B')
+      .eq('period_month', selectedMonth)
+      .maybeSingle();
+    setIsNilReturn(!!(data as any)?.is_nil);
+  }, [selectedClient, selectedMonth]);
+  useEffect(() => { fetchIsNil(); }, [fetchIsNil]);
+
+  const handleToggleNilReturn = async (checked: boolean) => {
+    if (!selectedClient || !selectedMonth) return;
+    setIsTogglingNil(true);
+    setIsNilReturn(checked);
+    try {
+      const { error } = await supabase
+        .from('filing_status')
+        .upsert(
+          { client_id: selectedClient, return_type: 'GSTR-3B', period_month: selectedMonth, is_nil: checked, updated_by: user?.id ?? null },
+          { onConflict: 'client_id,return_type,period_month' },
+        );
+      if (error) throw error;
+      toast.success(checked ? 'Marked as NIL Return.' : 'NIL Return unmarked.');
+    } catch (err: any) {
+      setIsNilReturn(!checked);
+      toast.error('Failed to update NIL Return: ' + err.message);
+    } finally {
+      setIsTogglingNil(false);
+    }
+  };
 
   const monthOptions = useMemo(() => {
     const months: { value: string; label: string }[] = [];
@@ -177,6 +221,19 @@ const Gstr3bPage: React.FC = () => {
                 />
               </div>
             </div>
+            {isStaff && selectedClient && selectedMonth && (
+              <div className="flex items-center gap-2" title="This period had zero activity for GSTR-3B.">
+                <Checkbox
+                  id="gstr3b-nil-return"
+                  checked={isNilReturn}
+                  disabled={!canEditFilingStatus() || isTogglingNil}
+                  onCheckedChange={(v) => handleToggleNilReturn(!!v)}
+                />
+                <label htmlFor="gstr3b-nil-return" className="text-sm font-medium cursor-pointer select-none">
+                  NIL Return
+                </label>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
