@@ -376,3 +376,41 @@ export const BOUNCE_STATUS_LABEL: Record<string, string> = {
 /** Effective rate for display, for any code an invoice can carry. */
 export const effectiveRateOf = (code: InvoiceRateCode): number =>
   code === 'DELAY_INTEREST_18' ? 18 : EFFECTIVE_RATE_PCT[code];
+
+// ─── 7. Cancellation refund set-off ─────────────────────────────────────────
+
+export interface CancellationOffsetResult {
+  offsetAmount: number;
+  taxableValue: number;
+  cgst: number;
+  sgst: number;
+  /** amount - offsetAmount: permanently forfeited, never carried forward. */
+  forfeitedAmount: number;
+}
+
+/**
+ * Net a single refund payment against its OWN period's Table 11A pool —
+ * the firm's elected alternative to a formal cancellation credit note (§11).
+ *
+ * Deliberately single-period, unlike a bounce offset: whatever doesn't fit
+ * the month the refund is actually paid in is forfeited outright, not carried
+ * to a later month. A cancellation refunded across several months is several
+ * independent calls to this function, one per payment.
+ */
+export const planCancellationOffset = (params: {
+  refundAmount: number;
+  availableInPeriod: number;
+  rateCode: BuilderRateCode;
+}): CancellationOffsetResult => {
+  const refund = round2(Number(params.refundAmount) || 0);
+  const available = Math.max(0, round2(Number(params.availableInPeriod) || 0));
+  const offsetAmount = round2(Math.min(refund, available));
+  const t = computeTax(offsetAmount, params.rateCode);
+  return {
+    offsetAmount,
+    taxableValue: t.taxableValue,
+    cgst: t.cgst,
+    sgst: t.sgst,
+    forfeitedAmount: round2(refund - offsetAmount),
+  };
+};

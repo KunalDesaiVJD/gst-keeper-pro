@@ -86,6 +86,7 @@ interface ReceiptRow {
   instrument_type: string; instrument_ref: string | null; cheque_status: ChequeStatus;
   gst_already_discharged: boolean; period_month: string; doc_no: string | null;
   subsumed_by_bu_event_id: string | null;
+  cancelled_via_id: string | null;
 }
 interface InvoiceRow {
   id: string; booking_id: string; unit_id: string; invoice_date: string;
@@ -182,7 +183,7 @@ const BuilderBookingsPage: React.FC = () => {
   interface SurfaceState {
     type: '' | 'masters' | 'corrections' | 'dastavej';
     unitId?: string;
-    action?: 'editUnit' | 'openingBalance' | 'creditNote' | 'reRate' | 'bounceReversal' | 'convert' | 'recordDastavej';
+    action?: 'editUnit' | 'openingBalance' | 'creditNote' | 'reRate' | 'bounceReversal' | 'convert' | 'cancelBooking' | 'recordDastavej';
   }
   const [surface, setSurface] = useState<SurfaceState>({ type: '' });
 
@@ -445,11 +446,16 @@ const BuilderBookingsPage: React.FC = () => {
     });
   }, [classifyFor, openings, receipts, invoices, adjustmentsForUnit]);
 
-  /** Open advances on a unit, net of what invoices have already absorbed. */
+  /**
+   * Open advances on a unit, net of what invoices have already absorbed.
+   * Excludes a cancelled booking's receipts — once cancelled, that money
+   * belongs to a sale that no longer exists and must never be absorbed
+   * against a fresh booking's invoice on the same unit.
+   */
   const openAdvancesFor = useCallback((unitId: string) => {
     const unitAdj = adjustmentsForUnit(unitId);
     return (receipts[unitId] || [])
-      .filter((r) => receiptPostsTax(r))
+      .filter((r) => receiptPostsTax(r) && !r.cancelled_via_id)
       .map((r) => {
         const used = unitAdj
           .filter((a) => a.receipt_id === r.id)
@@ -1448,6 +1454,14 @@ const BuilderBookingsPage: React.FC = () => {
                                     >
                                       Convert to another unit
                                     </DropdownMenuItem>
+                                    {activeBookingFor(u.id) && (
+                                      <DropdownMenuItem
+                                        className="text-destructive focus:text-destructive"
+                                        onSelect={() => setSurface({ type: 'corrections', unitId: u.id, action: 'cancelBooking' })}
+                                      >
+                                        Cancel booking
+                                      </DropdownMenuItem>
+                                    )}
                                     <DropdownMenuSeparator />
                                     <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
                                       Setup
@@ -1797,6 +1811,7 @@ const BuilderBookingsPage: React.FC = () => {
               focusAction={
                 surface.action === 'creditNote' || surface.action === 'reRate'
                 || surface.action === 'bounceReversal' || surface.action === 'convert'
+                || surface.action === 'cancelBooking'
                   ? surface.action : undefined
               }
             />
