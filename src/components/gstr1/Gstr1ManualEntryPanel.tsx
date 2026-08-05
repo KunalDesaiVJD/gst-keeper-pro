@@ -82,6 +82,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
         .order('row_order', { ascending: true });
 
       const rows = (data as any[]) || [];
+      let finalDocRows: ManualRow[] = [];
       if (rows.length > 0) {
         const bySection: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, ManualRow[]> = { b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [], at: [], txpd: [] };
         const nil: ManualRow[] = [];
@@ -95,6 +96,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
         setRowsBySection(bySection);
         setNilRows(nil);
         setDocRows(doc);
+        finalDocRows = doc;
       } else if (hasGeneratedJson) {
         // No manual entry rows saved yet, but a JSON already exists (e.g.
         // generated once before) — hydrate the grid from it so editing
@@ -107,18 +109,28 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
           setRowsBySection(hydrated.rowsBySection);
           setNilRows(hydrated.nilRows);
           setDocRows(hydrated.docRows);
+          finalDocRows = hydrated.docRows;
         }
       } else {
         setRowsBySection({ b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [], at: [], txpd: [] });
         setNilRows([]);
         setDocRows([]);
       }
+      // Documents Issued is mandatory before upload (unless NIL) and is NEVER
+      // prefilled — collapsing the panel by default whenever a JSON already
+      // exists (the usual rule, so a finished return stays compact) would
+      // hide the one thing staff still have to fill in by hand. Force it
+      // open, on the Documents tab, whenever that's still outstanding.
+      if (!isFiled && finalDocRows.length === 0) {
+        setCollapsed(false);
+        setActiveTab('doc');
+      }
     } catch (err: any) {
       toast.error('Failed to load manual entries: ' + err.message);
     } finally {
       setIsLoading(false);
     }
-  }, [clientId, periodShort, hasGeneratedJson]);
+  }, [clientId, periodShort, hasGeneratedJson, isFiled]);
 
   useEffect(() => { fetchEntries(); }, [fetchEntries]);
   useEffect(() => { setCollapsed(hasGeneratedJson); }, [clientId, periodShort]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -316,7 +328,14 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
       <CardContent className="p-4">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h3 className="text-sm font-semibold">Manual GSTR-1 Entry</h3>
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              Manual GSTR-1 Entry
+              {!isFiled && docRows.length === 0 && (
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-destructive bg-destructive/10 rounded px-1.5 py-0.5">
+                  Documents Issued required
+                </span>
+              )}
+            </h3>
             <p className="text-xs text-muted-foreground">Key in invoices directly — Generate JSON produces the same file an imported return would have.</p>
           </div>
           <div className="flex items-center gap-2">
