@@ -23,7 +23,7 @@ import {
   ReceiptText, Coins,
 } from 'lucide-react';
 import {
-  DEFAULT_CHARGE_INCLUSIONS, classifyUnit, formatINR, testRrep,
+  DEFAULT_CHARGE_INCLUSIONS, classifyUnit, computeTax, formatINR, testRrep,
   type BuilderRateCode, type ChargeInclusionSettings, type UnitType,
 } from '@/utils/builderRates';
 import {
@@ -34,10 +34,11 @@ import { prettyPeriodLabel } from '@/utils/builderLedger';
 import { periodOfDate } from '@/utils/builderBuEvent';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
 import {
-  applyBounceOffsets, autoReclassifyProject, findOffsetCandidates, findReclassCandidates,
-  raiseBounceReversal, raiseCreditNote, restateReceipt, saveReclassification, scheduleFor,
-  type ReclassCandidate,
+  applyBounceOffsets, autoReclassifyProject, findAvailableInPeriod, findOffsetCandidates,
+  findReclassCandidates, raiseBounceReversal, raiseCreditNote, restateReceipt,
+  saveReclassification, scheduleFor, type ReclassCandidate,
 } from '@/lib/builderAdjustmentsData';
+import { cancelBooking, recordRefundPayment } from '@/lib/builderCancellationData';
 
 interface ProjectRow {
   id: string; client_id: string; name: string; is_metro: boolean;
@@ -81,6 +82,21 @@ interface ReceiptRow {
   rate_code: BuilderRateCode; rate_pct: number; taxable_value: number;
   cgst: number; sgst: number; cheque_status: string; receipt_nature: string;
 }
+interface BookingRow {
+  id: string; unit_id: string; status: string; total_consideration: number;
+}
+interface CancellationRow {
+  id: string; booking_id: string; unit_id: string; cancellation_date: string; reason: string | null;
+  rate_code: BuilderRateCode; rate_pct: number; total_received: number;
+  forfeiture_amount: number; cancellation_charge_taxable: number;
+  correction_method: 'CREDIT_NOTE' | 'SETOFF';
+  refund_payable: number; refund_paid: number; status: 'OPEN' | 'SETTLED';
+}
+interface RefundPaymentRow {
+  id: string; cancellation_id: string; payment_date: string; period_month: string;
+  amount: number; instrument_type: string | null;
+  offset_amount: number; forfeited_amount: number;
+}
 
 const today = () => new Date().toISOString().slice(0, 10);
 const currentPeriod = () => {
@@ -91,7 +107,7 @@ const currentPeriod = () => {
 interface Props {
   /** Jump straight into one unit's correction dialog, instead of the full register. */
   focusUnitId?: string;
-  focusAction?: 'creditNote' | 'reRate' | 'bounceReversal' | 'convert';
+  focusAction?: 'creditNote' | 'reRate' | 'bounceReversal' | 'convert' | 'cancelBooking';
 }
 
 const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) => {
@@ -113,6 +129,9 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
   const [excess, setExcess] = useState<ExcessRow[]>([]);
   const [notes, setNotes] = useState<CreditNoteRow[]>([]);
   const [conversions, setConversions] = useState<ConversionRow[]>([]);
+  const [bookings, setBookings] = useState<BookingRow[]>([]);
+  const [cancellations, setCancellations] = useState<CancellationRow[]>([]);
+  const [refundPayments, setRefundPayments] = useState<RefundPaymentRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -131,6 +150,18 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
 
   const [restateDialog, setRestateDialog] = useState<ReceiptRow | null>(null);
   const [restateTreatment, setRestateTreatment] = useState<'ADJUST' | 'REFUND' | 'ABSORB'>('ADJUST');
+
+  const [cancelDialog, setCancelDialog] = useState<{ unitId: string; bookingId: string } | null>(null);
+  const [cancelForm, setCancelForm] = useState({
+    cancellation_date: today(), reason: '', forfeiture_amount: '', cancellation_charge_taxable: '',
+    correction_method: 'CREDIT_NOTE' as 'CREDIT_NOTE' | 'SETOFF', retire_unit: false,
+  });
+
+  const [refundDialog, setRefundDialog] = useState<CancellationRow | null>(null);
+  const [refundForm, setRefundForm] = useState({
+    payment_date: today(), amount: '', instrument_type: 'NEFT/RTGS', instrument_ref: '', notes: '',
+  });
+  const [refundPreview, setRefundPreview] = useState<{ available: number } | null>(null);
 
   const canEdit = canPostBuilderAdjustments();
   const unitNo = useCallback((id: string) => units.find((u) => u.id === id)?.unit_no || '—', [units]);
@@ -155,7 +186,7 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
       if (!unitIds.length) { setIsLoading(false); return; }
 
       const [{ data: chg }, { data: rcp }, { data: rcl }, { data: bnc }, { data: exc },
-        { data: cns }, { data: cnv }] = await Promise.all([
+        { data: cns }, { data: cnv }, { data: bkg }, { data: cxl }] = await Promise.all([
         supabase.from('builder_unit_charges').select('*').in('unit_id', unitIds),
         supabase.from('builder_receipts').select('*').in('unit_id', unitIds).order('receipt_date'),
         supabase.from('builder_reclassifications').select('*').in('unit_id', unitIds),
@@ -163,6 +194,8 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
         supabase.from('builder_excess_tax').select('*').eq('project_id', projectId),
         supabase.from('builder_credit_notes').select('*').in('unit_id', unitIds).order('note_date'),
         supabase.from('builder_conversions').select('*').in('from_unit_id', unitIds),
+        supabase.from('builder_bookings').select('id, unit_id, status, total_consideration').in('unit_id', unitIds),
+        supabase.from('builder_cancellations').select('*').eq('project_id', projectId).order('cancellation_date'),
       ]);
 
       const cmap: Record<string, ChargeRow[]> = {};
@@ -174,6 +207,17 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
       setExcess((exc || []) as unknown as ExcessRow[]);
       setNotes((cns || []) as unknown as CreditNoteRow[]);
       setConversions((cnv || []) as unknown as ConversionRow[]);
+      setBookings((bkg || []) as unknown as BookingRow[]);
+      const cancellationRows = (cxl || []) as unknown as CancellationRow[];
+      setCancellations(cancellationRows);
+      const cancellationIds = cancellationRows.map((c) => c.id);
+      if (cancellationIds.length) {
+        const { data: fp } = await supabase
+          .from('builder_refund_payments').select('*').in('cancellation_id', cancellationIds).order('payment_date');
+        setRefundPayments((fp || []) as unknown as RefundPaymentRow[]);
+      } else {
+        setRefundPayments([]);
+      }
     } catch (e) {
       toast.error(`Could not load: ${(e as Error).message}`);
     } finally {
@@ -279,8 +323,20 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
       } else {
         toast.info(`${unitNo(focusUnitId)} is not currently due for re-rating.`);
       }
+    } else if (focusAction === 'cancelBooking') {
+      setTab('cancellations');
+      const booking = bookings.find((b) => b.unit_id === focusUnitId && b.status === 'Active');
+      if (booking) {
+        setCancelForm({
+          cancellation_date: today(), reason: '', forfeiture_amount: '', cancellation_charge_taxable: '',
+          correction_method: 'CREDIT_NOTE', retire_unit: false,
+        });
+        setCancelDialog({ unitId: focusUnitId, bookingId: booking.id });
+      } else {
+        toast.info(`${unitNo(focusUnitId)} has no active booking to cancel.`);
+      }
     }
-  }, [focusUnitId, focusAction, isLoading, candidatesReady, candidates, unitNo]);
+  }, [focusUnitId, focusAction, isLoading, candidatesReady, candidates, unitNo, bookings]);
 
   const previewSchedule = useMemo(
     () => (reclassDialog ? scheduleFor(reclassDialog, reclassPeriod) : null),
@@ -510,6 +566,119 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
     }
   };
 
+  // ── Cancel booking ───────────────────────────────────────────────────────
+  const cancelPreview = useMemo(() => {
+    if (!cancelDialog) return null;
+    const bookingReceipts = receipts.filter(
+      (r) => (bookings.find((b) => b.id === cancelDialog.bookingId)?.unit_id === r.unit_id)
+        && r.receipt_nature === 'ADVANCE' && r.cheque_status !== 'Bounced',
+    );
+    const totalReceived = bookingReceipts.reduce((s, r) => s + (Number(r.consideration) || 0), 0);
+    const forfeiture = parseFloat(cancelForm.forfeiture_amount) || 0;
+    const chargeTaxable = parseFloat(cancelForm.cancellation_charge_taxable) || 0;
+    const rateCode = (bookingReceipts[0]?.rate_code
+      || classification[cancelDialog.unitId]?.rateCode) as BuilderRateCode | undefined;
+    const chargeGst = chargeTaxable > 0 && rateCode ? computeTax(chargeTaxable, rateCode).totalTax : 0;
+    const refundPayable = Math.max(0, totalReceived - forfeiture - chargeTaxable - chargeGst);
+    return { totalReceived, refundPayable };
+  }, [cancelDialog, receipts, bookings, cancelForm.forfeiture_amount, cancelForm.cancellation_charge_taxable, classification]);
+
+  const handleSaveCancellation = async () => {
+    if (!cancelDialog || !project) return;
+    setIsSaving(true);
+    try {
+      const res = await cancelBooking({
+        bookingId: cancelDialog.bookingId,
+        unitId: cancelDialog.unitId,
+        projectId: projectId!,
+        cancellationDate: cancelForm.cancellation_date,
+        reason: cancelForm.reason,
+        forfeitureAmount: parseFloat(cancelForm.forfeiture_amount) || 0,
+        cancellationChargeTaxable: parseFloat(cancelForm.cancellation_charge_taxable) || 0,
+        correctionMethod: cancelForm.correction_method,
+        retireUnit: cancelForm.retire_unit,
+        periodMonth: currentPeriod(),
+        docSeriesPrefix: project.doc_series_prefix,
+        userId: user?.id ?? null,
+      });
+      toast.success(
+        cancelForm.correction_method === 'CREDIT_NOTE'
+          ? `Booking cancelled — credit note raised for ${formatINR(res.totalReceived)}. `
+            + `${formatINR(res.refundPayable)} still owed back to the member.`
+          : `Booking cancelled — no credit note. ${formatINR(res.refundPayable)} owed back; `
+            + 'record refund payments below as they happen, each nets against its own month.',
+      );
+      setCancelDialog(null);
+      setTab('cancellations');
+      await load();
+    } catch (e) {
+      toast.error(`Could not cancel: ${(e as Error).message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // ── Refund payments ──────────────────────────────────────────────────────
+  // Live preview of what a SETOFF payment would actually net, before saving —
+  // the same pool findAvailableInPeriod computes at save time.
+  useEffect(() => {
+    if (!refundDialog || refundDialog.correction_method !== 'SETOFF' || !refundForm.payment_date || !projectId) {
+      setRefundPreview(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const available = await findAvailableInPeriod({
+        projectId,
+        rateCode: refundDialog.rate_code,
+        periodMonth: periodOfDate(refundForm.payment_date),
+      });
+      if (!cancelled) setRefundPreview({ available });
+    })();
+    return () => { cancelled = true; };
+  }, [refundDialog, refundForm.payment_date, projectId]);
+
+  const handleSaveRefundPayment = async () => {
+    if (!refundDialog || !project) return;
+    if (!(parseFloat(refundForm.amount) > 0)) { toast.error('Amount is required'); return; }
+    setIsSaving(true);
+    try {
+      const res = await recordRefundPayment({
+        cancellationId: refundDialog.id,
+        paymentDate: refundForm.payment_date,
+        amount: parseFloat(refundForm.amount),
+        instrumentType: refundForm.instrument_type,
+        instrumentRef: refundForm.instrument_ref,
+        notes: refundForm.notes,
+        userId: user?.id ?? null,
+        clientId: project.client_id,
+        projectId: projectId!,
+        rateCode: refundDialog.rate_code,
+        correctionMethod: refundDialog.correction_method,
+        unitNo: unitNo(refundDialog.unit_id),
+        projectName: project.name,
+        cancellationDate: refundDialog.cancellation_date,
+        cancellationReason: refundDialog.reason,
+      });
+      if (refundDialog.correction_method === 'SETOFF') {
+        toast.success(
+          `${formatINR(res.offsetAmount)} set off against this month's collections`
+          + (res.forfeitedAmount > 0.005 ? `; ${formatINR(res.forfeitedAmount)} forfeited permanently (no carry-forward)` : '')
+          + (res.emailQueued ? '. Confirmation email queued to the client.' : '. Client email could not be queued — check email settings.'),
+        );
+      } else {
+        toast.success('Refund payment recorded.');
+      }
+      setRefundDialog(null);
+      setRefundForm({ payment_date: today(), amount: '', instrument_type: 'NEFT/RTGS', instrument_ref: '', notes: '' });
+      await load();
+    } catch (e) {
+      toast.error(`Could not record: ${(e as Error).message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const bouncedNeedingReversalFiltered = useMemo(
     () => (bounceFocusUnitId
       ? bouncedNeedingReversal.filter((r) => r.unit_id === bounceFocusUnitId)
@@ -568,6 +737,7 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
             Bounce register {bouncedNeedingReversal.length > 0 && <Badge className="ml-2 bg-red-100 text-red-800 border-red-200">{bouncedNeedingReversal.length}</Badge>}
           </TabsTrigger>
           <TabsTrigger value="excess">Excess tax ({excess.length})</TabsTrigger>
+          <TabsTrigger value="cancellations">Cancellations ({cancellations.length})</TabsTrigger>
         </TabsList>
 
         {/* ── Re-rating ─────────────────────────────────────────────────── */}
@@ -984,7 +1154,273 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
             </Card>
           )}
         </TabsContent>
+
+        {/* ── Cancellations ─────────────────────────────────────────────── */}
+        <TabsContent value="cancellations" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Cancelled bookings</CardTitle>
+              <CardDescription>
+                A <strong>credit note</strong> cancellation reverses the tax already charged in full,
+                immediately. A <strong>set-off</strong> cancellation raises no credit note — each refund
+                payment instead nets against that payment's own month's Table 11A collections at the
+                cancelled rate, and anything that doesn't fit is forfeited permanently, not carried
+                forward. Use "Cancel booking" on a unit's row menu on the Bookings page to start one.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              {cancellations.length === 0 ? (
+                <p className="text-sm text-muted-foreground px-4 py-6">No bookings cancelled.</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Unit</TableHead>
+                      <TableHead>Cancelled</TableHead>
+                      <TableHead>Method</TableHead>
+                      <TableHead className="text-right">Total received</TableHead>
+                      <TableHead className="text-right">Refund payable</TableHead>
+                      <TableHead className="text-right">Refund paid</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="w-32" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {cancellations.map((c) => (
+                      <React.Fragment key={c.id}>
+                        <TableRow>
+                          <TableCell className="font-medium">{unitNo(c.unit_id)}</TableCell>
+                          <TableCell className="text-sm">{c.cancellation_date}</TableCell>
+                          <TableCell className="text-sm">
+                            {c.correction_method === 'CREDIT_NOTE' ? 'Credit note' : 'Set-off'}
+                          </TableCell>
+                          <TableCell className="text-right text-sm">{formatINR(c.total_received)}</TableCell>
+                          <TableCell className="text-right text-sm">{formatINR(c.refund_payable)}</TableCell>
+                          <TableCell className="text-right text-sm">{formatINR(c.refund_paid)}</TableCell>
+                          <TableCell>
+                            <Badge className={c.status === 'SETTLED'
+                              ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                              : 'bg-amber-100 text-amber-800 border-amber-200'}>
+                              {c.status === 'SETTLED' ? 'Settled' : 'Refund pending'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {canEdit && c.status === 'OPEN' && (
+                              <Button
+                                size="sm" variant="outline"
+                                onClick={() => {
+                                  setRefundForm({ payment_date: today(), amount: '', instrument_type: 'NEFT/RTGS', instrument_ref: '', notes: '' });
+                                  setRefundDialog(c);
+                                }}
+                              >
+                                Record payment
+                              </Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                        {refundPayments.filter((p) => p.cancellation_id === c.id).map((p) => (
+                          <TableRow key={p.id} className="bg-muted/20">
+                            <TableCell />
+                            <TableCell className="text-xs text-muted-foreground">{p.payment_date}</TableCell>
+                            <TableCell colSpan={2} className="text-xs text-muted-foreground">
+                              Paid {formatINR(p.amount)}
+                              {c.correction_method === 'SETOFF' && (
+                                <>
+                                  {' — set off '}{formatINR(p.offset_amount)} against {prettyPeriodLabel(p.period_month)}
+                                  {p.forfeited_amount > 0.005 && <>, {formatINR(p.forfeited_amount)} forfeited</>}
+                                </>
+                              )}
+                            </TableCell>
+                            <TableCell colSpan={3} />
+                          </TableRow>
+                        ))}
+                      </React.Fragment>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
+
+      {/* ── Cancel booking dialog ────────────────────────────────────────── */}
+      <Dialog open={!!cancelDialog} onOpenChange={(o) => !o && setCancelDialog(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Cancel booking — unit {cancelDialog ? unitNo(cancelDialog.unitId) : ''}</DialogTitle>
+            <DialogDescription>
+              Frees the unit for resale. Choose how the tax already charged gets corrected — this cannot
+              be changed once saved.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="cx-date">Cancellation date</Label>
+                <Input
+                  id="cx-date" type="date" value={cancelForm.cancellation_date}
+                  onChange={(e) => setCancelForm({ ...cancelForm, cancellation_date: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label htmlFor="cx-forfeit">Forfeiture (non-taxable)</Label>
+                <Input
+                  id="cx-forfeit" type="number" step="0.01" value={cancelForm.forfeiture_amount}
+                  onChange={(e) => setCancelForm({ ...cancelForm, forfeiture_amount: e.target.value })}
+                />
+              </div>
+            </div>
+            <div>
+              <Label htmlFor="cx-charge">Cancellation charge (taxable, excl. GST)</Label>
+              <Input
+                id="cx-charge" type="number" step="0.01" value={cancelForm.cancellation_charge_taxable}
+                onChange={(e) => setCancelForm({ ...cancelForm, cancellation_charge_taxable: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Taxed at the unit's own rate and posted as a fresh invoice — independent of how the
+                refund itself is corrected below.
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="cx-reason">Reason</Label>
+              <Input
+                id="cx-reason" value={cancelForm.reason}
+                onChange={(e) => setCancelForm({ ...cancelForm, reason: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label>Correction method</Label>
+              <Select
+                value={cancelForm.correction_method}
+                onValueChange={(v) => setCancelForm({ ...cancelForm, correction_method: v as 'CREDIT_NOTE' | 'SETOFF' })}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="CREDIT_NOTE">Credit note — reverse the full amount now (s.34)</SelectItem>
+                  <SelectItem value="SETOFF">Set-off — no credit note; net each refund against its own month</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                {cancelForm.correction_method === 'CREDIT_NOTE'
+                  ? 'A CANCELLATION credit note is raised immediately for the full amount already taxed.'
+                  : 'No credit note. As refund payments are recorded below, each one nets against that '
+                    + "month's collections at this unit's rate — capped by what's available, and anything "
+                    + 'over that is forfeited permanently, never carried to a later month. The client is '
+                    + 'emailed to confirm each set-off once its return is filed.'}
+              </p>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div>
+                <p className="text-sm font-medium">Retire this unit permanently</p>
+                <p className="text-xs text-muted-foreground">Off by default — the unit becomes Available for resale.</p>
+              </div>
+              <input
+                type="checkbox" checked={cancelForm.retire_unit}
+                onChange={(e) => setCancelForm({ ...cancelForm, retire_unit: e.target.checked })}
+                className="h-4 w-4"
+              />
+            </div>
+            {cancelPreview && (
+              <div className="rounded-lg border bg-muted/30 p-3 text-sm space-y-1">
+                <div className="flex justify-between"><span>Total already received</span><span className="font-medium">{formatINR(cancelPreview.totalReceived)}</span></div>
+                <div className="flex justify-between"><span>Refund payable to member</span><span className="font-semibold">{formatINR(cancelPreview.refundPayable)}</span></div>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCancelDialog(null)}>Cancel</Button>
+            <Button onClick={handleSaveCancellation} disabled={isSaving} variant="destructive">
+              {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              Confirm cancellation
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Record refund payment dialog ─────────────────────────────────── */}
+      <Dialog open={!!refundDialog} onOpenChange={(o) => !o && setRefundDialog(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Record refund payment — unit {refundDialog ? unitNo(refundDialog.unit_id) : ''}</DialogTitle>
+            <DialogDescription>
+              {refundDialog?.correction_method === 'SETOFF'
+                ? "This payment nets against its own month's collections — a cancellation refunded over "
+                  + 'several months is several independent payments, each judged on its own period.'
+                : 'Plain cash record — the credit note already corrected the GST side.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="rf-date">Payment date</Label>
+                <Input
+                  id="rf-date" type="date" value={refundForm.payment_date}
+                  onChange={(e) => setRefundForm({ ...refundForm, payment_date: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label htmlFor="rf-amt">Amount</Label>
+                <Input
+                  id="rf-amt" type="number" step="0.01" value={refundForm.amount}
+                  onChange={(e) => setRefundForm({ ...refundForm, amount: e.target.value })}
+                />
+              </div>
+            </div>
+            <div>
+              <Label>Instrument</Label>
+              <Select
+                value={refundForm.instrument_type}
+                onValueChange={(v) => setRefundForm({ ...refundForm, instrument_type: v })}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {['NEFT/RTGS', 'Cheque', 'UPI', 'Cash', 'Bank Transfer', 'Other'].map((t) => (
+                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="rf-ref">Reference</Label>
+              <Input
+                id="rf-ref" value={refundForm.instrument_ref}
+                onChange={(e) => setRefundForm({ ...refundForm, instrument_ref: e.target.value })}
+              />
+            </div>
+            {refundDialog?.correction_method === 'SETOFF' && refundPreview && (
+              <div className="rounded-lg border bg-muted/30 p-3 text-sm space-y-1">
+                <div className="flex justify-between">
+                  <span>Available in {prettyPeriodLabel(periodOfDate(refundForm.payment_date))} at this rate</span>
+                  <span className="font-medium">{formatINR(refundPreview.available)}</span>
+                </div>
+                {(() => {
+                  const amt = parseFloat(refundForm.amount) || 0;
+                  const offset = Math.min(amt, refundPreview.available);
+                  const forfeited = Math.max(0, amt - offset);
+                  return amt > 0 ? (
+                    <>
+                      <div className="flex justify-between"><span>Would set off</span><span className="font-medium">{formatINR(offset)}</span></div>
+                      {forfeited > 0.005 && (
+                        <div className="flex justify-between text-destructive">
+                          <span>Would forfeit permanently</span><span className="font-semibold">{formatINR(forfeited)}</span>
+                        </div>
+                      )}
+                    </>
+                  ) : null;
+                })()}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRefundDialog(null)}>Cancel</Button>
+            <Button onClick={handleSaveRefundPayment} disabled={isSaving}>
+              {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              Record payment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Re-rating schedule dialog ─────────────────────────────────────── */}
       <Dialog open={!!reclassDialog} onOpenChange={(o) => !o && setReclassDialog(null)}>

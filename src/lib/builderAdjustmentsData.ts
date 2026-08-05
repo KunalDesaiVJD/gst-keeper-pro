@@ -344,7 +344,11 @@ export async function findOffsetCandidates(params: {
     .select('period_month, consideration, source_type')
     .eq('project_id', params.projectId)
     .eq('rate_code', params.rateCode)
-    .in('source_type', ['ADVANCE_11A', 'BOUNCE_REVERSAL']);
+    // Cancellation set-offs (builderCancellationData.ts) draw on the exact
+    // same per-period pool a bounce offset would — both must net out of the
+    // same total, or the two mechanisms could jointly push a period negative
+    // even though each looked capped on its own.
+    .in('source_type', ['ADVANCE_11A', 'BOUNCE_REVERSAL', 'CANCELLATION_OFFSET']);
 
   type Row = { period_month: string; consideration: number; source_type: string };
   const byPeriod = new Map<string, number>();
@@ -364,6 +368,29 @@ export async function findOffsetCandidates(params: {
       periodMonth,
       available: Math.round((available + Number.EPSILON) * 100) / 100,
     }));
+}
+
+/**
+ * Positive Table 11A pool at this rate, in this exact period — what a
+ * cancellation refund set-off (builderCancellationData.ts) can draw against.
+ * Single period only, unlike findOffsetCandidates' forward scan: a refund's
+ * offset is capped to the month it's actually paid in, nothing carries.
+ */
+export async function findAvailableInPeriod(params: {
+  projectId: string;
+  rateCode: string;
+  periodMonth: string;
+}): Promise<number> {
+  const { data } = await supabase
+    .from('builder_period_postings')
+    .select('consideration')
+    .eq('project_id', params.projectId)
+    .eq('rate_code', params.rateCode)
+    .eq('period_month', params.periodMonth)
+    .in('source_type', ['ADVANCE_11A', 'BOUNCE_REVERSAL', 'CANCELLATION_OFFSET']);
+  const total = ((data || []) as { consideration: number }[])
+    .reduce((s, r) => s + (Number(r.consideration) || 0), 0);
+  return Math.max(0, Math.round((total + Number.EPSILON) * 100) / 100);
 }
 
 /** Allocate a reversal across later months and record what was taken. */
