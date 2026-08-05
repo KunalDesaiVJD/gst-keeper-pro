@@ -1,9 +1,17 @@
 import { supabase } from '@/integrations/supabase/client';
-import { computeTax, type BuilderRateCode } from '@/utils/builderRates';
+import {
+  classifyUnit, computeTax, testRrep, type BuilderRateCode, type ChargeInclusionSettings,
+} from '@/utils/builderRates';
+import { fetchBuilderSettings } from '@/lib/builderSettings';
 import {
   buildReclassSchedule, creditNoteWindow, planBounceOffsets,
   type OffsetCandidate, type ReclassSchedule,
 } from '@/utils/builderAdjustments';
+
+const currentPeriod = (): string => {
+  const d = new Date();
+  return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+};
 
 // Data access for the corrections layer. Detection is deliberately derived from
 // what was actually POSTED rather than from stored flags — a unit needs
@@ -130,6 +138,160 @@ export async function saveReclassification(params: {
   );
   if (pErr) throw pErr;
   return data.id;
+}
+
+/**
+ * Post a re-rating with no staff review step. The firm's position (§8 of
+ * BUILDER_GST_POSITIONS.md) is that a unit crossing ₹45L was never
+ * affordable — nothing about the correction is a judgment call once the
+ * crossing itself is detected, so it is posted directly rather than staged
+ * as a DRAFT waiting on a "Post" click.
+ */
+async function autoPostReclassification(params: {
+  candidate: ReclassCandidate;
+  schedule: ReclassSchedule;
+  postingPeriod: string;
+  userId: string | null;
+}): Promise<string> {
+  const { candidate: c, schedule: s } = params;
+  const nowIso = new Date().toISOString();
+  const { data, error } = await supabase.from('builder_reclassifications').insert({
+    unit_id: c.unitId,
+    from_rate_code: 'AFFORDABLE',
+    from_rate_pct: 1.5,
+    to_rate_code: c.currentRateCode,
+    to_rate_pct: c.currentRatePct,
+    gross_before: 0,
+    gross_after: c.grossConsideration,
+    reason: 'Auto-posted: gross consideration crossed ₹45,00,000 — the affordable concession never applied.',
+    posting_period: params.postingPeriod,
+    total_value_retaxed: s.totalValueRetaxed,
+    total_differential_tax: s.totalDifferentialTax,
+    total_interest: s.totalInterest,
+    status: 'POSTED',
+    posted_at: nowIso,
+    posted_by: params.userId,
+    created_by: params.userId,
+  }).select('id').single();
+  if (error) throw error;
+
+  const { error: pErr } = await supabase.from('builder_reclassification_periods').insert(
+    s.periods.map((p) => ({
+      reclassification_id: data.id,
+      period_month: p.periodMonth,
+      taxable_value: p.taxableValue,
+      old_cgst: p.oldCgst,
+      old_sgst: p.oldSgst,
+      new_cgst: p.newCgst,
+      new_sgst: p.newSgst,
+      differential_tax: p.differentialTax,
+      due_date: p.dueDate || null,
+      interest_days: p.interestDays,
+      interest_amount: p.interestAmount,
+    })),
+  );
+  if (pErr) throw pErr;
+  return data.id;
+}
+
+/**
+ * Detect and post every re-rating a project currently needs, given a
+ * classification map the caller has already computed. Skips any unit that
+ * already carries a reclassification row (posted earlier, by this sweep or
+ * by hand) so this never double-posts. Returns whichever candidates were
+ * just posted, for a toast.
+ */
+export async function autoReclassifyProject(
+  projectId: string,
+  classification: Record<string, { rateCode: string; ratePct: number; agreementValue: number }>,
+  userId: string | null,
+): Promise<ReclassCandidate[]> {
+  const unitIds = Object.keys(classification);
+  if (!unitIds.length) return [];
+
+  const { data: existing } = await supabase
+    .from('builder_reclassifications').select('unit_id').in('unit_id', unitIds);
+  const done = new Set(((existing || []) as { unit_id: string }[]).map((r) => r.unit_id));
+
+  const candidates = (await findReclassCandidates(projectId, classification))
+    .filter((c) => !done.has(c.unitId));
+  if (!candidates.length) return [];
+
+  const postingPeriod = currentPeriod();
+  for (const c of candidates) {
+    const schedule = scheduleFor(c, postingPeriod);
+    await autoPostReclassification({ candidate: c, schedule, postingPeriod, userId });
+  }
+  return candidates;
+}
+
+/**
+ * Same as {@link autoReclassifyProject}, but self-contained — loads the
+ * project, units, charges, settings and RREP test itself, for callers (e.g.
+ * Builder Returns' Generate) that don't already have a classification map on
+ * hand. This is the safety net: whichever page a unit actually crossed ₹45L
+ * on, generating the return always re-rates it first.
+ */
+export async function runAutoReclassSweep(
+  projectId: string,
+  userId: string | null,
+): Promise<ReclassCandidate[]> {
+  const { data: proj } = await supabase
+    .from('builder_projects').select('*').eq('id', projectId).maybeSingle();
+  if (!proj) return [];
+  const p = proj as unknown as {
+    client_id: string; is_metro: boolean; carpet_area_source: string;
+    manual_residential_carpet_sqm: number; manual_commercial_carpet_sqm: number;
+  };
+
+  const { data: unt } = await supabase.from('builder_units').select('*').eq('project_id', projectId);
+  type Unit = {
+    id: string; unit_type: 'Residential' | 'Commercial'; carpet_area_sqm: number;
+    base_consideration: number; status: string;
+  };
+  const units = (unt || []) as unknown as Unit[];
+  if (!units.length) return [];
+  const unitIds = units.map((u) => u.id);
+
+  const [settings, { data: chg }] = await Promise.all([
+    fetchBuilderSettings(p.client_id),
+    supabase.from('builder_unit_charges').select('*').in('unit_id', unitIds),
+  ]);
+  type Charge = { unit_id: string; charge_head: string; amount: number; include_override: boolean | null };
+  const cmap: Record<string, Charge[]> = {};
+  ((chg || []) as unknown as Charge[]).forEach((c) => { (cmap[c.unit_id] ||= []).push(c); });
+
+  let resi = 0, comm = 0;
+  if (p.carpet_area_source === 'MANUAL') {
+    resi = Number(p.manual_residential_carpet_sqm) || 0;
+    comm = Number(p.manual_commercial_carpet_sqm) || 0;
+  } else {
+    units.forEach((u) => {
+      if (u.status === 'Cancelled') return;
+      if (u.unit_type === 'Residential') resi += Number(u.carpet_area_sqm) || 0;
+      else comm += Number(u.carpet_area_sqm) || 0;
+    });
+  }
+  const rrep = testRrep(resi, comm);
+
+  const classification: Record<string, { rateCode: string; ratePct: number; agreementValue: number }> = {};
+  units.forEach((u) => {
+    const cls = classifyUnit({
+      unitType: u.unit_type,
+      carpetAreaSqM: Number(u.carpet_area_sqm) || 0,
+      baseConsideration: Number(u.base_consideration) || 0,
+      charges: (cmap[u.id] || []).map((c) => ({
+        charge_head: c.charge_head as never, amount: Number(c.amount) || 0,
+        include_override: c.include_override,
+      })),
+      isMetro: p.is_metro ?? false,
+      isRrep: rrep.isRrep,
+      settings: settings as ChargeInclusionSettings,
+    });
+    classification[u.id] = { rateCode: cls.rateCode, ratePct: cls.ratePct, agreementValue: cls.gross.gross };
+  });
+
+  return autoReclassifyProject(projectId, classification, userId);
 }
 
 // ─── Bounce reversals ───────────────────────────────────────────────────────

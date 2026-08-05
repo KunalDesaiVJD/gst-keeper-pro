@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -47,6 +48,7 @@ import {
   type ChequeStatus, type InvoiceType, type ReceiptNature,
 } from '@/utils/builderLedger';
 import { computeDelayInterest, type DelayInterestBasis } from '@/utils/builderAdjustments';
+import { autoReclassifyProject } from '@/lib/builderAdjustmentsData';
 import { periodKey } from '@/utils/builderBuEvent';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
 
@@ -102,11 +104,21 @@ interface OpeningRow {
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
+const currentMonthShort = () => {
+  const d = new Date();
+  return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+};
+/** Only the return period matters for tax purposes — the 1st of it satisfies
+ *  the schema's NOT NULL receipt_date without asking staff for an exact day. */
+const monthToIsoDate = (mmYyyy: string): string => {
+  const [mm, yyyy] = (mmYyyy || currentMonthShort()).split('/');
+  return `${yyyy}-${mm}-01`;
+};
 
 const emptyBooking = { booking_date: today(), total_consideration: '', notes: '' };
 const emptyMember = { name: '', pan: '', ownership_ratio: '100' };
 const emptyReceipt = {
-  receipt_date: today(), receipt_nature: 'ADVANCE' as ReceiptNature,
+  receipt_month: currentMonthShort(), receipt_nature: 'ADVANCE' as ReceiptNature,
   amount_entered: '', amount_is_gst_inclusive: false, tds_194ia: '', bank_credit: '',
   instrument_type: 'NEFT/RTGS', instrument_ref: '', cheque_status: 'Cleared' as ChequeStatus,
   gst_already_discharged: false, doc_no: '',
@@ -143,6 +155,8 @@ const BuilderBookingsPage: React.FC = () => {
   const [invoices, setInvoices] = useState<Record<string, InvoiceRow[]>>({});
   const [adjustments, setAdjustments] = useState<AdjRow[]>([]);
   const [openings, setOpenings] = useState<Record<string, OpeningRow>>({});
+  /** Units already carrying a re-rating (auto-posted or, rarely, manual). */
+  const [reclassifiedUnitIds, setReclassifiedUnitIds] = useState<Set<string>>(new Set());
   const [settings, setSettings] = useState<ChargeInclusionSettings>(DEFAULT_CHARGE_INCLUSIONS);
   const [delayInterestBasis, setDelayInterestBasis] = useState<DelayInterestBasis>('FLAT_18');
   /** False for a client who never raises a milestone invoice — hides that control on the ledger. */
@@ -233,18 +247,20 @@ const BuilderBookingsPage: React.FC = () => {
       const unitIds = unitRows.map((u) => u.id);
       if (!unitIds.length) {
         setCharges({}); setBookings([]); setMembers({}); setReceipts({});
-        setInvoices({}); setAdjustments([]); setOpenings({});
+        setInvoices({}); setAdjustments([]); setOpenings({}); setReclassifiedUnitIds(new Set());
         return;
       }
 
-      const [{ data: chg }, { data: bkg }, { data: rcp }, { data: inv }, { data: opn }] =
+      const [{ data: chg }, { data: bkg }, { data: rcp }, { data: inv }, { data: opn }, { data: rcl }] =
         await Promise.all([
           supabase.from('builder_unit_charges').select('*').in('unit_id', unitIds),
           supabase.from('builder_bookings').select('*').in('unit_id', unitIds).order('booking_date'),
           supabase.from('builder_receipts').select('*').in('unit_id', unitIds).order('receipt_date'),
           supabase.from('builder_invoices').select('*').in('unit_id', unitIds).order('invoice_date'),
           supabase.from('builder_opening_balances').select('*').in('unit_id', unitIds),
+          supabase.from('builder_reclassifications').select('unit_id').in('unit_id', unitIds),
         ]);
+      setReclassifiedUnitIds(new Set(((rcl || []) as unknown as { unit_id: string }[]).map((r) => r.unit_id)));
 
       const cmap: Record<string, ChargeRow[]> = {};
       ((chg || []) as unknown as ChargeRow[]).forEach((c) => { (cmap[c.unit_id] ||= []).push(c); });
@@ -317,6 +333,53 @@ const BuilderBookingsPage: React.FC = () => {
     isRrep: rrep.isRrep,
     settings,
   }), [charges, project, rrep.isRrep, settings]);
+
+  const classification = useMemo(() => {
+    const out: Record<string, { rateCode: string; ratePct: number; agreementValue: number }> = {};
+    units.forEach((u) => {
+      const cls = classifyFor(u);
+      out[u.id] = { rateCode: cls.rateCode, ratePct: cls.ratePct, agreementValue: cls.gross.gross };
+    });
+    return out;
+  }, [units, classifyFor]);
+
+  /** Receipt entry only ever needs the return period, not an exact date. */
+  const receiptMonthOptions = useMemo(() => {
+    const out: { value: string; label: string }[] = [];
+    const now = new Date();
+    for (let i = -24; i <= 2; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      out.push({ value: `${mm}/${d.getFullYear()}`, label: prettyPeriodLabel(`${mm}/${d.getFullYear()}`) });
+    }
+    return out.reverse();
+  }, []);
+
+  /**
+   * Re-rating (§8) posts itself the moment a unit crosses ₹45L — no staff
+   * selection. This is the daily workspace, so the correction fires from
+   * here rather than waiting for anyone to open the Adjustments tab; Builder
+   * Returns' Generate step re-runs the same check as a safety net for
+   * whichever page a unit actually crossed on.
+   */
+  useEffect(() => {
+    if (!projectId || !units.length) return;
+    (async () => {
+      try {
+        const posted = await autoReclassifyProject(projectId, classification, user?.id ?? null);
+        if (posted.length) {
+          toast.success(
+            `${posted.length} unit${posted.length === 1 ? '' : 's'} auto re-rated on crossing ₹45,00,000 `
+            + `(${posted.map((c) => c.unitNo).join(', ')}) — Table 10 amendment and interest posted.`,
+          );
+          setReclassifiedUnitIds((prev) => new Set([...prev, ...posted.map((c) => c.unitId)]));
+        }
+      } catch (e) {
+        toast.error(`Auto re-rating failed for one or more units: ${(e as Error).message}`);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, units.length, classification]);
 
   const activeBookingFor = useCallback(
     (unitId: string) => bookings.find((b) => b.unit_id === unitId && b.status === 'Active') || null,
@@ -515,7 +578,7 @@ const BuilderBookingsPage: React.FC = () => {
     setReceiptTarget({ unit: u, booking: b });
     setEditingReceipt(r);
     setReceiptForm({
-      receipt_date: r.receipt_date,
+      receipt_month: dateToPeriod(r.receipt_date) || currentMonthShort(),
       receipt_nature: r.receipt_nature,
       amount_entered: String(r.amount_entered ?? ''),
       amount_is_gst_inclusive: !!r.amount_is_gst_inclusive,
@@ -537,10 +600,11 @@ const BuilderBookingsPage: React.FC = () => {
     try {
       const cls = classifyFor(receiptTarget.unit);
       const t = receiptPreview.tax;
+      const receiptDate = monthToIsoDate(receiptForm.receipt_month);
       const payload = {
         booking_id: receiptTarget.booking.id,
         unit_id: receiptTarget.unit.id,
-        receipt_date: receiptForm.receipt_date,
+        receipt_date: receiptDate,
         receipt_nature: receiptForm.receipt_nature,
         amount_entered: parseFloat(receiptForm.amount_entered) || 0,
         amount_is_gst_inclusive: receiptForm.amount_is_gst_inclusive,
@@ -556,7 +620,7 @@ const BuilderBookingsPage: React.FC = () => {
         instrument_ref: receiptForm.instrument_ref.trim() || null,
         cheque_status: receiptForm.cheque_status,
         gst_already_discharged: receiptForm.gst_already_discharged,
-        period_month: dateToPeriod(receiptForm.receipt_date),
+        period_month: receiptForm.receipt_month,
         doc_series: project?.doc_series_prefix ?? null,
         doc_no: receiptForm.doc_no.trim() || null,
         created_by: user?.id ?? null,
@@ -757,11 +821,12 @@ const BuilderBookingsPage: React.FC = () => {
    */
   const reRatingDue = useMemo(
     () => units.filter((u) => {
+      if (reclassifiedUnitIds.has(u.id)) return false; // already corrected
       if (u.unit_type !== 'Residential') return false;
       if (classifyFor(u).affordable.isAffordable) return false; // now over ₹45L
       return (receipts[u.id] || []).some((r) => r.rate_code === 'AFFORDABLE');
     }),
-    [units, classifyFor, receipts],
+    [units, classifyFor, receipts, reclassifiedUnitIds],
   );
 
   /**
@@ -985,7 +1050,9 @@ const BuilderBookingsPage: React.FC = () => {
       />
 
       {/* Re-rating due: a unit crossed ₹45 lakh while carrying 1.5% receipts.
-          On the page staff work daily, not buried in the Adjustments tab. */}
+          This posts itself automatically (see the effect above) — this banner
+          is only visible in the brief window before that finishes, or if it
+          failed and needs a manual look on the Adjustments tab. */}
       {canEdit && reRatingDue.length > 0 && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-400 bg-amber-50 px-3 py-2 text-amber-900">
           <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -993,13 +1060,14 @@ const BuilderBookingsPage: React.FC = () => {
             <strong>{reRatingDue.length} unit{reRatingDue.length === 1 ? '' : 's'}</strong>
             {' '}crossed ₹45,00,000 while taxed as affordable
             {' '}({reRatingDue.map((u) => u.unit_no).join(', ')}). The concession never applied — everything
-            already taxed at 1.5% is due at 7.5%, in the month it crossed.
+            already taxed at 1.5% is being re-rated to 7.5% automatically. If this doesn't clear on its own,
+            check the Adjustments tab.
           </span>
           <Button
             variant="outline" size="sm" className="ml-auto h-7"
             onClick={() => setSurface({ type: 'corrections', unitId: reRatingDue[0].id, action: 'reRate' })}
           >
-            Re-rate now
+            View in Adjustments
           </Button>
         </div>
       )}
@@ -1428,6 +1496,7 @@ const BuilderBookingsPage: React.FC = () => {
                                               <TableHead className="h-8 text-right">SGST</TableHead>
                                               <TableHead className="h-8 text-right">TDS</TableHead>
                                               <TableHead className="h-8">Status</TableHead>
+                                              <TableHead className="h-8 text-right">Bounced</TableHead>
                                               <TableHead className="h-8 w-24" />
                                             </TableRow>
                                           </TableHeader>
@@ -1477,6 +1546,29 @@ const BuilderBookingsPage: React.FC = () => {
                                                       <span className="block text-muted-foreground">GST already paid</span>
                                                     )}
                                                   </TableCell>
+                                                  {/* Bounce as a deduction column, right in the register, rather
+                                                      than a status buried in the edit dialog's dropdown: ticking
+                                                      it deducts this receipt's full consideration — a bounced
+                                                      instrument didn't clear for any partial amount. */}
+                                                  <TableCell className="text-xs py-1 text-right">
+                                                    {r.cheque_status === 'Bounced' ? (
+                                                      <span className="text-red-700 font-medium">
+                                                        -{formatINR(r.consideration)}
+                                                      </span>
+                                                    ) : canEdit ? (
+                                                      <div className="flex items-center justify-end gap-1">
+                                                        <Checkbox
+                                                          className="h-3.5 w-3.5"
+                                                          checked={false}
+                                                          onCheckedChange={(v) => { if (v) setChequeStatus(r, 'Bounced'); }}
+                                                          aria-label={`Mark bounced — deduct ${formatINR(r.consideration)}`}
+                                                          title={`Deduct ${formatINR(r.consideration)}`}
+                                                        />
+                                                      </div>
+                                                    ) : (
+                                                      <span className="text-muted-foreground">—</span>
+                                                    )}
+                                                  </TableCell>
                                                   <TableCell className="py-1">
                                                     {canEdit && (
                                                       <div className="flex items-center gap-0.5">
@@ -1493,15 +1585,6 @@ const BuilderBookingsPage: React.FC = () => {
                                                         >
                                                           <Pencil className="h-3 w-3" />
                                                         </Button>
-                                                        {r.cheque_status !== 'Bounced' && (
-                                                          <Button
-                                                            variant="ghost" size="icon" className="h-6 w-6"
-                                                            title="Mark bounced"
-                                                            onClick={() => setChequeStatus(r, 'Bounced')}
-                                                          >
-                                                            <AlertTriangle className="h-3 w-3 text-amber-600" />
-                                                          </Button>
-                                                        )}
                                                         <Button
                                                           variant="ghost" size="icon" className="h-6 w-6"
                                                           title="Delete receipt"
@@ -1537,6 +1620,7 @@ const BuilderBookingsPage: React.FC = () => {
                                                     <TableCell className="text-xs py-1 text-right">{formatINR(i.sgst)}</TableCell>
                                                     <TableCell className="text-xs py-1 text-right">—</TableCell>
                                                     <TableCell className="text-xs py-1" />
+                                                    <TableCell className="text-xs py-1" />
                                                     <TableCell className="py-1" />
                                                   </TableRow>
                                                   {absorbed > 0 && (
@@ -1557,6 +1641,7 @@ const BuilderBookingsPage: React.FC = () => {
                                                         -{formatINR(adj.reduce((s, a) => s + (Number(a.sgst) || 0), 0))}
                                                       </TableCell>
                                                       <TableCell className="text-xs py-1 text-right">—</TableCell>
+                                                      <TableCell className="text-xs py-1" />
                                                       <TableCell className="text-xs py-1" />
                                                       <TableCell className="py-1" />
                                                     </TableRow>
@@ -1750,10 +1835,12 @@ const BuilderBookingsPage: React.FC = () => {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <Label htmlFor="r-date">Receipt date</Label>
-              <Input
-                id="r-date" type="date" value={receiptForm.receipt_date}
-                onChange={(e) => setReceiptForm({ ...receiptForm, receipt_date: e.target.value })}
+              <Label>Period</Label>
+              <SearchableMonthSelect
+                options={receiptMonthOptions}
+                value={receiptForm.receipt_month}
+                onValueChange={(v) => setReceiptForm({ ...receiptForm, receipt_month: v })}
+                placeholder="Select month"
               />
             </div>
             <div>

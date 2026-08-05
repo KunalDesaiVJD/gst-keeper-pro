@@ -31,11 +31,12 @@ import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
 import { Loader2, Wallet, AlertTriangle, Users } from 'lucide-react';
 import { formatINR, computeTds194IA, isTds194IAApplicable, type BuilderRateCode } from '@/utils/builderRates';
-import { deriveReceipt, dateToPeriod, prettyPeriodLabel } from '@/utils/builderLedger';
+import { deriveReceipt, prettyPeriodLabel } from '@/utils/builderLedger';
 
 // Must match the builder_receipts_instrument_type_check DB constraint exactly,
 // or every save fails — 'NEFT'/'RTGS'/'IMPS' are NOT valid values there.
@@ -79,9 +80,31 @@ const BulkReceiptsDialog: React.FC<Props> = ({
   const { user } = useAuth();
   const [isSaving, setIsSaving] = useState(false);
 
-  const today = new Date().toISOString().slice(0, 10);
+  // Only the return period matters for tax purposes (period_month, not the
+  // exact day) — see dateToPeriod's callers throughout builderBuPosting.ts
+  // and builderAdjustments.ts, none of which key off a day-of-month. Staff
+  // only ever needs to pick the month; the 1st of it satisfies the schema's
+  // NOT NULL receipt_date without asking for a date nobody uses.
+  const currentMonth = (() => {
+    const d = new Date();
+    return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+  })();
+  const monthOptions = useMemo(() => {
+    const out: { value: string; label: string }[] = [];
+    const now = new Date();
+    for (let i = -24; i <= 2; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      out.push({ value: `${mm}/${d.getFullYear()}`, label: prettyPeriodLabel(`${mm}/${d.getFullYear()}`) });
+    }
+    return out.reverse();
+  }, []);
+  const monthToIsoDate = (mmYyyy: string): string => {
+    const [mm, yyyy] = mmYyyy.split('/');
+    return `${yyyy}-${mm}-01`;
+  };
   const [common, setCommon] = useState({
-    receipt_date: today,
+    receipt_month: currentMonth,
     receipt_nature: 'ADVANCE',
     instrument_type: 'NEFT/RTGS',
     amount_is_gst_inclusive: false,
@@ -214,7 +237,8 @@ const BulkReceiptsDialog: React.FC<Props> = ({
     if (!active.length) return;
     setIsSaving(true);
     try {
-      const period = dateToPeriod(common.receipt_date);
+      const period = common.receipt_month;
+      const receiptDate = monthToIsoDate(period);
 
       // A receipt has to hang off a booking, so any unbooked unit that received
       // money is booked here first — money in is the moment of sale. The booking
@@ -226,7 +250,7 @@ const BulkReceiptsDialog: React.FC<Props> = ({
         if (r.u.bookingId) { bookingIdByUnit[r.u.unitId] = r.u.bookingId; continue; }
         const { data: bk, error: bErr } = await supabase.from('builder_bookings').insert({
           unit_id: r.u.unitId,
-          booking_date: common.receipt_date,
+          booking_date: receiptDate,
           total_consideration: r.u.totalConsideration || 0,
           status: 'Active',
           created_by: user?.id ?? null,
@@ -250,7 +274,7 @@ const BulkReceiptsDialog: React.FC<Props> = ({
         active.map((r) => ({
           booking_id: bookingIdByUnit[r.u.unitId],
           unit_id: r.u.unitId,
-          receipt_date: common.receipt_date,
+          receipt_date: receiptDate,
           receipt_nature: common.receipt_nature,
           amount_entered: r.entered,
           amount_is_gst_inclusive: common.amount_is_gst_inclusive,
@@ -308,13 +332,15 @@ const BulkReceiptsDialog: React.FC<Props> = ({
         {/* Common to the whole run. */}
         <div className="grid gap-3 rounded-lg border bg-muted/30 p-3 sm:grid-cols-2 lg:grid-cols-4">
           <div>
-            <Label className="mb-1.5 block text-xs">Receipt date</Label>
-            <Input
-              type="date" value={common.receipt_date}
-              onChange={(e) => setCommon({ ...common, receipt_date: e.target.value })}
+            <Label className="mb-1.5 block text-xs">Period</Label>
+            <SearchableMonthSelect
+              options={monthOptions}
+              value={common.receipt_month}
+              onValueChange={(v) => setCommon({ ...common, receipt_month: v })}
+              placeholder="Select month"
             />
             <p className="mt-1 text-xs text-muted-foreground">
-              Period {prettyPeriodLabel(dateToPeriod(common.receipt_date))}
+              Only the return period matters here — no exact date needed.
             </p>
           </div>
           <div>
