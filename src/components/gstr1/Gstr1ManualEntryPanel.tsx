@@ -16,12 +16,13 @@ import {
 } from '@/utils/gstr1ManualBuild';
 import { buildGstr1Summary } from '@/utils/buildGstr1Summary';
 
-const INVOICE_SECTIONS: Exclude<Gstr1Section, 'nil' | 'doc'>[] = ['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp'];
+const INVOICE_SECTIONS: Exclude<Gstr1Section, 'nil' | 'doc'>[] = ['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp', 'at', 'txpd'];
 
 const SECTION_LABELS: Record<Gstr1Section, string> = {
   b2b: '4A/4B — B2B (Registered)', b2cl: '5 — B2CL (Large, Unregistered)',
   b2cs: '7 — B2CS (Others)', cdnr: '9B — Credit/Debit Notes (Registered)',
   cdnur: '9B — Credit/Debit Notes (Unregistered)', exp: '6A — Exports',
+  at: '11A — Advances Received', txpd: '11B — Advance Adjustment',
   nil: '8 — Nil Rated / Exempted', doc: '13 — Documents Issued',
 };
 
@@ -51,7 +52,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
   const [summaryOpen, setSummaryOpen] = useState(false);
 
   const [rowsBySection, setRowsBySection] = useState<Record<Exclude<Gstr1Section, 'nil' | 'doc'>, ManualRow[]>>({
-    b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [],
+    b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [], at: [], txpd: [],
   });
   const [nilRows, setNilRows] = useState<ManualRow[]>([]);
   const [docRows, setDocRows] = useState<ManualRow[]>([]);
@@ -82,7 +83,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
 
       const rows = (data as any[]) || [];
       if (rows.length > 0) {
-        const bySection: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, ManualRow[]> = { b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [] };
+        const bySection: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, ManualRow[]> = { b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [], at: [], txpd: [] };
         const nil: ManualRow[] = [];
         const doc: ManualRow[] = [];
         rows.forEach((r) => {
@@ -108,7 +109,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
           setDocRows(hydrated.docRows);
         }
       } else {
-        setRowsBySection({ b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [] });
+        setRowsBySection({ b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [], at: [], txpd: [] });
         setNilRows([]);
         setDocRows([]);
       }
@@ -149,7 +150,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
         if (field === 'ctin' && typeof value === 'string' && value.length >= 2) {
           next.pos = value.slice(0, 2).toUpperCase();
         }
-        if (['rt', 'txval', 'pos', 'typ', 'ctin'].includes(field)) next = recomputeRowTax(section, next, homeState);
+        if (['rt', 'txval', 'ad_amt', 'pos', 'typ', 'ctin'].includes(field)) next = recomputeRowTax(section, next, homeState);
         return next;
       }),
     }));
@@ -272,7 +273,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
     }
   };
 
-  const sectionTotal = (rows: ManualRow[]) => rows.reduce((s, r) => s + (Number(r.txval) || 0), 0);
+  const sectionTotal = (rows: ManualRow[]) => rows.reduce((s, r) => s + (Number(r.txval ?? r.ad_amt) || 0), 0);
 
   const renderCell = (section: Exclude<Gstr1Section, 'nil' | 'doc'>, row: ManualRow, col: ColumnDef) => {
     const value = row[col.key] ?? '';
@@ -360,7 +361,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
                 editable table below. Counts/values are live, computed from
                 whatever is currently in the grid. */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mb-4">
-              {(['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp', 'nil', 'doc'] as Gstr1Section[]).map((s) => {
+              {(['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp', 'at', 'txpd', 'nil', 'doc'] as Gstr1Section[]).map((s) => {
                 const isActive = activeTab === s;
                 const tile = tileFor(s);
                 return (

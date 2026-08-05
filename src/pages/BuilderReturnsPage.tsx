@@ -29,6 +29,7 @@ import {
   previewBuilderGstr1, saveBuilderGstr1, fetchGstr1Status, type Gstr1Status,
 } from '@/lib/builderGstr1Data';
 import { isFsiConsentBlocked } from '@/lib/builderFsiData';
+import { runAutoReclassSweep } from '@/lib/builderAdjustmentsData';
 import { fetchBuilderOutputTaxSplit, fetchNetItcAvailable } from '@/lib/builderItcCashData';
 import { computeItcCashWorkingPaper, type ItcCashWorkingPaper } from '@/utils/builderItcCash';
 
@@ -268,6 +269,28 @@ const BuilderReturnsPage: React.FC = () => {
     if (!selectedClientId || !selectedMonth) return;
     setIsGenerating(true);
     try {
+      // Safety net: re-rating (§8) posts itself the moment a unit crosses
+      // ₹45L, from wherever that's first noticed (Bookings page, this page's
+      // own load). Re-run it here too, for whichever project the crossing
+      // actually happened on, so the return is never generated ahead of a
+      // correction it should already carry.
+      const projectsToSweep = projectFilter !== 'ALL'
+        ? [projectFilter]
+        : projects.map((p) => p.id);
+      for (const pid of projectsToSweep) {
+        try {
+          const posted = await runAutoReclassSweep(pid, user?.id ?? null);
+          if (posted.length) {
+            toast.success(
+              `${posted.length} unit${posted.length === 1 ? '' : 's'} auto re-rated on crossing `
+              + `₹45,00,000 before generating (${posted.map((c) => c.unitNo).join(', ')}).`,
+            );
+          }
+        } catch (e) {
+          toast.error(`Auto re-rating check failed for a project: ${(e as Error).message}`);
+        }
+      }
+
       const { result, blocked } = await saveBuilderGstr1({
         clientId: selectedClientId,
         gstin: selectedClient?.gstin ?? null,

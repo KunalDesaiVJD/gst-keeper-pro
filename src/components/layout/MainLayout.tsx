@@ -12,7 +12,7 @@ import logo from '@/assets/logo.png';
 
 const MainLayout: React.FC = () => {
   const { isAuthenticated, isLoading, isStaffRole } = useAuth();
-  const [isSidebarMinimized, setIsSidebarMinimized] = useState(false);
+  const [isSidebarMinimized, setIsSidebarMinimized] = useState(true);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
   if (isLoading) {

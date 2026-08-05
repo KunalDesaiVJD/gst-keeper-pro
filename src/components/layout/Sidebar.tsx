@@ -24,6 +24,7 @@ import {
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
 import logoIcon from '@/assets/logo-icon.png';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface NavItem {
   label: string;
@@ -408,26 +409,30 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
           </button>
         </div>
 
-        {/* Minimized nav - icons only */}
+        {/* Minimized nav - icons only, with a tooltip carrying the label so the
+            rail stays narrow without losing discoverability. */}
         <nav className="flex-1 py-4 px-2 space-y-2 overflow-y-auto">
           {navItems.map((item) => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              className={({ isActive }) =>
-                cn(
-                  'relative flex items-center justify-center p-2 rounded-lg transition-all duration-200',
-                  'before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2 before:w-1 before:rounded-r-full before:transition-all',
-                  isActive
-                    ? 'bg-sidebar-accent text-sidebar-accent-foreground before:h-6 before:bg-accent'
-                    : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground before:h-0'
-                )
-              }
-              title={item.label}
-              aria-label={item.label}
-            >
-              {item.icon}
-            </NavLink>
+            <Tooltip key={item.path} delayDuration={100}>
+              <TooltipTrigger asChild>
+                <NavLink
+                  to={item.path}
+                  className={({ isActive }) =>
+                    cn(
+                      'relative flex items-center justify-center p-2 rounded-lg transition-all duration-200',
+                      'before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2 before:w-1 before:rounded-r-full before:transition-all',
+                      isActive
+                        ? 'bg-sidebar-accent text-sidebar-accent-foreground before:h-6 before:bg-accent'
+                        : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground before:h-0'
+                    )
+                  }
+                  aria-label={item.label}
+                >
+                  {item.icon}
+                </NavLink>
+              </TooltipTrigger>
+              <TooltipContent side="right">{item.label}</TooltipContent>
+            </Tooltip>
           ))}
         </nav>
 

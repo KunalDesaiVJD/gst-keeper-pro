@@ -34,8 +34,8 @@ import { prettyPeriodLabel } from '@/utils/builderLedger';
 import { periodOfDate } from '@/utils/builderBuEvent';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
 import {
-  applyBounceOffsets, findOffsetCandidates, findReclassCandidates, raiseBounceReversal,
-  raiseCreditNote, restateReceipt, saveReclassification, scheduleFor,
+  applyBounceOffsets, autoReclassifyProject, findOffsetCandidates, findReclassCandidates,
+  raiseBounceReversal, raiseCreditNote, restateReceipt, saveReclassification, scheduleFor,
   type ReclassCandidate,
 } from '@/lib/builderAdjustmentsData';
 
@@ -217,18 +217,39 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
     return out;
   }, [units, charges, project, rrep.isRrep, settings]);
 
-  // Re-rating candidates are derived from what was actually posted at 1.5%.
+  // Re-rating candidates are derived from what was actually posted at 1.5%,
+  // and — per the firm's position (§8) — posted immediately with no staff
+  // review: a unit crossing ₹45L was never affordable, so the correction is
+  // arithmetic, not a judgment call. `candidates` stays for the rare case a
+  // post fails (e.g. a transient write error) so it isn't silently lost.
   const [candidatesReady, setCandidatesReady] = useState(false);
   useEffect(() => {
     if (!projectId || !units.length) { setCandidates([]); setCandidatesReady(true); return; }
     setCandidatesReady(false);
     (async () => {
-      const done = new Set(reclasses.map((r) => r.unit_id));
-      const found = await findReclassCandidates(projectId, classification);
-      setCandidates(found.filter((c) => !done.has(c.unitId)));
-      setCandidatesReady(true);
+      try {
+        const posted = await autoReclassifyProject(projectId, classification, user?.id ?? null);
+        if (posted.length) {
+          toast.success(
+            `${posted.length} unit${posted.length === 1 ? '' : 's'} auto re-rated on crossing ₹45,00,000 `
+            + `(${posted.map((c) => c.unitNo).join(', ')}) — Table 10 amendment and interest posted below.`,
+          );
+          await load();
+        }
+        setCandidates([]);
+      } catch (e) {
+        // Fall back to surfacing the raw candidates so the correction isn't
+        // lost — findReclassCandidates alone doesn't touch the database.
+        const done = new Set(reclasses.map((r) => r.unit_id));
+        const found = await findReclassCandidates(projectId, classification);
+        setCandidates(found.filter((c) => !done.has(c.unitId)));
+        toast.error(`Auto re-rating failed, showing candidates for manual review: ${(e as Error).message}`);
+      } finally {
+        setCandidatesReady(true);
+      }
     })();
-  }, [projectId, units.length, classification, reclasses]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, units.length, classification]);
 
   /** Route the row-menu click straight to the right tab and dialog. */
   const handledFocusRef = useRef<string | null>(null);
@@ -557,13 +578,15 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
               <CardDescription>
                 A unit taxed at 1.5% whose gross consideration has since crossed ₹45 lakh was never
                 affordable. The concession never applied, so the higher rate is due on everything already
-                offered to tax — with interest u/s 50 running from each original period's due date.
+                offered to tax — with interest u/s 50 running from each original period's due date. This is
+                posted automatically the moment it's detected (no staff selection); the table below only
+                shows a candidate here if that automatic post failed and needs a manual retry.
               </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
               {candidates.length === 0 ? (
                 <p className="text-sm text-muted-foreground px-4 py-6">
-                  No units carry affordable-rate entries that no longer qualify.
+                  No units are waiting on re-rating — anything detected posts automatically.
                 </p>
               ) : (
                 <Table>

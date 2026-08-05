@@ -197,6 +197,7 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
 
   const handleSave = async () => {
     if (!editUnit) return;
+    if (!form.dastavej_date) { toast.error('Dastavej date is required.'); return; }
     setIsSaving(true);
     try {
       const { error } = await supabase.from('builder_units').update({
@@ -490,9 +491,9 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
 
           <div className="space-y-3">
             <div>
-              <Label htmlFor="d-date">Dastavej date</Label>
+              <Label htmlFor="d-date">Dastavej date <span className="text-destructive">*</span></Label>
               <Input
-                id="d-date" type="date" value={form.dastavej_date}
+                id="d-date" type="date" required value={form.dastavej_date}
                 onChange={(e) => setForm({ ...form, dastavej_date: e.target.value })}
               />
             </div>
