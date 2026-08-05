@@ -109,6 +109,12 @@ const currentMonthShort = () => {
   const d = new Date();
   return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
 };
+/** One calendar month before the given 'MM/YYYY' — for the Opening column. */
+const previousPeriod = (mmYyyy: string): string => {
+  const [mm, yyyy] = (mmYyyy || currentMonthShort()).split('/').map(Number);
+  const d = new Date(yyyy, mm - 1 - 1, 1);
+  return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+};
 /** Only the return period matters for tax purposes — the 1st of it satisfies
  *  the schema's NOT NULL receipt_date without asking staff for an exact day. */
 const monthToIsoDate = (mmYyyy: string): string => {
@@ -534,7 +540,13 @@ const BuilderBookingsPage: React.FC = () => {
     // taxed on its whole balance at that cut-off — a receipt arriving after
     // that is a plain collection, not a fresh advance. Defaulted, not forced:
     // an unpost or a genuine edge case can still override it.
-    setReceiptForm({ ...emptyReceipt, gst_already_discharged: !!u.bu_event_id });
+    setReceiptForm({
+      ...emptyReceipt,
+      // Default to whatever month is already selected on the main screen —
+      // staff already made that choice before opening this dialog.
+      receipt_month: selectedMonth || emptyReceipt.receipt_month,
+      gst_already_discharged: !!u.bu_event_id,
+    });
     setReceiptDialog(true);
   };
 
@@ -1305,12 +1317,11 @@ const BuilderBookingsPage: React.FC = () => {
                     <TableHead>Member(s)</TableHead>
                     <TableHead className="text-right">Carpet</TableHead>
                     <TableHead>Rate</TableHead>
-                    <TableHead className="text-right">₹45L headroom</TableHead>
                     <TableHead className="text-right">Agreement</TableHead>
-                    <TableHead className="text-right">Value taxed</TableHead>
-                    <TableHead className="text-right">Open advance</TableHead>
+                    <TableHead className="text-right">Opening</TableHead>
                     <TableHead className="text-right">Received</TableHead>
-                    <TableHead className="text-right">Balance to tax</TableHead>
+                    <TableHead className="text-right">Closing</TableHead>
+                    <TableHead className="text-right">Open advance</TableHead>
                     <TableHead>Dastavej</TableHead>
                     <TableHead className="w-36" />
                   </TableRow>
@@ -1320,6 +1331,7 @@ const BuilderBookingsPage: React.FC = () => {
                     const cls = classifyFor(u);
                     const booking = activeBookingFor(u.id);
                     const led = ledgerForAsOf(u, selectedMonth);
+                    const openingLed = ledgerForAsOf(u, previousPeriod(selectedMonth));
                     const agreement = openings[u.id]?.agreement_value || cls.gross.gross;
                     const tie = checkTieOut(agreement, led.valueTaxed);
                     const mem = booking ? members[booking.id] || [] : [];
@@ -1363,21 +1375,11 @@ const BuilderBookingsPage: React.FC = () => {
                             {cls.ratePct}%
                             <span className="block text-xs text-muted-foreground">eff. {cls.effectiveRatePct}%</span>
                           </TableCell>
-                          <TableCell className="text-right text-sm tabular-nums">
-                            {u.unit_type !== 'Residential' ? (
-                              <span className="text-muted-foreground">n/a</span>
-                            ) : (() => {
-                              // Distance to the ₹45 lakh limit. Negative means the
-                              // concession is already gone; a small positive number
-                              // means one charge head would end it.
-                              const room = AFFORDABLE_VALUE_LIMIT - cls.gross.gross;
-                              const tone = room < 0
-                                ? 'text-destructive'
-                                : room < 100000 ? 'text-amber-600 dark:text-amber-500' : '';
-                              return <span className={tone}>{formatINR(room)}</span>;
-                            })()}
-                          </TableCell>
                           <TableCell className="text-right text-sm">{formatINR(agreement)}</TableCell>
+                          <TableCell className="text-right text-sm">{formatINR(openingLed.valueTaxed)}</TableCell>
+                          <TableCell className="text-right text-sm">
+                            {formatINR(led.valueTaxed - openingLed.valueTaxed)}
+                          </TableCell>
                           <TableCell className="text-right text-sm font-medium">
                             {formatINR(led.valueTaxed)}
                             {!tie.reconciles && (
@@ -1389,8 +1391,6 @@ const BuilderBookingsPage: React.FC = () => {
                           <TableCell className="text-right text-sm">
                             {led.openAdvance > 0 ? formatINR(led.openAdvance) : '—'}
                           </TableCell>
-                          <TableCell className="text-right text-sm">{formatINR(led.totalReceived)}</TableCell>
-                          <TableCell className="text-right text-sm">{formatINR(led.balanceToTax)}</TableCell>
                           <TableCell className="text-sm tabular-nums">
                             {u.dastavej_date || <span className="text-muted-foreground">—</span>}
                           </TableCell>
@@ -1438,11 +1438,6 @@ const BuilderBookingsPage: React.FC = () => {
                                       onSelect={() => setSurface({ type: 'corrections', unitId: u.id, action: 'creditNote' })}
                                     >
                                       Credit note
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      onSelect={() => setSurface({ type: 'corrections', unitId: u.id, action: 'reRate' })}
-                                    >
-                                      Re-rate (Table 10)
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
                                       onSelect={() => setSurface({ type: 'corrections', unitId: u.id, action: 'bounceReversal' })}
@@ -1834,6 +1829,7 @@ const BuilderBookingsPage: React.FC = () => {
           onOpenChange={setBulkReceipts}
           units={bulkReceiptUnits}
           docSeriesPrefix={project.doc_series_prefix}
+          defaultMonth={selectedMonth}
           onSaved={load}
         />
       )}
@@ -2041,8 +2037,8 @@ const BuilderBookingsPage: React.FC = () => {
                 {agreementWarning.crosses45L && (
                   <p>
                     It also takes a unit currently taxed as affordable past <strong>₹45,00,000</strong>. Once
-                    the master reflects that, the unit is re-rated to 7.5% on everything already taxed, in the
-                    month it crosses — raise that from the row menu → Re-rate (Table 10).
+                    the master reflects that, the unit is re-rated to 7.5% on everything already taxed
+                    automatically, in the month it crosses — no action needed here.
                   </p>
                 )}
                 {receiptTarget && (

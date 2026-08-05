@@ -17,7 +17,7 @@
  * differently is how a reconciliation becomes unexplainable.
  */
 
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -71,11 +71,15 @@ interface Props {
   onOpenChange: (v: boolean) => void;
   units: BulkReceiptUnit[];
   docSeriesPrefix?: string | null;
+  /** The month already selected on the main screen ('MM/YYYY') — the dialog
+   *  opens straight onto it rather than asking again. Falls back to the
+   *  calendar-current month if not given. */
+  defaultMonth?: string | null;
   onSaved: () => void | Promise<void>;
 }
 
 const BulkReceiptsDialog: React.FC<Props> = ({
-  open, onOpenChange, units, docSeriesPrefix, onSaved,
+  open, onOpenChange, units, docSeriesPrefix, defaultMonth, onSaved,
 }) => {
   const { user } = useAuth();
   const [isSaving, setIsSaving] = useState(false);
@@ -104,12 +108,19 @@ const BulkReceiptsDialog: React.FC<Props> = ({
     return `${yyyy}-${mm}-01`;
   };
   const [common, setCommon] = useState({
-    receipt_month: currentMonth,
+    receipt_month: defaultMonth || currentMonth,
     receipt_nature: 'ADVANCE',
     instrument_type: 'NEFT/RTGS',
     amount_is_gst_inclusive: false,
     deduct_tds: false,
   });
+  // The dialog stays mounted across opens, so re-sync to whatever month is
+  // selected on the main screen each time it opens rather than whatever was
+  // left over from the last session.
+  useEffect(() => {
+    if (open) setCommon((c) => ({ ...c, receipt_month: defaultMonth || currentMonth }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, defaultMonth]);
   /** unitId → typed amount. Absent or blank means "not collected from this unit". */
   const [amounts, setAmounts] = useState<Record<string, string>>({});
   const [refs, setRefs] = useState<Record<string, string>>({});

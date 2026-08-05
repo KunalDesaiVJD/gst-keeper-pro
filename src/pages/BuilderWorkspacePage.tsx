@@ -407,6 +407,7 @@ const BuilderWorkspacePage: React.FC = () => {
           onOpenChange={setClientReceiptsOpen}
           units={clientReceiptUnits}
           docSeriesPrefix={null}
+          defaultMonth={selectedMonth}
           onSaved={async () => {
             // Re-pull so a re-opened dialog reflects the balances just recorded.
             if (selectedClientId) {
