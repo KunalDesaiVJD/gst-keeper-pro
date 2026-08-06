@@ -16,8 +16,10 @@
 name: Portal Agent
 
 on:
-  schedule:
-    - cron: '*/30 * * * *'          # every 30 min (sized to stay within free minutes)
+  # Automatic schedule disabled at the firm's request — an unattended run
+  # that hits an expired session/CAPTCHA has nobody to answer the prompt, so
+  # it just sits until the job timeout kills it (reported as a failed run).
+  # Trigger manually via "Run workflow" instead when a sync is actually needed.
   workflow_dispatch: {}             # manual "Run workflow" button = instant sync
   repository_dispatch:
     types: [portal-sync]            # optional on-demand trigger from a backend
