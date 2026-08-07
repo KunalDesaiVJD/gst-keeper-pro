@@ -400,6 +400,10 @@ const BuilderWorkspacePage: React.FC = () => {
           onSaved={async () => {
             if (selectedClientId) setProjects(await loadProjects(selectedClientId));
           }}
+          onDeleted={async () => {
+            patch({ project: '' });
+            if (selectedClientId) setProjects(await loadProjects(selectedClientId));
+          }}
         />
 
         <BulkReceiptsDialog

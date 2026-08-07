@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -12,7 +14,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { AlertTriangle, Loader2 } from 'lucide-react';
+import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
 import { RREP_COMMERCIAL_THRESHOLD, formatPct, testRrep } from '@/utils/builderRates';
 
 /**
@@ -85,13 +87,19 @@ interface Props {
   project: BuilderProjectFormRow | null;
   readOnly?: boolean;
   onSaved: () => void | Promise<void>;
+  /** Called after a successful delete. Falls back to onSaved if not given. */
+  onDeleted?: () => void | Promise<void>;
 }
 
 const BuilderProjectSettingsDialog: React.FC<Props> = ({
-  open, onOpenChange, clientId, project, readOnly, onSaved,
+  open, onOpenChange, clientId, project, readOnly, onSaved, onDeleted,
 }) => {
+  const { user } = useAuth();
+  const confirm = useConfirm();
+  const canDelete = user?.role === 'superadmin' || user?.role === 'gst_manager';
   const [form, setForm] = useState(emptyForm);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -145,6 +153,30 @@ const BuilderProjectSettingsDialog: React.FC<Props> = ({
       toast.error(`Could not save: ${(e as Error).message}`);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!project) return;
+    const ok = await confirm({
+      title: `Delete "${project.name}"?`,
+      description: 'This permanently deletes the project and everything under it — units, bookings, '
+        + 'receipts, invoices, BU events, TDR/FSI workings and returns data. This cannot be undone.',
+      destructive: true,
+      confirmText: 'Delete project',
+    });
+    if (!ok) return;
+    setIsDeleting(true);
+    try {
+      const { error } = await supabase.from('builder_projects').delete().eq('id', project.id);
+      if (error) throw error;
+      toast.success('Project deleted');
+      onOpenChange(false);
+      await (onDeleted || onSaved)();
+    } catch (e) {
+      toast.error(`Could not delete: ${(e as Error).message}`);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -325,16 +357,29 @@ const BuilderProjectSettingsDialog: React.FC<Props> = ({
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {readOnly ? 'Close' : 'Cancel'}
-          </Button>
-          {!readOnly && (
-            <Button onClick={handleSave} disabled={isSaving}>
-              {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              {project ? 'Save changes' : 'Create project'}
+        <DialogFooter className="sm:justify-between">
+          {project && canDelete ? (
+            <Button
+              variant="ghost"
+              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+              onClick={handleDelete}
+              disabled={isDeleting || isSaving}
+            >
+              {isDeleting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
+              Delete project
             </Button>
-          )}
+          ) : <span />}
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              {readOnly ? 'Close' : 'Cancel'}
+            </Button>
+            {!readOnly && (
+              <Button onClick={handleSave} disabled={isSaving || isDeleting}>
+                {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                {project ? 'Save changes' : 'Create project'}
+              </Button>
+            )}
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

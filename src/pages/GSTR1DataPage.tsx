@@ -621,9 +621,24 @@ const GSTR1DataPage: React.FC = () => {
       toast.error('GSTR-1 for this period is already Filed — the imported JSON is locked and cannot be deleted.');
       return;
     }
-    if (!(await confirm({ title: 'Delete GSTR-1 data?', description: 'This removes the imported GSTR-1 data for this client and period.', destructive: true, confirmText: 'Delete' }))) return;
+    const description = isManualClient
+      ? 'This removes the generated GSTR-1 data and every manually entered invoice row for this client and period.'
+      : 'This removes the imported GSTR-1 data for this client and period.';
+    if (!(await confirm({ title: 'Delete GSTR-1 data?', description, destructive: true, confirmText: 'Delete' }))) return;
     try {
-      await supabase.from('gstr1_data').delete().eq('id', gstr1Data.id);
+      const { error } = await supabase.from('gstr1_data').delete().eq('id', gstr1Data.id);
+      if (error) throw error;
+      // Manual clients key invoices into gstr1_manual_entries, a separate table
+      // from gstr1_data — deleting only the generated JSON left those rows
+      // behind, so "Delete" then re-entering invoices silently reloaded the
+      // old data instead of starting from an empty grid.
+      if (isManualClient) {
+        const periodMonthKey = mmYyyyToShort(selectedMonth);
+        const { error: entriesError } = await supabase
+          .from('gstr1_manual_entries' as any)
+          .delete().eq('client_id', selectedClient).eq('period_month', periodMonthKey);
+        if (entriesError) throw entriesError;
+      }
       toast.success('GSTR-1 data deleted');
       setGstr1Data(null);
     } catch (err: any) {
