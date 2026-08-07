@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { FileCheck2, Download, FileText, Loader2, FileJson } from 'lucide-react';
+import { FileCheck2, Download, FileText, Loader2, FileJson, Send, CheckCircle2, XCircle, X } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useMonth } from '@/contexts/MonthContext';
@@ -58,12 +58,49 @@ const Gstr3bPage: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [result, setResult] = useState<Gstr3bResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  // NIL Return flag, shared with GSTR-1's filing_status.is_nil mechanism —
-  // this page has no portal-push action of its own, but the flag records
-  // that this period had zero activity for whatever downstream consumes it
-  // (Filing Status page, future portal integration).
+  // NIL Return flag, shared with GSTR-1's filing_status.is_nil mechanism.
   const [isNilReturn, setIsNilReturn] = useState(false);
   const [isTogglingNil, setIsTogglingNil] = useState(false);
+
+  // "Push to GST Portal" — extension-driven, mirrors the GSTR-1 upload bridge.
+  // GSTR-3B has no offline-JSON path (it's a live web form), so this fills
+  // Table 3.1 + Table 4 directly and stops before Confirm/Offset/File — the
+  // human reviews and submits.
+  const [extReady, setExtReady] = useState(false);
+  const [isPushing, setIsPushing] = useState(false);
+  const [pushResult, setPushResult] = useState<{ ok: boolean; summary: string; skipped?: string[] } | null>(null);
+
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      const d: any = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkPushGstr3bResult) {
+        const r = d.__gstkPushGstr3bResult as { ok: boolean; summary?: string; error?: string; skipped?: string[] };
+        setIsPushing(false);
+        if (r.ok) {
+          toast.success(r.summary || 'GSTR-3B form filled.');
+          setPushResult({ ok: true, summary: r.summary || 'GSTR-3B form filled.', skipped: r.skipped });
+        } else {
+          const msg = r.error || r.summary || 'GSTR-3B push failed.';
+          toast.error(msg);
+          setPushResult({ ok: false, summary: msg });
+        }
+      }
+    };
+    window.addEventListener('message', onMsg);
+    const ping = () => window.postMessage({ __gstkAppReady: true }, '*');
+    ping();
+    const t1 = setTimeout(ping, 400);
+    const t2 = setTimeout(ping, 1200);
+    return () => {
+      window.removeEventListener('message', onMsg);
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, []);
+
+  useEffect(() => { setPushResult(null); }, [selectedClient, selectedMonth]);
 
   const fetchIsNil = useCallback(async () => {
     if (!selectedClient || !selectedMonth) { setIsNilReturn(false); return; }
@@ -166,6 +203,32 @@ const Gstr3bPage: React.FC = () => {
     });
   };
 
+  const handlePush = () => {
+    if (!result || !selectedClient || !selectedMonth) return;
+    if (!extReady) {
+      toast.error('Install / enable the GST Keeper browser extension to push from this page.');
+      return;
+    }
+    if (!selectedClientData?.gstin) {
+      toast.error('Selected client has no GSTIN on file.');
+      return;
+    }
+    setIsPushing(true);
+    setPushResult(null);
+    window.postMessage(
+      {
+        __gstkPushGstr3b: {
+          clientId: selectedClient,
+          period_month: selectedMonth,
+          actorId: user?.id ?? null,
+          gstr3bJson: result.json,
+        },
+      },
+      '*'
+    );
+    toast.info('Opening the GST portal in a new tab — clear the CAPTCHA and let the fill run. It stops before Confirm/Offset/File; review and submit yourself.');
+  };
+
   const Tile: React.FC<{ label: string; value: number; tone?: 'primary' | 'success' | 'info' }> = ({ label, value, tone = 'primary' }) => (
     <Card className={tone === 'success' ? 'bg-success/5 border-success/20' : tone === 'info' ? 'bg-info/5 border-info/20' : 'bg-primary/5 border-primary/20'}>
       <CardContent className="p-4">
@@ -189,6 +252,17 @@ const Gstr3bPage: React.FC = () => {
             <Button variant="outline" onClick={handleDownloadPdf}>
               <Download className="h-4 w-4 mr-2" /> Download PDF
             </Button>
+            {isStaff && (
+              <Button
+                onClick={handlePush}
+                disabled={isPushing || !extReady}
+                className="bg-success text-success-foreground hover:bg-success/90"
+                title={!extReady ? 'Install / enable the GST Keeper browser extension' : 'Fills Table 3.1 + Table 4 on the live GSTR-3B form; stops before Confirm/Offset/File'}
+              >
+                {isPushing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+                {isPushing ? 'Pushing…' : 'Push to GST Portal'}
+              </Button>
+            )}
           </>
         ) : undefined}
       />
@@ -237,6 +311,29 @@ const Gstr3bPage: React.FC = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Push-to-portal result — what got filled, what didn't, and the
+          standing reminder that Table 5 / 4(D)(1) are never touched. */}
+      {pushResult && (
+        <div
+          className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${
+            pushResult.ok ? 'border-success/30 bg-success/10 text-success' : 'border-destructive/30 bg-destructive/10 text-destructive'
+          }`}
+        >
+          {pushResult.ok ? <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-success" /> : <XCircle className="h-4 w-4 mt-0.5 shrink-0" />}
+          <div className="flex-1">
+            <p className="break-words">{pushResult.summary}</p>
+            {pushResult.skipped && pushResult.skipped.length > 0 && (
+              <ul className="mt-1 text-xs list-disc pl-4 text-foreground/70">
+                {pushResult.skipped.map((s, i) => <li key={i}>{s}</li>)}
+              </ul>
+            )}
+          </div>
+          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 shrink-0" onClick={() => setPushResult(null)}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
