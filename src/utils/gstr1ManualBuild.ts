@@ -31,10 +31,15 @@ export interface ManualRow {
 
 export const gstinHomeState = (gstin: string): string => (gstin || '').slice(0, 2);
 
-// GST portal tax figures are whole rupees on virtually every real invoice
-// (paisa-level splits are a rounding artifact, not something anyone files
-// on) — round every auto-computed amount to the nearest rupee.
-const roundRupee = (n: number): number => Math.round(n);
+// Round auto-computed tax amounts to 2 decimals (paise), not a whole rupee.
+// Whole-rupee rounding was the original design, but it broke CGST/SGST
+// equality on an odd tax total: splitting a pre-rounded whole-rupee amount
+// in half can't divide evenly (16731 / 2 => 8366/8365), so rounding to a
+// rupee FIRST is what created the mismatch. Rounding to 2 decimals instead
+// keeps an exact half like 8365.50 exact on both sides — no rounding step
+// forces them apart. (Still just the auto-fill starting value — every tax
+// cell stays a plain editable field.)
+const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 /**
  * Auto-split a line's tax into IGST vs CGST+SGST based on POS vs the client's
@@ -48,16 +53,16 @@ export function computeTaxSplit(rt: number, txval: number, pos: string, homeStat
   if (isIntraState) {
     // CGST and SGST must come out equal — compute each independently at
     // half the rate (9% + 9% for an 18% supply) rather than computing the
-    // full-rate tax once and splitting it in half. Splitting an odd whole-
-    // rupee total (e.g. 92950 * 18% = 16731) can never divide evenly, so
-    // one side always landed ₹1 higher (8366/8365) — a real, reported bug.
-    // Computing both halves the same way from the same formula guarantees
-    // they match, at the (accepted, standard) cost of the pair's sum
-    // occasionally differing by ₹1 from a straight full-rate calculation.
-    const half = roundRupee(((Number(rt) || 0) / 200) * (Number(txval) || 0));
+    // full-rate tax once and splitting it in half. Splitting a total first
+    // can't divide evenly whenever it's odd (16731 / 2 => 8366/8365 if
+    // rounded to a rupee) — a real, reported bug. Computing both halves the
+    // same way from the same formula guarantees they match exactly (e.g.
+    // 8365.50 / 8365.50), at the (accepted, standard) cost of the pair's sum
+    // occasionally differing by a paisa or two from a straight full-rate calc.
+    const half = round2(((Number(rt) || 0) / 200) * (Number(txval) || 0));
     return { iamt: 0, camt: half, samt: half };
   }
-  const taxAmt = roundRupee(((Number(rt) || 0) / 100) * (Number(txval) || 0));
+  const taxAmt = round2(((Number(rt) || 0) / 100) * (Number(txval) || 0));
   return { iamt: taxAmt, camt: 0, samt: 0 };
 }
 
@@ -229,7 +234,7 @@ export const DOC_TYPES = [
 
 export function recomputeRowTax(section: Gstr1Section, row: ManualRow, homeState: string): ManualRow {
   if (section === 'b2cl' || section === 'cdnur' || section === 'exp') {
-    const taxAmt = roundRupee(((Number(row.rt) || 0) / 100) * (Number(row.txval) || 0));
+    const taxAmt = round2(((Number(row.rt) || 0) / 100) * (Number(row.txval) || 0));
     return { ...row, iamt: taxAmt };
   }
   if (section === 'b2cs') {
