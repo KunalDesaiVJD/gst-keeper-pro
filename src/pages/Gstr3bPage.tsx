@@ -318,7 +318,7 @@ const Gstr3bPage: React.FC = () => {
                 <Checkbox
                   id="gstr3b-nil-return"
                   checked={isNilReturn}
-                  disabled={!canEditFilingStatus() || isTogglingNil}
+                  disabled={!canEditFilingStatus() || isFiled || isTogglingNil}
                   onCheckedChange={(v) => handleToggleNilReturn(!!v)}
                 />
                 <label htmlFor="gstr3b-nil-return" className="text-sm font-medium cursor-pointer select-none">
