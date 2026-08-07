@@ -225,13 +225,16 @@ export function recomputeRowTax(section: Gstr1Section, row: ManualRow, homeState
     return { ...row, iamt: taxAmt };
   }
   if (section === 'b2cs') {
-    if (row.typ === 'INTRA') {
-      const taxAmt = roundRupee(((Number(row.rt) || 0) / 100) * (Number(row.txval) || 0));
-      const half = roundRupee(taxAmt / 2);
-      return { ...row, iamt: 0, camt: half, samt: taxAmt - half };
-    }
-    const taxAmt = roundRupee(((Number(row.rt) || 0) / 100) * (Number(row.txval) || 0));
-    return { ...row, iamt: taxAmt, camt: 0, samt: 0 };
+    // Intra vs. inter-state must come from POS vs. home state — NOT row.typ,
+    // which is the e-commerce flag (OE/E), a different field entirely. This
+    // used to check row.typ === 'INTRA', a value that stopped being reachable
+    // once the typ dropdown was fixed to its real OE/E meaning, so every
+    // row silently fell through to the inter-state (IGST-only) branch
+    // regardless of POS — producing IGST on intra-state supplies, which
+    // GSTN's portal correctly rejects as a business-rule validation error
+    // ("Processed with Error", not a schema rejection).
+    const split = computeTaxSplit(row.rt, row.txval, row.pos, homeState);
+    return { ...row, ...split };
   }
   if (section === 'b2b' || section === 'cdnr') {
     const split = computeTaxSplit(row.rt, row.txval, row.pos, homeState);
