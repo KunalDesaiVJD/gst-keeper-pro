@@ -107,18 +107,23 @@ const Gstr3bPage: React.FC = () => {
   // submitted to GSTN.
   const [filingStatus, setFilingStatus] = useState<string | null>(null);
   const isFiled = filingStatus === 'Filed';
+  // GSTR-3B can only genuinely be NIL if GSTR-1 for the same client/period
+  // was also NIL — they cover the same underlying outward/inward activity.
+  // Gate the checkbox on GSTR-1's own is_nil flag so it isn't offered (and
+  // can't be mis-ticked) for a period that plainly has real supplies.
+  const [gstr1IsNil, setGstr1IsNil] = useState(false);
 
   const fetchFilingStatus = useCallback(async () => {
-    if (!selectedClient || !selectedMonth) { setIsNilReturn(false); setFilingStatus(null); return; }
-    const { data } = await supabase
-      .from('filing_status')
-      .select('status, is_nil')
-      .eq('client_id', selectedClient)
-      .eq('return_type', 'GSTR-3B')
-      .eq('period_month', selectedMonth)
-      .maybeSingle();
-    setIsNilReturn(!!(data as any)?.is_nil);
-    setFilingStatus(((data as any)?.status || null) as string | null);
+    if (!selectedClient || !selectedMonth) { setIsNilReturn(false); setFilingStatus(null); setGstr1IsNil(false); return; }
+    const [gstr3bRes, gstr1Res] = await Promise.all([
+      supabase.from('filing_status').select('status, is_nil')
+        .eq('client_id', selectedClient).eq('return_type', 'GSTR-3B').eq('period_month', selectedMonth).maybeSingle(),
+      supabase.from('filing_status').select('is_nil')
+        .eq('client_id', selectedClient).eq('return_type', 'GSTR-1').eq('period_month', selectedMonth).maybeSingle(),
+    ]);
+    setIsNilReturn(!!(gstr3bRes.data as any)?.is_nil);
+    setFilingStatus(((gstr3bRes.data as any)?.status || null) as string | null);
+    setGstr1IsNil(!!(gstr1Res.data as any)?.is_nil);
   }, [selectedClient, selectedMonth]);
   useEffect(() => { fetchFilingStatus(); }, [fetchFilingStatus]);
 
@@ -308,7 +313,7 @@ const Gstr3bPage: React.FC = () => {
                 />
               </div>
             </div>
-            {isStaff && selectedClient && selectedMonth && (
+            {isStaff && selectedClient && selectedMonth && gstr1IsNil && (
               <div className="flex items-center gap-2" title="This period had zero activity for GSTR-3B.">
                 <Checkbox
                   id="gstr3b-nil-return"
