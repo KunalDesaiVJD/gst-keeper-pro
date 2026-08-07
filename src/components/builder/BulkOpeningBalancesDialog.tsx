@@ -97,8 +97,26 @@ const BulkOpeningBalancesDialog: React.FC<Props> = ({
     setRows(next);
   }, [open, units, defaultAsAtDate]);
 
+  const emptyRowForm: RowForm = {
+    agreement_value: '', cumulative_receipts: '', cumulative_value_taxed: '',
+    cumulative_cgst: '', cumulative_sgst: '', cumulative_tds_194ia: '',
+  };
+
   const setField = (unitId: string, field: keyof RowForm, value: string) => {
-    setRows((prev) => ({ ...prev, [unitId]: { ...prev[unitId], [field]: value } }));
+    setRows((prev) => {
+      const current = prev[unitId] || emptyRowForm;
+      const next = { ...current, [field]: value };
+      // Agreement value is what marks a row "active" (see handleSave's
+      // `active` filter) — typing into any other field first, with Agreement
+      // value still blank, silently dropped that entry from the save. Default
+      // it from the unit's derived consideration the moment another field
+      // gets a value, so nothing typed is lost.
+      if (field !== 'agreement_value' && !current.agreement_value && value) {
+        const u = units.find((x) => x.unitId === unitId);
+        if (u?.defaultAgreementValue) next.agreement_value = String(u.defaultAgreementValue);
+      }
+      return { ...prev, [unitId]: next };
+    });
   };
 
   const active = units

@@ -418,6 +418,10 @@ const BuilderWorkspacePage: React.FC = () => {
               const { units } = await fetchClientBulkReceiptUnits(selectedClientId);
               setClientReceiptUnits(units);
             }
+            // The Ledger tab (BuilderBookingsPage) loaded its own copy of this
+            // data on mount and has no other way to learn this dialog — a
+            // sibling under the workspace, not a child — just wrote to it.
+            window.dispatchEvent(new CustomEvent('builder:data-changed'));
           }}
         />
 
@@ -428,6 +432,7 @@ const BuilderWorkspacePage: React.FC = () => {
           defaultAsAtDate={null}
           onSaved={async () => {
             if (selectedClientId) setClientOpeningUnits(await fetchClientBulkOpeningUnits(selectedClientId));
+            window.dispatchEvent(new CustomEvent('builder:data-changed'));
           }}
         />
       </div>

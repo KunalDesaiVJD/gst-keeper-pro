@@ -340,6 +340,20 @@ const BuilderBookingsPage: React.FC = () => {
 
   useEffect(() => { void load(); }, [load]);
 
+  /**
+   * The client-wide "Record receipts" / "Opening balances" dialogs (client
+   * setup toolbar, in BuilderWorkspacePage) write straight to the database
+   * and only refresh their own unit list so a re-open shows the numbers just
+   * entered — this component's own openings/receipts state, loaded once on
+   * mount, never heard about the write. Reload on the same event so a save
+   * there shows up here without a manual page refresh.
+   */
+  useEffect(() => {
+    const reload = () => { void load(); };
+    window.addEventListener('builder:data-changed', reload);
+    return () => window.removeEventListener('builder:data-changed', reload);
+  }, [load]);
+
   // The project-level 15% test decides every commercial unit's rate.
   const rrep = useMemo(() => {
     if (!project) return testRrep(0, 0);
