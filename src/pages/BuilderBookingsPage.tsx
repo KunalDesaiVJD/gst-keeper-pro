@@ -21,6 +21,7 @@ import {
 import {
   Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { toast } from 'sonner';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -214,6 +215,15 @@ const BuilderBookingsPage: React.FC = () => {
   // Selected receipt ids, for bulk delete. Kept as ids rather than rows so a
   // reload cannot leave the selection pointing at stale objects.
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // Column-heading filters on the Units table, same pattern as Filing Status:
+  // an empty array means "no filter" (show everything).
+  const [unitTypeFilter, setUnitTypeFilter] = useState<UnitType[]>([]);
+  const [bookingFilter, setBookingFilter] = useState<('Booked' | 'Unbooked')[]>([]);
+  const [rateFilter, setRateFilter] = useState<BuilderRateCode[]>([]);
+  const toggleInArray = <T,>(setter: React.Dispatch<React.SetStateAction<T[]>>, value: T) => {
+    setter((prev) => (prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]));
+  };
 
   const [receiptDialog, setReceiptDialog] = useState(false);
   /** Set when the receipt dialog is editing rather than creating. */
@@ -822,6 +832,20 @@ const BuilderBookingsPage: React.FC = () => {
     });
   }, [units, byHeadroom, headroomOf]);
 
+  const filteredUnits = useMemo(() => {
+    if (unitTypeFilter.length === 0 && bookingFilter.length === 0 && rateFilter.length === 0) return sortedUnits;
+    return sortedUnits.filter((u) => {
+      if (unitTypeFilter.length > 0 && !unitTypeFilter.includes(u.unit_type)) return false;
+      if (bookingFilter.length > 0) {
+        const booking = activeBookingFor(u.id);
+        const isBooked = !!booking && (members[booking.id] || []).length > 0;
+        if (!bookingFilter.includes(isBooked ? 'Booked' : 'Unbooked')) return false;
+      }
+      if (rateFilter.length > 0 && !rateFilter.includes(classifyFor(u).rateCode)) return false;
+      return true;
+    });
+  }, [sortedUnits, unitTypeFilter, bookingFilter, rateFilter, activeBookingFor, members, classifyFor]);
+
   const atRisk = useMemo(
     () => units.filter((u) => {
       const h = headroomOf(u);
@@ -1313,10 +1337,100 @@ const BuilderBookingsPage: React.FC = () => {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-8" />
-                    <TableHead>Unit</TableHead>
-                    <TableHead>Member(s)</TableHead>
+                    <TableHead>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
+                            Unit
+                            <ChevronDown className="h-3 w-3" />
+                            {unitTypeFilter.length > 0 && (
+                              <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">{unitTypeFilter.length}</Badge>
+                            )}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-48 p-2 bg-background border" align="start">
+                          <div className="space-y-1">
+                            <div className="text-xs font-medium text-muted-foreground mb-2">Filter by type</div>
+                            {(['Residential', 'Commercial'] as UnitType[]).map((t) => (
+                              <div key={t} className="flex items-center space-x-2 p-1 hover:bg-muted rounded">
+                                <Checkbox
+                                  id={`unittype-${t}`}
+                                  checked={unitTypeFilter.includes(t)}
+                                  onCheckedChange={() => toggleInArray(setUnitTypeFilter, t)}
+                                />
+                                <label htmlFor={`unittype-${t}`} className="text-xs cursor-pointer flex-1">{t}</label>
+                              </div>
+                            ))}
+                            {unitTypeFilter.length > 0 && (
+                              <Button variant="ghost" size="sm" className="w-full mt-2 h-6 text-xs" onClick={() => setUnitTypeFilter([])}>Clear</Button>
+                            )}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    </TableHead>
+                    <TableHead>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
+                            Member(s)
+                            <ChevronDown className="h-3 w-3" />
+                            {bookingFilter.length > 0 && (
+                              <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">{bookingFilter.length}</Badge>
+                            )}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-48 p-2 bg-background border" align="start">
+                          <div className="space-y-1">
+                            <div className="text-xs font-medium text-muted-foreground mb-2">Filter by booking</div>
+                            {(['Booked', 'Unbooked'] as const).map((b) => (
+                              <div key={b} className="flex items-center space-x-2 p-1 hover:bg-muted rounded">
+                                <Checkbox
+                                  id={`booking-${b}`}
+                                  checked={bookingFilter.includes(b)}
+                                  onCheckedChange={() => toggleInArray(setBookingFilter, b)}
+                                />
+                                <label htmlFor={`booking-${b}`} className="text-xs cursor-pointer flex-1">{b}</label>
+                              </div>
+                            ))}
+                            {bookingFilter.length > 0 && (
+                              <Button variant="ghost" size="sm" className="w-full mt-2 h-6 text-xs" onClick={() => setBookingFilter([])}>Clear</Button>
+                            )}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    </TableHead>
                     <TableHead className="text-right">Carpet</TableHead>
-                    <TableHead>Rate</TableHead>
+                    <TableHead>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
+                            Rate
+                            <ChevronDown className="h-3 w-3" />
+                            {rateFilter.length > 0 && (
+                              <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">{rateFilter.length}</Badge>
+                            )}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-64 p-2 bg-background border" align="start">
+                          <div className="space-y-1">
+                            <div className="text-xs font-medium text-muted-foreground mb-2">Filter by rate</div>
+                            {(Object.keys(RATE_CODE_LABEL) as BuilderRateCode[]).map((code) => (
+                              <div key={code} className="flex items-center space-x-2 p-1 hover:bg-muted rounded">
+                                <Checkbox
+                                  id={`rate-${code}`}
+                                  checked={rateFilter.includes(code)}
+                                  onCheckedChange={() => toggleInArray(setRateFilter, code)}
+                                />
+                                <label htmlFor={`rate-${code}`} className="text-xs cursor-pointer flex-1">{RATE_CODE_LABEL[code]}</label>
+                              </div>
+                            ))}
+                            {rateFilter.length > 0 && (
+                              <Button variant="ghost" size="sm" className="w-full mt-2 h-6 text-xs" onClick={() => setRateFilter([])}>Clear</Button>
+                            )}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    </TableHead>
                     <TableHead className="text-right">Agreement</TableHead>
                     <TableHead className="text-right">Opening</TableHead>
                     <TableHead className="text-right">Received</TableHead>
@@ -1327,7 +1441,14 @@ const BuilderBookingsPage: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedUnits.map((u) => {
+                  {filteredUnits.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={11} className="text-center text-muted-foreground py-8 text-sm">
+                        No units match the current filters.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {filteredUnits.map((u) => {
                     const cls = classifyFor(u);
                     const booking = activeBookingFor(u.id);
                     const led = ledgerForAsOf(u, selectedMonth);
