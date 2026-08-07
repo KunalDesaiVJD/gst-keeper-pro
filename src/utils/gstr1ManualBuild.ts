@@ -44,12 +44,20 @@ const roundRupee = (n: number): number => Math.round(n);
  * only supplies the starting value.
  */
 export function computeTaxSplit(rt: number, txval: number, pos: string, homeState: string) {
-  const taxAmt = roundRupee(((Number(rt) || 0) / 100) * (Number(txval) || 0));
   const isIntraState = !!pos && !!homeState && pos === homeState;
   if (isIntraState) {
-    const half = roundRupee(taxAmt / 2);
-    return { iamt: 0, camt: half, samt: taxAmt - half };
+    // CGST and SGST must come out equal — compute each independently at
+    // half the rate (9% + 9% for an 18% supply) rather than computing the
+    // full-rate tax once and splitting it in half. Splitting an odd whole-
+    // rupee total (e.g. 92950 * 18% = 16731) can never divide evenly, so
+    // one side always landed ₹1 higher (8366/8365) — a real, reported bug.
+    // Computing both halves the same way from the same formula guarantees
+    // they match, at the (accepted, standard) cost of the pair's sum
+    // occasionally differing by ₹1 from a straight full-rate calculation.
+    const half = roundRupee(((Number(rt) || 0) / 200) * (Number(txval) || 0));
+    return { iamt: 0, camt: half, samt: half };
   }
+  const taxAmt = roundRupee(((Number(rt) || 0) / 100) * (Number(txval) || 0));
   return { iamt: taxAmt, camt: 0, samt: 0 };
 }
 
