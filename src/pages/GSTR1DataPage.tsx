@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
-import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, Inbox, BarChart3, Download, ChevronsDownUp, ChevronsUpDown, FileSpreadsheet, History, Lock } from 'lucide-react';
+import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, Inbox, BarChart3, Download, ChevronsDownUp, ChevronsUpDown, FileSpreadsheet, History, Lock, Pencil, Plus, Save, X } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -27,6 +27,9 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DOC_TYPES } from '@/utils/gstr1ManualBuild';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -172,6 +175,19 @@ const GSTR1DataPage: React.FC = () => {
   const [errorsDialogOpen, setErrorsDialogOpen] = useState(false);
   const [showUploadReport, setShowUploadReport] = useState(false);
   const [extReady, setExtReady] = useState(false);
+
+  // Manual correction of an imported JSON's HSN (Table 12) and Documents
+  // Issued (Table 13) sections. Tally's GSTR-1 export has produced malformed
+  // values/shape in these two sections for some clients, causing the portal
+  // to reject the whole upload with a generic error — this lets the operator
+  // hand-fix the values in-app before retrying, without needing Tally to
+  // regenerate a corrected file.
+  const [hsnEditMode, setHsnEditMode] = useState(false);
+  const [hsnEditRows, setHsnEditRows] = useState<any[]>([]);
+  const [isSavingHsn, setIsSavingHsn] = useState(false);
+  const [docEditMode, setDocEditMode] = useState(false);
+  const [docEditRows, setDocEditRows] = useState<any[]>([]);
+  const [isSavingDoc, setIsSavingDoc] = useState(false);
 
   // Upload history (versions) + per-version error dialog.
   const [versions, setVersions] = useState<UploadVersion[]>([]);
@@ -450,7 +466,12 @@ const GSTR1DataPage: React.FC = () => {
   useEffect(() => { fetchVersions(); }, [fetchVersions]);
   useEffect(() => { fetchFilingStatus(); }, [fetchFilingStatus]);
   // Clear the transient upload banner when the operator switches client/month.
-  useEffect(() => { setUploadResult(null); setShowUploadReport(false); }, [selectedClient, selectedMonth]);
+  useEffect(() => {
+    setUploadResult(null);
+    setShowUploadReport(false);
+    setHsnEditMode(false); setHsnEditRows([]);
+    setDocEditMode(false); setDocEditRows([]);
+  }, [selectedClient, selectedMonth]);
 
   // Extension bridge: detect the GST Keeper browser extension and receive the
   // upload result it posts back after driving the portal. Mirrors the pattern
@@ -1002,8 +1023,11 @@ const GSTR1DataPage: React.FC = () => {
   // Accept both so files pulled from either era populate the HSN tab.
   const hsnRows = useMemo(() => {
     const raw: any[] = json.hsn?.data
-      ? json.hsn.data
-      : [...(json.hsn?.hsn_b2b || []), ...(json.hsn?.hsn_b2c || [])];
+      ? json.hsn.data.map((item: any) => ({ ...item, _src: 'hsn_b2b' }))
+      : [
+          ...(json.hsn?.hsn_b2b || []).map((item: any) => ({ ...item, _src: 'hsn_b2b' })),
+          ...(json.hsn?.hsn_b2c || []).map((item: any) => ({ ...item, _src: 'hsn_b2c' })),
+        ];
     return raw.map((item: any) => ({
       hsn_sc: item.hsn_sc,
       desc: item.desc,
@@ -1015,6 +1039,7 @@ const GSTR1DataPage: React.FC = () => {
       camt: item.camt,
       samt: item.samt,
       csamt: item.csamt,
+      _src: item._src,
     }));
   }, [json.hsn]);
 
@@ -1051,14 +1076,17 @@ const GSTR1DataPage: React.FC = () => {
     }));
   }, [json.txpd]);
 
-  // DOC data
+  // DOC data. The portal JSON keys each group by "doc_num" (a serial code for
+  // the document type, e.g. 1 = Invoices for outward supply) and doesn't
+  // repeat the type label — look it up from DOC_TYPES for display/editing.
   const docRows = useMemo(() => {
     const rows: any[] = [];
     (json.doc_issue?.doc_det || []).forEach((doc: any) => {
+      const typLabel = doc.doc_typ || DOC_TYPES.find((d) => d.doc_num === doc.doc_num)?.value || '';
       (doc.docs || []).forEach((d: any) => {
         rows.push({
           doc_num: doc.doc_num,
-          doc_typ: doc.doc_typ,
+          doc_typ: typLabel,
           from: d.from,
           to: d.to,
           totnum: d.totnum,
@@ -1069,6 +1097,134 @@ const GSTR1DataPage: React.FC = () => {
     });
     return rows;
   }, [json.doc_issue]);
+
+  // --- HSN (Table 12) manual correction ---
+  const startHsnEdit = () => {
+    setHsnEditRows(hsnRows.map((r, i) => ({ ...r, _id: i })));
+    setHsnEditMode(true);
+  };
+  const cancelHsnEdit = () => { setHsnEditMode(false); setHsnEditRows([]); };
+  const updateHsnCell = (id: number, field: string, value: any) =>
+    setHsnEditRows((prev) => prev.map((r) => (r._id === id ? { ...r, [field]: value } : r)));
+  const addHsnRow = () =>
+    setHsnEditRows((prev) => [
+      ...prev,
+      { _id: (prev.at(-1)?._id ?? -1) + 1, _src: 'hsn_b2b', hsn_sc: '', desc: '', uqc: 'NA', qty: 0, rt: 0, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 },
+    ]);
+  const removeHsnRow = (id: number) => setHsnEditRows((prev) => prev.filter((r) => r._id !== id));
+  const saveHsnEdits = async () => {
+    if (!gstr1Data) return;
+    setIsSavingHsn(true);
+    try {
+      const buckets: Record<string, any[]> = { hsn_b2b: [], hsn_b2c: [] };
+      hsnEditRows
+        .filter((r) => String(r.hsn_sc || '').trim())
+        .forEach((r) => {
+          const bucket = r._src === 'hsn_b2c' ? 'hsn_b2c' : 'hsn_b2b';
+          buckets[bucket].push({
+            num: buckets[bucket].length + 1,
+            hsn_sc: String(r.hsn_sc).trim(),
+            desc: r.desc || '',
+            uqc: r.uqc || 'NA',
+            qty: Number(r.qty) || 0,
+            rt: Number(r.rt) || 0,
+            txval: Number(r.txval) || 0,
+            iamt: Number(r.iamt) || 0,
+            camt: Number(r.camt) || 0,
+            samt: Number(r.samt) || 0,
+            csamt: Number(r.csamt) || 0,
+          });
+        });
+      const newJson = { ...json };
+      if (buckets.hsn_b2b.length || buckets.hsn_b2c.length) {
+        newJson.hsn = {};
+        if (buckets.hsn_b2b.length) newJson.hsn.hsn_b2b = buckets.hsn_b2b;
+        if (buckets.hsn_b2c.length) newJson.hsn.hsn_b2c = buckets.hsn_b2c;
+      } else {
+        delete newJson.hsn;
+      }
+      const { error } = await supabase.from('gstr1_data').update({ raw_json: newJson, updated_at: new Date().toISOString() }).eq('id', gstr1Data.id);
+      if (error) throw error;
+      toast.success('HSN summary updated.');
+      await fetchGSTR1Data();
+      await recordVersion({ action_type: 'IMPORT', status: 'edited', summary: 'Edited HSN summary (Table 12) before upload' });
+      setHsnEditMode(false);
+      setHsnEditRows([]);
+    } catch (err: any) {
+      toast.error('Failed to save HSN summary: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setIsSavingHsn(false);
+    }
+  };
+
+  // --- Documents Issued (Table 13) manual correction ---
+  const docSeriesCount = (from: string, to: string): number | null => {
+    const f = String(from ?? '').match(/(\d+)\s*$/)?.[1];
+    const t = String(to ?? '').match(/(\d+)\s*$/)?.[1];
+    if (!f || !t) return null;
+    const diff = parseInt(t, 10) - parseInt(f, 10) + 1;
+    return diff > 0 ? diff : null;
+  };
+  const startDocEdit = () => {
+    setDocEditRows(docRows.map((r, i) => ({ ...r, _id: i })));
+    setDocEditMode(true);
+  };
+  const cancelDocEdit = () => { setDocEditMode(false); setDocEditRows([]); };
+  const updateDocCell = (id: number, field: string, value: any) =>
+    setDocEditRows((prev) => prev.map((r) => {
+      if (r._id !== id) return r;
+      const next = { ...r, [field]: value };
+      if (field === 'doc_typ') {
+        next.doc_num = DOC_TYPES.find((d) => d.value === value)?.doc_num ?? r.doc_num;
+      }
+      if (field === 'from' || field === 'to') {
+        const count = docSeriesCount(next.from, next.to);
+        if (count !== null) next.totnum = count;
+      }
+      return next;
+    }));
+  const addDocRow = () =>
+    setDocEditRows((prev) => [
+      ...prev,
+      { _id: (prev.at(-1)?._id ?? -1) + 1, doc_num: DOC_TYPES[0].doc_num, doc_typ: DOC_TYPES[0].value, from: '', to: '', totnum: 0, cancel: 0 },
+    ]);
+  const removeDocRow = (id: number) => setDocEditRows((prev) => prev.filter((r) => r._id !== id));
+  const saveDocEdits = async () => {
+    if (!gstr1Data) return;
+    setIsSavingDoc(true);
+    try {
+      const groups = new Map<number, any[]>();
+      docEditRows
+        .filter((r) => (Number(r.totnum) || 0) > 0)
+        .forEach((r) => {
+          const key = Number(r.doc_num);
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key)!.push(r);
+        });
+      const docDet = Array.from(groups.entries()).map(([doc_num, rows]) => ({
+        doc_num,
+        docs: rows.map((r, i) => {
+          const totnum = Number(r.totnum) || 0;
+          const cancel = Number(r.cancel) || 0;
+          return { num: i + 1, from: r.from || '', to: r.to || '', totnum, cancel, net_issue: totnum - cancel };
+        }),
+      }));
+      const newJson = { ...json };
+      if (docDet.length) newJson.doc_issue = { doc_det: docDet };
+      else delete newJson.doc_issue;
+      const { error } = await supabase.from('gstr1_data').update({ raw_json: newJson, updated_at: new Date().toISOString() }).eq('id', gstr1Data.id);
+      if (error) throw error;
+      toast.success('Documents Issued updated.');
+      await fetchGSTR1Data();
+      await recordVersion({ action_type: 'IMPORT', status: 'edited', summary: 'Edited Documents Issued (Table 13) before upload' });
+      setDocEditMode(false);
+      setDocEditRows([]);
+    } catch (err: any) {
+      toast.error('Failed to save Documents Issued: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setIsSavingDoc(false);
+    }
+  };
 
   const renderEmptyState = (label: string) => (
     <TableEmptyState
@@ -1601,18 +1757,53 @@ const GSTR1DataPage: React.FC = () => {
                     {(docCount[activeTab] ?? 0).toLocaleString('en-IN')}
                   </span>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0"
-                  onClick={() => toggleCollapse(activeTab)}
-                >
-                  {isCollapsed(activeTab) ? (
-                    <><ChevronsUpDown className="h-3.5 w-3.5 mr-1.5" /> Show all rows</>
-                  ) : (
-                    <><ChevronsDownUp className="h-3.5 w-3.5 mr-1.5" /> Show only total</>
+                <div className="flex items-center gap-2 shrink-0">
+                  {activeTab === 'hsn' && !isFiled && (
+                    hsnEditMode ? (
+                      <>
+                        <Button variant="ghost" size="sm" onClick={cancelHsnEdit} disabled={isSavingHsn}>
+                          <X className="h-3.5 w-3.5 mr-1.5" /> Cancel
+                        </Button>
+                        <Button size="sm" onClick={saveHsnEdits} disabled={isSavingHsn}>
+                          {isSavingHsn ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+                          Save
+                        </Button>
+                      </>
+                    ) : (
+                      <Button variant="outline" size="sm" onClick={startHsnEdit}>
+                        <Pencil className="h-3.5 w-3.5 mr-1.5" /> Edit HSN Summary
+                      </Button>
+                    )
                   )}
-                </Button>
+                  {activeTab === 'doc' && !isFiled && (
+                    docEditMode ? (
+                      <>
+                        <Button variant="ghost" size="sm" onClick={cancelDocEdit} disabled={isSavingDoc}>
+                          <X className="h-3.5 w-3.5 mr-1.5" /> Cancel
+                        </Button>
+                        <Button size="sm" onClick={saveDocEdits} disabled={isSavingDoc}>
+                          {isSavingDoc ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+                          Save
+                        </Button>
+                      </>
+                    ) : (
+                      <Button variant="outline" size="sm" onClick={startDocEdit}>
+                        <Pencil className="h-3.5 w-3.5 mr-1.5" /> Edit Documents Issued
+                      </Button>
+                    )
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => toggleCollapse(activeTab)}
+                  >
+                    {isCollapsed(activeTab) ? (
+                      <><ChevronsUpDown className="h-3.5 w-3.5 mr-1.5" /> Show all rows</>
+                    ) : (
+                      <><ChevronsDownUp className="h-3.5 w-3.5 mr-1.5" /> Show only total</>
+                    )}
+                  </Button>
+                </div>
               </div>
               <p className="text-xs text-muted-foreground mb-3">
                 Counts are documents (invoices / notes) like the GST portal; the table lists each tax-rate line, so it can have more rows than the count.
@@ -1986,7 +2177,85 @@ const GSTR1DataPage: React.FC = () => {
 
               {/* HSN Tab */}
               <TabsContent value="hsn">
-                {hsnRows.length === 0 ? renderEmptyState('HSN') : (
+                {hsnEditMode ? (
+                  <div className={TABLE_SHELL}>
+                    <Table className="min-w-[1100px]">
+                      <TableHeader className="sticky top-0 z-10">
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-32">HSN Code</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-44">Type</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-40">UQC</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-24 text-right">Qty</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-20 text-right">Rate</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-32 text-right">Taxable Value</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-28 text-right">IGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-28 text-right">CGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-28 text-right">SGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-24 text-right">Cess</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12" />
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {hsnEditRows.map((row: any, i: number) => (
+                          <TableRow key={row._id}>
+                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
+                            <TableCell className="border border-border p-1">
+                              <Input className="h-8" value={row.hsn_sc || ''} onChange={(e) => updateHsnCell(row._id, 'hsn_sc', e.target.value)} />
+                            </TableCell>
+                            <TableCell className="border border-border p-1">
+                              <Select value={row._src || 'hsn_b2b'} onValueChange={(v) => updateHsnCell(row._id, '_src', v)}>
+                                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="hsn_b2b">B2B / CDNR (registered)</SelectItem>
+                                  <SelectItem value="hsn_b2c">Other (B2C / Exports)</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell className="border border-border p-1">
+                              <Input className="h-8" value={row.uqc || ''} onChange={(e) => updateHsnCell(row._id, 'uqc', e.target.value)} />
+                            </TableCell>
+                            <TableCell className="border border-border p-1">
+                              <Input className="h-8 text-right" type="number" value={row.qty ?? 0} onChange={(e) => updateHsnCell(row._id, 'qty', e.target.value)} />
+                            </TableCell>
+                            <TableCell className="border border-border p-1">
+                              <Input className="h-8 text-right" type="number" value={row.rt ?? 0} onChange={(e) => updateHsnCell(row._id, 'rt', e.target.value)} />
+                            </TableCell>
+                            <TableCell className="border border-border p-1">
+                              <Input className="h-8 text-right" type="number" value={row.txval ?? 0} onChange={(e) => updateHsnCell(row._id, 'txval', e.target.value)} />
+                            </TableCell>
+                            <TableCell className="border border-border p-1">
+                              <Input className="h-8 text-right" type="number" value={row.iamt ?? 0} onChange={(e) => updateHsnCell(row._id, 'iamt', e.target.value)} />
+                            </TableCell>
+                            <TableCell className="border border-border p-1">
+                              <Input className="h-8 text-right" type="number" value={row.camt ?? 0} onChange={(e) => updateHsnCell(row._id, 'camt', e.target.value)} />
+                            </TableCell>
+                            <TableCell className="border border-border p-1">
+                              <Input className="h-8 text-right" type="number" value={row.samt ?? 0} onChange={(e) => updateHsnCell(row._id, 'samt', e.target.value)} />
+                            </TableCell>
+                            <TableCell className="border border-border p-1">
+                              <Input className="h-8 text-right" type="number" value={row.csamt ?? 0} onChange={(e) => updateHsnCell(row._id, 'csamt', e.target.value)} />
+                            </TableCell>
+                            <TableCell className="border border-border p-1 text-center">
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive" onClick={() => removeHsnRow(row._id)}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                      <TableFooter>
+                        <TableRow className="bg-muted hover:bg-muted">
+                          <TableCell className="border border-border" colSpan={12}>
+                            <Button variant="ghost" size="sm" onClick={addHsnRow}>
+                              <Plus className="h-3.5 w-3.5 mr-1.5" /> Add Row
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      </TableFooter>
+                    </Table>
+                  </div>
+                ) : hsnRows.length === 0 ? renderEmptyState('HSN') : (
                   <div className={TABLE_SHELL}>
                     <Table className="min-w-[1000px]">
                       <TableHeader className="sticky top-0 z-10">
@@ -2172,7 +2441,68 @@ const GSTR1DataPage: React.FC = () => {
 
               {/* DOC Tab */}
               <TabsContent value="doc">
-                {docRows.length === 0 ? renderEmptyState('Document Issued') : (
+                {docEditMode ? (
+                  <div className={TABLE_SHELL}>
+                    <Table>
+                      <TableHeader className="sticky top-0 z-10">
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-56">Doc Type</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-32">From</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-32">To</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-24 text-right">Total</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-24 text-right">Cancelled</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-24 text-right">Net Issued</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12" />
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {docEditRows.map((row: any, i: number) => (
+                          <TableRow key={row._id}>
+                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
+                            <TableCell className="border border-border p-1">
+                              <Select value={row.doc_typ || ''} onValueChange={(v) => updateDocCell(row._id, 'doc_typ', v)}>
+                                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  {DOC_TYPES.map((d) => <SelectItem key={d.value} value={d.value}>{d.value}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell className="border border-border p-1">
+                              <Input className="h-8" value={row.from || ''} onChange={(e) => updateDocCell(row._id, 'from', e.target.value)} />
+                            </TableCell>
+                            <TableCell className="border border-border p-1">
+                              <Input className="h-8" value={row.to || ''} onChange={(e) => updateDocCell(row._id, 'to', e.target.value)} />
+                            </TableCell>
+                            <TableCell className="border border-border p-1">
+                              <Input className="h-8 text-right" type="number" value={row.totnum ?? 0} onChange={(e) => updateDocCell(row._id, 'totnum', e.target.value)} />
+                            </TableCell>
+                            <TableCell className="border border-border p-1">
+                              <Input className="h-8 text-right" type="number" value={row.cancel ?? 0} onChange={(e) => updateDocCell(row._id, 'cancel', e.target.value)} />
+                            </TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">
+                              {(Number(row.totnum) || 0) - (Number(row.cancel) || 0)}
+                            </TableCell>
+                            <TableCell className="border border-border p-1 text-center">
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive" onClick={() => removeDocRow(row._id)}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                      <TableFooter>
+                        <TableRow className="bg-muted hover:bg-muted">
+                          <TableCell className="border border-border" colSpan={8}>
+                            <Button variant="ghost" size="sm" onClick={addDocRow}>
+                              <Plus className="h-3.5 w-3.5 mr-1.5" /> Add Row
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      </TableFooter>
+                    </Table>
+                  </div>
+                ) : docRows.length === 0 ? renderEmptyState('Document Issued') : (
                   <div className={TABLE_SHELL}>
                     <Table>
                       <TableHeader className="sticky top-0 z-10">
