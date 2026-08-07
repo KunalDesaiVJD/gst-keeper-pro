@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { FileCheck2, Download, FileText, Loader2, FileJson, Send, CheckCircle2, XCircle, X } from 'lucide-react';
+import { FileCheck2, Download, FileText, Loader2, FileJson, Send, CheckCircle2, XCircle, X, Lock } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useMonth } from '@/contexts/MonthContext';
@@ -102,18 +102,25 @@ const Gstr3bPage: React.FC = () => {
 
   useEffect(() => { setPushResult(null); }, [selectedClient, selectedMonth]);
 
-  const fetchIsNil = useCallback(async () => {
-    if (!selectedClient || !selectedMonth) { setIsNilReturn(false); return; }
+  // Same filing_status row GSTR-1 locks against — 'Filed' disables the push,
+  // same reasoning: don't let the tool alter a draft behind what was already
+  // submitted to GSTN.
+  const [filingStatus, setFilingStatus] = useState<string | null>(null);
+  const isFiled = filingStatus === 'Filed';
+
+  const fetchFilingStatus = useCallback(async () => {
+    if (!selectedClient || !selectedMonth) { setIsNilReturn(false); setFilingStatus(null); return; }
     const { data } = await supabase
       .from('filing_status')
-      .select('is_nil')
+      .select('status, is_nil')
       .eq('client_id', selectedClient)
       .eq('return_type', 'GSTR-3B')
       .eq('period_month', selectedMonth)
       .maybeSingle();
     setIsNilReturn(!!(data as any)?.is_nil);
+    setFilingStatus(((data as any)?.status || null) as string | null);
   }, [selectedClient, selectedMonth]);
-  useEffect(() => { fetchIsNil(); }, [fetchIsNil]);
+  useEffect(() => { fetchFilingStatus(); }, [fetchFilingStatus]);
 
   const handleToggleNilReturn = async (checked: boolean) => {
     if (!selectedClient || !selectedMonth) return;
@@ -255,9 +262,15 @@ const Gstr3bPage: React.FC = () => {
             {isStaff && (
               <Button
                 onClick={handlePush}
-                disabled={isPushing || !extReady}
+                disabled={isPushing || !extReady || isFiled}
                 className="bg-success text-success-foreground hover:bg-success/90"
-                title={!extReady ? 'Install / enable the GST Keeper browser extension' : 'Fills Table 3.1 + Table 4 on the live GSTR-3B form; stops before Confirm/Offset/File'}
+                title={
+                  isFiled
+                    ? 'GSTR-3B already Filed for this period — push is locked'
+                    : !extReady
+                      ? 'Install / enable the GST Keeper browser extension'
+                      : 'Fills Table 3.1 + Table 4 on the live GSTR-3B form; stops before Confirm/Offset/File'
+                }
               >
                 {isPushing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
                 {isPushing ? 'Pushing…' : 'Push to GST Portal'}
@@ -311,6 +324,18 @@ const Gstr3bPage: React.FC = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Return is Filed — matches GSTR-1's lock: don't let the tool push a
+          draft behind what was already submitted to GSTN. */}
+      {isFiled && (
+        <div className="flex items-start gap-2 rounded-lg border border-success/40 bg-success/10 p-3 text-sm text-success-foreground">
+          <Lock className="h-4 w-4 mt-0.5 shrink-0 text-success" />
+          <div className="flex-1">
+            <p className="font-medium text-success">GSTR-3B already Filed for this period</p>
+            <p className="text-xs mt-0.5 text-foreground/80">Push to GST Portal is locked to preserve the record of what was actually filed.</p>
+          </div>
+        </div>
+      )}
 
       {/* Push-to-portal result — what got filled, what didn't, and the
           standing reminder that Table 5 / 4(D)(1) are never touched. */}
