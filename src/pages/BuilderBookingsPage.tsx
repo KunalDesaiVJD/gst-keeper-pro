@@ -224,6 +224,23 @@ const BuilderBookingsPage: React.FC = () => {
   const toggleInArray = <T,>(setter: React.Dispatch<React.SetStateAction<T[]>>, value: T) => {
     setter((prev) => (prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]));
   };
+  // Excel-style unit-number picker inside the Unit column filter: null means
+  // "everything" (the default, unfiltered state) rather than an empty list,
+  // because an explicit empty selection has to mean "show nothing" once the
+  // user starts unchecking individual units — the same list used for "no
+  // filter applied" and "user cleared every box" would otherwise collide.
+  const [unitNoFilter, setUnitNoFilter] = useState<string[] | null>(null);
+  const [unitNoSearch, setUnitNoSearch] = useState('');
+  const allUnitNos = useMemo(
+    () => Array.from(new Set(units.map((u) => u.unit_no))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    [units],
+  );
+  const toggleUnitNo = (no: string) => {
+    setUnitNoFilter((prev) => {
+      const current = prev ?? allUnitNos;
+      return current.includes(no) ? current.filter((v) => v !== no) : [...current, no];
+    });
+  };
 
   const [receiptDialog, setReceiptDialog] = useState(false);
   /** Set when the receipt dialog is editing rather than creating. */
@@ -833,9 +850,12 @@ const BuilderBookingsPage: React.FC = () => {
   }, [units, byHeadroom, headroomOf]);
 
   const filteredUnits = useMemo(() => {
-    if (unitTypeFilter.length === 0 && bookingFilter.length === 0 && rateFilter.length === 0) return sortedUnits;
+    if (unitTypeFilter.length === 0 && bookingFilter.length === 0 && rateFilter.length === 0 && unitNoFilter === null) {
+      return sortedUnits;
+    }
     return sortedUnits.filter((u) => {
       if (unitTypeFilter.length > 0 && !unitTypeFilter.includes(u.unit_type)) return false;
+      if (unitNoFilter !== null && !unitNoFilter.includes(u.unit_no)) return false;
       if (bookingFilter.length > 0) {
         const booking = activeBookingFor(u.id);
         const isBooked = !!booking && (members[booking.id] || []).length > 0;
@@ -844,7 +864,7 @@ const BuilderBookingsPage: React.FC = () => {
       if (rateFilter.length > 0 && !rateFilter.includes(classifyFor(u).rateCode)) return false;
       return true;
     });
-  }, [sortedUnits, unitTypeFilter, bookingFilter, rateFilter, activeBookingFor, members, classifyFor]);
+  }, [sortedUnits, unitTypeFilter, unitNoFilter, bookingFilter, rateFilter, activeBookingFor, members, classifyFor]);
 
   const atRisk = useMemo(
     () => units.filter((u) => {
@@ -1338,17 +1358,19 @@ const BuilderBookingsPage: React.FC = () => {
                   <TableRow>
                     <TableHead className="w-8" />
                     <TableHead>
-                      <Popover>
+                      <Popover onOpenChange={(open) => { if (!open) setUnitNoSearch(''); }}>
                         <PopoverTrigger asChild>
                           <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
                             Unit
                             <ChevronDown className="h-3 w-3" />
-                            {unitTypeFilter.length > 0 && (
-                              <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">{unitTypeFilter.length}</Badge>
+                            {(unitTypeFilter.length > 0 || unitNoFilter !== null) && (
+                              <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                                {unitNoFilter !== null ? unitNoFilter.length : unitTypeFilter.length}
+                              </Badge>
                             )}
                           </Button>
                         </PopoverTrigger>
-                        <PopoverContent className="w-48 p-2 bg-background border" align="start">
+                        <PopoverContent className="w-56 p-2 bg-background border" align="start">
                           <div className="space-y-1">
                             <div className="text-xs font-medium text-muted-foreground mb-2">Filter by type</div>
                             {(['Residential', 'Commercial'] as UnitType[]).map((t) => (
@@ -1361,8 +1383,50 @@ const BuilderBookingsPage: React.FC = () => {
                                 <label htmlFor={`unittype-${t}`} className="text-xs cursor-pointer flex-1">{t}</label>
                               </div>
                             ))}
-                            {unitTypeFilter.length > 0 && (
-                              <Button variant="ghost" size="sm" className="w-full mt-2 h-6 text-xs" onClick={() => setUnitTypeFilter([])}>Clear</Button>
+
+                            <div className="border-t mt-2 pt-2">
+                              <div className="text-xs font-medium text-muted-foreground mb-1">Filter by unit no.</div>
+                              <Input
+                                value={unitNoSearch}
+                                onChange={(e) => setUnitNoSearch(e.target.value)}
+                                placeholder="Search unit..."
+                                className="h-7 text-xs mb-1"
+                              />
+                              <div className="flex items-center gap-2 px-1 pb-1 mb-1 border-b text-xs">
+                                <button type="button" className="text-primary hover:underline" onClick={() => setUnitNoFilter(null)}>
+                                  Select all
+                                </button>
+                                <span className="text-muted-foreground">·</span>
+                                <button type="button" className="text-primary hover:underline" onClick={() => setUnitNoFilter([])}>
+                                  Clear all
+                                </button>
+                              </div>
+                              <div className="max-h-48 overflow-y-auto space-y-0.5">
+                                {allUnitNos
+                                  .filter((no) => no.toLowerCase().includes(unitNoSearch.toLowerCase()))
+                                  .map((no) => (
+                                    <div key={no} className="flex items-center space-x-2 p-1 hover:bg-muted rounded">
+                                      <Checkbox
+                                        id={`unitno-${no}`}
+                                        checked={unitNoFilter === null || unitNoFilter.includes(no)}
+                                        onCheckedChange={() => toggleUnitNo(no)}
+                                      />
+                                      <label htmlFor={`unitno-${no}`} className="text-xs cursor-pointer flex-1">{no}</label>
+                                    </div>
+                                  ))}
+                                {allUnitNos.filter((no) => no.toLowerCase().includes(unitNoSearch.toLowerCase())).length === 0 && (
+                                  <p className="text-xs text-muted-foreground p-1">No matching units.</p>
+                                )}
+                              </div>
+                            </div>
+
+                            {(unitTypeFilter.length > 0 || unitNoFilter !== null) && (
+                              <Button
+                                variant="ghost" size="sm" className="w-full mt-2 h-6 text-xs"
+                                onClick={() => { setUnitTypeFilter([]); setUnitNoFilter(null); }}
+                              >
+                                Clear
+                              </Button>
                             )}
                           </div>
                         </PopoverContent>
