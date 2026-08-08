@@ -80,6 +80,27 @@ const toShortMonth = (mmYyyy: string): string => {
   return `${MONTH_SHORT[mm - 1]}-${String(yyyy).slice(-2)}`;
 };
 
+// bills_not_in_2b.reversal_month / reclaim_month are free-text (e.g. "Jun-26",
+// "June 2026", "06/2026") — mirrors ITCSummaryPage's getMonthPatterns /
+// monthMatches exactly, so this page's live reversal/reclaim totals for M-1
+// match what ITC Summary itself would compute for that period.
+const getMonthPatterns = (monthStr: string) => {
+  const [monthNum, year] = monthStr.split('/');
+  const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  const monthName = monthNames[parseInt(monthNum) - 1] || '';
+  const yearShort = year?.slice(-2) || '';
+  const yearSingle = year?.slice(-1) || '';
+  return { monthName, yearShort, yearSingle, fullYear: year || '' };
+};
+const monthMatches = (storedMonth: string | null, patterns: ReturnType<typeof getMonthPatterns>): boolean => {
+  if (!storedMonth) return false;
+  const stored = storedMonth.toLowerCase().trim();
+  const { monthName, yearShort, yearSingle, fullYear } = patterns;
+  const hasMonth = stored.includes(monthName);
+  const hasYear = stored.includes(yearShort) || stored.includes(yearSingle) || stored.includes(fullYear);
+  return hasMonth && hasYear;
+};
+
 const GstReceivableRecoPage: React.FC = () => {
   const { user, isStaffRole, canManualOverride } = useAuth();
   const { selectedMonth, setSelectedMonth } = useMonth();
@@ -133,6 +154,11 @@ const GstReceivableRecoPage: React.FC = () => {
   // Source-availability flags (drive the small notes on the row labels)
   const [hasItcSummary, setHasItcSummary] = useState(false);
   const [hasGstr1, setHasGstr1] = useState(false);
+  // Net ITC Available (4C) is only taken from ITC Summary once M-1's
+  // GSTR-3B is actually Filed — before that it's still a draft that can
+  // keep changing, so the reco intentionally shows 0 rather than a number
+  // that might not match what eventually gets filed.
+  const [prevReturnFiled, setPrevReturnFiled] = useState(false);
 
   const isStaff = isStaffRole();
   const selectedClientData = clients.find(c => c.id === selectedClientId);
@@ -274,17 +300,22 @@ const GstReceivableRecoPage: React.FC = () => {
       // from the M-1 (previous month) sources.
       const prevMonth = previousPeriodMonthKey(selectedMonth);
 
-      // 2. ITC Summary (M-1) → Net ITC Available (4C = 4A − 4B)
-      const { data: itcData } = prevMonth
-        ? await supabase
-            .from('itc_summaries')
-            .select('data')
-            .eq('client_id', selectedClientId)
-            .eq('period_month', prevMonth)
-            .maybeSingle()
-        : { data: null };
+      // 2. ITC Summary (M-1) → Net ITC Available (4C = 4A − 4B). ITC Summary's
+      // own auto-linked rows (RCM ITC, 2B-Reco reversal/reclaim) only get
+      // baked into this saved snapshot on a manual Save, and can keep
+      // changing right up to the point M-1's GSTR-3B is actually filed — so
+      // only trust this snapshot once that return is Filed (it's locked at
+      // that point and won't drift again); before that it's still a draft.
+      const [{ data: itcData }, { data: prevFilingRows }] = prevMonth
+        ? await Promise.all([
+            supabase.from('itc_summaries').select('data').eq('client_id', selectedClientId).eq('period_month', prevMonth).maybeSingle(),
+            supabase.from('filing_status').select('status').eq('client_id', selectedClientId).eq('period_month', prevMonth).in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']),
+          ])
+        : [{ data: null }, { data: null }];
+      const prevReturnFiled = !!prevFilingRows?.some((f: any) => f.status === 'Filed');
+      setPrevReturnFiled(prevReturnFiled);
 
-      if (itcData?.data) {
+      if (itcData?.data && prevReturnFiled) {
         setHasItcSummary(true);
         const itc = itcData.data as any;
         const rowsA: any[] = itc.section4A || [];
@@ -292,41 +323,58 @@ const GstReceivableRecoPage: React.FC = () => {
         const findRow = (rows: any[], srNo: string) =>
           rows.find(r => r?.srNo === srNo) || { cgst: 0, sgst: 0, igst: 0 };
         const num = (v: any) => Number(v) || 0;
+        const zero3 = { cgst: 0, sgst: 0, igst: 0 };
 
-        // Row (3) "RCM ITC" is auto-linked from rcm_data on the ITC Summary
-        // page, but only ever PERSISTED to itc_summaries on a manual Save —
-        // the saved snapshot silently drifts from live RCM data whenever RCM
-        // entries change afterward (same staleness bug fixed for GSTR-3B's
-        // 4A(3) in buildGstr3bJson.ts). Recompute it live here too instead of
-        // trusting the stored row(3), same formula as ITCSummaryPage's
-        // fetchRCMTotals, so this page's 4C matches what ITC Summary shows.
+        // ITC Summary auto-links three rows live (RCM ITC, and two from 2B
+        // Reconciliation) and only bakes them into the saved snapshot on a
+        // manual Save. Recompute them the same way here so this page always
+        // matches what ITC Summary is currently displaying for M-1, not
+        // whatever happened to be saved last.
         const prevShortMonth = prevMonth ? toShortMonth(prevMonth) : '';
-        const { data: rcmRows } = prevShortMonth
-          ? await supabase
-              .from('rcm_data')
-              .select('cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18')
-              .eq('client_id', selectedClientId)
-              .eq('month', prevShortMonth)
-          : { data: null };
+        const patterns = prevMonth ? getMonthPatterns(prevMonth) : null;
+        const [{ data: rcmRows }, { data: reversalBills }, { data: reclaimBills }] = await Promise.all([
+          prevShortMonth
+            ? supabase.from('rcm_data').select('cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18').eq('client_id', selectedClientId).eq('month', prevShortMonth)
+            : Promise.resolve({ data: null }),
+          prevMonth
+            ? supabase.from('bills_not_in_2b').select('input_igst, input_cgst, input_sgst, reversal_month').eq('client_id', selectedClientId).eq('period_month', prevMonth).not('reversal_month', 'is', null)
+            : Promise.resolve({ data: null }),
+          prevMonth
+            ? supabase.from('bills_not_in_2b').select('input_igst, input_cgst, input_sgst, reclaim_month, reclaim_subtype').eq('client_id', selectedClientId).eq('period_month', prevMonth).not('reclaim_month', 'is', null)
+            : Promise.resolve({ data: null }),
+        ]);
         const liveRcmItc = (rcmRows || []).reduce(
-          (acc, r: any) => ({
+          (acc: any, r: any) => ({
             igst: acc.igst + (Number(r.igst_5) || 0) + (Number(r.igst_18) || 0),
             cgst: acc.cgst + (Number(r.cgst_2_5) || 0) + (Number(r.cgst_9) || 0),
             sgst: acc.sgst + (Number(r.sgst_2_5) || 0) + (Number(r.sgst_9) || 0),
           }),
-          { igst: 0, cgst: 0, sgst: 0 }
+          zero3
         );
+        const liveReversal = patterns
+          ? (reversalBills || [])
+              .filter((b: any) => monthMatches(b.reversal_month, patterns))
+              .reduce((acc: any, b: any) => ({
+                igst: acc.igst + (b.input_igst || 0), cgst: acc.cgst + (b.input_cgst || 0), sgst: acc.sgst + (b.input_sgst || 0),
+              }), zero3)
+          : zero3;
+        const liveReclaim = patterns
+          ? (reclaimBills || [])
+              .filter((b: any) => b.reclaim_subtype !== 'EXPENSE_OUT' && monthMatches(b.reclaim_month, patterns))
+              .reduce((acc: any, b: any) => ({
+                igst: acc.igst + (b.input_igst || 0), cgst: acc.cgst + (b.input_cgst || 0), sgst: acc.sgst + (b.input_sgst || 0),
+              }), zero3)
+          : zero3;
 
-        // Total (5) = 5.1 + 5.2 − 5.3 + 5.4 + 5.5 (matches ITC Summary page)
+        // Total (5) = 5.1 + 5.2 − 5.3 + 5.4 + 5.5 (matches ITC Summary page) — 5.4 uses liveReclaim.
         const r51 = findRow(rowsA, '5.1');
         const r52 = findRow(rowsA, '5.2');
         const r53 = findRow(rowsA, '5.3');
-        const r54 = findRow(rowsA, '5.4');
         const r55 = findRow(rowsA, '5.5');
         const total5 = {
-          cgst: num(r51.cgst) + num(r52.cgst) - num(r53.cgst) + num(r54.cgst) + num(r55.cgst),
-          sgst: num(r51.sgst) + num(r52.sgst) - num(r53.sgst) + num(r54.sgst) + num(r55.sgst),
-          igst: num(r51.igst) + num(r52.igst) - num(r53.igst) + num(r54.igst) + num(r55.igst),
+          cgst: num(r51.cgst) + num(r52.cgst) - num(r53.cgst) + liveReclaim.cgst + num(r55.cgst),
+          sgst: num(r51.sgst) + num(r52.sgst) - num(r53.sgst) + liveReclaim.sgst + num(r55.sgst),
+          igst: num(r51.igst) + num(r52.igst) - num(r53.igst) + liveReclaim.igst + num(r55.igst),
         };
         // Total 4A = rows (1)+(2)+(3)+(4) + Total (5) — row (3) uses liveRcmItc.
         const rows1To4 = rowsA.slice(0, 4).reduce(
@@ -366,17 +414,14 @@ const GstReceivableRecoPage: React.FC = () => {
             sgst: num(prevMonthAdjRow?.sgst),
             igst: num(prevMonthAdjRow?.igst),
           };
-          // (2)'s sub-rows: current month per 2B RECO + previous months
-          const recoReversalRow = rowsB.find((r: any) =>
-            typeof r?.particular === 'string' && r.particular.includes('current month as per 2B RECO')
-          );
+          // (2)'s sub-rows: current month per 2B RECO (live) + previous months (stored)
           const prevMonthsReversalRow = rowsB.find((r: any) =>
             typeof r?.particular === 'string' && r.particular.includes('previous months, if any')
           );
           const row2 = {
-            cgst: num(recoReversalRow?.cgst) + num(prevMonthsReversalRow?.cgst),
-            sgst: num(recoReversalRow?.sgst) + num(prevMonthsReversalRow?.sgst),
-            igst: num(recoReversalRow?.igst) + num(prevMonthsReversalRow?.igst),
+            cgst: liveReversal.cgst + num(prevMonthsReversalRow?.cgst),
+            sgst: liveReversal.sgst + num(prevMonthsReversalRow?.sgst),
+            igst: liveReversal.igst + num(prevMonthsReversalRow?.igst),
           };
           // i) = Total 4A × residentialRatio
           const rIn = (x: number) => Math.round(x * 100) / 100;
@@ -404,15 +449,16 @@ const GstReceivableRecoPage: React.FC = () => {
             igst: row1.igst + row2.igst,
           };
         } else {
-          // Regular clients: sum non-header rows (matches ITC Summary)
+          // Regular clients: sum non-header rows (matches ITC Summary) — the
+          // "current month as per 2B RECO" row uses liveReversal.
           total4B = rowsB
             .filter(r => !r?.isHeader)
             .reduce(
-              (acc, r) => ({
-                cgst: acc.cgst + num(r?.cgst),
-                sgst: acc.sgst + num(r?.sgst),
-                igst: acc.igst + num(r?.igst),
-              }),
+              (acc, r) => {
+                const isRecoReversalRow = typeof r?.particular === 'string' && r.particular.includes('current month as per 2B RECO');
+                const vals = isRecoReversalRow ? liveReversal : { cgst: num(r?.cgst), sgst: num(r?.sgst), igst: num(r?.igst) };
+                return { cgst: acc.cgst + vals.cgst, sgst: acc.sgst + vals.sgst, igst: acc.igst + vals.igst };
+              },
               { cgst: 0, sgst: 0, igst: 0 }
             );
         }
@@ -421,7 +467,7 @@ const GstReceivableRecoPage: React.FC = () => {
         setAvailedSgst(total4A.sgst - total4B.sgst);
         setAvailedIgst(total4A.igst - total4B.igst);
       } else {
-        setHasItcSummary(false);
+        setHasItcSummary(!!itcData?.data);
         setAvailedCgst(0); setAvailedSgst(0); setAvailedIgst(0);
       }
 
@@ -1068,6 +1114,7 @@ const GstReceivableRecoPage: React.FC = () => {
                     <div>ADD: NET ITC AVAILABLE (4C)</div>
                     <p className="text-[10px] text-muted-foreground font-normal mt-0.5">{prevMonthLabel ? `From ${prevMonthLabel} ITC Summary (4A − 4B)` : '4A − 4B from previous month'}</p>
                     {!hasItcSummary && <p className="text-[10px] text-muted-foreground font-normal mt-0.5">{prevMonthLabel ? `ITC Summary not saved for ${prevMonthLabel} — showing 0` : 'ITC Summary not saved — showing 0'}</p>}
+                    {hasItcSummary && !prevReturnFiled && <p className="text-[10px] text-muted-foreground font-normal mt-0.5">{prevMonthLabel ? `${prevMonthLabel}'s GSTR-3B not yet Filed — showing 0 until it's final` : "GSTR-3B not yet Filed — showing 0 until it's final"}</p>}
                   </TableCell>
                   <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(availedIgst)}</TableCell>
                   <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(availedCgst)}</TableCell>
