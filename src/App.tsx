@@ -22,6 +22,7 @@ import FilingStatusPage from "@/pages/FilingStatusPage";
 import GSTRunningUpdatePage from "@/pages/GSTRunningUpdatePage";
 import GSTR1DataPage from "@/pages/GSTR1DataPage";
 import Gstr3bPage from "@/pages/Gstr3bPage";
+import Gstr3bAdjustmentsPage from "@/pages/Gstr3bAdjustmentsPage";
 import ReportsPage from "@/pages/ReportsPage";
 import BuilderWorkspacePage from "@/pages/BuilderWorkspacePage";
 import BuilderSettingsPage from "@/pages/BuilderSettingsPage";
@@ -72,6 +73,7 @@ const App = () => (
                   <Route path="/gst-running-update" element={<GSTRunningUpdatePage />} />
                   <Route path="/gstr1-data" element={<GSTR1DataPage />} />
                   <Route path="/gstr3b" element={<Gstr3bPage />} />
+                  <Route path="/gstr3b-adjustments" element={<Gstr3bAdjustmentsPage />} />
                   {/* The workspace is the way in. The individual routes below stay
                       live so existing links and bookmarks keep working. */}
                   <Route path="/builder" element={<BuilderWorkspacePage />} />

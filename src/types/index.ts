@@ -5,7 +5,7 @@ export type UserRole = 'superadmin' | 'gst_manager' | 'employee' | 'client';
 export type RegistrationType = 'Regular' | 'Composition' | 'Tax Deductor' | 'ISD' | 'IFF';
 
 // Return Types - Including IFF specific returns
-export type ReturnType = 'GSTR-1' | 'GSTR-3B' | 'ITC-04' | 'GSTR-6' | 'GSTR-7' | 'CMP-08' | 'GSTR-1 (IFF)' | 'GSTR-3B (Q)';
+export type ReturnType = 'GSTR-1' | 'GSTR-3B' | 'ITC-04' | 'GSTR-6' | 'GSTR-7' | 'CMP-08' | 'GSTR-1 (IFF)' | 'GSTR-3B (Q)' | 'GSTR-1A';
 
 // Filing Status - Updated to include new options (maintaining backwards compatibility)
 export type FilingStatusType = 

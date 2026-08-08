@@ -3459,6 +3459,71 @@ export type Database = {
           },
         ]
       }
+      gstr3b_adjustments: {
+        Row: {
+          cess: number
+          cgst: number
+          client_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          igst: number
+          label: string
+          period_month: string
+          reason: string
+          sgst: number
+          source: string
+          table_ref: string
+          taxable_value: number
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          cess?: number
+          cgst?: number
+          client_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          igst?: number
+          label: string
+          period_month: string
+          reason: string
+          sgst?: number
+          source?: string
+          table_ref: string
+          taxable_value?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          cess?: number
+          cgst?: number
+          client_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          igst?: number
+          label?: string
+          period_month?: string
+          reason?: string
+          sgst?: number
+          source?: string
+          table_ref?: string
+          taxable_value?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gstr3b_adjustments_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       gstr3b_push_versions: {
         Row: {
           action_at: string
@@ -4548,6 +4613,7 @@ export type Database = {
         | "CMP-08"
         | "GSTR-1 (IFF)"
         | "GSTR-3B (Q)"
+        | "GSTR-1A"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -4704,6 +4770,7 @@ export const Constants = {
         "CMP-08",
         "GSTR-1 (IFF)",
         "GSTR-3B (Q)",
+        "GSTR-1A",
       ],
     },
   },

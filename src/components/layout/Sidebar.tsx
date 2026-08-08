@@ -111,6 +111,12 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
   {
+    label: 'GSTR-3B Adjustments',
+    path: '/gstr3b-adjustments',
+    icon: <FileSignature className="h-5 w-5" />,
+    roles: ['superadmin', 'gst_manager'],
+  },
+  {
     label: 'GST Update Sheet',
     path: '/gst-running-update',
     icon: <FileSpreadsheet className="h-5 w-5" />,
