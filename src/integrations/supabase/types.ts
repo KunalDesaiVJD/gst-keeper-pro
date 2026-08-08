@@ -844,6 +844,136 @@ export type Database = {
           },
         ]
       }
+      builder_cancellations: {
+        Row: {
+          booking_id: string
+          cancellation_charge_invoice_id: string | null
+          cancellation_charge_taxable: number
+          cancellation_date: string
+          correction_method: string
+          created_at: string
+          created_by: string | null
+          credit_note_id: string | null
+          forfeiture_amount: number
+          id: string
+          project_id: string
+          rate_code: string
+          rate_pct: number
+          reason: string | null
+          refund_paid: number
+          refund_payable: number
+          status: string
+          total_received: number
+          unit_id: string
+        }
+        Insert: {
+          booking_id: string
+          cancellation_charge_invoice_id?: string | null
+          cancellation_charge_taxable?: number
+          cancellation_date: string
+          correction_method: string
+          created_at?: string
+          created_by?: string | null
+          credit_note_id?: string | null
+          forfeiture_amount?: number
+          id?: string
+          project_id: string
+          rate_code: string
+          rate_pct: number
+          reason?: string | null
+          refund_paid?: number
+          refund_payable?: number
+          status?: string
+          total_received?: number
+          unit_id: string
+        }
+        Update: {
+          booking_id?: string
+          cancellation_charge_invoice_id?: string | null
+          cancellation_charge_taxable?: number
+          cancellation_date?: string
+          correction_method?: string
+          created_at?: string
+          created_by?: string | null
+          credit_note_id?: string | null
+          forfeiture_amount?: number
+          id?: string
+          project_id?: string
+          rate_code?: string
+          rate_pct?: number
+          reason?: string | null
+          refund_paid?: number
+          refund_payable?: number
+          status?: string
+          total_received?: number
+          unit_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_cancellations_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_cancellations_cancellation_charge_invoice_id_fkey"
+            columns: ["cancellation_charge_invoice_id"]
+            isOneToOne: false
+            referencedRelation: "builder_invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_cancellations_credit_note_id_fkey"
+            columns: ["credit_note_id"]
+            isOneToOne: false
+            referencedRelation: "builder_credit_notes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_cancellations_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_project_areas"
+            referencedColumns: ["project_id"]
+          },
+          {
+            foreignKeyName: "builder_cancellations_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_cancellations_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_rcm_postings"
+            referencedColumns: ["project_id"]
+          },
+          {
+            foreignKeyName: "builder_cancellations_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_cancellations_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_cancellations_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_client_settings: {
         Row: {
           client_id: string
@@ -854,6 +984,7 @@ export type Database = {
           confirmation_sent_at: string | null
           created_at: string
           default_fsi_treatment: string
+          default_is_metro: boolean
           delay_interest_basis: string
           excess_tax_treatment: string
           extra_work_rate: string
@@ -865,6 +996,7 @@ export type Database = {
           incl_parking: boolean
           incl_plc: boolean
           incl_utility_deposit: boolean
+          raises_invoices: boolean
           updated_at: string
           updated_by: string | null
         }
@@ -877,6 +1009,7 @@ export type Database = {
           confirmation_sent_at?: string | null
           created_at?: string
           default_fsi_treatment?: string
+          default_is_metro?: boolean
           delay_interest_basis?: string
           excess_tax_treatment?: string
           extra_work_rate?: string
@@ -888,6 +1021,7 @@ export type Database = {
           incl_parking?: boolean
           incl_plc?: boolean
           incl_utility_deposit?: boolean
+          raises_invoices?: boolean
           updated_at?: string
           updated_by?: string | null
         }
@@ -900,6 +1034,7 @@ export type Database = {
           confirmation_sent_at?: string | null
           created_at?: string
           default_fsi_treatment?: string
+          default_is_metro?: boolean
           delay_interest_basis?: string
           excess_tax_treatment?: string
           extra_work_rate?: string
@@ -911,6 +1046,7 @@ export type Database = {
           incl_parking?: boolean
           incl_plc?: boolean
           incl_utility_deposit?: boolean
+          raises_invoices?: boolean
           updated_at?: string
           updated_by?: string | null
         }
@@ -1815,6 +1951,7 @@ export type Database = {
           bank_credit: number | null
           booking_id: string
           bounced_on: string | null
+          cancelled_via_id: string | null
           cgst: number
           cheque_status: string
           consideration: number
@@ -1847,6 +1984,7 @@ export type Database = {
           bank_credit?: number | null
           booking_id: string
           bounced_on?: string | null
+          cancelled_via_id?: string | null
           cgst?: number
           cheque_status?: string
           consideration?: number
@@ -1879,6 +2017,7 @@ export type Database = {
           bank_credit?: number | null
           booking_id?: string
           bounced_on?: string | null
+          cancelled_via_id?: string | null
           cgst?: number
           cheque_status?: string
           consideration?: number
@@ -1911,6 +2050,13 @@ export type Database = {
             columns: ["booking_id"]
             isOneToOne: false
             referencedRelation: "builder_bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_receipts_cancelled_via_id_fkey"
+            columns: ["cancelled_via_id"]
+            isOneToOne: false
+            referencedRelation: "builder_cancellations"
             referencedColumns: ["id"]
           },
           {
@@ -2097,6 +2243,78 @@ export type Database = {
           },
         ]
       }
+      builder_refund_payments: {
+        Row: {
+          amount: number
+          cancellation_id: string
+          created_at: string
+          created_by: string | null
+          email_outbox_id: string | null
+          forfeited_amount: number
+          id: string
+          instrument_ref: string | null
+          instrument_type: string | null
+          notes: string | null
+          offset_amount: number
+          offset_cgst: number
+          offset_sgst: number
+          offset_taxable_value: number
+          payment_date: string
+          period_month: string
+        }
+        Insert: {
+          amount: number
+          cancellation_id: string
+          created_at?: string
+          created_by?: string | null
+          email_outbox_id?: string | null
+          forfeited_amount?: number
+          id?: string
+          instrument_ref?: string | null
+          instrument_type?: string | null
+          notes?: string | null
+          offset_amount?: number
+          offset_cgst?: number
+          offset_sgst?: number
+          offset_taxable_value?: number
+          payment_date: string
+          period_month: string
+        }
+        Update: {
+          amount?: number
+          cancellation_id?: string
+          created_at?: string
+          created_by?: string | null
+          email_outbox_id?: string | null
+          forfeited_amount?: number
+          id?: string
+          instrument_ref?: string | null
+          instrument_type?: string | null
+          notes?: string | null
+          offset_amount?: number
+          offset_cgst?: number
+          offset_sgst?: number
+          offset_taxable_value?: number
+          payment_date?: string
+          period_month?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_refund_payments_cancellation_id_fkey"
+            columns: ["cancellation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_cancellations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_refund_payments_email_outbox_id_fkey"
+            columns: ["email_outbox_id"]
+            isOneToOne: false
+            referencedRelation: "email_outbox"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_unit_charges: {
         Row: {
           amount: number
@@ -2240,6 +2458,7 @@ export type Database = {
           group_id: string | null
           id: string
           notes: string | null
+          onboarding_status: string
           project_id: string
           sort_order: number
           status: string
@@ -2259,6 +2478,7 @@ export type Database = {
           group_id?: string | null
           id?: string
           notes?: string | null
+          onboarding_status?: string
           project_id: string
           sort_order?: number
           status?: string
@@ -2278,6 +2498,7 @@ export type Database = {
           group_id?: string | null
           id?: string
           notes?: string | null
+          onboarding_status?: string
           project_id?: string
           sort_order?: number
           status?: string
@@ -2579,6 +2800,7 @@ export type Database = {
           gst_password: string | null
           gst_user_id: string | null
           gstin: string
+          gstr1_import_mode: string
           id: string
           inactive_at_hand: boolean
           is_first_login: boolean | null
@@ -2607,6 +2829,7 @@ export type Database = {
           gst_password?: string | null
           gst_user_id?: string | null
           gstin: string
+          gstr1_import_mode?: string
           id?: string
           inactive_at_hand?: boolean
           is_first_login?: boolean | null
@@ -2635,6 +2858,7 @@ export type Database = {
           gst_password?: string | null
           gst_user_id?: string | null
           gstin?: string
+          gstr1_import_mode?: string
           id?: string
           inactive_at_hand?: boolean
           is_first_login?: boolean | null
@@ -2780,6 +3004,7 @@ export type Database = {
           filed_date: string | null
           id: string
           is_locked: boolean | null
+          is_nil: boolean
           period_month: string
           remarks: string | null
           return_pdf_url: string | null
@@ -2795,6 +3020,7 @@ export type Database = {
           filed_date?: string | null
           id?: string
           is_locked?: boolean | null
+          is_nil?: boolean
           period_month: string
           remarks?: string | null
           return_pdf_url?: string | null
@@ -2810,6 +3036,7 @@ export type Database = {
           filed_date?: string | null
           id?: string
           is_locked?: boolean | null
+          is_nil?: boolean
           period_month?: string
           remarks?: string | null
           return_pdf_url?: string | null
@@ -2835,6 +3062,9 @@ export type Database = {
           books_closing_igst: number | null
           books_closing_sgst: number | null
           client_id: string
+          drc_cgst: number | null
+          drc_igst: number | null
+          drc_sgst: number | null
           id: string
           opening_cgst: number | null
           opening_csv_period_month: string | null
@@ -2851,12 +3081,18 @@ export type Database = {
           period_month: string
           updated_at: string | null
           updated_by: string | null
+          utilized_cgst: number | null
+          utilized_igst: number | null
+          utilized_sgst: number | null
         }
         Insert: {
           books_closing_cgst?: number | null
           books_closing_igst?: number | null
           books_closing_sgst?: number | null
           client_id: string
+          drc_cgst?: number | null
+          drc_igst?: number | null
+          drc_sgst?: number | null
           id?: string
           opening_cgst?: number | null
           opening_csv_period_month?: string | null
@@ -2873,12 +3109,18 @@ export type Database = {
           period_month: string
           updated_at?: string | null
           updated_by?: string | null
+          utilized_cgst?: number | null
+          utilized_igst?: number | null
+          utilized_sgst?: number | null
         }
         Update: {
           books_closing_cgst?: number | null
           books_closing_igst?: number | null
           books_closing_sgst?: number | null
           client_id?: string
+          drc_cgst?: number | null
+          drc_igst?: number | null
+          drc_sgst?: number | null
           id?: string
           opening_cgst?: number | null
           opening_csv_period_month?: string | null
@@ -2895,6 +3137,9 @@ export type Database = {
           period_month?: string
           updated_at?: string | null
           updated_by?: string | null
+          utilized_cgst?: number | null
+          utilized_igst?: number | null
+          utilized_sgst?: number | null
         }
         Relationships: [
           {
@@ -2916,6 +3161,8 @@ export type Database = {
           igst: number | null
           instructions_by_employee_id: string | null
           interest: number | null
+          itc_section: string | null
+          itc_sr_no: string | null
           matter_brief: string | null
           remarks: string | null
           sgst: number | null
@@ -2936,6 +3183,8 @@ export type Database = {
           igst?: number | null
           instructions_by_employee_id?: string | null
           interest?: number | null
+          itc_section?: string | null
+          itc_sr_no?: string | null
           matter_brief?: string | null
           remarks?: string | null
           sgst?: number | null
@@ -2956,6 +3205,8 @@ export type Database = {
           igst?: number | null
           instructions_by_employee_id?: string | null
           interest?: number | null
+          itc_section?: string | null
+          itc_sr_no?: string | null
           matter_brief?: string | null
           remarks?: string | null
           sgst?: number | null
@@ -3060,6 +3311,11 @@ export type Database = {
           last_push_message: string | null
           last_push_status: string | null
           last_pushed_at: string | null
+          last_upload_errors: Json | null
+          last_upload_status: string | null
+          last_upload_summary: string | null
+          last_uploaded_at: string | null
+          last_uploaded_by: string | null
           period_month: string
           raw_json: Json
           updated_at: string | null
@@ -3074,6 +3330,11 @@ export type Database = {
           last_push_message?: string | null
           last_push_status?: string | null
           last_pushed_at?: string | null
+          last_upload_errors?: Json | null
+          last_upload_status?: string | null
+          last_upload_summary?: string | null
+          last_uploaded_at?: string | null
+          last_uploaded_by?: string | null
           period_month: string
           raw_json?: Json
           updated_at?: string | null
@@ -3088,6 +3349,11 @@ export type Database = {
           last_push_message?: string | null
           last_push_status?: string | null
           last_pushed_at?: string | null
+          last_upload_errors?: Json | null
+          last_upload_status?: string | null
+          last_upload_summary?: string | null
+          last_uploaded_at?: string | null
+          last_uploaded_by?: string | null
           period_month?: string
           raw_json?: Json
           updated_at?: string | null
@@ -3095,6 +3361,97 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "gstr1_data_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gstr1_manual_entries: {
+        Row: {
+          client_id: string
+          data: Json
+          id: string
+          period_month: string
+          row_order: number
+          section: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          client_id: string
+          data?: Json
+          id?: string
+          period_month: string
+          row_order?: number
+          section: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          client_id?: string
+          data?: Json
+          id?: string
+          period_month?: string
+          row_order?: number
+          section?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gstr1_manual_entries_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gstr1_upload_versions: {
+        Row: {
+          action_at: string
+          action_type: string
+          actor_id: string | null
+          client_id: string
+          errors: Json | null
+          file_name: string | null
+          id: string
+          period_month: string
+          status: string | null
+          summary: string | null
+          version_number: number
+        }
+        Insert: {
+          action_at?: string
+          action_type: string
+          actor_id?: string | null
+          client_id: string
+          errors?: Json | null
+          file_name?: string | null
+          id?: string
+          period_month: string
+          status?: string | null
+          summary?: string | null
+          version_number: number
+        }
+        Update: {
+          action_at?: string
+          action_type?: string
+          actor_id?: string | null
+          client_id?: string
+          errors?: Json | null
+          file_name?: string | null
+          id?: string
+          period_month?: string
+          status?: string | null
+          summary?: string | null
+          version_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gstr1_upload_versions_client_id_fkey"
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
@@ -3936,7 +4293,9 @@ export type Database = {
           client_id: string | null
           consideration: number | null
           doc_date: string | null
+          doc_no: string | null
           gstr1_table: string | null
+          original_period: string | null
           period_month: string | null
           project_id: string | null
           rate_code: string | null

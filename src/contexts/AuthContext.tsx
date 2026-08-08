@@ -26,6 +26,7 @@ interface UserPermissions {
   post_builder_adjustments: boolean;
   approve_fsi_consent: boolean;
   view_builder_reports: boolean;
+  edit_gstr1_import_mode: boolean;
 }
 
 const DEFAULT_PERMISSIONS: UserPermissions = {
@@ -48,6 +49,7 @@ const DEFAULT_PERMISSIONS: UserPermissions = {
   post_builder_adjustments: false,
   approve_fsi_consent: false,
   view_builder_reports: false,
+  edit_gstr1_import_mode: false,
 };
 
 interface AppUser {
@@ -88,6 +90,7 @@ interface AuthContextType {
   canPostBuilderAdjustments: () => boolean;
   canApproveFsiConsent: () => boolean;
   canViewBuilderReports: () => boolean;
+  canEditGstr1ImportMode: () => boolean;
   hasPermission: (permission: keyof UserPermissions) => boolean;
 }
 
@@ -589,6 +592,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return hasPermission('view_builder_reports');
   }, [user, hasPermission]);
 
+  // Gates who can change a client's GSTR-1 Import Mode (json / manual /
+  // json_manual) — not everyone should be able to switch a client onto the
+  // fully-manual-edit path, since it changes what "the return" is trusted to be.
+  const canEditGstr1ImportMode = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission('edit_gstr1_import_mode');
+  }, [user, hasPermission]);
+
   return (
     <AuthContext.Provider
       value={{
@@ -620,6 +632,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canPostBuilderAdjustments,
         canApproveFsiConsent,
         canViewBuilderReports,
+        canEditGstr1ImportMode,
         hasPermission,
       }}
     >

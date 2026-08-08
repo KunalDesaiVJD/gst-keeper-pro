@@ -76,7 +76,9 @@ interface Client {
   regular_sub_type?: string | null;
   // 'manual' clients only send bills — their GSTR-1 is prepared entirely
   // outside this app, so the Import/Upload actions don't apply to them.
-  gstr1_import_mode?: 'json' | 'manual' | null;
+  // 'json_manual' clients import/upload a JSON as usual but staff can also
+  // open the manual entry grid against it and edit every section by hand.
+  gstr1_import_mode?: 'json' | 'manual' | 'json_manual' | null;
 }
 
 interface UploadErrorRow {
@@ -288,6 +290,16 @@ const GSTR1DataPage: React.FC = () => {
    */
   const isManualClient = useMemo(
     () => clients.find((c) => c.id === selectedClient)?.gstr1_import_mode === 'manual',
+    [clients, selectedClient],
+  );
+
+  /**
+   * 'json_manual' clients import/upload their JSON as usual, but staff can
+   * also open the manual entry grid against the imported return and edit any
+   * section by hand (not just HSN/Documents via the HSN editor below).
+   */
+  const isJsonManualClient = useMemo(
+    () => clients.find((c) => c.id === selectedClient)?.gstr1_import_mode === 'json_manual',
     [clients, selectedClient],
   );
 
@@ -600,6 +612,16 @@ const GSTR1DataPage: React.FC = () => {
         throw new Error('Write was rejected by the database (no row returned). Check that you are signed in.');
       }
 
+      // JSON+Manual clients may already have edited rows in gstr1_manual_entries
+      // from a previous import. A fresh import replaces raw_json outright, so
+      // stale manual-entry rows must go too — otherwise the entry grid keeps
+      // showing the old edits instead of hydrating from the newly imported file.
+      if (isJsonManualClient) {
+        await supabase
+          .from('gstr1_manual_entries' as any)
+          .delete().eq('client_id', selectedClient).eq('period_month', periodMonthKey);
+      }
+
       toast.success(`GSTR-1 JSON imported for ${periodMonthKey}.`);
       await fetchGSTR1Data();
       await recordVersion({
@@ -621,18 +643,18 @@ const GSTR1DataPage: React.FC = () => {
       toast.error('GSTR-1 for this period is already Filed — the imported JSON is locked and cannot be deleted.');
       return;
     }
-    const description = isManualClient
+    const description = (isManualClient || isJsonManualClient)
       ? 'This removes the generated GSTR-1 data and every manually entered invoice row for this client and period.'
       : 'This removes the imported GSTR-1 data for this client and period.';
     if (!(await confirm({ title: 'Delete GSTR-1 data?', description, destructive: true, confirmText: 'Delete' }))) return;
     try {
       const { error } = await supabase.from('gstr1_data').delete().eq('id', gstr1Data.id);
       if (error) throw error;
-      // Manual clients key invoices into gstr1_manual_entries, a separate table
-      // from gstr1_data — deleting only the generated JSON left those rows
-      // behind, so "Delete" then re-entering invoices silently reloaded the
-      // old data instead of starting from an empty grid.
-      if (isManualClient) {
+      // Manual (and JSON+Manual) clients key invoices into gstr1_manual_entries,
+      // a separate table from gstr1_data — deleting only the generated JSON left
+      // those rows behind, so "Delete" then re-importing/re-entering silently
+      // reloaded the old edited rows instead of starting fresh.
+      if (isManualClient || isJsonManualClient) {
         const periodMonthKey = mmYyyyToShort(selectedMonth);
         const { error: entriesError } = await supabase
           .from('gstr1_manual_entries' as any)
@@ -1721,8 +1743,11 @@ const GSTR1DataPage: React.FC = () => {
               a JSON: the grid hydrates from it (prefilled Table 7/11A/11B,
               Table 13 always blank — see hydrateManualEntriesFromJson) so
               staff can review, add Documents Issued by hand, and re-Generate
-              before the Upload button above will allow a push. */}
-          {(isManualClient || isBuilderClient) && (
+              before the Upload button above will allow a push. JSON+Manual
+              clients land here the same way once their JSON is imported —
+              the grid hydrates every section from the imported return so
+              staff can edit anything, not just HSN/Documents. */}
+          {(isManualClient || isBuilderClient || isJsonManualClient) && (
             <Gstr1ManualEntryPanel
               clientId={selectedClient}
               clientGstin={selectedClientData?.gstin || ''}

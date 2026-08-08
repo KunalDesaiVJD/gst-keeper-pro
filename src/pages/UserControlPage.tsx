@@ -103,6 +103,11 @@ const AVAILABLE_PERMISSIONS = [
     label: 'View Builder Reports',
     description: 'Access builder working papers and export them to Excel and PDF',
   },
+  {
+    key: 'edit_gstr1_import_mode',
+    label: 'GSTR-1 Import Mode',
+    description: 'Change how a client\'s GSTR-1 is prepared: JSON, Manual, or JSON + Manual (edit an imported return)',
+  },
   // Note: approve_fsi_consent is intentionally absent. Signing off a client's
   // written instruction to skip RCM on TDR/FSI is restricted to GST Manager and
   // Superadmin by role, and cannot be granted to an employee here.

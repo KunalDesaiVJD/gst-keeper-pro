@@ -37,7 +37,7 @@ interface ClientData {
   email: string | null;
   assigned_accountant: string | null;
   selected_returns: ReturnType[] | null;
-  gstr1_import_mode?: 'json' | 'manual' | null;
+  gstr1_import_mode?: 'json' | 'manual' | 'json_manual' | null;
   cancellation_date?: string | null;
   registration_cancellation_date?: string | null;
   inactive_at_hand?: boolean | null;
@@ -46,7 +46,7 @@ interface ClientData {
 const EditClientPage: React.FC = () => {
   const navigate = useNavigate();
   const { clientId } = useParams<{ clientId: string }>();
-  const { user } = useAuth();
+  const { user, canEditGstr1ImportMode } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -62,7 +62,7 @@ const EditClientPage: React.FC = () => {
     email: '',
     assignedAccountant: '',
     selectedReturns: [] as ReturnType[],
-    gstr1ImportMode: 'json' as 'json' | 'manual',
+    gstr1ImportMode: 'json' as 'json' | 'manual' | 'json_manual',
     cancellationDate: '',
     registrationCancellationDate: '',
     inactiveAtHand: false,
@@ -119,7 +119,7 @@ const EditClientPage: React.FC = () => {
         email: data.email || '',
         assignedAccountant: data.assigned_accountant || '',
         selectedReturns: (data.selected_returns || []) as ReturnType[],
-        gstr1ImportMode: ((data as any).gstr1_import_mode as 'json' | 'manual') || 'json',
+        gstr1ImportMode: ((data as any).gstr1_import_mode as 'json' | 'manual' | 'json_manual') || 'json',
         cancellationDate: (data as any).cancellation_date || '',
         registrationCancellationDate: (data as any).registration_cancellation_date || '',
         inactiveAtHand: !!(data as any).inactive_at_hand,
@@ -667,14 +667,22 @@ const EditClientPage: React.FC = () => {
             {formData.registrationType && formData.selectedReturns.includes('GSTR-1') && (
               <div className="space-y-3">
                 <Label>GSTR-1 Import Mode</Label>
+                {!canEditGstr1ImportMode() && (
+                  <p className="text-xs text-muted-foreground">
+                    You don't have permission to change this — ask a manager to grant "GSTR-1 Import Mode" in User Control.
+                  </p>
+                )}
                 <RadioGroup
                   value={formData.gstr1ImportMode}
-                  onValueChange={(v) => setFormData(prev => ({ ...prev, gstr1ImportMode: v as 'json' | 'manual' }))}
-                  className="grid grid-cols-1 md:grid-cols-2 gap-3"
+                  onValueChange={(v) => setFormData(prev => ({ ...prev, gstr1ImportMode: v as 'json' | 'manual' | 'json_manual' }))}
+                  disabled={!canEditGstr1ImportMode()}
+                  className="grid grid-cols-1 md:grid-cols-3 gap-3"
                 >
                   <label
                     htmlFor="gstr1ModeJson"
-                    className={`flex items-start gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                    className={`flex items-start gap-2 p-3 border rounded-lg transition-colors ${
+                      canEditGstr1ImportMode() ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'
+                    } ${
                       formData.gstr1ImportMode === 'json' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
                     }`}
                   >
@@ -687,8 +695,27 @@ const EditClientPage: React.FC = () => {
                     </div>
                   </label>
                   <label
+                    htmlFor="gstr1ModeJsonManual"
+                    className={`flex items-start gap-2 p-3 border rounded-lg transition-colors ${
+                      canEditGstr1ImportMode() ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'
+                    } ${
+                      formData.gstr1ImportMode === 'json_manual' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                    }`}
+                  >
+                    <RadioGroupItem value="json_manual" id="gstr1ModeJsonManual" className="mt-0.5" />
+                    <div>
+                      <span className="text-sm font-normal block">JSON + Manual</span>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Client's JSON is imported/uploaded as usual, but every section (not just HSN/Documents) can
+                        also be edited by hand on the GSTR-1 page.
+                      </p>
+                    </div>
+                  </label>
+                  <label
                     htmlFor="gstr1ModeManual"
-                    className={`flex items-start gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                    className={`flex items-start gap-2 p-3 border rounded-lg transition-colors ${
+                      canEditGstr1ImportMode() ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'
+                    } ${
                       formData.gstr1ImportMode === 'manual' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
                     }`}
                   >

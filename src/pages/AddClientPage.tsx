@@ -14,6 +14,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION, QUARTERLY_RETURN_TYPES, isQuarterEndMonth } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 import { mockPasswords } from '@/data/mockData';
 import ClientCredentialsSection from '@/components/clients/ClientCredentialsSection';
 import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
@@ -29,6 +30,7 @@ const Req: React.FC = () => (
 
 const AddClientPage: React.FC = () => {
   const navigate = useNavigate();
+  const { canEditGstr1ImportMode } = useAuth();
   const [isSaving, setIsSaving] = useState(false);
 
   const [formData, setFormData] = useState({
@@ -42,7 +44,7 @@ const AddClientPage: React.FC = () => {
     defaultTargetDate: '', // Optional - for GSTR-1, GSTR-7
     otherTargetDate: '', // Optional - for GSTR-3B, ITC-04
     selectedReturns: [] as ReturnType[],
-    gstr1ImportMode: 'json' as 'json' | 'manual', // How this client's GSTR-1 is prepared
+    gstr1ImportMode: 'json' as 'json' | 'manual' | 'json_manual', // How this client's GSTR-1 is prepared
     cancellationDate: '', // Optional — labeled "GSTR 10 Date" in UI
     registrationCancellationDate: '', // Optional — actual registration cancellation date
     inactiveAtHand: false, // Optional — hides client from Filing Status when true
@@ -556,14 +558,22 @@ const AddClientPage: React.FC = () => {
             {formData.registrationType && formData.selectedReturns.includes('GSTR-1') && (
               <div className="space-y-3">
                 <Label>GSTR-1 Import Mode</Label>
+                {!canEditGstr1ImportMode() && (
+                  <p className="text-xs text-muted-foreground">
+                    You don't have permission to change this — ask a manager to grant "GSTR-1 Import Mode" in User Control.
+                  </p>
+                )}
                 <RadioGroup
                   value={formData.gstr1ImportMode}
-                  onValueChange={(v) => setFormData(prev => ({ ...prev, gstr1ImportMode: v as 'json' | 'manual' }))}
-                  className="grid grid-cols-1 md:grid-cols-2 gap-3"
+                  onValueChange={(v) => setFormData(prev => ({ ...prev, gstr1ImportMode: v as 'json' | 'manual' | 'json_manual' }))}
+                  disabled={!canEditGstr1ImportMode()}
+                  className="grid grid-cols-1 md:grid-cols-3 gap-3"
                 >
                   <label
                     htmlFor="gstr1ModeJson"
-                    className={`flex items-start gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                    className={`flex items-start gap-2 p-3 border rounded-lg transition-colors ${
+                      canEditGstr1ImportMode() ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'
+                    } ${
                       formData.gstr1ImportMode === 'json' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
                     }`}
                   >
@@ -576,8 +586,27 @@ const AddClientPage: React.FC = () => {
                     </div>
                   </label>
                   <label
+                    htmlFor="gstr1ModeJsonManual"
+                    className={`flex items-start gap-2 p-3 border rounded-lg transition-colors ${
+                      canEditGstr1ImportMode() ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'
+                    } ${
+                      formData.gstr1ImportMode === 'json_manual' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                    }`}
+                  >
+                    <RadioGroupItem value="json_manual" id="gstr1ModeJsonManual" className="mt-0.5" />
+                    <div>
+                      <span className="text-sm font-normal block">JSON + Manual</span>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Client's JSON is imported/uploaded as usual, but every section (not just HSN/Documents) can
+                        also be edited by hand on the GSTR-1 page.
+                      </p>
+                    </div>
+                  </label>
+                  <label
                     htmlFor="gstr1ModeManual"
-                    className={`flex items-start gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                    className={`flex items-start gap-2 p-3 border rounded-lg transition-colors ${
+                      canEditGstr1ImportMode() ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'
+                    } ${
                       formData.gstr1ImportMode === 'manual' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
                     }`}
                   >
