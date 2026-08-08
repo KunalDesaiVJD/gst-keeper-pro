@@ -17,12 +17,29 @@ export interface ItcRow { srNo: string; igst: number; cgst: number; sgst: number
 export interface ItcData { section4A: ItcRow[]; section4B: ItcRow[]; section4D: ItcRow[] }
 export interface RcmTotals { taxable: number; igst: number; cgst: number; sgst: number }
 
+// A row from the GSTR-3B Adjustments module (gstr3b_adjustments table) — a
+// correction that legitimately belongs in this period's 3B but doesn't come
+// from GSTR-1/ITC Summary/RCM (a GSTR-1A amendment, a prior-period true-up).
+// Only the seven mapped table_ref values below fold into the computed
+// totals; anything else ("Other") is deliberately left out and surfaced via
+// `flags` so it isn't silently missing from the draft.
+export interface Gstr3bAdjustment {
+  tableRef: string;    // '3.1(a)' | '3.1(b)' | '3.1(c)' | '3.1(d)' | '3.1(e)' | '4A(5)' | '4B(1)' | 'Other'
+  label: string;
+  taxableValue: number;
+  igst: number;
+  cgst: number;
+  sgst: number;
+  cess: number;
+}
+
 export interface Gstr3bInput {
   gstin: string;
   periodMonth: string;    // "MM/YYYY"
   gstr1Raw: any | null;   // GSTR-1 JSON (outward supplies)
   itc: ItcData | null;    // itc_summaries.data
   rcm: RcmTotals;         // RCM liability/ITC totals for the period
+  adjustments?: Gstr3bAdjustment[]; // GSTR-3B Adjustments module rows for this period
 }
 
 export interface TaxHead { igst: number; cgst: number; sgst: number }
@@ -44,7 +61,16 @@ export interface Gstr3bSummary {
   totalLiability: TaxHead;      // output + RCM
   indicativeNetPayable: TaxHead; // liability − net ITC (indicative; real offset is done on the portal)
 }
-export interface Gstr3bResult { json: any; summary: Gstr3bSummary; flags: string[] }
+export interface Gstr3bResult {
+  json: any;
+  summary: Gstr3bSummary;
+  flags: string[];
+  // How many GSTR-3B Adjustments rows fed into the totals above, and how
+  // many were left out because their table_ref isn't one of the mapped
+  // seven (e.g. 'Other') — surfaced so the UI can badge the draft.
+  adjustmentsApplied: number;
+  adjustmentsUnmapped: number;
+}
 
 const r2 = (n: number) => Math.round((n || 0) * 100) / 100;
 const num = (v: any) => (typeof v === 'number' ? v : parseFloat(v) || 0);
@@ -137,6 +163,47 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
 
   const out = computeOutward(g);
 
+  // ---- GSTR-3B Adjustments module — fold mapped rows into the relevant
+  // Table 3.1 / Table 4 bucket before anything downstream (totalLiability,
+  // itc_net, the indicative net payable) is computed, so the effect is
+  // consistent everywhere rather than a bolt-on at the end.
+  const adjustments = input.adjustments || [];
+  const MAPPED_REFS = ['3.1(a)', '3.1(b)', '3.1(c)', '3.1(d)', '3.1(e)', '4A(5)', '4B(1)'];
+  const sumAdj = (ref: string) => adjustments
+    .filter((a) => a.tableRef === ref)
+    .reduce((acc, a) => ({
+      taxable: acc.taxable + (a.taxableValue || 0),
+      igst: acc.igst + (a.igst || 0),
+      cgst: acc.cgst + (a.cgst || 0),
+      sgst: acc.sgst + (a.sgst || 0),
+      cess: acc.cess + (a.cess || 0),
+    }), { taxable: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 });
+  const adjustmentsApplied = adjustments.filter((a) => MAPPED_REFS.includes(a.tableRef)).length;
+  const adjustmentsUnmapped = adjustments.length - adjustmentsApplied;
+  if (adjustmentsApplied > 0) {
+    flags.push(`${adjustmentsApplied} manual adjustment(s) from the GSTR-3B Adjustments module are included in the totals below.`);
+  }
+  if (adjustmentsUnmapped > 0) {
+    flags.push(`${adjustmentsUnmapped} adjustment(s) tagged "Other" are NOT included in any table below — review them in the GSTR-3B Adjustments module and fold them in manually.`);
+  }
+
+  const adj31a = sumAdj('3.1(a)');
+  out.det.txval = r2(out.det.txval + adj31a.taxable);
+  out.det.iamt = r2(out.det.iamt + adj31a.igst);
+  out.det.camt = r2(out.det.camt + adj31a.cgst);
+  out.det.samt = r2(out.det.samt + adj31a.sgst);
+  out.det.csamt = r2(out.det.csamt + adj31a.cess);
+
+  const adj31b = sumAdj('3.1(b)');
+  out.zero.txval = r2(out.zero.txval + adj31b.taxable);
+  out.zero.iamt = r2(out.zero.iamt + adj31b.igst);
+  out.zero.csamt = r2(out.zero.csamt + adj31b.cess);
+
+  out.nilExempt = r2(out.nilExempt + sumAdj('3.1(c)').taxable);
+  out.nonGst = r2(out.nonGst + sumAdj('3.1(e)').taxable);
+
+  const adj31d = sumAdj('3.1(d)');
+
   // ---- Table 4 (ITC) ----
   const A: ItcRow[] = itc?.section4A || [];
   const B: ItcRow[] = itc?.section4B || [];
@@ -153,12 +220,21 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   // always pushes wrong figures for the drifted head until someone happens
   // to re-save ITC Summary. Deriving both from the same source makes that
   // drift structurally impossible instead of relying on a save workflow.
+  // Manual 3.1(d) adjustments are output-liability-only (like every other
+  // outward-table adjustment here) — they don't create matching 4A(3) ITC;
+  // log a separate 4A(5) adjustment for that if it's actually eligible.
   const isrc: ItcRow = { srNo: '(3)', igst: r2(input.rcm.igst), cgst: r2(input.rcm.cgst), sgst: r2(input.rcm.sgst) };
   const isd = row(A, '(4)');    // 4A(4) ISD
-  // 4A(5) "all other ITC" = 5.1 + 5.2 − 5.3 + 5.4 + 5.5
-  const oth4a = round3(add3(row(A, '5.1'), row(A, '5.2'), sub3({ igst: 0, cgst: 0, sgst: 0 }, row(A, '5.3')), row(A, '5.4'), row(A, '5.5')));
+  // 4A(5) "all other ITC" = 5.1 + 5.2 − 5.3 + 5.4 + 5.5, plus any manual
+  // 4A(5) adjustment.
+  const adj4A5 = sumAdj('4A(5)');
+  const oth4a = round3(add3(
+    row(A, '5.1'), row(A, '5.2'), sub3({ igst: 0, cgst: 0, sgst: 0 }, row(A, '5.3')), row(A, '5.4'), row(A, '5.5'),
+    { igst: adj4A5.igst, cgst: adj4A5.cgst, sgst: adj4A5.sgst },
+  ));
 
-  const revRul = row(B, '(1)');                       // 4B(1) rule 38/42/43 & 17(5)
+  const adj4B1 = sumAdj('4B(1)');
+  const revRul = round3(add3(row(B, '(1)'), { igst: adj4B1.igst, cgst: adj4B1.cgst, sgst: adj4B1.sgst })); // 4B(1) rule 38/42/43 & 17(5)
   const revOth = round3(add3(row(B, '(i)'), row(B, '(ii)'), row(B, '(iii)'))); // 4B(2) others
 
   const inelgOth = row(D, '(2)');                     // 4D(2) 16(4) & PoS
@@ -185,7 +261,13 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   const itcRev = round3(add3(revRul, revOth));
   const itcNet = round3(sub3(itcAvail, itcRev));
 
-  const rcm = { txval: r2(input.rcm.taxable), iamt: r2(input.rcm.igst), camt: r2(input.rcm.cgst), samt: r2(input.rcm.sgst), csamt: 0 };
+  const rcm = {
+    txval: r2(input.rcm.taxable + adj31d.taxable),
+    iamt: r2(input.rcm.igst + adj31d.igst),
+    camt: r2(input.rcm.cgst + adj31d.cgst),
+    samt: r2(input.rcm.sgst + adj31d.sgst),
+    csamt: r2(adj31d.cess),
+  };
 
   const json = {
     gstin: input.gstin,
@@ -249,7 +331,7 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
     indicativeNetPayable: round3(sub3(totalLiability, itcNet)),
   };
 
-  return { json, summary, flags };
+  return { json, summary, flags, adjustmentsApplied, adjustmentsUnmapped };
 }
 
 function stripSr(o: any) { const { srNo, ...rest } = o; return rest; }

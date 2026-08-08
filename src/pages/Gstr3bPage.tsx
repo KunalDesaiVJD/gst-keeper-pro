@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -12,7 +13,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { FileCheck2, Download, FileText, Loader2, FileJson, Send, CheckCircle2, XCircle, X, Lock, History } from 'lucide-react';
+import { FileCheck2, Download, FileText, Loader2, FileJson, Send, CheckCircle2, XCircle, X, Lock, History, Info } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useMonth } from '@/contexts/MonthContext';
@@ -71,6 +72,7 @@ const THead: React.FC<{ first: string }> = ({ first }) => (
 );
 
 const Gstr3bPage: React.FC = () => {
+  const navigate = useNavigate();
   const { selectedClientId: selectedClient, setSelectedClientId: setSelectedClient } = useClient();
   const { selectedMonth, setSelectedMonth } = useMonth();
   const { user, isStaffRole, canEditFilingStatus } = useAuth();
@@ -426,6 +428,31 @@ const Gstr3bPage: React.FC = () => {
             <p className="font-medium text-success">GSTR-3B already Filed for this period</p>
             <p className="text-xs mt-0.5 text-foreground/80">Push to GST Portal is locked to preserve the record of what was actually filed.</p>
           </div>
+        </div>
+      )}
+
+      {/* GSTR-3B Adjustments module — this draft already includes N manual
+          rows (a GSTR-1A amendment, a prior-period true-up, etc.); flag it
+          plainly rather than let it blend in silently. */}
+      {result && (result.adjustmentsApplied > 0 || result.adjustmentsUnmapped > 0) && (
+        <div className="flex items-start gap-2 rounded-lg border border-info/40 bg-info/10 p-3 text-sm">
+          <Info className="h-4 w-4 mt-0.5 shrink-0 text-info" />
+          <div className="flex-1">
+            {result.adjustmentsApplied > 0 && (
+              <p className="text-foreground">
+                {result.adjustmentsApplied} manual adjustment{result.adjustmentsApplied === 1 ? '' : 's'} from GSTR-3B
+                Adjustments {result.adjustmentsApplied === 1 ? 'is' : 'are'} included in the totals below.
+              </p>
+            )}
+            {result.adjustmentsUnmapped > 0 && (
+              <p className="text-xs mt-0.5 text-destructive">
+                {result.adjustmentsUnmapped} more, tagged "Other", could NOT be mapped into a table and are excluded — review them.
+              </p>
+            )}
+          </div>
+          <Button variant="outline" size="sm" onClick={() => navigate('/gstr3b-adjustments')}>
+            Review
+          </Button>
         </div>
       )}
 

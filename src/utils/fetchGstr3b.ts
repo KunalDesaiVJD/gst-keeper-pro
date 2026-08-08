@@ -4,7 +4,7 @@
 // dialog so both compute the return the exact same way.
 
 import { supabase } from '@/integrations/supabase/client';
-import { buildGstr3bJson, type Gstr3bResult, type ItcData, type RcmTotals } from './buildGstr3bJson';
+import { buildGstr3bJson, type Gstr3bAdjustment, type Gstr3bResult, type ItcData, type RcmTotals } from './buildGstr3bJson';
 
 const SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const toShort = (mmYyyy: string) => {
@@ -18,10 +18,15 @@ export async function fetchGstr3b(
   periodMonth: string, // MM/YYYY
 ): Promise<Gstr3bResult> {
   const short = toShort(periodMonth);
-  const [g, itcRes, rcmRes, fsiRes] = await Promise.all([
+  const [g, itcRes, rcmRes, adjRes, fsiRes] = await Promise.all([
     supabase.from('gstr1_data').select('raw_json').eq('client_id', clientId).eq('period_month', short).maybeSingle(),
     supabase.from('itc_summaries').select('data').eq('client_id', clientId).eq('period_month', periodMonth).maybeSingle(),
     supabase.from('rcm_data').select('taxable_value, cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18').eq('client_id', clientId).eq('month', short),
+    // GSTR-3B Adjustments module — GSTR-1A / prior-period corrections that
+    // don't come from GSTR-1/ITC Summary/RCM. See Gstr3bAdjustmentsPage.tsx.
+    supabase.from('gstr3b_adjustments')
+      .select('table_ref, label, taxable_value, igst, cgst, sgst, cess')
+      .eq('client_id', clientId).eq('period_month', periodMonth),
     // Builder TDR/FSI reverse charge. It is a second, independent source of
     // 3.1(d) that never passes through rcm_data — the working is computed from
     // a posted BU event and lives in its own view. Reading only rcm_data left a
@@ -57,5 +62,15 @@ export async function fetchGstr3b(
     rcm.sgst += Number(r.sgst) || 0;
   });
 
-  return buildGstr3bJson({ gstin, periodMonth, gstr1Raw: (g.data as any)?.raw_json ?? null, itc, rcm });
+  const adjustments: Gstr3bAdjustment[] = ((adjRes.data as any[]) || []).map((a) => ({
+    tableRef: a.table_ref,
+    label: a.label,
+    taxableValue: Number(a.taxable_value) || 0,
+    igst: Number(a.igst) || 0,
+    cgst: Number(a.cgst) || 0,
+    sgst: Number(a.sgst) || 0,
+    cess: Number(a.cess) || 0,
+  }));
+
+  return buildGstr3bJson({ gstin, periodMonth, gstr1Raw: (g.data as any)?.raw_json ?? null, itc, rcm, adjustments });
 }
