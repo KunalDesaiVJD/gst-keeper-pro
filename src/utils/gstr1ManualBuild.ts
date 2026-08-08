@@ -534,6 +534,52 @@ export function findInvalidGstinRows(rowsBySection: Record<Exclude<Gstr1Section,
   return invalid;
 }
 
+/**
+ * Pre-flight check before Generate JSON: the portal requires an invoice's
+ * "Invoice/Note Value" to equal the sum of its own taxable value + tax
+ * (across every item line under that invoice) — even a few paise off is
+ * enough to trigger the same generic "could not be uploaded" rejection.
+ * A mismatch here is almost always the operator having typed a rounded
+ * total from the physical invoice instead of the exact taxable + tax sum.
+ * Grouped the same way assembleGstr1Json groups invoices, so a multi-item
+ * invoice's components are all counted, not just one row's.
+ */
+export function findInvoiceValueMismatchRows(rowsBySection: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, ManualRow[]>): { section: 'b2b' | 'b2cl' | 'cdnr' | 'cdnur' | 'exp'; inum: string; entered: number; expected: number }[] {
+  const TOLERANCE = 0.02; // absorbs float rounding noise only, not real mismatches
+  const mismatches: { section: 'b2b' | 'b2cl' | 'cdnr' | 'cdnur' | 'exp'; inum: string; entered: number; expected: number }[] = [];
+
+  const checkGroups = (section: 'b2b' | 'b2cl' | 'cdnr' | 'cdnur' | 'exp', groups: Map<string, ManualRow[]>) => {
+    groups.forEach((rows) => {
+      const enteredRow = rows.find((r) => num(r.val) > 0);
+      if (!enteredRow) return; // nothing entered yet — handled elsewhere (e.g. required-field checks)
+      const expected = round2(rows.reduce((s, r) => s + num(r.txval) + num(r.iamt) + num(r.camt) + num(r.samt) + num(r.csamt), 0));
+      const entered = num(enteredRow.val);
+      if (Math.abs(entered - expected) > TOLERANCE) {
+        mismatches.push({ section, inum: enteredRow.inum || enteredRow.ntNum || '(row without invoice no.)', entered, expected });
+      }
+    });
+  };
+
+  const groupBy = (rows: ManualRow[], keyFn: (r: ManualRow) => string | null) => {
+    const map = new Map<string, ManualRow[]>();
+    rows.forEach((r) => {
+      const key = keyFn(r);
+      if (!key) return;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(r);
+    });
+    return map;
+  };
+
+  checkGroups('b2b', groupBy(rowsBySection.b2b || [], (r) => (r.ctin && r.inum) ? `${r.ctin}__${r.inum}` : null));
+  checkGroups('b2cl', groupBy(rowsBySection.b2cl || [], (r) => (r.pos && r.inum) ? `${r.pos}__${r.inum}` : null));
+  checkGroups('cdnr', groupBy(rowsBySection.cdnr || [], (r) => (r.ctin && r.ntNum) ? `${r.ctin}__${r.ntNum}` : null));
+  checkGroups('cdnur', groupBy(rowsBySection.cdnur || [], (r) => r.ntNum || null));
+  checkGroups('exp', groupBy(rowsBySection.exp || [], (r) => (r.expTyp && r.inum) ? `${r.expTyp}__${r.inum}` : null));
+
+  return mismatches;
+}
+
 // ---------------------------------------------------------------------------
 // Hydrate: portal JSON -> flat rows (for re-opening a generated return)
 // ---------------------------------------------------------------------------

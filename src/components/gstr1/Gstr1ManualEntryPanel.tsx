@@ -13,7 +13,7 @@ import { supabase } from '@/integrations/supabase/client';
 import {
   Gstr1Section, ManualRow, ColumnDef, SECTION_COLUMNS, NIL_SUPPLY_TYPES, DOC_TYPES,
   gstinHomeState, recomputeRowTax, assembleGstr1Json, hydrateManualEntriesFromJson, findMissingHsnRows,
-  findInvalidGstinRows,
+  findInvalidGstinRows, findInvoiceValueMismatchRows,
 } from '@/utils/gstr1ManualBuild';
 import { buildGstr1Summary } from '@/utils/buildGstr1Summary';
 
@@ -254,6 +254,20 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
       toast.error(
         `${invalidGstin.length} row(s) have a malformed counterparty GSTIN — the portal will reject the upload. ` +
         `Fix these first: ${preview}${invalidGstin.length > 5 ? '…' : ''}`
+      );
+      return;
+    }
+    // Invoice/Note Value must equal taxable value + tax exactly (a few paise
+    // off is enough to bounce the upload) — usually caused by typing a
+    // rounded total from the physical invoice instead of the computed sum.
+    const valueMismatches = findInvoiceValueMismatchRows(rowsBySection);
+    if (valueMismatches.length > 0) {
+      const preview = valueMismatches.slice(0, 5)
+        .map((m) => `${SECTION_LABELS[m.section]}: ${m.inum} (entered ₹${m.entered.toFixed(2)}, should be ₹${m.expected.toFixed(2)})`)
+        .join('; ');
+      toast.error(
+        `${valueMismatches.length} invoice(s) have an Invoice/Note Value that doesn't match taxable value + tax — ` +
+        `the portal will reject the upload. Fix these first: ${preview}${valueMismatches.length > 5 ? '…' : ''}`
       );
       return;
     }
