@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
-import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, Inbox, BarChart3, Download, ChevronsDownUp, ChevronsUpDown, FileSpreadsheet, History, Lock, Pencil, Plus, Save, X } from 'lucide-react';
+import { Upload, FileJson, Loader2, Trash2, Send, CheckCircle2, XCircle, Inbox, BarChart3, Download, ChevronsDownUp, ChevronsUpDown, FileSpreadsheet, History, Lock, Pencil, Plus, Save, X, Combine } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -1127,6 +1127,43 @@ const GSTR1DataPage: React.FC = () => {
       { _id: (prev.at(-1)?._id ?? -1) + 1, _src: 'hsn_b2b', hsn_sc: '', desc: '', uqc: 'NA', qty: 0, rt: 0, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 },
     ]);
   const removeHsnRow = (id: number) => setHsnEditRows((prev) => prev.filter((r) => r._id !== id));
+  // Merge rows sharing the same HSN code + rate + UQC + Type (B2B vs Other)
+  // into one summed row. Table 12 is meant to have exactly one row per
+  // unique HSN+rate+UQC — Tally exports (and manual edits, e.g. correcting
+  // an invalid UQC on several rows to the same value) can leave duplicates,
+  // which the portal may reject as separate conflicting entries. _src is
+  // part of the merge key because hsn_b2b/hsn_b2c are genuinely different
+  // portal JSON buckets — merging across them would silently reclassify
+  // supplies, not just consolidate a duplicate.
+  const mergeDuplicateHsnRows = () => {
+    setHsnEditRows((prev) => {
+      const groups = new Map<string, any[]>();
+      prev.forEach((r) => {
+        const key = [String(r.hsn_sc || '').trim().toUpperCase(), String(r.rt ?? ''), String(r.uqc || '').trim().toUpperCase(), r._src || 'hsn_b2b'].join('|');
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(r);
+      });
+      let mergedCount = 0;
+      const merged = Array.from(groups.values()).map((rows) => {
+        if (rows.length === 1) return rows[0];
+        mergedCount += rows.length - 1;
+        const num = (v: any) => Number(v) || 0;
+        return {
+          ...rows[0],
+          desc: rows.find((r) => (r.desc || '').trim())?.desc || rows[0].desc,
+          qty: rows.reduce((s, r) => s + num(r.qty), 0),
+          txval: rows.reduce((s, r) => s + num(r.txval), 0),
+          iamt: rows.reduce((s, r) => s + num(r.iamt), 0),
+          camt: rows.reduce((s, r) => s + num(r.camt), 0),
+          samt: rows.reduce((s, r) => s + num(r.samt), 0),
+          csamt: rows.reduce((s, r) => s + num(r.csamt), 0),
+        };
+      });
+      if (mergedCount > 0) toast.success(`Merged ${mergedCount} duplicate row(s) — ${merged.length} unique HSN + rate + UQC row(s) remain.`);
+      else toast.info('No duplicate HSN + rate + UQC rows found.');
+      return merged;
+    });
+  };
   const saveHsnEdits = async () => {
     if (!gstr1Data) return;
     setIsSavingHsn(true);
@@ -2262,9 +2299,19 @@ const GSTR1DataPage: React.FC = () => {
                       <TableFooter>
                         <TableRow className="bg-muted hover:bg-muted">
                           <TableCell className="border border-border" colSpan={12}>
-                            <Button variant="ghost" size="sm" onClick={addHsnRow}>
-                              <Plus className="h-3.5 w-3.5 mr-1.5" /> Add Row
-                            </Button>
+                            <div className="flex items-center gap-2">
+                              <Button variant="ghost" size="sm" onClick={addHsnRow}>
+                                <Plus className="h-3.5 w-3.5 mr-1.5" /> Add Row
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={mergeDuplicateHsnRows}
+                                title="Combine rows that share the same HSN code, rate and UQC into one summed row — the portal expects exactly one row per unique combination."
+                              >
+                                <Combine className="h-3.5 w-3.5 mr-1.5" /> Merge Duplicates
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       </TableFooter>
