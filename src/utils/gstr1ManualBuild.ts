@@ -9,16 +9,19 @@
 //    + place-of-supply vs the client's home state (first 2 digits of their
 //    GSTIN) — the operator only types rate and taxable value.
 //  - HSN (Table 12) has no per-line code inside the real B2B/B2CS JSON
-//    sections; the portal treats it as a separate rollup. We ask for an HSN
-//    code on every manual line and derive Table 12 from those, which is more
-//    accurate than what an imported JSON gives us for free.
+//    sections; the portal treats it as its own aggregate rollup, not
+//    something derived from individual invoice lines — so it's entered as
+//    its own flat table here too (hsn_sc/rate/taxable value/tax per row),
+//    same shape GSTR1DataPage's "Edit HSN Summary" already uses for
+//    imported returns. Typing a per-line HSN on every invoice/note row was
+//    tried first and dropped — real Table 12 rows often span many invoices
+//    at different POS, so no per-line code could honestly reconstruct it
+//    anyway, and it forced re-typing the same code on every line.
 //  - Documents Issued (13) can't be derived from invoice content (it's about
 //    serial-number continuity, including cancelled numbers) — entered as its
 //    own small fixed-shape table.
 
-import { BUILDER_SAC } from './builderGstr1';
-
-export type Gstr1Section = 'b2b' | 'b2cl' | 'b2cs' | 'cdnr' | 'cdnur' | 'exp' | 'at' | 'txpd' | 'nil' | 'doc';
+export type Gstr1Section = 'b2b' | 'b2cl' | 'b2cs' | 'cdnr' | 'cdnur' | 'exp' | 'at' | 'txpd' | 'nil' | 'doc' | 'hsn';
 
 export interface ManualRow {
   id: string;           // client-side row id (uuid), stable across edits
@@ -106,7 +109,7 @@ export interface ColumnDef {
   computed?: boolean; // rendered read-only, derived from other fields
 }
 
-export const SECTION_COLUMNS: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, ColumnDef[]> = {
+export const SECTION_COLUMNS: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, ColumnDef[]> = {
   b2b: [
     { key: 'ctin', label: 'Customer GSTIN', type: 'text', width: 'w-36' },
     { key: 'inum', label: 'Invoice No.', type: 'text', width: 'w-28' },
@@ -115,7 +118,6 @@ export const SECTION_COLUMNS: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, Colum
     { key: 'pos', label: 'POS', type: 'state', width: 'w-24' },
     { key: 'rchrg', label: 'Rev. Chrg', type: 'select', options: [{ value: 'N', label: 'No' }, { value: 'Y', label: 'Yes' }], width: 'w-20' },
     { key: 'inv_typ', label: 'Type', type: 'select', options: [{ value: 'R', label: 'Regular' }, { value: 'SEWP', label: 'SEZ (Pay)' }, { value: 'SEWOP', label: 'SEZ (No Pay)' }, { value: 'DE', label: 'Deemed Exp' }], width: 'w-28' },
-    { key: 'hsnCode', label: 'HSN Code', type: 'text', width: 'w-24' },
     { key: 'rt', label: 'Rate %', type: 'number', width: 'w-16' },
     { key: 'txval', label: 'Taxable Value', type: 'number', width: 'w-28' },
     { key: 'iamt', label: 'IGST', type: 'number', width: 'w-24', computed: true },
@@ -128,7 +130,6 @@ export const SECTION_COLUMNS: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, Colum
     { key: 'inum', label: 'Invoice No.', type: 'text', width: 'w-28' },
     { key: 'idt', label: 'Date', type: 'date', width: 'w-32' },
     { key: 'val', label: 'Invoice Value', type: 'number', width: 'w-28' },
-    { key: 'hsnCode', label: 'HSN Code', type: 'text', width: 'w-24' },
     { key: 'rt', label: 'Rate %', type: 'number', width: 'w-16' },
     { key: 'txval', label: 'Taxable Value', type: 'number', width: 'w-28' },
     { key: 'iamt', label: 'IGST', type: 'number', width: 'w-24', computed: true },
@@ -137,7 +138,6 @@ export const SECTION_COLUMNS: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, Colum
   b2cs: [
     { key: 'pos', label: 'POS', type: 'state', width: 'w-24' },
     { key: 'typ', label: 'E-Comm?', type: 'select', options: [{ value: 'OE', label: 'No (Own Supply)' }, { value: 'E', label: 'Via E-comm Operator' }], width: 'w-32' },
-    { key: 'hsnCode', label: 'HSN Code', type: 'text', width: 'w-24' },
     { key: 'rt', label: 'Rate %', type: 'number', width: 'w-16' },
     { key: 'txval', label: 'Taxable Value', type: 'number', width: 'w-28' },
     { key: 'iamt', label: 'IGST', type: 'number', width: 'w-24', computed: true },
@@ -152,7 +152,6 @@ export const SECTION_COLUMNS: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, Colum
     { key: 'ntTyp', label: 'Type', type: 'select', options: [{ value: 'C', label: 'Credit Note' }, { value: 'D', label: 'Debit Note' }], width: 'w-24' },
     { key: 'val', label: 'Note Value', type: 'number', width: 'w-28' },
     { key: 'pos', label: 'POS', type: 'state', width: 'w-24' },
-    { key: 'hsnCode', label: 'HSN Code', type: 'text', width: 'w-24' },
     { key: 'rt', label: 'Rate %', type: 'number', width: 'w-16' },
     { key: 'txval', label: 'Taxable Value', type: 'number', width: 'w-28' },
     { key: 'iamt', label: 'IGST', type: 'number', width: 'w-24', computed: true },
@@ -166,7 +165,6 @@ export const SECTION_COLUMNS: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, Colum
     { key: 'ntTyp', label: 'Type', type: 'select', options: [{ value: 'C', label: 'Credit Note' }, { value: 'D', label: 'Debit Note' }], width: 'w-24' },
     { key: 'val', label: 'Note Value', type: 'number', width: 'w-28' },
     { key: 'pos', label: 'POS', type: 'state', width: 'w-24' },
-    { key: 'hsnCode', label: 'HSN Code', type: 'text', width: 'w-24' },
     { key: 'rt', label: 'Rate %', type: 'number', width: 'w-16' },
     { key: 'txval', label: 'Taxable Value', type: 'number', width: 'w-28' },
     { key: 'iamt', label: 'IGST', type: 'number', width: 'w-24', computed: true },
@@ -180,7 +178,6 @@ export const SECTION_COLUMNS: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, Colum
     { key: 'sbpcode', label: 'Port Code', type: 'text', width: 'w-24' },
     { key: 'sbnum', label: 'Shipping Bill No.', type: 'text', width: 'w-28' },
     { key: 'sbdt', label: 'SB Date', type: 'date', width: 'w-32' },
-    { key: 'hsnCode', label: 'HSN Code', type: 'text', width: 'w-24' },
     { key: 'rt', label: 'Rate %', type: 'number', width: 'w-16' },
     { key: 'txval', label: 'Taxable Value', type: 'number', width: 'w-28' },
     { key: 'iamt', label: 'IGST', type: 'number', width: 'w-24', computed: true },
@@ -282,11 +279,12 @@ const toPortalDate = (iso: string): string => {
 export function assembleGstr1Json(params: {
   gstin: string;
   periodShort: string; // "Jul-26"
-  rowsBySection: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, ManualRow[]>;
+  rowsBySection: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, ManualRow[]>;
   nilRows: ManualRow[];   // { sply_ty, nil_amt, expt_amt, ngsup_amt }
   docRows: ManualRow[];   // { doc_typ, from, to, totnum, cancel }
+  hsnRows: ManualRow[];   // { _src: 'hsn_b2b'|'hsn_b2c', hsn_sc, desc, uqc, qty, rt, txval, iamt, camt, samt, csamt }
 }): any {
-  const { gstin, periodShort, rowsBySection, nilRows, docRows } = params;
+  const { gstin, periodShort, rowsBySection, nilRows, docRows, hsnRows } = params;
   const homeState = gstinHomeState(gstin);
 
   // fp: MMYYYY from a short label like "Jul-26"
@@ -416,34 +414,33 @@ export function assembleGstr1Json(params: {
     .filter((r) => num(r.nil_amt) || num(r.expt_amt) || num(r.ngsup_amt))
     .map((r) => ({ sply_ty: r.sply_ty, nil_amt: num(r.nil_amt), expt_amt: num(r.expt_amt), ngsup_amt: num(r.ngsup_amt) }));
 
-  // --- Table 12 (HSN): rolled up from every line that carries an hsnCode,
-  // grouped by (hsn_sc, rate). Real portal-exported JSON splits this into TWO
-  // separate arrays, not one — confirmed against a real downloaded GSTR-1
-  // JSON (24AAKFV4897J1ZF, Jul-2026): "hsn_b2b" totals matched exactly the
-  // b2b-invoice lines, and a SEPARATE "hsn_b2c" totalled exactly the b2cs
-  // lines (265000 txval in both). Emitting every line into a single
-  // "hsn_b2b" array (as before) is a schema-shape mismatch on its own,
-  // independent of the doc_issue/date/key-name fixes: hsn_b2b covers supplies
-  // to registered recipients (b2b, cdnr), hsn_b2c covers everything else
-  // (b2cl, b2cs, cdnur, exp).
-  const buildHsnRollup = (lines: ManualRow[]) => {
-    const map = new Map<string, any>();
-    lines.forEach((r) => {
-      const code = (r.hsnCode || '').trim();
-      if (!code) return;
-      const key = `${code}__${r.rt}`;
-      const existing = map.get(key);
-      if (existing) {
-        existing.txval += num(r.txval); existing.iamt += num(r.iamt);
-        existing.camt += num(r.camt); existing.samt += num(r.samt); existing.csamt += num(r.csamt);
-      } else {
-        map.set(key, { hsn_sc: code, rt: num(r.rt), txval: num(r.txval), iamt: num(r.iamt), camt: num(r.camt), samt: num(r.samt), csamt: num(r.csamt), uqc: 'NA', qty: 0, desc: '', user_desc: '' });
-      }
+  // --- Table 12 (HSN): entered directly as its own aggregate table, not
+  // derived from invoice lines — real Table 12 rows often span many
+  // invoices at different POS, so no honest per-line code could reconstruct
+  // it. Same bucket split GSTR1DataPage's "Edit HSN Summary" already writes
+  // for imported returns: hsn_b2b for supplies to registered recipients
+  // (b2b, cdnr), hsn_b2c for everything else (b2cl, b2cs, cdnur, exp).
+  const hsnBuckets: { hsn_b2b: any[]; hsn_b2c: any[] } = { hsn_b2b: [], hsn_b2c: [] };
+  (hsnRows || [])
+    .filter((r) => String(r.hsn_sc || '').trim())
+    .forEach((r) => {
+      const bucket = r._src === 'hsn_b2c' ? 'hsn_b2c' : 'hsn_b2b';
+      hsnBuckets[bucket].push({
+        num: hsnBuckets[bucket].length + 1,
+        hsn_sc: String(r.hsn_sc).trim(),
+        desc: r.desc || '',
+        uqc: r.uqc || 'NA',
+        qty: num(r.qty),
+        rt: num(r.rt),
+        txval: num(r.txval),
+        iamt: num(r.iamt),
+        camt: num(r.camt),
+        samt: num(r.samt),
+        csamt: num(r.csamt),
+      });
     });
-    return Array.from(map.values()).map((h, i) => ({ num: i + 1, ...h }));
-  };
-  const hsnB2b = buildHsnRollup([...(rowsBySection.b2b || []), ...(rowsBySection.cdnr || [])]);
-  const hsnB2c = buildHsnRollup([...(rowsBySection.b2cl || []), ...(rowsBySection.b2cs || []), ...(rowsBySection.cdnur || []), ...(rowsBySection.exp || [])]);
+  const hsnB2b = hsnBuckets.hsn_b2b;
+  const hsnB2c = hsnBuckets.hsn_b2c;
 
   // --- Table 13 (Documents Issued) ---
   // Real portal-exported JSON (confirmed against an actual download) puts a
@@ -490,22 +487,18 @@ export function assembleGstr1Json(params: {
 
 /**
  * Pre-flight check before Generate JSON: GSTN has made HSN-wise reporting
- * mandatory on GSTR-1, so a return with real taxable supplies but zero HSN
- * entries is very likely to be rejected by the portal's upload validator
+ * mandatory on GSTR-1, so a return with real taxable supplies but an empty
+ * Table 12 is very likely to be rejected by the portal's upload validator
  * with the same generic "download the latest offline tool" message —
- * regardless of how correct everything else is. Flag rows missing an HSN
- * code so the operator can fix them before wasting an upload attempt.
+ * regardless of how correct everything else is. Table 12 is its own
+ * standalone table now (not derived per invoice line), so this just checks
+ * it isn't empty when there's real taxable value elsewhere in the return.
  */
-export function findMissingHsnRows(rowsBySection: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, ManualRow[]>): { section: Gstr1Section; inum: string }[] {
-  const missing: { section: Gstr1Section; inum: string }[] = [];
-  (Object.keys(rowsBySection) as Exclude<Gstr1Section, 'nil' | 'doc'>[]).forEach((section) => {
-    rowsBySection[section].forEach((r) => {
-      const hasValue = num(r.txval) > 0;
-      const hasHsn = !!(r.hsnCode || '').trim();
-      if (hasValue && !hasHsn) missing.push({ section, inum: r.inum || r.ntNum || '(row without invoice no.)' });
-    });
-  });
-  return missing;
+export function hasMissingHsnSummary(rowsBySection: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, ManualRow[]>, hsnRows: ManualRow[]): boolean {
+  const hasTaxableValue = (Object.keys(rowsBySection) as Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>[])
+    .some((section) => rowsBySection[section].some((r) => num(r.txval) > 0));
+  const hasHsnRows = (hsnRows || []).some((r) => String(r.hsn_sc || '').trim());
+  return hasTaxableValue && !hasHsnRows;
 }
 
 // Standard 15-char GSTIN shape: 2-digit state code, 10-char PAN (5 letters,
@@ -521,7 +514,7 @@ const GSTIN_FORMAT = /^[0-9]{2}[A-Za-z]{5}[0-9]{4}[A-Za-z][1-9A-Za-z]Z[0-9A-Za-z
  * b2cl/b2cs/cdnur/exp/at/txpd address the recipient by place-of-supply, not
  * GSTIN, so they're not checked here.
  */
-export function findInvalidGstinRows(rowsBySection: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, ManualRow[]>): { section: 'b2b' | 'cdnr'; ctin: string; inum: string }[] {
+export function findInvalidGstinRows(rowsBySection: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, ManualRow[]>): { section: 'b2b' | 'cdnr'; ctin: string; inum: string }[] {
   const invalid: { section: 'b2b' | 'cdnr'; ctin: string; inum: string }[] = [];
   (['b2b', 'cdnr'] as const).forEach((section) => {
     (rowsBySection[section] || []).forEach((r) => {
@@ -544,7 +537,7 @@ export function findInvalidGstinRows(rowsBySection: Record<Exclude<Gstr1Section,
  * Grouped the same way assembleGstr1Json groups invoices, so a multi-item
  * invoice's components are all counted, not just one row's.
  */
-export function findInvoiceValueMismatchRows(rowsBySection: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, ManualRow[]>): { section: 'b2b' | 'b2cl' | 'cdnr' | 'cdnur' | 'exp'; inum: string; entered: number; expected: number }[] {
+export function findInvoiceValueMismatchRows(rowsBySection: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, ManualRow[]>): { section: 'b2b' | 'b2cl' | 'cdnr' | 'cdnur' | 'exp'; inum: string; entered: number; expected: number }[] {
   const TOLERANCE = 0.02; // absorbs float rounding noise only, not real mismatches
   const mismatches: { section: 'b2b' | 'b2cl' | 'cdnr' | 'cdnur' | 'exp'; inum: string; entered: number; expected: number }[] = [];
 
@@ -598,44 +591,41 @@ const fromPortalDate = (d: string): string => {
 };
 
 export function hydrateManualEntriesFromJson(json: any): {
-  rowsBySection: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, ManualRow[]>;
+  rowsBySection: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, ManualRow[]>;
   nilRows: ManualRow[];
   docRows: ManualRow[];
+  hsnRows: ManualRow[];
 } {
   const j = json || {};
   const b2b: ManualRow[] = [];
   (j.b2b || []).forEach((party: any) => (party.inv || []).forEach((inv: any) => (inv.itms || []).forEach((itm: any) => {
     b2b.push({
       id: nextId(), ctin: party.ctin, inum: inv.inum, idt: fromPortalDate(inv.idt), val: inv.val, pos: inv.pos,
-      rchrg: inv.rchrg, inv_typ: inv.inv_typ, hsnCode: '', rt: itm.itm_det?.rt, txval: itm.itm_det?.txval,
+      rchrg: inv.rchrg, inv_typ: inv.inv_typ, rt: itm.itm_det?.rt, txval: itm.itm_det?.txval,
       iamt: itm.itm_det?.iamt, camt: itm.itm_det?.camt, samt: itm.itm_det?.samt, csamt: itm.itm_det?.csamt,
     });
   })));
 
   const b2cl: ManualRow[] = [];
   (j.b2cl || []).forEach((state: any) => (state.inv || []).forEach((inv: any) => (inv.itms || []).forEach((itm: any) => {
-    b2cl.push({ id: nextId(), pos: state.pos, inum: inv.inum, idt: fromPortalDate(inv.idt), val: inv.val, hsnCode: '', rt: itm.itm_det?.rt, txval: itm.itm_det?.txval, iamt: itm.itm_det?.iamt, csamt: itm.itm_det?.csamt });
+    b2cl.push({ id: nextId(), pos: state.pos, inum: inv.inum, idt: fromPortalDate(inv.idt), val: inv.val, rt: itm.itm_det?.rt, txval: itm.itm_det?.txval, iamt: itm.itm_det?.iamt, csamt: itm.itm_det?.csamt });
   })));
 
-  // Builder Returns has no per-line HSN (the whole return is one SAC), so
-  // default it here for those prefilled rows only — a manually-uploaded
-  // JSON still hydrates with a blank hsnCode as before.
-  const defaultHsn = j._source === 'BUILDER_RETURNS' ? BUILDER_SAC : '';
-  const b2cs: ManualRow[] = (j.b2cs || []).map((item: any) => ({ id: nextId(), pos: item.pos, typ: item.typ, hsnCode: defaultHsn, rt: item.rt, txval: item.txval, iamt: item.iamt, camt: item.camt, samt: item.samt, csamt: item.csamt }));
+  const b2cs: ManualRow[] = (j.b2cs || []).map((item: any) => ({ id: nextId(), pos: item.pos, typ: item.typ, rt: item.rt, txval: item.txval, iamt: item.iamt, camt: item.camt, samt: item.samt, csamt: item.csamt }));
 
   const cdnr: ManualRow[] = [];
   (j.cdnr || []).forEach((party: any) => (party.nt || []).forEach((nt: any) => (nt.itms || []).forEach((itm: any) => {
-    cdnr.push({ id: nextId(), ctin: party.ctin, ntNum: nt.nt_num, ntDt: fromPortalDate(nt.nt_dt), ntTyp: nt.ntty || nt.typ, val: nt.val, pos: nt.pos, hsnCode: '', rt: itm.itm_det?.rt, txval: itm.itm_det?.txval, iamt: itm.itm_det?.iamt, camt: itm.itm_det?.camt, samt: itm.itm_det?.samt, csamt: itm.itm_det?.csamt });
+    cdnr.push({ id: nextId(), ctin: party.ctin, ntNum: nt.nt_num, ntDt: fromPortalDate(nt.nt_dt), ntTyp: nt.ntty || nt.typ, val: nt.val, pos: nt.pos, rt: itm.itm_det?.rt, txval: itm.itm_det?.txval, iamt: itm.itm_det?.iamt, camt: itm.itm_det?.camt, samt: itm.itm_det?.samt, csamt: itm.itm_det?.csamt });
   })));
 
   const cdnur: ManualRow[] = [];
   (j.cdnur || []).forEach((nt: any) => (nt.itms || []).forEach((itm: any) => {
-    cdnur.push({ id: nextId(), ntNum: nt.nt_num, ntDt: fromPortalDate(nt.nt_dt), ntTyp: nt.ntty || nt.typ, val: nt.val, pos: nt.pos, hsnCode: '', rt: itm.itm_det?.rt, txval: itm.itm_det?.txval, iamt: itm.itm_det?.iamt, csamt: itm.itm_det?.csamt });
+    cdnur.push({ id: nextId(), ntNum: nt.nt_num, ntDt: fromPortalDate(nt.nt_dt), ntTyp: nt.ntty || nt.typ, val: nt.val, pos: nt.pos, rt: itm.itm_det?.rt, txval: itm.itm_det?.txval, iamt: itm.itm_det?.iamt, csamt: itm.itm_det?.csamt });
   }));
 
   const exp: ManualRow[] = [];
   (j.exp || []).forEach((e: any) => (e.inv || []).forEach((inv: any) => (inv.itms || []).forEach((itm: any) => {
-    exp.push({ id: nextId(), expTyp: e.exp_typ, inum: inv.inum, idt: fromPortalDate(inv.idt), val: inv.val, sbpcode: inv.sbpcode, sbnum: inv.sbnum, sbdt: fromPortalDate(inv.sbdt), hsnCode: '', rt: itm.rt, txval: itm.txval, iamt: itm.iamt, csamt: itm.csamt });
+    exp.push({ id: nextId(), expTyp: e.exp_typ, inum: inv.inum, idt: fromPortalDate(inv.idt), val: inv.val, sbpcode: inv.sbpcode, sbnum: inv.sbnum, sbdt: fromPortalDate(inv.sbdt), rt: itm.rt, txval: itm.txval, iamt: itm.iamt, csamt: itm.csamt });
   })));
 
   const at: ManualRow[] = [];
@@ -661,5 +651,14 @@ export function hydrateManualEntriesFromJson(json: any): {
     docRows.push({ id: nextId(), doc_typ: meta?.value || '', from: d.from, to: d.to, totnum: d.totnum, cancel: d.cancel });
   }));
 
-  return { rowsBySection: { b2b, b2cl, b2cs, cdnr, cdnur, exp, at, txpd }, nilRows, docRows };
+  // Table 12 — same real shape whether the source is an imported JSON or a
+  // Builder-generated one; no transformation needed, just tag each row with
+  // which bucket it came from so the grid's Type dropdown shows correctly
+  // and re-assembly (assembleGstr1Json) puts it back in the same bucket.
+  const hsnRows: ManualRow[] = [
+    ...(j.hsn?.hsn_b2b || []).map((h: any) => ({ id: nextId(), _src: 'hsn_b2b', hsn_sc: h.hsn_sc, desc: h.desc, uqc: h.uqc, qty: h.qty, rt: h.rt, txval: h.txval, iamt: h.iamt, camt: h.camt, samt: h.samt, csamt: h.csamt })),
+    ...(j.hsn?.hsn_b2c || []).map((h: any) => ({ id: nextId(), _src: 'hsn_b2c', hsn_sc: h.hsn_sc, desc: h.desc, uqc: h.uqc, qty: h.qty, rt: h.rt, txval: h.txval, iamt: h.iamt, camt: h.camt, samt: h.samt, csamt: h.csamt })),
+  ];
+
+  return { rowsBySection: { b2b, b2cl, b2cs, cdnr, cdnur, exp, at, txpd }, nilRows, docRows, hsnRows };
 }

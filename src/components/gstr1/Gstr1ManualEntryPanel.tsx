@@ -12,19 +12,19 @@ import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import {
   Gstr1Section, ManualRow, ColumnDef, SECTION_COLUMNS, NIL_SUPPLY_TYPES, DOC_TYPES,
-  gstinHomeState, recomputeRowTax, assembleGstr1Json, hydrateManualEntriesFromJson, findMissingHsnRows,
+  gstinHomeState, recomputeRowTax, assembleGstr1Json, hydrateManualEntriesFromJson, hasMissingHsnSummary,
   findInvalidGstinRows, findInvoiceValueMismatchRows,
 } from '@/utils/gstr1ManualBuild';
 import { buildGstr1Summary } from '@/utils/buildGstr1Summary';
 
-const INVOICE_SECTIONS: Exclude<Gstr1Section, 'nil' | 'doc'>[] = ['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp', 'at', 'txpd'];
+const INVOICE_SECTIONS: Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>[] = ['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp', 'at', 'txpd'];
 
 const SECTION_LABELS: Record<Gstr1Section, string> = {
   b2b: '4A/4B — B2B (Registered)', b2cl: '5 — B2CL (Large, Unregistered)',
   b2cs: '7 — B2CS (Others)', cdnr: '9B — Credit/Debit Notes (Registered)',
   cdnur: '9B — Credit/Debit Notes (Unregistered)', exp: '6A — Exports',
   at: '11A — Advances Received', txpd: '11B — Advance Adjustment',
-  nil: '8 — Nil Rated / Exempted', doc: '13 — Documents Issued',
+  nil: '8 — Nil Rated / Exempted', hsn: '12 — HSN-wise Summary', doc: '13 — Documents Issued',
 };
 
 let _localIdSeq = 0;
@@ -52,11 +52,12 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
   const [collapsed, setCollapsed] = useState(hasGeneratedJson); // start collapsed once a JSON already exists
   const [summaryOpen, setSummaryOpen] = useState(false);
 
-  const [rowsBySection, setRowsBySection] = useState<Record<Exclude<Gstr1Section, 'nil' | 'doc'>, ManualRow[]>>({
+  const [rowsBySection, setRowsBySection] = useState<Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, ManualRow[]>>({
     b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [], at: [], txpd: [],
   });
   const [nilRows, setNilRows] = useState<ManualRow[]>([]);
   const [docRows, setDocRows] = useState<ManualRow[]>([]);
+  const [hsnRows, setHsnRows] = useState<ManualRow[]>([]);
 
   const homeState = gstinHomeState(clientGstin);
 
@@ -64,8 +65,8 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
   // saved/generated), so the tile counts/values and "Generate Summary" always
   // reflect what's on screen right now, same shape a real import would use.
   const liveJson = useMemo(
-    () => assembleGstr1Json({ gstin: clientGstin, periodShort, rowsBySection, nilRows, docRows }),
-    [clientGstin, periodShort, rowsBySection, nilRows, docRows],
+    () => assembleGstr1Json({ gstin: clientGstin, periodShort, rowsBySection, nilRows, docRows, hsnRows }),
+    [clientGstin, periodShort, rowsBySection, nilRows, docRows, hsnRows],
   );
   const liveSummary = useMemo(() => buildGstr1Summary(liveJson), [liveJson]);
   const tileFor = (key: Gstr1Section) => liveSummary.tiles.find((t) => t.key === key);
@@ -85,18 +86,21 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
       const rows = (data as any[]) || [];
       let finalDocRows: ManualRow[] = [];
       if (rows.length > 0) {
-        const bySection: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, ManualRow[]> = { b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [], at: [], txpd: [] };
+        const bySection: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, ManualRow[]> = { b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [], at: [], txpd: [] };
         const nil: ManualRow[] = [];
         const doc: ManualRow[] = [];
+        const hsn: ManualRow[] = [];
         rows.forEach((r) => {
           const row = { id: r.id, ...r.data };
           if (r.section === 'nil') nil.push(row);
           else if (r.section === 'doc') doc.push(row);
-          else if (bySection[r.section as Exclude<Gstr1Section, 'nil' | 'doc'>]) bySection[r.section as Exclude<Gstr1Section, 'nil' | 'doc'>].push(row);
+          else if (r.section === 'hsn') hsn.push(row);
+          else if (bySection[r.section as Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>]) bySection[r.section as Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>].push(row);
         });
         setRowsBySection(bySection);
         setNilRows(nil);
         setDocRows(doc);
+        setHsnRows(hsn);
         finalDocRows = doc;
       } else if (hasGeneratedJson) {
         // No manual entry rows saved yet, but a JSON already exists (e.g.
@@ -110,12 +114,14 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
           setRowsBySection(hydrated.rowsBySection);
           setNilRows(hydrated.nilRows);
           setDocRows(hydrated.docRows);
+          setHsnRows(hydrated.hsnRows);
           finalDocRows = hydrated.docRows;
         }
       } else {
         setRowsBySection({ b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [], at: [], txpd: [] });
         setNilRows([]);
         setDocRows([]);
+        setHsnRows([]);
       }
       // Documents Issued is mandatory before upload (unless NIL) and is NEVER
       // prefilled — collapsing the panel by default whenever a JSON already
@@ -139,16 +145,18 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
   const addRow = (section: Gstr1Section) => {
     if (section === 'nil') setNilRows((prev) => [...prev, { id: newRowId(), sply_ty: 'INTRB2B', nil_amt: 0, expt_amt: 0, ngsup_amt: 0 }]);
     else if (section === 'doc') setDocRows((prev) => [...prev, { id: newRowId(), doc_typ: DOC_TYPES[0].value, from: '', to: '', totnum: 0, cancel: 0 }]);
+    else if (section === 'hsn') setHsnRows((prev) => [...prev, { id: newRowId(), _src: 'hsn_b2b', hsn_sc: '', desc: '', uqc: 'NA', qty: 0, rt: 0, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 }]);
     else setRowsBySection((prev) => ({ ...prev, [section]: [...prev[section], { id: newRowId() }] }));
   };
 
   const deleteRow = (section: Gstr1Section, id: string) => {
     if (section === 'nil') setNilRows((prev) => prev.filter((r) => r.id !== id));
     else if (section === 'doc') setDocRows((prev) => prev.filter((r) => r.id !== id));
+    else if (section === 'hsn') setHsnRows((prev) => prev.filter((r) => r.id !== id));
     else setRowsBySection((prev) => ({ ...prev, [section]: prev[section].filter((r) => r.id !== id) }));
   };
 
-  const updateRow = (section: Exclude<Gstr1Section, 'nil' | 'doc'>, id: string, field: string, value: any) => {
+  const updateRow = (section: Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, id: string, field: string, value: any) => {
     setRowsBySection((prev) => ({
       ...prev,
       [section]: prev[section].map((r) => {
@@ -193,6 +201,8 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
       return next;
     }));
 
+  const updateHsnRow = (id: string, field: string, value: any) => setHsnRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
+
   const persistRows = async () => {
     await supabase.from('gstr1_manual_entries' as any)
       .delete().eq('client_id', clientId).eq('period_month', periodShort);
@@ -211,6 +221,10 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
     docRows.forEach((row, idx) => {
       const { id, ...data } = row;
       inserts.push({ client_id: clientId, period_month: periodShort, section: 'doc', row_order: idx, data, updated_by: actorId });
+    });
+    hsnRows.forEach((row, idx) => {
+      const { id, ...data } = row;
+      inserts.push({ client_id: clientId, period_month: periodShort, section: 'hsn', row_order: idx, data, updated_by: actorId });
     });
     if (inserts.length > 0) {
       const { error } = await supabase.from('gstr1_manual_entries' as any).insert(inserts);
@@ -232,17 +246,12 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
 
   const handleGenerate = async () => {
     // GSTN has made HSN-wise reporting mandatory on GSTR-1 — a return with
-    // real taxable value but zero HSN entries gets rejected by the portal's
+    // real taxable value but an empty Table 12 gets rejected by the portal's
     // upload validator with a generic "download the latest offline tool"
     // message that gives no hint HSN is the actual problem. Catch it here so
     // the operator fixes it before wasting a portal round-trip.
-    const missingHsn = findMissingHsnRows(rowsBySection);
-    if (missingHsn.length > 0) {
-      const preview = missingHsn.slice(0, 5).map((m) => `${SECTION_LABELS[m.section]}: ${m.inum}`).join('; ');
-      toast.error(
-        `${missingHsn.length} row(s) have a taxable value but no HSN code — the portal will reject the upload. ` +
-        `Fix these first: ${preview}${missingHsn.length > 5 ? '…' : ''}`
-      );
+    if (hasMissingHsnSummary(rowsBySection, hsnRows)) {
+      toast.error('This return has taxable value but no HSN summary (Table 12) rows — the portal will reject the upload. Add at least one row on the "12 — HSN-wise Summary" tab first.');
       return;
     }
     // A single malformed counterparty GSTIN anywhere in the file bounces the
@@ -275,7 +284,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
     try {
       await persistRows();
 
-      const json = assembleGstr1Json({ gstin: clientGstin, periodShort, rowsBySection, nilRows, docRows });
+      const json = assembleGstr1Json({ gstin: clientGstin, periodShort, rowsBySection, nilRows, docRows, hsnRows });
 
       const { data: written, error } = await supabase
         .from('gstr1_data')
@@ -314,7 +323,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
 
   const sectionTotal = (rows: ManualRow[]) => rows.reduce((s, r) => s + (Number(r.txval ?? r.ad_amt) || 0), 0);
 
-  const renderCell = (section: Exclude<Gstr1Section, 'nil' | 'doc'>, row: ManualRow, col: ColumnDef) => {
+  const renderCell = (section: Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, row: ManualRow, col: ColumnDef) => {
     const value = row[col.key] ?? '';
     if (!canEdit || isFiled) return <span className="text-xs px-1 tabular-nums">{value}</span>;
     // Auto-computed tax columns (IGST/CGST/SGST) are pre-filled from rate +
@@ -407,7 +416,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
                 editable table below. Counts/values are live, computed from
                 whatever is currently in the grid. */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mb-4">
-              {(['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp', 'at', 'txpd', 'nil', 'doc'] as Gstr1Section[]).map((s) => {
+              {(['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp', 'at', 'txpd', 'nil', 'hsn', 'doc'] as Gstr1Section[]).map((s) => {
                 const isActive = activeTab === s;
                 const tile = tileFor(s);
                 return (
@@ -519,6 +528,81 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
                       </TableRow>
                     ))}
                     {nilRows.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-6 text-sm">No rows yet.</TableCell></TableRow>}
+                  </TableBody>
+                </Table>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="hsn" className="mt-4">
+              <p className="text-xs text-muted-foreground mb-2">
+                One row per HSN/SAC + rate combination — this is the aggregate the portal expects, not a per-invoice
+                breakdown. Counts (Qty) are optional for services (leave UQC as NA).
+              </p>
+              <div className="flex items-center justify-between mb-2">
+                {canEdit && !isFiled && (
+                  <Button size="sm" variant="outline" onClick={() => addRow('hsn')}>
+                    <Plus className="h-3.5 w-3.5 mr-1.5" /> Add Row
+                  </Button>
+                )}
+              </div>
+              <div className="rounded-md border overflow-auto">
+                <Table>
+                  <TableHeader><TableRow>
+                    <TableHead className="text-xs">HSN Code</TableHead>
+                    <TableHead className="text-xs">Type</TableHead>
+                    <TableHead className="text-xs">UQC</TableHead>
+                    <TableHead className="text-xs">Qty</TableHead>
+                    <TableHead className="text-xs">Rate %</TableHead>
+                    <TableHead className="text-xs">Taxable Value</TableHead>
+                    <TableHead className="text-xs">IGST</TableHead>
+                    <TableHead className="text-xs">CGST</TableHead>
+                    <TableHead className="text-xs">SGST</TableHead>
+                    <TableHead className="text-xs">Cess</TableHead>
+                    {canEdit && !isFiled && <TableHead className="w-10" />}
+                  </TableRow></TableHeader>
+                  <TableBody>
+                    {hsnRows.map((row) => (
+                      <TableRow key={row.id}>
+                        <TableCell className="p-1">
+                          {canEdit && !isFiled ? (
+                            <Input value={row.hsn_sc || ''} onChange={(e) => updateHsnRow(row.id, 'hsn_sc', e.target.value)} className="h-8 text-xs" />
+                          ) : <span className="text-xs font-mono">{row.hsn_sc}</span>}
+                        </TableCell>
+                        <TableCell className="p-1">
+                          {canEdit && !isFiled ? (
+                            <Select value={row._src || 'hsn_b2b'} onValueChange={(v) => updateHsnRow(row.id, '_src', v)}>
+                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="hsn_b2b">B2B / CDNR (registered)</SelectItem>
+                                <SelectItem value="hsn_b2c">Other (B2C / Exports)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          ) : <span className="text-xs">{row._src === 'hsn_b2c' ? 'Other (B2C / Exports)' : 'B2B / CDNR (registered)'}</span>}
+                        </TableCell>
+                        {(['uqc'] as const).map((f) => (
+                          <TableCell key={f} className="p-1">
+                            {canEdit && !isFiled ? (
+                              <Input value={row[f] || ''} onChange={(e) => updateHsnRow(row.id, f, e.target.value)} className="h-8 text-xs" />
+                            ) : <span className="text-xs">{row[f]}</span>}
+                          </TableCell>
+                        ))}
+                        {(['qty', 'rt', 'txval', 'iamt', 'camt', 'samt', 'csamt'] as const).map((f) => (
+                          <TableCell key={f} className="p-1">
+                            {canEdit && !isFiled ? (
+                              <Input type="number" value={row[f] ?? 0} onChange={(e) => updateHsnRow(row.id, f, parseFloat(e.target.value) || 0)} className="h-8 text-xs" />
+                            ) : <span className="text-xs tabular-nums">{Number(row[f] || 0).toLocaleString('en-IN')}</span>}
+                          </TableCell>
+                        ))}
+                        {canEdit && !isFiled && (
+                          <TableCell className="p-1">
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => deleteRow('hsn', row.id)}>
+                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                            </Button>
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    ))}
+                    {hsnRows.length === 0 && <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-6 text-sm">No rows yet.</TableCell></TableRow>}
                   </TableBody>
                 </Table>
               </div>
