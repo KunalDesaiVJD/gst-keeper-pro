@@ -293,6 +293,30 @@ const GstReceivableRecoPage: React.FC = () => {
           rows.find(r => r?.srNo === srNo) || { cgst: 0, sgst: 0, igst: 0 };
         const num = (v: any) => Number(v) || 0;
 
+        // Row (3) "RCM ITC" is auto-linked from rcm_data on the ITC Summary
+        // page, but only ever PERSISTED to itc_summaries on a manual Save —
+        // the saved snapshot silently drifts from live RCM data whenever RCM
+        // entries change afterward (same staleness bug fixed for GSTR-3B's
+        // 4A(3) in buildGstr3bJson.ts). Recompute it live here too instead of
+        // trusting the stored row(3), same formula as ITCSummaryPage's
+        // fetchRCMTotals, so this page's 4C matches what ITC Summary shows.
+        const prevShortMonth = prevMonth ? toShortMonth(prevMonth) : '';
+        const { data: rcmRows } = prevShortMonth
+          ? await supabase
+              .from('rcm_data')
+              .select('cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18')
+              .eq('client_id', selectedClientId)
+              .eq('month', prevShortMonth)
+          : { data: null };
+        const liveRcmItc = (rcmRows || []).reduce(
+          (acc, r: any) => ({
+            igst: acc.igst + (Number(r.igst_5) || 0) + (Number(r.igst_18) || 0),
+            cgst: acc.cgst + (Number(r.cgst_2_5) || 0) + (Number(r.cgst_9) || 0),
+            sgst: acc.sgst + (Number(r.sgst_2_5) || 0) + (Number(r.sgst_9) || 0),
+          }),
+          { igst: 0, cgst: 0, sgst: 0 }
+        );
+
         // Total (5) = 5.1 + 5.2 − 5.3 + 5.4 + 5.5 (matches ITC Summary page)
         const r51 = findRow(rowsA, '5.1');
         const r52 = findRow(rowsA, '5.2');
@@ -304,12 +328,12 @@ const GstReceivableRecoPage: React.FC = () => {
           sgst: num(r51.sgst) + num(r52.sgst) - num(r53.sgst) + num(r54.sgst) + num(r55.sgst),
           igst: num(r51.igst) + num(r52.igst) - num(r53.igst) + num(r54.igst) + num(r55.igst),
         };
-        // Total 4A = rows (1)+(2)+(3)+(4) + Total (5)
+        // Total 4A = rows (1)+(2)+(3)+(4) + Total (5) — row (3) uses liveRcmItc.
         const rows1To4 = rowsA.slice(0, 4).reduce(
           (acc, r) => ({
-            cgst: acc.cgst + num(r?.cgst),
-            sgst: acc.sgst + num(r?.sgst),
-            igst: acc.igst + num(r?.igst),
+            cgst: acc.cgst + (r?.srNo === '(3)' ? liveRcmItc.cgst : num(r?.cgst)),
+            sgst: acc.sgst + (r?.srNo === '(3)' ? liveRcmItc.sgst : num(r?.sgst)),
+            igst: acc.igst + (r?.srNo === '(3)' ? liveRcmItc.igst : num(r?.igst)),
           }),
           { cgst: 0, sgst: 0, igst: 0 }
         );
