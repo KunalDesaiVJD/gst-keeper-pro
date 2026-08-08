@@ -4,7 +4,15 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { FileCheck2, Download, FileText, Loader2, FileJson, Send, CheckCircle2, XCircle, X, Lock } from 'lucide-react';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import { FileCheck2, Download, FileText, Loader2, FileJson, Send, CheckCircle2, XCircle, X, Lock, History } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useMonth } from '@/contexts/MonthContext';
@@ -17,6 +25,18 @@ import type { Gstr3bResult } from '@/utils/buildGstr3bJson';
 import { exportGstr3bToPDF } from '@/utils/gstr3bPdf';
 
 interface Client { id: string; name: string; gstin: string; }
+
+interface Gstr3bPushVersion {
+  id: string;
+  version_number: number;
+  actor_id: string | null;
+  actor_name?: string;
+  action_at: string;
+  status: string | null;
+  summary: string | null;
+  filled_count: number | null;
+  skipped: string[] | null;
+}
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const toShort = (mmYyyy: string) => {
@@ -70,21 +90,64 @@ const Gstr3bPage: React.FC = () => {
   const [isPushing, setIsPushing] = useState(false);
   const [pushResult, setPushResult] = useState<{ ok: boolean; summary: string; skipped?: string[] } | null>(null);
 
+  // Push audit trail — one row per "Push to GST Portal" attempt, mirroring
+  // GSTR-1's gstr1_upload_versions (see GSTR1DataPage.tsx / that migration).
+  const [versions, setVersions] = useState<Gstr3bPushVersion[]>([]);
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
+  const [expandedVersionId, setExpandedVersionId] = useState<string | null>(null);
+
+  const fetchVersions = useCallback(async () => {
+    if (!selectedClient || !selectedMonth) { setVersions([]); return; }
+    const { data } = await supabase
+      .from('gstr3b_push_versions')
+      .select('*')
+      .eq('client_id', selectedClient)
+      .eq('period_month', selectedMonth)
+      .order('version_number', { ascending: false });
+    const rows = (data as any[]) || [];
+    const actorIds = Array.from(new Set(rows.map((r) => r.actor_id).filter(Boolean))) as string[];
+    let nameMap = new Map<string, string>();
+    if (actorIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles').select('user_id, first_name').in('user_id', actorIds);
+      nameMap = new Map((profiles || []).map((p) => [p.user_id, p.first_name || 'Unknown']));
+    }
+    setVersions(rows.map((r) => ({ ...r, actor_name: r.actor_id ? (nameMap.get(r.actor_id) || 'Unknown') : 'System' })));
+  }, [selectedClient, selectedMonth]);
+
+  useEffect(() => { fetchVersions(); }, [fetchVersions]);
+
+  const recordPushVersion = useCallback(async (v: { status: string; summary: string; filledCount?: number; skipped?: string[] | null }) => {
+    if (!selectedClient || !selectedMonth) return;
+    await supabase.from('gstr3b_push_versions').insert({
+      client_id: selectedClient,
+      period_month: selectedMonth,
+      actor_id: user?.id ?? null,
+      status: v.status,
+      summary: v.summary,
+      filled_count: v.filledCount ?? null,
+      skipped: (v.skipped as any) ?? null,
+    });
+    fetchVersions();
+  }, [selectedClient, selectedMonth, user?.id, fetchVersions]);
+
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       const d: any = e.data;
       if (!d || typeof d !== 'object') return;
       if (d.__gstkExtensionReady) setExtReady(true);
       if (d.__gstkPushGstr3bResult) {
-        const r = d.__gstkPushGstr3bResult as { ok: boolean; summary?: string; error?: string; skipped?: string[] };
+        const r = d.__gstkPushGstr3bResult as { ok: boolean; summary?: string; error?: string; skipped?: string[]; filled?: number };
         setIsPushing(false);
         if (r.ok) {
           toast.success(r.summary || 'GSTR-3B form filled.');
           setPushResult({ ok: true, summary: r.summary || 'GSTR-3B form filled.', skipped: r.skipped });
+          recordPushVersion({ status: 'ok', summary: r.summary || 'GSTR-3B form filled.', filledCount: r.filled, skipped: r.skipped });
         } else {
           const msg = r.error || r.summary || 'GSTR-3B push failed.';
           toast.error(msg);
           setPushResult({ ok: false, summary: msg });
+          recordPushVersion({ status: 'failed', summary: msg });
         }
       }
     };
@@ -98,7 +161,7 @@ const Gstr3bPage: React.FC = () => {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, []);
+  }, [recordPushVersion]);
 
   useEffect(() => { setPushResult(null); }, [selectedClient, selectedMonth]);
 
@@ -326,7 +389,31 @@ const Gstr3bPage: React.FC = () => {
                 </label>
               </div>
             )}
+            {selectedClient && selectedMonth && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setVersionHistoryOpen(true)}
+                title={versions.length === 0
+                  ? 'No push history yet for this return'
+                  : `${versions.length} recorded push(es) for this return`}
+              >
+                <History className="h-4 w-4 mr-2" />
+                Push History{versions.length > 0 ? ` (${versions.length})` : ''}
+              </Button>
+            )}
           </div>
+          {versions.length > 0 && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Last pushed by <span className="font-medium text-foreground">{versions[0].actor_name || '—'}</span> on{' '}
+              {new Date(versions[0].action_at).toLocaleString('en-IN', {
+                day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+              })}
+              {versions[0].status && (
+                <span className={versions[0].status === 'ok' ? 'text-success' : 'text-destructive'}> · {versions[0].status === 'ok' ? 'succeeded' : 'failed'}</span>
+              )}
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -461,6 +548,82 @@ const Gstr3bPage: React.FC = () => {
           </Card>
         </>
       )}
+
+      <Dialog open={versionHistoryOpen} onOpenChange={setVersionHistoryOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>GSTR-3B push history — {selectedClientName || '—'} · {toShort(selectedMonth)}</DialogTitle>
+            <DialogDescription>
+              Every "Push to GST Portal" attempt for this return, with what got filled and what didn't.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[65vh] overflow-auto rounded-md border">
+            <Table>
+              <TableHeader className="sticky top-0 bg-muted">
+                <TableRow>
+                  <TableHead className="w-16">V#</TableHead>
+                  <TableHead>By</TableHead>
+                  <TableHead>When</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Summary</TableHead>
+                  <TableHead className="w-24">Skipped</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {versions.map((v) => (
+                  <React.Fragment key={v.id}>
+                    <TableRow>
+                      <TableCell className="font-mono">v{v.version_number}</TableCell>
+                      <TableCell>{v.actor_name || '—'}</TableCell>
+                      <TableCell className="text-xs whitespace-nowrap">
+                        {new Date(v.action_at).toLocaleString('en-IN', {
+                          day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                        })}
+                      </TableCell>
+                      <TableCell>
+                        <span className={v.status === 'ok' ? 'text-success font-medium' : v.status === 'failed' ? 'text-destructive font-medium' : 'text-muted-foreground'}>
+                          {v.status === 'ok' ? `Filled ${v.filled_count ?? 0}` : v.status || '—'}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-xs max-w-md">{v.summary || '—'}</TableCell>
+                      <TableCell>
+                        {v.skipped && v.skipped.length > 0 ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => setExpandedVersionId(expandedVersionId === v.id ? null : v.id)}
+                          >
+                            {expandedVersionId === v.id ? 'Hide' : `View (${v.skipped.length})`}
+                          </Button>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                    {expandedVersionId === v.id && v.skipped && v.skipped.length > 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} className="bg-muted/40 p-3">
+                          <ul className="text-xs list-disc pl-4 space-y-0.5">
+                            {v.skipped.map((s, i) => <li key={i}>{s}</li>)}
+                          </ul>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </React.Fragment>
+                ))}
+                {versions.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-6">
+                      No pushes recorded yet for this return.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

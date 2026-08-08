@@ -13,6 +13,7 @@ import { supabase } from '@/integrations/supabase/client';
 import {
   Gstr1Section, ManualRow, ColumnDef, SECTION_COLUMNS, NIL_SUPPLY_TYPES, DOC_TYPES,
   gstinHomeState, recomputeRowTax, assembleGstr1Json, hydrateManualEntriesFromJson, findMissingHsnRows,
+  findInvalidGstinRows,
 } from '@/utils/gstr1ManualBuild';
 import { buildGstr1Summary } from '@/utils/buildGstr1Summary';
 
@@ -241,6 +242,18 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
       toast.error(
         `${missingHsn.length} row(s) have a taxable value but no HSN code — the portal will reject the upload. ` +
         `Fix these first: ${preview}${missingHsn.length > 5 ? '…' : ''}`
+      );
+      return;
+    }
+    // A single malformed counterparty GSTIN anywhere in the file bounces the
+    // whole upload with the same generic "could not be uploaded" message —
+    // catch it here with a specific reason instead of finding out on the portal.
+    const invalidGstin = findInvalidGstinRows(rowsBySection);
+    if (invalidGstin.length > 0) {
+      const preview = invalidGstin.slice(0, 5).map((m) => `${SECTION_LABELS[m.section]}: ${m.inum} (${m.ctin})`).join('; ');
+      toast.error(
+        `${invalidGstin.length} row(s) have a malformed counterparty GSTIN — the portal will reject the upload. ` +
+        `Fix these first: ${preview}${invalidGstin.length > 5 ? '…' : ''}`
       );
       return;
     }

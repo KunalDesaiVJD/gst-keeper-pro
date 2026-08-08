@@ -3459,6 +3459,53 @@ export type Database = {
           },
         ]
       }
+      gstr3b_push_versions: {
+        Row: {
+          action_at: string
+          actor_id: string | null
+          client_id: string
+          filled_count: number | null
+          id: string
+          period_month: string
+          skipped: Json | null
+          status: string | null
+          summary: string | null
+          version_number: number
+        }
+        Insert: {
+          action_at?: string
+          actor_id?: string | null
+          client_id: string
+          filled_count?: number | null
+          id?: string
+          period_month: string
+          skipped?: Json | null
+          status?: string | null
+          summary?: string | null
+          version_number: number
+        }
+        Update: {
+          action_at?: string
+          actor_id?: string | null
+          client_id?: string
+          filled_count?: number | null
+          id?: string
+          period_month?: string
+          skipped?: Json | null
+          status?: string | null
+          summary?: string | null
+          version_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gstr3b_push_versions_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       itc_summaries: {
         Row: {
           client_id: string

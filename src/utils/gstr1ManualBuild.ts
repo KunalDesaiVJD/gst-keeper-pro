@@ -508,6 +508,32 @@ export function findMissingHsnRows(rowsBySection: Record<Exclude<Gstr1Section, '
   return missing;
 }
 
+// Standard 15-char GSTIN shape: 2-digit state code, 10-char PAN (5 letters,
+// 4 digits, 1 letter), 1-char entity number, literal 'Z', 1-char checksum.
+const GSTIN_FORMAT = /^[0-9]{2}[A-Za-z]{5}[0-9]{4}[A-Za-z][1-9A-Za-z]Z[0-9A-Za-z]$/;
+
+/**
+ * Pre-flight check before Generate JSON: a single malformed counterparty
+ * GSTIN (ctin) anywhere in the return is enough for the portal's upload
+ * validator to reject the whole file with the same generic "could not be
+ * uploaded" message HSN and other schema problems produce — with no hint
+ * which invoice or field is actually wrong. Only b2b/cdnr carry a ctin;
+ * b2cl/b2cs/cdnur/exp/at/txpd address the recipient by place-of-supply, not
+ * GSTIN, so they're not checked here.
+ */
+export function findInvalidGstinRows(rowsBySection: Record<Exclude<Gstr1Section, 'nil' | 'doc'>, ManualRow[]>): { section: 'b2b' | 'cdnr'; ctin: string; inum: string }[] {
+  const invalid: { section: 'b2b' | 'cdnr'; ctin: string; inum: string }[] = [];
+  (['b2b', 'cdnr'] as const).forEach((section) => {
+    (rowsBySection[section] || []).forEach((r) => {
+      const ctin = String(r.ctin || '').trim();
+      if (ctin && !GSTIN_FORMAT.test(ctin)) {
+        invalid.push({ section, ctin, inum: r.inum || r.ntNum || '(row without invoice no.)' });
+      }
+    });
+  });
+  return invalid;
+}
+
 // ---------------------------------------------------------------------------
 // Hydrate: portal JSON -> flat rows (for re-opening a generated return)
 // ---------------------------------------------------------------------------
