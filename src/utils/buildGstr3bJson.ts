@@ -144,7 +144,16 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
 
   const impg = row(A, '(1)');   // 4A(1) import of goods
   const imps = row(A, '(2)');   // 4A(2) import of services
-  const isrc = row(A, '(3)');   // 4A(3) RCM ITC (auto-linked from rcm_data)
+  // 4A(3) RCM ITC — computed directly from the SAME live RCM totals used for
+  // Table 3.1(d) below, not read from ITC Summary's stored section4A row(3).
+  // That stored row is only refreshed when someone opens and re-saves the
+  // ITC Summary page; if RCM data changes after that (a real case: a client
+  // whose ITC Summary was saved before a new RCM entry — e.g. a different
+  // rate/head — was added), the two tables silently drift apart. GSTR-3B
+  // always pushes wrong figures for the drifted head until someone happens
+  // to re-save ITC Summary. Deriving both from the same source makes that
+  // drift structurally impossible instead of relying on a save workflow.
+  const isrc: ItcRow = { srNo: '(3)', igst: r2(input.rcm.igst), cgst: r2(input.rcm.cgst), sgst: r2(input.rcm.sgst) };
   const isd = row(A, '(4)');    // 4A(4) ISD
   // 4A(5) "all other ITC" = 5.1 + 5.2 − 5.3 + 5.4 + 5.5
   const oth4a = round3(add3(row(A, '5.1'), row(A, '5.2'), sub3({ igst: 0, cgst: 0, sgst: 0 }, row(A, '5.3')), row(A, '5.4'), row(A, '5.5')));
