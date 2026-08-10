@@ -35,6 +35,26 @@ fourth — see §7.
 *Implemented in `src/utils/builderRates.ts` (`NOTIFIED_RATE_PCT`,
 `EFFECTIVE_RATE_PCT`, `computeTax`).*
 
+**The 1/3rd, disclosed as Non-GST supply.** A further firm election, on top
+of the deemed-1/3rd position above: the land deduction is now also reported
+as Non-GST supply — GSTR-1 Table 8 (`nil.inv[].ngsup_amt`, `sply_ty:
+INTRAB2C` — intra-state to unregistered, consistent with §5) and 3B Table
+3.1(e). This is a disclosure practice, not a claim that land is a distinct
+supply here: there is one indivisible construction service under a single
+booking agreement, and the 1/3rd is a deemed valuation carve-out for that
+one supply, not a separate land transaction. The reason to disclose it
+anyway is turnover reconciliation — books record the full consideration as
+one figure, GST returns only the 2/3rd, and GSTR-9C Table 5 would otherwise
+show a gap with nothing on the return to explain it.
+
+`computeTax()` already computes the 1/3rd as `landDeduction` on every
+`TaxBreakup`; `builder_period_postings` carries it as its own
+`land_deduction` column per posting (zero on the two Table 10 re-rating
+legs, since a re-rating only swaps the rate on an already-established
+taxable value and never re-derives the land split — see the view's own
+`COMMENT`). `buildBuilderGstr1()` in `src/utils/builderGstr1.ts` sums it
+across the period and emits the one Table 8 row.
+
 ## 2. Affordable residential apartment
 
 Both limbs must hold, tested **per unit**:
@@ -294,6 +314,7 @@ flagged while trying to tax it here.
 |---|---|
 | Rates, the 15% test, affordability, Rule 35, 194-IA | `src/utils/builderRates.ts` |
 | Ledger, receipt derivation, advance absorption, period roll-up | `src/utils/builderLedger.ts` |
+| Land deduction as Non-GST supply (GSTR-1 Table 8, 3B Table 3.1(e)) | `src/utils/builderGstr1.ts` (`buildBuilderGstr1`) |
 | Cut-off, differential, s.50 interest, credit-note deadline | `src/utils/builderBuEvent.ts` |
 | Re-rating, conversions, bounce offsets, restatement, delay interest | `src/utils/builderAdjustments.ts` |
 | TDR/FSI legs, the cap, the consent gate, carpet split | `src/utils/builderFsi.ts` |

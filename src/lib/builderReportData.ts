@@ -156,6 +156,7 @@ export interface PostingDoc {
   taxableValue: number;
   cgst: number;
   sgst: number;
+  landDeduction: number;
 }
 
 export interface FsiLine {
@@ -199,6 +200,7 @@ export async function fetchPeriodReport(params: {
     taxableValue: Number(r.taxable_value) || 0,
     cgst: Number(r.cgst) || 0,
     sgst: Number(r.sgst) || 0,
+    landDeduction: Number(r.land_deduction) || 0,
   })).sort((a, b) => (a.docDate || '').localeCompare(b.docDate || ''));
 
   let fq = supabase.from('builder_rcm_postings').select('*')
@@ -227,6 +229,7 @@ export async function fetchPeriodReport(params: {
       taxable_value: d.taxableValue,
       cgst: d.cgst,
       sgst: d.sgst,
+      land_deduction: d.landDeduction,
     }))),
     documents,
     fsi,

@@ -42,7 +42,7 @@ export async function fetchBuilderPostings(
 ): Promise<Gstr1PostingRow[]> {
   let q = supabase
     .from('builder_period_postings')
-    .select('source_type, gstr1_table, rate_code, rate_pct, taxable_value, cgst, sgst, original_period, doc_no')
+    .select('source_type, gstr1_table, rate_code, rate_pct, taxable_value, cgst, sgst, original_period, doc_no, land_deduction')
     .eq('client_id', clientId)
     .eq('period_month', period);
   if (projectId && projectId !== 'ALL') q = q.eq('project_id', projectId);

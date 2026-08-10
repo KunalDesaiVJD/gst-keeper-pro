@@ -4407,6 +4407,7 @@ export type Database = {
           doc_date: string | null
           doc_no: string | null
           gstr1_table: string | null
+          land_deduction: number | null
           original_period: string | null
           period_month: string | null
           project_id: string | null

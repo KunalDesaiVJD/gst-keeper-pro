@@ -8,13 +8,15 @@
  * untouched. For a builder client this replaces the JSON import; the figures are
  * computed from bookings, receipts and BU events rather than typed or uploaded.
  *
- * Only four outward sections can arise, and the reasons are structural rather
- * than incidental:
+ * Only five sections can arise, and the reasons are structural rather than
+ * incidental:
  *
  *   Table 7   → `b2cs`   invoices, net of credit notes
  *   Table 11A → `at`     advances received, net of bounce offsets
  *   Table 11B → `txpd`   advances adjusted against invoices
  *   Table 10  → `b2csa`  amendments from a retrospective re-rating
+ *   Table 8   → `nil`    the 1/3rd deemed land deduction, as Non-GST supply
+ *                        (firm election — see BUILDER_GST_POSITIONS.md §1)
  *
  * Buyers are unregistered individuals, so Table 4A (B2B) cannot arise. Under
  * s.12(3)(a) IGST Act the place of supply for a service in relation to
@@ -45,6 +47,9 @@ export interface Gstr1PostingRow {
   /** Only set on legs that issue their own document — drives Table 13. */
   doc_no?: string | null;
   rate_code?: BuilderRateCode;
+  /** 1/3rd deemed land value (Notif 11/2017 para 2), reported as Non-GST
+   *  supply — Table 8 `nil.inv[].ngsup_amt`. Zero on Table 10 re-rating legs. */
+  land_deduction?: number;
 }
 
 /**
@@ -84,9 +89,11 @@ export interface BuilderGstr1Result {
   json: Record<string, unknown>;
   warnings: Gstr1Warning[];
   /** Per-section row counts, for the confirmation screen. */
-  counts: { b2cs: number; at: number; txpd: number; b2csa: number };
+  counts: { b2cs: number; at: number; txpd: number; b2csa: number; nil: number };
   /** Total tax the return carries, for tying back to the workpaper. */
   totalTax: number;
+  /** Table 8 non-GST total (the period's land deduction), for the workpaper. */
+  nonGstTotal: number;
   /** Table 13 series, surfaced so the workpaper can show them with the SAC. */
   docSeries: DocSeriesLine[];
 }
@@ -302,6 +309,22 @@ export function buildBuilderGstr1(params: {
     });
   }
 
+  // ── Table 8 → nil. The 1/3rd land deduction, as Non-GST supply. ──────────
+  // Summed across every posting in the period (not filtered by table): Table
+  // 10 legs always contribute zero by construction (see the view comment on
+  // builder_period_postings), so summing unconditionally nets 11A/11B/Table 7
+  // together exactly the way `outward` already does for taxable value.
+  const landTotal = money(
+    postings.reduce((s, r) => s + (Number(r.land_deduction) || 0), 0),
+  );
+  if (landTotal < 0) {
+    warnings.push({
+      severity: 'WARN',
+      message: `Table 8 (non-GST land) is net negative this period (${landTotal.toFixed(2)}) `
+        + 'because credit notes/reversals exceed the land component posted. The portal may reject it.',
+    });
+  }
+
   const totalTax = money(
     postings.reduce((s, r) => s + (Number(r.cgst) || 0) + (Number(r.sgst) || 0), 0),
   );
@@ -323,6 +346,10 @@ export function buildBuilderGstr1(params: {
   if (txpd.length) json.txpd = txpd;
   if (b2csa.length) json.b2csa = b2csa;
   if (hsnData.length) json.hsn = { data: hsnData };
+  const nilInv = landTotal !== 0
+    ? [{ sply_ty: 'INTRAB2C', nil_amt: 0, expt_amt: 0, ngsup_amt: landTotal }]
+    : [];
+  if (nilInv.length) json.nil = { inv: nilInv };
 
   // ── Table 13 — documents issued ──────────────────────────────────────────
   const docSeries = buildDocSeries(postings);
@@ -353,8 +380,9 @@ export function buildBuilderGstr1(params: {
   return {
     json,
     warnings,
-    counts: { b2cs: b2cs.length, at: at.length, txpd: txpd.length, b2csa: b2csa.length },
+    counts: { b2cs: b2cs.length, at: at.length, txpd: txpd.length, b2csa: b2csa.length, nil: nilInv.length },
     totalTax,
+    nonGstTotal: landTotal,
     docSeries,
   };
 }
