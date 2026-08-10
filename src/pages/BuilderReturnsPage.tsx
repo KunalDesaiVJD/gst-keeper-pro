@@ -53,6 +53,7 @@ interface PostingDbRow {
   taxable_value: number;
   cgst: number;
   sgst: number;
+  land_deduction: number;
 }
 
 const SOURCE_LABEL: Record<PostingSource, string> = {
@@ -75,8 +76,9 @@ const BucketTable: React.FC<{ buckets: RateBucket[]; emptyText: string }> = ({ b
       taxableValue: acc.taxableValue + b.taxableValue,
       cgst: acc.cgst + b.cgst,
       sgst: acc.sgst + b.sgst,
+      landDeduction: acc.landDeduction + b.landDeduction,
     }),
-    { taxableValue: 0, cgst: 0, sgst: 0 },
+    { taxableValue: 0, cgst: 0, sgst: 0, landDeduction: 0 },
   );
   return (
     <div className="overflow-x-auto">
@@ -86,6 +88,7 @@ const BucketTable: React.FC<{ buckets: RateBucket[]; emptyText: string }> = ({ b
             <TableHead>Rate</TableHead>
             <TableHead className="text-right">Documents</TableHead>
             <TableHead className="text-right">Consideration</TableHead>
+            <TableHead className="text-right">Non-GST (land)</TableHead>
             <TableHead className="text-right">Taxable value</TableHead>
             <TableHead className="text-right">CGST</TableHead>
             <TableHead className="text-right">SGST</TableHead>
@@ -101,6 +104,7 @@ const BucketTable: React.FC<{ buckets: RateBucket[]; emptyText: string }> = ({ b
               </TableCell>
               <TableCell className="text-right text-sm">{b.count}</TableCell>
               <TableCell className="text-right text-sm">{formatINR(b.consideration)}</TableCell>
+              <TableCell className="text-right text-sm text-muted-foreground">{formatINR(b.landDeduction)}</TableCell>
               <TableCell className="text-right text-sm font-medium">{formatINR(b.taxableValue)}</TableCell>
               <TableCell className="text-right text-sm">{formatINR(b.cgst)}</TableCell>
               <TableCell className="text-right text-sm">{formatINR(b.sgst)}</TableCell>
@@ -111,6 +115,7 @@ const BucketTable: React.FC<{ buckets: RateBucket[]; emptyText: string }> = ({ b
             <TableCell className="font-semibold">Total</TableCell>
             <TableCell />
             <TableCell />
+            <TableCell className="text-right font-semibold text-muted-foreground">{formatINR(total.landDeduction)}</TableCell>
             <TableCell className="text-right font-semibold">{formatINR(total.taxableValue)}</TableCell>
             <TableCell className="text-right font-semibold">{formatINR(total.cgst)}</TableCell>
             <TableCell className="text-right font-semibold">{formatINR(total.sgst)}</TableCell>
@@ -336,6 +341,7 @@ const BuilderReturnsPage: React.FC = () => {
       taxable_value: Number(r.taxable_value) || 0,
       cgst: Number(r.cgst) || 0,
       sgst: Number(r.sgst) || 0,
+      land_deduction: Number(r.land_deduction) || 0,
     } as PostingRow))),
     [rows],
   );
@@ -457,6 +463,11 @@ const BuilderReturnsPage: React.FC = () => {
                     </p>
                   </div>
                 ))}
+                <div className="rounded-lg border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Table 8 — Non-GST (land)</p>
+                  <p className="text-lg font-semibold">{formatINR(preview.nonGstTotal)}</p>
+                  <p className="text-xs text-muted-foreground">1/3rd deemed land value</p>
+                </div>
                 <div className="rounded-lg border bg-primary/5 p-3">
                   <p className="text-xs text-muted-foreground">Tax in the return</p>
                   <p className="text-lg font-semibold">{formatINR(preview.totalTax)}</p>
@@ -717,6 +728,7 @@ const BuilderReturnsPage: React.FC = () => {
                         <TableHead>Table</TableHead>
                         <TableHead className="text-right">Rate</TableHead>
                         <TableHead className="text-right">Consideration</TableHead>
+                        <TableHead className="text-right">Non-GST (land)</TableHead>
                         <TableHead className="text-right">Taxable value</TableHead>
                         <TableHead className="text-right">CGST</TableHead>
                         <TableHead className="text-right">SGST</TableHead>
@@ -735,6 +747,7 @@ const BuilderReturnsPage: React.FC = () => {
                             </TableCell>
                             <TableCell className="text-right text-sm">{r.rate_pct}%</TableCell>
                             <TableCell className="text-right text-sm">{formatINR(r.consideration)}</TableCell>
+                            <TableCell className="text-right text-sm text-muted-foreground">{formatINR(r.land_deduction)}</TableCell>
                             <TableCell className="text-right text-sm">{formatINR(r.taxable_value)}</TableCell>
                             <TableCell className="text-right text-sm">{formatINR(r.cgst)}</TableCell>
                             <TableCell className="text-right text-sm">{formatINR(r.sgst)}</TableCell>

@@ -108,10 +108,10 @@ export const buWorkingExcel = (ctx: ReportContext, r: BuWorkingReport): void => 
 // ─── 2 & 4. Period reports ──────────────────────────────────────────────────
 
 const bucketRows = (buckets: PeriodReport['summary']['table7']): Sheet => [
-  ['Rate %', 'Effective %', 'Documents', 'Consideration', 'Taxable value', 'CGST', 'SGST', 'Total tax'],
+  ['Rate %', 'Effective %', 'Documents', 'Consideration', 'Non-GST (land)', 'Taxable value', 'CGST', 'SGST', 'Total tax'],
   ...buckets.map((b): Cell[] => [
     b.ratePct, b.effectiveRatePct, b.count,
-    b.consideration, b.taxableValue, b.cgst, b.sgst, b.totalTax,
+    b.consideration, b.landDeduction, b.taxableValue, b.cgst, b.sgst, b.totalTax,
   ]),
 ];
 
@@ -128,6 +128,7 @@ const periodExcel = (
     ...bucketRows(r.summary.outward),
     [],
     ['Outward taxable value', t.taxableValue],
+    ['Outward non-GST (land)', t.landDeduction],
     ['Outward CGST', t.cgst],
     ['Outward SGST', t.sgst],
     ['Outward tax', t.totalTax],
@@ -135,11 +136,11 @@ const periodExcel = (
     ['GSTR-3B Table 3.1(d) — reverse charge on development rights', r.fsiTotal],
     ['Payable in cash; the credit is blocked under the 1%/5% scheme.'],
   ];
-  applySheet(wb, '3B summary', summary, { widths: [46, 14, 12, 16, 16, 14, 14, 14], numericFrom: 1 });
+  applySheet(wb, '3B summary', summary, { widths: [46, 14, 12, 16, 16, 16, 14, 14, 14], numericFrom: 1 });
 
   const leg = (name: string, buckets: PeriodReport['summary']['table7']) => {
     applySheet(wb, name, [[name], [], ...bucketRows(buckets)], {
-      widths: [12, 13, 12, 16, 16, 14, 14, 14], numericFrom: 0, headerRows: [0, 2],
+      widths: [12, 13, 12, 16, 16, 16, 14, 14, 14], numericFrom: 0, headerRows: [0, 2],
     });
   };
   leg('Table 7 B2CS', r.summary.table7);
@@ -160,13 +161,13 @@ const periodExcel = (
 
   applySheet(wb, 'Documents', [
     ['Documents behind the totals'], [],
-    ['Date', 'Unit', 'Source', 'GSTR-1 table', 'Rate %', 'Consideration', 'Taxable value', 'CGST', 'SGST'],
+    ['Date', 'Unit', 'Source', 'GSTR-1 table', 'Rate %', 'Consideration', 'Non-GST (land)', 'Taxable value', 'CGST', 'SGST'],
     ...r.documents.map((d): Cell[] => [
       d.docDate, d.unitNo,
       d.sourceType.replace(/_/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase()),
-      d.gstr1Table, d.ratePct, d.consideration, d.taxableValue, d.cgst, d.sgst,
+      d.gstr1Table, d.ratePct, d.consideration, d.landDeduction, d.taxableValue, d.cgst, d.sgst,
     ]),
-  ], { widths: [12, 12, 20, 14, 9, 16, 16, 14, 14], numericFrom: 4, headerRows: [0, 2] });
+  ], { widths: [12, 12, 20, 14, 9, 16, 16, 16, 14, 14], numericFrom: 4, headerRows: [0, 2] });
 
   XLSX.writeFile(wb, reportFileName([fileStem, ctx.projectName || ctx.clientName, ctx.periodMonth], 'xlsx'));
 };

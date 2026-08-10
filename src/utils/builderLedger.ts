@@ -316,6 +316,10 @@ export interface PostingRow {
   taxable_value: number;
   cgst: number;
   sgst: number;
+  /** 1/3rd deemed land value (Notif 11/2017 para 2), reported as Non-GST
+   *  supply. Zero on Table 10 re-rating legs — see builder_period_postings'
+   *  view comment. */
+  land_deduction: number;
 }
 
 export interface RateBucket {
@@ -328,6 +332,7 @@ export interface RateBucket {
   sgst: number;
   totalTax: number;
   count: number;
+  landDeduction: number;
 }
 
 export interface PeriodSummary {
@@ -339,14 +344,14 @@ export interface PeriodSummary {
   table7: RateBucket[];
   /** 3B Table 3.1(a): everything above, netted. */
   outward: RateBucket[];
-  totals: { taxableValue: number; cgst: number; sgst: number; totalTax: number };
+  totals: { taxableValue: number; cgst: number; sgst: number; totalTax: number; landDeduction: number };
 }
 
 const emptyBucket = (rateCode: BuilderRateCode, ratePct: number): RateBucket => ({
   rateCode,
   ratePct,
   effectiveRatePct: EFFECTIVE_RATE_PCT[rateCode],
-  consideration: 0, taxableValue: 0, cgst: 0, sgst: 0, totalTax: 0, count: 0,
+  consideration: 0, taxableValue: 0, cgst: 0, sgst: 0, totalTax: 0, count: 0, landDeduction: 0,
 });
 
 const bucketise = (rows: PostingRow[]): RateBucket[] => {
@@ -359,6 +364,7 @@ const bucketise = (rows: PostingRow[]): RateBucket[] => {
     b.cgst = round2(b.cgst + (Number(r.cgst) || 0));
     b.sgst = round2(b.sgst + (Number(r.sgst) || 0));
     b.totalTax = round2(b.cgst + b.sgst);
+    b.landDeduction = round2(b.landDeduction + (Number(r.land_deduction) || 0));
     b.count += 1;
     map.set(key, b);
   });
@@ -386,6 +392,7 @@ export const summarisePeriod = (rows: PostingRow[]): PeriodSummary => {
       cgst: round2(outward.reduce((s, b) => s + b.cgst, 0)),
       sgst: round2(outward.reduce((s, b) => s + b.sgst, 0)),
       totalTax: round2(outward.reduce((s, b) => s + b.totalTax, 0)),
+      landDeduction: round2(outward.reduce((s, b) => s + b.landDeduction, 0)),
     },
   };
 };

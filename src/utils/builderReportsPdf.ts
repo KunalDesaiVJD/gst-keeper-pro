@@ -119,6 +119,7 @@ const rateBucketBody = (buckets: PeriodReport['summary']['table7']) =>
     `${b.ratePct}% (eff. ${b.effectiveRatePct}%)`,
     String(b.count),
     n(b.consideration),
+    n(b.landDeduction),
     n(b.taxableValue),
     n(b.cgst),
     n(b.sgst),
@@ -140,6 +141,7 @@ const periodPdf = (
   const t = r.summary.totals;
   let cursor = drawStatBand(doc, [
     { label: 'Outward taxable value', value: formatINR(t.taxableValue), note: '3B Table 3.1(a)' },
+    { label: 'Non-GST (land, 1/3rd)', value: formatINR(t.landDeduction), note: '3B Table 3.1(e)' },
     { label: 'Outward tax', value: formatINR(t.totalTax), note: `CGST ${formatINR(t.cgst)} + SGST ${formatINR(t.sgst)}` },
     {
       label: 'Reverse charge on FSI', value: formatINR(r.fsiTotal),
@@ -160,7 +162,7 @@ const periodPdf = (
     reportTable(doc, {
       startY: cursor,
       numericFrom: 1,
-      head: [['Rate', 'Documents', 'Consideration', 'Taxable value', 'CGST', 'SGST', 'Total tax']],
+      head: [['Rate', 'Documents', 'Consideration', 'Non-GST (land)', 'Taxable value', 'CGST', 'SGST', 'Total tax']],
       body: rateBucketBody(buckets),
     });
     cursor = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 7;
@@ -200,12 +202,12 @@ const periodPdf = (
     reportTable(doc, {
       startY: docY,
       numericFrom: 4,
-      head: [['Date', 'Unit', 'Source', 'Table', 'Rate %', 'Consideration', 'Taxable value', 'CGST', 'SGST']],
+      head: [['Date', 'Unit', 'Source', 'Table', 'Rate %', 'Consideration', 'Non-GST (land)', 'Taxable value', 'CGST', 'SGST']],
       body: r.documents.map((d) => [
         d.docDate, d.unitNo,
         d.sourceType.replace(/_/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase()),
         d.gstr1Table, String(d.ratePct),
-        n(d.consideration), n(d.taxableValue), n(d.cgst), n(d.sgst),
+        n(d.consideration), n(d.landDeduction), n(d.taxableValue), n(d.cgst), n(d.sgst),
       ]),
       styles: { fontSize: 6.5, cellPadding: 1.4 },
     });
