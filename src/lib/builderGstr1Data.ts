@@ -9,7 +9,7 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import {
-  buildBuilderGstr1, type BuilderGstr1Result, type Gstr1PostingRow,
+  buildBuilderGstr1, isBuilderGenerated, type BuilderGstr1Result, type Gstr1PostingRow,
 } from '@/utils/builderGstr1';
 
 /** `gstr1_data.period_month` is the short label ("Jun-26"); MonthContext is "MM/YYYY". */
@@ -58,18 +58,17 @@ export async function fetchGstr1Status(
 ): Promise<Gstr1Status | null> {
   const { data, error } = await supabase
     .from('gstr1_data')
-    .select('id, file_name, imported_at, raw_json')
+    .select('id, file_name, imported_at')
     .eq('client_id', clientId)
     .eq('period_month', mmYyyyToShort(period))
     .maybeSingle();
   if (error || !data) return null;
-  const row = data as { id: string; file_name: string | null; imported_at: string | null; raw_json: unknown };
-  const raw = row.raw_json as { _source?: string } | null;
+  const row = data as { id: string; file_name: string | null; imported_at: string | null };
   return {
     id: row.id,
     fileName: row.file_name,
     importedAt: row.imported_at,
-    fromBuilder: raw?._source === 'BUILDER_RETURNS',
+    fromBuilder: isBuilderGenerated(row.file_name),
   };
 }
 

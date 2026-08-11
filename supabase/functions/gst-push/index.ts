@@ -183,13 +183,19 @@ Deno.serve(async (req: Request) => {
     }
 
     // 3) Build the Humonex request and send it.
+    // Strip this app's own provenance fields (_source/_generated_at, added by
+    // Builder Returns so the UI can show where a return came from) — the
+    // portal's upload schema doesn't recognise them, and a strict validator
+    // rejects the whole file over one unexpected key.
+    const { _source: _unusedSource, _generated_at: _unusedGeneratedAt, ...portalJson } =
+      gstr1.raw_json as Record<string, unknown>;
     const humonexBody = {
       username: client.gst_user_id,
       password: client.gst_password,
       quarter: derived.quarter,
       financial_year: derived.financialYear,
       period: derived.period,
-      gstr1_json: gstr1.raw_json,
+      gstr1_json: portalJson,
     };
 
     let httpStatus = 0;

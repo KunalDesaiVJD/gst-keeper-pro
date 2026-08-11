@@ -336,10 +336,6 @@ export function buildBuilderGstr1(params: {
     hash: 'hash',
     gt: money(params.grossTurnover || 0),
     cur_gt: money(params.grossTurnover || 0),
-    // Provenance. The GSTR-1 page reads this to show that the figures were
-    // generated from Builder Returns rather than uploaded.
-    _source: 'BUILDER_RETURNS',
-    _generated_at: new Date().toISOString(),
   };
   if (b2cs.length) json.b2cs = b2cs;
   if (at.length) json.at = at;
@@ -387,6 +383,29 @@ export function buildBuilderGstr1(params: {
   };
 }
 
-/** True when a stored GSTR-1 record was produced here rather than uploaded. */
-export const isBuilderGenerated = (raw: unknown): boolean =>
-  !!raw && typeof raw === 'object' && (raw as { _source?: string })._source === 'BUILDER_RETURNS';
+/**
+ * True when a stored GSTR-1 record was produced by Builder Returns rather
+ * than uploaded. Provenance is the `file_name` `saveBuilderGstr1()` writes
+ * ("Builder Returns — <period>"), never a field inside the JSON itself —
+ * that JSON is the exact file the portal receives, and stuffing app-only
+ * metadata into it is what caused the portal to reject the whole upload
+ * over an unrecognised key (see `stripInternalFields`).
+ */
+export const isBuilderGenerated = (fileName: string | null | undefined): boolean =>
+  !!fileName && fileName.startsWith('Builder Returns');
+
+/**
+ * Older Builder-generated rows (before this fix) still carry `_source`/
+ * `_generated_at` inside their stored `raw_json` — added so the UI could
+ * show a provenance badge, before that moved to `file_name`. The portal's
+ * upload schema doesn't recognise them, and a strict validator rejects the
+ * whole file over one unexpected key with the same generic "doesn't match
+ * the template" message it gives for any schema mismatch. Strip them at
+ * every point a stored JSON leaves the app: the manual download and the
+ * automated portal push. A no-op on rows saved after this fix.
+ */
+export function stripInternalFields(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object') return {};
+  const { _source, _generated_at, ...rest } = raw as Record<string, unknown>;
+  return rest;
+}
