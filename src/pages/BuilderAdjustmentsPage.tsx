@@ -34,7 +34,7 @@ import { prettyPeriodLabel } from '@/utils/builderLedger';
 import { periodOfDate } from '@/utils/builderBuEvent';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
 import {
-  applyBounceOffsets, autoReclassifyProject, findAvailableInPeriod, findOffsetCandidates,
+  applyBounceOffsets, autoReclassifyProject, fetchFiledPeriods, findAvailableInPeriod, findOffsetCandidates,
   findReclassCandidates, raiseBounceReversal, raiseCreditNote, restateReceipt,
   reverseReclassification, saveReclassification, scheduleFor, type ReclassCandidate,
 } from '@/lib/builderAdjustmentsData';
@@ -266,31 +266,44 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
     return out;
   }, [units, charges, project, rrep.isRrep, settings]);
 
-  // Re-rating candidates are derived from what was actually posted at 1.5%,
-  // and — per the firm's position (§8) — posted immediately with no staff
-  // review: a unit crossing ₹45L was never affordable, so the correction is
-  // arithmetic, not a judgment call. `candidates` stays for the rare case a
-  // post fails (e.g. a transient write error) so it isn't silently lost.
+  // Re-rating candidates are derived from what was actually posted at 1.5% in
+  // an ALREADY-FILED period — the only case that needs a formal Table 10
+  // amendment, posted immediately with no staff review: per the firm's
+  // position (§8), a filed period taxed at 1.5% that's crossed ₹45L was
+  // never affordable, so the correction is arithmetic, not a judgment call.
+  // An unfiled period is simply corrected in place instead (autoReclassify-
+  // Project's `resynced`), no amendment involved. `candidates` stays for the
+  // rare case a post fails (e.g. a transient write error) so it isn't lost.
   const [candidatesReady, setCandidatesReady] = useState(false);
   useEffect(() => {
-    if (!projectId || !units.length) { setCandidates([]); setCandidatesReady(true); return; }
+    if (!projectId || !units.length || !project?.client_id) { setCandidates([]); setCandidatesReady(true); return; }
     setCandidatesReady(false);
     (async () => {
       try {
-        const posted = await autoReclassifyProject(projectId, classification, user?.id ?? null);
+        const { posted, resynced } = await autoReclassifyProject(
+          projectId, classification, user?.id ?? null, project.client_id,
+        );
         if (posted.length) {
           toast.success(
-            `${posted.length} unit${posted.length === 1 ? '' : 's'} auto re-rated on crossing ₹45,00,000 `
+            `${posted.length} unit${posted.length === 1 ? '' : 's'} re-rated on a filed period crossing ₹45,00,000 `
             + `(${posted.map((c) => c.unitNo).join(', ')}) — Table 10 amendment and interest posted below.`,
           );
           await load();
+        }
+        if (resynced.length) {
+          const names = resynced.map((r) => unitNo(r.unitId));
+          toast.info(
+            `${resynced.length} unit${resynced.length === 1 ? '' : 's'} resynced to the current rate on unfiled `
+            + `periods (${names.join(', ')}) — no amendment needed, nothing filed yet.`,
+          );
         }
         setCandidates([]);
       } catch (e) {
         // Fall back to surfacing the raw candidates so the correction isn't
         // lost — findReclassCandidates alone doesn't touch the database.
         const done = new Set(reclasses.map((r) => r.unit_id));
-        const found = await findReclassCandidates(projectId, classification);
+        const filedPeriods = await fetchFiledPeriods(project.client_id);
+        const found = await findReclassCandidates(projectId, classification, filedPeriods);
         setCandidates(found.filter((c) => !done.has(c.unitId)));
         toast.error(`Auto re-rating failed, showing candidates for manual review: ${(e as Error).message}`);
       } finally {
@@ -298,7 +311,7 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, units.length, classification]);
+  }, [projectId, units.length, classification, project?.client_id]);
 
   /** Route the row-menu click straight to the right tab and dialog. */
   const handledFocusRef = useRef<string | null>(null);

@@ -274,21 +274,28 @@ const BuilderReturnsPage: React.FC = () => {
     if (!selectedClientId || !selectedMonth) return;
     setIsGenerating(true);
     try {
-      // Safety net: re-rating (§8) posts itself the moment a unit crosses
-      // ₹45L, from wherever that's first noticed (Bookings page, this page's
-      // own load). Re-run it here too, for whichever project the crossing
-      // actually happened on, so the return is never generated ahead of a
-      // correction it should already carry.
+      // Safety net: a filed-period crossing (§8) posts its Table 10 amendment
+      // the moment it's detected, from wherever that's first noticed
+      // (Bookings page, this page's own load); an unfiled period is simply
+      // resynced to the current rate, no amendment involved. Re-run it here
+      // too, for whichever project the crossing actually happened on, so the
+      // return is never generated ahead of a correction it should already carry.
       const projectsToSweep = projectFilter !== 'ALL'
         ? [projectFilter]
         : projects.map((p) => p.id);
       for (const pid of projectsToSweep) {
         try {
-          const posted = await runAutoReclassSweep(pid, user?.id ?? null);
+          const { posted, resynced } = await runAutoReclassSweep(pid, user?.id ?? null);
           if (posted.length) {
             toast.success(
-              `${posted.length} unit${posted.length === 1 ? '' : 's'} auto re-rated on crossing `
+              `${posted.length} unit${posted.length === 1 ? '' : 's'} re-rated on a filed period crossing `
               + `₹45,00,000 before generating (${posted.map((c) => c.unitNo).join(', ')}).`,
+            );
+          }
+          if (resynced.length) {
+            toast.info(
+              `${resynced.length} unit${resynced.length === 1 ? '' : 's'} resynced to the current rate on `
+              + 'unfiled periods before generating — no amendment needed.',
             );
           }
         } catch (e) {

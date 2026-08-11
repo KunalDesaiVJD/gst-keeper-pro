@@ -148,34 +148,64 @@ reversal.
 
 ## 8. Retrospective re-rating
 
-A unit taxed at 1.5% whose gross consideration later crosses ₹45 lakh **was
-never affordable** — the concession did not apply, so the higher rate is due on
-everything already offered to tax.
+**The ₹45L test floors at money already recognised, not just the unit
+master.** `base_consideration` + charges is the primary figure, but a unit
+cannot legitimately have been charged or received MORE than its true agreed
+price — so if opening balance + every receipt/invoice to date (net of
+absorption) exceeds base + charges, that running total governs instead
+(`knownConsideration` on `classifyUnit()`, fed from `computeUnitLedger()`'s
+`considerationRecognized`). This catches a unit whose master was never kept
+in sync with what's actually being collected — including one booked years
+ago that only crosses via a receipt entered this month — without waiting for
+anyone to notice and go update the base consideration by hand. The unit list
+flags this case with a warning icon rather than silently absorbing it, since
+the master figure is still wrong and should be corrected even though the
+classification is already right in the meantime.
 
-Every buyer is unregistered, so the correction is an **amendment of the earlier
-B2CS entries in Table 10**, not a debit note: the old rate reversed, the same
-taxable value re-reported at the correct one.
+**The rate freezes on filing, not on crossing.** For any period whose GSTR-1
+has not yet been filed, a unit's classification is always the live one —
+`classifyUnit()` off today's base consideration and charges — and every
+receipt/invoice already recorded for that unfiled period is kept in sync
+with it automatically (`resyncUnfiledPostings()` in
+`src/lib/builderAdjustmentsData.ts`), in either direction, with no amendment
+of any kind. There is nothing to amend: nothing has been filed yet, so a
+mistaken charge caught and corrected before filing simply never happened, as
+far as the return is concerned.
 
-The schedule is **period-wise**, because interest under **s.50** runs from each
-original period's due date. A single aggregate at the trigger date would
-understate it materially on an older unit.
+Once a period's GSTR-1 **is filed**, that period is closed — the DB itself
+blocks editing a receipt or invoice dated into it
+(`builder_receipts_period_lock` / `builder_invoices_period_lock`,
+`supabase/migrations/20260811140000_builder_filed_period_lock.sql`) — so from
+that point on its figures can only be corrected by a formal amendment, never
+a silent rewrite. **This is where "a unit taxed at 1.5% whose gross
+consideration later crosses ₹45 lakh was never affordable" applies**: if a
+unit's live classification has moved off AFFORDABLE while a *filed* period
+still carries 1.5% postings, that crossing is real and permanent for that
+period — the higher rate is due on everything already filed, and the
+correction is a **Table 10 amendment**, not a debit note (every buyer is
+unregistered): the old rate reversed, the same taxable value re-reported at
+the correct one. Posted automatically, no staff review — the correction is
+arithmetic once a filed-period crossing is detected
+(`findReclassCandidates()`/`autoReclassifyProject()`).
 
-**No downgrade.** A later fall below ₹45 lakh does not restore the concession.
+The schedule is **period-wise**, because interest under **s.50** runs from
+each original period's due date. A single aggregate at the trigger date
+would understate it materially on an older unit.
 
-**The lock is enforced everywhere a unit's rate is used**, not only in the
-return — the unit list, receipt/invoice entry, opening balances and bulk
-entry all read the same posted reclassification and float the rate at the
-locked one, never the raw recompute off today's base + charges
-(`applyReclassificationLock()` in `src/utils/builderRates.ts`).
+**No downgrade on a filed period.** A later fall below ₹45 lakh does not
+reopen or restate an amendment already posted against a filed period — only
+an unfiled period's postings track the live rate freely, up or down.
 
-**Reversal is for a mistaken crossing, not a real downgrade.** If the charge
-that triggered the crossing turns out to have been entered in error and is
-removed, the crossing was never real, so the correction it triggered can be
-voided (superadmin only, with a reason recorded — `builder_reclassifications.
-status = 'REVERSED'`). This is distinct from — and does not create an
-exception to — "no downgrade": a *genuine* later fall in consideration still
-never restores the concession; only a reclassification shown to have been
-triggered by bad data is eligible for reversal.
+**A filed-period amendment can still be voided if the crossing was itself a
+mistake** — e.g. the triggering charge was entered in error and removed
+before anyone noticed the period had, in the meantime, been filed at the
+wrong rate. Superadmin only, reason recorded
+(`builder_reclassifications.status = 'REVERSED'`); voiding removes the
+amendment from later returns but does **not** rewrite the already-filed
+period itself (the DB trigger prevents that regardless) — correcting a
+figure that has already gone to the portal needs a downward Table 10
+amendment in a later period, which this app does not yet post automatically
+(as of this writing, handled case-by-case).
 
 ## 9. Bounce reversals — *position*
 

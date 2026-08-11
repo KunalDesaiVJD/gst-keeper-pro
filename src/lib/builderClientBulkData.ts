@@ -1,11 +1,10 @@
 import { supabase } from '@/integrations/supabase/client';
 import {
-  DEFAULT_CHARGE_INCLUSIONS, applyReclassificationLock, classifyUnit, testRrep,
-  type ChargeInclusionSettings, type ReclassificationLock, type UnitType,
+  DEFAULT_CHARGE_INCLUSIONS, classifyUnit, testRrep,
+  type ChargeInclusionSettings, type UnitType,
 } from '@/utils/builderRates';
 import { computeUnitLedger } from '@/utils/builderLedger';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
-import { fetchReclassificationLocks } from '@/lib/builderAdjustmentsData';
 import type { BulkReceiptUnit } from '@/components/builder/BulkReceiptsDialog';
 import type { BulkOpeningUnit } from '@/components/builder/BulkOpeningBalancesDialog';
 
@@ -54,7 +53,6 @@ interface ClientBulkContext {
   invoicesByUnit: Record<string, InvoiceRow[]>;
   adjustments: AdjRow[];
   openingsByUnit: Record<string, OpeningRow>;
-  locksByUnit: Record<string, ReclassificationLock>;
   settings: ChargeInclusionSettings;
   rrepByProject: Record<string, boolean>;
   metroByProject: Record<string, boolean>;
@@ -78,7 +76,6 @@ async function loadClientBulkContext(clientId: string): Promise<ClientBulkContex
   const units = (unt || []) as unknown as UnitRow[];
   const groups = (grp || []) as unknown as GroupRow[];
   const unitIds = units.map((u) => u.id);
-  const locksByUnit = await fetchReclassificationLocks(unitIds);
 
   const chargesByUnit: Record<string, ChargeRow[]> = {};
   const bookingsByUnit: Record<string, BookingRow[]> = {};
@@ -138,14 +135,14 @@ async function loadClientBulkContext(clientId: string): Promise<ClientBulkContex
 
   return {
     projects, units, groups, chargesByUnit, bookingsByUnit, membersByBooking,
-    receiptsByUnit, invoicesByUnit, adjustments, openingsByUnit, locksByUnit,
+    receiptsByUnit, invoicesByUnit, adjustments, openingsByUnit,
     settings: settings as ChargeInclusionSettings,
     rrepByProject, metroByProject, docSeriesByProject,
   };
 }
 
 function classifyOne(ctx: ClientBulkContext, u: UnitRow) {
-  return applyReclassificationLock(classifyUnit({
+  return classifyUnit({
     unitType: u.unit_type,
     carpetAreaSqM: Number(u.carpet_area_sqm) || 0,
     baseConsideration: Number(u.base_consideration) || 0,
@@ -155,7 +152,7 @@ function classifyOne(ctx: ClientBulkContext, u: UnitRow) {
     isMetro: ctx.metroByProject[u.project_id] ?? false,
     isRrep: ctx.rrepByProject[u.project_id] ?? false,
     settings: ctx.settings || DEFAULT_CHARGE_INCLUSIONS,
-  }), ctx.locksByUnit[u.id]);
+  });
 }
 
 function ledgerOne(ctx: ClientBulkContext, u: UnitRow, agreementValue: number) {

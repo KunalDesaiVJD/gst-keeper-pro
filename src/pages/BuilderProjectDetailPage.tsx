@@ -20,17 +20,16 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { toast } from 'sonner';
 import {
   ArrowLeft, Plus, Loader2, Pencil, Trash2, Layers, Home, AlertTriangle, Wallet, Receipt,
-  CalendarCheck, Wrench, Landmark, History, Lock,
+  CalendarCheck, Wrench, Landmark, History,
 } from 'lucide-react';
 import {
-  DEFAULT_CHARGE_INCLUSIONS, RATE_CODE_LABEL, applyReclassificationLock, classifyUnit, formatINR, formatPct,
+  DEFAULT_CHARGE_INCLUSIONS, RATE_CODE_LABEL, classifyUnit, formatINR, formatPct,
   formatSqM, suggestedUnitTypeMismatch, testRrep,
   type BuilderRateCode, type ChargeHead, type ChargeInclusionSettings,
-  type ReclassificationLock, type UnitCharge, type UnitType,
+  type UnitCharge, type UnitType,
 } from '@/utils/builderRates';
 import { CHARGE_HEADS, fetchBuilderSettings } from '@/lib/builderSettings';
 import { CHARGE_HEAD_LABEL } from '@/utils/builderRates';
-import { fetchReclassificationLocks } from '@/lib/builderAdjustmentsData';
 import BulkAddUnitsDialog from '@/components/builder/BulkAddUnitsDialog';
 import BulkOpeningBalancesDialog, { type BulkOpeningUnit } from '@/components/builder/BulkOpeningBalancesDialog';
 
@@ -138,9 +137,6 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
   const [units, setUnits] = useState<UnitRow[]>([]);
   const [charges, setCharges] = useState<Record<string, ChargeRow[]>>({});
   const [openings, setOpenings] = useState<Record<string, OpeningRow>>({});
-  /** Active (POSTED) reclassification lock per unit — see
-   *  applyReclassificationLock() in builderRates.ts. */
-  const [locks, setLocks] = useState<Record<string, ReclassificationLock>>({});
   const [settings, setSettings] = useState<ChargeInclusionSettings>(DEFAULT_CHARGE_INCLUSIONS);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -193,10 +189,9 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
 
       const ids = unitRows.map((u) => u.id);
       if (ids.length) {
-        const [{ data: chg }, { data: opn }, unitLocks] = await Promise.all([
+        const [{ data: chg }, { data: opn }] = await Promise.all([
           supabase.from('builder_unit_charges').select('*').in('unit_id', ids),
           supabase.from('builder_opening_balances').select('*').in('unit_id', ids),
-          fetchReclassificationLocks(ids),
         ]);
         const cmap: Record<string, ChargeRow[]> = {};
         ((chg || []) as unknown as ChargeRow[]).forEach((c) => {
@@ -206,9 +201,8 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
         const omap: Record<string, OpeningRow> = {};
         ((opn || []) as unknown as OpeningRow[]).forEach((o) => { omap[o.unit_id] = o; });
         setOpenings(omap);
-        setLocks(unitLocks);
       } else {
-        setCharges({}); setOpenings({}); setLocks({});
+        setCharges({}); setOpenings({});
       }
     } catch (e) {
       toast.error(`Could not load project: ${(e as Error).message}`);
@@ -248,7 +242,7 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
   }, [project, units]);
 
   /** Classification for a saved unit, using its stored charges. */
-  const classifyStored = useCallback((u: UnitRow) => applyReclassificationLock(classifyUnit({
+  const classifyStored = useCallback((u: UnitRow) => classifyUnit({
     unitType: u.unit_type,
     carpetAreaSqM: Number(u.carpet_area_sqm) || 0,
     baseConsideration: Number(u.base_consideration) || 0,
@@ -258,7 +252,7 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
     isMetro: project?.is_metro ?? false,
     isRrep: rrep.isRrep,
     settings,
-  }), locks[u.id]), [charges, project, rrep.isRrep, settings, locks]);
+  }), [charges, project, rrep.isRrep, settings]);
 
   /** Feed for the bulk opening-balances grid — one row per unit, block by block. */
   const bulkOpeningUnits: BulkOpeningUnit[] = useMemo(() => {
@@ -291,11 +285,8 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
     });
   }, [units, openings, classifyStored, groups]);
 
-  /** Live classification for whatever is currently in the unit dialog —
-   *  floored at the edited unit's lock, if it already has one, so a staff
-   *  member correcting a charge back down sees the true (locked) rate they're
-   *  actually going to save, not a preview that silently disagrees with it. */
-  const formClassification = useMemo(() => applyReclassificationLock(classifyUnit({
+  /** Live classification for whatever is currently in the unit dialog. */
+  const formClassification = useMemo(() => classifyUnit({
     unitType: unitForm.unit_type,
     carpetAreaSqM: parseFloat(unitForm.carpet_area_sqm) || 0,
     baseConsideration: parseFloat(unitForm.base_consideration) || 0,
@@ -303,7 +294,7 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
     isMetro: project?.is_metro ?? false,
     isRrep: rrep.isRrep,
     settings,
-  }), editingUnit ? locks[editingUnit.id] : undefined), [unitForm, unitCharges, project, rrep.isRrep, settings, editingUnit, locks]);
+  }), [unitForm, unitCharges, project, rrep.isRrep, settings]);
 
   const unitNameMismatch = useMemo(
     () => suggestedUnitTypeMismatch(unitForm.unit_no, unitForm.unit_type),
@@ -759,12 +750,6 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
                             </TableCell>
                             <TableCell className="text-sm">
                               <span className="font-medium">{cls.ratePct}%</span>
-                              {cls.locked && (
-                                <Lock
-                                  className="inline h-3 w-3 ml-1 text-amber-600 align-text-top"
-                                  title={`Locked at ${cls.ratePct}% since re-rating on ${new Date(cls.lock!.postedAt).toLocaleDateString('en-IN')} — a later fall in consideration does not restore the concession (see Adjustments).`}
-                                />
-                              )}
                               <span className="block text-xs text-muted-foreground">eff. {cls.effectiveRatePct}%</span>
                             </TableCell>
                             <TableCell>
