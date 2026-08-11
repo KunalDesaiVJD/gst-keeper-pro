@@ -43,7 +43,7 @@ import {
   Loader2, Layers, AlertTriangle, CheckCircle2, Download, Upload, FileSpreadsheet,
 } from 'lucide-react';
 import {
-  RATE_CODE_LABEL, classifyUnit, formatINR,
+  RATE_CODE_LABEL, classifyUnit, formatINR, suggestedUnitTypeMismatch,
   type ChargeInclusionSettings, type UnitType,
 } from '@/utils/builderRates';
 import {
@@ -139,12 +139,14 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
         isRrep,
         settings,
       });
-      return { ...d, problem, cls };
+      const nameMismatch = suggestedUnitTypeMismatch(d.unit_no, d.unit_type);
+      return { ...d, problem, cls, nameMismatch };
     });
   }, [drafts, existingUnitNos, isMetro, isRrep, settings]);
 
   const okRows = previewed.filter((r) => !r.problem);
   const badRows = previewed.filter((r) => r.problem);
+  const mismatchCount = previewed.filter((r) => r.nameMismatch).length;
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -486,6 +488,12 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
                   {badRows.length} skipped
                 </Badge>
               )}
+              {mismatchCount > 0 && (
+                <Badge variant="outline" className="gap-1 border-amber-500/40">
+                  <AlertTriangle className="h-3 w-3 text-amber-600 dark:text-amber-500" />
+                  {mismatchCount} name/type worth a second look
+                </Badge>
+              )}
               <span className="text-xs text-muted-foreground">
                 Total gross consideration {formatINR(totalValue)}
               </span>
@@ -514,7 +522,17 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
                           <span className="block text-xs text-destructive">{r.problem}</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-sm">{r.unit_type}</TableCell>
+                      <TableCell className="text-sm">
+                        {r.unit_type}
+                        {r.nameMismatch && (
+                          <span
+                            className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-500"
+                            title={r.nameMismatch}
+                          >
+                            <AlertTriangle className="h-3 w-3 shrink-0" /> Check type
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right text-sm">{r.carpet_area_sqm || '—'}</TableCell>
                       <TableCell className="text-right text-sm">
                         {r.charges.length

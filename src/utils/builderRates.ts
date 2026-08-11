@@ -442,6 +442,36 @@ export const computeTds194IA = (totalConsideration: number, receiptAmount: numbe
 export const isTds194IAApplicable = (totalConsideration: number): boolean =>
   (Number(totalConsideration) || 0) >= TDS_194IA_THRESHOLD;
 
+// ─── Naming-vs-type sanity check ────────────────────────────────────────────
+//
+// Not a validation gate — a soft warning. A unit's actual rate is driven
+// entirely by its `unit_type` (§ above), never by its number; this exists
+// only to catch the transcription slip where a unit named like a shop gets
+// left on the form's default Residential (or vice versa) before it reaches
+// the database, where it would otherwise sit — silently correct by the
+// engine's own logic, incorrect against what the unit actually is — until
+// caught downstream by the reclassification sweep.
+
+const COMMERCIAL_NAME_HINTS = ['shop', 'office', 'showroom', 'godown', 'warehouse', 'commercial'];
+const RESIDENTIAL_NAME_HINTS = ['flat', 'row house', 'rowhouse', 'villa', 'bungalow', 'residential'];
+
+/**
+ * Null when the unit number carries no hint, or the hint agrees with the
+ * selected type. Otherwise a short message naming the exact word that
+ * triggered it, so the warning is checkable rather than a bare assertion.
+ */
+export const suggestedUnitTypeMismatch = (unitNo: string, unitType: UnitType): string | null => {
+  const lower = (unitNo || '').toLowerCase();
+  if (unitType === 'Residential') {
+    const hit = COMMERCIAL_NAME_HINTS.find((h) => lower.includes(h));
+    if (hit) return `"${unitNo}" contains "${hit}", which usually means Commercial — this unit is set to Residential.`;
+  } else {
+    const hit = RESIDENTIAL_NAME_HINTS.find((h) => lower.includes(h));
+    if (hit) return `"${unitNo}" contains "${hit}", which usually means Residential — this unit is set to Commercial.`;
+  }
+  return null;
+};
+
 // ─── Formatting helpers ─────────────────────────────────────────────────────
 
 export const formatINR = (n: number): string =>
