@@ -765,6 +765,103 @@ export type Database = {
           },
         ]
       }
+      builder_bu_agreement_confirmations: {
+        Row: {
+          agreement_value_at_request: number
+          bu_event_id: string
+          client_id: string
+          created_at: string
+          created_by: string | null
+          dispute_notes: string | null
+          id: string
+          outbox_id: string | null
+          response_ip: string | null
+          responded_at: string | null
+          sent_at: string | null
+          status: string
+          token: string
+          unit_id: string
+          updated_at: string
+        }
+        Insert: {
+          agreement_value_at_request?: number
+          bu_event_id: string
+          client_id: string
+          created_at?: string
+          created_by?: string | null
+          dispute_notes?: string | null
+          id?: string
+          outbox_id?: string | null
+          response_ip?: string | null
+          responded_at?: string | null
+          sent_at?: string | null
+          status?: string
+          token?: string
+          unit_id: string
+          updated_at?: string
+        }
+        Update: {
+          agreement_value_at_request?: number
+          bu_event_id?: string
+          client_id?: string
+          created_at?: string
+          created_by?: string | null
+          dispute_notes?: string | null
+          id?: string
+          outbox_id?: string | null
+          response_ip?: string | null
+          responded_at?: string | null
+          sent_at?: string | null
+          status?: string
+          token?: string
+          unit_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_bu_agreement_confirmations_bu_event_id_fkey"
+            columns: ["bu_event_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bu_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_bu_agreement_confirmations_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_bu_agreement_confirmations_outbox_id_fkey"
+            columns: ["outbox_id"]
+            isOneToOne: false
+            referencedRelation: "email_outbox"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_bu_agreement_confirmations_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_bu_agreement_confirmations_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_bu_agreement_confirmations_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_bu_events: {
         Row: {
           bu_date: string
@@ -2096,6 +2193,58 @@ export type Database = {
           },
         ]
       }
+      builder_historical_receipts: {
+        Row: {
+          amount: number
+          created_at: string
+          created_by: string | null
+          id: string
+          notes: string | null
+          receipt_date: string
+          unit_id: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          notes?: string | null
+          receipt_date: string
+          unit_id: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          notes?: string | null
+          receipt_date?: string
+          unit_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_historical_receipts_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_historical_receipts_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_historical_receipts_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_reclassification_periods: {
         Row: {
           created_at: string
@@ -2156,6 +2305,11 @@ export type Database = {
         Row: {
           created_at: string
           created_by: string | null
+          discharge_mode: string
+          drc03_arn: string | null
+          drc03_filed_by: string | null
+          drc03_filed_date: string | null
+          drc03_status: string
           from_rate_code: string
           from_rate_pct: number
           gross_after: number
@@ -2181,6 +2335,11 @@ export type Database = {
         Insert: {
           created_at?: string
           created_by?: string | null
+          discharge_mode?: string
+          drc03_arn?: string | null
+          drc03_filed_by?: string | null
+          drc03_filed_date?: string | null
+          drc03_status?: string
           from_rate_code: string
           from_rate_pct: number
           gross_after?: number
@@ -2206,6 +2365,11 @@ export type Database = {
         Update: {
           created_at?: string
           created_by?: string | null
+          discharge_mode?: string
+          drc03_arn?: string | null
+          drc03_filed_by?: string | null
+          drc03_filed_date?: string | null
+          drc03_status?: string
           from_rate_code?: string
           from_rate_pct?: number
           gross_after?: number
@@ -4554,6 +4718,23 @@ export type Database = {
           is_first_login: boolean
           role: Database["public"]["Enums"]["app_role"]
           user_id: string
+        }[]
+      }
+      builder_bu_agreement_confirm: {
+        Args: { _action: string; _notes: string; _token: string }
+        Returns: boolean
+      }
+      builder_bu_agreement_confirmation_blocked: {
+        Args: { _client_id: string; _period_month: string }
+        Returns: boolean
+      }
+      builder_bu_agreement_confirmation_lookup: {
+        Args: { _token: string }
+        Returns: {
+          agreement_value: number
+          project_name: string
+          status: string
+          unit_no: string
         }[]
       }
       builder_fsi_consent_blocked: {

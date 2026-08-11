@@ -181,31 +181,62 @@ a silent rewrite. **This is where "a unit taxed at 1.5% whose gross
 consideration later crosses ₹45 lakh was never affordable" applies**: if a
 unit's live classification has moved off AFFORDABLE while a *filed* period
 still carries 1.5% postings, that crossing is real and permanent for that
-period — the higher rate is due on everything already filed, and the
-correction is a **Table 10 amendment**, not a debit note (every buyer is
-unregistered): the old rate reversed, the same taxable value re-reported at
-the correct one. Posted automatically, no staff review — the correction is
-arithmetic once a filed-period crossing is detected
-(`findReclassCandidates()`/`autoReclassifyProject()`).
+period, and the higher rate is due on everything already filed.
+
+**Discharged by DRC-03, not a GSTR-1 amendment (firm decision, 11/08/2026).**
+Originally this correction went through Table 10 as a formal amendment (old
+rate reversed, same taxable value re-reported at the correct one — every
+buyer being unregistered rules out a debit note). That mechanism is now used
+only as a manual, DB-only exception (`builder_reclassifications.discharge_mode
+= 'GSTR1_AMENDMENT'`, never offered in the UI). The default for every
+re-rating going forward is `discharge_mode = 'DRC03'`: the differential tax
+and s.50 interest are computed exactly as before, but paid by voluntary
+payment on the GST portal, and never reported in GSTR-1 or 3B. Two reasons
+drove the change:
+
+- **Duplicate effect.** A Table 10 amendment assumes the return as originally
+  filed is still what the portal shows. Where the client's own team has
+  separately hand-corrected the portal already — the E-1004 case this
+  section used to describe — a later Table 10 amendment on top of that
+  reproduces the correction a second time.
+- **Pre-onboarding history is otherwise unreachable.** `findReclassCandidates()`
+  only ever reads `builder_period_postings`, which excludes
+  `builder_opening_balances` by construction (see
+  `supabase/migrations/20260811150000_builder_reclass_drc03.sql`). A unit
+  booked years before this firm's onboarding has its entire pre-onboarding
+  history in a single lump snapshot, invisible to a return amendment no
+  matter what. Staff can instead reconstruct it, date by date, in
+  `builder_historical_receipts` — floored at 01.04.2019, the date
+  Notification 03/2019-CT(R) starts and the earliest date `builderRates.ts`
+  models any rate for; anything earlier is a pre-scheme regime this module
+  was never built to compute and stays a manual firm judgment call. Those
+  entered periods feed the same schedule/interest engine as app-tracked
+  periods and land in the same DRC-03 workpaper for the unit
+  (`findHistoricalReclassCandidates()`/`mergeCandidates()` in
+  `src/lib/builderAdjustmentsData.ts`).
+
+Posted automatically, no staff review — the correction is arithmetic once a
+crossing is detected (`findReclassCandidates()`/`findHistoricalReclassCandidates()`
+/`autoReclassifyProject()`). Once posted, a superadmin/GST-Manager can record
+that the DRC-03 was actually filed (ARN + date, `BuilderAdjustmentsPage.tsx`)
+— a record only; the app does not file DRC-03 itself.
 
 The schedule is **period-wise**, because interest under **s.50** runs from
 each original period's due date. A single aggregate at the trigger date
 would understate it materially on an older unit.
 
 **No downgrade on a filed period.** A later fall below ₹45 lakh does not
-reopen or restate an amendment already posted against a filed period — only
+reopen or restate a correction already posted against a filed period — only
 an unfiled period's postings track the live rate freely, up or down.
 
-**A filed-period amendment can still be voided if the crossing was itself a
+**A posted correction can still be voided if the crossing was itself a
 mistake** — e.g. the triggering charge was entered in error and removed
 before anyone noticed the period had, in the meantime, been filed at the
 wrong rate. Superadmin only, reason recorded
-(`builder_reclassifications.status = 'REVERSED'`); voiding removes the
-amendment from later returns but does **not** rewrite the already-filed
-period itself (the DB trigger prevents that regardless) — correcting a
-figure that has already gone to the portal needs a downward Table 10
-amendment in a later period, which this app does not yet post automatically
-(as of this writing, handled case-by-case).
+(`builder_reclassifications.status = 'REVERSED'`); voiding removes it from
+the DRC-03 workpaper but does **not** rewrite the already-filed period itself
+(the DB trigger prevents that regardless) — correcting a figure that has
+already gone to the portal needs handling case-by-case.
 
 ## 9. Bounce reversals — *position*
 

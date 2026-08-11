@@ -15,6 +15,8 @@ const currentPeriod = (): string => {
   return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
 };
 
+const round2 = (n: number): number => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
 // Data access for the corrections layer. Detection is deliberately derived from
 // what was actually POSTED rather than from stored flags — a unit needs
 // re-rating because 1.5% entries exist in the returns, not because a column
@@ -112,6 +114,163 @@ export async function findReclassCandidates(
       totalTaxableAtOldRate: Math.round((c.totalTaxableAtOldRate + Number.EPSILON) * 100) / 100,
     }))
     .filter((c) => c.periods.length > 0 && c.totalTaxableAtOldRate > 0.005);
+}
+
+// ─── Historical (pre-onboarding) receipts — DRC-03 ─────────────────────────
+//
+// A unit's history before this firm's onboarding sits only in the single-row
+// builder_opening_balances snapshot — invisible to findReclassCandidates,
+// which only ever reads builder_period_postings. A unit whose opening
+// balance already correctly reflects a >45L position (so nothing ever posts
+// as AFFORDABLE for it after onboarding) generates zero reclass candidates
+// today — the crossing itself, and every year of s.50 interest that ran
+// before onboarding, is silently invisible. builder_historical_receipts
+// lets staff reconstruct that history by hand, date by date, only when a
+// real case requires it; these periods are always treated as needing the
+// DRC-03 treatment (never "unfiled resync") because they represent returns
+// the firm already filed, years ago, just not through this app.
+
+export interface HistoricalReceipt {
+  id: string;
+  receiptDate: string;
+  amount: number;
+  notes: string | null;
+}
+
+export async function fetchHistoricalReceipts(unitId: string): Promise<HistoricalReceipt[]> {
+  const { data, error } = await supabase
+    .from('builder_historical_receipts')
+    .select('id, receipt_date, amount, notes')
+    .eq('unit_id', unitId)
+    .order('receipt_date', { ascending: true });
+  if (error) throw error;
+  type Row = { id: string; receipt_date: string; amount: number; notes: string | null };
+  return ((data || []) as unknown as Row[]).map((r) => ({
+    id: r.id, receiptDate: r.receipt_date, amount: Number(r.amount) || 0, notes: r.notes,
+  }));
+}
+
+export async function addHistoricalReceipt(params: {
+  unitId: string;
+  receiptDate: string;
+  amount: number;
+  notes: string | null;
+  userId: string | null;
+}): Promise<void> {
+  const { error } = await supabase.from('builder_historical_receipts').insert({
+    unit_id: params.unitId,
+    receipt_date: params.receiptDate,
+    amount: params.amount,
+    notes: params.notes,
+    created_by: params.userId,
+  });
+  if (error) throw error;
+}
+
+export async function deleteHistoricalReceipt(id: string): Promise<void> {
+  const { error } = await supabase.from('builder_historical_receipts').delete().eq('id', id);
+  if (error) throw error;
+}
+
+export interface HistoricalReconciliation {
+  historicalTotal: number;
+  openingCumulativeReceipts: number;
+  variance: number;
+}
+
+/** Does the manually entered date-wise history actually tally with the lump
+ *  opening balance it's meant to break out? Surfaced to staff as a plain
+ *  variance, not auto-forced to zero — partial history is a realistic case. */
+export async function fetchHistoricalReconciliation(unitId: string): Promise<HistoricalReconciliation> {
+  const [{ data: receipts }, { data: opening }] = await Promise.all([
+    supabase.from('builder_historical_receipts').select('amount').eq('unit_id', unitId),
+    supabase.from('builder_opening_balances').select('cumulative_receipts').eq('unit_id', unitId).maybeSingle(),
+  ]);
+  const historicalTotal = round2(((receipts || []) as { amount: number }[])
+    .reduce((s, r) => s + (Number(r.amount) || 0), 0));
+  const openingCumulativeReceipts = round2(Number((opening as { cumulative_receipts?: number } | null)
+    ?.cumulative_receipts) || 0);
+  return {
+    historicalTotal,
+    openingCumulativeReceipts,
+    variance: round2(historicalTotal - openingCumulativeReceipts),
+  };
+}
+
+/**
+ * Units whose manually entered historical receipts show them crossing ₹45L
+ * before this firm ever tracked a posting for them — the case
+ * findReclassCandidates structurally cannot see (it never reads
+ * builder_historical_receipts). Buckets by receipt month and derives taxable
+ * value at the AFFORDABLE rate exactly as the original (pre-onboarding)
+ * filing would have — same 1/3rd land deduction this module uses everywhere.
+ */
+export async function findHistoricalReclassCandidates(
+  classification: Record<string, { rateCode: string; ratePct: number; agreementValue: number }>,
+): Promise<ReclassCandidate[]> {
+  const unitIds = Object.keys(classification).filter((id) => classification[id].rateCode !== 'AFFORDABLE');
+  if (!unitIds.length) return [];
+
+  const { data } = await supabase
+    .from('builder_historical_receipts')
+    .select('unit_id, receipt_date, amount')
+    .in('unit_id', unitIds);
+  type Row = { unit_id: string; receipt_date: string; amount: number };
+  const rows = (data || []) as unknown as Row[];
+  if (!rows.length) return [];
+
+  const { data: unitRows } = await supabase.from('builder_units').select('id, unit_no').in('id', unitIds);
+  const unitNoOf = new Map(((unitRows || []) as { id: string; unit_no: string }[]).map((u) => [u.id, u.unit_no]));
+
+  const byUnitPeriod = new Map<string, Map<string, number>>();
+  rows.forEach((r) => {
+    const m = /^(\d{4})-(\d{2})/.exec(r.receipt_date || '');
+    if (!m) return;
+    const periodMonth = `${m[2]}/${m[1]}`;
+    const periods = byUnitPeriod.get(r.unit_id) || new Map<string, number>();
+    periods.set(periodMonth, (periods.get(periodMonth) || 0) + (Number(r.amount) || 0));
+    byUnitPeriod.set(r.unit_id, periods);
+  });
+
+  const candidates: ReclassCandidate[] = [];
+  byUnitPeriod.forEach((periods, unitId) => {
+    const cls = classification[unitId];
+    const periodEntries = [...periods.entries()]
+      .map(([periodMonth, amount]) => ({
+        periodMonth,
+        taxableValue: computeTax(round2(amount), 'AFFORDABLE').taxableValue,
+      }))
+      .filter((p) => p.taxableValue > 0.005);
+    if (!periodEntries.length) return;
+    candidates.push({
+      unitId,
+      unitNo: unitNoOf.get(unitId) || '',
+      currentRateCode: cls.rateCode as BuilderRateCode,
+      currentRatePct: cls.ratePct,
+      grossConsideration: cls.agreementValue,
+      periods: periodEntries,
+      totalTaxableAtOldRate: round2(periodEntries.reduce((s, p) => s + p.taxableValue, 0)),
+    });
+  });
+  return candidates;
+}
+
+/** Merge two candidate lists by unit — builder_reclassifications carries a
+ *  UNIQUE(unit_id) constraint, so app-tracked and historical periods for the
+ *  same unit must land in one saved row, not two. */
+function mergeCandidates(a: ReclassCandidate[], b: ReclassCandidate[]): ReclassCandidate[] {
+  const byUnit = new Map<string, ReclassCandidate>();
+  [...a, ...b].forEach((c) => {
+    const existing = byUnit.get(c.unitId);
+    if (!existing) { byUnit.set(c.unitId, { ...c, periods: [...c.periods] }); return; }
+    c.periods.forEach((p) => {
+      const dup = existing.periods.find((e) => e.periodMonth === p.periodMonth);
+      if (dup) dup.taxableValue = round2(dup.taxableValue + p.taxableValue);
+      else existing.periods.push(p);
+    });
+    existing.totalTaxableAtOldRate = round2(existing.totalTaxableAtOldRate + c.totalTaxableAtOldRate);
+  });
+  return [...byUnit.values()];
 }
 
 export function scheduleFor(
@@ -323,7 +482,11 @@ export async function autoReclassifyProject(
     .from('builder_reclassifications').select('unit_id').in('unit_id', unitIds).neq('status', 'REVERSED');
   const done = new Set(((existing || []) as { unit_id: string }[]).map((r) => r.unit_id));
 
-  const candidates = (await findReclassCandidates(projectId, classification, filedPeriods))
+  const [appTracked, historical] = await Promise.all([
+    findReclassCandidates(projectId, classification, filedPeriods),
+    findHistoricalReclassCandidates(classification),
+  ]);
+  const candidates = mergeCandidates(appTracked, historical)
     .filter((c) => !done.has(c.unitId));
 
   const postingPeriod = currentPeriod();

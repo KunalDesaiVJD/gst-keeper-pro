@@ -22,6 +22,7 @@ import { SchemeHistoryEntry } from '@/utils/schemeResolver';
 import { generateFilingRecords } from '@/lib/filingRecords';
 import { MultiSelectPopover } from '@/components/ui/multi-select-popover';
 import { isFsiConsentBlocked } from '@/lib/builderFsiData';
+import { isBuAgreementConfirmationBlocked } from '@/lib/builderAgreementConfirmData';
 
 // Normalize an accountant name by stripping the trailing "/<number>" reference
 // (e.g. "PUNITBHAI/16" / "PAVANBHAI /66" / "PRIYA,MUKESHBHAI/ 28") so the same
@@ -601,6 +602,24 @@ const FilingStatusPage: React.FC = () => {
           'Cannot file: a TDR/FSI liability is being held back for this period without a complete '
           + "consent. Attach the client's written instruction and obtain GST Manager approval on the "
           + "project's TDR/FSI page first.",
+        );
+        return;
+      }
+
+      // A BU event's differential rests on the agreement value staff keyed in
+      // for each taxable unit — that has to be confirmed by the client (a
+      // tokenized email link, no login) before the period can file, so a
+      // client who quietly changes the agreement value later can't leave the
+      // firm exposed.
+      const agreementBlocked = await isBuAgreementConfirmationBlocked(
+        record.client_id,
+        record.period_month || selectedMonth,
+      );
+      if (agreementBlocked) {
+        toast.error(
+          "Cannot file: a BU event's taxable unit(s) have an unconfirmed agreement value. Send (or "
+          + "re-send) confirmation requests on the project's BU Events page and wait for every unit to "
+          + 'come back Confirmed.',
         );
         return;
       }
