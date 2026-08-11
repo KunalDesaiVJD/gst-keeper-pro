@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import {
   DEFAULT_CHARGE_INCLUSIONS, RATE_CODE_LABEL, classifyUnit, formatINR, formatPct,
-  formatSqM, testRrep,
+  formatSqM, suggestedUnitTypeMismatch, testRrep,
   type BuilderRateCode, type ChargeHead, type ChargeInclusionSettings,
   type UnitCharge, type UnitType,
 } from '@/utils/builderRates';
@@ -274,6 +274,11 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
     isRrep: rrep.isRrep,
     settings,
   }), [unitForm, unitCharges, project, rrep.isRrep, settings]);
+
+  const unitNameMismatch = useMemo(
+    () => suggestedUnitTypeMismatch(unitForm.unit_no, unitForm.unit_type),
+    [unitForm.unit_no, unitForm.unit_type],
+  );
 
   // ── Units ────────────────────────────────────────────────────────────────
   const openCreateUnit = () => {
@@ -828,6 +833,11 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
                   <SelectItem value="Commercial">Commercial</SelectItem>
                 </SelectContent>
               </Select>
+              {unitNameMismatch && (
+                <p className="mt-1 flex items-center gap-1 text-xs text-amber-600 dark:text-amber-500">
+                  <AlertTriangle className="h-3 w-3 shrink-0" /> {unitNameMismatch}
+                </p>
+              )}
             </div>
             <div>
               <Label>Status</Label>
