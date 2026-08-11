@@ -87,6 +87,20 @@ interface UploadErrorRow {
   reason: string;
 }
 
+// GSTN's upload/error-report responses can include a row for every submitted
+// record, not just the rejected ones — accepted records show up with
+// placeholder fields like reason "NA NA NA" instead of a real validation
+// message. Without filtering these out, a fully-accepted upload (extension
+// reports status 'accepted' and a summary like "all accepted") still gets
+// rendered as a partial/failed upload because the errors array isn't empty.
+const isPlaceholderReason = (reason?: string | null) => {
+  const trimmed = (reason || '').trim();
+  if (!trimmed) return true;
+  return trimmed.split(/\s+/).every((token) => /^n\/?a$/i.test(token));
+};
+const filterRealErrors = (errors?: UploadErrorRow[] | null): UploadErrorRow[] =>
+  (errors || []).filter((row) => !isPlaceholderReason(row.reason));
+
 interface UploadVersion {
   id: string;
   version_number: number;
@@ -336,7 +350,18 @@ const GSTR1DataPage: React.FC = () => {
         .eq('period_month', periodMonthKey)
         .maybeSingle();
       if (error) throw error;
-      setGstr1Data(data as GSTR1Record | null);
+      const record = data as GSTR1Record | null;
+      if (record) {
+        // The extension writes last_upload_* directly to this row, so a stray
+        // placeholder row in last_upload_errors (see isPlaceholderReason)
+        // would otherwise keep showing "View errors" / a red status forever,
+        // even across refreshes, on a return GSTN actually accepted in full.
+        record.last_upload_errors = filterRealErrors(record.last_upload_errors);
+        if (record.last_upload_status === 'partial' && record.last_upload_errors.length === 0) {
+          record.last_upload_status = 'accepted';
+        }
+      }
+      setGstr1Data(record);
     } catch (err: any) {
       toast.error('Failed to fetch data: ' + err.message);
     } finally {
@@ -504,17 +529,24 @@ const GSTR1DataPage: React.FC = () => {
         setIsUploading(false);
         if (r.ok) {
           const summary = r.summary || 'Uploaded to portal.';
-          const isPartial = r.status === 'partial' || (r.errors && r.errors.length > 0);
+          const realErrors = filterRealErrors(r.errors);
+          // Trust the extension's own accepted/partial call over the mere
+          // presence of an errors array — GSTN's response can list every
+          // record (with placeholder reasons for the accepted ones), so
+          // "errors.length > 0" alone isn't a reliable partial signal. Only
+          // fall back to counting real errors when status wasn't sent at all
+          // (older extension builds).
+          const isPartial = r.status ? r.status === 'partial' : realErrors.length > 0;
           if (isPartial) {
             toast.error(summary + ' Click "View errors" for details.');
           } else {
             toast.success(summary);
           }
-          setUploadResult({ ok: !isPartial, message: summary, errors: r.errors });
+          setUploadResult({ ok: !isPartial, message: summary, errors: realErrors });
         } else {
           const msg = r.error || 'Portal upload failed.';
           toast.error('Upload failed: ' + msg);
-          setUploadResult({ ok: false, message: msg, errors: r.errors });
+          setUploadResult({ ok: false, message: msg, errors: filterRealErrors(r.errors) });
         }
         fetchGSTR1Data();
         fetchVersions();
@@ -790,7 +822,12 @@ const GSTR1DataPage: React.FC = () => {
     try {
       const text = await file.text();
       const obj = JSON.parse(text);
-      const rows = parseGstnErrorReport(obj);
+      const rawRows = parseGstnErrorReport(obj);
+      // Some GSTN error reports list every submitted record, not just the
+      // rejected ones — accepted records carry placeholder reasons like
+      // "NA NA NA" rather than a real message. Strip those before deciding
+      // whether this report actually contains any errors.
+      const rows = filterRealErrors(rawRows);
       // Sanity check: warn if the report's GSTIN + fp don't match this row.
       const reportGstin = String(obj?.gstin || '').toUpperCase();
       const reportFp = String(obj?.fp || '');
@@ -804,27 +841,36 @@ const GSTR1DataPage: React.FC = () => {
       if (reportFp && expectedFp && reportFp !== expectedFp) {
         toast.warning(`Note: this error report is for period ${reportFp} but this page is ${expectedFp}. Loading anyway.`);
       }
-      const summary = rows.length
-        ? `Parsed ${rows.length} per-invoice validation error(s) from imported Error Report.`
-        : 'No per-invoice errors found in the imported Error Report file (structure may differ from expected).';
+      let summary: string;
+      let status: 'accepted' | 'partial';
+      if (rows.length > 0) {
+        summary = `Parsed ${rows.length} per-invoice validation error(s) from imported Error Report.`;
+        status = 'partial';
+      } else if (rawRows.length > 0) {
+        summary = 'Error Report parsed — no genuine validation errors found (all listed rows were accepted/placeholder entries).';
+        status = 'accepted';
+      } else {
+        summary = 'No per-invoice errors found in the imported Error Report file (structure may differ from expected).';
+        status = 'partial';
+      }
       // Persist so the "View errors" button + the sidebar indicator survive a refresh.
       const { error } = await supabase
         .from('gstr1_data')
         .update({
-          last_upload_status: 'partial',
+          last_upload_status: status,
           last_upload_summary: summary,
           last_upload_errors: rows as any,
           last_uploaded_at: gstr1Data.last_uploaded_at || new Date().toISOString(),
         })
         .eq('id', gstr1Data.id);
       if (error) throw error;
-      setUploadResult({ ok: false, message: summary, errors: rows });
+      setUploadResult({ ok: status === 'accepted', message: summary, errors: rows });
       setErrorsDialogOpen(true);
       await fetchGSTR1Data();
       await recordVersion({
         action_type: 'REFRESH_ERRORS',
         file_name: file.name,
-        status: 'partial',
+        status,
         summary,
         errors: rows,
       });
