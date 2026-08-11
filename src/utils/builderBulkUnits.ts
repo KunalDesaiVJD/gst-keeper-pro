@@ -14,6 +14,13 @@ export const BULK_UNIT_STATUSES = [
 export interface DraftUnit {
   unit_no: string;
   unit_type: UnitType;
+  /** False when the source text didn't clearly say "Residential" or
+   *  "Commercial" — a blank or unrecognised cell defaults unit_type to
+   *  Residential so the row still has a value to preview, but the row must
+   *  be treated as unsaveable until someone confirms it by hand. Silently
+   *  guessing here is exactly the mistake that put a Commercial unit on the
+   *  1.5% rate in production. */
+  unit_type_recognized: boolean;
   carpet_area_sqm: number;
   base_consideration: number;
   status: string;
@@ -75,6 +82,7 @@ export function generateUnits(params: {
       out.push({
         unit_no: expandPattern(params.pattern, f, n),
         unit_type: params.unitType,
+        unit_type_recognized: true, // an explicit dropdown choice, never parsed text
         carpet_area_sqm: params.carpetAreaSqM,
         base_consideration: params.baseConsideration,
         status: params.status,
@@ -116,13 +124,16 @@ export function parsePastedUnits(
     const typeRaw = (c[1] || '').toLowerCase();
     const statusRaw = (c[4] || '').trim();
     const groupRaw = (c[5] || '').trim().toLowerCase();
+    // Anything starting with "c" is Commercial, "r" is Residential — covers
+    // "Commercial"/"Comm"/"COM" and "Residential"/"Res". A blank or anything
+    // else is NOT guessed — defaulting a bare cell to Residential is exactly
+    // how a Commercial unit ended up on the 1.5% rate in production, so an
+    // unrecognised type is flagged for the preview to block instead.
+    const typeRecognized = typeRaw.startsWith('c') || typeRaw.startsWith('r');
     return {
       unit_no: c[0] || '',
-      // Anything starting with "c" is commercial — covers "Commercial",
-      // "Comm", "COM". Everything else, including a blank cell, is residential,
-      // which is both the common case and the safer default: it is the one that
-      // can qualify as affordable and so gets checked against the ₹45 lakh limit.
       unit_type: typeRaw.startsWith('c') ? 'Commercial' : 'Residential',
+      unit_type_recognized: typeRecognized,
       carpet_area_sqm: parseAmount(c[2]),
       base_consideration: parseAmount(c[3]),
       status: BULK_UNIT_STATUSES.find((s) => s.toLowerCase() === statusRaw.toLowerCase())
