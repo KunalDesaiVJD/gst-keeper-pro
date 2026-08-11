@@ -36,7 +36,7 @@ import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
-import { isBuilderGenerated as isBuilderSourced } from '@/utils/builderGstr1';
+import { isBuilderGenerated as isBuilderSourced, stripInternalFields } from '@/utils/builderGstr1';
 import Gstr1ManualEntryPanel from '@/components/gstr1/Gstr1ManualEntryPanel';
 
 // gstr1_data stores period_month as the short label ("Jun-26"). The rest of
@@ -319,7 +319,7 @@ const GSTR1DataPage: React.FC = () => {
 
   /** Was the stored return produced by Builder Returns rather than uploaded? */
   const isBuilderGenerated = useMemo(
-    () => isBuilderSourced(gstr1Data?.raw_json),
+    () => isBuilderSourced(gstr1Data?.file_name),
     [gstr1Data],
   );
 
@@ -912,7 +912,11 @@ const GSTR1DataPage: React.FC = () => {
       toast.error('No GSTR-1 JSON to download.');
       return;
     }
-    const blob = new Blob([JSON.stringify(gstr1Data.raw_json)], { type: 'application/json' });
+    // Strip this app's own provenance fields (_source/_generated_at) — the
+    // portal's upload schema doesn't recognise them, and a strict validator
+    // rejects the whole file over one unexpected key.
+    const portalJson = stripInternalFields(gstr1Data.raw_json);
+    const blob = new Blob([JSON.stringify(portalJson)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
