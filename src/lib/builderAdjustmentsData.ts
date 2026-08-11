@@ -3,6 +3,7 @@ import {
   classifyUnit, computeTax, testRrep,
   type BuilderRateCode, type ChargeInclusionSettings,
 } from '@/utils/builderRates';
+import { computeUnitLedger } from '@/utils/builderLedger';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
 import {
   buildReclassSchedule, creditNoteWindow, planBounceOffsets,
@@ -405,13 +406,43 @@ export async function runAutoReclassSweep(
   if (!units.length) return { posted: [], resynced: [] };
   const unitIds = units.map((u) => u.id);
 
-  const [settings, { data: chg }] = await Promise.all([
+  const [settings, { data: chg }, { data: rcp }, { data: inv }, { data: opn }] = await Promise.all([
     fetchBuilderSettings(p.client_id),
     supabase.from('builder_unit_charges').select('*').in('unit_id', unitIds),
+    supabase.from('builder_receipts').select('*').in('unit_id', unitIds),
+    supabase.from('builder_invoices').select('*').in('unit_id', unitIds),
+    supabase.from('builder_opening_balances').select('*').in('unit_id', unitIds),
   ]);
   type Charge = { unit_id: string; charge_head: string; amount: number; include_override: boolean | null };
   const cmap: Record<string, Charge[]> = {};
   ((chg || []) as unknown as Charge[]).forEach((c) => { (cmap[c.unit_id] ||= []).push(c); });
+
+  type Receipt = {
+    unit_id: string; consideration: number; cgst: number; sgst: number; tds_194ia: number;
+    bank_credit: number | null; receipt_nature: string; cheque_status: string;
+    gst_already_discharged: boolean; subsumed_by_bu_event_id: string | null;
+  };
+  const rmap: Record<string, Receipt[]> = {};
+  ((rcp || []) as unknown as Receipt[]).forEach((r) => { (rmap[r.unit_id] ||= []).push(r); });
+
+  type Invoice = { unit_id: string; id: string; consideration: number; cgst: number; sgst: number };
+  const imap: Record<string, Invoice[]> = {};
+  ((inv || []) as unknown as Invoice[]).forEach((i) => { (imap[i.unit_id] ||= []).push(i); });
+
+  type Opening = {
+    unit_id: string; agreement_value: number; cumulative_value_taxed: number;
+    cumulative_cgst: number; cumulative_sgst: number; cumulative_receipts: number;
+    cumulative_tds_194ia: number;
+  };
+  const omap: Record<string, Opening> = {};
+  ((opn || []) as unknown as Opening[]).forEach((o) => { omap[o.unit_id] = o; });
+
+  const invoiceIds = ((inv || []) as unknown as Invoice[]).map((i) => i.id);
+  const { data: adj } = invoiceIds.length
+    ? await supabase.from('builder_advance_adjustments').select('*').in('invoice_id', invoiceIds)
+    : { data: [] };
+  type Adjustment = { invoice_id: string; consideration_adjusted: number; cgst: number; sgst: number };
+  const adjustments = (adj || []) as unknown as Adjustment[];
 
   let resi = 0, comm = 0;
   if (p.carpet_area_source === 'MANUAL') {
@@ -428,6 +459,26 @@ export async function runAutoReclassSweep(
 
   const classification: Record<string, { rateCode: string; ratePct: number; agreementValue: number }> = {};
   units.forEach((u) => {
+    const invIds = new Set((imap[u.id] || []).map((i) => i.id));
+    const unitAdjustments = adjustments.filter((a) => invIds.has(a.invoice_id));
+    // knownConsideration: money already recognised (opening + receipts/
+    // invoices to date) — see classifyUnit()'s doc comment. agreementValue
+    // is irrelevant to considerationRecognized, so 0 is fine here.
+    const prelimLedger = computeUnitLedger({
+      agreementValue: 0,
+      opening: omap[u.id],
+      receipts: (rmap[u.id] || []).map((r) => ({
+        consideration: r.consideration, cgst: r.cgst, sgst: r.sgst,
+        tds_194ia: r.tds_194ia, bank_credit: r.bank_credit,
+        receipt_nature: r.receipt_nature as never, cheque_status: r.cheque_status as never,
+        gst_already_discharged: r.gst_already_discharged,
+        subsumed_by_bu_event_id: r.subsumed_by_bu_event_id,
+      })),
+      invoices: (imap[u.id] || []).map((i) => ({ consideration: i.consideration, cgst: i.cgst, sgst: i.sgst })),
+      adjustments: unitAdjustments.map((a) => ({
+        consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst,
+      })),
+    });
     const cls = classifyUnit({
       unitType: u.unit_type,
       carpetAreaSqM: Number(u.carpet_area_sqm) || 0,
@@ -439,6 +490,7 @@ export async function runAutoReclassSweep(
       isMetro: p.is_metro ?? false,
       isRrep: rrep.isRrep,
       settings: settings as ChargeInclusionSettings,
+      knownConsideration: prelimLedger.considerationRecognized,
     });
     classification[u.id] = { rateCode: cls.rateCode, ratePct: cls.ratePct, agreementValue: cls.gross.gross };
   });

@@ -381,18 +381,47 @@ const BuilderBookingsPage: React.FC = () => {
     return testRrep(resi, comm);
   }, [project, units]);
 
-  const classifyFor = useCallback((u: UnitRow) => classifyUnit({
-    unitType: u.unit_type,
-    carpetAreaSqM: Number(u.carpet_area_sqm) || 0,
-    baseConsideration: Number(u.base_consideration) || 0,
-    charges: (charges[u.id] || []).map((c) => ({
-      charge_head: c.charge_head as never, amount: Number(c.amount) || 0,
-      include_override: c.include_override,
-    })),
-    isMetro: project?.is_metro ?? false,
-    isRrep: rrep.isRrep,
-    settings,
-  }), [charges, project, rrep.isRrep, settings]);
+  /**
+   * Classification floored at money already recognised for the unit (opening
+   * balance + every receipt/invoice to date, net of absorption), not just
+   * base_consideration + charges — a unit can't legitimately have received
+   * more than its true agreed price, so if it has, the unit master itself is
+   * understating the true gross amount charged. Computes a preliminary
+   * ledger just for that running total; agreementValue is irrelevant to it,
+   * so 0 avoids a circular dependency on classifyFor's own result.
+   */
+  const classifyFor = useCallback((u: UnitRow) => {
+    const invIds = new Set((invoices[u.id] || []).map((i) => i.id));
+    const unitAdjustments = adjustments.filter((a) => invIds.has(a.invoice_id));
+    const prelimLedger = computeUnitLedger({
+      agreementValue: 0,
+      opening: openings[u.id],
+      receipts: (receipts[u.id] || []).map((r) => ({
+        consideration: r.consideration, cgst: r.cgst, sgst: r.sgst,
+        tds_194ia: r.tds_194ia, bank_credit: r.bank_credit,
+        receipt_nature: r.receipt_nature, cheque_status: r.cheque_status,
+        gst_already_discharged: r.gst_already_discharged,
+        subsumed_by_bu_event_id: r.subsumed_by_bu_event_id,
+      })),
+      invoices: (invoices[u.id] || []).map((i) => ({ consideration: i.consideration, cgst: i.cgst, sgst: i.sgst })),
+      adjustments: unitAdjustments.map((a) => ({
+        consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst,
+      })),
+    });
+    return classifyUnit({
+      unitType: u.unit_type,
+      carpetAreaSqM: Number(u.carpet_area_sqm) || 0,
+      baseConsideration: Number(u.base_consideration) || 0,
+      charges: (charges[u.id] || []).map((c) => ({
+        charge_head: c.charge_head as never, amount: Number(c.amount) || 0,
+        include_override: c.include_override,
+      })),
+      isMetro: project?.is_metro ?? false,
+      isRrep: rrep.isRrep,
+      settings,
+      knownConsideration: prelimLedger.considerationRecognized,
+    });
+  }, [charges, project, rrep.isRrep, settings, openings, receipts, invoices, adjustments]);
 
   const classification = useMemo(() => {
     const out: Record<string, { rateCode: string; ratePct: number; agreementValue: number }> = {};
@@ -1596,6 +1625,14 @@ const BuilderBookingsPage: React.FC = () => {
                           </TableCell>
                           <TableCell className="text-sm">
                             {cls.ratePct}%
+                            {cls.gross.impliedByReceipts && (
+                              <span
+                                className="inline-block align-text-top"
+                                title={`Rate reflects ${formatINR(cls.gross.gross)} actually recognised (opening + receipts), which exceeds ${formatINR(cls.gross.base + cls.gross.includedCharges)} on the unit master. Update base consideration/charges to match.`}
+                              >
+                                <AlertTriangle className="inline h-3 w-3 ml-1 text-amber-600" />
+                              </span>
+                            )}
                             <span className="block text-xs text-muted-foreground">eff. {cls.effectiveRatePct}%</span>
                           </TableCell>
                           <TableCell className="text-right text-sm">{formatINR(agreement)}</TableCell>

@@ -157,6 +157,25 @@ export interface UnitLedger {
   totalTds194ia: number;
   /** Agreement value less value taxed: what a BU event would still have to tax. */
   balanceToTax: number;
+  /**
+   * Full consideration recognised to date — opening's carried-forward
+   * position plus this unit's own advances/invoices, net of absorption.
+   * Despite the name, `valueTaxed` is already expressed in full-consideration
+   * terms, not the 2/3rd taxable-value basis — it's directly comparable to
+   * `agreementValue` via `balanceToTax` above, and every receipt/invoice
+   * contributes its own `consideration` field (pre-land-deduction) when
+   * accumulating it. So this is a plain alias, not a derived conversion —
+   * named separately because "valueTaxed" reads as the 2/3rd figure at every
+   * OTHER call site, and conflating the two here would be exactly the kind
+   * of silent unit mismatch this field exists to prevent.
+   *
+   * This is the "running balance" signal for the affordable-housing ₹45L
+   * test: a unit cannot legitimately have RECEIVED more than its true
+   * agreed price, so if this exceeds base consideration + charges, the unit
+   * master is understating the true gross amount charged, not the buyer
+   * overpaying — see `knownConsideration` on `classifyUnit()`.
+   */
+  considerationRecognized: number;
 }
 
 /**
@@ -209,6 +228,7 @@ export const computeUnitLedger = (params: {
     totalReceived: round2((Number(ob.cumulative_receipts) || 0) + received),
     totalTds194ia: round2((Number(ob.cumulative_tds_194ia) || 0) + tds),
     balanceToTax: round2(agreementValue - valueTaxed),
+    considerationRecognized: valueTaxed,
   };
 };
 

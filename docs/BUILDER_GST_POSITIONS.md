@@ -148,6 +148,20 @@ reversal.
 
 ## 8. Retrospective re-rating
 
+**The ₹45L test floors at money already recognised, not just the unit
+master.** `base_consideration` + charges is the primary figure, but a unit
+cannot legitimately have been charged or received MORE than its true agreed
+price — so if opening balance + every receipt/invoice to date (net of
+absorption) exceeds base + charges, that running total governs instead
+(`knownConsideration` on `classifyUnit()`, fed from `computeUnitLedger()`'s
+`considerationRecognized`). This catches a unit whose master was never kept
+in sync with what's actually being collected — including one booked years
+ago that only crosses via a receipt entered this month — without waiting for
+anyone to notice and go update the base consideration by hand. The unit list
+flags this case with a warning icon rather than silently absorbing it, since
+the master figure is still wrong and should be corrected even though the
+classification is already right in the meantime.
+
 **The rate freezes on filing, not on crossing.** For any period whose GSTR-1
 has not yet been filed, a unit's classification is always the live one —
 `classifyUnit()` off today's base consideration and charges — and every

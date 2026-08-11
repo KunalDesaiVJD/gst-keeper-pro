@@ -204,8 +204,13 @@ export interface GrossConsideration {
   base: number;
   includedCharges: number;
   excludedCharges: number;
-  /** base + includedCharges — the "gross amount charged" for the apartment. */
+  /** base + includedCharges, or knownConsideration if that's higher —
+   *  the "gross amount charged" for the apartment. */
   gross: number;
+  /** True when `gross` came from knownConsideration rather than the unit
+   *  master's own base + charges — money already recognised proves the true
+   *  price is higher than what's recorded, ahead of anyone updating it. */
+  impliedByReceipts: boolean;
 }
 
 /**
@@ -214,11 +219,22 @@ export interface GrossConsideration {
  * This single figure serves both the Rs. 45 lakh affordable test and the
  * taxable value — they are the same statutory base, which is why a charge head
  * carries one inclusion switch rather than two.
+ *
+ * `knownConsideration` — typically a unit's `considerationRecognized` from
+ * `computeUnitLedger()` (opening balance + every receipt/invoice to date) —
+ * floors the result: a unit cannot legitimately have been charged/received
+ * MORE than its true agreed price, so if the running total of real money
+ * exceeds base + charges, the unit master is understating the true gross,
+ * not the buyer overpaying. Using the higher figure means a stale or
+ * incomplete base_consideration/charges entry never lets an actually-crossed
+ * unit sit at the affordable rate just because nobody updated the master —
+ * see BUILDER_GST_POSITIONS.md §8.
  */
 export const computeGrossConsideration = (
   baseConsideration: number,
   charges: UnitCharge[] = [],
   settings: ChargeInclusionSettings = DEFAULT_CHARGE_INCLUSIONS,
+  knownConsideration = 0,
 ): GrossConsideration => {
   let included = 0;
   let excluded = 0;
@@ -228,11 +244,14 @@ export const computeGrossConsideration = (
     else excluded += amt;
   });
   const base = Number(baseConsideration) || 0;
+  const recorded = round2(base + included);
+  const known = round2(Number(knownConsideration) || 0);
   return {
     base: round2(base),
     includedCharges: round2(included),
     excludedCharges: round2(excluded),
-    gross: round2(base + included),
+    gross: Math.max(recorded, known),
+    impliedByReceipts: known > recorded + 0.005,
   };
 };
 
@@ -311,10 +330,13 @@ export const classifyUnit = (params: {
   isMetro: boolean;
   isRrep: boolean;
   settings?: ChargeInclusionSettings;
+  /** See computeGrossConsideration() — floors gross consideration at money
+   *  already recognised (opening + receipts), independent of base + charges. */
+  knownConsideration?: number;
 }): UnitClassification => {
   const gross = computeGrossConsideration(
     params.baseConsideration, params.charges || [],
-    params.settings || DEFAULT_CHARGE_INCLUSIONS,
+    params.settings || DEFAULT_CHARGE_INCLUSIONS, params.knownConsideration,
   );
   const affordable = testAffordable(
     params.unitType, params.carpetAreaSqM, gross.gross, params.isMetro,
