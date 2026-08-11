@@ -31,12 +31,12 @@ import {
 import BuilderProjectDetailPage from './BuilderProjectDetailPage';
 import BuilderAdjustmentsPage from './BuilderAdjustmentsPage';
 import BuilderDastavejPage from './BuilderDastavejPage';
-import { AFFORDABLE_VALUE_LIMIT, applyReclassificationLock, type ReclassificationLock } from '@/utils/builderRates';
+import { AFFORDABLE_VALUE_LIMIT } from '@/utils/builderRates';
 import BulkReceiptsDialog, { type BulkReceiptUnit } from '@/components/builder/BulkReceiptsDialog';
 import {
   ArrowLeft, Loader2, ChevronDown, ChevronRight, Plus, Receipt, FileText,
   AlertTriangle, UserPlus, Trash2, Users, Pencil, Wallet, CheckSquare, MoreHorizontal, Layers, ArrowUpDown,
-  History, ListChecks, Lock,
+  History, ListChecks,
 } from 'lucide-react';
 import {
   DEFAULT_CHARGE_INCLUSIONS, RATE_CODE_LABEL, classifyUnit, computeTds194IA,
@@ -49,7 +49,7 @@ import {
   type ChequeStatus, type InvoiceType, type ReceiptNature,
 } from '@/utils/builderLedger';
 import { computeDelayInterest, type DelayInterestBasis } from '@/utils/builderAdjustments';
-import { autoReclassifyProject, fetchReclassificationLocks } from '@/lib/builderAdjustmentsData';
+import { autoReclassifyProject } from '@/lib/builderAdjustmentsData';
 import { periodKey } from '@/utils/builderBuEvent';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
 
@@ -165,10 +165,6 @@ const BuilderBookingsPage: React.FC = () => {
   const [openings, setOpenings] = useState<Record<string, OpeningRow>>({});
   /** Units already carrying a re-rating (auto-posted or, rarely, manual). */
   const [reclassifiedUnitIds, setReclassifiedUnitIds] = useState<Set<string>>(new Set());
-  /** Active (POSTED) reclassification lock per unit — floors classifyFor()
-   *  at the locked rate per the "no downgrade" position. See
-   *  applyReclassificationLock() in builderRates.ts. */
-  const [locks, setLocks] = useState<Record<string, ReclassificationLock>>({});
   const [settings, setSettings] = useState<ChargeInclusionSettings>(DEFAULT_CHARGE_INCLUSIONS);
   const [delayInterestBasis, setDelayInterestBasis] = useState<DelayInterestBasis>('FLAT_18');
   /** False for a client who never raises a milestone invoice — hides that control on the ledger. */
@@ -294,22 +290,23 @@ const BuilderBookingsPage: React.FC = () => {
       const unitIds = unitRows.map((u) => u.id);
       if (!unitIds.length) {
         setCharges({}); setBookings([]); setMembers({}); setReceipts({});
-        setInvoices({}); setAdjustments([]); setOpenings({});
-        setReclassifiedUnitIds(new Set()); setLocks({});
+        setInvoices({}); setAdjustments([]); setOpenings({}); setReclassifiedUnitIds(new Set());
         return;
       }
 
-      const [{ data: chg }, { data: bkg }, { data: rcp }, { data: inv }, { data: opn }, unitLocks] =
+      const [{ data: chg }, { data: bkg }, { data: rcp }, { data: inv }, { data: opn }, { data: rcl }] =
         await Promise.all([
           supabase.from('builder_unit_charges').select('*').in('unit_id', unitIds),
           supabase.from('builder_bookings').select('*').in('unit_id', unitIds).order('booking_date'),
           supabase.from('builder_receipts').select('*').in('unit_id', unitIds).order('receipt_date'),
           supabase.from('builder_invoices').select('*').in('unit_id', unitIds).order('invoice_date'),
           supabase.from('builder_opening_balances').select('*').in('unit_id', unitIds),
-          fetchReclassificationLocks(unitIds),
+          // A REVERSED reclassification no longer counts as "handled" — the
+          // unit should show its re-rating-due banner again if it genuinely
+          // still needs one.
+          supabase.from('builder_reclassifications').select('unit_id').in('unit_id', unitIds).neq('status', 'REVERSED'),
         ]);
-      setLocks(unitLocks);
-      setReclassifiedUnitIds(new Set(Object.keys(unitLocks)));
+      setReclassifiedUnitIds(new Set(((rcl || []) as unknown as { unit_id: string }[]).map((r) => r.unit_id)));
 
       const cmap: Record<string, ChargeRow[]> = {};
       ((chg || []) as unknown as ChargeRow[]).forEach((c) => { (cmap[c.unit_id] ||= []).push(c); });
@@ -384,7 +381,7 @@ const BuilderBookingsPage: React.FC = () => {
     return testRrep(resi, comm);
   }, [project, units]);
 
-  const classifyFor = useCallback((u: UnitRow) => applyReclassificationLock(classifyUnit({
+  const classifyFor = useCallback((u: UnitRow) => classifyUnit({
     unitType: u.unit_type,
     carpetAreaSqM: Number(u.carpet_area_sqm) || 0,
     baseConsideration: Number(u.base_consideration) || 0,
@@ -395,7 +392,7 @@ const BuilderBookingsPage: React.FC = () => {
     isMetro: project?.is_metro ?? false,
     isRrep: rrep.isRrep,
     settings,
-  }), locks[u.id]), [charges, project, rrep.isRrep, settings, locks]);
+  }), [charges, project, rrep.isRrep, settings]);
 
   const classification = useMemo(() => {
     const out: Record<string, { rateCode: string; ratePct: number; agreementValue: number }> = {};
@@ -419,30 +416,42 @@ const BuilderBookingsPage: React.FC = () => {
   }, []);
 
   /**
-   * Re-rating (§8) posts itself the moment a unit crosses ₹45L — no staff
-   * selection. This is the daily workspace, so the correction fires from
-   * here rather than waiting for anyone to open the Adjustments tab; Builder
-   * Returns' Generate step re-runs the same check as a safety net for
-   * whichever page a unit actually crossed on.
+   * A unit crossing ₹45L (or falling back below it) is kept in sync the
+   * moment it's detected — no staff selection. A period already Filed gets a
+   * formal Table 10 amendment (permanent, interest included, per §8's "no
+   * downgrade" position — a filed return can only be corrected, not
+   * silently rewritten); an unfiled period is simply corrected in place, so
+   * a data-entry mistake caught before filing never needs an amendment at
+   * all. Builder Returns' Generate step re-runs the same check as a safety
+   * net for whichever page a unit actually crossed on.
    */
   useEffect(() => {
-    if (!projectId || !units.length) return;
+    if (!projectId || !units.length || !project?.client_id) return;
     (async () => {
       try {
-        const posted = await autoReclassifyProject(projectId, classification, user?.id ?? null);
+        const { posted, resynced } = await autoReclassifyProject(
+          projectId, classification, user?.id ?? null, project.client_id,
+        );
         if (posted.length) {
           toast.success(
-            `${posted.length} unit${posted.length === 1 ? '' : 's'} auto re-rated on crossing ₹45,00,000 `
+            `${posted.length} unit${posted.length === 1 ? '' : 's'} re-rated on a filed period crossing ₹45,00,000 `
             + `(${posted.map((c) => c.unitNo).join(', ')}) — Table 10 amendment and interest posted.`,
           );
           setReclassifiedUnitIds((prev) => new Set([...prev, ...posted.map((c) => c.unitId)]));
+        }
+        if (resynced.length) {
+          const names = resynced.map((r) => units.find((u) => u.id === r.unitId)?.unit_no || r.unitId);
+          toast.info(
+            `${resynced.length} unit${resynced.length === 1 ? '' : 's'} resynced to the current rate on unfiled `
+            + `periods (${names.join(', ')}) — no amendment needed, nothing filed yet.`,
+          );
         }
       } catch (e) {
         toast.error(`Auto re-rating failed for one or more units: ${(e as Error).message}`);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, units.length, classification]);
+  }, [projectId, units.length, classification, project?.client_id]);
 
   const activeBookingFor = useCallback(
     (unitId: string) => bookings.find((b) => b.unit_id === unitId && b.status === 'Active') || null,
@@ -1587,12 +1596,6 @@ const BuilderBookingsPage: React.FC = () => {
                           </TableCell>
                           <TableCell className="text-sm">
                             {cls.ratePct}%
-                            {cls.locked && (
-                              <Lock
-                                className="inline h-3 w-3 ml-1 text-amber-600 align-text-top"
-                                title={`Locked at ${cls.ratePct}% since re-rating on ${new Date(cls.lock!.postedAt).toLocaleDateString('en-IN')} — a later fall in consideration does not restore the concession (see Adjustments). Base + charges alone would show a different rate here.`}
-                              />
-                            )}
                             <span className="block text-xs text-muted-foreground">eff. {cls.effectiveRatePct}%</span>
                           </TableCell>
                           <TableCell className="text-right text-sm">{formatINR(agreement)}</TableCell>
