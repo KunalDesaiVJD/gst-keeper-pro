@@ -169,6 +169,10 @@ const BuilderBookingsPage: React.FC = () => {
   const [delayInterestBasis, setDelayInterestBasis] = useState<DelayInterestBasis>('FLAT_18');
   /** False for a client who never raises a milestone invoice — hides that control on the ledger. */
   const [raisesInvoices, setRaisesInvoices] = useState(true);
+  /** GSTR-1 periods already Filed for this client — receipts/invoices dated
+   *  into one of these are rejected by the DB; this is just the same check
+   *  surfaced before the click instead of after it. */
+  const [filedPeriods, setFiledPeriods] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -268,6 +272,11 @@ const BuilderBookingsPage: React.FC = () => {
       setSettings(clientSettings as ChargeInclusionSettings);
       setDelayInterestBasis(clientSettings.delay_interest_basis);
       setRaisesInvoices(clientSettings.raises_invoices !== false);
+
+      const { data: filed } = await supabase
+        .from('filing_status').select('period_month')
+        .eq('client_id', p.client_id).eq('return_type', 'GSTR-1').eq('status', 'Filed');
+      setFiledPeriods(new Set(((filed || []) as { period_month: string }[]).map((f) => f.period_month)));
 
       const [{ data: unt }, { data: grp }] = await Promise.all([
         supabase.from('builder_units').select('*').eq('project_id', projectId)
@@ -2052,6 +2061,12 @@ const BuilderBookingsPage: React.FC = () => {
                 onValueChange={(v) => setReceiptForm({ ...receiptForm, receipt_month: v })}
                 placeholder="Select month"
               />
+              {filedPeriods.has(receiptForm.receipt_month) && (
+                <p className="mt-1 flex items-center gap-1 text-xs text-destructive">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  GSTR-1 for {receiptForm.receipt_month} is already Filed — this period is locked.
+                </p>
+              )}
             </div>
             <div>
               <Label>Nature</Label>
@@ -2257,7 +2272,7 @@ const BuilderBookingsPage: React.FC = () => {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setReceiptDialog(false)}>Cancel</Button>
-            <Button onClick={handleSaveReceipt} disabled={isSaving}>
+            <Button onClick={handleSaveReceipt} disabled={isSaving || filedPeriods.has(receiptForm.receipt_month)}>
               {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Record receipt
             </Button>
           </DialogFooter>
@@ -2282,6 +2297,12 @@ const BuilderBookingsPage: React.FC = () => {
                 id="i-date" type="date" value={invoiceForm.invoice_date}
                 onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_date: e.target.value })}
               />
+              {filedPeriods.has(dateToPeriod(invoiceForm.invoice_date)) && (
+                <p className="mt-1 flex items-center gap-1 text-xs text-destructive">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  GSTR-1 for {dateToPeriod(invoiceForm.invoice_date)} is already Filed — this period is locked.
+                </p>
+              )}
             </div>
             <div>
               <Label>Type</Label>
@@ -2353,7 +2374,10 @@ const BuilderBookingsPage: React.FC = () => {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setInvoiceDialog(false)}>Cancel</Button>
-            <Button onClick={handleSaveInvoice} disabled={isSaving}>
+            <Button
+              onClick={handleSaveInvoice}
+              disabled={isSaving || filedPeriods.has(dateToPeriod(invoiceForm.invoice_date))}
+            >
               {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Raise invoice
             </Button>
           </DialogFooter>
