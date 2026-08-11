@@ -66,8 +66,8 @@ export const BUILDER_SAC = '9954';
  */
 const DOC_CLASS: Record<string, { num: number; label: string }> = {
   INVOICE_B2CS: { num: 1, label: 'Invoices for outward supply' },
-  ADVANCE_11A: { num: 4, label: 'Receipt voucher' },
-  CREDIT_NOTE: { num: 8, label: 'Credit note' },
+  ADVANCE_11A: { num: 6, label: 'Receipt voucher' },
+  CREDIT_NOTE: { num: 5, label: 'Credit note' },
 };
 
 export interface DocSeriesLine {
@@ -354,7 +354,7 @@ export function buildBuilderGstr1(params: {
   // ── Table 13 — documents issued ──────────────────────────────────────────
   const docSeries = buildDocSeries(postings);
   if (docSeries.length) {
-    json.doc = {
+    json.doc_issue = {
       doc_det: docSeries.map((s) => ({
         doc_num: s.docNum,
         doc_typ: s.label,
