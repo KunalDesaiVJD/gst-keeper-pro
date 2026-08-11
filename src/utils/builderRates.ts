@@ -300,6 +300,10 @@ export interface UnitClassification {
   effectiveRatePct: number;  // on full consideration
   areaLimitSqM: number;
   isRrep: boolean;
+  /** True when a posted reclassification floors this below what raw inputs
+   *  would otherwise compute — see {@link applyReclassificationLock}. */
+  locked: boolean;
+  lock?: ReclassificationLock;
 }
 
 /** One call from raw unit inputs to a fully classified unit. */
@@ -328,8 +332,56 @@ export const classifyUnit = (params: {
     effectiveRatePct: EFFECTIVE_RATE_PCT[rateCode],
     areaLimitSqM: affordable.areaLimitSqM,
     isRrep: params.isRrep,
+    locked: false,
   };
 };
+
+/** A unit's posted reclassification — the permanent rate the "no downgrade"
+ *  position (§8) holds it to, regardless of what current inputs compute. */
+export interface ReclassificationLock {
+  toRateCode: BuilderRateCode;
+  toRatePct: number;
+  postedAt: string;
+  reason: string | null;
+}
+
+/**
+ * Floors a freshly computed classification at a unit's posted reclassification.
+ *
+ * `classifyUnit()` is a pure function of TODAY's base consideration and
+ * charges — it has no memory of history. That is correct for a unit crossing
+ * ₹45L for the first time, but wrong once a reclassification has posted: per
+ * §8 of BUILDER_GST_POSITIONS.md, "a later fall below ₹45 lakh does not
+ * restore the concession." Without this, editing (or correcting) a charge
+ * after the crossing silently recomputes the unit back to the lower rate
+ * everywhere the raw classification is used — the display badge, and the
+ * actual rate a new receipt or invoice gets taxed at.
+ *
+ * Only ever floors upward-to-locked, never the reverse: a unit's residential
+ * classification has exactly two tiers (AFFORDABLE, OTHER_RESIDENTIAL), so
+ * once locked at the higher one there is nothing higher current inputs could
+ * legitimately compute to.
+ */
+export function applyReclassificationLock(
+  cls: UnitClassification,
+  lock: ReclassificationLock | null | undefined,
+): UnitClassification {
+  if (!lock) return cls;
+  return {
+    ...cls,
+    rateCode: lock.toRateCode,
+    ratePct: lock.toRatePct,
+    effectiveRatePct: EFFECTIVE_RATE_PCT[lock.toRateCode],
+    // Keep isAffordable in step with the locked rate code — otherwise a unit
+    // can show "Affordable: Yes" next to "Rate: 7.5%", which is exactly the
+    // kind of self-contradictory display this exists to prevent. A lock only
+    // ever fires by moving OUT of AFFORDABLE (see findReclassCandidates), so
+    // this is always a flip to false, never the reverse.
+    affordable: { ...cls.affordable, isAffordable: lock.toRateCode === 'AFFORDABLE' },
+    locked: true,
+    lock,
+  };
+}
 
 // ─── Tax computation ────────────────────────────────────────────────────────
 
