@@ -36,7 +36,7 @@ import { fetchBuilderSettings } from '@/lib/builderSettings';
 import {
   applyBounceOffsets, autoReclassifyProject, findAvailableInPeriod, findOffsetCandidates,
   findReclassCandidates, raiseBounceReversal, raiseCreditNote, restateReceipt,
-  saveReclassification, scheduleFor, type ReclassCandidate,
+  reverseReclassification, saveReclassification, scheduleFor, type ReclassCandidate,
 } from '@/lib/builderAdjustmentsData';
 import { cancelBooking, recordRefundPayment } from '@/lib/builderCancellationData';
 
@@ -55,6 +55,7 @@ interface ReclassRow {
   id: string; unit_id: string; posting_period: string; status: string;
   total_value_retaxed: number; total_differential_tax: number; total_interest: number;
   from_rate_pct: number; to_rate_pct: number; triggered_on: string;
+  reversed_at: string | null; reversal_reason: string | null;
 }
 interface BounceRow {
   id: string; receipt_id: string; unit_id: string; original_period: string;
@@ -139,6 +140,9 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
   const [reclassPeriod, setReclassPeriod] = useState(currentPeriod());
   const [reclassReason, setReclassReason] = useState('');
 
+  const [reverseDialog, setReverseDialog] = useState<ReclassRow | null>(null);
+  const [reverseReason, setReverseReason] = useState('');
+
   const [cnDialog, setCnDialog] = useState(false);
   const [cnForm, setCnForm] = useState({
     unit_id: '', note_date: today(), note_type: 'CANCELLATION' as const,
@@ -164,6 +168,7 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
   const [refundPreview, setRefundPreview] = useState<{ available: number } | null>(null);
 
   const canEdit = canPostBuilderAdjustments();
+  const isSuperAdmin = user?.role === 'superadmin';
   const unitNo = useCallback((id: string) => units.find((u) => u.id === id)?.unit_no || '—', [units]);
 
   const load = useCallback(async () => {
@@ -376,6 +381,34 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
     if (error) { toast.error(error.message); return; }
     toast.success('Re-rating posted to Table 10');
     await load();
+  };
+
+  /**
+   * Void a POSTED reclassification — e.g. it was triggered by a charge that
+   * turned out to be a mistake and was removed shortly after. Superadmin-only:
+   * this reverses real posted tax and interest, not a routine edit.
+   */
+  const handleReverseReclass = async () => {
+    if (!reverseDialog) return;
+    if (!reverseReason.trim()) { toast.error('A reason is required'); return; }
+    setIsSaving(true);
+    try {
+      await reverseReclassification({
+        reclassificationId: reverseDialog.id, reason: reverseReason.trim(), userId: user?.id ?? null,
+      });
+      toast.success(
+        `Reversed — the Table 10 correction and its interest no longer appear in the return. ${unitNo(reverseDialog.unit_id)}'s `
+        + 'live classification governs again. If any receipt/invoice in the affected period had its own rate rewritten '
+        + 'while this was locked, check and re-save it by hand — reversing does not rewrite those automatically.',
+      );
+      setReverseDialog(null);
+      setReverseReason('');
+      await load();
+    } catch (e) {
+      toast.error(`Could not reverse: ${(e as Error).message}`);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // ── Bounce ───────────────────────────────────────────────────────────────
@@ -818,16 +851,32 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
                         <TableCell className="text-right text-sm font-medium">{formatINR(r.total_differential_tax)}</TableCell>
                         <TableCell className="text-right text-sm">{formatINR(r.total_interest)}</TableCell>
                         <TableCell>
-                          <Badge className={r.status === 'POSTED'
-                            ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                            : 'bg-amber-100 text-amber-800 border-amber-200'}>
+                          <Badge className={
+                            r.status === 'POSTED' ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                              : r.status === 'REVERSED' ? 'bg-slate-100 text-slate-700 border-slate-200'
+                                : 'bg-amber-100 text-amber-800 border-amber-200'
+                          }>
                             {r.status}
                           </Badge>
+                          {r.status === 'REVERSED' && r.reversal_reason && (
+                            <span className="block text-xs text-muted-foreground mt-0.5" title={r.reversal_reason}>
+                              {r.reversal_reason}
+                            </span>
+                          )}
                         </TableCell>
                         <TableCell>
-                          {canEdit && r.status !== 'POSTED' && (
+                          {canEdit && r.status === 'DRAFT' && (
                             <Button size="sm" onClick={() => handlePostReclass(r)}>
                               <Send className="h-3 w-3 mr-1" /> Post
+                            </Button>
+                          )}
+                          {isSuperAdmin && r.status === 'POSTED' && (
+                            <Button
+                              size="sm" variant="outline"
+                              className="text-red-700 border-red-200 hover:bg-red-50"
+                              onClick={() => { setReverseDialog(r); setReverseReason(''); }}
+                            >
+                              <Undo2 className="h-3 w-3 mr-1" /> Reverse
                             </Button>
                           )}
                         </TableCell>
@@ -1504,6 +1553,38 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
             <Button variant="outline" onClick={() => setReclassDialog(null)}>Cancel</Button>
             <Button onClick={handleSaveReclass} disabled={isSaving}>
               {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save schedule
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Reverse reclassification dialog ─────────────────────────────────── */}
+      <Dialog open={!!reverseDialog} onOpenChange={(o) => { if (!o) { setReverseDialog(null); setReverseReason(''); } }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Reverse re-rating — unit {reverseDialog ? unitNo(reverseDialog.unit_id) : ''}</DialogTitle>
+            <DialogDescription>
+              Voids this reclassification. The Table 10 correction (
+              {reverseDialog ? formatINR(reverseDialog.total_differential_tax) : ''} differential tax,{' '}
+              {reverseDialog ? formatINR(reverseDialog.total_interest) : ''} interest) drops out of the return, and
+              the unit's live classification governs again. This does not rewrite any receipt or invoice whose own
+              rate was saved while the unit was locked — check those by hand afterwards.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div>
+            <Label htmlFor="reverse-reason">Reason (required)</Label>
+            <Input
+              id="reverse-reason" value={reverseReason}
+              placeholder="e.g. the parking charge that triggered this was entered in error and removed same day"
+              onChange={(e) => setReverseReason(e.target.value)}
+            />
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setReverseDialog(null); setReverseReason(''); }}>Cancel</Button>
+            <Button variant="destructive" onClick={handleReverseReclass} disabled={isSaving || !reverseReason.trim()}>
+              {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Reverse
             </Button>
           </DialogFooter>
         </DialogContent>

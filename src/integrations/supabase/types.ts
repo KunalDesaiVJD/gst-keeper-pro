@@ -2165,6 +2165,9 @@ export type Database = {
           posted_by: string | null
           posting_period: string
           reason: string | null
+          reversal_reason: string | null
+          reversed_at: string | null
+          reversed_by: string | null
           status: string
           to_rate_code: string
           to_rate_pct: number
@@ -2187,6 +2190,9 @@ export type Database = {
           posted_by?: string | null
           posting_period: string
           reason?: string | null
+          reversal_reason?: string | null
+          reversed_at?: string | null
+          reversed_by?: string | null
           status?: string
           to_rate_code: string
           to_rate_pct: number
@@ -2209,6 +2215,9 @@ export type Database = {
           posted_by?: string | null
           posting_period?: string
           reason?: string | null
+          reversal_reason?: string | null
+          reversed_at?: string | null
+          reversed_by?: string | null
           status?: string
           to_rate_code?: string
           to_rate_pct?: number

@@ -162,6 +162,21 @@ understate it materially on an older unit.
 
 **No downgrade.** A later fall below ₹45 lakh does not restore the concession.
 
+**The lock is enforced everywhere a unit's rate is used**, not only in the
+return — the unit list, receipt/invoice entry, opening balances and bulk
+entry all read the same posted reclassification and float the rate at the
+locked one, never the raw recompute off today's base + charges
+(`applyReclassificationLock()` in `src/utils/builderRates.ts`).
+
+**Reversal is for a mistaken crossing, not a real downgrade.** If the charge
+that triggered the crossing turns out to have been entered in error and is
+removed, the crossing was never real, so the correction it triggered can be
+voided (superadmin only, with a reason recorded — `builder_reclassifications.
+status = 'REVERSED'`). This is distinct from — and does not create an
+exception to — "no downgrade": a *genuine* later fall in consideration still
+never restores the concession; only a reclassification shown to have been
+triggered by bad data is eligible for reversal.
+
 ## 9. Bounce reversals — *position*
 
 | Situation | Treatment |

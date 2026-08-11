@@ -1,6 +1,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import {
-  classifyUnit, computeTax, testRrep, type BuilderRateCode, type ChargeInclusionSettings,
+  classifyUnit, computeTax, testRrep,
+  type BuilderRateCode, type ChargeInclusionSettings, type ReclassificationLock,
 } from '@/utils/builderRates';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
 import {
@@ -197,9 +198,11 @@ async function autoPostReclassification(params: {
 /**
  * Detect and post every re-rating a project currently needs, given a
  * classification map the caller has already computed. Skips any unit that
- * already carries a reclassification row (posted earlier, by this sweep or
- * by hand) so this never double-posts. Returns whichever candidates were
- * just posted, for a toast.
+ * already carries an ACTIVE (POSTED) reclassification so this never
+ * double-posts — but a REVERSED one no longer counts, so a unit whose
+ * mistaken reclassification was voided is free to be re-detected if it
+ * genuinely crosses ₹45L again later. Returns whichever candidates were just
+ * posted, for a toast.
  */
 export async function autoReclassifyProject(
   projectId: string,
@@ -210,7 +213,7 @@ export async function autoReclassifyProject(
   if (!unitIds.length) return [];
 
   const { data: existing } = await supabase
-    .from('builder_reclassifications').select('unit_id').in('unit_id', unitIds);
+    .from('builder_reclassifications').select('unit_id').in('unit_id', unitIds).neq('status', 'REVERSED');
   const done = new Set(((existing || []) as { unit_id: string }[]).map((r) => r.unit_id));
 
   const candidates = (await findReclassCandidates(projectId, classification))
@@ -223,6 +226,78 @@ export async function autoReclassifyProject(
     await autoPostReclassification({ candidate: c, schedule, postingPeriod, userId });
   }
   return candidates;
+}
+
+/**
+ * The active reclassification lock per unit — every consumer of
+ * `classifyUnit()` that needs the true, current rate (not just a fresh
+ * recompute) runs its result through `applyReclassificationLock()` with the
+ * entry from this map. See that function's doc comment for why.
+ */
+export async function fetchReclassificationLocks(
+  unitIds: string[],
+): Promise<Record<string, ReclassificationLock>> {
+  if (!unitIds.length) return {};
+  const { data, error } = await supabase
+    .from('builder_reclassifications')
+    .select('unit_id, to_rate_code, to_rate_pct, posted_at, reason')
+    .in('unit_id', unitIds)
+    .eq('status', 'POSTED')
+    .order('posted_at', { ascending: false });
+  if (error) throw error;
+
+  type Row = {
+    unit_id: string; to_rate_code: string; to_rate_pct: number;
+    posted_at: string; reason: string | null;
+  };
+  const out: Record<string, ReclassificationLock> = {};
+  // Newest first, so the first row seen per unit is the one that governs —
+  // relevant once a unit can carry more than one POSTED row over its life
+  // (a reversed one followed by a fresh, genuine re-rating later).
+  ((data || []) as Row[]).forEach((r) => {
+    if (out[r.unit_id]) return;
+    out[r.unit_id] = {
+      toRateCode: r.to_rate_code as BuilderRateCode,
+      toRatePct: r.to_rate_pct,
+      postedAt: r.posted_at,
+      reason: r.reason,
+    };
+  });
+  return out;
+}
+
+/**
+ * Void a POSTED reclassification: it and its Table 10 legs drop out of
+ * `builder_period_postings` (every branch there already filters
+ * `WHERE rc.status = 'POSTED'`), and the unit's live classification governs
+ * again from this point on.
+ *
+ * Deliberately does NOT attempt to rewrite any builder_receipts/
+ * builder_invoices row whose own rate_code may have been overwritten by an
+ * edit made while the unit was locked — `handleSaveReceipt`/`handleSaveInvoice`
+ * rewrite the derived tax on every save, so a receipt touched during the
+ * locked window can carry the higher rate directly, not just via the Table 10
+ * overlay. There is no reliable way to reconstruct "what it was before" from
+ * `builder_reclassification_periods` alone, so the caller is responsible for
+ * checking the affected unit's postings after reversing and re-saving any
+ * that still carry the old (now-wrong) rate by hand.
+ */
+export async function reverseReclassification(params: {
+  reclassificationId: string;
+  reason: string;
+  userId: string | null;
+}): Promise<void> {
+  const { error } = await supabase
+    .from('builder_reclassifications')
+    .update({
+      status: 'REVERSED',
+      reversed_at: new Date().toISOString(),
+      reversed_by: params.userId,
+      reversal_reason: params.reason || null,
+    })
+    .eq('id', params.reclassificationId)
+    .eq('status', 'POSTED');
+  if (error) throw error;
 }
 
 /**
