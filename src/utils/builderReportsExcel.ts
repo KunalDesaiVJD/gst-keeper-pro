@@ -3,7 +3,7 @@ import { prettyPeriodLabel } from '@/utils/builderLedger';
 import { POSTING_BASIS_LABEL, creditNoteDeadline, type PostingBasis } from '@/utils/builderBuEvent';
 import { REPORT_FIRM, nowStamp, reportFileName } from '@/utils/builderReportTheme';
 import type {
-  BuWorkingReport, PeriodReport, ReportContext, UnitLedgerReport,
+  BuWorkingReport, Drc03Report, PeriodReport, ReportContext, UnitLedgerReport,
 } from '@/lib/builderReportData';
 
 // Excel renderers.
@@ -267,4 +267,40 @@ export const memberStatementExcel = (ctx: ReportContext, r: UnitLedgerReport): v
   });
 
   XLSX.writeFile(wb, reportFileName(['Statement', r.unitNo, r.members[0]?.name], 'xlsx'));
+};
+
+// ─── 5. DRC-03 workpaper ────────────────────────────────────────────────────
+
+export const drc03WorkpaperExcel = (ctx: ReportContext, r: Drc03Report): void => {
+  const wb = XLSX.utils.book_new();
+  const head = titleBlock(ctx, 'DRC-03 workpaper', [
+    ['Unit', r.unitNo],
+    ['Rate change', `${r.fromRatePct}% to ${r.toRatePct}%`],
+    ['Posting period', prettyPeriodLabel(r.postingPeriod)],
+    ['DRC-03 status', r.drc03Status === 'FILED' ? `Filed${r.drc03Arn ? ` — ${r.drc03Arn}` : ''}` : 'Pending'],
+  ]);
+  const headerRowIdx = head.length;
+
+  applySheet(wb, 'DRC-03', [
+    ...head,
+    ['Period', 'Taxable value', `Tax at ${r.fromRatePct}%`, `Tax at ${r.toRatePct}%`, 'Differential', 'Due date', 'Days', 'Interest'],
+    ...r.periods.map((p): Cell[] => [
+      prettyPeriodLabel(p.periodMonth), p.taxableValue,
+      p.oldCgst + p.oldSgst, p.newCgst + p.newSgst,
+      p.differentialTax, p.dueDate, p.interestDays, p.interestAmount,
+    ]),
+    ['Total', r.totals.valueRetaxed, '', '', r.totals.differentialTax, '', '', r.totals.interest],
+    [],
+    ['Total payable by DRC-03 (tax + interest)', r.totals.differentialTax + r.totals.interest],
+    [],
+    ['The concession under Notification 03/2019-CT(R) never applied to this unit once its gross '
+      + 'consideration crossed ₹45,00,000 — the higher rate is due on everything already offered to tax, '
+      + 'discharged by voluntary payment (DRC-03) rather than a GSTR-1 amendment.'],
+  ], {
+    widths: [22, 16, 16, 16, 14, 14, 8, 14],
+    numericFrom: 1,
+    headerRows: [headerRowIdx],
+  });
+
+  XLSX.writeFile(wb, reportFileName(['DRC03', r.unitNo, r.postingPeriod], 'xlsx'));
 };

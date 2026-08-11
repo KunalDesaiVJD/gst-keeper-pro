@@ -6,7 +6,7 @@ import {
   reportTable, startDoc, type StatTile,
 } from '@/utils/builderReportTheme';
 import type {
-  BuWorkingReport, PeriodReport, ReportContext, UnitLedgerReport,
+  BuWorkingReport, Drc03Report, PeriodReport, ReportContext, UnitLedgerReport,
 } from '@/lib/builderReportData';
 
 // PDF renderers for the five working papers.
@@ -376,4 +376,56 @@ export const memberStatementPdf = (ctx: ReportContext, r: UnitLedgerReport): voi
 
   drawFooters(doc, nowStamp());
   doc.save(reportFileName(['Statement', r.unitNo, r.members[0]?.name], 'pdf'));
+};
+
+// ─── 5. DRC-03 workpaper ────────────────────────────────────────────────────
+
+export const drc03WorkpaperPdf = (ctx: ReportContext, r: Drc03Report): void => {
+  const { doc, y } = startDoc('l', {
+    title: 'DRC-03 workpaper',
+    subtitle: `Unit ${r.unitNo} — ${r.fromRatePct}% to ${r.toRatePct}%`,
+    fields: [
+      ...clientFields(ctx),
+      { label: 'Posting period', value: prettyPeriodLabel(r.postingPeriod) },
+      { label: 'DRC-03 status', value: r.drc03Status === 'FILED' ? `Filed${r.drc03Arn ? ` — ${r.drc03Arn}` : ''}` : 'Pending' },
+    ],
+  });
+
+  const cursor = drawStatBand(doc, [
+    { label: 'Value re-taxed', value: formatINR(r.totals.valueRetaxed) },
+    { label: 'Differential tax', value: formatINR(r.totals.differentialTax) },
+    { label: 'Interest u/s 50', value: formatINR(r.totals.interest) },
+    { label: 'Total payable', value: formatINR(r.totals.differentialTax + r.totals.interest), note: 'DRC-03' },
+  ], y);
+
+  const noted = drawNote(doc,
+    `The concession under Notification 03/2019-CT(R) never applied to this unit once its gross `
+    + `consideration crossed ₹45,00,000 — the higher rate was due on everything already offered to tax. `
+    + `Rather than a GSTR-1 amendment, the firm discharges this by voluntary payment (DRC-03): the `
+    + `differential tax below, plus interest u/s 50 at 18% p.a. computed period-wise from each original `
+    + `period's own GSTR-3B due date to the posting period's due date.`,
+    cursor);
+
+  reportTable(doc, {
+    startY: noted,
+    numericFrom: 1,
+    head: [['Period', 'Taxable value', `Tax at ${r.fromRatePct}%`, `Tax at ${r.toRatePct}%`, 'Differential', 'Due date', 'Days', 'Interest']],
+    body: r.periods.map((p) => [
+      prettyPeriodLabel(p.periodMonth),
+      n(p.taxableValue),
+      n(p.oldCgst + p.oldSgst),
+      n(p.newCgst + p.newSgst),
+      n(p.differentialTax),
+      p.dueDate,
+      String(p.interestDays),
+      n(p.interestAmount),
+    ]),
+    foot: [[
+      'Total', n(r.totals.valueRetaxed), '', '', n(r.totals.differentialTax), '', '', n(r.totals.interest),
+    ]],
+    footStyles: { fillColor: [226, 232, 240], textColor: [17, 24, 39], fontStyle: 'bold' },
+  });
+
+  drawFooters(doc, nowStamp());
+  doc.save(reportFileName(['DRC03', r.unitNo, r.postingPeriod], 'pdf'));
 };
