@@ -124,6 +124,7 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
   const [pending, setPending] = useState<PendingUnit[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
 
   const [dialog, setDialog] = useState(false);
   const [editUnit, setEditUnit] = useState<{ id: string; unit_no: string } | null>(null);
@@ -310,6 +311,41 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
       toast.error(`Could not save: ${(e as Error).message}`);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  /**
+   * A wrong date/value entirely — not a date that should move, which is just
+   * an overwrite via Save. Blocked whenever a differential (or Schedule III
+   * record) has already been posted off this unit's dastavej: clearing the
+   * date then would leave that posting orphaned, tracing back to nothing in
+   * the register. Unpost it on the BU Events page first — same rule the rest
+   * of this module uses for undoing a posted event.
+   */
+  const handleClear = async () => {
+    if (!editUnit) return;
+    setIsClearing(true);
+    try {
+      const { data: unitRow, error: uErr } = await supabase
+        .from('builder_units').select('bu_event_id').eq('id', editUnit.id).single();
+      if (uErr) throw uErr;
+      if ((unitRow as { bu_event_id: string | null }).bu_event_id) {
+        toast.error(
+          'A differential (or Schedule III record) is already posted off this date — unpost it on the '
+          + 'BU Events page first, then clear the date here.',
+        );
+        return;
+      }
+      const { error } = await supabase.from('builder_units')
+        .update({ dastavej_date: null, dastavej_value: null }).eq('id', editUnit.id);
+      if (error) throw error;
+      toast.success('Dastavej date cleared');
+      setDialog(false);
+      await load();
+    } catch (e) {
+      toast.error(`Could not clear: ${(e as Error).message}`);
+    } finally {
+      setIsClearing(false);
     }
   };
 
@@ -595,8 +631,16 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
           </div>
 
           <DialogFooter>
+            {form.dastavej_date && (
+              <Button
+                variant="destructive" className="mr-auto"
+                onClick={handleClear} disabled={isSaving || isClearing}
+              >
+                {isClearing && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Clear date
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setDialog(false)}>Cancel</Button>
-            <Button onClick={handleSave} disabled={isSaving}>
+            <Button onClick={handleSave} disabled={isSaving || isClearing}>
               {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save
             </Button>
           </DialogFooter>
