@@ -4084,6 +4084,36 @@ export type Database = {
         }
         Relationships: []
       }
+      return_reminder_schedules: {
+        Row: {
+          due_day: number
+          reminder_1_day: number
+          reminder_2_day: number
+          reminder_final_day: number
+          return_type: Database["public"]["Enums"]["return_type"]
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          due_day: number
+          reminder_1_day: number
+          reminder_2_day: number
+          reminder_final_day: number
+          return_type: Database["public"]["Enums"]["return_type"]
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          due_day?: number
+          reminder_1_day?: number
+          reminder_2_day?: number
+          reminder_final_day?: number
+          return_type?: Database["public"]["Enums"]["return_type"]
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       rcm_data: {
         Row: {
           cgst_2_5: number | null

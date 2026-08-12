@@ -85,6 +85,11 @@ const ReminderSettingsCard: React.FC<Props> = ({ clientId }) => {
           Automatic email reminders (from gst@vjdesai.com) asking this client to share their GST return data,
           plus a confirmation once the return is filed. Set per client.
         </CardDescription>
+        <CardDescription className="pt-1">
+          The on/off switch below applies to every return type. For GSTR-1, GSTR-3B, GSTR-6 and GSTR-7 the reminder
+          days follow the firm-wide schedule (Settings → GST Reminders → Return reminder schedule), not the interval
+          setting here — the interval and escalation settings below only apply to other return types (ITC-04, CMP-08, …).
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {loading ? (

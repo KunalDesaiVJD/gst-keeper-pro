@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { prettyPeriod } from '@/lib/gstReminders';
 import EmailTemplatesEditor from '@/components/reminders/EmailTemplatesEditor';
+import ReturnReminderScheduleCard from '@/components/reminders/ReturnReminderScheduleCard';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -169,13 +170,17 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
         </span>
       </div>
 
+      {/* Firm-wide reminder-day schedule for GSTR-1 / GSTR-3B / GSTR-6 / GSTR-7 */}
+      <ReturnReminderScheduleCard />
+
       {/* Queue-due action */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Queue due reminders</CardTitle>
           <CardDescription>
             For every client with reminders enabled whose return is still <strong>Data Pending</strong> this period,
-            queue the next reminder if it's due (interval elapsed, under the cap).
+            queue the next reminder if it's due — the fixed schedule above for GSTR-1 / GSTR-3B / GSTR-6 / GSTR-7,
+            or the interval-based ladder (under the cap) for any other return type.
           </CardDescription>
         </CardHeader>
         <CardContent>
