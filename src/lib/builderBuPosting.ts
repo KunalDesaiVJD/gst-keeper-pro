@@ -1,9 +1,9 @@
 import { supabase } from '@/integrations/supabase/client';
-import { classifyUnit, computeTax, DEFAULT_CHARGE_INCLUSIONS, testRrep } from '@/utils/builderRates';
+import { classifyUnit, computeTax, DEFAULT_CHARGE_INCLUSIONS, testRrep, type BuilderRateCode } from '@/utils/builderRates';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
 import {
-  buildEventWorking, isPeriodBefore, periodOfDate,
-  type EventWorking, type PostingBasis, type WorkingUnitInput,
+  buildEventWorking, computeLateDiscoveryInterest, isPeriodBefore, periodOfDate,
+  type EventWorking, type LateDiscoveryInterest, type LateTranche, type PostingBasis, type WorkingUnitInput,
 } from '@/utils/builderBuEvent';
 
 // Preparing and posting a BU event.
@@ -467,6 +467,144 @@ export async function autoPostDastavejDifferential(params: {
   });
 
   return { action: 'POSTED', differentialValue: wu.differentialValue, cgst: wu.differentialCgst, sgst: wu.differentialSgst };
+}
+
+// ─── Late-discovery interest preview ───────────────────────────────────────
+//
+// For a dastavej/BU shortfall discovered long after the fact, where the
+// buyer kept paying and each payment was already taxed as an ordinary
+// advance in its own month — see computeLateDiscoveryInterest() for why the
+// shortfall must not simply be reposted in full. This computes the same
+// single-unit shortfall autoPostDastavejDifferential would, then prices
+// interest against the unit's own later, un-subsumed advance receipts
+// instead of posting a fresh differential for the whole amount.
+
+export async function previewLateDiscoveryInterest(params: {
+  unitId: string;
+  dastavejDate: string;
+}): Promise<LateDiscoveryInterest & { rateCode: BuilderRateCode; cutOffPeriod: string; bookedAtCutOff: boolean }> {
+  const { data: unitRow, error: uErr } = await supabase
+    .from('builder_units').select('*').eq('id', params.unitId).single();
+  if (uErr || !unitRow) throw new Error(uErr?.message || 'Unit not found');
+  const unit = unitRow as unknown as {
+    id: string; project_id: string; unit_no: string; unit_type: 'Residential' | 'Commercial';
+    carpet_area_sqm: number; base_consideration: number; status: string;
+  };
+
+  const { data: projectRow, error: pErr } = await supabase
+    .from('builder_projects').select('*').eq('id', unit.project_id).single();
+  if (pErr || !projectRow) throw new Error(pErr?.message || 'Project not found');
+  const project = projectRow as unknown as {
+    id: string; client_id: string; is_metro: boolean; carpet_area_source: 'DERIVED' | 'MANUAL';
+    manual_residential_carpet_sqm: number; manual_commercial_carpet_sqm: number;
+  };
+
+  const [{ data: chargeRows }, { data: allUnits }, settings] = await Promise.all([
+    supabase.from('builder_unit_charges').select('*').eq('unit_id', unit.id),
+    supabase.from('builder_units').select('unit_type, carpet_area_sqm, status').eq('project_id', unit.project_id),
+    fetchBuilderSettings(project.client_id),
+  ]);
+
+  const rrep = project.carpet_area_source === 'MANUAL'
+    ? testRrep(project.manual_residential_carpet_sqm, project.manual_commercial_carpet_sqm)
+    : testRrep(
+      ((allUnits || []) as { unit_type: string; carpet_area_sqm: number; status: string }[])
+        .filter((u) => u.unit_type === 'Residential' && u.status !== 'Cancelled')
+        .reduce((s, u) => s + (Number(u.carpet_area_sqm) || 0), 0),
+      ((allUnits || []) as { unit_type: string; carpet_area_sqm: number; status: string }[])
+        .filter((u) => u.unit_type === 'Commercial' && u.status !== 'Cancelled')
+        .reduce((s, u) => s + (Number(u.carpet_area_sqm) || 0), 0),
+    );
+
+  const cls = classifyUnit({
+    unitType: unit.unit_type,
+    carpetAreaSqM: Number(unit.carpet_area_sqm) || 0,
+    baseConsideration: Number(unit.base_consideration) || 0,
+    charges: ((chargeRows || []) as { charge_head: string; amount: number; include_override: boolean | null }[])
+      .map((c) => ({ charge_head: c.charge_head as never, amount: Number(c.amount) || 0, include_override: c.include_override })),
+    isMetro: !!project.is_metro,
+    isRrep: rrep.isRrep,
+    settings: settings || DEFAULT_CHARGE_INCLUSIONS,
+  });
+
+  const postingPeriod = periodOfDate(params.dastavejDate);
+  const prepared = await prepareBuEvent({
+    buDate: params.dastavejDate,
+    postingPeriod,
+    postingBasis: 'DISCOVERY',
+    units: [{
+      id: unit.id, unit_no: unit.unit_no, unit_type: unit.unit_type,
+      carpet_area_sqm: unit.carpet_area_sqm, dastavej_date: params.dastavejDate, status: unit.status,
+    }],
+    classification: { [unit.id]: { agreementValue: cls.gross.gross, rateCode: cls.rateCode, ratePct: cls.ratePct } },
+  });
+  const wu = prepared.working.units[0];
+
+  if (!wu.bookedAtCutOff || wu.differentialValue <= 0) {
+    return {
+      shortfallValue: 0, tranches: [], totalAllocated: 0, totalInterest: 0, residualUnrecovered: 0,
+      rateCode: wu.rateCode, cutOffPeriod: postingPeriod, bookedAtCutOff: wu.bookedAtCutOff,
+    };
+  }
+
+  // Ordinary advances dated AFTER the cut-off period, never subsumed by any
+  // BU event — these are exactly the payments that, unknown to whoever
+  // recorded them, were already covering this shortfall.
+  const { data: rcp } = await supabase
+    .from('builder_receipts')
+    .select('period_month, consideration, receipt_date')
+    .eq('unit_id', unit.id)
+    .eq('receipt_nature', 'ADVANCE')
+    .neq('cheque_status', 'Bounced')
+    .eq('gst_already_discharged', false)
+    .is('subsumed_by_bu_event_id', null);
+  const laterReceipts = ((rcp || []) as unknown as { period_month: string; consideration: number; receipt_date: string }[])
+    .filter((r) => !isPeriodBefore(r.period_month, postingPeriod) && r.period_month !== postingPeriod)
+    .sort((a, b) => a.receipt_date.localeCompare(b.receipt_date));
+
+  const tranches: LateTranche[] = laterReceipts.map((r) => ({
+    periodMonth: r.period_month, amount: Number(r.consideration) || 0,
+  }));
+
+  const result = computeLateDiscoveryInterest({
+    shortfallValue: wu.differentialValue, rateCode: wu.rateCode, cutOffPeriod: postingPeriod, tranches,
+  });
+
+  return { ...result, rateCode: wu.rateCode, cutOffPeriod: postingPeriod, bookedAtCutOff: true };
+}
+
+export async function saveLateDiscoveryInterest(params: {
+  unitId: string;
+  projectId: string;
+  dastavejDate: string;
+  preview: LateDiscoveryInterest & { rateCode: BuilderRateCode; cutOffPeriod: string };
+  userId: string | null;
+}): Promise<{ id: string }> {
+  const { data, error } = await supabase.from('builder_dastavej_late_interest').insert({
+    unit_id: params.unitId,
+    project_id: params.projectId,
+    dastavej_date: params.dastavejDate,
+    cut_off_period: params.preview.cutOffPeriod,
+    rate_code: params.preview.rateCode,
+    shortfall_value: params.preview.shortfallValue,
+    tranches: params.preview.tranches as never,
+    total_allocated: params.preview.totalAllocated,
+    total_interest: params.preview.totalInterest,
+    residual_unrecovered: params.preview.residualUnrecovered,
+    created_by: params.userId,
+  }).select('id').single();
+  if (error) throw error;
+  return { id: data.id };
+}
+
+export async function markLateDiscoveryInterestPaid(params: {
+  id: string;
+  arn: string;
+  paidDate: string;
+}): Promise<void> {
+  const { error } = await supabase.from('builder_dastavej_late_interest')
+    .update({ status: 'PAID', arn: params.arn, paid_date: params.paidDate }).eq('id', params.id);
+  if (error) throw error;
 }
 
 async function insertEventUnitRow(eventId: string, w: EventWorking['units'][number]): Promise<void> {

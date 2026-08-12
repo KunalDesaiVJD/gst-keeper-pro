@@ -386,3 +386,95 @@ export const creditNoteDeadline = (postingPeriod: string): string => {
   const fyEndYear = month >= 4 ? year + 1 : year;
   return `30/11/${fyEndYear}`;
 };
+
+// ─── Late-discovery interest ────────────────────────────────────────────────
+//
+// A dastavej/BU shortfall that goes unnoticed doesn't necessarily sit unpaid:
+// the buyer often keeps paying, and each payment gets taxed normally as an
+// ordinary Table 11A advance in ITS OWN month, with no idea it was actually
+// covering money that should already have been taxed in full back at the
+// cut-off. By the time the missed dastavej surfaces, posting the FULL
+// shortfall as a fresh differential would tax that money a second time —
+// prepareBuEvent()'s advancesBefore only ever looks at periods before the
+// cut-off, so it has no way to see (or credit) a later tranche.
+//
+// This allocates those later tranches against the shortfall instead, oldest
+// first, and prices only the one thing actually still owed on each: s.50
+// interest for paying it later than the cut-off period's own due date —
+// never the tax again. Whatever the tranches don't cover is a genuine
+// residual that was never taxed at all, and still needs an ordinary
+// DISCOVERY_WITH_INTEREST differential post for that leftover amount.
+
+export interface LateTranche {
+  periodMonth: string;
+  amount: number;
+}
+
+export interface PricedTranche extends LateTranche {
+  allocated: number;
+  taxableValue: number;
+  cgst: number;
+  sgst: number;
+  tax: number;
+  interestDays: number;
+  interestAmount: number;
+}
+
+export interface LateDiscoveryInterest {
+  shortfallValue: number;
+  tranches: PricedTranche[];
+  totalAllocated: number;
+  totalInterest: number;
+  /** Never taxed by any tranche — still needs a fresh differential post. */
+  residualUnrecovered: number;
+}
+
+/**
+ * Allocate `tranches` (oldest first) against `shortfallValue`, pricing s.50
+ * interest on each allocated amount from `cutOffPeriod`'s own due date to
+ * that tranche's own due date. Caller supplies tranches already sorted
+ * oldest-first and already known to be genuine, un-subsumed ordinary
+ * advances dated after the cut-off — this function only allocates and prices.
+ */
+export const computeLateDiscoveryInterest = (params: {
+  shortfallValue: number;
+  rateCode: BuilderRateCode;
+  cutOffPeriod: string;
+  tranches: LateTranche[];
+}): LateDiscoveryInterest => {
+  let remaining = round2(Math.max(0, params.shortfallValue));
+  const priced: PricedTranche[] = [];
+
+  for (const t of params.tranches) {
+    if (remaining <= 0.005) break;
+    const allocated = round2(Math.min(remaining, Math.max(0, t.amount)));
+    if (allocated <= 0.005) continue;
+    remaining = round2(remaining - allocated);
+
+    const tax = computeTax(allocated, params.rateCode);
+    const interest = computeSection50Interest(tax.totalTax, params.cutOffPeriod, t.periodMonth);
+
+    priced.push({
+      periodMonth: t.periodMonth,
+      amount: t.amount,
+      allocated,
+      taxableValue: tax.taxableValue,
+      cgst: tax.cgst,
+      sgst: tax.sgst,
+      tax: tax.totalTax,
+      interestDays: interest.days,
+      interestAmount: interest.amount,
+    });
+  }
+
+  const totalAllocated = round2(priced.reduce((s, t) => s + t.allocated, 0));
+  const totalInterest = round2(priced.reduce((s, t) => s + t.interestAmount, 0));
+
+  return {
+    shortfallValue: round2(Math.max(0, params.shortfallValue)),
+    tranches: priced,
+    totalAllocated,
+    totalInterest,
+    residualUnrecovered: round2(Math.max(0, params.shortfallValue - totalAllocated)),
+  };
+};

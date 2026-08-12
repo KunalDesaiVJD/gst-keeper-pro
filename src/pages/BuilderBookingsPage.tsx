@@ -79,6 +79,10 @@ interface MemberRow {
   id: string; booking_id: string; name: string; pan: string | null;
   ownership_ratio: number; is_primary: boolean;
 }
+interface CancellationRow {
+  id: string; booking_id: string; unit_id: string; cancellation_date: string;
+  refund_payable: number; refund_paid: number; status: string;
+}
 interface ReceiptRow {
   id: string; booking_id: string; unit_id: string; receipt_date: string;
   receipt_nature: ReceiptNature; amount_entered: number; amount_is_gst_inclusive: boolean;
@@ -163,6 +167,8 @@ const BuilderBookingsPage: React.FC = () => {
   const [invoices, setInvoices] = useState<Record<string, InvoiceRow[]>>({});
   const [adjustments, setAdjustments] = useState<AdjRow[]>([]);
   const [openings, setOpenings] = useState<Record<string, OpeningRow>>({});
+  /** Cancellations with an unpaid refund — one unit can carry more than one over time. */
+  const [openCancellations, setOpenCancellations] = useState<Record<string, CancellationRow[]>>({});
   /** Units already carrying a re-rating (auto-posted or, rarely, manual). */
   const [reclassifiedUnitIds, setReclassifiedUnitIds] = useState<Set<string>>(new Set());
   const [settings, setSettings] = useState<ChargeInclusionSettings>(DEFAULT_CHARGE_INCLUSIONS);
@@ -181,6 +187,8 @@ const BuilderBookingsPage: React.FC = () => {
   const [bookingUnit, setBookingUnit] = useState<UnitRow | null>(null);
   const [bookingForm, setBookingForm] = useState(emptyBooking);
   const [bookingMembers, setBookingMembers] = useState([{ ...emptyMember }]);
+  /** Must be ticked before Save when the unit carries an unpaid cancellation. */
+  const [bookingCancelAck, setBookingCancelAck] = useState(false);
 
   const [bulkReceipts, setBulkReceipts] = useState(false);
   /**
@@ -291,10 +299,11 @@ const BuilderBookingsPage: React.FC = () => {
       if (!unitIds.length) {
         setCharges({}); setBookings([]); setMembers({}); setReceipts({});
         setInvoices({}); setAdjustments([]); setOpenings({}); setReclassifiedUnitIds(new Set());
+        setOpenCancellations({});
         return;
       }
 
-      const [{ data: chg }, { data: bkg }, { data: rcp }, { data: inv }, { data: opn }, { data: rcl }] =
+      const [{ data: chg }, { data: bkg }, { data: rcp }, { data: inv }, { data: opn }, { data: rcl }, { data: cxl }] =
         await Promise.all([
           supabase.from('builder_unit_charges').select('*').in('unit_id', unitIds),
           supabase.from('builder_bookings').select('*').in('unit_id', unitIds).order('booking_date'),
@@ -305,8 +314,16 @@ const BuilderBookingsPage: React.FC = () => {
           // unit should show its re-rating-due banner again if it genuinely
           // still needs one.
           supabase.from('builder_reclassifications').select('unit_id').in('unit_id', unitIds).neq('status', 'REVERSED'),
+          // Cancellations whose refund is still unpaid — surfaced on the unit
+          // row and at re-booking time, since a unit freed for resale carries
+          // no other trace of money still owed to its previous member.
+          supabase.from('builder_cancellations').select('*').in('unit_id', unitIds).eq('status', 'OPEN'),
         ]);
       setReclassifiedUnitIds(new Set(((rcl || []) as unknown as { unit_id: string }[]).map((r) => r.unit_id)));
+
+      const cxlMap: Record<string, CancellationRow[]> = {};
+      ((cxl || []) as unknown as CancellationRow[]).forEach((c) => { (cxlMap[c.unit_id] ||= []).push(c); });
+      setOpenCancellations(cxlMap);
 
       const cmap: Record<string, ChargeRow[]> = {};
       ((chg || []) as unknown as ChargeRow[]).forEach((c) => { (cmap[c.unit_id] ||= []).push(c); });
@@ -488,6 +505,12 @@ const BuilderBookingsPage: React.FC = () => {
     [bookings],
   );
 
+  const openCancellationTotal = useCallback(
+    (unitId: string) => (openCancellations[unitId] || [])
+      .reduce((s, c) => s + Math.max(0, (Number(c.refund_payable) || 0) - (Number(c.refund_paid) || 0)), 0),
+    [openCancellations],
+  );
+
   const adjustmentsForUnit = useCallback((unitId: string) => {
     const invIds = new Set((invoices[unitId] || []).map((i) => i.id));
     return adjustments.filter((a) => invIds.has(a.invoice_id));
@@ -583,6 +606,7 @@ const BuilderBookingsPage: React.FC = () => {
     setBookingUnit(u);
     setBookingForm({ ...emptyBooking, total_consideration: String(cls.gross.gross || '') });
     setBookingMembers([{ ...emptyMember }]);
+    setBookingCancelAck(false);
     setBookingDialog(true);
   };
 
@@ -593,6 +617,10 @@ const BuilderBookingsPage: React.FC = () => {
     const ratioTotal = named.reduce((s, m) => s + (parseFloat(m.ownership_ratio) || 0), 0);
     if (Math.abs(ratioTotal - 100) > 0.01) {
       toast.error(`Ownership ratios must total 100% (currently ${ratioTotal}%)`);
+      return;
+    }
+    if ((openCancellations[bookingUnit.id] || []).length > 0 && !bookingCancelAck) {
+      toast.error('Acknowledge the unsettled cancellation on this unit before booking a new member');
       return;
     }
     setIsSaving(true);
@@ -1615,6 +1643,20 @@ const BuilderBookingsPage: React.FC = () => {
                                 Closed pre-onboarding
                               </Badge>
                             )}
+                            {(openCancellations[u.id] || []).length > 0 && (
+                              <Badge
+                                variant="outline"
+                                className="mt-1 text-[10px] block w-fit cursor-pointer border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                                title={
+                                  `${formatINR(openCancellationTotal(u.id))} refund still owed from `
+                                  + `${(openCancellations[u.id] || []).length > 1 ? 'earlier cancellations' : 'an earlier cancellation'} on this unit — `
+                                  + 'click to open the Cancellations tab'
+                                }
+                                onClick={() => navigate(`/builder-projects/${projectId}/adjustments?tab=cancellations`)}
+                              >
+                                {formatINR(openCancellationTotal(u.id))} refund pending
+                              </Badge>
+                            )}
                           </TableCell>
                           <TableCell className="text-sm">
                             {mem.length === 0 ? (
@@ -2045,9 +2087,45 @@ const BuilderBookingsPage: React.FC = () => {
             />
           </div>
 
+          {bookingUnit && (openCancellations[bookingUnit.id] || []).length > 0 && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900 space-y-2">
+              <div className="flex gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <div className="text-xs space-y-1">
+                  <p className="font-medium">
+                    This unit has {(openCancellations[bookingUnit.id] || []).length > 1 ? 'earlier cancellations' : 'an earlier cancellation'} with an unpaid refund:
+                  </p>
+                  <ul className="list-disc list-inside space-y-0.5">
+                    {(openCancellations[bookingUnit.id] || []).map((c) => (
+                      <li key={c.id}>
+                        {formatINR(Math.max(0, (Number(c.refund_payable) || 0) - (Number(c.refund_paid) || 0)))} owed
+                        to {(members[c.booking_id] || [])[0]?.name || 'the previous member'}, cancelled {c.cancellation_date}
+                      </li>
+                    ))}
+                  </ul>
+                  <p>
+                    Booking a new member here does not settle or affect that refund — it stays open,
+                    independently, on the Cancellations tab.
+                  </p>
+                </div>
+              </div>
+              <label className="flex items-start gap-2 text-xs pl-6">
+                <input
+                  type="checkbox" checked={bookingCancelAck}
+                  onChange={(e) => setBookingCancelAck(e.target.checked)}
+                  className="mt-0.5 h-3.5 w-3.5"
+                />
+                I understand the earlier refund is still outstanding and unrelated to this booking.
+              </label>
+            </div>
+          )}
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setBookingDialog(false)}>Cancel</Button>
-            <Button onClick={handleSaveBooking} disabled={isSaving}>
+            <Button
+              onClick={handleSaveBooking}
+              disabled={isSaving || (!!bookingUnit && (openCancellations[bookingUnit.id] || []).length > 0 && !bookingCancelAck)}
+            >
               {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Book unit
             </Button>
           </DialogFooter>

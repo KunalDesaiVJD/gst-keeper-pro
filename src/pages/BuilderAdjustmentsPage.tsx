@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorkspaceContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -123,7 +123,10 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
   const navigate = useNavigate();
   const { canPostBuilderAdjustments, user } = useAuth();
 
-  const [tab, setTab] = useState('reclass');
+  // Deep-linked from the Bookings page's open-cancellation badge — falls
+  // back to the usual default when nothing points here directly.
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState(searchParams.get('tab') || 'reclass');
   const [bounceFocusUnitId, setBounceFocusUnitId] = useState<string | null>(null);
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [units, setUnits] = useState<UnitRow[]>([]);
