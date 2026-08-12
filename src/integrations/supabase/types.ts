@@ -1313,6 +1313,7 @@ export type Database = {
           id: string
           note_date: string
           note_type: string
+          original_documents: Json
           period_month: string
           rate_code: string
           rate_pct: number
@@ -1334,6 +1335,7 @@ export type Database = {
           id?: string
           note_date: string
           note_type?: string
+          original_documents?: Json
           period_month: string
           rate_code: string
           rate_pct?: number
@@ -1355,6 +1357,7 @@ export type Database = {
           id?: string
           note_date?: string
           note_type?: string
+          original_documents?: Json
           period_month?: string
           rate_code?: string
           rate_pct?: number

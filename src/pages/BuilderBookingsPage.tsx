@@ -402,6 +402,7 @@ const BuilderBookingsPage: React.FC = () => {
         receipt_nature: r.receipt_nature, cheque_status: r.cheque_status,
         gst_already_discharged: r.gst_already_discharged,
         subsumed_by_bu_event_id: r.subsumed_by_bu_event_id,
+        cancelled_via_id: r.cancelled_via_id,
       })),
       invoices: (invoices[u.id] || []).map((i) => ({ consideration: i.consideration, cgst: i.cgst, sgst: i.sgst })),
       adjustments: unitAdjustments.map((a) => ({
@@ -504,6 +505,7 @@ const BuilderBookingsPage: React.FC = () => {
         receipt_nature: r.receipt_nature, cheque_status: r.cheque_status,
         gst_already_discharged: r.gst_already_discharged,
         subsumed_by_bu_event_id: r.subsumed_by_bu_event_id,
+        cancelled_via_id: r.cancelled_via_id,
       })),
       invoices: (invoices[u.id] || []).map((i) => ({
         consideration: i.consideration, cgst: i.cgst, sgst: i.sgst,
@@ -534,6 +536,7 @@ const BuilderBookingsPage: React.FC = () => {
           receipt_nature: r.receipt_nature, cheque_status: r.cheque_status,
           gst_already_discharged: r.gst_already_discharged,
           subsumed_by_bu_event_id: r.subsumed_by_bu_event_id,
+          cancelled_via_id: r.cancelled_via_id,
         })),
       invoices: (invoices[u.id] || [])
         .filter((i) => periodKey(i.period_month) <= cutoff)
@@ -925,13 +928,20 @@ const BuilderBookingsPage: React.FC = () => {
       if (unitNoFilter !== null && !unitNoFilter.includes(u.unit_no)) return false;
       if (bookingFilter.length > 0) {
         const booking = activeBookingFor(u.id);
-        const isBooked = !!booking && (members[booking.id] || []).length > 0;
+        const hasMember = !!booking && (members[booking.id] || []).length > 0;
+        // A unit with a recognised opening balance was demonstrably booked
+        // before onboarding, even with no member name on file yet — counts
+        // as Booked here too, consistent with the BU cut-off test.
+        const opening = openings[u.id];
+        const hasOpeningActivity = !!opening
+          && ((Number(opening.agreement_value) || 0) > 0.005 || (Number(opening.cumulative_receipts) || 0) > 0.005);
+        const isBooked = hasMember || hasOpeningActivity;
         if (!bookingFilter.includes(isBooked ? 'Booked' : 'Unbooked')) return false;
       }
       if (rateFilter.length > 0 && !rateFilter.includes(classifyFor(u).rateCode)) return false;
       return true;
     });
-  }, [sortedUnits, unitTypeFilter, unitNoFilter, bookingFilter, rateFilter, activeBookingFor, members, classifyFor]);
+  }, [sortedUnits, unitTypeFilter, unitNoFilter, bookingFilter, rateFilter, activeBookingFor, members, openings, classifyFor]);
 
   const atRisk = useMemo(
     () => units.filter((u) => {
