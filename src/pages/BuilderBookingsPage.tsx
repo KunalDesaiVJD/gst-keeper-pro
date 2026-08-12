@@ -52,6 +52,7 @@ import { computeDelayInterest, type DelayInterestBasis } from '@/utils/builderAd
 import { autoReclassifyProject } from '@/lib/builderAdjustmentsData';
 import { periodKey } from '@/utils/builderBuEvent';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
+import { clearDastavejDate } from '@/lib/builderBuPosting';
 
 interface ProjectRow {
   id: string; client_id: string; name: string; is_metro: boolean;
@@ -169,6 +170,8 @@ const BuilderBookingsPage: React.FC = () => {
   const [openings, setOpenings] = useState<Record<string, OpeningRow>>({});
   /** Cancellations with an unpaid refund — one unit can carry more than one over time. */
   const [openCancellations, setOpenCancellations] = useState<Record<string, CancellationRow[]>>({});
+  /** Every cancellation, any status — for the "cancelled, now available" display state. */
+  const [allCancellations, setAllCancellations] = useState<Record<string, CancellationRow[]>>({});
   /** Units already carrying a re-rating (auto-posted or, rarely, manual). */
   const [reclassifiedUnitIds, setReclassifiedUnitIds] = useState<Set<string>>(new Set());
   const [settings, setSettings] = useState<ChargeInclusionSettings>(DEFAULT_CHARGE_INCLUSIONS);
@@ -189,6 +192,7 @@ const BuilderBookingsPage: React.FC = () => {
   const [bookingMembers, setBookingMembers] = useState([{ ...emptyMember }]);
   /** Must be ticked before Save when the unit carries an unpaid cancellation. */
   const [bookingCancelAck, setBookingCancelAck] = useState(false);
+  const [isClearingDastavej, setIsClearingDastavej] = useState(false);
 
   const [bulkReceipts, setBulkReceipts] = useState(false);
   /**
@@ -299,7 +303,7 @@ const BuilderBookingsPage: React.FC = () => {
       if (!unitIds.length) {
         setCharges({}); setBookings([]); setMembers({}); setReceipts({});
         setInvoices({}); setAdjustments([]); setOpenings({}); setReclassifiedUnitIds(new Set());
-        setOpenCancellations({});
+        setOpenCancellations({}); setAllCancellations({});
         return;
       }
 
@@ -314,16 +318,20 @@ const BuilderBookingsPage: React.FC = () => {
           // unit should show its re-rating-due banner again if it genuinely
           // still needs one.
           supabase.from('builder_reclassifications').select('unit_id').in('unit_id', unitIds).neq('status', 'REVERSED'),
-          // Cancellations whose refund is still unpaid — surfaced on the unit
-          // row and at re-booking time, since a unit freed for resale carries
-          // no other trace of money still owed to its previous member.
-          supabase.from('builder_cancellations').select('*').in('unit_id', unitIds).eq('status', 'OPEN'),
+          // Every cancellation, any status — a unit that was booked and later
+          // cancelled reads identically to one never booked at all unless
+          // this history is kept around, even once its refund is settled.
+          supabase.from('builder_cancellations').select('*').in('unit_id', unitIds),
         ]);
       setReclassifiedUnitIds(new Set(((rcl || []) as unknown as { unit_id: string }[]).map((r) => r.unit_id)));
 
+      const allCxl = (cxl || []) as unknown as CancellationRow[];
       const cxlMap: Record<string, CancellationRow[]> = {};
-      ((cxl || []) as unknown as CancellationRow[]).forEach((c) => { (cxlMap[c.unit_id] ||= []).push(c); });
-      setOpenCancellations(cxlMap);
+      allCxl.forEach((c) => { (cxlMap[c.unit_id] ||= []).push(c); });
+      setAllCancellations(cxlMap);
+      const openMap: Record<string, CancellationRow[]> = {};
+      allCxl.filter((c) => c.status === 'OPEN').forEach((c) => { (openMap[c.unit_id] ||= []).push(c); });
+      setOpenCancellations(openMap);
 
       const cmap: Record<string, ChargeRow[]> = {};
       ((chg || []) as unknown as ChargeRow[]).forEach((c) => { (cmap[c.unit_id] ||= []).push(c); });
@@ -511,6 +519,26 @@ const BuilderBookingsPage: React.FC = () => {
     [openCancellations],
   );
 
+  const hasOpeningActivity = useCallback((unitId: string) => {
+    const opening = openings[unitId];
+    return !!opening
+      && ((Number(opening.agreement_value) || 0) > 0.005 || (Number(opening.cumulative_receipts) || 0) > 0.005);
+  }, [openings]);
+
+  /**
+   * What to show in place of a member name when there isn't an active
+   * booking with one — three genuinely different situations that all used to
+   * read as the same bare "Unbooked", the source of the confusion here: a
+   * pre-onboarding sale recognised only via its opening balance, a unit that
+   * was sold and later cancelled and is now free again, and one that has
+   * simply never been sold.
+   */
+  const unbookedLabel = useCallback((unitId: string): string => {
+    if (hasOpeningActivity(unitId)) return 'Booked — no member on file';
+    if ((allCancellations[unitId] || []).length > 0) return 'Cancelled — available';
+    return 'Unbooked';
+  }, [hasOpeningActivity, allCancellations]);
+
   const adjustmentsForUnit = useCallback((unitId: string) => {
     const invIds = new Set((invoices[unitId] || []).map((i) => i.id));
     return adjustments.filter((a) => invIds.has(a.invoice_id));
@@ -608,6 +636,27 @@ const BuilderBookingsPage: React.FC = () => {
     setBookingMembers([{ ...emptyMember }]);
     setBookingCancelAck(false);
     setBookingDialog(true);
+  };
+
+  /**
+   * A unit being booked here can still carry a dastavej date from an earlier,
+   * now-cancelled sale — stale for this fresh booking, since it will get its
+   * own registration later. See clearDastavejDate() for the guards (blocked
+   * if the posting is already filed, or covers other units too).
+   */
+  const handleClearStaleDastavej = async () => {
+    if (!bookingUnit) return;
+    setIsClearingDastavej(true);
+    try {
+      await clearDastavejDate(bookingUnit.id);
+      toast.success('Stale dastavej date cleared');
+      setBookingUnit({ ...bookingUnit, dastavej_date: null, dastavej_value: null, bu_event_id: null });
+      void load();
+    } catch (e) {
+      toast.error(`Could not clear: ${(e as Error).message}`);
+    } finally {
+      setIsClearingDastavej(false);
+    }
   };
 
   const handleSaveBooking = async () => {
@@ -960,16 +1009,14 @@ const BuilderBookingsPage: React.FC = () => {
         // A unit with a recognised opening balance was demonstrably booked
         // before onboarding, even with no member name on file yet — counts
         // as Booked here too, consistent with the BU cut-off test.
-        const opening = openings[u.id];
-        const hasOpeningActivity = !!opening
-          && ((Number(opening.agreement_value) || 0) > 0.005 || (Number(opening.cumulative_receipts) || 0) > 0.005);
-        const isBooked = hasMember || hasOpeningActivity;
+        const isBooked = hasMember || hasOpeningActivity(u.id);
         if (!bookingFilter.includes(isBooked ? 'Booked' : 'Unbooked')) return false;
       }
       if (rateFilter.length > 0 && !rateFilter.includes(classifyFor(u).rateCode)) return false;
       return true;
     });
-  }, [sortedUnits, unitTypeFilter, unitNoFilter, bookingFilter, rateFilter, activeBookingFor, members, openings, classifyFor]);
+  }, [sortedUnits, unitTypeFilter, unitNoFilter, bookingFilter, rateFilter, activeBookingFor, members, hasOpeningActivity,
+    classifyFor]);
 
   const atRisk = useMemo(
     () => units.filter((u) => {
@@ -1029,7 +1076,7 @@ const BuilderBookingsPage: React.FC = () => {
       const booking = bookings.find((b) => b.unit_id === u.id && b.status === 'Active')
         || bookings.find((b) => b.unit_id === u.id) || null;
       const mem = booking ? members[booking.id] || [] : [];
-      const memberLabel = mem.length === 0 ? 'Unbooked'
+      const memberLabel = mem.length === 0 ? unbookedLabel(u.id)
         : mem.length === 1 ? mem[0].name : `${mem[0].name} +${mem.length - 1} joint`;
       const rows: RegisterRow[] = [];
 
@@ -1091,7 +1138,7 @@ const BuilderBookingsPage: React.FC = () => {
       });
     });
     return groups.sort((x, y) => x.rows[0].date.localeCompare(y.rows[0].date));
-  }, [viewMode, units, bookings, members, receipts, invoices, adjustmentsForUnit, selectedMonth]);
+  }, [viewMode, units, bookings, members, receipts, invoices, adjustmentsForUnit, selectedMonth, unbookedLabel]);
 
   const registerTotals = useMemo(() => monthRegisterGroups.reduce((t, g) => ({
     bank: t.bank + g.bank, taxable: t.taxable + g.taxable, cgst: t.cgst + g.cgst, sgst: t.sgst + g.sgst,
@@ -1660,7 +1707,7 @@ const BuilderBookingsPage: React.FC = () => {
                           </TableCell>
                           <TableCell className="text-sm">
                             {mem.length === 0 ? (
-                              <span className="text-muted-foreground">Unbooked</span>
+                              <span className="text-muted-foreground">{unbookedLabel(u.id)}</span>
                             ) : (
                               <>
                                 {mem[0].name}
@@ -2086,6 +2133,26 @@ const BuilderBookingsPage: React.FC = () => {
               onChange={(e) => setBookingForm({ ...bookingForm, notes: e.target.value })}
             />
           </div>
+
+          {bookingUnit?.dastavej_date && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-1.5 flex-1">
+                <p>
+                  This unit still carries a dastavej date ({bookingUnit.dastavej_date}
+                  {bookingUnit.dastavej_value ? `, ${formatINR(bookingUnit.dastavej_value)}` : ''}) — likely
+                  stale from an earlier, now-cancelled sale. It will misread as this booking's own
+                  registration unless cleared first.
+                </p>
+                <Button
+                  size="sm" variant="outline"
+                  onClick={handleClearStaleDastavej} disabled={isClearingDastavej}
+                >
+                  {isClearingDastavej && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />} Clear dastavej date
+                </Button>
+              </div>
+            </div>
+          )}
 
           {bookingUnit && (openCancellations[bookingUnit.id] || []).length > 0 && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900 space-y-2">

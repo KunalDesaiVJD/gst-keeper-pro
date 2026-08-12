@@ -20,7 +20,7 @@ import { toast } from 'sonner';
 import { FileSignature, Loader2, Pencil, Info, AlertTriangle, CheckCircle2, Percent } from 'lucide-react';
 import { formatINR, type BuilderRateCode } from '@/utils/builderRates';
 import {
-  autoPostDastavejDifferential, markLateDiscoveryInterestPaid, previewLateDiscoveryInterest,
+  autoPostDastavejDifferential, clearDastavejDate, markLateDiscoveryInterestPaid, previewLateDiscoveryInterest,
   saveLateDiscoveryInterest,
 } from '@/lib/builderBuPosting';
 import type { LateDiscoveryInterest } from '@/utils/builderBuEvent';
@@ -316,29 +316,15 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
 
   /**
    * A wrong date/value entirely — not a date that should move, which is just
-   * an overwrite via Save. Blocked whenever a differential (or Schedule III
-   * record) has already been posted off this unit's dastavej: clearing the
-   * date then would leave that posting orphaned, tracing back to nothing in
-   * the register. Unpost it on the BU Events page first — same rule the rest
-   * of this module uses for undoing a posted event.
+   * an overwrite via Save. See clearDastavejDate() for the guards: blocked
+   * outright if the posted differential's period is already filed, or if the
+   * event covers other units too; otherwise unposted and cleared in one step.
    */
   const handleClear = async () => {
     if (!editUnit) return;
     setIsClearing(true);
     try {
-      const { data: unitRow, error: uErr } = await supabase
-        .from('builder_units').select('bu_event_id').eq('id', editUnit.id).single();
-      if (uErr) throw uErr;
-      if ((unitRow as { bu_event_id: string | null }).bu_event_id) {
-        toast.error(
-          'A differential (or Schedule III record) is already posted off this date — unpost it on the '
-          + 'BU Events page first, then clear the date here.',
-        );
-        return;
-      }
-      const { error } = await supabase.from('builder_units')
-        .update({ dastavej_date: null, dastavej_value: null }).eq('id', editUnit.id);
-      if (error) throw error;
+      await clearDastavejDate(editUnit.id);
       toast.success('Dastavej date cleared');
       setDialog(false);
       await load();
