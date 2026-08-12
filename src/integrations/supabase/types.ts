@@ -2304,6 +2304,78 @@ export type Database = {
           },
         ]
       }
+      builder_dastavej_late_interest: {
+        Row: {
+          arn: string | null
+          created_at: string
+          created_by: string | null
+          cut_off_period: string
+          dastavej_date: string
+          id: string
+          paid_date: string | null
+          project_id: string
+          rate_code: string
+          residual_unrecovered: number
+          shortfall_value: number
+          status: string
+          total_allocated: number
+          total_interest: number
+          tranches: Json
+          unit_id: string
+        }
+        Insert: {
+          arn?: string | null
+          created_at?: string
+          created_by?: string | null
+          cut_off_period: string
+          dastavej_date: string
+          id?: string
+          paid_date?: string | null
+          project_id: string
+          rate_code: string
+          residual_unrecovered?: number
+          shortfall_value?: number
+          status?: string
+          total_allocated?: number
+          total_interest?: number
+          tranches?: Json
+          unit_id: string
+        }
+        Update: {
+          arn?: string | null
+          created_at?: string
+          created_by?: string | null
+          cut_off_period?: string
+          dastavej_date?: string
+          id?: string
+          paid_date?: string | null
+          project_id?: string
+          rate_code?: string
+          residual_unrecovered?: number
+          shortfall_value?: number
+          status?: string
+          total_allocated?: number
+          total_interest?: number
+          tranches?: Json
+          unit_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_dastavej_late_interest_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_dastavej_late_interest_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_reclassifications: {
         Row: {
           created_at: string
