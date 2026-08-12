@@ -113,11 +113,13 @@ export const receiptPostsTax = (r: {
   cheque_status: ChequeStatus;
   gst_already_discharged: boolean;
   subsumed_by_bu_event_id?: string | null;
+  cancelled_via_id?: string | null;
 }): boolean =>
   r.receipt_nature === 'ADVANCE'
   && r.cheque_status !== 'Bounced'
   && !r.gst_already_discharged
-  && !r.subsumed_by_bu_event_id;
+  && !r.subsumed_by_bu_event_id
+  && !r.cancelled_via_id;
 
 // ─── Per-unit ledger ────────────────────────────────────────────────────────
 
@@ -131,6 +133,11 @@ export interface LedgerReceipt {
   cheque_status: ChequeStatus;
   gst_already_discharged: boolean;
   subsumed_by_bu_event_id?: string | null;
+  /** Set once a receipt's booking is cancelled — excluded from valueTaxed/
+   *  considerationRecognized/openAdvance (the tax-relevant figures) so a
+   *  later re-booking of the same unit doesn't inherit a refunded member's
+   *  money, but still counted in totalReceived (a historical cash memo). */
+  cancelled_via_id?: string | null;
 }
 
 export interface LedgerInvoice { consideration: number; cgst: number; sgst: number }

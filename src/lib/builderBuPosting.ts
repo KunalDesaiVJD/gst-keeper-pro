@@ -82,7 +82,10 @@ export async function prepareBuEvent(params: {
   type Inv = { id: string; unit_id: string; period_month: string; consideration: number };
   type Adj = { invoice_id: string; receipt_id: string; consideration_adjusted: number; period_month: string };
   type Bkg = { id: string; unit_id: string; booking_date: string; status: string };
-  type Opn = { unit_id: string; cumulative_value_taxed: number; agreement_value: number };
+  type Opn = {
+    unit_id: string; cumulative_value_taxed: number; agreement_value: number;
+    cumulative_receipts: number; as_at_date: string;
+  };
 
   const rcpts = (receipts || []) as unknown as Rcpt[];
   const invs = (invoices || []) as unknown as Inv[];
@@ -99,6 +102,12 @@ export async function prepareBuEvent(params: {
     const opening = opns.find((o) => o.unit_id === u.id);
     // The live booking, if any. A cancelled booking leaves the unit unbooked.
     const booking = bkgs.find((b) => b.unit_id === u.id && b.status === 'Active');
+    // A unit with a recognised opening balance was demonstrably booked
+    // before onboarding, even with no builder_bookings row — its as_at_date
+    // stands in as the effective booking date so it isn't wrongly swept into
+    // Schedule III just because this app never recorded a formal booking.
+    const hasOpeningActivity = opening
+      && ((Number(opening.agreement_value) || 0) > 0.005 || (Number(opening.cumulative_receipts) || 0) > 0.005);
 
     const unitReceipts = rcpts.filter((r) => r.unit_id === u.id);
     const posted = unitReceipts.filter(
@@ -157,7 +166,7 @@ export async function prepareBuEvent(params: {
       agreementValue: opening?.agreement_value || cls?.agreementValue || 0,
       dastavejDate: u.dastavej_date,
       bookingId: booking?.id ?? null,
-      bookingDate: booking?.booking_date ?? null,
+      bookingDate: booking?.booking_date ?? (hasOpeningActivity ? opening!.as_at_date : null),
       openingValueTaxed: Number(opening?.cumulative_value_taxed) || 0,
       advancesBefore,
       invoicesBefore,

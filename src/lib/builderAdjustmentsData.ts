@@ -808,6 +808,13 @@ export async function applyBounceOffsets(params: {
  * it the note is still recorded — the trail matters — but flagged out of window
  * and excluded from the postings feed, because the tax cannot be adjusted.
  */
+export interface OriginalDocument {
+  docType: 'INVOICE' | 'RECEIPT';
+  docNo: string | null;
+  docDate: string;
+  amount: number;
+}
+
 export async function raiseCreditNote(params: {
   unitId: string;
   bookingId: string | null;
@@ -816,6 +823,11 @@ export async function raiseCreditNote(params: {
   consideration: number;
   rateCode: BuilderRateCode;
   originalDocDate: string;
+  /** The actual invoice(s)/receipt voucher(s) this note reverses — auto-
+   *  derived by the caller from the DB, never typed by hand. Empty for the
+   *  standalone Raise Credit Note dialog, which has no linked booking to
+   *  derive them from. */
+  originalDocuments?: OriginalDocument[];
   periodMonth: string;
   docSeries: string | null;
   docNo: string | null;
@@ -841,6 +853,7 @@ export async function raiseCreditNote(params: {
     doc_series: params.docSeries,
     doc_no: params.docNo,
     reason: params.reason,
+    original_documents: (params.originalDocuments || []) as never,
     created_by: params.userId,
   }).select('id').single();
   if (error) throw error;

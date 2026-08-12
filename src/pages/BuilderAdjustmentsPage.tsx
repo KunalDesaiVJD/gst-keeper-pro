@@ -96,7 +96,7 @@ interface CancellationRow {
   id: string; booking_id: string; unit_id: string; cancellation_date: string; reason: string | null;
   rate_code: BuilderRateCode; rate_pct: number; total_received: number;
   forfeiture_amount: number; cancellation_charge_taxable: number;
-  correction_method: 'CREDIT_NOTE' | 'SETOFF';
+  correction_method: 'CREDIT_NOTE' | 'SETOFF' | 'NONE';
   refund_payable: number; refund_paid: number; status: 'OPEN' | 'SETTLED';
 }
 interface RefundPaymentRow {
@@ -174,7 +174,7 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
   const [cancelDialog, setCancelDialog] = useState<{ unitId: string; bookingId: string } | null>(null);
   const [cancelForm, setCancelForm] = useState({
     cancellation_date: today(), reason: '', forfeiture_amount: '', cancellation_charge_taxable: '',
-    correction_method: 'CREDIT_NOTE' as 'CREDIT_NOTE' | 'SETOFF', retire_unit: false,
+    correction_method: 'CREDIT_NOTE' as 'CREDIT_NOTE' | 'SETOFF' | 'NONE', retire_unit: false,
   });
 
   const [refundDialog, setRefundDialog] = useState<CancellationRow | null>(null);
@@ -798,8 +798,13 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
       || classification[cancelDialog.unitId]?.rateCode) as BuilderRateCode | undefined;
     const chargeGst = chargeTaxable > 0 && rateCode ? computeTax(chargeTaxable, rateCode).totalTax : 0;
     const refundPayable = Math.max(0, totalReceived - forfeiture - chargeTaxable - chargeGst);
-    return { totalReceived, refundPayable };
-  }, [cancelDialog, receipts, bookings, cancelForm.forfeiture_amount, cancelForm.cancellation_charge_taxable, classification]);
+    const earliestReceiptDate = bookingReceipts.reduce(
+      (min, r) => (!min || r.receipt_date < min ? r.receipt_date : min), '' as string,
+    ) || cancelForm.cancellation_date;
+    const window = creditNoteWindow(earliestReceiptDate, cancelForm.cancellation_date);
+    return { totalReceived, refundPayable, window };
+  }, [cancelDialog, receipts, bookings, cancelForm.forfeiture_amount, cancelForm.cancellation_charge_taxable,
+    cancelForm.cancellation_date, classification]);
 
   const handleSaveCancellation = async () => {
     if (!cancelDialog || !project) return;
@@ -823,8 +828,11 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
         cancelForm.correction_method === 'CREDIT_NOTE'
           ? `Booking cancelled — credit note raised for ${formatINR(res.totalReceived)}. `
             + `${formatINR(res.refundPayable)} still owed back to the member.`
-          : `Booking cancelled — no credit note. ${formatINR(res.refundPayable)} owed back; `
-            + 'record refund payments below as they happen, each nets against its own month.',
+          : cancelForm.correction_method === 'SETOFF'
+            ? `Booking cancelled — no credit note. ${formatINR(res.refundPayable)} owed back; `
+              + 'record refund payments below as they happen, each nets against its own month.'
+            : `Booking cancelled — no correction attempted. ${formatINR(res.refundPayable)} owed back; `
+              + 'record refund payments below as a plain cash record.',
       );
       setCancelDialog(null);
       setTab('cancellations');
@@ -1496,7 +1504,8 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
                           <TableCell className="font-medium">{unitNo(c.unit_id)}</TableCell>
                           <TableCell className="text-sm">{c.cancellation_date}</TableCell>
                           <TableCell className="text-sm">
-                            {c.correction_method === 'CREDIT_NOTE' ? 'Credit note' : 'Set-off'}
+                            {c.correction_method === 'CREDIT_NOTE' ? 'Credit note'
+                              : c.correction_method === 'SETOFF' ? 'Set-off' : 'No correction'}
                           </TableCell>
                           <TableCell className="text-right text-sm">{formatINR(c.total_received)}</TableCell>
                           <TableCell className="text-right text-sm">{formatINR(c.refund_payable)}</TableCell>
@@ -1597,22 +1606,39 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
               <Label>Correction method</Label>
               <Select
                 value={cancelForm.correction_method}
-                onValueChange={(v) => setCancelForm({ ...cancelForm, correction_method: v as 'CREDIT_NOTE' | 'SETOFF' })}
+                onValueChange={(v) => setCancelForm({ ...cancelForm, correction_method: v as 'CREDIT_NOTE' | 'SETOFF' | 'NONE' })}
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="CREDIT_NOTE">Credit note — reverse the full amount now (s.34)</SelectItem>
                   <SelectItem value="SETOFF">Set-off — no credit note; net each refund against its own month</SelectItem>
+                  <SelectItem value="NONE">No correction — plain cash refund, tax already paid stays as-is</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground mt-1">
                 {cancelForm.correction_method === 'CREDIT_NOTE'
-                  ? 'A CANCELLATION credit note is raised immediately for the full amount already taxed.'
-                  : 'No credit note. As refund payments are recorded below, each one nets against that '
-                    + "month's collections at this unit's rate — capped by what's available, and anything "
-                    + 'over that is forfeited permanently, never carried to a later month. The client is '
-                    + 'emailed to confirm each set-off once its return is filed.'}
+                  ? 'A CANCELLATION credit note is raised immediately for the full amount already taxed, '
+                    + 'referencing the actual invoice(s)/receipt voucher(s) behind it.'
+                  : cancelForm.correction_method === 'SETOFF'
+                    ? 'No credit note. As refund payments are recorded below, each one nets against that '
+                      + "month's collections at this unit's rate — capped by what's available, and anything "
+                      + 'over that is forfeited permanently, never carried to a later month. The client is '
+                      + 'emailed to confirm each set-off once its return is filed.'
+                    : 'No credit note, no set-off against any month\'s collections. The refund below is a '
+                      + 'plain cash record only — the firm does not attempt to recover the GST already paid '
+                      + 'on this advance.'}
               </p>
+              {cancelForm.correction_method === 'CREDIT_NOTE' && cancelPreview && !cancelPreview.window.isOpen && (
+                <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 mt-2 text-amber-900">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <p className="text-xs">
+                    The s.34 window on this booking's earliest receipt closed on {cancelPreview.window.expiryLabel}.
+                    A credit note raised now will be recorded but excluded from GSTR-1 — the tax cannot be
+                    recovered by the firm this way. Consider Set-off or No correction instead, or note that the
+                    member (as an unregistered buyer) may separately claim it back under Circular 188/20/2022.
+                  </p>
+                </div>
+              )}
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3">
               <div>
@@ -1651,7 +1677,9 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
               {refundDialog?.correction_method === 'SETOFF'
                 ? "This payment nets against its own month's collections — a cancellation refunded over "
                   + 'several months is several independent payments, each judged on its own period.'
-                : 'Plain cash record — the credit note already corrected the GST side.'}
+                : refundDialog?.correction_method === 'CREDIT_NOTE'
+                  ? 'Plain cash record — the credit note already corrected the GST side.'
+                  : 'Plain cash record — no GST correction is being attempted for this refund.'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
