@@ -201,6 +201,7 @@ const BuilderBookingsPage: React.FC = () => {
   const [membersDialog, setMembersDialog] = useState(false);
   const [membersDialogTarget, setMembersDialogTarget] = useState<{ unit: UnitRow; booking: BookingRow } | null>(null);
   const [editMembers, setEditMembers] = useState([{ ...emptyMember }]);
+  const [editBookingDate, setEditBookingDate] = useState('');
 
   const [bulkReceipts, setBulkReceipts] = useState(false);
   /**
@@ -714,7 +715,7 @@ const BuilderBookingsPage: React.FC = () => {
     }
   };
 
-  // ── Edit member(s) on an existing booking ───────────────────────────────
+  // ── Edit member(s) / booking date on an existing booking ────────────────
   const openEditMembers = (u: UnitRow, b: BookingRow) => {
     const existing = (members[b.id] || []).map((m) => ({
       name: m.name === 'To be named' ? '' : m.name,
@@ -723,6 +724,7 @@ const BuilderBookingsPage: React.FC = () => {
     }));
     setMembersDialogTarget({ unit: u, booking: b });
     setEditMembers(existing.length ? existing : [{ ...emptyMember }]);
+    setEditBookingDate(b.booking_date);
     setMembersDialog(true);
   };
 
@@ -735,9 +737,15 @@ const BuilderBookingsPage: React.FC = () => {
       toast.error(`Ownership ratios must total 100% (currently ${ratioTotal}%)`);
       return;
     }
+    if (!editBookingDate) { toast.error('Booking date is required'); return; }
     setIsSaving(true);
     try {
       const bookingId = membersDialogTarget.booking.id;
+      if (editBookingDate !== membersDialogTarget.booking.booking_date) {
+        const { error: dateErr } = await supabase
+          .from('builder_bookings').update({ booking_date: editBookingDate }).eq('id', bookingId);
+        if (dateErr) throw dateErr;
+      }
       const { error: delErr } = await supabase.from('builder_booking_members').delete().eq('booking_id', bookingId);
       if (delErr) throw delErr;
       const { error: insErr } = await supabase.from('builder_booking_members').insert(
@@ -752,11 +760,11 @@ const BuilderBookingsPage: React.FC = () => {
       );
       if (insErr) throw insErr;
 
-      toast.success('Member(s) updated');
+      toast.success('Booking updated');
       setMembersDialog(false);
       await load();
     } catch (e) {
-      toast.error(`Could not update members: ${(e as Error).message}`);
+      toast.error(`Could not update booking: ${(e as Error).message}`);
     } finally {
       setIsSaving(false);
     }
@@ -2264,12 +2272,20 @@ const BuilderBookingsPage: React.FC = () => {
       <Dialog open={membersDialog} onOpenChange={setMembersDialog}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Edit member(s) — {membersDialogTarget?.unit.unit_no}</DialogTitle>
+            <DialogTitle>Edit booking — {membersDialogTarget?.unit.unit_no}</DialogTitle>
             <DialogDescription>
-              Renaming here does not change the booking date, consideration, or any receipts/invoices already
-              recorded — only who the buyer(s) are on record. Ratios must total 100%.
+              Changes here don't touch the consideration or any receipts/invoices already recorded — only the
+              booking date and who the buyer(s) are on record. Ratios must total 100%.
             </DialogDescription>
           </DialogHeader>
+
+          <div>
+            <Label htmlFor="em-date">Booking date</Label>
+            <Input
+              id="em-date" type="date" value={editBookingDate}
+              onChange={(e) => setEditBookingDate(e.target.value)}
+            />
+          </div>
 
           <div>
             <div className="flex items-center justify-between mb-2">
