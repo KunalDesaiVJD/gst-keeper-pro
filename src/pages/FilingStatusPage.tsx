@@ -43,6 +43,7 @@ const filingStatusAccent = (status: string): string => {
     case 'Prepared Pending': return 'border-l-4 border-l-warning bg-warning/5';
     case 'Data Received':
     case 'Prepared': return 'border-l-4 border-l-info bg-info/5';
+    case 'Not to File': return 'border-l-4 border-l-muted-foreground bg-muted/40';
     default: return '';
   }
 };
@@ -1068,7 +1069,7 @@ const FilingStatusPage: React.FC = () => {
   };
 
   // All available statuses
-  const allStatuses: FilingStatusType[] = ['Prepared', 'Prepared Pending', 'Data Pending', 'Data Received', 'Mismatch in Data', 'Filed'];
+  const allStatuses: FilingStatusType[] = ['Prepared', 'Prepared Pending', 'Data Pending', 'Data Received', 'Mismatch in Data', 'Filed', 'Not to File'];
 
   // Get unique target dates for filter dropdown
   const getUniqueTargetDates = (): number[] => {
@@ -1470,6 +1471,7 @@ const FilingStatusPage: React.FC = () => {
                       <SelectItem value="Data Received">Data Received</SelectItem>
                       <SelectItem value="Mismatch in Data">Mismatch in Data</SelectItem>
                       <SelectItem value="Filed">Filed</SelectItem>
+                      <SelectItem value="Not to File">Not to File</SelectItem>
                     </SelectContent>
                   </Select>
                 </td>
