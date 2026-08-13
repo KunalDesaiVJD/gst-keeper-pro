@@ -37,6 +37,7 @@ import { toast } from 'sonner';
 import { Loader2, Wallet, AlertTriangle, Users } from 'lucide-react';
 import { formatINR, computeTds194IA, isTds194IAApplicable, type BuilderRateCode } from '@/utils/builderRates';
 import { deriveReceipt, prettyPeriodLabel } from '@/utils/builderLedger';
+import { recheckStaleScheduleIII } from '@/lib/builderBuPosting';
 
 // Must match the builder_receipts_instrument_type_check DB constraint exactly,
 // or every save fails — 'NEFT'/'RTGS'/'IMPS' are NOT valid values there.
@@ -256,6 +257,7 @@ const BulkReceiptsDialog: React.FC<Props> = ({
       // takes the unit's agreement value as its consideration and a single
       // primary holder, named inline or left "To be named" to complete later.
       const bookingIdByUnit: Record<string, string> = {};
+      const autoBookedUnitIds: string[] = [];
       let autoBooked = 0;
       for (const r of active) {
         if (r.u.bookingId) { bookingIdByUnit[r.u.unitId] = r.u.bookingId; continue; }
@@ -278,6 +280,7 @@ const BulkReceiptsDialog: React.FC<Props> = ({
         if (mErr) throw mErr;
         await supabase.from('builder_units').update({ status: 'Booked' }).eq('id', r.u.unitId);
         bookingIdByUnit[r.u.unitId] = bk.id;
+        autoBookedUnitIds.push(r.u.unitId);
         autoBooked += 1;
       }
 
@@ -318,6 +321,20 @@ const BulkReceiptsDialog: React.FC<Props> = ({
       setAmounts({}); setRefs({}); setSplits({}); setMemberAmounts({}); setMemberRefs({}); setBuyerNames({});
       onOpenChange(false);
       await onSaved();
+      // Any of these fresh bookings may prove a unit already frozen
+      // Schedule III off its dastavej/BU was actually booked before that
+      // cut-off all along — self-heals that, silently, for whichever apply.
+      if (autoBookedUnitIds.length) {
+        Promise.allSettled(
+          autoBookedUnitIds.map((unitId) => recheckStaleScheduleIII({ unitId, userId: user?.id ?? null })),
+        ).then((results) => {
+          const reclassified = results.filter((r) => r.status === 'fulfilled' && r.value === 'RECLASSIFIED').length;
+          if (reclassified > 0) {
+            toast.info(`${reclassified} unit${reclassified === 1 ? '' : 's'} re-checked and no longer Schedule III.`);
+            void onSaved();
+          }
+        });
+      }
     } catch (e) {
       toast.error(`Could not save: ${(e as Error).message}`);
     } finally {

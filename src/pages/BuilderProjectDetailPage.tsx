@@ -29,6 +29,7 @@ import {
   type UnitCharge, type UnitType,
 } from '@/utils/builderRates';
 import { CHARGE_HEADS, fetchBuilderSettings } from '@/lib/builderSettings';
+import { recheckStaleScheduleIII } from '@/lib/builderBuPosting';
 import { CHARGE_HEAD_LABEL } from '@/utils/builderRates';
 import BulkAddUnitsDialog from '@/components/builder/BulkAddUnitsDialog';
 import BulkOpeningBalancesDialog, { type BulkOpeningUnit } from '@/components/builder/BulkOpeningBalancesDialog';
@@ -560,6 +561,17 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
       }, { onConflict: 'unit_id' });
       if (error) throw error;
       toast.success('Opening balance saved');
+      // This balance may prove the unit was booked before a dastavej/BU
+      // cut-off that already froze it Schedule III, before this existed to
+      // say otherwise — self-heals that, silently, if so.
+      recheckStaleScheduleIII({ unitId: openingUnit.id, userId: user?.id ?? null })
+        .then((r) => {
+          if (r === 'RECLASSIFIED') {
+            toast.info(`${openingUnit.unit_no}'s dastavej was re-checked and is no longer Schedule III.`);
+            void load();
+          }
+        })
+        .catch(() => { /* best-effort; the manual BU Events page remains the fallback */ });
       setOpeningDialog(false);
       await load();
     } catch (e) {

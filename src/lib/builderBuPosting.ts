@@ -329,67 +329,117 @@ export async function unpostBuEvent(eventId: string): Promise<void> {
 }
 
 /**
- * Clear a wrong dastavej entirely — not a date that should move, which is
- * just an overwrite. Reused by both the Dastavej page's own Clear action and
- * the Book Unit dialog's pointer, so a stale date from a cancelled-then-
- * reregistered unit's earlier sale is handled the same way everywhere.
- *
- * A posted differential (or Schedule III record) blocks a plain clear:
+ * Unpost a posted event, but only when it's genuinely safe to do so
+ * automatically. Shared by clearDastavejDate() and recheckStaleScheduleIII()
+ * — both need the same two guards before calling unpostBuEvent():
  *   - its period already FILED → hard-blocked, always. The DB's own
  *     filed-period lock would reject the unpost anyway; this just gives a
  *     specific reason instead of a raw trigger error.
  *   - the event covers OTHER units too (a real project/block BU sweep, not
- *     the dastavej auto-post's own single-unit event) → also blocked, since
- *     unposting it here would silently reverse everyone else's differential
- *     along with this one unit's. Directs to the BU Events page instead.
- *   - otherwise (unfiled, single-unit) → unposted automatically, then cleared,
- *     in one step.
+ *     a single-unit auto-post) → also blocked, since unposting it here would
+ *     silently reverse everyone else's posting along with this one unit's.
+ */
+async function guardedUnpost(buEventId: string): Promise<void> {
+  const { data: eventRow, error: eErr } = await supabase
+    .from('builder_bu_events').select('posting_period, project_id').eq('id', buEventId).single();
+  if (eErr || !eventRow) throw new Error(eErr?.message || 'Could not load the posted event');
+  const { posting_period: postingPeriod, project_id: projectId } =
+    eventRow as { posting_period: string; project_id: string };
+
+  const { data: projRow } = await supabase
+    .from('builder_projects').select('client_id').eq('id', projectId).single();
+  const clientId = (projRow as { client_id: string } | null)?.client_id;
+
+  if (clientId && postingPeriod) {
+    const { data: filed } = await supabase
+      .from('filing_status').select('id')
+      .eq('client_id', clientId).eq('return_type', 'GSTR-1')
+      .eq('period_month', postingPeriod).eq('status', 'Filed').maybeSingle();
+    if (filed) {
+      throw new Error(
+        `GSTR-1 for ${postingPeriod} is already filed — the posting can no longer be reversed `
+        + 'automatically. Correct it with a credit note instead.',
+      );
+    }
+  }
+
+  const { count } = await supabase
+    .from('builder_bu_event_units').select('unit_id', { count: 'exact', head: true })
+    .eq('bu_event_id', buEventId);
+  if ((count || 0) > 1) {
+    throw new Error(
+      'The posted event covers other units too — it can only be unposted from the BU Events page, so '
+      + 'their postings are reviewed along with this one, not silently reversed automatically.',
+    );
+  }
+
+  await unpostBuEvent(buEventId);
+}
+
+/**
+ * Clear a wrong dastavej entirely — not a date that should move, which is
+ * just an overwrite. Reused by both the Dastavej page's own Clear action and
+ * the Book Unit dialog's pointer, so a stale date from a cancelled-then-
+ * reregistered unit's earlier sale is handled the same way everywhere.
  */
 export async function clearDastavejDate(unitId: string): Promise<void> {
   const { data: unitRow, error: uErr } = await supabase
-    .from('builder_units').select('bu_event_id, project_id').eq('id', unitId).single();
+    .from('builder_units').select('bu_event_id').eq('id', unitId).single();
   if (uErr || !unitRow) throw new Error(uErr?.message || 'Unit not found');
-  const unit = unitRow as unknown as { bu_event_id: string | null; project_id: string };
+  const unit = unitRow as unknown as { bu_event_id: string | null };
 
   if (unit.bu_event_id) {
-    const { data: eventRow, error: eErr } = await supabase
-      .from('builder_bu_events').select('posting_period').eq('id', unit.bu_event_id).single();
-    if (eErr || !eventRow) throw new Error(eErr?.message || 'Could not load the posted event');
-    const postingPeriod = (eventRow as { posting_period: string }).posting_period;
-
-    const { data: projRow } = await supabase
-      .from('builder_projects').select('client_id').eq('id', unit.project_id).single();
-    const clientId = (projRow as { client_id: string } | null)?.client_id;
-
-    if (clientId && postingPeriod) {
-      const { data: filed } = await supabase
-        .from('filing_status').select('id')
-        .eq('client_id', clientId).eq('return_type', 'GSTR-1')
-        .eq('period_month', postingPeriod).eq('status', 'Filed').maybeSingle();
-      if (filed) {
-        throw new Error(
-          `GSTR-1 for ${postingPeriod} is already filed — the differential posted off this date can no `
-          + 'longer be reversed. Correct it with a credit note instead of clearing the date.',
-        );
-      }
-    }
-
-    const { count } = await supabase
-      .from('builder_bu_event_units').select('unit_id', { count: 'exact', head: true })
-      .eq('bu_event_id', unit.bu_event_id);
-    if ((count || 0) > 1) {
-      throw new Error(
-        'The posted event covers other units too — unpost it from the BU Events page instead, so their '
-        + 'postings are reviewed along with this one, not silently reversed from here.',
-      );
-    }
-
-    await unpostBuEvent(unit.bu_event_id);
+    await guardedUnpost(unit.bu_event_id);
   }
 
   const { error } = await supabase.from('builder_units')
     .update({ dastavej_date: null, dastavej_value: null }).eq('id', unitId);
   if (error) throw error;
+}
+
+export type ScheduleIIIRecheckResult = 'RECLASSIFIED' | 'UNCHANGED' | 'NO_DASTAVEJ' | 'BLOCKED';
+
+/**
+ * Self-healing check for the exact bug that hit Plot 148 at Shree Maruti
+ * Infra: a dastavej auto-post ran while the unit still looked genuinely
+ * unbooked, froze it Schedule III, and then an opening balance or booking
+ * arrived afterward that would have changed that determination — with
+ * nothing to ever notice, since the auto-post only fires once, at save time,
+ * and short-circuits forever after on bu_event_id being set.
+ *
+ * Called after every opening-balance and booking save so this can never go
+ * unnoticed again. Silent no-op for every case except the one it exists to
+ * catch: a single-unit, unfiled, Schedule III event whose booked-at-cutoff
+ * determination has genuinely changed since it posted. Never touches a real
+ * differential already correctly posted, a multi-unit sweep, or a filed
+ * period — those still need the normal manual correction paths.
+ */
+export async function recheckStaleScheduleIII(params: {
+  unitId: string;
+  userId: string | null;
+}): Promise<ScheduleIIIRecheckResult> {
+  const { data: unitRow } = await supabase
+    .from('builder_units').select('bu_event_id, dastavej_date').eq('id', params.unitId).maybeSingle();
+  const unit = unitRow as { bu_event_id: string | null; dastavej_date: string | null } | null;
+  if (!unit?.bu_event_id || !unit.dastavej_date) return 'NO_DASTAVEJ';
+
+  const { data: euRow } = await supabase
+    .from('builder_bu_event_units').select('booked_at_cutoff')
+    .eq('bu_event_id', unit.bu_event_id).eq('unit_id', params.unitId).maybeSingle();
+  if (!euRow || (euRow as { booked_at_cutoff: boolean }).booked_at_cutoff) return 'UNCHANGED';
+
+  try {
+    await guardedUnpost(unit.bu_event_id);
+  } catch {
+    // Filed period or a multi-unit event — leave the stale label in place,
+    // this needs a human looking at the BU Events page, not a silent skip.
+    return 'BLOCKED';
+  }
+
+  await autoPostDastavejDifferential({
+    unitId: params.unitId, dastavejDate: unit.dastavej_date, userId: params.userId,
+  });
+  return 'RECLASSIFIED';
 }
 
 // ─── Auto-post at dastavej ─────────────────────────────────────────────────
