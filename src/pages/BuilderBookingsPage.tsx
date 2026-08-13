@@ -194,6 +194,15 @@ const BuilderBookingsPage: React.FC = () => {
   const [bookingCancelAck, setBookingCancelAck] = useState(false);
   const [isClearingDastavej, setIsClearingDastavej] = useState(false);
 
+  // Rename/correct the member(s) on an already-booked unit — the "Book unit"
+  // flow above only ever creates a booking, so it disappears once one exists.
+  // Needed most often for bookings created via Bulk Receipts import, which
+  // leaves a placeholder "To be named" member when no name was supplied.
+  const [membersDialog, setMembersDialog] = useState(false);
+  const [membersDialogTarget, setMembersDialogTarget] = useState<{ unit: UnitRow; booking: BookingRow } | null>(null);
+  const [editMembers, setEditMembers] = useState([{ ...emptyMember }]);
+  const [editBookingDate, setEditBookingDate] = useState('');
+
   const [bulkReceipts, setBulkReceipts] = useState(false);
   /**
    * The surfaces the row menu opens. They are dialogs over the table rather
@@ -706,6 +715,71 @@ const BuilderBookingsPage: React.FC = () => {
         .catch(() => { /* best-effort; the manual BU Events page remains the fallback */ });
     } catch (e) {
       toast.error(`Could not book: ${(e as Error).message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // ── Edit member(s) / booking date on an existing booking ────────────────
+  const openEditMembers = (u: UnitRow, b: BookingRow) => {
+    const existing = (members[b.id] || []).map((m) => ({
+      name: m.name === 'To be named' ? '' : m.name,
+      pan: m.pan || '',
+      ownership_ratio: String(m.ownership_ratio ?? 0),
+    }));
+    setMembersDialogTarget({ unit: u, booking: b });
+    setEditMembers(existing.length ? existing : [{ ...emptyMember }]);
+    setEditBookingDate(b.booking_date);
+    setMembersDialog(true);
+  };
+
+  const handleSaveMembers = async () => {
+    if (!membersDialogTarget) return;
+    const named = editMembers.filter((m) => m.name.trim());
+    if (!named.length) { toast.error('At least one member is required'); return; }
+    const ratioTotal = named.reduce((s, m) => s + (parseFloat(m.ownership_ratio) || 0), 0);
+    if (Math.abs(ratioTotal - 100) > 0.01) {
+      toast.error(`Ownership ratios must total 100% (currently ${ratioTotal}%)`);
+      return;
+    }
+    if (!editBookingDate) { toast.error('Booking date is required'); return; }
+    setIsSaving(true);
+    try {
+      const bookingId = membersDialogTarget.booking.id;
+      if (editBookingDate !== membersDialogTarget.booking.booking_date) {
+        const { error: dateErr } = await supabase
+          .from('builder_bookings').update({ booking_date: editBookingDate }).eq('id', bookingId);
+        if (dateErr) throw dateErr;
+      }
+      const { error: delErr } = await supabase.from('builder_booking_members').delete().eq('booking_id', bookingId);
+      if (delErr) throw delErr;
+      const { error: insErr } = await supabase.from('builder_booking_members').insert(
+        named.map((m, idx) => ({
+          booking_id: bookingId,
+          name: m.name.trim(),
+          pan: m.pan.trim() || null,
+          ownership_ratio: parseFloat(m.ownership_ratio) || 0,
+          is_primary: idx === 0,
+          sort_order: idx,
+        })),
+      );
+      if (insErr) throw insErr;
+
+      toast.success('Booking updated');
+      const dateChanged = editBookingDate !== membersDialogTarget.booking.booking_date;
+      const unitId = membersDialogTarget.unit.id;
+      setMembersDialog(false);
+      await load();
+      // An earlier booking date is exactly the kind of new information that
+      // can prove a unit already frozen Schedule III off its dastavej/BU was
+      // actually booked before that cut-off all along — self-heals that.
+      if (dateChanged) {
+        recheckStaleScheduleIII({ unitId, userId: user?.id ?? null })
+          .then((r) => { if (r === 'RECLASSIFIED') { toast.info('Dastavej re-checked — no longer Schedule III.'); void load(); } })
+          .catch(() => { /* best-effort; the manual BU Events page remains the fallback */ });
+      }
+    } catch (e) {
+      toast.error(`Could not update booking: ${(e as Error).message}`);
     } finally {
       setIsSaving(false);
     }
@@ -1794,6 +1868,12 @@ const BuilderBookingsPage: React.FC = () => {
                                     >
                                       Record dastavej
                                     </DropdownMenuItem>
+                                    {booking && (
+                                      <DropdownMenuItem onSelect={() => openEditMembers(u, booking)}>
+                                        Edit member{mem.length > 1 ? 's' : ''}
+                                        {(mem.length === 0 || mem[0].name === 'To be named') ? ' (name not set)' : ''}
+                                      </DropdownMenuItem>
+                                    )}
                                     <DropdownMenuSeparator />
                                     <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
                                       Rare — occasional corrections
@@ -2199,6 +2279,84 @@ const BuilderBookingsPage: React.FC = () => {
               disabled={isSaving || (!!bookingUnit && (openCancellations[bookingUnit.id] || []).length > 0 && !bookingCancelAck)}
             >
               {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Book unit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={membersDialog} onOpenChange={setMembersDialog}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit booking — {membersDialogTarget?.unit.unit_no}</DialogTitle>
+            <DialogDescription>
+              Changes here don't touch the consideration or any receipts/invoices already recorded — only the
+              booking date and who the buyer(s) are on record. Ratios must total 100%.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div>
+            <Label htmlFor="em-date">Booking date</Label>
+            <Input
+              id="em-date" type="date" value={editBookingDate}
+              onChange={(e) => setEditBookingDate(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <Label>Members</Label>
+              <Button
+                variant="outline" size="sm"
+                onClick={() => setEditMembers([...editMembers, { ...emptyMember, ownership_ratio: '0' }])}
+              >
+                <Plus className="h-3 w-3 mr-1" /> Add joint holder
+              </Button>
+            </div>
+            <div className="space-y-2">
+              {editMembers.map((m, idx) => (
+                <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                  <Input
+                    className="col-span-5" placeholder="Name" value={m.name}
+                    onChange={(e) => {
+                      const next = [...editMembers]; next[idx] = { ...m, name: e.target.value };
+                      setEditMembers(next);
+                    }}
+                  />
+                  <Input
+                    className="col-span-4" placeholder="PAN" value={m.pan}
+                    onChange={(e) => {
+                      const next = [...editMembers]; next[idx] = { ...m, pan: e.target.value.toUpperCase() };
+                      setEditMembers(next);
+                    }}
+                  />
+                  <Input
+                    className="col-span-2" type="number" step="0.01" placeholder="%"
+                    value={m.ownership_ratio}
+                    onChange={(e) => {
+                      const next = [...editMembers]; next[idx] = { ...m, ownership_ratio: e.target.value };
+                      setEditMembers(next);
+                    }}
+                  />
+                  <Button
+                    variant="ghost" size="icon" className="col-span-1"
+                    disabled={editMembers.length === 1}
+                    onClick={() => setEditMembers(editMembers.filter((_, i) => i !== idx))}
+                  >
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Ratios must total 100%. Currently{' '}
+              {editMembers.reduce((s, m) => s + (parseFloat(m.ownership_ratio) || 0), 0)}%.
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMembersDialog(false)}>Cancel</Button>
+            <Button onClick={handleSaveMembers} disabled={isSaving}>
+              {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save
             </Button>
           </DialogFooter>
         </DialogContent>
