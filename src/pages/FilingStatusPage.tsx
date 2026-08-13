@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Download, FileText, Lock, Unlock, Search, Filter, ChevronDown, Info, Upload, Eye, Trash2, LogIn } from 'lucide-react';
-import { FilingStatusType, ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth, RegistrationType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
+import { FilingStatusType, ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth, RegistrationType, RETURN_TYPES_BY_REGISTRATION, filingStatusDisplayLabel } from '@/types';
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -43,7 +43,6 @@ const filingStatusAccent = (status: string): string => {
     case 'Prepared Pending': return 'border-l-4 border-l-warning bg-warning/5';
     case 'Data Received':
     case 'Prepared': return 'border-l-4 border-l-info bg-info/5';
-    case 'Not to File': return 'border-l-4 border-l-muted-foreground bg-muted/40';
     default: return '';
   }
 };
@@ -1069,7 +1068,7 @@ const FilingStatusPage: React.FC = () => {
   };
 
   // All available statuses
-  const allStatuses: FilingStatusType[] = ['Prepared', 'Prepared Pending', 'Data Pending', 'Data Received', 'Mismatch in Data', 'Filed', 'Not to File'];
+  const allStatuses: FilingStatusType[] = ['Prepared', 'Prepared Pending', 'Data Pending', 'Data Received', 'Mismatch in Data', 'Filed'];
 
   // Get unique target dates for filter dropdown
   const getUniqueTargetDates = (): number[] => {
@@ -1316,11 +1315,11 @@ const FilingStatusPage: React.FC = () => {
                             checked={selectedStatuses.includes(status)}
                             onCheckedChange={() => toggleStatus(status)}
                           />
-                          <label 
-                            htmlFor={`status-${status}`} 
+                          <label
+                            htmlFor={`status-${status}`}
                             className="text-xs cursor-pointer flex-1"
                           >
-                            {status}
+                            {filingStatusDisplayLabel(status)}
                           </label>
                         </div>
                       ))}
@@ -1466,12 +1465,11 @@ const FilingStatusPage: React.FC = () => {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="Prepared">Prepared</SelectItem>
-                      <SelectItem value="Prepared Pending">Prepared Pending</SelectItem>
+                      <SelectItem value="Prepared Pending">Not to File</SelectItem>
                       <SelectItem value="Data Pending">Data Pending</SelectItem>
                       <SelectItem value="Data Received">Data Received</SelectItem>
                       <SelectItem value="Mismatch in Data">Mismatch in Data</SelectItem>
                       <SelectItem value="Filed">Filed</SelectItem>
-                      <SelectItem value="Not to File">Not to File</SelectItem>
                     </SelectContent>
                   </Select>
                 </td>

@@ -15,8 +15,14 @@ export type FilingStatusType =
   | 'Data Received'
   | 'Mismatch in Data'
   | 'Not Verified' // Legacy - kept for backwards compatibility
-  | 'Filed'
-  | 'Not to File';
+  | 'Filed';
+
+// 'Prepared Pending' is displayed as "Not to File" everywhere a status is
+// shown as text — the underlying value is untouched (still what the unlock
+// flow resets a Filed return to, still what's stored/filtered/compared
+// against), only the label changed. Every other status displays as itself.
+export const filingStatusDisplayLabel = (status: FilingStatusType | string): string =>
+  status === 'Prepared Pending' ? 'Not to File' : status;
 
 // User interface
 export interface User {

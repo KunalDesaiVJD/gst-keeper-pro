@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FilingStatusRecord } from '@/types';
+import { FilingStatusRecord, filingStatusDisplayLabel } from '@/types';
 import logoSmall from '@/assets/logo-small.png';
 
 export const exportFilingStatusToPDF = (
@@ -36,7 +36,7 @@ export const exportFilingStatusToPDF = (
       record.clientName,
       record.accountantName,
       record.filingFrequency,
-      record.status,
+      filingStatusDisplayLabel(record.status),
       record.targetDate,
       record.filedDate ? new Date(record.filedDate).toLocaleDateString('en-IN') : '-',
     ];
