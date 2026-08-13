@@ -24,6 +24,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { toast } from 'sonner';
 import { Loader2, Wallet } from 'lucide-react';
 import { formatINR, type BuilderRateCode } from '@/utils/builderRates';
+import { recheckStaleScheduleIII } from '@/lib/builderBuPosting';
 
 export interface BulkOpeningUnit {
   unitId: string;
@@ -160,6 +161,18 @@ const BulkOpeningBalancesDialog: React.FC<Props> = ({
       toast.success(`Opening balance set for ${active.length} unit${active.length === 1 ? '' : 's'}.`);
       onOpenChange(false);
       await onSaved();
+      // Any of these may prove a unit already frozen Schedule III off its
+      // dastavej/BU was actually booked before that cut-off all along —
+      // self-heals that, silently, for whichever ones it applies to.
+      Promise.allSettled(
+        active.map(({ u }) => recheckStaleScheduleIII({ unitId: u.unitId, userId: user?.id ?? null })),
+      ).then((results) => {
+        const reclassified = results.filter((r) => r.status === 'fulfilled' && r.value === 'RECLASSIFIED').length;
+        if (reclassified > 0) {
+          toast.info(`${reclassified} unit${reclassified === 1 ? '' : 's'} re-checked and no longer Schedule III.`);
+          void onSaved();
+        }
+      });
     } catch (e) {
       toast.error(`Could not save: ${(e as Error).message}`);
     } finally {

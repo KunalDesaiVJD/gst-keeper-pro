@@ -52,7 +52,7 @@ import { computeDelayInterest, type DelayInterestBasis } from '@/utils/builderAd
 import { autoReclassifyProject } from '@/lib/builderAdjustmentsData';
 import { periodKey } from '@/utils/builderBuEvent';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
-import { clearDastavejDate } from '@/lib/builderBuPosting';
+import { clearDastavejDate, recheckStaleScheduleIII } from '@/lib/builderBuPosting';
 
 interface ProjectRow {
   id: string; client_id: string; name: string; is_metro: boolean;
@@ -699,6 +699,11 @@ const BuilderBookingsPage: React.FC = () => {
       toast.success('Unit booked');
       setBookingDialog(false);
       await load();
+      // This booking may prove the unit was sold before a dastavej/BU
+      // cut-off already froze it Schedule III — self-heals that, silently.
+      recheckStaleScheduleIII({ unitId: bookingUnit.id, userId: user?.id ?? null })
+        .then((r) => { if (r === 'RECLASSIFIED') { toast.info('Dastavej re-checked — no longer Schedule III.'); void load(); } })
+        .catch(() => { /* best-effort; the manual BU Events page remains the fallback */ });
     } catch (e) {
       toast.error(`Could not book: ${(e as Error).message}`);
     } finally {
