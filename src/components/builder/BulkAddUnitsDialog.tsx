@@ -22,7 +22,7 @@
  * on every receipt that follows, and it is far cheaper to catch here.
  */
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -33,6 +33,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -43,7 +44,7 @@ import {
   Loader2, Layers, AlertTriangle, CheckCircle2, Download, Upload, FileSpreadsheet,
 } from 'lucide-react';
 import {
-  RATE_CODE_LABEL, classifyUnit, formatINR,
+  RATE_CODE_LABEL, classifyUnit, formatINR, suggestedUnitTypeMismatch,
   type ChargeInclusionSettings, type UnitType,
 } from '@/utils/builderRates';
 import {
@@ -78,6 +79,7 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
   const { user } = useAuth();
   const [isSaving, setIsSaving] = useState(false);
   const [mode, setMode] = useState('template');
+  const [mismatchAcked, setMismatchAcked] = useState(false);
 
   // Generate mode
   const [gen, setGen] = useState({
@@ -128,6 +130,7 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
       if (!d.unit_no.trim()) problem = 'Unit number is blank';
       else if (existing.has(key)) problem = 'Already exists on this project';
       else if (seen.has(key)) problem = 'Duplicated in this batch';
+      else if (!d.unit_type_recognized) problem = 'Type is blank or unrecognised — type Residential or Commercial explicitly';
       seen.add(key);
 
       const cls = classifyUnit({
@@ -139,12 +142,19 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
         isRrep,
         settings,
       });
-      return { ...d, problem, cls };
+      const nameMismatch = suggestedUnitTypeMismatch(d.unit_no, d.unit_type);
+      return { ...d, problem, cls, nameMismatch };
     });
   }, [drafts, existingUnitNos, isMetro, isRrep, settings]);
 
   const okRows = previewed.filter((r) => !r.problem);
   const badRows = previewed.filter((r) => r.problem);
+  const mismatchCount = previewed.filter((r) => r.nameMismatch).length;
+
+  // A fresh batch (mode switch, re-upload, re-paste, generator re-run) needs
+  // a fresh acknowledgement — carrying an old tick mark forward would defeat
+  // the point of it.
+  useEffect(() => { setMismatchAcked(false); }, [mode, drafts]);
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -486,6 +496,12 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
                   {badRows.length} skipped
                 </Badge>
               )}
+              {mismatchCount > 0 && (
+                <Badge variant="outline" className="gap-1 border-amber-500/40">
+                  <AlertTriangle className="h-3 w-3 text-amber-600 dark:text-amber-500" />
+                  {mismatchCount} name/type worth a second look
+                </Badge>
+              )}
               <span className="text-xs text-muted-foreground">
                 Total gross consideration {formatINR(totalValue)}
               </span>
@@ -514,7 +530,17 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
                           <span className="block text-xs text-destructive">{r.problem}</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-sm">{r.unit_type}</TableCell>
+                      <TableCell className="text-sm">
+                        {r.unit_type}
+                        {r.nameMismatch && (
+                          <span
+                            className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-500"
+                            title={r.nameMismatch}
+                          >
+                            <AlertTriangle className="h-3 w-3 shrink-0" /> Check type
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right text-sm">{r.carpet_area_sqm || '—'}</TableCell>
                       <TableCell className="text-right text-sm">
                         {r.charges.length
@@ -550,9 +576,27 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
           </div>
         )}
 
+        {mismatchCount > 0 && (
+          <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
+            <Checkbox
+              id="mismatch-ack"
+              checked={mismatchAcked}
+              onCheckedChange={(v) => setMismatchAcked(v === true)}
+              className="mt-0.5"
+            />
+            <Label htmlFor="mismatch-ack" className="text-xs font-normal leading-snug">
+              I've checked the {mismatchCount} unit{mismatchCount === 1 ? '' : 's'} flagged "Check type" above —
+              their name and selected type are correct as entered.
+            </Label>
+          </div>
+        )}
+
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={handleSave} disabled={isSaving || !okRows.length}>
+          <Button
+            onClick={handleSave}
+            disabled={isSaving || !okRows.length || (mismatchCount > 0 && !mismatchAcked)}
+          >
             {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Add {okRows.length || ''} unit{okRows.length === 1 ? '' : 's'}
           </Button>

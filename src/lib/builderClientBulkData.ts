@@ -33,6 +33,7 @@ interface ReceiptRow {
   id: string; unit_id: string; consideration: number; cgst: number; sgst: number;
   tds_194ia: number; bank_credit: number | null; receipt_nature: string;
   cheque_status: string; gst_already_discharged: boolean; subsumed_by_bu_event_id: string | null;
+  cancelled_via_id: string | null;
 }
 interface InvoiceRow { id: string; unit_id: string; consideration: number; cgst: number; sgst: number }
 interface AdjRow { invoice_id: string; consideration_adjusted: number; cgst: number; sgst: number }
@@ -165,7 +166,7 @@ function ledgerOne(ctx: ClientBulkContext, u: UnitRow, agreementValue: number) {
       consideration: r.consideration, cgst: r.cgst, sgst: r.sgst, tds_194ia: r.tds_194ia,
       bank_credit: r.bank_credit, receipt_nature: r.receipt_nature as never,
       cheque_status: r.cheque_status as never, gst_already_discharged: r.gst_already_discharged,
-      subsumed_by_bu_event_id: r.subsumed_by_bu_event_id,
+      subsumed_by_bu_event_id: r.subsumed_by_bu_event_id, cancelled_via_id: r.cancelled_via_id,
     })),
     invoices: (ctx.invoicesByUnit[u.id] || []).map((i) => ({ consideration: i.consideration, cgst: i.cgst, sgst: i.sgst })),
     adjustments: ctx.adjustments.filter((a) => invIds.has(a.invoice_id))

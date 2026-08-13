@@ -1,7 +1,9 @@
 import { supabase } from '@/integrations/supabase/client';
 import {
-  classifyUnit, computeTax, testRrep, type BuilderRateCode, type ChargeInclusionSettings,
+  classifyUnit, computeTax, testRrep,
+  type BuilderRateCode, type ChargeInclusionSettings,
 } from '@/utils/builderRates';
+import { computeUnitLedger } from '@/utils/builderLedger';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
 import {
   buildReclassSchedule, creditNoteWindow, planBounceOffsets,
@@ -13,10 +15,35 @@ const currentPeriod = (): string => {
   return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
 };
 
+const round2 = (n: number): number => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
 // Data access for the corrections layer. Detection is deliberately derived from
 // what was actually POSTED rather than from stored flags — a unit needs
 // re-rating because 1.5% entries exist in the returns, not because a column
 // says so.
+//
+// A crossing only ever needs a FORMAL correction (this Table 10 amendment
+// mechanism) for a period whose GSTR-1 has already been filed — that return
+// is closed, so the only way to fix it is to amend it. For a period that
+// hasn't been filed yet, there is nothing to amend: the original receipt/
+// invoice can simply be corrected in place before the return is ever
+// generated (see resyncUnfiledPostings below). Conflating the two used to
+// mean a crossing detected minutes after a data-entry mistake permanently
+// locked a unit at the wrong rate forever, even once the mistake was fixed —
+// this split is what stops that.
+
+/** GSTR-1 periods already Filed for this client — the only ones a crossing
+ *  needs a Table 10 amendment for. */
+export async function fetchFiledPeriods(clientId: string): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from('filing_status')
+    .select('period_month')
+    .eq('client_id', clientId)
+    .eq('return_type', 'GSTR-1')
+    .eq('status', 'Filed');
+  if (error) throw error;
+  return new Set(((data || []) as { period_month: string }[]).map((r) => r.period_month));
+}
 
 export interface ReclassCandidate {
   unitId: string;
@@ -29,8 +56,11 @@ export interface ReclassCandidate {
 }
 
 /**
- * Units carrying affordable-rate entries in the returns whose current
- * classification is no longer affordable.
+ * Units carrying affordable-rate entries in ALREADY-FILED returns whose
+ * current classification is no longer affordable — the only case a formal
+ * Table 10 amendment is needed for. A crossing whose affected periods are
+ * all still unfiled produces no candidate here; resyncUnfiledPostings()
+ * handles those by correcting the postings directly instead.
  *
  * The trigger is always the Rs. 45 lakh limb — carpet area is physical and
  * cannot move. Typically a PLC, parking or club charge added long after
@@ -39,6 +69,7 @@ export interface ReclassCandidate {
 export async function findReclassCandidates(
   projectId: string,
   classification: Record<string, { rateCode: string; ratePct: number; agreementValue: number }>,
+  filedPeriods: Set<string>,
 ): Promise<ReclassCandidate[]> {
   const { data } = await supabase
     .from('builder_period_postings')
@@ -54,6 +85,8 @@ export async function findReclassCandidates(
     const cls = classification[r.unit_id];
     // Still affordable, or unknown — nothing to correct.
     if (!cls || cls.rateCode === 'AFFORDABLE') return;
+    // Not filed yet — resyncUnfiledPostings() will just correct it in place.
+    if (!filedPeriods.has(r.period_month)) return;
 
     const entry = byUnit.get(r.unit_id) || {
       unitId: r.unit_id,
@@ -81,6 +114,163 @@ export async function findReclassCandidates(
       totalTaxableAtOldRate: Math.round((c.totalTaxableAtOldRate + Number.EPSILON) * 100) / 100,
     }))
     .filter((c) => c.periods.length > 0 && c.totalTaxableAtOldRate > 0.005);
+}
+
+// ─── Historical (pre-onboarding) receipts — DRC-03 ─────────────────────────
+//
+// A unit's history before this firm's onboarding sits only in the single-row
+// builder_opening_balances snapshot — invisible to findReclassCandidates,
+// which only ever reads builder_period_postings. A unit whose opening
+// balance already correctly reflects a >45L position (so nothing ever posts
+// as AFFORDABLE for it after onboarding) generates zero reclass candidates
+// today — the crossing itself, and every year of s.50 interest that ran
+// before onboarding, is silently invisible. builder_historical_receipts
+// lets staff reconstruct that history by hand, date by date, only when a
+// real case requires it; these periods are always treated as needing the
+// DRC-03 treatment (never "unfiled resync") because they represent returns
+// the firm already filed, years ago, just not through this app.
+
+export interface HistoricalReceipt {
+  id: string;
+  receiptDate: string;
+  amount: number;
+  notes: string | null;
+}
+
+export async function fetchHistoricalReceipts(unitId: string): Promise<HistoricalReceipt[]> {
+  const { data, error } = await supabase
+    .from('builder_historical_receipts')
+    .select('id, receipt_date, amount, notes')
+    .eq('unit_id', unitId)
+    .order('receipt_date', { ascending: true });
+  if (error) throw error;
+  type Row = { id: string; receipt_date: string; amount: number; notes: string | null };
+  return ((data || []) as unknown as Row[]).map((r) => ({
+    id: r.id, receiptDate: r.receipt_date, amount: Number(r.amount) || 0, notes: r.notes,
+  }));
+}
+
+export async function addHistoricalReceipt(params: {
+  unitId: string;
+  receiptDate: string;
+  amount: number;
+  notes: string | null;
+  userId: string | null;
+}): Promise<void> {
+  const { error } = await supabase.from('builder_historical_receipts').insert({
+    unit_id: params.unitId,
+    receipt_date: params.receiptDate,
+    amount: params.amount,
+    notes: params.notes,
+    created_by: params.userId,
+  });
+  if (error) throw error;
+}
+
+export async function deleteHistoricalReceipt(id: string): Promise<void> {
+  const { error } = await supabase.from('builder_historical_receipts').delete().eq('id', id);
+  if (error) throw error;
+}
+
+export interface HistoricalReconciliation {
+  historicalTotal: number;
+  openingCumulativeReceipts: number;
+  variance: number;
+}
+
+/** Does the manually entered date-wise history actually tally with the lump
+ *  opening balance it's meant to break out? Surfaced to staff as a plain
+ *  variance, not auto-forced to zero — partial history is a realistic case. */
+export async function fetchHistoricalReconciliation(unitId: string): Promise<HistoricalReconciliation> {
+  const [{ data: receipts }, { data: opening }] = await Promise.all([
+    supabase.from('builder_historical_receipts').select('amount').eq('unit_id', unitId),
+    supabase.from('builder_opening_balances').select('cumulative_receipts').eq('unit_id', unitId).maybeSingle(),
+  ]);
+  const historicalTotal = round2(((receipts || []) as { amount: number }[])
+    .reduce((s, r) => s + (Number(r.amount) || 0), 0));
+  const openingCumulativeReceipts = round2(Number((opening as { cumulative_receipts?: number } | null)
+    ?.cumulative_receipts) || 0);
+  return {
+    historicalTotal,
+    openingCumulativeReceipts,
+    variance: round2(historicalTotal - openingCumulativeReceipts),
+  };
+}
+
+/**
+ * Units whose manually entered historical receipts show them crossing ₹45L
+ * before this firm ever tracked a posting for them — the case
+ * findReclassCandidates structurally cannot see (it never reads
+ * builder_historical_receipts). Buckets by receipt month and derives taxable
+ * value at the AFFORDABLE rate exactly as the original (pre-onboarding)
+ * filing would have — same 1/3rd land deduction this module uses everywhere.
+ */
+export async function findHistoricalReclassCandidates(
+  classification: Record<string, { rateCode: string; ratePct: number; agreementValue: number }>,
+): Promise<ReclassCandidate[]> {
+  const unitIds = Object.keys(classification).filter((id) => classification[id].rateCode !== 'AFFORDABLE');
+  if (!unitIds.length) return [];
+
+  const { data } = await supabase
+    .from('builder_historical_receipts')
+    .select('unit_id, receipt_date, amount')
+    .in('unit_id', unitIds);
+  type Row = { unit_id: string; receipt_date: string; amount: number };
+  const rows = (data || []) as unknown as Row[];
+  if (!rows.length) return [];
+
+  const { data: unitRows } = await supabase.from('builder_units').select('id, unit_no').in('id', unitIds);
+  const unitNoOf = new Map(((unitRows || []) as { id: string; unit_no: string }[]).map((u) => [u.id, u.unit_no]));
+
+  const byUnitPeriod = new Map<string, Map<string, number>>();
+  rows.forEach((r) => {
+    const m = /^(\d{4})-(\d{2})/.exec(r.receipt_date || '');
+    if (!m) return;
+    const periodMonth = `${m[2]}/${m[1]}`;
+    const periods = byUnitPeriod.get(r.unit_id) || new Map<string, number>();
+    periods.set(periodMonth, (periods.get(periodMonth) || 0) + (Number(r.amount) || 0));
+    byUnitPeriod.set(r.unit_id, periods);
+  });
+
+  const candidates: ReclassCandidate[] = [];
+  byUnitPeriod.forEach((periods, unitId) => {
+    const cls = classification[unitId];
+    const periodEntries = [...periods.entries()]
+      .map(([periodMonth, amount]) => ({
+        periodMonth,
+        taxableValue: computeTax(round2(amount), 'AFFORDABLE').taxableValue,
+      }))
+      .filter((p) => p.taxableValue > 0.005);
+    if (!periodEntries.length) return;
+    candidates.push({
+      unitId,
+      unitNo: unitNoOf.get(unitId) || '',
+      currentRateCode: cls.rateCode as BuilderRateCode,
+      currentRatePct: cls.ratePct,
+      grossConsideration: cls.agreementValue,
+      periods: periodEntries,
+      totalTaxableAtOldRate: round2(periodEntries.reduce((s, p) => s + p.taxableValue, 0)),
+    });
+  });
+  return candidates;
+}
+
+/** Merge two candidate lists by unit — builder_reclassifications carries a
+ *  UNIQUE(unit_id) constraint, so app-tracked and historical periods for the
+ *  same unit must land in one saved row, not two. */
+function mergeCandidates(a: ReclassCandidate[], b: ReclassCandidate[]): ReclassCandidate[] {
+  const byUnit = new Map<string, ReclassCandidate>();
+  [...a, ...b].forEach((c) => {
+    const existing = byUnit.get(c.unitId);
+    if (!existing) { byUnit.set(c.unitId, { ...c, periods: [...c.periods] }); return; }
+    c.periods.forEach((p) => {
+      const dup = existing.periods.find((e) => e.periodMonth === p.periodMonth);
+      if (dup) dup.taxableValue = round2(dup.taxableValue + p.taxableValue);
+      else existing.periods.push(p);
+    });
+    existing.totalTaxableAtOldRate = round2(existing.totalTaxableAtOldRate + c.totalTaxableAtOldRate);
+  });
+  return [...byUnit.values()];
 }
 
 export function scheduleFor(
@@ -195,34 +385,160 @@ async function autoPostReclassification(params: {
 }
 
 /**
- * Detect and post every re-rating a project currently needs, given a
- * classification map the caller has already computed. Skips any unit that
- * already carries a reclassification row (posted earlier, by this sweep or
- * by hand) so this never double-posts. Returns whichever candidates were
- * just posted, for a toast.
+ * Correct a unit's UNFILED receipts and invoices to its current
+ * classification, in place.
+ *
+ * No amendment is needed here — nothing has been filed yet, so the original
+ * document can simply carry the right figures once generation is due. Only
+ * touches rows whose own `rate_code` disagrees with the target and whose
+ * period is not in `filedPeriods`; a filed period's rows are left exactly as
+ * filed (the DB trigger blocks writing to them anyway) and picked up by
+ * `findReclassCandidates`/the Table 10 flow instead.
+ *
+ * Excludes DELAY_INTEREST invoices — they follow the client's own delay-
+ * interest rate election, not the unit's classification.
+ *
+ * Known gap: does not touch `builder_advance_adjustments` rows that already
+ * absorbed part of a resynced receipt into an invoice (11B). Those keep the
+ * consideration/tax split computed at the time the invoice was raised. This
+ * only matters if a unit's classification moves again in the same window an
+ * invoice has already absorbed one of its receipts — narrow enough to flag
+ * rather than build for now.
+ */
+export async function resyncUnfiledPostings(params: {
+  unitId: string;
+  targetRateCode: BuilderRateCode;
+  filedPeriods: Set<string>;
+}): Promise<{ receiptsUpdated: number; invoicesUpdated: number }> {
+  const { unitId, targetRateCode, filedPeriods } = params;
+
+  const [{ data: rcp }, { data: inv }] = await Promise.all([
+    supabase.from('builder_receipts')
+      .select('id, consideration, period_month')
+      .eq('unit_id', unitId).neq('rate_code', targetRateCode),
+    supabase.from('builder_invoices')
+      .select('id, consideration, period_month')
+      .eq('unit_id', unitId).neq('rate_code', targetRateCode).neq('invoice_type', 'DELAY_INTEREST'),
+  ]);
+
+  type Row = { id: string; consideration: number; period_month: string };
+  const staleReceipts = ((rcp || []) as Row[]).filter((r) => !filedPeriods.has(r.period_month));
+  const staleInvoices = ((inv || []) as Row[]).filter((r) => !filedPeriods.has(r.period_month));
+
+  let receiptsUpdated = 0;
+  for (const r of staleReceipts) {
+    const t = computeTax(r.consideration, targetRateCode);
+    const { error } = await supabase.from('builder_receipts').update({
+      rate_code: targetRateCode, rate_pct: t.ratePct,
+      taxable_value: t.taxableValue, cgst: t.cgst, sgst: t.sgst,
+    }).eq('id', r.id);
+    if (!error) receiptsUpdated++;
+  }
+
+  let invoicesUpdated = 0;
+  for (const i of staleInvoices) {
+    const t = computeTax(i.consideration, targetRateCode);
+    const { error } = await supabase.from('builder_invoices').update({
+      rate_code: targetRateCode, rate_pct: t.ratePct,
+      taxable_value: t.taxableValue, cgst: t.cgst, sgst: t.sgst,
+    }).eq('id', i.id);
+    if (!error) invoicesUpdated++;
+  }
+
+  return { receiptsUpdated, invoicesUpdated };
+}
+
+export interface ReclassifySweepResult {
+  /** Filed-period corrections posted as a formal Table 10 amendment. */
+  posted: ReclassCandidate[];
+  /** Units whose unfiled postings were corrected in place, no amendment. */
+  resynced: { unitId: string; receiptsUpdated: number; invoicesUpdated: number }[];
+}
+
+/**
+ * Detect and fix every re-rating a project currently needs, given a
+ * classification map the caller has already computed.
+ *
+ * Splits on whether a unit's affected periods are filed: a filed period gets
+ * a formal Table 10 amendment (skipped if one is already ACTIVE — POSTED,
+ * not REVERSED — so this never double-posts); an unfiled period is corrected
+ * directly via resyncUnfiledPostings(), for every unit in `classification`,
+ * not just the ones with a filed-period mismatch — a unit can be resynced
+ * many times over its life as staff correct entries, with no Table 10
+ * involved at all until something is actually filed.
  */
 export async function autoReclassifyProject(
   projectId: string,
   classification: Record<string, { rateCode: string; ratePct: number; agreementValue: number }>,
   userId: string | null,
-): Promise<ReclassCandidate[]> {
+  clientId: string,
+): Promise<ReclassifySweepResult> {
   const unitIds = Object.keys(classification);
-  if (!unitIds.length) return [];
+  if (!unitIds.length) return { posted: [], resynced: [] };
+
+  const filedPeriods = await fetchFiledPeriods(clientId);
 
   const { data: existing } = await supabase
-    .from('builder_reclassifications').select('unit_id').in('unit_id', unitIds);
+    .from('builder_reclassifications').select('unit_id').in('unit_id', unitIds).neq('status', 'REVERSED');
   const done = new Set(((existing || []) as { unit_id: string }[]).map((r) => r.unit_id));
 
-  const candidates = (await findReclassCandidates(projectId, classification))
+  const [appTracked, historical] = await Promise.all([
+    findReclassCandidates(projectId, classification, filedPeriods),
+    findHistoricalReclassCandidates(classification),
+  ]);
+  const candidates = mergeCandidates(appTracked, historical)
     .filter((c) => !done.has(c.unitId));
-  if (!candidates.length) return [];
 
   const postingPeriod = currentPeriod();
   for (const c of candidates) {
     const schedule = scheduleFor(c, postingPeriod);
     await autoPostReclassification({ candidate: c, schedule, postingPeriod, userId });
   }
-  return candidates;
+
+  const resynced: ReclassifySweepResult['resynced'] = [];
+  for (const unitId of unitIds) {
+    const cls = classification[unitId];
+    const r = await resyncUnfiledPostings({
+      unitId, targetRateCode: cls.rateCode as BuilderRateCode, filedPeriods,
+    });
+    if (r.receiptsUpdated + r.invoicesUpdated > 0) resynced.push({ unitId, ...r });
+  }
+
+  return { posted: candidates, resynced };
+}
+
+/**
+ * Void a POSTED reclassification: it and its Table 10 legs drop out of
+ * `builder_period_postings` (every branch there already filters
+ * `WHERE rc.status = 'POSTED'`), and the unit's live classification governs
+ * again from this point on.
+ *
+ * Deliberately does NOT attempt to rewrite any builder_receipts/
+ * builder_invoices row whose own rate_code may have been overwritten by an
+ * edit made while the unit was locked — `handleSaveReceipt`/`handleSaveInvoice`
+ * rewrite the derived tax on every save, so a receipt touched during the
+ * locked window can carry the higher rate directly, not just via the Table 10
+ * overlay. There is no reliable way to reconstruct "what it was before" from
+ * `builder_reclassification_periods` alone, so the caller is responsible for
+ * checking the affected unit's postings after reversing and re-saving any
+ * that still carry the old (now-wrong) rate by hand.
+ */
+export async function reverseReclassification(params: {
+  reclassificationId: string;
+  reason: string;
+  userId: string | null;
+}): Promise<void> {
+  const { error } = await supabase
+    .from('builder_reclassifications')
+    .update({
+      status: 'REVERSED',
+      reversed_at: new Date().toISOString(),
+      reversed_by: params.userId,
+      reversal_reason: params.reason || null,
+    })
+    .eq('id', params.reclassificationId)
+    .eq('status', 'POSTED');
+  if (error) throw error;
 }
 
 /**
@@ -235,10 +551,10 @@ export async function autoReclassifyProject(
 export async function runAutoReclassSweep(
   projectId: string,
   userId: string | null,
-): Promise<ReclassCandidate[]> {
+): Promise<ReclassifySweepResult> {
   const { data: proj } = await supabase
     .from('builder_projects').select('*').eq('id', projectId).maybeSingle();
-  if (!proj) return [];
+  if (!proj) return { posted: [], resynced: [] };
   const p = proj as unknown as {
     client_id: string; is_metro: boolean; carpet_area_source: string;
     manual_residential_carpet_sqm: number; manual_commercial_carpet_sqm: number;
@@ -250,16 +566,46 @@ export async function runAutoReclassSweep(
     base_consideration: number; status: string;
   };
   const units = (unt || []) as unknown as Unit[];
-  if (!units.length) return [];
+  if (!units.length) return { posted: [], resynced: [] };
   const unitIds = units.map((u) => u.id);
 
-  const [settings, { data: chg }] = await Promise.all([
+  const [settings, { data: chg }, { data: rcp }, { data: inv }, { data: opn }] = await Promise.all([
     fetchBuilderSettings(p.client_id),
     supabase.from('builder_unit_charges').select('*').in('unit_id', unitIds),
+    supabase.from('builder_receipts').select('*').in('unit_id', unitIds),
+    supabase.from('builder_invoices').select('*').in('unit_id', unitIds),
+    supabase.from('builder_opening_balances').select('*').in('unit_id', unitIds),
   ]);
   type Charge = { unit_id: string; charge_head: string; amount: number; include_override: boolean | null };
   const cmap: Record<string, Charge[]> = {};
   ((chg || []) as unknown as Charge[]).forEach((c) => { (cmap[c.unit_id] ||= []).push(c); });
+
+  type Receipt = {
+    unit_id: string; consideration: number; cgst: number; sgst: number; tds_194ia: number;
+    bank_credit: number | null; receipt_nature: string; cheque_status: string;
+    gst_already_discharged: boolean; subsumed_by_bu_event_id: string | null;
+  };
+  const rmap: Record<string, Receipt[]> = {};
+  ((rcp || []) as unknown as Receipt[]).forEach((r) => { (rmap[r.unit_id] ||= []).push(r); });
+
+  type Invoice = { unit_id: string; id: string; consideration: number; cgst: number; sgst: number };
+  const imap: Record<string, Invoice[]> = {};
+  ((inv || []) as unknown as Invoice[]).forEach((i) => { (imap[i.unit_id] ||= []).push(i); });
+
+  type Opening = {
+    unit_id: string; agreement_value: number; cumulative_value_taxed: number;
+    cumulative_cgst: number; cumulative_sgst: number; cumulative_receipts: number;
+    cumulative_tds_194ia: number;
+  };
+  const omap: Record<string, Opening> = {};
+  ((opn || []) as unknown as Opening[]).forEach((o) => { omap[o.unit_id] = o; });
+
+  const invoiceIds = ((inv || []) as unknown as Invoice[]).map((i) => i.id);
+  const { data: adj } = invoiceIds.length
+    ? await supabase.from('builder_advance_adjustments').select('*').in('invoice_id', invoiceIds)
+    : { data: [] };
+  type Adjustment = { invoice_id: string; consideration_adjusted: number; cgst: number; sgst: number };
+  const adjustments = (adj || []) as unknown as Adjustment[];
 
   let resi = 0, comm = 0;
   if (p.carpet_area_source === 'MANUAL') {
@@ -276,6 +622,26 @@ export async function runAutoReclassSweep(
 
   const classification: Record<string, { rateCode: string; ratePct: number; agreementValue: number }> = {};
   units.forEach((u) => {
+    const invIds = new Set((imap[u.id] || []).map((i) => i.id));
+    const unitAdjustments = adjustments.filter((a) => invIds.has(a.invoice_id));
+    // knownConsideration: money already recognised (opening + receipts/
+    // invoices to date) — see classifyUnit()'s doc comment. agreementValue
+    // is irrelevant to considerationRecognized, so 0 is fine here.
+    const prelimLedger = computeUnitLedger({
+      agreementValue: 0,
+      opening: omap[u.id],
+      receipts: (rmap[u.id] || []).map((r) => ({
+        consideration: r.consideration, cgst: r.cgst, sgst: r.sgst,
+        tds_194ia: r.tds_194ia, bank_credit: r.bank_credit,
+        receipt_nature: r.receipt_nature as never, cheque_status: r.cheque_status as never,
+        gst_already_discharged: r.gst_already_discharged,
+        subsumed_by_bu_event_id: r.subsumed_by_bu_event_id,
+      })),
+      invoices: (imap[u.id] || []).map((i) => ({ consideration: i.consideration, cgst: i.cgst, sgst: i.sgst })),
+      adjustments: unitAdjustments.map((a) => ({
+        consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst,
+      })),
+    });
     const cls = classifyUnit({
       unitType: u.unit_type,
       carpetAreaSqM: Number(u.carpet_area_sqm) || 0,
@@ -287,11 +653,12 @@ export async function runAutoReclassSweep(
       isMetro: p.is_metro ?? false,
       isRrep: rrep.isRrep,
       settings: settings as ChargeInclusionSettings,
+      knownConsideration: prelimLedger.considerationRecognized,
     });
     classification[u.id] = { rateCode: cls.rateCode, ratePct: cls.ratePct, agreementValue: cls.gross.gross };
   });
 
-  return autoReclassifyProject(projectId, classification, userId);
+  return autoReclassifyProject(projectId, classification, userId, p.client_id);
 }
 
 // ─── Bounce reversals ───────────────────────────────────────────────────────
@@ -441,6 +808,13 @@ export async function applyBounceOffsets(params: {
  * it the note is still recorded — the trail matters — but flagged out of window
  * and excluded from the postings feed, because the tax cannot be adjusted.
  */
+export interface OriginalDocument {
+  docType: 'INVOICE' | 'RECEIPT';
+  docNo: string | null;
+  docDate: string;
+  amount: number;
+}
+
 export async function raiseCreditNote(params: {
   unitId: string;
   bookingId: string | null;
@@ -449,6 +823,11 @@ export async function raiseCreditNote(params: {
   consideration: number;
   rateCode: BuilderRateCode;
   originalDocDate: string;
+  /** The actual invoice(s)/receipt voucher(s) this note reverses — auto-
+   *  derived by the caller from the DB, never typed by hand. Empty for the
+   *  standalone Raise Credit Note dialog, which has no linked booking to
+   *  derive them from. */
+  originalDocuments?: OriginalDocument[];
   periodMonth: string;
   docSeries: string | null;
   docNo: string | null;
@@ -474,6 +853,7 @@ export async function raiseCreditNote(params: {
     doc_series: params.docSeries,
     doc_no: params.docNo,
     reason: params.reason,
+    original_documents: (params.originalDocuments || []) as never,
     created_by: params.userId,
   }).select('id').single();
   if (error) throw error;

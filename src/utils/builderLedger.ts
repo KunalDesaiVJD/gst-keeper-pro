@@ -113,11 +113,13 @@ export const receiptPostsTax = (r: {
   cheque_status: ChequeStatus;
   gst_already_discharged: boolean;
   subsumed_by_bu_event_id?: string | null;
+  cancelled_via_id?: string | null;
 }): boolean =>
   r.receipt_nature === 'ADVANCE'
   && r.cheque_status !== 'Bounced'
   && !r.gst_already_discharged
-  && !r.subsumed_by_bu_event_id;
+  && !r.subsumed_by_bu_event_id
+  && !r.cancelled_via_id;
 
 // ─── Per-unit ledger ────────────────────────────────────────────────────────
 
@@ -131,6 +133,11 @@ export interface LedgerReceipt {
   cheque_status: ChequeStatus;
   gst_already_discharged: boolean;
   subsumed_by_bu_event_id?: string | null;
+  /** Set once a receipt's booking is cancelled — excluded from valueTaxed/
+   *  considerationRecognized/openAdvance (the tax-relevant figures) so a
+   *  later re-booking of the same unit doesn't inherit a refunded member's
+   *  money, but still counted in totalReceived (a historical cash memo). */
+  cancelled_via_id?: string | null;
 }
 
 export interface LedgerInvoice { consideration: number; cgst: number; sgst: number }
@@ -157,6 +164,25 @@ export interface UnitLedger {
   totalTds194ia: number;
   /** Agreement value less value taxed: what a BU event would still have to tax. */
   balanceToTax: number;
+  /**
+   * Full consideration recognised to date — opening's carried-forward
+   * position plus this unit's own advances/invoices, net of absorption.
+   * Despite the name, `valueTaxed` is already expressed in full-consideration
+   * terms, not the 2/3rd taxable-value basis — it's directly comparable to
+   * `agreementValue` via `balanceToTax` above, and every receipt/invoice
+   * contributes its own `consideration` field (pre-land-deduction) when
+   * accumulating it. So this is a plain alias, not a derived conversion —
+   * named separately because "valueTaxed" reads as the 2/3rd figure at every
+   * OTHER call site, and conflating the two here would be exactly the kind
+   * of silent unit mismatch this field exists to prevent.
+   *
+   * This is the "running balance" signal for the affordable-housing ₹45L
+   * test: a unit cannot legitimately have RECEIVED more than its true
+   * agreed price, so if this exceeds base consideration + charges, the unit
+   * master is understating the true gross amount charged, not the buyer
+   * overpaying — see `knownConsideration` on `classifyUnit()`.
+   */
+  considerationRecognized: number;
 }
 
 /**
@@ -209,6 +235,7 @@ export const computeUnitLedger = (params: {
     totalReceived: round2((Number(ob.cumulative_receipts) || 0) + received),
     totalTds194ia: round2((Number(ob.cumulative_tds_194ia) || 0) + tds),
     balanceToTax: round2(agreementValue - valueTaxed),
+    considerationRecognized: valueTaxed,
   };
 };
 
@@ -316,6 +343,10 @@ export interface PostingRow {
   taxable_value: number;
   cgst: number;
   sgst: number;
+  /** 1/3rd deemed land value (Notif 11/2017 para 2), reported as Non-GST
+   *  supply. Zero on Table 10 re-rating legs — see builder_period_postings'
+   *  view comment. */
+  land_deduction: number;
 }
 
 export interface RateBucket {
@@ -328,6 +359,7 @@ export interface RateBucket {
   sgst: number;
   totalTax: number;
   count: number;
+  landDeduction: number;
 }
 
 export interface PeriodSummary {
@@ -339,14 +371,14 @@ export interface PeriodSummary {
   table7: RateBucket[];
   /** 3B Table 3.1(a): everything above, netted. */
   outward: RateBucket[];
-  totals: { taxableValue: number; cgst: number; sgst: number; totalTax: number };
+  totals: { taxableValue: number; cgst: number; sgst: number; totalTax: number; landDeduction: number };
 }
 
 const emptyBucket = (rateCode: BuilderRateCode, ratePct: number): RateBucket => ({
   rateCode,
   ratePct,
   effectiveRatePct: EFFECTIVE_RATE_PCT[rateCode],
-  consideration: 0, taxableValue: 0, cgst: 0, sgst: 0, totalTax: 0, count: 0,
+  consideration: 0, taxableValue: 0, cgst: 0, sgst: 0, totalTax: 0, count: 0, landDeduction: 0,
 });
 
 const bucketise = (rows: PostingRow[]): RateBucket[] => {
@@ -359,6 +391,7 @@ const bucketise = (rows: PostingRow[]): RateBucket[] => {
     b.cgst = round2(b.cgst + (Number(r.cgst) || 0));
     b.sgst = round2(b.sgst + (Number(r.sgst) || 0));
     b.totalTax = round2(b.cgst + b.sgst);
+    b.landDeduction = round2(b.landDeduction + (Number(r.land_deduction) || 0));
     b.count += 1;
     map.set(key, b);
   });
@@ -386,6 +419,7 @@ export const summarisePeriod = (rows: PostingRow[]): PeriodSummary => {
       cgst: round2(outward.reduce((s, b) => s + b.cgst, 0)),
       sgst: round2(outward.reduce((s, b) => s + b.sgst, 0)),
       totalTax: round2(outward.reduce((s, b) => s + b.totalTax, 0)),
+      landDeduction: round2(outward.reduce((s, b) => s + b.landDeduction, 0)),
     },
   };
 };

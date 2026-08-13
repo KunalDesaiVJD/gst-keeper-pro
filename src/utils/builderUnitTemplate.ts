@@ -227,6 +227,9 @@ export function parseUnitWorkbook(
     drafts.push({
       unit_no: unitNo,
       unit_type: (typeRaw.startsWith('c') ? 'Commercial' : 'Residential') as UnitType,
+      // A blank or unrecognised type cell is NOT guessed — see DraftUnit's
+      // unit_type_recognized doc comment.
+      unit_type_recognized: typeRaw.startsWith('c') || typeRaw.startsWith('r'),
       carpet_area_sqm: parseAmount(at(row, idx.carpet)),
       base_consideration: parseAmount(at(row, idx.consideration)),
       status: BULK_UNIT_STATUSES.find((s) => s.toLowerCase() === statusRaw.toLowerCase())

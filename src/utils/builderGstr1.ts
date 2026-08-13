@@ -8,13 +8,15 @@
  * untouched. For a builder client this replaces the JSON import; the figures are
  * computed from bookings, receipts and BU events rather than typed or uploaded.
  *
- * Only four outward sections can arise, and the reasons are structural rather
- * than incidental:
+ * Only five sections can arise, and the reasons are structural rather than
+ * incidental:
  *
  *   Table 7   → `b2cs`   invoices, net of credit notes
  *   Table 11A → `at`     advances received, net of bounce offsets
  *   Table 11B → `txpd`   advances adjusted against invoices
  *   Table 10  → `b2csa`  amendments from a retrospective re-rating
+ *   Table 8   → `nil`    the 1/3rd deemed land deduction, as Non-GST supply
+ *                        (firm election — see BUILDER_GST_POSITIONS.md §1)
  *
  * Buyers are unregistered individuals, so Table 4A (B2B) cannot arise. Under
  * s.12(3)(a) IGST Act the place of supply for a service in relation to
@@ -45,6 +47,9 @@ export interface Gstr1PostingRow {
   /** Only set on legs that issue their own document — drives Table 13. */
   doc_no?: string | null;
   rate_code?: BuilderRateCode;
+  /** 1/3rd deemed land value (Notif 11/2017 para 2), reported as Non-GST
+   *  supply — Table 8 `nil.inv[].ngsup_amt`. Zero on Table 10 re-rating legs. */
+  land_deduction?: number;
 }
 
 /**
@@ -61,8 +66,8 @@ export const BUILDER_SAC = '9954';
  */
 const DOC_CLASS: Record<string, { num: number; label: string }> = {
   INVOICE_B2CS: { num: 1, label: 'Invoices for outward supply' },
-  ADVANCE_11A: { num: 4, label: 'Receipt voucher' },
-  CREDIT_NOTE: { num: 8, label: 'Credit note' },
+  ADVANCE_11A: { num: 6, label: 'Receipt voucher' },
+  CREDIT_NOTE: { num: 5, label: 'Credit note' },
 };
 
 export interface DocSeriesLine {
@@ -84,9 +89,11 @@ export interface BuilderGstr1Result {
   json: Record<string, unknown>;
   warnings: Gstr1Warning[];
   /** Per-section row counts, for the confirmation screen. */
-  counts: { b2cs: number; at: number; txpd: number; b2csa: number };
+  counts: { b2cs: number; at: number; txpd: number; b2csa: number; nil: number };
   /** Total tax the return carries, for tying back to the workpaper. */
   totalTax: number;
+  /** Table 8 non-GST total (the period's land deduction), for the workpaper. */
+  nonGstTotal: number;
   /** Table 13 series, surfaced so the workpaper can show them with the SAC. */
   docSeries: DocSeriesLine[];
 }
@@ -302,6 +309,22 @@ export function buildBuilderGstr1(params: {
     });
   }
 
+  // ── Table 8 → nil. The 1/3rd land deduction, as Non-GST supply. ──────────
+  // Summed across every posting in the period (not filtered by table): Table
+  // 10 legs always contribute zero by construction (see the view comment on
+  // builder_period_postings), so summing unconditionally nets 11A/11B/Table 7
+  // together exactly the way `outward` already does for taxable value.
+  const landTotal = money(
+    postings.reduce((s, r) => s + (Number(r.land_deduction) || 0), 0),
+  );
+  if (landTotal < 0) {
+    warnings.push({
+      severity: 'WARN',
+      message: `Table 8 (non-GST land) is net negative this period (${landTotal.toFixed(2)}) `
+        + 'because credit notes/reversals exceed the land component posted. The portal may reject it.',
+    });
+  }
+
   const totalTax = money(
     postings.reduce((s, r) => s + (Number(r.cgst) || 0) + (Number(r.sgst) || 0), 0),
   );
@@ -313,21 +336,21 @@ export function buildBuilderGstr1(params: {
     hash: 'hash',
     gt: money(params.grossTurnover || 0),
     cur_gt: money(params.grossTurnover || 0),
-    // Provenance. The GSTR-1 page reads this to show that the figures were
-    // generated from Builder Returns rather than uploaded.
-    _source: 'BUILDER_RETURNS',
-    _generated_at: new Date().toISOString(),
   };
   if (b2cs.length) json.b2cs = b2cs;
   if (at.length) json.at = at;
   if (txpd.length) json.txpd = txpd;
   if (b2csa.length) json.b2csa = b2csa;
   if (hsnData.length) json.hsn = { data: hsnData };
+  const nilInv = landTotal !== 0
+    ? [{ sply_ty: 'INTRAB2C', nil_amt: 0, expt_amt: 0, ngsup_amt: landTotal }]
+    : [];
+  if (nilInv.length) json.nil = { inv: nilInv };
 
   // ── Table 13 — documents issued ──────────────────────────────────────────
   const docSeries = buildDocSeries(postings);
   if (docSeries.length) {
-    json.doc = {
+    json.doc_issue = {
       doc_det: docSeries.map((s) => ({
         doc_num: s.docNum,
         doc_typ: s.label,
@@ -353,12 +376,36 @@ export function buildBuilderGstr1(params: {
   return {
     json,
     warnings,
-    counts: { b2cs: b2cs.length, at: at.length, txpd: txpd.length, b2csa: b2csa.length },
+    counts: { b2cs: b2cs.length, at: at.length, txpd: txpd.length, b2csa: b2csa.length, nil: nilInv.length },
     totalTax,
+    nonGstTotal: landTotal,
     docSeries,
   };
 }
 
-/** True when a stored GSTR-1 record was produced here rather than uploaded. */
-export const isBuilderGenerated = (raw: unknown): boolean =>
-  !!raw && typeof raw === 'object' && (raw as { _source?: string })._source === 'BUILDER_RETURNS';
+/**
+ * True when a stored GSTR-1 record was produced by Builder Returns rather
+ * than uploaded. Provenance is the `file_name` `saveBuilderGstr1()` writes
+ * ("Builder Returns — <period>"), never a field inside the JSON itself —
+ * that JSON is the exact file the portal receives, and stuffing app-only
+ * metadata into it is what caused the portal to reject the whole upload
+ * over an unrecognised key (see `stripInternalFields`).
+ */
+export const isBuilderGenerated = (fileName: string | null | undefined): boolean =>
+  !!fileName && fileName.startsWith('Builder Returns');
+
+/**
+ * Older Builder-generated rows (before this fix) still carry `_source`/
+ * `_generated_at` inside their stored `raw_json` — added so the UI could
+ * show a provenance badge, before that moved to `file_name`. The portal's
+ * upload schema doesn't recognise them, and a strict validator rejects the
+ * whole file over one unexpected key with the same generic "doesn't match
+ * the template" message it gives for any schema mismatch. Strip them at
+ * every point a stored JSON leaves the app: the manual download and the
+ * automated portal push. A no-op on rows saved after this fix.
+ */
+export function stripInternalFields(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object') return {};
+  const { _source, _generated_at, ...rest } = raw as Record<string, unknown>;
+  return rest;
+}

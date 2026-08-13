@@ -52,6 +52,7 @@ import { computeDelayInterest, type DelayInterestBasis } from '@/utils/builderAd
 import { autoReclassifyProject } from '@/lib/builderAdjustmentsData';
 import { periodKey } from '@/utils/builderBuEvent';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
+import { clearDastavejDate } from '@/lib/builderBuPosting';
 
 interface ProjectRow {
   id: string; client_id: string; name: string; is_metro: boolean;
@@ -78,6 +79,10 @@ interface BookingRow {
 interface MemberRow {
   id: string; booking_id: string; name: string; pan: string | null;
   ownership_ratio: number; is_primary: boolean;
+}
+interface CancellationRow {
+  id: string; booking_id: string; unit_id: string; cancellation_date: string;
+  refund_payable: number; refund_paid: number; status: string;
 }
 interface ReceiptRow {
   id: string; booking_id: string; unit_id: string; receipt_date: string;
@@ -163,12 +168,20 @@ const BuilderBookingsPage: React.FC = () => {
   const [invoices, setInvoices] = useState<Record<string, InvoiceRow[]>>({});
   const [adjustments, setAdjustments] = useState<AdjRow[]>([]);
   const [openings, setOpenings] = useState<Record<string, OpeningRow>>({});
+  /** Cancellations with an unpaid refund — one unit can carry more than one over time. */
+  const [openCancellations, setOpenCancellations] = useState<Record<string, CancellationRow[]>>({});
+  /** Every cancellation, any status — for the "cancelled, now available" display state. */
+  const [allCancellations, setAllCancellations] = useState<Record<string, CancellationRow[]>>({});
   /** Units already carrying a re-rating (auto-posted or, rarely, manual). */
   const [reclassifiedUnitIds, setReclassifiedUnitIds] = useState<Set<string>>(new Set());
   const [settings, setSettings] = useState<ChargeInclusionSettings>(DEFAULT_CHARGE_INCLUSIONS);
   const [delayInterestBasis, setDelayInterestBasis] = useState<DelayInterestBasis>('FLAT_18');
   /** False for a client who never raises a milestone invoice — hides that control on the ledger. */
   const [raisesInvoices, setRaisesInvoices] = useState(true);
+  /** GSTR-1 periods already Filed for this client — receipts/invoices dated
+   *  into one of these are rejected by the DB; this is just the same check
+   *  surfaced before the click instead of after it. */
+  const [filedPeriods, setFiledPeriods] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -177,6 +190,9 @@ const BuilderBookingsPage: React.FC = () => {
   const [bookingUnit, setBookingUnit] = useState<UnitRow | null>(null);
   const [bookingForm, setBookingForm] = useState(emptyBooking);
   const [bookingMembers, setBookingMembers] = useState([{ ...emptyMember }]);
+  /** Must be ticked before Save when the unit carries an unpaid cancellation. */
+  const [bookingCancelAck, setBookingCancelAck] = useState(false);
+  const [isClearingDastavej, setIsClearingDastavej] = useState(false);
 
   // Rename/correct the member(s) on an already-booked unit — the "Book unit"
   // flow above only ever creates a booking, so it disappears once one exists.
@@ -277,6 +293,11 @@ const BuilderBookingsPage: React.FC = () => {
       setDelayInterestBasis(clientSettings.delay_interest_basis);
       setRaisesInvoices(clientSettings.raises_invoices !== false);
 
+      const { data: filed } = await supabase
+        .from('filing_status').select('period_month')
+        .eq('client_id', p.client_id).eq('return_type', 'GSTR-1').eq('status', 'Filed');
+      setFiledPeriods(new Set(((filed || []) as { period_month: string }[]).map((f) => f.period_month)));
+
       const [{ data: unt }, { data: grp }] = await Promise.all([
         supabase.from('builder_units').select('*').eq('project_id', projectId)
           .order('sort_order').order('unit_no'),
@@ -290,19 +311,35 @@ const BuilderBookingsPage: React.FC = () => {
       if (!unitIds.length) {
         setCharges({}); setBookings([]); setMembers({}); setReceipts({});
         setInvoices({}); setAdjustments([]); setOpenings({}); setReclassifiedUnitIds(new Set());
+        setOpenCancellations({}); setAllCancellations({});
         return;
       }
 
-      const [{ data: chg }, { data: bkg }, { data: rcp }, { data: inv }, { data: opn }, { data: rcl }] =
+      const [{ data: chg }, { data: bkg }, { data: rcp }, { data: inv }, { data: opn }, { data: rcl }, { data: cxl }] =
         await Promise.all([
           supabase.from('builder_unit_charges').select('*').in('unit_id', unitIds),
           supabase.from('builder_bookings').select('*').in('unit_id', unitIds).order('booking_date'),
           supabase.from('builder_receipts').select('*').in('unit_id', unitIds).order('receipt_date'),
           supabase.from('builder_invoices').select('*').in('unit_id', unitIds).order('invoice_date'),
           supabase.from('builder_opening_balances').select('*').in('unit_id', unitIds),
-          supabase.from('builder_reclassifications').select('unit_id').in('unit_id', unitIds),
+          // A REVERSED reclassification no longer counts as "handled" — the
+          // unit should show its re-rating-due banner again if it genuinely
+          // still needs one.
+          supabase.from('builder_reclassifications').select('unit_id').in('unit_id', unitIds).neq('status', 'REVERSED'),
+          // Every cancellation, any status — a unit that was booked and later
+          // cancelled reads identically to one never booked at all unless
+          // this history is kept around, even once its refund is settled.
+          supabase.from('builder_cancellations').select('*').in('unit_id', unitIds),
         ]);
       setReclassifiedUnitIds(new Set(((rcl || []) as unknown as { unit_id: string }[]).map((r) => r.unit_id)));
+
+      const allCxl = (cxl || []) as unknown as CancellationRow[];
+      const cxlMap: Record<string, CancellationRow[]> = {};
+      allCxl.forEach((c) => { (cxlMap[c.unit_id] ||= []).push(c); });
+      setAllCancellations(cxlMap);
+      const openMap: Record<string, CancellationRow[]> = {};
+      allCxl.filter((c) => c.status === 'OPEN').forEach((c) => { (openMap[c.unit_id] ||= []).push(c); });
+      setOpenCancellations(openMap);
 
       const cmap: Record<string, ChargeRow[]> = {};
       ((chg || []) as unknown as ChargeRow[]).forEach((c) => { (cmap[c.unit_id] ||= []).push(c); });
@@ -377,18 +414,48 @@ const BuilderBookingsPage: React.FC = () => {
     return testRrep(resi, comm);
   }, [project, units]);
 
-  const classifyFor = useCallback((u: UnitRow) => classifyUnit({
-    unitType: u.unit_type,
-    carpetAreaSqM: Number(u.carpet_area_sqm) || 0,
-    baseConsideration: Number(u.base_consideration) || 0,
-    charges: (charges[u.id] || []).map((c) => ({
-      charge_head: c.charge_head as never, amount: Number(c.amount) || 0,
-      include_override: c.include_override,
-    })),
-    isMetro: project?.is_metro ?? false,
-    isRrep: rrep.isRrep,
-    settings,
-  }), [charges, project, rrep.isRrep, settings]);
+  /**
+   * Classification floored at money already recognised for the unit (opening
+   * balance + every receipt/invoice to date, net of absorption), not just
+   * base_consideration + charges — a unit can't legitimately have received
+   * more than its true agreed price, so if it has, the unit master itself is
+   * understating the true gross amount charged. Computes a preliminary
+   * ledger just for that running total; agreementValue is irrelevant to it,
+   * so 0 avoids a circular dependency on classifyFor's own result.
+   */
+  const classifyFor = useCallback((u: UnitRow) => {
+    const invIds = new Set((invoices[u.id] || []).map((i) => i.id));
+    const unitAdjustments = adjustments.filter((a) => invIds.has(a.invoice_id));
+    const prelimLedger = computeUnitLedger({
+      agreementValue: 0,
+      opening: openings[u.id],
+      receipts: (receipts[u.id] || []).map((r) => ({
+        consideration: r.consideration, cgst: r.cgst, sgst: r.sgst,
+        tds_194ia: r.tds_194ia, bank_credit: r.bank_credit,
+        receipt_nature: r.receipt_nature, cheque_status: r.cheque_status,
+        gst_already_discharged: r.gst_already_discharged,
+        subsumed_by_bu_event_id: r.subsumed_by_bu_event_id,
+        cancelled_via_id: r.cancelled_via_id,
+      })),
+      invoices: (invoices[u.id] || []).map((i) => ({ consideration: i.consideration, cgst: i.cgst, sgst: i.sgst })),
+      adjustments: unitAdjustments.map((a) => ({
+        consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst,
+      })),
+    });
+    return classifyUnit({
+      unitType: u.unit_type,
+      carpetAreaSqM: Number(u.carpet_area_sqm) || 0,
+      baseConsideration: Number(u.base_consideration) || 0,
+      charges: (charges[u.id] || []).map((c) => ({
+        charge_head: c.charge_head as never, amount: Number(c.amount) || 0,
+        include_override: c.include_override,
+      })),
+      isMetro: project?.is_metro ?? false,
+      isRrep: rrep.isRrep,
+      settings,
+      knownConsideration: prelimLedger.considerationRecognized,
+    });
+  }, [charges, project, rrep.isRrep, settings, openings, receipts, invoices, adjustments]);
 
   const classification = useMemo(() => {
     const out: Record<string, { rateCode: string; ratePct: number; agreementValue: number }> = {};
@@ -412,35 +479,73 @@ const BuilderBookingsPage: React.FC = () => {
   }, []);
 
   /**
-   * Re-rating (§8) posts itself the moment a unit crosses ₹45L — no staff
-   * selection. This is the daily workspace, so the correction fires from
-   * here rather than waiting for anyone to open the Adjustments tab; Builder
-   * Returns' Generate step re-runs the same check as a safety net for
-   * whichever page a unit actually crossed on.
+   * A unit crossing ₹45L (or falling back below it) is kept in sync the
+   * moment it's detected — no staff selection. A period already Filed gets a
+   * formal Table 10 amendment (permanent, interest included, per §8's "no
+   * downgrade" position — a filed return can only be corrected, not
+   * silently rewritten); an unfiled period is simply corrected in place, so
+   * a data-entry mistake caught before filing never needs an amendment at
+   * all. Builder Returns' Generate step re-runs the same check as a safety
+   * net for whichever page a unit actually crossed on.
    */
   useEffect(() => {
-    if (!projectId || !units.length) return;
+    if (!projectId || !units.length || !project?.client_id) return;
     (async () => {
       try {
-        const posted = await autoReclassifyProject(projectId, classification, user?.id ?? null);
+        const { posted, resynced } = await autoReclassifyProject(
+          projectId, classification, user?.id ?? null, project.client_id,
+        );
         if (posted.length) {
           toast.success(
-            `${posted.length} unit${posted.length === 1 ? '' : 's'} auto re-rated on crossing ₹45,00,000 `
+            `${posted.length} unit${posted.length === 1 ? '' : 's'} re-rated on a filed period crossing ₹45,00,000 `
             + `(${posted.map((c) => c.unitNo).join(', ')}) — Table 10 amendment and interest posted.`,
           );
           setReclassifiedUnitIds((prev) => new Set([...prev, ...posted.map((c) => c.unitId)]));
+        }
+        if (resynced.length) {
+          const names = resynced.map((r) => units.find((u) => u.id === r.unitId)?.unit_no || r.unitId);
+          toast.info(
+            `${resynced.length} unit${resynced.length === 1 ? '' : 's'} resynced to the current rate on unfiled `
+            + `periods (${names.join(', ')}) — no amendment needed, nothing filed yet.`,
+          );
         }
       } catch (e) {
         toast.error(`Auto re-rating failed for one or more units: ${(e as Error).message}`);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, units.length, classification]);
+  }, [projectId, units.length, classification, project?.client_id]);
 
   const activeBookingFor = useCallback(
     (unitId: string) => bookings.find((b) => b.unit_id === unitId && b.status === 'Active') || null,
     [bookings],
   );
+
+  const openCancellationTotal = useCallback(
+    (unitId: string) => (openCancellations[unitId] || [])
+      .reduce((s, c) => s + Math.max(0, (Number(c.refund_payable) || 0) - (Number(c.refund_paid) || 0)), 0),
+    [openCancellations],
+  );
+
+  const hasOpeningActivity = useCallback((unitId: string) => {
+    const opening = openings[unitId];
+    return !!opening
+      && ((Number(opening.agreement_value) || 0) > 0.005 || (Number(opening.cumulative_receipts) || 0) > 0.005);
+  }, [openings]);
+
+  /**
+   * What to show in place of a member name when there isn't an active
+   * booking with one — three genuinely different situations that all used to
+   * read as the same bare "Unbooked", the source of the confusion here: a
+   * pre-onboarding sale recognised only via its opening balance, a unit that
+   * was sold and later cancelled and is now free again, and one that has
+   * simply never been sold.
+   */
+  const unbookedLabel = useCallback((unitId: string): string => {
+    if (hasOpeningActivity(unitId)) return 'Booked — no member on file';
+    if ((allCancellations[unitId] || []).length > 0) return 'Cancelled — available';
+    return 'Unbooked';
+  }, [hasOpeningActivity, allCancellations]);
 
   const adjustmentsForUnit = useCallback((unitId: string) => {
     const invIds = new Set((invoices[unitId] || []).map((i) => i.id));
@@ -459,6 +564,7 @@ const BuilderBookingsPage: React.FC = () => {
         receipt_nature: r.receipt_nature, cheque_status: r.cheque_status,
         gst_already_discharged: r.gst_already_discharged,
         subsumed_by_bu_event_id: r.subsumed_by_bu_event_id,
+        cancelled_via_id: r.cancelled_via_id,
       })),
       invoices: (invoices[u.id] || []).map((i) => ({
         consideration: i.consideration, cgst: i.cgst, sgst: i.sgst,
@@ -489,6 +595,7 @@ const BuilderBookingsPage: React.FC = () => {
           receipt_nature: r.receipt_nature, cheque_status: r.cheque_status,
           gst_already_discharged: r.gst_already_discharged,
           subsumed_by_bu_event_id: r.subsumed_by_bu_event_id,
+          cancelled_via_id: r.cancelled_via_id,
         })),
       invoices: (invoices[u.id] || [])
         .filter((i) => periodKey(i.period_month) <= cutoff)
@@ -535,7 +642,29 @@ const BuilderBookingsPage: React.FC = () => {
     setBookingUnit(u);
     setBookingForm({ ...emptyBooking, total_consideration: String(cls.gross.gross || '') });
     setBookingMembers([{ ...emptyMember }]);
+    setBookingCancelAck(false);
     setBookingDialog(true);
+  };
+
+  /**
+   * A unit being booked here can still carry a dastavej date from an earlier,
+   * now-cancelled sale — stale for this fresh booking, since it will get its
+   * own registration later. See clearDastavejDate() for the guards (blocked
+   * if the posting is already filed, or covers other units too).
+   */
+  const handleClearStaleDastavej = async () => {
+    if (!bookingUnit) return;
+    setIsClearingDastavej(true);
+    try {
+      await clearDastavejDate(bookingUnit.id);
+      toast.success('Stale dastavej date cleared');
+      setBookingUnit({ ...bookingUnit, dastavej_date: null, dastavej_value: null, bu_event_id: null });
+      void load();
+    } catch (e) {
+      toast.error(`Could not clear: ${(e as Error).message}`);
+    } finally {
+      setIsClearingDastavej(false);
+    }
   };
 
   const handleSaveBooking = async () => {
@@ -545,6 +674,10 @@ const BuilderBookingsPage: React.FC = () => {
     const ratioTotal = named.reduce((s, m) => s + (parseFloat(m.ownership_ratio) || 0), 0);
     if (Math.abs(ratioTotal - 100) > 0.01) {
       toast.error(`Ownership ratios must total 100% (currently ${ratioTotal}%)`);
+      return;
+    }
+    if ((openCancellations[bookingUnit.id] || []).length > 0 && !bookingCancelAck) {
+      toast.error('Acknowledge the unsettled cancellation on this unit before booking a new member');
       return;
     }
     setIsSaving(true);
@@ -928,13 +1061,18 @@ const BuilderBookingsPage: React.FC = () => {
       if (unitNoFilter !== null && !unitNoFilter.includes(u.unit_no)) return false;
       if (bookingFilter.length > 0) {
         const booking = activeBookingFor(u.id);
-        const isBooked = !!booking && (members[booking.id] || []).length > 0;
+        const hasMember = !!booking && (members[booking.id] || []).length > 0;
+        // A unit with a recognised opening balance was demonstrably booked
+        // before onboarding, even with no member name on file yet — counts
+        // as Booked here too, consistent with the BU cut-off test.
+        const isBooked = hasMember || hasOpeningActivity(u.id);
         if (!bookingFilter.includes(isBooked ? 'Booked' : 'Unbooked')) return false;
       }
       if (rateFilter.length > 0 && !rateFilter.includes(classifyFor(u).rateCode)) return false;
       return true;
     });
-  }, [sortedUnits, unitTypeFilter, unitNoFilter, bookingFilter, rateFilter, activeBookingFor, members, classifyFor]);
+  }, [sortedUnits, unitTypeFilter, unitNoFilter, bookingFilter, rateFilter, activeBookingFor, members, hasOpeningActivity,
+    classifyFor]);
 
   const atRisk = useMemo(
     () => units.filter((u) => {
@@ -994,7 +1132,7 @@ const BuilderBookingsPage: React.FC = () => {
       const booking = bookings.find((b) => b.unit_id === u.id && b.status === 'Active')
         || bookings.find((b) => b.unit_id === u.id) || null;
       const mem = booking ? members[booking.id] || [] : [];
-      const memberLabel = mem.length === 0 ? 'Unbooked'
+      const memberLabel = mem.length === 0 ? unbookedLabel(u.id)
         : mem.length === 1 ? mem[0].name : `${mem[0].name} +${mem.length - 1} joint`;
       const rows: RegisterRow[] = [];
 
@@ -1056,7 +1194,7 @@ const BuilderBookingsPage: React.FC = () => {
       });
     });
     return groups.sort((x, y) => x.rows[0].date.localeCompare(y.rows[0].date));
-  }, [viewMode, units, bookings, members, receipts, invoices, adjustmentsForUnit, selectedMonth]);
+  }, [viewMode, units, bookings, members, receipts, invoices, adjustmentsForUnit, selectedMonth, unbookedLabel]);
 
   const registerTotals = useMemo(() => monthRegisterGroups.reduce((t, g) => ({
     bank: t.bank + g.bank, taxable: t.taxable + g.taxable, cgst: t.cgst + g.cgst, sgst: t.sgst + g.sgst,
@@ -1608,10 +1746,24 @@ const BuilderBookingsPage: React.FC = () => {
                                 Closed pre-onboarding
                               </Badge>
                             )}
+                            {(openCancellations[u.id] || []).length > 0 && (
+                              <Badge
+                                variant="outline"
+                                className="mt-1 text-[10px] block w-fit cursor-pointer border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                                title={
+                                  `${formatINR(openCancellationTotal(u.id))} refund still owed from `
+                                  + `${(openCancellations[u.id] || []).length > 1 ? 'earlier cancellations' : 'an earlier cancellation'} on this unit — `
+                                  + 'click to open the Cancellations tab'
+                                }
+                                onClick={() => navigate(`/builder-projects/${projectId}/adjustments?tab=cancellations`)}
+                              >
+                                {formatINR(openCancellationTotal(u.id))} refund pending
+                              </Badge>
+                            )}
                           </TableCell>
                           <TableCell className="text-sm">
                             {mem.length === 0 ? (
-                              <span className="text-muted-foreground">Unbooked</span>
+                              <span className="text-muted-foreground">{unbookedLabel(u.id)}</span>
                             ) : (
                               <>
                                 {mem[0].name}
@@ -1628,6 +1780,14 @@ const BuilderBookingsPage: React.FC = () => {
                           </TableCell>
                           <TableCell className="text-sm">
                             {cls.ratePct}%
+                            {cls.gross.impliedByReceipts && (
+                              <span
+                                className="inline-block align-text-top"
+                                title={`Rate reflects ${formatINR(cls.gross.gross)} actually recognised (opening + receipts), which exceeds ${formatINR(cls.gross.base + cls.gross.includedCharges)} on the unit master. Update base consideration/charges to match.`}
+                              >
+                                <AlertTriangle className="inline h-3 w-3 ml-1 text-amber-600" />
+                              </span>
+                            )}
                             <span className="block text-xs text-muted-foreground">eff. {cls.effectiveRatePct}%</span>
                           </TableCell>
                           <TableCell className="text-right text-sm">{formatINR(agreement)}</TableCell>
@@ -2036,9 +2196,65 @@ const BuilderBookingsPage: React.FC = () => {
             />
           </div>
 
+          {bookingUnit?.dastavej_date && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-1.5 flex-1">
+                <p>
+                  This unit still carries a dastavej date ({bookingUnit.dastavej_date}
+                  {bookingUnit.dastavej_value ? `, ${formatINR(bookingUnit.dastavej_value)}` : ''}) — likely
+                  stale from an earlier, now-cancelled sale. It will misread as this booking's own
+                  registration unless cleared first.
+                </p>
+                <Button
+                  size="sm" variant="outline"
+                  onClick={handleClearStaleDastavej} disabled={isClearingDastavej}
+                >
+                  {isClearingDastavej && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />} Clear dastavej date
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {bookingUnit && (openCancellations[bookingUnit.id] || []).length > 0 && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900 space-y-2">
+              <div className="flex gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <div className="text-xs space-y-1">
+                  <p className="font-medium">
+                    This unit has {(openCancellations[bookingUnit.id] || []).length > 1 ? 'earlier cancellations' : 'an earlier cancellation'} with an unpaid refund:
+                  </p>
+                  <ul className="list-disc list-inside space-y-0.5">
+                    {(openCancellations[bookingUnit.id] || []).map((c) => (
+                      <li key={c.id}>
+                        {formatINR(Math.max(0, (Number(c.refund_payable) || 0) - (Number(c.refund_paid) || 0)))} owed
+                        to {(members[c.booking_id] || [])[0]?.name || 'the previous member'}, cancelled {c.cancellation_date}
+                      </li>
+                    ))}
+                  </ul>
+                  <p>
+                    Booking a new member here does not settle or affect that refund — it stays open,
+                    independently, on the Cancellations tab.
+                  </p>
+                </div>
+              </div>
+              <label className="flex items-start gap-2 text-xs pl-6">
+                <input
+                  type="checkbox" checked={bookingCancelAck}
+                  onChange={(e) => setBookingCancelAck(e.target.checked)}
+                  className="mt-0.5 h-3.5 w-3.5"
+                />
+                I understand the earlier refund is still outstanding and unrelated to this booking.
+              </label>
+            </div>
+          )}
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setBookingDialog(false)}>Cancel</Button>
-            <Button onClick={handleSaveBooking} disabled={isSaving}>
+            <Button
+              onClick={handleSaveBooking}
+              disabled={isSaving || (!!bookingUnit && (openCancellations[bookingUnit.id] || []).length > 0 && !bookingCancelAck)}
+            >
               {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Book unit
             </Button>
           </DialogFooter>
@@ -2184,6 +2400,12 @@ const BuilderBookingsPage: React.FC = () => {
                 onValueChange={(v) => setReceiptForm({ ...receiptForm, receipt_month: v })}
                 placeholder="Select month"
               />
+              {filedPeriods.has(receiptForm.receipt_month) && (
+                <p className="mt-1 flex items-center gap-1 text-xs text-destructive">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  GSTR-1 for {receiptForm.receipt_month} is already Filed — this period is locked.
+                </p>
+              )}
             </div>
             <div>
               <Label>Nature</Label>
@@ -2389,7 +2611,7 @@ const BuilderBookingsPage: React.FC = () => {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setReceiptDialog(false)}>Cancel</Button>
-            <Button onClick={handleSaveReceipt} disabled={isSaving}>
+            <Button onClick={handleSaveReceipt} disabled={isSaving || filedPeriods.has(receiptForm.receipt_month)}>
               {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Record receipt
             </Button>
           </DialogFooter>
@@ -2414,6 +2636,12 @@ const BuilderBookingsPage: React.FC = () => {
                 id="i-date" type="date" value={invoiceForm.invoice_date}
                 onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_date: e.target.value })}
               />
+              {filedPeriods.has(dateToPeriod(invoiceForm.invoice_date)) && (
+                <p className="mt-1 flex items-center gap-1 text-xs text-destructive">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  GSTR-1 for {dateToPeriod(invoiceForm.invoice_date)} is already Filed — this period is locked.
+                </p>
+              )}
             </div>
             <div>
               <Label>Type</Label>
@@ -2485,7 +2713,10 @@ const BuilderBookingsPage: React.FC = () => {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setInvoiceDialog(false)}>Cancel</Button>
-            <Button onClick={handleSaveInvoice} disabled={isSaving}>
+            <Button
+              onClick={handleSaveInvoice}
+              disabled={isSaving || filedPeriods.has(dateToPeriod(invoiceForm.invoice_date))}
+            >
               {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Raise invoice
             </Button>
           </DialogFooter>

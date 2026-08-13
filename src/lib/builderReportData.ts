@@ -156,6 +156,7 @@ export interface PostingDoc {
   taxableValue: number;
   cgst: number;
   sgst: number;
+  landDeduction: number;
 }
 
 export interface FsiLine {
@@ -199,6 +200,7 @@ export async function fetchPeriodReport(params: {
     taxableValue: Number(r.taxable_value) || 0,
     cgst: Number(r.cgst) || 0,
     sgst: Number(r.sgst) || 0,
+    landDeduction: Number(r.land_deduction) || 0,
   })).sort((a, b) => (a.docDate || '').localeCompare(b.docDate || ''));
 
   let fq = supabase.from('builder_rcm_postings').select('*')
@@ -227,6 +229,7 @@ export async function fetchPeriodReport(params: {
       taxable_value: d.taxableValue,
       cgst: d.cgst,
       sgst: d.sgst,
+      land_deduction: d.landDeduction,
     }))),
     documents,
     fsi,
@@ -266,6 +269,33 @@ export interface UnitLedgerReport {
   };
   balanceToTax: number;
   uncollected: number;
+}
+
+export interface Drc03PeriodRow {
+  periodMonth: string;
+  taxableValue: number;
+  oldCgst: number;
+  oldSgst: number;
+  newCgst: number;
+  newSgst: number;
+  differentialTax: number;
+  dueDate: string;
+  interestDays: number;
+  interestAmount: number;
+}
+
+/** The DRC-03 workpaper for one unit's re-rating — the document staff take to the GST portal's DRC-03 form. */
+export interface Drc03Report {
+  unitNo: string;
+  fromRatePct: number;
+  toRatePct: number;
+  postingPeriod: string;
+  dischargeMode: string;
+  drc03Status: string;
+  drc03Arn: string | null;
+  drc03FiledDate: string | null;
+  periods: Drc03PeriodRow[];
+  totals: { valueRetaxed: number; differentialTax: number; interest: number };
 }
 
 /**

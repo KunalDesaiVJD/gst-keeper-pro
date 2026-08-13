@@ -8,6 +8,7 @@ import { MonthProvider } from "@/contexts/MonthContext";
 import { ClientProvider } from "@/contexts/ClientContext";
 import MainLayout from "@/components/layout/MainLayout";
 import LoginPage from "@/pages/LoginPage";
+import AgreementConfirmPage from "@/pages/AgreementConfirmPage";
 import DashboardPage from "@/pages/DashboardPage";
 import AddClientPage from "@/pages/AddClientPage";
 import EditClientPage from "@/pages/EditClientPage";
@@ -54,6 +55,7 @@ const App = () => (
             <ClientProvider>
               <Routes>
                 <Route path="/login" element={<LoginPage />} />
+                <Route path="/agreement-confirm/:token" element={<AgreementConfirmPage />} />
                 <Route path="/" element={<Navigate to="/login" replace />} />
                 
                 {/* Protected Routes */}

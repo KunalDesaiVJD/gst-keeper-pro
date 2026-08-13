@@ -20,11 +20,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { toast } from 'sonner';
 import {
   ArrowLeft, Plus, Loader2, Pencil, Trash2, Layers, Home, AlertTriangle, Wallet, Receipt,
-  CalendarCheck, Wrench, Landmark,
+  CalendarCheck, Wrench, Landmark, History,
 } from 'lucide-react';
 import {
   DEFAULT_CHARGE_INCLUSIONS, RATE_CODE_LABEL, classifyUnit, formatINR, formatPct,
-  formatSqM, testRrep,
+  formatSqM, suggestedUnitTypeMismatch, testRrep,
   type BuilderRateCode, type ChargeHead, type ChargeInclusionSettings,
   type UnitCharge, type UnitType,
 } from '@/utils/builderRates';
@@ -63,6 +63,19 @@ interface UnitRow {
   status: string;
   sort_order: number;
   onboarding_status: OnboardingStatus;
+}
+
+interface UnitHistoryRow {
+  id: string;
+  effective_from: string;
+  created_at: string;
+  rate_code: BuilderRateCode;
+  is_affordable: boolean;
+  carpet_area_sqm: number;
+  gross_consideration: number;
+  reason: string;
+  note: string | null;
+  created_by: string | null;
 }
 
 interface ChargeRow {
@@ -134,6 +147,14 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
   const [editingUnit, setEditingUnit] = useState<UnitRow | null>(null);
   const [unitForm, setUnitForm] = useState(emptyUnitForm);
   const [unitCharges, setUnitCharges] = useState<UnitCharge[]>([]);
+  /** Null while checking; true once the unit has a booking, receipt or
+   *  invoice against it — the point past which its type is superadmin-only. */
+  const [unitHasActivity, setUnitHasActivity] = useState<boolean | null>(null);
+
+  const [historyDialog, setHistoryDialog] = useState(false);
+  const [historyUnit, setHistoryUnit] = useState<UnitRow | null>(null);
+  const [historyRows, setHistoryRows] = useState<UnitHistoryRow[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const [groupDialog, setGroupDialog] = useState(false);
   const [groupName, setGroupName] = useState('');
@@ -275,15 +296,26 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
     settings,
   }), [unitForm, unitCharges, project, rrep.isRrep, settings]);
 
+  const unitNameMismatch = useMemo(
+    () => suggestedUnitTypeMismatch(unitForm.unit_no, unitForm.unit_type),
+    [unitForm.unit_no, unitForm.unit_type],
+  );
+
+  /** Locked to everyone but superadmin once the unit has activity; also
+   *  locked (conservatively) while the activity check is still in flight. */
+  const isSuperAdmin = user?.role === 'superadmin';
+  const unitTypeLocked = !!editingUnit && unitHasActivity !== false && !isSuperAdmin;
+
   // ── Units ────────────────────────────────────────────────────────────────
   const openCreateUnit = () => {
     setEditingUnit(null);
     setUnitForm(emptyUnitForm);
     setUnitCharges([]);
+    setUnitHasActivity(false); // a brand-new unit can never have activity yet
     setUnitDialog(true);
   };
 
-  const openEditUnit = (u: UnitRow) => {
+  const openEditUnit = async (u: UnitRow) => {
     setEditingUnit(u);
     setUnitForm({
       unit_no: u.unit_no,
@@ -297,7 +329,57 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
     setUnitCharges((charges[u.id] || []).map((c) => ({
       charge_head: c.charge_head, amount: Number(c.amount) || 0, include_override: c.include_override,
     })));
+    setUnitHasActivity(null); // unknown while the check below is in flight
     setUnitDialog(true);
+
+    // A unit's type drives every receipt/invoice already posted against it —
+    // once any exist, changing it here would silently orphan them from what
+    // they were actually taxed as. Checked fresh on every open: cheap, and
+    // the answer can change between one open and the next.
+    const [bk, rc, iv] = await Promise.all([
+      supabase.from('builder_bookings').select('id').eq('unit_id', u.id).limit(1),
+      supabase.from('builder_receipts').select('id').eq('unit_id', u.id).limit(1),
+      supabase.from('builder_invoices').select('id').eq('unit_id', u.id).limit(1),
+    ]);
+    setUnitHasActivity(!!(bk.data?.length || rc.data?.length || iv.data?.length));
+  };
+
+  /** Names for whoever recorded each history row, so it reads like "Vaidehi,
+   *  2026-08-10" instead of a bare uuid — exactly the lookup a real
+   *  investigation into a rate mismatch needs first. */
+  const [staffNames, setStaffNames] = useState<Record<string, string>>({});
+
+  const openHistory = async (u: UnitRow) => {
+    setHistoryUnit(u);
+    setHistoryRows([]);
+    setHistoryDialog(true);
+    setHistoryLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('builder_unit_classification_history')
+        .select('*')
+        .eq('unit_id', u.id)
+        .order('effective_from', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const rows = (data || []) as unknown as UnitHistoryRow[];
+      setHistoryRows(rows);
+
+      const missing = [...new Set(rows.map((r) => r.created_by).filter(Boolean))]
+        .filter((id) => !staffNames[id as string]) as string[];
+      if (missing.length) {
+        const { data: profiles } = await supabase
+          .from('profiles').select('user_id, first_name').in('user_id', missing);
+        const found: Record<string, string> = {};
+        ((profiles || []) as { user_id: string; first_name: string }[])
+          .forEach((p) => { found[p.user_id] = p.first_name; });
+        setStaffNames((prev) => ({ ...prev, ...found }));
+      }
+    } catch (e) {
+      toast.error(`Could not load history: ${(e as Error).message}`);
+    } finally {
+      setHistoryLoading(false);
+    }
   };
 
   /**
@@ -682,6 +764,9 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
                             </TableCell>
                             <TableCell>
                               <div className="flex items-center gap-0.5">
+                                <Button variant="ghost" size="icon" title="Classification history" onClick={() => openHistory(u)}>
+                                  <History className="h-4 w-4" />
+                                </Button>
                                 {canEditUnits && (
                                   <>
                                     <Button variant="ghost" size="icon" title="Opening balance" onClick={() => openOpening(u)}>
@@ -821,13 +906,38 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
             </div>
             <div>
               <Label>Type</Label>
-              <Select value={unitForm.unit_type} onValueChange={(v) => setUnitForm({ ...unitForm, unit_type: v as UnitType })}>
+              <Select
+                value={unitForm.unit_type}
+                onValueChange={(v) => setUnitForm({ ...unitForm, unit_type: v as UnitType })}
+                disabled={unitTypeLocked}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Residential">Residential</SelectItem>
                   <SelectItem value="Commercial">Commercial</SelectItem>
                 </SelectContent>
               </Select>
+              {unitTypeLocked && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {unitHasActivity === null
+                    ? 'Checking for existing activity…'
+                    : 'This unit already has a booking, receipt or invoice against it. '
+                      + 'Its type drove their rate — only a superadmin can change it now.'}
+                </p>
+              )}
+              {!unitTypeLocked && editingUnit && unitHasActivity && isSuperAdmin && (
+                <p className="mt-1 flex items-center gap-1 text-xs text-amber-600 dark:text-amber-500">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  This unit already has postings at the current type. Changing it won't rewrite them —
+                  the reclassification sweep will correct their rate the next time Bookings, Adjustments
+                  or Returns runs. Verify the result afterwards.
+                </p>
+              )}
+              {unitNameMismatch && (
+                <p className="mt-1 flex items-center gap-1 text-xs text-amber-600 dark:text-amber-500">
+                  <AlertTriangle className="h-3 w-3 shrink-0" /> {unitNameMismatch}
+                </p>
+              )}
             </div>
             <div>
               <Label>Status</Label>
@@ -951,6 +1061,58 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
               {editingUnit ? 'Save changes' : 'Add unit'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Classification history ───────────────────────────────────────── */}
+      <Dialog open={historyDialog} onOpenChange={setHistoryDialog}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>History — unit {historyUnit?.unit_no}</DialogTitle>
+            <DialogDescription>
+              Every classification recorded for this unit, most recent first. A row is written whenever
+              its rate or affordable status changes — including a type edit, since that always changes
+              the rate code.
+            </DialogDescription>
+          </DialogHeader>
+          {historyLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-6">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+            </div>
+          ) : historyRows.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-6">No history recorded yet.</p>
+          ) : (
+            <div className="overflow-x-auto rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>When</TableHead>
+                    <TableHead>Rate</TableHead>
+                    <TableHead>Affordable</TableHead>
+                    <TableHead className="text-right">Carpet</TableHead>
+                    <TableHead className="text-right">Gross</TableHead>
+                    <TableHead>Reason</TableHead>
+                    <TableHead>By</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {historyRows.map((r) => (
+                    <TableRow key={r.id}>
+                      <TableCell className="text-sm">{r.effective_from}</TableCell>
+                      <TableCell className="text-sm">{RATE_CODE_LABEL[r.rate_code]}</TableCell>
+                      <TableCell className="text-sm">{r.is_affordable ? 'Yes' : 'No'}</TableCell>
+                      <TableCell className="text-right text-sm">{formatSqM(r.carpet_area_sqm)}</TableCell>
+                      <TableCell className="text-right text-sm">{formatINR(r.gross_consideration)}</TableCell>
+                      <TableCell className="text-sm">{r.reason}</TableCell>
+                      <TableCell className="text-sm">
+                        {(r.created_by && staffNames[r.created_by]) || '—'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorkspaceContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -34,11 +34,16 @@ import { prettyPeriodLabel } from '@/utils/builderLedger';
 import { periodOfDate } from '@/utils/builderBuEvent';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
 import {
-  applyBounceOffsets, autoReclassifyProject, findAvailableInPeriod, findOffsetCandidates,
-  findReclassCandidates, raiseBounceReversal, raiseCreditNote, restateReceipt,
-  saveReclassification, scheduleFor, type ReclassCandidate,
+  addHistoricalReceipt, applyBounceOffsets, autoReclassifyProject, deleteHistoricalReceipt,
+  fetchFiledPeriods, fetchHistoricalReceipts, fetchHistoricalReconciliation, findAvailableInPeriod,
+  findOffsetCandidates, findReclassCandidates, raiseBounceReversal, raiseCreditNote, restateReceipt,
+  reverseReclassification, saveReclassification, scheduleFor,
+  type HistoricalReceipt, type HistoricalReconciliation, type ReclassCandidate,
 } from '@/lib/builderAdjustmentsData';
 import { cancelBooking, recordRefundPayment } from '@/lib/builderCancellationData';
+import { drc03WorkpaperPdf } from '@/utils/builderReportsPdf';
+import { drc03WorkpaperExcel } from '@/utils/builderReportsExcel';
+import type { Drc03Report } from '@/lib/builderReportData';
 
 interface ProjectRow {
   id: string; client_id: string; name: string; is_metro: boolean;
@@ -55,6 +60,8 @@ interface ReclassRow {
   id: string; unit_id: string; posting_period: string; status: string;
   total_value_retaxed: number; total_differential_tax: number; total_interest: number;
   from_rate_pct: number; to_rate_pct: number; triggered_on: string;
+  reversed_at: string | null; reversal_reason: string | null;
+  discharge_mode: string; drc03_status: string; drc03_arn: string | null; drc03_filed_date: string | null;
 }
 interface BounceRow {
   id: string; receipt_id: string; unit_id: string; original_period: string;
@@ -89,7 +96,7 @@ interface CancellationRow {
   id: string; booking_id: string; unit_id: string; cancellation_date: string; reason: string | null;
   rate_code: BuilderRateCode; rate_pct: number; total_received: number;
   forfeiture_amount: number; cancellation_charge_taxable: number;
-  correction_method: 'CREDIT_NOTE' | 'SETOFF';
+  correction_method: 'CREDIT_NOTE' | 'SETOFF' | 'NONE';
   refund_payable: number; refund_paid: number; status: 'OPEN' | 'SETTLED';
 }
 interface RefundPaymentRow {
@@ -116,7 +123,10 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
   const navigate = useNavigate();
   const { canPostBuilderAdjustments, user } = useAuth();
 
-  const [tab, setTab] = useState('reclass');
+  // Deep-linked from the Bookings page's open-cancellation badge — falls
+  // back to the usual default when nothing points here directly.
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState(searchParams.get('tab') || 'reclass');
   const [bounceFocusUnitId, setBounceFocusUnitId] = useState<string | null>(null);
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [units, setUnits] = useState<UnitRow[]>([]);
@@ -139,6 +149,19 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
   const [reclassPeriod, setReclassPeriod] = useState(currentPeriod());
   const [reclassReason, setReclassReason] = useState('');
 
+  const [reverseDialog, setReverseDialog] = useState<ReclassRow | null>(null);
+  const [reverseReason, setReverseReason] = useState('');
+
+  const [filedDialog, setFiledDialog] = useState<ReclassRow | null>(null);
+  const [filedForm, setFiledForm] = useState({ arn: '', filed_date: today() });
+
+  const [histUnitId, setHistUnitId] = useState('');
+  const [histDialog, setHistDialog] = useState(false);
+  const [histReceipts, setHistReceipts] = useState<HistoricalReceipt[]>([]);
+  const [histRecon, setHistRecon] = useState<HistoricalReconciliation | null>(null);
+  const [histForm, setHistForm] = useState({ receipt_date: '', amount: '', notes: '' });
+  const [histLoading, setHistLoading] = useState(false);
+
   const [cnDialog, setCnDialog] = useState(false);
   const [cnForm, setCnForm] = useState({
     unit_id: '', note_date: today(), note_type: 'CANCELLATION' as const,
@@ -154,7 +177,7 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
   const [cancelDialog, setCancelDialog] = useState<{ unitId: string; bookingId: string } | null>(null);
   const [cancelForm, setCancelForm] = useState({
     cancellation_date: today(), reason: '', forfeiture_amount: '', cancellation_charge_taxable: '',
-    correction_method: 'CREDIT_NOTE' as 'CREDIT_NOTE' | 'SETOFF', retire_unit: false,
+    correction_method: 'CREDIT_NOTE' as 'CREDIT_NOTE' | 'SETOFF' | 'NONE', retire_unit: false,
   });
 
   const [refundDialog, setRefundDialog] = useState<CancellationRow | null>(null);
@@ -164,6 +187,8 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
   const [refundPreview, setRefundPreview] = useState<{ available: number } | null>(null);
 
   const canEdit = canPostBuilderAdjustments();
+  const isSuperAdmin = user?.role === 'superadmin';
+  const isGstManagerOrAbove = user?.role === 'superadmin' || user?.role === 'gst_manager';
   const unitNo = useCallback((id: string) => units.find((u) => u.id === id)?.unit_no || '—', [units]);
 
   const load = useCallback(async () => {
@@ -261,31 +286,44 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
     return out;
   }, [units, charges, project, rrep.isRrep, settings]);
 
-  // Re-rating candidates are derived from what was actually posted at 1.5%,
-  // and — per the firm's position (§8) — posted immediately with no staff
-  // review: a unit crossing ₹45L was never affordable, so the correction is
-  // arithmetic, not a judgment call. `candidates` stays for the rare case a
-  // post fails (e.g. a transient write error) so it isn't silently lost.
+  // Re-rating candidates are derived from what was actually posted at 1.5% in
+  // an ALREADY-FILED period — the only case that needs a formal Table 10
+  // amendment, posted immediately with no staff review: per the firm's
+  // position (§8), a filed period taxed at 1.5% that's crossed ₹45L was
+  // never affordable, so the correction is arithmetic, not a judgment call.
+  // An unfiled period is simply corrected in place instead (autoReclassify-
+  // Project's `resynced`), no amendment involved. `candidates` stays for the
+  // rare case a post fails (e.g. a transient write error) so it isn't lost.
   const [candidatesReady, setCandidatesReady] = useState(false);
   useEffect(() => {
-    if (!projectId || !units.length) { setCandidates([]); setCandidatesReady(true); return; }
+    if (!projectId || !units.length || !project?.client_id) { setCandidates([]); setCandidatesReady(true); return; }
     setCandidatesReady(false);
     (async () => {
       try {
-        const posted = await autoReclassifyProject(projectId, classification, user?.id ?? null);
+        const { posted, resynced } = await autoReclassifyProject(
+          projectId, classification, user?.id ?? null, project.client_id,
+        );
         if (posted.length) {
           toast.success(
-            `${posted.length} unit${posted.length === 1 ? '' : 's'} auto re-rated on crossing ₹45,00,000 `
+            `${posted.length} unit${posted.length === 1 ? '' : 's'} re-rated on a filed period crossing ₹45,00,000 `
             + `(${posted.map((c) => c.unitNo).join(', ')}) — Table 10 amendment and interest posted below.`,
           );
           await load();
+        }
+        if (resynced.length) {
+          const names = resynced.map((r) => unitNo(r.unitId));
+          toast.info(
+            `${resynced.length} unit${resynced.length === 1 ? '' : 's'} resynced to the current rate on unfiled `
+            + `periods (${names.join(', ')}) — no amendment needed, nothing filed yet.`,
+          );
         }
         setCandidates([]);
       } catch (e) {
         // Fall back to surfacing the raw candidates so the correction isn't
         // lost — findReclassCandidates alone doesn't touch the database.
         const done = new Set(reclasses.map((r) => r.unit_id));
-        const found = await findReclassCandidates(projectId, classification);
+        const filedPeriods = await fetchFiledPeriods(project.client_id);
+        const found = await findReclassCandidates(projectId, classification, filedPeriods);
         setCandidates(found.filter((c) => !done.has(c.unitId)));
         toast.error(`Auto re-rating failed, showing candidates for manual review: ${(e as Error).message}`);
       } finally {
@@ -293,7 +331,7 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, units.length, classification]);
+  }, [projectId, units.length, classification, project?.client_id]);
 
   /** Route the row-menu click straight to the right tab and dialog. */
   const handledFocusRef = useRef<string | null>(null);
@@ -366,16 +404,199 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
   };
 
   const handlePostReclass = async (r: ReclassRow) => {
-    if (!window.confirm(
-      'Post this re-rating? The earlier B2CS entries are amended in Table 10 — reversed at 1.5% and '
-      + 're-reported at the correct rate. Interest u/s 50 is payable in cash separately.',
+    const isDrc03 = r.discharge_mode !== 'GSTR1_AMENDMENT';
+    if (!window.confirm(isDrc03
+      ? 'Post this re-rating? The differential tax and interest below become payable by DRC-03 — '
+        + 'nothing is amended in GSTR-1 or 3B.'
+      : 'Post this re-rating? The earlier B2CS entries are amended in Table 10 — reversed at 1.5% and '
+        + 're-reported at the correct rate. Interest u/s 50 is payable in cash separately.',
     )) return;
     const { error } = await supabase.from('builder_reclassifications')
       .update({ status: 'POSTED', posted_at: new Date().toISOString(), posted_by: user?.id ?? null })
       .eq('id', r.id);
     if (error) { toast.error(error.message); return; }
-    toast.success('Re-rating posted to Table 10');
+    toast.success(isDrc03 ? 'Re-rating posted — ready for DRC-03' : 'Re-rating posted to Table 10');
     await load();
+  };
+
+  /** Superadmin/GST Manager records that the DRC-03 was actually filed on the portal. */
+  const handleMarkFiled = async () => {
+    if (!filedDialog) return;
+    setIsSaving(true);
+    try {
+      const { error } = await supabase.from('builder_reclassifications').update({
+        drc03_status: 'FILED',
+        drc03_arn: filedForm.arn.trim() || null,
+        drc03_filed_date: filedForm.filed_date || null,
+        drc03_filed_by: user?.id ?? null,
+      }).eq('id', filedDialog.id);
+      if (error) throw error;
+      toast.success('Marked as filed');
+      setFiledDialog(null);
+      await load();
+    } catch (e) {
+      toast.error(`Could not save: ${(e as Error).message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  /** Fetches the period-wise breakup for one reclassification and hands it to
+   *  the given renderer — the document staff actually take to the DRC-03 form. */
+  const exportDrc03 = async (r: ReclassRow, format: 'pdf' | 'xlsx') => {
+    try {
+      const [{ data: periods }, { data: client }] = await Promise.all([
+        supabase.from('builder_reclassification_periods').select('*').eq('reclassification_id', r.id)
+          .order('period_month'),
+        project ? supabase.from('clients').select('name, gstin').eq('id', project.client_id).maybeSingle()
+          : Promise.resolve({ data: null }),
+      ]);
+      type PeriodRow = {
+        period_month: string; taxable_value: number; old_cgst: number; old_sgst: number;
+        new_cgst: number; new_sgst: number; differential_tax: number; due_date: string | null;
+        interest_days: number; interest_amount: number;
+      };
+      const report: Drc03Report = {
+        unitNo: unitNo(r.unit_id),
+        fromRatePct: r.from_rate_pct,
+        toRatePct: r.to_rate_pct,
+        postingPeriod: r.posting_period,
+        dischargeMode: r.discharge_mode,
+        drc03Status: r.drc03_status,
+        drc03Arn: r.drc03_arn,
+        drc03FiledDate: r.drc03_filed_date,
+        periods: ((periods || []) as unknown as PeriodRow[]).map((p) => ({
+          periodMonth: p.period_month, taxableValue: p.taxable_value,
+          oldCgst: p.old_cgst, oldSgst: p.old_sgst, newCgst: p.new_cgst, newSgst: p.new_sgst,
+          differentialTax: p.differential_tax, dueDate: p.due_date || '',
+          interestDays: p.interest_days, interestAmount: p.interest_amount,
+        })),
+        totals: {
+          valueRetaxed: r.total_value_retaxed,
+          differentialTax: r.total_differential_tax,
+          interest: r.total_interest,
+        },
+      };
+      const ctx = {
+        clientName: (client as { name?: string } | null)?.name || '—',
+        clientGstin: (client as { gstin?: string } | null)?.gstin || '',
+        projectName: project?.name,
+      };
+      if (format === 'pdf') drc03WorkpaperPdf(ctx, report);
+      else drc03WorkpaperExcel(ctx, report);
+    } catch (e) {
+      toast.error(`Could not export: ${(e as Error).message}`);
+    }
+  };
+
+  // ── Historical (pre-onboarding) receipts ────────────────────────────────
+  const loadHistorical = useCallback(async (unitId: string) => {
+    setHistLoading(true);
+    try {
+      const [rows, recon] = await Promise.all([
+        fetchHistoricalReceipts(unitId),
+        fetchHistoricalReconciliation(unitId),
+      ]);
+      setHistReceipts(rows);
+      setHistRecon(recon);
+    } catch (e) {
+      toast.error(`Could not load historical receipts: ${(e as Error).message}`);
+    } finally {
+      setHistLoading(false);
+    }
+  }, []);
+
+  const handleOpenHistDialog = (unitId: string) => {
+    setHistUnitId(unitId);
+    setHistForm({ receipt_date: '', amount: '', notes: '' });
+    setHistDialog(true);
+    void loadHistorical(unitId);
+  };
+
+  const handleAddHistorical = async () => {
+    if (!histUnitId || !histForm.receipt_date || !Number(histForm.amount)) {
+      toast.error('Date and amount are required'); return;
+    }
+    if (histForm.receipt_date < '2019-04-01') {
+      toast.error('Out of scope — receipts before 01/04/2019 predate the affordable-housing scheme this '
+        + 'module models and need a manual firm judgment, not this tool.');
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await addHistoricalReceipt({
+        unitId: histUnitId, receiptDate: histForm.receipt_date,
+        amount: Number(histForm.amount), notes: histForm.notes.trim() || null,
+        userId: user?.id ?? null,
+      });
+      setHistForm({ receipt_date: '', amount: '', notes: '' });
+      await loadHistorical(histUnitId);
+    } catch (e) {
+      toast.error(`Could not save: ${(e as Error).message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDeleteHistorical = async (id: string) => {
+    try {
+      await deleteHistoricalReceipt(id);
+      await loadHistorical(histUnitId);
+    } catch (e) {
+      toast.error(`Could not delete: ${(e as Error).message}`);
+    }
+  };
+
+  /** Re-run the same detection the page loads with — lets staff trigger it
+   *  again right after entering historical receipts, without waiting for a
+   *  dependency (classification) that entering them doesn't itself change. */
+  const runReclassSweep = useCallback(async () => {
+    if (!projectId || !project?.client_id) return;
+    try {
+      const { posted, resynced } = await autoReclassifyProject(
+        projectId, classification, user?.id ?? null, project.client_id,
+      );
+      if (posted.length) {
+        toast.success(
+          `${posted.length} unit${posted.length === 1 ? '' : 's'} re-rated `
+          + `(${posted.map((c) => c.unitNo).join(', ')}) — DRC-03 workpaper below.`,
+        );
+      }
+      if (resynced.length) {
+        toast.info(`${resynced.length} unit(s) resynced on unfiled periods — no amendment needed.`);
+      }
+      await load();
+    } catch (e) {
+      toast.error(`Re-check failed: ${(e as Error).message}`);
+    }
+  }, [projectId, project?.client_id, classification, user?.id, load]);
+
+  /**
+   * Void a POSTED reclassification — e.g. it was triggered by a charge that
+   * turned out to be a mistake and was removed shortly after. Superadmin-only:
+   * this reverses real posted tax and interest, not a routine edit.
+   */
+  const handleReverseReclass = async () => {
+    if (!reverseDialog) return;
+    if (!reverseReason.trim()) { toast.error('A reason is required'); return; }
+    setIsSaving(true);
+    try {
+      await reverseReclassification({
+        reclassificationId: reverseDialog.id, reason: reverseReason.trim(), userId: user?.id ?? null,
+      });
+      toast.success(
+        `Reversed — the Table 10 correction and its interest no longer appear in the return. ${unitNo(reverseDialog.unit_id)}'s `
+        + 'live classification governs again. If any receipt/invoice in the affected period had its own rate rewritten '
+        + 'while this was locked, check and re-save it by hand — reversing does not rewrite those automatically.',
+      );
+      setReverseDialog(null);
+      setReverseReason('');
+      await load();
+    } catch (e) {
+      toast.error(`Could not reverse: ${(e as Error).message}`);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // ── Bounce ───────────────────────────────────────────────────────────────
@@ -580,8 +801,13 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
       || classification[cancelDialog.unitId]?.rateCode) as BuilderRateCode | undefined;
     const chargeGst = chargeTaxable > 0 && rateCode ? computeTax(chargeTaxable, rateCode).totalTax : 0;
     const refundPayable = Math.max(0, totalReceived - forfeiture - chargeTaxable - chargeGst);
-    return { totalReceived, refundPayable };
-  }, [cancelDialog, receipts, bookings, cancelForm.forfeiture_amount, cancelForm.cancellation_charge_taxable, classification]);
+    const earliestReceiptDate = bookingReceipts.reduce(
+      (min, r) => (!min || r.receipt_date < min ? r.receipt_date : min), '' as string,
+    ) || cancelForm.cancellation_date;
+    const window = creditNoteWindow(earliestReceiptDate, cancelForm.cancellation_date);
+    return { totalReceived, refundPayable, window };
+  }, [cancelDialog, receipts, bookings, cancelForm.forfeiture_amount, cancelForm.cancellation_charge_taxable,
+    cancelForm.cancellation_date, classification]);
 
   const handleSaveCancellation = async () => {
     if (!cancelDialog || !project) return;
@@ -605,8 +831,11 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
         cancelForm.correction_method === 'CREDIT_NOTE'
           ? `Booking cancelled — credit note raised for ${formatINR(res.totalReceived)}. `
             + `${formatINR(res.refundPayable)} still owed back to the member.`
-          : `Booking cancelled — no credit note. ${formatINR(res.refundPayable)} owed back; `
-            + 'record refund payments below as they happen, each nets against its own month.',
+          : cancelForm.correction_method === 'SETOFF'
+            ? `Booking cancelled — no credit note. ${formatINR(res.refundPayable)} owed back; `
+              + 'record refund payments below as they happen, each nets against its own month.'
+            : `Booking cancelled — no correction attempted. ${formatINR(res.refundPayable)} owed back; `
+              + 'record refund payments below as a plain cash record.',
       );
       setCancelDialog(null);
       setTab('cancellations');
@@ -743,15 +972,46 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
         {/* ── Re-rating ─────────────────────────────────────────────────── */}
         <TabsContent value="reclass" className="mt-4 space-y-4">
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Units needing re-rating</CardTitle>
-              <CardDescription>
-                A unit taxed at 1.5% whose gross consideration has since crossed ₹45 lakh was never
-                affordable. The concession never applied, so the higher rate is due on everything already
-                offered to tax — with interest u/s 50 running from each original period's due date. This is
-                posted automatically the moment it's detected (no staff selection); the table below only
-                shows a candidate here if that automatic post failed and needs a manual retry.
-              </CardDescription>
+            <CardHeader className="flex flex-row items-start justify-between gap-3">
+              <div>
+                <CardTitle className="text-base">Historical (pre-onboarding) receipts</CardTitle>
+                <CardDescription>
+                  A unit's history before this firm's onboarding sits only in a single opening-balance
+                  snapshot — invisible to the detection below. Enter its real date-wise receipts here only
+                  when a re-rating case actually needs them; the amounts must tally with the unit's opening
+                  balance for the interest computed to be reliable. Only receipts on/after 01/04/2019 are
+                  accepted — earlier is outside the affordable-housing scheme this module models.
+                </CardDescription>
+              </div>
+              {canEdit && (
+                <Select value={histUnitId} onValueChange={handleOpenHistDialog}>
+                  <SelectTrigger className="w-56"><SelectValue placeholder="Select a unit…" /></SelectTrigger>
+                  <SelectContent>
+                    {units.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>{u.unit_no}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </CardHeader>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-start justify-between gap-3">
+              <div>
+                <CardTitle className="text-base">Units needing re-rating</CardTitle>
+                <CardDescription>
+                  A unit taxed at 1.5% whose gross consideration has since crossed ₹45 lakh was never
+                  affordable. The concession never applied, so the higher rate is due on everything already
+                  offered to tax — with interest u/s 50 running from each original period's due date, paid
+                  by DRC-03. This is posted automatically the moment it's detected (no staff selection); the
+                  table below only shows a candidate here if that automatic post failed and needs a manual
+                  retry.
+                </CardDescription>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => void runReclassSweep()}>
+                Re-check for re-rating
+              </Button>
             </CardHeader>
             <CardContent className="p-0">
               {candidates.length === 0 ? (
@@ -795,7 +1055,14 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
 
           {reclasses.length > 0 && (
             <Card>
-              <CardHeader><CardTitle className="text-base">Scheduled re-ratings</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle className="text-base">DRC-03 workpaper</CardTitle>
+                <CardDescription>
+                  Differential tax and s.50 interest for each re-rating, discharged by voluntary DRC-03 on
+                  the GST portal — not reported in GSTR-1 or 3B. Total tax + interest below is the figure
+                  to key into the DRC-03 form; mark it filed once done, for the record.
+                </CardDescription>
+              </CardHeader>
               <CardContent className="p-0">
                 <Table>
                   <TableHeader>
@@ -806,6 +1073,7 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
                       <TableHead className="text-right">Differential tax</TableHead>
                       <TableHead className="text-right">Interest u/s 50</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>DRC-03</TableHead>
                       <TableHead className="w-20" />
                     </TableRow>
                   </TableHeader>
@@ -818,16 +1086,63 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
                         <TableCell className="text-right text-sm font-medium">{formatINR(r.total_differential_tax)}</TableCell>
                         <TableCell className="text-right text-sm">{formatINR(r.total_interest)}</TableCell>
                         <TableCell>
-                          <Badge className={r.status === 'POSTED'
-                            ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                            : 'bg-amber-100 text-amber-800 border-amber-200'}>
+                          <Badge className={
+                            r.status === 'POSTED' ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                              : r.status === 'REVERSED' ? 'bg-slate-100 text-slate-700 border-slate-200'
+                                : 'bg-amber-100 text-amber-800 border-amber-200'
+                          }>
                             {r.status}
                           </Badge>
+                          {r.status === 'REVERSED' && r.reversal_reason && (
+                            <span className="block text-xs text-muted-foreground mt-0.5" title={r.reversal_reason}>
+                              {r.reversal_reason}
+                            </span>
+                          )}
                         </TableCell>
                         <TableCell>
-                          {canEdit && r.status !== 'POSTED' && (
+                          {r.discharge_mode === 'GSTR1_AMENDMENT' ? (
+                            <Badge variant="outline">Table 10</Badge>
+                          ) : (
+                            <>
+                              <Badge className={r.drc03_status === 'FILED'
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                                : 'bg-amber-100 text-amber-800 border-amber-200'}>
+                                {r.drc03_status === 'FILED' ? 'Filed' : 'Pending'}
+                              </Badge>
+                              {r.drc03_status === 'FILED' && r.drc03_arn && (
+                                <span className="block text-xs text-muted-foreground mt-0.5">{r.drc03_arn}</span>
+                              )}
+                            </>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {canEdit && r.status === 'DRAFT' && (
                             <Button size="sm" onClick={() => handlePostReclass(r)}>
                               <Send className="h-3 w-3 mr-1" /> Post
+                            </Button>
+                          )}
+                          {r.status === 'POSTED' && (
+                            <>
+                              <Button size="sm" variant="ghost" onClick={() => void exportDrc03(r, 'pdf')}>PDF</Button>
+                              <Button size="sm" variant="ghost" onClick={() => void exportDrc03(r, 'xlsx')}>Excel</Button>
+                            </>
+                          )}
+                          {isGstManagerOrAbove && r.status === 'POSTED' && r.discharge_mode !== 'GSTR1_AMENDMENT'
+                            && r.drc03_status !== 'FILED' && (
+                            <Button
+                              size="sm" variant="outline"
+                              onClick={() => { setFiledDialog(r); setFiledForm({ arn: '', filed_date: today() }); }}
+                            >
+                              Mark filed
+                            </Button>
+                          )}
+                          {isSuperAdmin && r.status === 'POSTED' && (
+                            <Button
+                              size="sm" variant="outline"
+                              className="text-red-700 border-red-200 hover:bg-red-50 ml-1"
+                              onClick={() => { setReverseDialog(r); setReverseReason(''); }}
+                            >
+                              <Undo2 className="h-3 w-3 mr-1" /> Reverse
                             </Button>
                           )}
                         </TableCell>
@@ -1192,7 +1507,8 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
                           <TableCell className="font-medium">{unitNo(c.unit_id)}</TableCell>
                           <TableCell className="text-sm">{c.cancellation_date}</TableCell>
                           <TableCell className="text-sm">
-                            {c.correction_method === 'CREDIT_NOTE' ? 'Credit note' : 'Set-off'}
+                            {c.correction_method === 'CREDIT_NOTE' ? 'Credit note'
+                              : c.correction_method === 'SETOFF' ? 'Set-off' : 'No correction'}
                           </TableCell>
                           <TableCell className="text-right text-sm">{formatINR(c.total_received)}</TableCell>
                           <TableCell className="text-right text-sm">{formatINR(c.refund_payable)}</TableCell>
@@ -1293,22 +1609,39 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
               <Label>Correction method</Label>
               <Select
                 value={cancelForm.correction_method}
-                onValueChange={(v) => setCancelForm({ ...cancelForm, correction_method: v as 'CREDIT_NOTE' | 'SETOFF' })}
+                onValueChange={(v) => setCancelForm({ ...cancelForm, correction_method: v as 'CREDIT_NOTE' | 'SETOFF' | 'NONE' })}
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="CREDIT_NOTE">Credit note — reverse the full amount now (s.34)</SelectItem>
                   <SelectItem value="SETOFF">Set-off — no credit note; net each refund against its own month</SelectItem>
+                  <SelectItem value="NONE">No correction — plain cash refund, tax already paid stays as-is</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground mt-1">
                 {cancelForm.correction_method === 'CREDIT_NOTE'
-                  ? 'A CANCELLATION credit note is raised immediately for the full amount already taxed.'
-                  : 'No credit note. As refund payments are recorded below, each one nets against that '
-                    + "month's collections at this unit's rate — capped by what's available, and anything "
-                    + 'over that is forfeited permanently, never carried to a later month. The client is '
-                    + 'emailed to confirm each set-off once its return is filed.'}
+                  ? 'A CANCELLATION credit note is raised immediately for the full amount already taxed, '
+                    + 'referencing the actual invoice(s)/receipt voucher(s) behind it.'
+                  : cancelForm.correction_method === 'SETOFF'
+                    ? 'No credit note. As refund payments are recorded below, each one nets against that '
+                      + "month's collections at this unit's rate — capped by what's available, and anything "
+                      + 'over that is forfeited permanently, never carried to a later month. The client is '
+                      + 'emailed to confirm each set-off once its return is filed.'
+                    : 'No credit note, no set-off against any month\'s collections. The refund below is a '
+                      + 'plain cash record only — the firm does not attempt to recover the GST already paid '
+                      + 'on this advance.'}
               </p>
+              {cancelForm.correction_method === 'CREDIT_NOTE' && cancelPreview && !cancelPreview.window.isOpen && (
+                <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 mt-2 text-amber-900">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <p className="text-xs">
+                    The s.34 window on this booking's earliest receipt closed on {cancelPreview.window.expiryLabel}.
+                    A credit note raised now will be recorded but excluded from GSTR-1 — the tax cannot be
+                    recovered by the firm this way. Consider Set-off or No correction instead, or note that the
+                    member (as an unregistered buyer) may separately claim it back under Circular 188/20/2022.
+                  </p>
+                </div>
+              )}
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3">
               <div>
@@ -1347,7 +1680,9 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
               {refundDialog?.correction_method === 'SETOFF'
                 ? "This payment nets against its own month's collections — a cancellation refunded over "
                   + 'several months is several independent payments, each judged on its own period.'
-                : 'Plain cash record — the credit note already corrected the GST side.'}
+                : refundDialog?.correction_method === 'CREDIT_NOTE'
+                  ? 'Plain cash record — the credit note already corrected the GST side.'
+                  : 'Plain cash record — no GST correction is being attempted for this refund.'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -1504,6 +1839,165 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
             <Button variant="outline" onClick={() => setReclassDialog(null)}>Cancel</Button>
             <Button onClick={handleSaveReclass} disabled={isSaving}>
               {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save schedule
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Reverse reclassification dialog ─────────────────────────────────── */}
+      <Dialog open={!!reverseDialog} onOpenChange={(o) => { if (!o) { setReverseDialog(null); setReverseReason(''); } }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Reverse re-rating — unit {reverseDialog ? unitNo(reverseDialog.unit_id) : ''}</DialogTitle>
+            <DialogDescription>
+              Voids this reclassification. The correction (
+              {reverseDialog ? formatINR(reverseDialog.total_differential_tax) : ''} differential tax,{' '}
+              {reverseDialog ? formatINR(reverseDialog.total_interest) : ''} interest) drops out of the DRC-03
+              workpaper (or Table 10, if that mode was used), and the unit's live classification governs again.
+              This does not rewrite any receipt or invoice whose own rate was saved while the unit was locked —
+              check those by hand afterwards.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div>
+            <Label htmlFor="reverse-reason">Reason (required)</Label>
+            <Input
+              id="reverse-reason" value={reverseReason}
+              placeholder="e.g. the parking charge that triggered this was entered in error and removed same day"
+              onChange={(e) => setReverseReason(e.target.value)}
+            />
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setReverseDialog(null); setReverseReason(''); }}>Cancel</Button>
+            <Button variant="destructive" onClick={handleReverseReclass} disabled={isSaving || !reverseReason.trim()}>
+              {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Reverse
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Mark DRC-03 as filed dialog ──────────────────────────────────────── */}
+      <Dialog open={!!filedDialog} onOpenChange={(o) => !o && setFiledDialog(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Mark DRC-03 as filed — unit {filedDialog ? unitNo(filedDialog.unit_id) : ''}</DialogTitle>
+            <DialogDescription>
+              Records that the {filedDialog ? formatINR(filedDialog.total_differential_tax + filedDialog.total_interest) : ''}{' '}
+              (tax + interest) was paid via DRC-03 on the GST portal. This is a record only — the app does not
+              file DRC-03 itself.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label htmlFor="drc03-arn">ARN</Label>
+              <Input
+                id="drc03-arn" value={filedForm.arn} placeholder="e.g. AD2408240012345"
+                onChange={(e) => setFiledForm((f) => ({ ...f, arn: e.target.value }))}
+              />
+            </div>
+            <div>
+              <Label htmlFor="drc03-date">Filed date</Label>
+              <Input
+                id="drc03-date" type="date" value={filedForm.filed_date}
+                onChange={(e) => setFiledForm((f) => ({ ...f, filed_date: e.target.value }))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFiledDialog(null)}>Cancel</Button>
+            <Button onClick={handleMarkFiled} disabled={isSaving}>
+              {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Historical receipts dialog ───────────────────────────────────────── */}
+      <Dialog open={histDialog} onOpenChange={(o) => !o && setHistDialog(false)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Historical receipts — unit {unitNo(histUnitId)}</DialogTitle>
+            <DialogDescription>
+              Date-wise pre-onboarding receipts, used only to compute DRC-03 differential tax and s.50
+              interest for periods the opening balance can't break out on its own.
+            </DialogDescription>
+          </DialogHeader>
+
+          {histRecon && (
+            <div className="rounded-md border p-3 text-sm space-y-1 bg-muted/30">
+              <div className="flex justify-between"><span>Entered here</span><span>{formatINR(histRecon.historicalTotal)}</span></div>
+              <div className="flex justify-between"><span>Opening balance — cumulative receipts</span><span>{formatINR(histRecon.openingCumulativeReceipts)}</span></div>
+              <div className={`flex justify-between font-medium ${Math.abs(histRecon.variance) > 0.5 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                <span>Variance</span><span>{formatINR(histRecon.variance)}</span>
+              </div>
+              {Math.abs(histRecon.variance) > 0.5 && (
+                <p className="text-xs text-muted-foreground pt-1">
+                  Doesn't tally yet — partial history is fine, but interest computed from what's entered here
+                  will understate the true position until it does.
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-[1fr_1fr_2fr_auto] gap-2 items-end">
+            <div>
+              <Label htmlFor="hist-date">Date</Label>
+              <Input
+                id="hist-date" type="date" value={histForm.receipt_date}
+                onChange={(e) => setHistForm((f) => ({ ...f, receipt_date: e.target.value }))}
+              />
+            </div>
+            <div>
+              <Label htmlFor="hist-amount">Amount</Label>
+              <Input
+                id="hist-amount" type="number" value={histForm.amount}
+                onChange={(e) => setHistForm((f) => ({ ...f, amount: e.target.value }))}
+              />
+            </div>
+            <div>
+              <Label htmlFor="hist-notes">Notes</Label>
+              <Input
+                id="hist-notes" value={histForm.notes}
+                onChange={(e) => setHistForm((f) => ({ ...f, notes: e.target.value }))}
+              />
+            </div>
+            <Button onClick={handleAddHistorical} disabled={isSaving}>Add</Button>
+          </div>
+
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Date</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+                <TableHead>Notes</TableHead>
+                <TableHead className="w-16" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {histLoading ? (
+                <TableRow><TableCell colSpan={4} className="text-center text-sm text-muted-foreground py-6">Loading…</TableCell></TableRow>
+              ) : histReceipts.length === 0 ? (
+                <TableRow><TableCell colSpan={4} className="text-center text-sm text-muted-foreground py-6">No historical receipts entered.</TableCell></TableRow>
+              ) : histReceipts.map((r) => (
+                <TableRow key={r.id}>
+                  <TableCell className="text-sm">{r.receiptDate}</TableCell>
+                  <TableCell className="text-right text-sm">{formatINR(r.amount)}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{r.notes}</TableCell>
+                  <TableCell>
+                    <Button size="sm" variant="ghost" onClick={() => handleDeleteHistorical(r.id)}>
+                      <Undo2 className="h-3 w-3" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setHistDialog(false)}>Close</Button>
+            <Button onClick={() => { setHistDialog(false); void runReclassSweep(); }}>
+              Close &amp; check for re-rating
             </Button>
           </DialogFooter>
         </DialogContent>

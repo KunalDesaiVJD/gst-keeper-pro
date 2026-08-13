@@ -31,6 +31,10 @@ import {
 import { prettyPeriodLabel } from '@/utils/builderLedger';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
 import { postBuEvent, prepareBuEvent, unpostBuEvent, type PreparedEvent } from '@/lib/builderBuPosting';
+import {
+  isBuAgreementConfirmationBlocked, requestAgreementConfirmations,
+  type AgreementConfirmStatus,
+} from '@/lib/builderAgreementConfirmData';
 
 interface ProjectRow {
   id: string; client_id: string; name: string; is_metro: boolean; grouping_label: string;
@@ -88,8 +92,10 @@ const BuilderBuEventsPage: React.FC = () => {
   const [settings, setSettings] = useState<ChargeInclusionSettings>(DEFAULT_CHARGE_INCLUSIONS);
   const [events, setEvents] = useState<EventRow[]>([]);
   const [eventUnits, setEventUnits] = useState<Record<string, EventUnitRow[]>>({});
+  const [confirmations, setConfirmations] = useState<Record<string, AgreementConfirmStatus[]>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSendingConfirm, setIsSendingConfirm] = useState<string | null>(null);
 
   const [dialog, setDialog] = useState(false);
   const [form, setForm] = useState(emptyEvent);
@@ -138,7 +144,19 @@ const BuilderBuEventsPage: React.FC = () => {
         const emap: Record<string, EventUnitRow[]> = {};
         ((eu || []) as unknown as EventUnitRow[]).forEach((r) => { (emap[r.bu_event_id] ||= []).push(r); });
         setEventUnits(emap);
-      } else setEventUnits({});
+
+        const { data: cf } = await supabase
+          .from('builder_bu_agreement_confirmations').select('bu_event_id, unit_id, status, dispute_notes')
+          .in('bu_event_id', eventRows.map((e) => e.id));
+        type CfRow = { bu_event_id: string; unit_id: string; status: string; dispute_notes: string | null };
+        const cmap: Record<string, AgreementConfirmStatus[]> = {};
+        ((cf || []) as unknown as CfRow[]).forEach((r) => {
+          (cmap[r.bu_event_id] ||= []).push({
+            unitId: r.unit_id, status: r.status as AgreementConfirmStatus['status'], disputeNotes: r.dispute_notes,
+          });
+        });
+        setConfirmations(cmap);
+      } else { setEventUnits({}); setConfirmations({}); }
     } catch (e) {
       toast.error(`Could not load: ${(e as Error).message}`);
     } finally {
@@ -288,7 +306,48 @@ const BuilderBuEventsPage: React.FC = () => {
     }
   };
 
+  /** Every taxable unit's agreement value must be client-confirmed before an
+   *  event can post — a client who later changes it without telling the firm
+   *  can never leave the firm exposed. */
+  const handleSendConfirmations = async (ev: EventRow) => {
+    if (!project) return;
+    const rows = (eventUnits[ev.id] || []).filter((r) => r.booked_at_cutoff);
+    if (!rows.length) return;
+    setIsSendingConfirm(ev.id);
+    try {
+      const res = await requestAgreementConfirmations({
+        buEventId: ev.id,
+        clientId: project.client_id,
+        projectName: project.name,
+        buDate: ev.bu_date,
+        staffName: user?.firstName ?? null,
+        userId: user?.id ?? null,
+        units: rows.map((r) => ({
+          unitId: r.unit_id, unitNo: units.find((u) => u.id === r.unit_id)?.unit_no || '',
+          agreementValue: r.agreement_value,
+        })),
+      });
+      if (res.ok) toast.success(`Confirmation request sent for ${res.sent} unit(s)`);
+      else toast.error(res.reason || 'Could not send confirmation requests');
+      await load();
+    } catch (e) {
+      toast.error(`Could not send: ${(e as Error).message}`);
+    } finally {
+      setIsSendingConfirm(null);
+    }
+  };
+
   const handlePost = async (ev: EventRow) => {
+    if (!project) return;
+    const rows0 = eventUnits[ev.id] || [];
+    const taxable0 = rows0.filter((r) => r.booked_at_cutoff);
+    if (taxable0.length && await isBuAgreementConfirmationBlocked(project.client_id, ev.posting_period)) {
+      toast.error(
+        'Blocked: one or more taxable units\' agreement value has not been confirmed by the client yet. '
+        + 'Send (or re-send) confirmation requests and wait for every unit to come back Confirmed.',
+      );
+      return;
+    }
     if (!window.confirm(
       `Post the BU differential for ${prettyPeriodLabel(ev.posting_period)}? `
       + 'This raises a BU differential invoice per taxable unit, adjusts their open advances in '
@@ -423,6 +482,10 @@ const BuilderBuEventsPage: React.FC = () => {
             interest: a.interest + Number(r.interest_amount || 0),
           }), { diff: 0, taxable: 0, cgst: 0, sgst: 0, interest: 0 });
           const isOpen = openEvent === ev.id;
+          const cfRows = confirmations[ev.id] || [];
+          const cfByUnit = new Map(cfRows.map((c) => [c.unitId, c]));
+          const cfConfirmed = taxable.filter((r) => cfByUnit.get(r.unit_id)?.status === 'CONFIRMED').length;
+          const cfOutstanding = taxable.length - cfConfirmed;
 
           return (
             <Card key={ev.id}>
@@ -441,6 +504,14 @@ const BuilderBuEventsPage: React.FC = () => {
                       >
                         {ev.status}
                       </Badge>
+                      {ev.status !== 'POSTED' && taxable.length > 0 && (
+                        <Badge
+                          variant="outline"
+                          className={cfOutstanding === 0 ? 'text-emerald-700 border-emerald-200' : 'text-amber-700 border-amber-200'}
+                        >
+                          Agreement value: {cfConfirmed}/{taxable.length} confirmed
+                        </Badge>
+                      )}
                     </CardTitle>
                     <CardDescription>
                       {ev.scope === 'FULL' ? 'Full project' : `${rows.length} selected unit(s)`}
@@ -452,9 +523,24 @@ const BuilderBuEventsPage: React.FC = () => {
                     <Button variant="outline" size="sm" onClick={() => setOpenEvent(isOpen ? null : ev.id)}>
                       {isOpen ? 'Hide working' : 'Show working'}
                     </Button>
+                    {canPost && ev.status !== 'POSTED' && taxable.length > 0 && (
+                      <Button
+                        variant="outline" size="sm"
+                        onClick={() => void handleSendConfirmations(ev)}
+                        disabled={isSendingConfirm === ev.id}
+                      >
+                        {isSendingConfirm === ev.id
+                          ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          : <Send className="h-4 w-4 mr-2" />}
+                        {cfRows.length ? 'Re-send confirmations' : 'Send confirmation requests'}
+                      </Button>
+                    )}
                     {canPost && ev.status !== 'POSTED' && (
                       <>
-                        <Button size="sm" onClick={() => handlePost(ev)} disabled={isSaving}>
+                        <Button
+                          size="sm" onClick={() => void handlePost(ev)} disabled={isSaving}
+                          title={cfOutstanding > 0 ? `${cfOutstanding} unit(s) still awaiting client confirmation` : undefined}
+                        >
                           <Send className="h-4 w-4 mr-2" /> Post
                         </Button>
                         <Button variant="ghost" size="icon" onClick={() => handleDelete(ev)}>
@@ -520,6 +606,7 @@ const BuilderBuEventsPage: React.FC = () => {
                           <TableHead>Status at cut-off</TableHead>
                           <TableHead className="text-right">Rate</TableHead>
                           <TableHead className="text-right">Agreement</TableHead>
+                          <TableHead>Confirmed?</TableHead>
                           <TableHead className="text-right">Taxed to opening</TableHead>
                           <TableHead className="text-right">Differential</TableHead>
                           <TableHead className="text-right">Taxable value</TableHead>
@@ -550,6 +637,31 @@ const BuilderBuEventsPage: React.FC = () => {
                               </TableCell>
                               <TableCell className="text-right text-sm">{r.rate_pct}%</TableCell>
                               <TableCell className="text-right text-sm">{formatINR(r.agreement_value)}</TableCell>
+                              <TableCell>
+                                {!r.booked_at_cutoff ? (
+                                  <span className="text-muted-foreground text-xs">—</span>
+                                ) : (() => {
+                                  const cf = cfByUnit.get(r.unit_id);
+                                  const status = cf?.status || 'NOT_SENT';
+                                  const cls = status === 'CONFIRMED'
+                                    ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                                    : status === 'DISPUTED'
+                                      ? 'bg-red-100 text-red-800 border-red-200'
+                                      : status === 'PENDING'
+                                        ? 'bg-amber-100 text-amber-800 border-amber-200'
+                                        : 'bg-slate-100 text-slate-600 border-slate-200';
+                                  return (
+                                    <>
+                                      <Badge className={cls}>{status === 'NOT_SENT' ? 'Not sent' : status}</Badge>
+                                      {status === 'DISPUTED' && cf?.disputeNotes && (
+                                        <span className="block text-xs text-muted-foreground mt-0.5" title={cf.disputeNotes}>
+                                          {cf.disputeNotes}
+                                        </span>
+                                      )}
+                                    </>
+                                  );
+                                })()}
+                              </TableCell>
                               <TableCell className="text-right text-sm">{formatINR(r.value_taxed_upto_opening)}</TableCell>
                               <TableCell className="text-right text-sm font-medium">
                                 {r.booked_at_cutoff ? formatINR(r.differential_value) : '—'}

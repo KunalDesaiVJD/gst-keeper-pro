@@ -14,13 +14,71 @@
 // already-posted period's own Table 11A figures.
 
 import { supabase } from '@/integrations/supabase/client';
-import { computeTax, formatINR, type BuilderRateCode } from '@/utils/builderRates';
+import {
+  classifyUnit, computeTax, formatINR, testRrep, type BuilderRateCode, type UnitType,
+} from '@/utils/builderRates';
 import { planCancellationOffset } from '@/utils/builderAdjustments';
-import { dateToPeriod, prettyPeriodLabel } from '@/utils/builderLedger';
-import { raiseCreditNote, findAvailableInPeriod } from '@/lib/builderAdjustmentsData';
+import { computeUnitLedger, dateToPeriod, prettyPeriodLabel } from '@/utils/builderLedger';
+import { fetchBuilderSettings } from '@/lib/builderSettings';
+import {
+  autoReclassifyProject, raiseCreditNote, findAvailableInPeriod, type OriginalDocument,
+} from '@/lib/builderAdjustmentsData';
 import { GST_FIRM, renderTemplate } from '@/lib/gstReminders';
 
 const round2 = (n: number): number => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
+/**
+ * What a cancellation credit note actually reverses — auto-derived, never
+ * typed by hand. A booking's advances are taxed on a receipt voucher, not a
+ * tax invoice (see the "Nature" split in the Bookings page); a formal
+ * invoice only exists for whatever portion a milestone has since absorbed
+ * (builder_advance_adjustments). So: reference the absorbed invoice(s) for
+ * the invoiced portion, and the receipt voucher(s) for whatever is still a
+ * bare, un-invoiced advance.
+ */
+async function buildOriginalDocuments(
+  receipts: { id: string; consideration: number; receipt_date: string; doc_no: string | null }[],
+  fallbackDate: string,
+): Promise<OriginalDocument[]> {
+  const receiptIds = receipts.map((r) => r.id);
+  const { data: adjRows } = receiptIds.length
+    ? await supabase.from('builder_advance_adjustments')
+      .select('receipt_id, invoice_id, consideration_adjusted').in('receipt_id', receiptIds)
+    : { data: [] };
+  const adjustments = (adjRows || []) as { receipt_id: string; invoice_id: string; consideration_adjusted: number }[];
+
+  const absorbedByReceipt = new Map<string, number>();
+  const absorbedByInvoice = new Map<string, number>();
+  adjustments.forEach((a) => {
+    const amt = Number(a.consideration_adjusted) || 0;
+    absorbedByReceipt.set(a.receipt_id, (absorbedByReceipt.get(a.receipt_id) || 0) + amt);
+    absorbedByInvoice.set(a.invoice_id, (absorbedByInvoice.get(a.invoice_id) || 0) + amt);
+  });
+
+  const invoiceIds = [...absorbedByInvoice.keys()];
+  const { data: invRows } = invoiceIds.length
+    ? await supabase.from('builder_invoices').select('id, doc_no, invoice_date').in('id', invoiceIds)
+    : { data: [] };
+  const invoicesById = new Map(
+    ((invRows || []) as { id: string; doc_no: string | null; invoice_date: string }[]).map((i) => [i.id, i]),
+  );
+
+  const documents: OriginalDocument[] = [];
+  absorbedByInvoice.forEach((amount, invoiceId) => {
+    const inv = invoicesById.get(invoiceId);
+    documents.push({
+      docType: 'INVOICE', docNo: inv?.doc_no || null, docDate: inv?.invoice_date || fallbackDate,
+      amount: round2(amount),
+    });
+  });
+  receipts.forEach((r) => {
+    const remainder = round2((Number(r.consideration) || 0) - (absorbedByReceipt.get(r.id) || 0));
+    if (remainder > 0.005) {
+      documents.push({ docType: 'RECEIPT', docNo: r.doc_no, docDate: r.receipt_date, amount: remainder });
+    }
+  });
+  return documents;
+}
 
 export interface CancelBookingParams {
   bookingId: string;
@@ -30,7 +88,7 @@ export interface CancelBookingParams {
   reason: string;
   forfeitureAmount: number;
   cancellationChargeTaxable: number;
-  correctionMethod: 'CREDIT_NOTE' | 'SETOFF';
+  correctionMethod: 'CREDIT_NOTE' | 'SETOFF' | 'NONE';
   /** false (default) frees the unit for resale; true retires it permanently. */
   retireUnit: boolean;
   periodMonth: string;
@@ -57,13 +115,15 @@ export interface CancelBookingResult {
 export async function cancelBooking(params: CancelBookingParams): Promise<CancelBookingResult> {
   const { data: rcpts, error: rErr } = await supabase
     .from('builder_receipts')
-    .select('id, consideration, rate_code, rate_pct, receipt_date')
+    .select('id, consideration, rate_code, rate_pct, receipt_date, doc_no')
     .eq('booking_id', params.bookingId)
     .eq('receipt_nature', 'ADVANCE')
     .neq('cheque_status', 'Bounced')
     .is('subsumed_by_bu_event_id', null);
   if (rErr) throw rErr;
-  const rows = (rcpts || []) as { id: string; consideration: number; rate_code: string; rate_pct: number; receipt_date: string }[];
+  const rows = (rcpts || []) as {
+    id: string; consideration: number; rate_code: string; rate_pct: number; receipt_date: string; doc_no: string | null;
+  }[];
 
   const rateCodes = new Set(rows.map((r) => r.rate_code));
   if (rateCodes.size > 1) {
@@ -108,6 +168,7 @@ export async function cancelBooking(params: CancelBookingParams): Promise<Cancel
 
   let creditNoteId: string | null = null;
   if (params.correctionMethod === 'CREDIT_NOTE' && totalReceived > 0.005) {
+    const originalDocuments = await buildOriginalDocuments(rows, params.cancellationDate);
     const note = await raiseCreditNote({
       unitId: params.unitId,
       bookingId: params.bookingId,
@@ -116,6 +177,7 @@ export async function cancelBooking(params: CancelBookingParams): Promise<Cancel
       consideration: totalReceived,
       rateCode,
       originalDocDate: earliestReceiptDate,
+      originalDocuments,
       periodMonth: params.periodMonth,
       docSeries: params.docSeriesPrefix,
       docNo: null,
@@ -169,7 +231,126 @@ export async function cancelBooking(params: CancelBookingParams): Promise<Cancel
     status: params.retireUnit ? 'Cancelled' : 'Available',
   }).eq('id', params.unitId);
 
+  // Once these receipts carry cancelled_via_id, computeUnitLedger will never
+  // count them again (a re-booking of this unit must not inherit a refunded
+  // member's money) — so this is the last moment a ₹45L crossing that
+  // happened during this booking's life can still be caught. Never blocks
+  // the cancellation itself if the check fails; the ongoing sweep already
+  // exists as a backstop for a unit that's still live.
+  try {
+    await checkReclassificationOnCancellation({
+      unitId: params.unitId, projectId: params.projectId, cancellationId: cxl.id, userId: params.userId,
+    });
+  } catch (e) {
+    console.warn('[builderCancellation] frozen re-rating check failed:', (e as Error).message);
+  }
+
   return { cancellationId: cxl.id, refundPayable, totalReceived, creditNoteId };
+}
+
+/**
+ * Freezes the unit's classification using every receipt/invoice not
+ * cancelled by an EARLIER cancellation (i.e. including the one this call
+ * just stamped) and, if it crosses ₹45L, runs it through the same DRC-03
+ * pipeline a live crossing would — scoped to just this unit via
+ * autoReclassifyProject's classification map, so no other unit is touched.
+ */
+async function checkReclassificationOnCancellation(params: {
+  unitId: string;
+  projectId: string;
+  cancellationId: string;
+  userId: string | null;
+}): Promise<void> {
+  const { data: unit } = await supabase.from('builder_units')
+    .select('unit_type, carpet_area_sqm, base_consideration').eq('id', params.unitId).maybeSingle();
+  if (!unit) return;
+  const u = unit as unknown as { unit_type: UnitType; carpet_area_sqm: number; base_consideration: number };
+
+  const { data: proj } = await supabase.from('builder_projects')
+    .select('client_id, is_metro, carpet_area_source, manual_residential_carpet_sqm, manual_commercial_carpet_sqm')
+    .eq('id', params.projectId).maybeSingle();
+  if (!proj) return;
+  const p = proj as unknown as {
+    client_id: string; is_metro: boolean; carpet_area_source: string;
+    manual_residential_carpet_sqm: number; manual_commercial_carpet_sqm: number;
+  };
+
+  const [settings, { data: chg }, { data: rcp }, { data: inv }, { data: opn }, { data: allUnits }] = await Promise.all([
+    fetchBuilderSettings(p.client_id),
+    supabase.from('builder_unit_charges').select('charge_head, amount, include_override').eq('unit_id', params.unitId),
+    supabase.from('builder_receipts').select('*').eq('unit_id', params.unitId),
+    supabase.from('builder_invoices').select('*').eq('unit_id', params.unitId),
+    supabase.from('builder_opening_balances').select('*').eq('unit_id', params.unitId).maybeSingle(),
+    supabase.from('builder_units').select('unit_type, carpet_area_sqm, status').eq('project_id', params.projectId),
+  ]);
+
+  let resi = 0, comm = 0;
+  if (p.carpet_area_source === 'MANUAL') {
+    resi = Number(p.manual_residential_carpet_sqm) || 0;
+    comm = Number(p.manual_commercial_carpet_sqm) || 0;
+  } else {
+    type UnitCarpet = { unit_type: string; carpet_area_sqm: number; status: string };
+    ((allUnits || []) as unknown as UnitCarpet[]).forEach((au) => {
+      if (au.status === 'Cancelled') return;
+      if (au.unit_type === 'Residential') resi += Number(au.carpet_area_sqm) || 0;
+      else comm += Number(au.carpet_area_sqm) || 0;
+    });
+  }
+  const rrep = testRrep(resi, comm);
+
+  type Receipt = {
+    id: string; consideration: number; cgst: number; sgst: number; tds_194ia: number;
+    bank_credit: number | null; receipt_nature: string; cheque_status: string;
+    gst_already_discharged: boolean; subsumed_by_bu_event_id: string | null; cancelled_via_id: string | null;
+  };
+  const receipts = ((rcp || []) as unknown as Receipt[])
+    .filter((r) => !r.cancelled_via_id || r.cancelled_via_id === params.cancellationId);
+
+  type Invoice = { id: string; consideration: number; cgst: number; sgst: number };
+  const invoices = (inv || []) as unknown as Invoice[];
+  const invoiceIds = invoices.map((i) => i.id);
+  const { data: adj } = invoiceIds.length
+    ? await supabase.from('builder_advance_adjustments').select('consideration_adjusted, cgst, sgst, invoice_id')
+      .in('invoice_id', invoiceIds)
+    : { data: [] };
+  type Adjustment = { invoice_id: string; consideration_adjusted: number; cgst: number; sgst: number };
+  const adjustments = (adj || []) as unknown as Adjustment[];
+
+  const ledger = computeUnitLedger({
+    agreementValue: 0,
+    opening: (opn || undefined) as never,
+    receipts: receipts.map((r) => ({
+      consideration: r.consideration, cgst: r.cgst, sgst: r.sgst, tds_194ia: r.tds_194ia,
+      bank_credit: r.bank_credit, receipt_nature: r.receipt_nature as never,
+      cheque_status: r.cheque_status as never, gst_already_discharged: r.gst_already_discharged,
+      subsumed_by_bu_event_id: r.subsumed_by_bu_event_id,
+    })),
+    invoices: invoices.map((i) => ({ consideration: i.consideration, cgst: i.cgst, sgst: i.sgst })),
+    adjustments: adjustments.map((a) => ({
+      consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst,
+    })),
+  });
+
+  type Charge = { charge_head: string; amount: number; include_override: boolean | null };
+  const cls = classifyUnit({
+    unitType: u.unit_type,
+    carpetAreaSqM: Number(u.carpet_area_sqm) || 0,
+    baseConsideration: Number(u.base_consideration) || 0,
+    charges: ((chg || []) as unknown as Charge[]).map((c) => ({
+      charge_head: c.charge_head as never, amount: Number(c.amount) || 0, include_override: c.include_override,
+    })),
+    isMetro: p.is_metro ?? false,
+    isRrep: rrep.isRrep,
+    settings: settings as never,
+    knownConsideration: ledger.considerationRecognized,
+  });
+
+  await autoReclassifyProject(
+    params.projectId,
+    { [params.unitId]: { rateCode: cls.rateCode, ratePct: cls.ratePct, agreementValue: cls.gross.gross } },
+    params.userId,
+    p.client_id,
+  );
 }
 
 export interface RecordRefundPaymentParams {
@@ -185,7 +366,7 @@ export interface RecordRefundPaymentParams {
   clientId: string;
   projectId: string;
   rateCode: BuilderRateCode;
-  correctionMethod: 'CREDIT_NOTE' | 'SETOFF';
+  correctionMethod: 'CREDIT_NOTE' | 'SETOFF' | 'NONE';
   unitNo: string;
   projectName: string;
   cancellationDate: string;

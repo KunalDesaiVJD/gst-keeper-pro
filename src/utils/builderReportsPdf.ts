@@ -6,7 +6,7 @@ import {
   reportTable, startDoc, type StatTile,
 } from '@/utils/builderReportTheme';
 import type {
-  BuWorkingReport, PeriodReport, ReportContext, UnitLedgerReport,
+  BuWorkingReport, Drc03Report, PeriodReport, ReportContext, UnitLedgerReport,
 } from '@/lib/builderReportData';
 
 // PDF renderers for the five working papers.
@@ -119,6 +119,7 @@ const rateBucketBody = (buckets: PeriodReport['summary']['table7']) =>
     `${b.ratePct}% (eff. ${b.effectiveRatePct}%)`,
     String(b.count),
     n(b.consideration),
+    n(b.landDeduction),
     n(b.taxableValue),
     n(b.cgst),
     n(b.sgst),
@@ -140,6 +141,7 @@ const periodPdf = (
   const t = r.summary.totals;
   let cursor = drawStatBand(doc, [
     { label: 'Outward taxable value', value: formatINR(t.taxableValue), note: '3B Table 3.1(a)' },
+    { label: 'Non-GST (land, 1/3rd)', value: formatINR(t.landDeduction), note: '3B Table 3.1(e)' },
     { label: 'Outward tax', value: formatINR(t.totalTax), note: `CGST ${formatINR(t.cgst)} + SGST ${formatINR(t.sgst)}` },
     {
       label: 'Reverse charge on FSI', value: formatINR(r.fsiTotal),
@@ -160,7 +162,7 @@ const periodPdf = (
     reportTable(doc, {
       startY: cursor,
       numericFrom: 1,
-      head: [['Rate', 'Documents', 'Consideration', 'Taxable value', 'CGST', 'SGST', 'Total tax']],
+      head: [['Rate', 'Documents', 'Consideration', 'Non-GST (land)', 'Taxable value', 'CGST', 'SGST', 'Total tax']],
       body: rateBucketBody(buckets),
     });
     cursor = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 7;
@@ -200,12 +202,12 @@ const periodPdf = (
     reportTable(doc, {
       startY: docY,
       numericFrom: 4,
-      head: [['Date', 'Unit', 'Source', 'Table', 'Rate %', 'Consideration', 'Taxable value', 'CGST', 'SGST']],
+      head: [['Date', 'Unit', 'Source', 'Table', 'Rate %', 'Consideration', 'Non-GST (land)', 'Taxable value', 'CGST', 'SGST']],
       body: r.documents.map((d) => [
         d.docDate, d.unitNo,
         d.sourceType.replace(/_/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase()),
         d.gstr1Table, String(d.ratePct),
-        n(d.consideration), n(d.taxableValue), n(d.cgst), n(d.sgst),
+        n(d.consideration), n(d.landDeduction), n(d.taxableValue), n(d.cgst), n(d.sgst),
       ]),
       styles: { fontSize: 6.5, cellPadding: 1.4 },
     });
@@ -374,4 +376,56 @@ export const memberStatementPdf = (ctx: ReportContext, r: UnitLedgerReport): voi
 
   drawFooters(doc, nowStamp());
   doc.save(reportFileName(['Statement', r.unitNo, r.members[0]?.name], 'pdf'));
+};
+
+// ─── 5. DRC-03 workpaper ────────────────────────────────────────────────────
+
+export const drc03WorkpaperPdf = (ctx: ReportContext, r: Drc03Report): void => {
+  const { doc, y } = startDoc('l', {
+    title: 'DRC-03 workpaper',
+    subtitle: `Unit ${r.unitNo} — ${r.fromRatePct}% to ${r.toRatePct}%`,
+    fields: [
+      ...clientFields(ctx),
+      { label: 'Posting period', value: prettyPeriodLabel(r.postingPeriod) },
+      { label: 'DRC-03 status', value: r.drc03Status === 'FILED' ? `Filed${r.drc03Arn ? ` — ${r.drc03Arn}` : ''}` : 'Pending' },
+    ],
+  });
+
+  const cursor = drawStatBand(doc, [
+    { label: 'Value re-taxed', value: formatINR(r.totals.valueRetaxed) },
+    { label: 'Differential tax', value: formatINR(r.totals.differentialTax) },
+    { label: 'Interest u/s 50', value: formatINR(r.totals.interest) },
+    { label: 'Total payable', value: formatINR(r.totals.differentialTax + r.totals.interest), note: 'DRC-03' },
+  ], y);
+
+  const noted = drawNote(doc,
+    `The concession under Notification 03/2019-CT(R) never applied to this unit once its gross `
+    + `consideration crossed ₹45,00,000 — the higher rate was due on everything already offered to tax. `
+    + `Rather than a GSTR-1 amendment, the firm discharges this by voluntary payment (DRC-03): the `
+    + `differential tax below, plus interest u/s 50 at 18% p.a. computed period-wise from each original `
+    + `period's own GSTR-3B due date to the posting period's due date.`,
+    cursor);
+
+  reportTable(doc, {
+    startY: noted,
+    numericFrom: 1,
+    head: [['Period', 'Taxable value', `Tax at ${r.fromRatePct}%`, `Tax at ${r.toRatePct}%`, 'Differential', 'Due date', 'Days', 'Interest']],
+    body: r.periods.map((p) => [
+      prettyPeriodLabel(p.periodMonth),
+      n(p.taxableValue),
+      n(p.oldCgst + p.oldSgst),
+      n(p.newCgst + p.newSgst),
+      n(p.differentialTax),
+      p.dueDate,
+      String(p.interestDays),
+      n(p.interestAmount),
+    ]),
+    foot: [[
+      'Total', n(r.totals.valueRetaxed), '', '', n(r.totals.differentialTax), '', '', n(r.totals.interest),
+    ]],
+    footStyles: { fillColor: [226, 232, 240], textColor: [17, 24, 39], fontStyle: 'bold' },
+  });
+
+  drawFooters(doc, nowStamp());
+  doc.save(reportFileName(['DRC03', r.unitNo, r.postingPeriod], 'pdf'));
 };

@@ -17,9 +17,13 @@ import {
 } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { FileSignature, Loader2, Pencil, Info, AlertTriangle, CheckCircle2 } from 'lucide-react';
-import { formatINR } from '@/utils/builderRates';
-import { autoPostDastavejDifferential } from '@/lib/builderBuPosting';
+import { FileSignature, Loader2, Pencil, Info, AlertTriangle, CheckCircle2, Percent } from 'lucide-react';
+import { formatINR, type BuilderRateCode } from '@/utils/builderRates';
+import {
+  autoPostDastavejDifferential, clearDastavejDate, markLateDiscoveryInterestPaid, previewLateDiscoveryInterest,
+  saveLateDiscoveryInterest,
+} from '@/lib/builderBuPosting';
+import type { LateDiscoveryInterest } from '@/utils/builderBuEvent';
 
 interface RecoRow {
   unit_id: string;
@@ -94,6 +98,8 @@ const resolveAction = (r: RecoRow): Action => {
   return { kind: 'CREDIT_NOTE', label: 'Deed below value taxed — credit note, check the window', tone: 'warn' };
 };
 
+const today = () => new Date().toISOString().slice(0, 10);
+
 const TONE_CLASS: Record<Action['tone'], string> = {
   ok: 'bg-emerald-100 text-emerald-800 border-emerald-200',
   info: 'bg-sky-100 text-sky-800 border-sky-200',
@@ -118,10 +124,18 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
   const [pending, setPending] = useState<PendingUnit[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
 
   const [dialog, setDialog] = useState(false);
   const [editUnit, setEditUnit] = useState<{ id: string; unit_no: string } | null>(null);
   const [form, setForm] = useState({ dastavej_date: '', dastavej_value: '' });
+
+  const [interestUnit, setInterestUnit] = useState<{ id: string; unit_no: string; dastavej_date: string; project_id: string } | null>(null);
+  const [interestPreview, setInterestPreview] = useState<(LateDiscoveryInterest & { rateCode: BuilderRateCode; cutOffPeriod: string; bookedAtCutOff: boolean }) | null>(null);
+  const [interestLoading, setInterestLoading] = useState(false);
+  const [interestSavedId, setInterestSavedId] = useState<string | null>(null);
+  const [interestArn, setInterestArn] = useState('');
+  const [interestPaidDate, setInterestPaidDate] = useState('');
 
   const canEdit = canManageBuilderUnits();
 
@@ -195,6 +209,58 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
     setDialog(true);
   };
 
+  const openLateInterest = async (unitId: string, unitNo: string, dastavejDate: string, projectId: string) => {
+    setInterestUnit({ id: unitId, unit_no: unitNo, dastavej_date: dastavejDate, project_id: projectId });
+    setInterestPreview(null);
+    setInterestSavedId(null);
+    setInterestArn('');
+    setInterestPaidDate(today());
+    setInterestLoading(true);
+    try {
+      const result = await previewLateDiscoveryInterest({ unitId, dastavejDate });
+      setInterestPreview(result);
+    } catch (e) {
+      toast.error(`Could not compute: ${(e as Error).message}`);
+      setInterestUnit(null);
+    } finally {
+      setInterestLoading(false);
+    }
+  };
+
+  const handleSaveInterest = async () => {
+    if (!interestUnit || !interestPreview) return;
+    setInterestLoading(true);
+    try {
+      const { id } = await saveLateDiscoveryInterest({
+        unitId: interestUnit.id, projectId: interestUnit.project_id, dastavejDate: interestUnit.dastavej_date,
+        preview: interestPreview, userId: user?.id ?? null,
+      });
+      setInterestSavedId(id);
+      toast.success('Working paper saved');
+    } catch (e) {
+      toast.error(`Could not save: ${(e as Error).message}`);
+    } finally {
+      setInterestLoading(false);
+    }
+  };
+
+  const handleMarkInterestPaid = async () => {
+    if (!interestSavedId || !interestArn.trim() || !interestPaidDate) {
+      toast.error('ARN and paid date are required');
+      return;
+    }
+    setInterestLoading(true);
+    try {
+      await markLateDiscoveryInterestPaid({ id: interestSavedId, arn: interestArn.trim(), paidDate: interestPaidDate });
+      toast.success('Marked as paid');
+      setInterestUnit(null);
+    } catch (e) {
+      toast.error(`Could not mark paid: ${(e as Error).message}`);
+    } finally {
+      setInterestLoading(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!editUnit) return;
     if (!form.dastavej_date) { toast.error('Dastavej date is required.'); return; }
@@ -245,6 +311,27 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
       toast.error(`Could not save: ${(e as Error).message}`);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  /**
+   * A wrong date/value entirely — not a date that should move, which is just
+   * an overwrite via Save. See clearDastavejDate() for the guards: blocked
+   * outright if the posted differential's period is already filed, or if the
+   * event covers other units too; otherwise unposted and cleared in one step.
+   */
+  const handleClear = async () => {
+    if (!editUnit) return;
+    setIsClearing(true);
+    try {
+      await clearDastavejDate(editUnit.id);
+      toast.success('Dastavej date cleared');
+      setDialog(false);
+      await load();
+    } catch (e) {
+      toast.error(`Could not clear: ${(e as Error).message}`);
+    } finally {
+      setIsClearing(false);
     }
   };
 
@@ -403,14 +490,24 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
                               </Badge>
                             </TableCell>
                             <TableCell>
-                              {canEdit && (
-                                <Button
-                                  variant="ghost" size="icon"
-                                  onClick={() => openEdit(r.unit_id, r.unit_no, r.dastavej_date, r.dastavej_value)}
-                                >
-                                  <Pencil className="h-4 w-4" />
-                                </Button>
-                              )}
+                              <div className="flex items-center">
+                                {canEdit && (
+                                  <Button
+                                    variant="ghost" size="icon"
+                                    onClick={() => openEdit(r.unit_id, r.unit_no, r.dastavej_date, r.dastavej_value)}
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                {canEdit && r.dastavej_date && (
+                                  <Button
+                                    variant="ghost" size="icon" title="Late-discovery interest"
+                                    onClick={() => openLateInterest(r.unit_id, r.unit_no, r.dastavej_date!, r.project_id)}
+                                  >
+                                    <Percent className="h-4 w-4" />
+                                  </Button>
+                                )}
+                              </div>
                             </TableCell>
                           </TableRow>
                         );
@@ -520,10 +617,140 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
           </div>
 
           <DialogFooter>
+            {form.dastavej_date && (
+              <Button
+                variant="destructive" className="mr-auto"
+                onClick={handleClear} disabled={isSaving || isClearing}
+              >
+                {isClearing && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Clear date
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setDialog(false)}>Cancel</Button>
-            <Button onClick={handleSave} disabled={isSaving}>
+            <Button onClick={handleSave} disabled={isSaving || isClearing}>
               {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Late-discovery interest ─────────────────────────────────────── */}
+      <Dialog open={!!interestUnit} onOpenChange={(o) => !o && setInterestUnit(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Late-discovery interest — unit {interestUnit?.unit_no}</DialogTitle>
+            <DialogDescription>
+              For a shortfall that sat unposted while the buyer kept paying normally — prices s.50
+              interest on what was already collected and taxed as ordinary advances, instead of taxing
+              it a second time as a fresh differential.
+            </DialogDescription>
+          </DialogHeader>
+
+          {interestLoading && !interestPreview && (
+            <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+          )}
+
+          {interestPreview && (
+            <div className="space-y-4">
+              {!interestPreview.bookedAtCutOff ? (
+                <div className="flex gap-2 rounded-lg border border-muted bg-muted/30 p-3 text-muted-foreground">
+                  <Info className="h-4 w-4 shrink-0 mt-0.5" />
+                  <p className="text-xs">Unbooked at this cut-off — Schedule III, no GST involved.</p>
+                </div>
+              ) : interestPreview.shortfallValue <= 0 ? (
+                <div className="flex gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-emerald-900">
+                  <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
+                  <p className="text-xs">
+                    No shortfall as of {interestPreview.cutOffPeriod} — advances before the cut-off already
+                    covered the agreement value. Nothing to price here.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="rounded-lg border bg-muted/30 p-3 text-sm space-y-1">
+                    <div className="flex justify-between">
+                      <span>Shortfall as of {interestPreview.cutOffPeriod} (cut-off)</span>
+                      <span className="font-medium">{formatINR(interestPreview.shortfallValue)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Recovered via later ordinary advances</span>
+                      <span className="font-medium">{formatINR(interestPreview.totalAllocated)}</span>
+                    </div>
+                  </div>
+
+                  {interestPreview.tranches.length > 0 && (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Period</TableHead>
+                          <TableHead className="text-right">Allocated</TableHead>
+                          <TableHead className="text-right">Tax</TableHead>
+                          <TableHead className="text-right">Days late</TableHead>
+                          <TableHead className="text-right">Interest</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {interestPreview.tranches.map((t) => (
+                          <TableRow key={t.periodMonth}>
+                            <TableCell className="text-sm">{t.periodMonth}</TableCell>
+                            <TableCell className="text-right text-sm">{formatINR(t.allocated)}</TableCell>
+                            <TableCell className="text-right text-sm">{formatINR(t.tax)}</TableCell>
+                            <TableCell className="text-right text-sm">{t.interestDays}</TableCell>
+                            <TableCell className="text-right text-sm font-medium">{formatINR(t.interestAmount)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+
+                  <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sky-900">
+                    <p className="text-sm font-medium">Total interest owed: {formatINR(interestPreview.totalInterest)}</p>
+                    <p className="text-xs mt-1">Settled by voluntary payment on the portal — never through GSTR-1/3B.</p>
+                  </div>
+
+                  {interestPreview.residualUnrecovered > 0.005 && (
+                    <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                      <p className="text-xs">
+                        {formatINR(interestPreview.residualUnrecovered)} of the shortfall was never
+                        recovered by any later advance — still genuinely untaxed. This portion needs an
+                        ordinary differential post (BU Events page, single unit, Discovery-with-interest
+                        basis) for fresh tax plus interest to today, on top of the amount above.
+                      </p>
+                    </div>
+                  )}
+
+                  {!interestSavedId ? (
+                    <Button onClick={handleSaveInterest} disabled={interestLoading}>
+                      {interestLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save working paper
+                    </Button>
+                  ) : (
+                    <div className="rounded-lg border p-3 space-y-2">
+                      <p className="text-sm font-medium">Working paper saved. Record the portal payment once made:</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <Label htmlFor="li-arn">DRC-03 ARN</Label>
+                          <Input id="li-arn" value={interestArn} onChange={(e) => setInterestArn(e.target.value)} />
+                        </div>
+                        <div>
+                          <Label htmlFor="li-date">Paid date</Label>
+                          <Input
+                            id="li-date" type="date" value={interestPaidDate}
+                            onChange={(e) => setInterestPaidDate(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <Button onClick={handleMarkInterestPaid} disabled={interestLoading} size="sm">
+                        {interestLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Mark as paid
+                      </Button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setInterestUnit(null)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

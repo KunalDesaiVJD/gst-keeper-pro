@@ -35,6 +35,26 @@ fourth — see §7.
 *Implemented in `src/utils/builderRates.ts` (`NOTIFIED_RATE_PCT`,
 `EFFECTIVE_RATE_PCT`, `computeTax`).*
 
+**The 1/3rd, disclosed as Non-GST supply.** A further firm election, on top
+of the deemed-1/3rd position above: the land deduction is now also reported
+as Non-GST supply — GSTR-1 Table 8 (`nil.inv[].ngsup_amt`, `sply_ty:
+INTRAB2C` — intra-state to unregistered, consistent with §5) and 3B Table
+3.1(e). This is a disclosure practice, not a claim that land is a distinct
+supply here: there is one indivisible construction service under a single
+booking agreement, and the 1/3rd is a deemed valuation carve-out for that
+one supply, not a separate land transaction. The reason to disclose it
+anyway is turnover reconciliation — books record the full consideration as
+one figure, GST returns only the 2/3rd, and GSTR-9C Table 5 would otherwise
+show a gap with nothing on the return to explain it.
+
+`computeTax()` already computes the 1/3rd as `landDeduction` on every
+`TaxBreakup`; `builder_period_postings` carries it as its own
+`land_deduction` column per posting (zero on the two Table 10 re-rating
+legs, since a re-rating only swaps the rate on an already-established
+taxable value and never re-derives the land split — see the view's own
+`COMMENT`). `buildBuilderGstr1()` in `src/utils/builderGstr1.ts` sums it
+across the period and emits the one Table 8 row.
+
 ## 2. Affordable residential apartment
 
 Both limbs must hold, tested **per unit**:
@@ -128,19 +148,95 @@ reversal.
 
 ## 8. Retrospective re-rating
 
-A unit taxed at 1.5% whose gross consideration later crosses ₹45 lakh **was
-never affordable** — the concession did not apply, so the higher rate is due on
-everything already offered to tax.
+**The ₹45L test floors at money already recognised, not just the unit
+master.** `base_consideration` + charges is the primary figure, but a unit
+cannot legitimately have been charged or received MORE than its true agreed
+price — so if opening balance + every receipt/invoice to date (net of
+absorption) exceeds base + charges, that running total governs instead
+(`knownConsideration` on `classifyUnit()`, fed from `computeUnitLedger()`'s
+`considerationRecognized`). This catches a unit whose master was never kept
+in sync with what's actually being collected — including one booked years
+ago that only crosses via a receipt entered this month — without waiting for
+anyone to notice and go update the base consideration by hand. The unit list
+flags this case with a warning icon rather than silently absorbing it, since
+the master figure is still wrong and should be corrected even though the
+classification is already right in the meantime.
 
-Every buyer is unregistered, so the correction is an **amendment of the earlier
-B2CS entries in Table 10**, not a debit note: the old rate reversed, the same
-taxable value re-reported at the correct one.
+**The rate freezes on filing, not on crossing.** For any period whose GSTR-1
+has not yet been filed, a unit's classification is always the live one —
+`classifyUnit()` off today's base consideration and charges — and every
+receipt/invoice already recorded for that unfiled period is kept in sync
+with it automatically (`resyncUnfiledPostings()` in
+`src/lib/builderAdjustmentsData.ts`), in either direction, with no amendment
+of any kind. There is nothing to amend: nothing has been filed yet, so a
+mistaken charge caught and corrected before filing simply never happened, as
+far as the return is concerned.
 
-The schedule is **period-wise**, because interest under **s.50** runs from each
-original period's due date. A single aggregate at the trigger date would
-understate it materially on an older unit.
+Once a period's GSTR-1 **is filed**, that period is closed — the DB itself
+blocks editing a receipt or invoice dated into it
+(`builder_receipts_period_lock` / `builder_invoices_period_lock`,
+`supabase/migrations/20260811140000_builder_filed_period_lock.sql`) — so from
+that point on its figures can only be corrected by a formal amendment, never
+a silent rewrite. **This is where "a unit taxed at 1.5% whose gross
+consideration later crosses ₹45 lakh was never affordable" applies**: if a
+unit's live classification has moved off AFFORDABLE while a *filed* period
+still carries 1.5% postings, that crossing is real and permanent for that
+period, and the higher rate is due on everything already filed.
 
-**No downgrade.** A later fall below ₹45 lakh does not restore the concession.
+**Discharged by DRC-03, not a GSTR-1 amendment (firm decision, 11/08/2026).**
+Originally this correction went through Table 10 as a formal amendment (old
+rate reversed, same taxable value re-reported at the correct one — every
+buyer being unregistered rules out a debit note). That mechanism is now used
+only as a manual, DB-only exception (`builder_reclassifications.discharge_mode
+= 'GSTR1_AMENDMENT'`, never offered in the UI). The default for every
+re-rating going forward is `discharge_mode = 'DRC03'`: the differential tax
+and s.50 interest are computed exactly as before, but paid by voluntary
+payment on the GST portal, and never reported in GSTR-1 or 3B. Two reasons
+drove the change:
+
+- **Duplicate effect.** A Table 10 amendment assumes the return as originally
+  filed is still what the portal shows. Where the client's own team has
+  separately hand-corrected the portal already — the E-1004 case this
+  section used to describe — a later Table 10 amendment on top of that
+  reproduces the correction a second time.
+- **Pre-onboarding history is otherwise unreachable.** `findReclassCandidates()`
+  only ever reads `builder_period_postings`, which excludes
+  `builder_opening_balances` by construction (see
+  `supabase/migrations/20260811150000_builder_reclass_drc03.sql`). A unit
+  booked years before this firm's onboarding has its entire pre-onboarding
+  history in a single lump snapshot, invisible to a return amendment no
+  matter what. Staff can instead reconstruct it, date by date, in
+  `builder_historical_receipts` — floored at 01.04.2019, the date
+  Notification 03/2019-CT(R) starts and the earliest date `builderRates.ts`
+  models any rate for; anything earlier is a pre-scheme regime this module
+  was never built to compute and stays a manual firm judgment call. Those
+  entered periods feed the same schedule/interest engine as app-tracked
+  periods and land in the same DRC-03 workpaper for the unit
+  (`findHistoricalReclassCandidates()`/`mergeCandidates()` in
+  `src/lib/builderAdjustmentsData.ts`).
+
+Posted automatically, no staff review — the correction is arithmetic once a
+crossing is detected (`findReclassCandidates()`/`findHistoricalReclassCandidates()`
+/`autoReclassifyProject()`). Once posted, a superadmin/GST-Manager can record
+that the DRC-03 was actually filed (ARN + date, `BuilderAdjustmentsPage.tsx`)
+— a record only; the app does not file DRC-03 itself.
+
+The schedule is **period-wise**, because interest under **s.50** runs from
+each original period's due date. A single aggregate at the trigger date
+would understate it materially on an older unit.
+
+**No downgrade on a filed period.** A later fall below ₹45 lakh does not
+reopen or restate a correction already posted against a filed period — only
+an unfiled period's postings track the live rate freely, up or down.
+
+**A posted correction can still be voided if the crossing was itself a
+mistake** — e.g. the triggering charge was entered in error and removed
+before anyone noticed the period had, in the meantime, been filed at the
+wrong rate. Superadmin only, reason recorded
+(`builder_reclassifications.status = 'REVERSED'`); voiding removes it from
+the DRC-03 workpaper but does **not** rewrite the already-filed period itself
+(the DB trigger prevents that regardless) — correcting a figure that has
+already gone to the portal needs handling case-by-case.
 
 ## 9. Bounce reversals — *position*
 
@@ -294,6 +390,7 @@ flagged while trying to tax it here.
 |---|---|
 | Rates, the 15% test, affordability, Rule 35, 194-IA | `src/utils/builderRates.ts` |
 | Ledger, receipt derivation, advance absorption, period roll-up | `src/utils/builderLedger.ts` |
+| Land deduction as Non-GST supply (GSTR-1 Table 8, 3B Table 3.1(e)) | `src/utils/builderGstr1.ts` (`buildBuilderGstr1`) |
 | Cut-off, differential, s.50 interest, credit-note deadline | `src/utils/builderBuEvent.ts` |
 | Re-rating, conversions, bounce offsets, restatement, delay interest | `src/utils/builderAdjustments.ts` |
 | TDR/FSI legs, the cap, the consent gate, carpet split | `src/utils/builderFsi.ts` |
