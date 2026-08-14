@@ -94,6 +94,7 @@ export type Database = {
           period_month: string
           reclaim_month: string | null
           reclaim_subtype: string | null
+          reclaimed_via_doc_id: string | null
           reversal_month: string | null
           source_book_id: string | null
           supplier_gstin: string | null
@@ -116,6 +117,7 @@ export type Database = {
           period_month: string
           reclaim_month?: string | null
           reclaim_subtype?: string | null
+          reclaimed_via_doc_id?: string | null
           reversal_month?: string | null
           source_book_id?: string | null
           supplier_gstin?: string | null
@@ -138,6 +140,7 @@ export type Database = {
           period_month?: string
           reclaim_month?: string | null
           reclaim_subtype?: string | null
+          reclaimed_via_doc_id?: string | null
           reversal_month?: string | null
           source_book_id?: string | null
           supplier_gstin?: string | null
@@ -154,6 +157,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bills_not_in_2b_reclaimed_via_doc_id_fkey"
+            columns: ["reclaimed_via_doc_id"]
+            isOneToOne: false
+            referencedRelation: "twob_import_docs"
             referencedColumns: ["id"]
           },
           {

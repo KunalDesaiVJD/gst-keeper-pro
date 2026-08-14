@@ -15,8 +15,9 @@ import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
 import { parseGstr2bFile } from '@/utils/parseGstr2b';
-import { classifyBookAgainst2b, TwoBLite } from '@/utils/matchTwob';
+import { classifyBookAgainst2b, invoiceSimilar, TwoBLite } from '@/utils/matchTwob';
 import { periodMonthLabel, planImport2BPost, postImport2BToLedger, isPostPlanEmpty } from '@/lib/postImport2B';
+import ReclaimMatchDialog, { ReclaimInvoiceLite } from '@/components/dialogs/ReclaimMatchDialog';
 
 // Phase 3 — the "Import 2B" tab. Import the portal's GSTR-2B .xlsx into the
 // twob_import_docs staging table (non-RCM B2B only shown), let staff classify
@@ -90,13 +91,31 @@ interface PendingBillBooks {
   bill_in_2b_month: string | null;
 }
 
+// Reclaim always goes through a matching dialog — 'fromDoc' starts from a
+// freshly imported 2B document (picking which pending reversed item it
+// evidences the return of); 'fromPending' starts from a pending reversed
+// item (picking which freshly imported document matches it).
+interface ReclaimDialogState {
+  mode: 'fromDoc' | 'fromPending';
+  anchor: ReclaimInvoiceLite;
+  anchorLabel: string;
+  candidates: ReclaimInvoiceLite[];
+  candidateLabel: string;
+  docId?: string;
+  pendingId?: string;
+}
+
 const TWOB_ACTIONS = [
   { value: 'MATCHED', label: 'Matched' },
   { value: 'INELIGIBLE', label: 'Ineligible' },
   { value: 'ITC_OF_OTHERS', label: 'ITC of Others' },
   { value: 'MISMATCHED', label: 'Mismatched' },
   { value: 'NOT_IN_BOOKS', label: 'Not in Books' },
+  { value: 'RECLAIM', label: 'Reclaim' },
 ];
+// RECLAIM always goes through the matching dialog (Link & Reclaim) — never a
+// blind bulk-apply, since each one has to be paired to a specific pending item.
+const BULK_TWOB_ACTIONS = TWOB_ACTIONS.filter((a) => a.value !== 'RECLAIM');
 
 const BOOK_TREATMENTS = [
   { value: 'NOT_IN_2B', label: 'Not in 2B' },
@@ -148,6 +167,7 @@ const Import2BTab: React.FC = () => {
   const [pendingBillsBooks, setPendingBillsBooks] = useState<PendingBillBooks[]>([]);
   const [isPosting, setIsPosting] = useState(false);
   const [lastPosted, setLastPosted] = useState<{ at: string; version: number | null } | null>(null);
+  const [reclaimDialog, setReclaimDialog] = useState<ReclaimDialogState | null>(null);
 
   // Multi-select + bulk apply (2B table)
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -420,6 +440,91 @@ const Import2BTab: React.FC = () => {
     if (error) { toast.error('Save failed: ' + error.message); fetchAll(); }
   };
 
+  // ---- Reclaim by matching ---------------------------------------------------
+  // Reclaiming previously-reversed ITC requires evidence the same invoice is
+  // actually back in 2B — never a self-certified monthly pick. Both entry
+  // points (a fresh 2B doc, or a pending reversed item) open the same
+  // matching dialog and only commit on an exact amount match.
+  const toReclaimLite = (d: {
+    id: string; date: string | null; supplier_name: string | null; supplier_invoice_number: string | null;
+    supplier_gstin: string | null; taxable_value: number; input_igst: number; input_cgst: number; input_sgst: number;
+  }): ReclaimInvoiceLite => ({
+    id: d.id, date: d.date, supplierName: d.supplier_name, supplierInvoiceNumber: d.supplier_invoice_number,
+    supplierGstin: d.supplier_gstin, taxableValue: d.taxable_value || 0,
+    igst: d.input_igst || 0, cgst: d.input_cgst || 0, sgst: d.input_sgst || 0,
+  });
+
+  // Surface likely matches first (same GSTIN + a similar invoice number), then by date.
+  const sortReclaimCandidates = (
+    anchor: { supplier_gstin: string | null; supplier_invoice_number: string | null },
+    list: ReclaimInvoiceLite[],
+  ) => {
+    const g = (anchor.supplier_gstin || '').toUpperCase().trim();
+    const score = (c: ReclaimInvoiceLite) =>
+      (c.supplierGstin || '').toUpperCase().trim() === g && invoiceSimilar(c.supplierInvoiceNumber, anchor.supplier_invoice_number) ? 0 : 1;
+    return [...list].sort((a, b) => score(a) - score(b) || (b.date || '').localeCompare(a.date || ''));
+  };
+
+  const handleDocActionChange = async (doc: TwoBDoc, newAction: string) => {
+    if (readOnly) return;
+    if (newAction === 'RECLAIM') {
+      setReclaimDialog({
+        mode: 'fromDoc',
+        anchor: toReclaimLite(doc),
+        anchorLabel: 'This GSTR-2B document',
+        candidates: sortReclaimCandidates(doc, pendingBills2B.map(toReclaimLite)),
+        candidateLabel: 'pending reversed item',
+        docId: doc.id,
+      });
+      return;
+    }
+    const wasReclaim = doc.itc_action === 'RECLAIM';
+    if (wasReclaim) {
+      // Moving away from RECLAIM — release whichever pending item this doc
+      // was linked to, so it goes back to "awaiting reclaim".
+      const { error } = await supabase.from('bills_not_in_2b')
+        .update({ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null, updated_by: user?.id, updated_at: new Date().toISOString() })
+        .eq('reclaimed_via_doc_id', doc.id);
+      if (error) { toast.error('Could not unlink reclaim: ' + error.message); return; }
+    }
+    await setDocAction(doc.id, newAction);
+    if (wasReclaim) await fetchAll();
+  };
+
+  const openReclaimFromPending = (row: PendingBill2B) => {
+    const eligibleDocs = twoBDocs.filter((d) => d.itc_action === 'MATCHED' || d.itc_action === 'MISMATCHED');
+    setReclaimDialog({
+      mode: 'fromPending',
+      anchor: toReclaimLite(row),
+      anchorLabel: 'Pending reversed item',
+      candidates: sortReclaimCandidates(row, eligibleDocs.map(toReclaimLite)),
+      candidateLabel: 'GSTR-2B document',
+      pendingId: row.id,
+    });
+  };
+
+  const confirmReclaim = async (pendingId: string, docId: string) => {
+    const nowIso = new Date().toISOString();
+    const { error: err2B } = await supabase.from('bills_not_in_2b').update({
+      reclaim_month: currentLabel, reclaim_subtype: null, reclaimed_via_doc_id: docId,
+      updated_by: user?.id, updated_at: nowIso,
+    }).eq('id', pendingId);
+    if (err2B) { toast.error('Reclaim failed: ' + err2B.message); return; }
+    const { error: errDoc } = await supabase.from('twob_import_docs').update({
+      itc_action: 'RECLAIM', updated_by: user?.id, updated_at: nowIso,
+    }).eq('id', docId);
+    if (errDoc) { toast.error('Reclaim failed: ' + errDoc.message); return; }
+    toast.success('Reclaim linked and recorded.');
+    await fetchAll();
+  };
+
+  const handleReclaimConfirm = async (candidateId: string) => {
+    if (!reclaimDialog) return;
+    const docId = reclaimDialog.mode === 'fromDoc' ? reclaimDialog.docId! : candidateId;
+    const pendingId = reclaimDialog.mode === 'fromPending' ? reclaimDialog.pendingId! : candidateId;
+    await confirmReclaim(pendingId, docId);
+  };
+
   const toggleRow = (id: string) => setSelected((prev) => {
     const next = new Set(prev);
     next.has(id) ? next.delete(id) : next.add(id);
@@ -435,6 +540,16 @@ const Import2BTab: React.FC = () => {
   const applyBulk = async () => {
     if (!bulkValue || selected.size === 0 || readOnly) return;
     const ids = [...selected];
+    // Bulk-apply never targets RECLAIM itself (see BULK_TWOB_ACTIONS), but a
+    // selected doc might already BE one — release its linked pending item
+    // first so it doesn't dangle, pointing at a doc that no longer reclaims it.
+    const reclaimIds = twoBDocs.filter((d) => ids.includes(d.id) && d.itc_action === 'RECLAIM').map((d) => d.id);
+    if (reclaimIds.length > 0) {
+      const { error: unlinkError } = await supabase.from('bills_not_in_2b')
+        .update({ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null, updated_by: user?.id, updated_at: new Date().toISOString() })
+        .in('reclaimed_via_doc_id', reclaimIds);
+      if (unlinkError) { toast.error('Could not unlink reclaim: ' + unlinkError.message); return; }
+    }
     setTwoBDocs((prev) => prev.map((d) => (ids.includes(d.id) ? { ...d, itc_action: bulkValue } : d)));
     const { error } = await supabase.from('twob_import_docs')
       .update({ itc_action: bulkValue, updated_by: user?.id, updated_at: new Date().toISOString() }).in('id', ids);
@@ -442,6 +557,7 @@ const Import2BTab: React.FC = () => {
     toast.success(`Set ${ids.length} row(s) to ${TWOB_ACTIONS.find((a) => a.value === bulkValue)?.label}.`);
     setSelected(new Set());
     setBulkValue('');
+    if (reclaimIds.length > 0) await fetchAll();
   };
 
   // ---- Books register --------------------------------------------------------
@@ -568,17 +684,16 @@ const Import2BTab: React.FC = () => {
   };
 
   // ---- Zone 4 — Pending items (reclaim / book-entry decisions) ---------------
-  const setPendingReclaim = async (id: string, value: 'blank' | 'current' | 'expense_out') => {
-    const patch = value === 'blank'
-      ? { reclaim_month: null, reclaim_subtype: null }
-      : value === 'expense_out'
-        ? { reclaim_month: currentLabel, reclaim_subtype: 'EXPENSE_OUT' }
-        : { reclaim_month: currentLabel, reclaim_subtype: null };
+  // Reclaim itself always goes through the matching dialog (see confirmReclaim
+  // above) — this is only the "never coming back, write it off" escape hatch,
+  // which doesn't need a matching invoice.
+  const setPendingExpenseOut = async (id: string) => {
     const { error } = await supabase.from('bills_not_in_2b')
-      .update({ ...patch, updated_by: user?.id, updated_at: new Date().toISOString() }).eq('id', id);
+      .update({ reclaim_month: currentLabel, reclaim_subtype: 'EXPENSE_OUT', updated_by: user?.id, updated_at: new Date().toISOString() })
+      .eq('id', id);
     if (error) { toast.error('Save failed: ' + error.message); return; }
-    setPendingBills2B((prev) => prev.filter((r) => value === 'blank' ? true : r.id !== id));
-    if (value !== 'blank') toast.success('Reclaim recorded.');
+    setPendingBills2B((prev) => prev.filter((r) => r.id !== id));
+    toast.success('Marked as expense out.');
   };
 
   const setPendingBookEntry = async (id: string, value: 'blank' | 'current') => {
@@ -766,7 +881,7 @@ const Import2BTab: React.FC = () => {
                     <span className="text-xs font-medium">{selected.size} selected</span>
                     <select className="h-7 rounded-md border border-input bg-background px-2 text-xs" value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}>
                       <option value="">Set action to…</option>
-                      {TWOB_ACTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      {BULK_TWOB_ACTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
                     <Button size="sm" className="h-7" onClick={applyBulk} disabled={!bulkValue}>Apply</Button>
                     <Button
@@ -868,7 +983,7 @@ const Import2BTab: React.FC = () => {
                             <td className="border border-border p-2 text-right tabular-nums">{num(d.input_cgst)}</td>
                             <td className="border border-border p-2 text-right tabular-nums">{num(d.input_sgst)}</td>
                             <td className="border border-border p-2">
-                              <select className={rowSelectCls} value={d.itc_action} disabled={readOnly} onChange={(e) => setDocAction(d.id, e.target.value)}>
+                              <select className={rowSelectCls} value={d.itc_action} disabled={readOnly} onChange={(e) => handleDocActionChange(d, e.target.value)}>
                                 {TWOB_ACTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                               </select>
                             </td>
@@ -1022,7 +1137,7 @@ const Import2BTab: React.FC = () => {
                               <th className="border border-primary-foreground/20 p-2 text-right">CGST</th>
                               <th className="border border-primary-foreground/20 p-2 text-right">SGST</th>
                               <th className="border border-primary-foreground/20 p-2 text-left w-24">Reversed</th>
-                              <th className="border border-primary-foreground/20 p-2 text-left w-40">Reclaim</th>
+                              <th className="border border-primary-foreground/20 p-2 text-left w-44">Reclaim</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1036,16 +1151,26 @@ const Import2BTab: React.FC = () => {
                                 <td className="border border-border p-2 text-right tabular-nums">{num(r.input_sgst)}</td>
                                 <td className="border border-border p-2">{r.reversal_month || '-'}</td>
                                 <td className="border border-border p-2">
-                                  <select
-                                    className={rowSelectCls}
-                                    disabled={readOnly}
-                                    value={r.reclaim_subtype === 'EXPENSE_OUT' ? 'expense_out' : (r.reclaim_month ? 'current' : 'blank')}
-                                    onChange={(e) => setPendingReclaim(r.id, e.target.value as 'blank' | 'current' | 'expense_out')}
-                                  >
-                                    <option value="blank">-</option>
-                                    <option value="current">Reclaim in {currentLabel}</option>
-                                    <option value="expense_out">Expense out</option>
-                                  </select>
+                                  <div className="flex items-center gap-1.5">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 text-xs"
+                                      disabled={readOnly}
+                                      onClick={() => openReclaimFromPending(r)}
+                                    >
+                                      Link &amp; Reclaim
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                                      disabled={readOnly}
+                                      onClick={() => setPendingExpenseOut(r.id)}
+                                    >
+                                      Expense out
+                                    </Button>
+                                  </div>
                                 </td>
                               </tr>
                             ))}
@@ -1114,6 +1239,16 @@ const Import2BTab: React.FC = () => {
           )}
         </>
       )}
+
+      <ReclaimMatchDialog
+        open={!!reclaimDialog}
+        onOpenChange={(open) => { if (!open) setReclaimDialog(null); }}
+        anchorLabel={reclaimDialog?.anchorLabel || ''}
+        anchor={reclaimDialog?.anchor || null}
+        candidates={reclaimDialog?.candidates || []}
+        candidateLabel={reclaimDialog?.candidateLabel || ''}
+        onConfirm={handleReclaimConfirm}
+      />
     </div>
   );
 };
