@@ -209,8 +209,10 @@ export async function postBuEvent(params: {
   postingDate: string;
   docSeries: string | null;
   userId: string | null;
-}): Promise<{ invoicesCreated: number; adjustmentsCreated: number; receiptsSubsumed: number }> {
-  let invoicesCreated = 0, adjustmentsCreated = 0, receiptsSubsumed = 0;
+}): Promise<{
+  invoicesCreated: number; adjustmentsCreated: number; receiptsSubsumed: number; openingAdjustmentsCreated: number;
+}> {
+  let invoicesCreated = 0, adjustmentsCreated = 0, receiptsSubsumed = 0, openingAdjustmentsCreated = 0;
 
   for (const wu of params.prepared.working.taxable) {
     if (wu.invoiceValue <= 0 && wu.differentialValue <= 0) continue;
@@ -268,6 +270,30 @@ export async function postBuEvent(params: {
       adjustmentsCreated += rows.length;
     }
 
+    // Whatever's left of toAdjust once real advances are exhausted is the
+    // opening-balance portion of advanceToAdjust (proven in computeDifferential's
+    // doc comment) — real receipts have nothing further to offer, so this is
+    // the pre-onboarding money instead. Written to its own table since it has
+    // no receipt_id to attach to (builder_advance_adjustments.receipt_id is
+    // NOT NULL) — see 20260813150000_builder_opening_balance_adjustments.sql.
+    if (toAdjust > 0.005) {
+      const t = computeTax(toAdjust, wu.rateCode);
+      const { error: obErr } = await supabase.from('builder_opening_balance_adjustments').insert({
+        invoice_id: inv.id,
+        unit_id: wu.unitId,
+        consideration_adjusted: toAdjust,
+        taxable_value_adjusted: t.taxableValue,
+        cgst: t.cgst,
+        sgst: t.sgst,
+        rate_code: wu.rateCode,
+        rate_pct: t.ratePct,
+        period_month: params.postingPeriod,
+        created_by: params.userId,
+      });
+      if (obErr) throw obErr;
+      openingAdjustmentsCreated += 1;
+    }
+
     // Receipts inside the BU month are covered by the differential.
     const subsume = params.prepared.receiptsInBuMonth[wu.unitId] || [];
     if (subsume.length) {
@@ -296,7 +322,7 @@ export async function postBuEvent(params: {
     posted_by: params.userId,
   }).eq('id', params.eventId);
 
-  return { invoicesCreated, adjustmentsCreated, receiptsSubsumed };
+  return { invoicesCreated, adjustmentsCreated, receiptsSubsumed, openingAdjustmentsCreated };
 }
 
 /**
@@ -311,7 +337,8 @@ export async function unpostBuEvent(eventId: string): Promise<void> {
 
   const invoiceIds = rows.map((r) => r.invoice_id).filter(Boolean) as string[];
   if (invoiceIds.length) {
-    // builder_advance_adjustments cascades on invoice delete.
+    // builder_advance_adjustments and builder_opening_balance_adjustments
+    // both cascade on invoice delete.
     const { error } = await supabase.from('builder_invoices').delete().in('id', invoiceIds);
     if (error) throw error;
   }

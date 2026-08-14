@@ -324,7 +324,7 @@ const BuilderBuEventsPage: React.FC = () => {
         userId: user?.id ?? null,
         units: rows.map((r) => ({
           unitId: r.unit_id, unitNo: units.find((u) => u.id === r.unit_id)?.unit_no || '',
-          agreementValue: r.agreement_value,
+          agreementValue: r.agreement_value, cutOffSource: r.cut_off_source,
         })),
       });
       if (res.ok) toast.success(`Confirmation request sent for ${res.sent} unit(s)`);
@@ -375,7 +375,8 @@ const BuilderBuEventsPage: React.FC = () => {
       });
       toast.success(
         `Posted: ${res.invoicesCreated} differential invoice(s), ${res.adjustmentsCreated} advance `
-        + `adjustment(s), ${res.receiptsSubsumed} receipt(s) subsumed`,
+        + `adjustment(s), ${res.openingAdjustmentsCreated} opening balance adjustment(s), `
+        + `${res.receiptsSubsumed} receipt(s) subsumed`,
       );
       await load();
     } catch (e) {
@@ -493,7 +494,7 @@ const BuilderBuEventsPage: React.FC = () => {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <CardTitle className="text-base flex items-center gap-2">
-                      BU dated {ev.bu_date}
+                      {rows.length === 1 && rows[0].cut_off_source === 'DASTAVEJ' ? 'Dastavej' : 'BU'} dated {ev.bu_date}
                       {ev.bu_ref_no && <span className="text-muted-foreground font-normal">· {ev.bu_ref_no}</span>}
                       <Badge
                         className={

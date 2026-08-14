@@ -339,6 +339,9 @@ export async function fetchUnitLedger(unitId: string): Promise<UnitLedgerReport 
   const { data: adj } = invoiceIds.length
     ? await supabase.from('builder_advance_adjustments').select('*').in('invoice_id', invoiceIds)
     : { data: [] as unknown[] };
+  const { data: openingAdj } = invoiceIds.length
+    ? await supabase.from('builder_opening_balance_adjustments').select('*').in('invoice_id', invoiceIds)
+    : { data: [] as unknown[] };
   const { data: cn } = await supabase
     .from('builder_credit_notes').select('*').eq('unit_id', unitId).order('note_date');
 
@@ -405,6 +408,21 @@ export async function fetchUnitLedger(unitId: string): Promise<UnitLedgerReport 
       period: (a.period_month as string) || '',
       kind: 'Advance adjusted',
       reference: 'Table 11B — advance absorbed into the invoice',
+      consideration: -(Number(a.consideration_adjusted) || 0),
+      taxableValue: -(Number(a.taxable_value_adjusted) || 0),
+      cgst: -(Number(a.cgst) || 0),
+      sgst: -(Number(a.sgst) || 0),
+      tds: 0,
+    });
+  });
+
+  ((openingAdj || []) as R[]).forEach((a) => {
+    const i = invById.get(a.invoice_id as string);
+    raw.push({
+      date: (i?.invoice_date as string) || '',
+      period: (a.period_month as string) || '',
+      kind: 'Opening balance adjusted',
+      reference: 'Table 11B — opening balance absorbed into the invoice',
       consideration: -(Number(a.consideration_adjusted) || 0),
       taxableValue: -(Number(a.taxable_value_adjusted) || 0),
       cgst: -(Number(a.cgst) || 0),

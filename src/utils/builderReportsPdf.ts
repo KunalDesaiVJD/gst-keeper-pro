@@ -28,12 +28,14 @@ const clientFields = (ctx: ReportContext) => [
 // ─── 1. Unit-wise BU working ────────────────────────────────────────────────
 
 export const buWorkingPdf = (ctx: ReportContext, r: BuWorkingReport): void => {
+  const isDastavejOnly = r.rows.length === 1 && r.rows[0].cutOffSource === 'DASTAVEJ';
+  const cutOffLabel = isDastavejOnly ? 'Dastavej' : 'BU';
   const { doc, y } = startDoc('l', {
     title: 'Unit-wise BU working',
-    subtitle: `BU dated ${r.buDate}${r.buRefNo ? ` · ${r.buRefNo}` : ''}`,
+    subtitle: `${cutOffLabel} dated ${r.buDate}${r.buRefNo ? ` · ${r.buRefNo}` : ''}`,
     fields: [
       ...clientFields(ctx),
-      { label: 'BU date', value: r.buDate },
+      { label: `${cutOffLabel} date`, value: r.buDate },
       { label: 'Posted to', value: prettyPeriodLabel(r.postingPeriod) },
     ],
   });

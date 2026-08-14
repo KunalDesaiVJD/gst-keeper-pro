@@ -53,6 +53,7 @@ interface ClientBulkContext {
   receiptsByUnit: Record<string, ReceiptRow[]>;
   invoicesByUnit: Record<string, InvoiceRow[]>;
   adjustments: AdjRow[];
+  openingAdjustments: AdjRow[];
   openingsByUnit: Record<string, OpeningRow>;
   settings: ChargeInclusionSettings;
   rrepByProject: Record<string, boolean>;
@@ -85,6 +86,7 @@ async function loadClientBulkContext(clientId: string): Promise<ClientBulkContex
   const invoicesByUnit: Record<string, InvoiceRow[]> = {};
   const openingsByUnit: Record<string, OpeningRow> = {};
   let adjustments: AdjRow[] = [];
+  let openingAdjustments: AdjRow[] = [];
 
   if (unitIds.length) {
     const [{ data: chg }, { data: bkg }, { data: rcp }, { data: inv }, { data: opn }] =
@@ -111,9 +113,12 @@ async function loadClientBulkContext(clientId: string): Promise<ClientBulkContex
     }
     const invoiceIds = invoiceRows.map((i) => i.id);
     if (invoiceIds.length) {
-      const { data: adj } = await supabase
-        .from('builder_advance_adjustments').select('*').in('invoice_id', invoiceIds);
+      const [{ data: adj }, { data: obAdj }] = await Promise.all([
+        supabase.from('builder_advance_adjustments').select('*').in('invoice_id', invoiceIds),
+        supabase.from('builder_opening_balance_adjustments').select('*').in('invoice_id', invoiceIds),
+      ]);
       adjustments = (adj || []) as unknown as AdjRow[];
+      openingAdjustments = (obAdj || []) as unknown as AdjRow[];
     }
   }
 
@@ -136,7 +141,7 @@ async function loadClientBulkContext(clientId: string): Promise<ClientBulkContex
 
   return {
     projects, units, groups, chargesByUnit, bookingsByUnit, membersByBooking,
-    receiptsByUnit, invoicesByUnit, adjustments, openingsByUnit,
+    receiptsByUnit, invoicesByUnit, adjustments, openingAdjustments, openingsByUnit,
     settings: settings as ChargeInclusionSettings,
     rrepByProject, metroByProject, docSeriesByProject,
   };
@@ -170,6 +175,8 @@ function ledgerOne(ctx: ClientBulkContext, u: UnitRow, agreementValue: number) {
     })),
     invoices: (ctx.invoicesByUnit[u.id] || []).map((i) => ({ consideration: i.consideration, cgst: i.cgst, sgst: i.sgst })),
     adjustments: ctx.adjustments.filter((a) => invIds.has(a.invoice_id))
+      .map((a) => ({ consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst })),
+    openingAdjustments: ctx.openingAdjustments.filter((a) => invIds.has(a.invoice_id))
       .map((a) => ({ consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst })),
   });
 }

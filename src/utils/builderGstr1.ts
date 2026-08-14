@@ -35,8 +35,8 @@ import type { BuilderRateCode } from './builderRates';
 /** One row of `builder_period_postings`, narrowed to what the return needs. */
 export interface Gstr1PostingRow {
   source_type:
-    | 'ADVANCE_11A' | 'ADVANCE_11B' | 'INVOICE_B2CS'
-    | 'CREDIT_NOTE' | 'RECLASS_10_OLD' | 'RECLASS_10_NEW' | 'BOUNCE_REVERSAL';
+    | 'ADVANCE_11A' | 'ADVANCE_11B' | 'OPENING_11B' | 'INVOICE_B2CS'
+    | 'CREDIT_NOTE' | 'RECLASS_10_OLD' | 'RECLASS_10_NEW' | 'BOUNCE_REVERSAL' | 'CANCELLATION_OFFSET';
   gstr1_table: string;
   rate_pct: number;
   taxable_value: number;

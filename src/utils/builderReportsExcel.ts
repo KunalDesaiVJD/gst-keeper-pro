@@ -61,9 +61,10 @@ const titleBlock = (ctx: ReportContext, title: string, extra: [string, Cell][] =
 // ─── 1. Unit-wise BU working ────────────────────────────────────────────────
 
 export const buWorkingExcel = (ctx: ReportContext, r: BuWorkingReport): void => {
+  const isDastavejOnly = r.rows.length === 1 && r.rows[0].cutOffSource === 'DASTAVEJ';
   const wb = XLSX.utils.book_new();
   const head = titleBlock(ctx, 'Unit-wise BU working', [
-    ['BU date', r.buDate],
+    [isDastavejOnly ? 'Dastavej date' : 'BU date', r.buDate],
     ['BU reference', r.buRefNo || '—'],
     ['Posted to', prettyPeriodLabel(r.postingPeriod)],
     ['Posting basis', POSTING_BASIS_LABEL[r.postingBasis as PostingBasis] || r.postingBasis],

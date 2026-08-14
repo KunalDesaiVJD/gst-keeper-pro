@@ -309,12 +309,17 @@ async function checkReclassificationOnCancellation(params: {
   type Invoice = { id: string; consideration: number; cgst: number; sgst: number };
   const invoices = (inv || []) as unknown as Invoice[];
   const invoiceIds = invoices.map((i) => i.id);
-  const { data: adj } = invoiceIds.length
-    ? await supabase.from('builder_advance_adjustments').select('consideration_adjusted, cgst, sgst, invoice_id')
-      .in('invoice_id', invoiceIds)
-    : { data: [] };
+  const [{ data: adj }, { data: obAdj }] = invoiceIds.length
+    ? await Promise.all([
+      supabase.from('builder_advance_adjustments').select('consideration_adjusted, cgst, sgst, invoice_id')
+        .in('invoice_id', invoiceIds),
+      supabase.from('builder_opening_balance_adjustments').select('consideration_adjusted, cgst, sgst, invoice_id')
+        .in('invoice_id', invoiceIds),
+    ])
+    : [{ data: [] }, { data: [] }];
   type Adjustment = { invoice_id: string; consideration_adjusted: number; cgst: number; sgst: number };
   const adjustments = (adj || []) as unknown as Adjustment[];
+  const openingAdjustments = (obAdj || []) as unknown as Adjustment[];
 
   const ledger = computeUnitLedger({
     agreementValue: 0,
@@ -327,6 +332,9 @@ async function checkReclassificationOnCancellation(params: {
     })),
     invoices: invoices.map((i) => ({ consideration: i.consideration, cgst: i.cgst, sgst: i.sgst })),
     adjustments: adjustments.map((a) => ({
+      consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst,
+    })),
+    openingAdjustments: openingAdjustments.map((a) => ({
       consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst,
     })),
   });

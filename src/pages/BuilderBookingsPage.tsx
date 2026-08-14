@@ -104,6 +104,10 @@ interface AdjRow {
   id: string; invoice_id: string; receipt_id: string; consideration_adjusted: number;
   cgst: number; sgst: number; period_month: string;
 }
+interface OpeningAdjRow {
+  id: string; invoice_id: string; unit_id: string; consideration_adjusted: number;
+  cgst: number; sgst: number; period_month: string;
+}
 interface OpeningRow {
   unit_id: string; agreement_value: number; cumulative_value_taxed: number;
   cumulative_cgst: number; cumulative_sgst: number; cumulative_receipts: number;
@@ -167,6 +171,7 @@ const BuilderBookingsPage: React.FC = () => {
   const [receipts, setReceipts] = useState<Record<string, ReceiptRow[]>>({});
   const [invoices, setInvoices] = useState<Record<string, InvoiceRow[]>>({});
   const [adjustments, setAdjustments] = useState<AdjRow[]>([]);
+  const [openingAdjustments, setOpeningAdjustments] = useState<OpeningAdjRow[]>([]);
   const [openings, setOpenings] = useState<Record<string, OpeningRow>>({});
   /** Cancellations with an unpaid refund — one unit can carry more than one over time. */
   const [openCancellations, setOpenCancellations] = useState<Record<string, CancellationRow[]>>({});
@@ -311,7 +316,8 @@ const BuilderBookingsPage: React.FC = () => {
       const unitIds = unitRows.map((u) => u.id);
       if (!unitIds.length) {
         setCharges({}); setBookings([]); setMembers({}); setReceipts({});
-        setInvoices({}); setAdjustments([]); setOpenings({}); setReclassifiedUnitIds(new Set());
+        setInvoices({}); setAdjustments([]); setOpeningAdjustments([]); setOpenings({});
+        setReclassifiedUnitIds(new Set());
         setOpenCancellations({}); setAllCancellations({});
         return;
       }
@@ -373,10 +379,13 @@ const BuilderBookingsPage: React.FC = () => {
 
       const invoiceIds = invoiceRows.map((i) => i.id);
       if (invoiceIds.length) {
-        const { data: adj } = await supabase
-          .from('builder_advance_adjustments').select('*').in('invoice_id', invoiceIds);
+        const [{ data: adj }, { data: obAdj }] = await Promise.all([
+          supabase.from('builder_advance_adjustments').select('*').in('invoice_id', invoiceIds),
+          supabase.from('builder_opening_balance_adjustments').select('*').in('invoice_id', invoiceIds),
+        ]);
         setAdjustments((adj || []) as unknown as AdjRow[]);
-      } else setAdjustments([]);
+        setOpeningAdjustments((obAdj || []) as unknown as OpeningAdjRow[]);
+      } else { setAdjustments([]); setOpeningAdjustments([]); }
     } catch (e) {
       toast.error(`Could not load: ${(e as Error).message}`);
     } finally {
@@ -427,6 +436,7 @@ const BuilderBookingsPage: React.FC = () => {
   const classifyFor = useCallback((u: UnitRow) => {
     const invIds = new Set((invoices[u.id] || []).map((i) => i.id));
     const unitAdjustments = adjustments.filter((a) => invIds.has(a.invoice_id));
+    const unitOpeningAdjustments = openingAdjustments.filter((a) => a.unit_id === u.id);
     const prelimLedger = computeUnitLedger({
       agreementValue: 0,
       opening: openings[u.id],
@@ -440,6 +450,9 @@ const BuilderBookingsPage: React.FC = () => {
       })),
       invoices: (invoices[u.id] || []).map((i) => ({ consideration: i.consideration, cgst: i.cgst, sgst: i.sgst })),
       adjustments: unitAdjustments.map((a) => ({
+        consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst,
+      })),
+      openingAdjustments: unitOpeningAdjustments.map((a) => ({
         consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst,
       })),
     });
@@ -456,7 +469,7 @@ const BuilderBookingsPage: React.FC = () => {
       settings,
       knownConsideration: prelimLedger.considerationRecognized,
     });
-  }, [charges, project, rrep.isRrep, settings, openings, receipts, invoices, adjustments]);
+  }, [charges, project, rrep.isRrep, settings, openings, receipts, invoices, adjustments, openingAdjustments]);
 
   const classification = useMemo(() => {
     const out: Record<string, { rateCode: string; ratePct: number; agreementValue: number }> = {};
@@ -553,6 +566,11 @@ const BuilderBookingsPage: React.FC = () => {
     return adjustments.filter((a) => invIds.has(a.invoice_id));
   }, [adjustments, invoices]);
 
+  const openingAdjustmentsForUnit = useCallback(
+    (unitId: string) => openingAdjustments.filter((a) => a.unit_id === unitId),
+    [openingAdjustments],
+  );
+
   const ledgerFor = useCallback((u: UnitRow) => {
     const cls = classifyFor(u);
     const opening = openings[u.id];
@@ -573,8 +591,11 @@ const BuilderBookingsPage: React.FC = () => {
       adjustments: adjustmentsForUnit(u.id).map((a) => ({
         consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst,
       })),
+      openingAdjustments: openingAdjustmentsForUnit(u.id).map((a) => ({
+        consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst,
+      })),
     });
-  }, [classifyFor, openings, receipts, invoices, adjustmentsForUnit]);
+  }, [classifyFor, openings, receipts, invoices, adjustmentsForUnit, openingAdjustmentsForUnit]);
 
   /**
    * The same ledger, frozen at the end of a given period — what the table
@@ -606,8 +627,13 @@ const BuilderBookingsPage: React.FC = () => {
         .map((a) => ({
           consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst,
         })),
+      openingAdjustments: openingAdjustmentsForUnit(u.id)
+        .filter((a) => periodKey(a.period_month) <= cutoff)
+        .map((a) => ({
+          consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst,
+        })),
     });
-  }, [classifyFor, openings, receipts, invoices, adjustmentsForUnit]);
+  }, [classifyFor, openings, receipts, invoices, adjustmentsForUnit, openingAdjustmentsForUnit]);
 
   /**
    * Open advances on a unit, net of what invoices have already absorbed.
@@ -1205,6 +1231,19 @@ const BuilderBookingsPage: React.FC = () => {
           });
         });
 
+      openingAdjustmentsForUnit(u.id)
+        .filter((a) => a.period_month === selectedMonth)
+        .forEach((a) => {
+          const inv = (invoices[u.id] || []).find((i) => i.id === a.invoice_id);
+          rows.push({
+            key: `oa-${a.id}`, date: inv?.invoice_date || '', unitId: u.id, unitNo: u.unit_no, memberLabel,
+            docType: `Opening balance adjusted${inv?.doc_no ? ` (${inv.doc_no})` : ''}`,
+            tableTag: '11B', ref: null, bankAmount: null,
+            taxableValue: -(Number(a.consideration_adjusted) || 0) * (2 / 3),
+            cgst: -(Number(a.cgst) || 0), sgst: -(Number(a.sgst) || 0),
+          });
+        });
+
       if (!rows.length) return;
       rows.sort((x, y) => x.date.localeCompare(y.date));
       groups.push({
@@ -1217,7 +1256,8 @@ const BuilderBookingsPage: React.FC = () => {
       });
     });
     return groups.sort((x, y) => x.rows[0].date.localeCompare(y.rows[0].date));
-  }, [viewMode, units, bookings, members, receipts, invoices, adjustmentsForUnit, selectedMonth, unbookedLabel]);
+  }, [viewMode, units, bookings, members, receipts, invoices, adjustmentsForUnit,
+    openingAdjustmentsForUnit, selectedMonth, unbookedLabel]);
 
   const registerTotals = useMemo(() => monthRegisterGroups.reduce((t, g) => ({
     bank: t.bank + g.bank, taxable: t.taxable + g.taxable, cgst: t.cgst + g.cgst, sgst: t.sgst + g.sgst,
@@ -2054,6 +2094,8 @@ const BuilderBookingsPage: React.FC = () => {
                                             {entries.invoices.map((i) => {
                                               const adj = adjustments.filter((a) => a.invoice_id === i.id);
                                               const absorbed = adj.reduce((s, a) => s + (Number(a.consideration_adjusted) || 0), 0);
+                                              const obAdj = openingAdjustments.filter((a) => a.invoice_id === i.id);
+                                              const obAbsorbed = obAdj.reduce((s, a) => s + (Number(a.consideration_adjusted) || 0), 0);
                                               return (
                                                 <React.Fragment key={i.id}>
                                                   <TableRow>
@@ -2092,6 +2134,29 @@ const BuilderBookingsPage: React.FC = () => {
                                                       </TableCell>
                                                       <TableCell className="text-xs py-1 text-right">
                                                         -{formatINR(adj.reduce((s, a) => s + (Number(a.sgst) || 0), 0))}
+                                                      </TableCell>
+                                                      <TableCell className="text-xs py-1 text-right">—</TableCell>
+                                                      <TableCell className="text-xs py-1" />
+                                                      <TableCell className="text-xs py-1" />
+                                                      <TableCell className="py-1" />
+                                                    </TableRow>
+                                                  )}
+                                                  {obAbsorbed > 0 && (
+                                                    <TableRow>
+                                                      <TableCell className="text-xs py-1" />
+                                                      <TableCell className="text-xs py-1 text-muted-foreground">
+                                                        Opening balance adjusted
+                                                      </TableCell>
+                                                      <TableCell className="text-xs py-1">
+                                                        <Badge variant="outline" className="text-xs">11B</Badge>
+                                                      </TableCell>
+                                                      <TableCell className="text-xs py-1 text-right">-{formatINR(obAbsorbed)}</TableCell>
+                                                      <TableCell className="text-xs py-1 text-right">—</TableCell>
+                                                      <TableCell className="text-xs py-1 text-right">
+                                                        -{formatINR(obAdj.reduce((s, a) => s + (Number(a.cgst) || 0), 0))}
+                                                      </TableCell>
+                                                      <TableCell className="text-xs py-1 text-right">
+                                                        -{formatINR(obAdj.reduce((s, a) => s + (Number(a.sgst) || 0), 0))}
                                                       </TableCell>
                                                       <TableCell className="text-xs py-1 text-right">—</TableCell>
                                                       <TableCell className="text-xs py-1" />

@@ -34,8 +34,8 @@ import { fetchBuilderOutputTaxSplit, fetchNetItcAvailable } from '@/lib/builderI
 import { computeItcCashWorkingPaper, type ItcCashWorkingPaper } from '@/utils/builderItcCash';
 
 type PostingSource =
-  | 'ADVANCE_11A' | 'ADVANCE_11B' | 'INVOICE_B2CS'
-  | 'CREDIT_NOTE' | 'RECLASS_10_OLD' | 'RECLASS_10_NEW' | 'BOUNCE_REVERSAL';
+  | 'ADVANCE_11A' | 'ADVANCE_11B' | 'OPENING_11B' | 'INVOICE_B2CS'
+  | 'CREDIT_NOTE' | 'RECLASS_10_OLD' | 'RECLASS_10_NEW' | 'BOUNCE_REVERSAL' | 'CANCELLATION_OFFSET';
 
 interface PostingDbRow {
   source_id: string;
@@ -59,11 +59,13 @@ interface PostingDbRow {
 const SOURCE_LABEL: Record<PostingSource, string> = {
   ADVANCE_11A: 'Advance received',
   ADVANCE_11B: 'Advance adjusted',
+  OPENING_11B: 'Opening balance adjusted',
   INVOICE_B2CS: 'Invoice',
   CREDIT_NOTE: 'Credit note',
   RECLASS_10_OLD: 'Re-rating — old rate reversed',
   RECLASS_10_NEW: 'Re-rating — at correct rate',
   BOUNCE_REVERSAL: 'Bounce reversal',
+  CANCELLATION_OFFSET: 'Cancellation offset',
 };
 
 /** Rate-wise table shared by all four sections. */

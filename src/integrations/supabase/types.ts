@@ -351,6 +351,66 @@ export type Database = {
           },
         ]
       }
+      builder_opening_balance_adjustments: {
+        Row: {
+          cgst: number
+          consideration_adjusted: number
+          created_at: string
+          created_by: string | null
+          id: string
+          invoice_id: string
+          period_month: string
+          rate_code: string
+          rate_pct: number
+          sgst: number
+          taxable_value_adjusted: number
+          unit_id: string
+        }
+        Insert: {
+          cgst?: number
+          consideration_adjusted?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id: string
+          period_month: string
+          rate_code: string
+          rate_pct?: number
+          sgst?: number
+          taxable_value_adjusted?: number
+          unit_id: string
+        }
+        Update: {
+          cgst?: number
+          consideration_adjusted?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id?: string
+          period_month?: string
+          rate_code?: string
+          rate_pct?: number
+          sgst?: number
+          taxable_value_adjusted?: number
+          unit_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_opening_balance_adjustments_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "builder_invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_opening_balance_adjustments_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_booking_members: {
         Row: {
           booking_id: string
@@ -4626,6 +4686,7 @@ export type Database = {
           bu_date: string | null
           bu_event_id: string | null
           client_id: string | null
+          cut_off_source: string | null
           dastavej_date: string | null
           dastavej_value: number | null
           opening_agreement_value: number | null
