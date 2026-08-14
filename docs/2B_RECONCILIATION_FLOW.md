@@ -198,3 +198,36 @@ Out of scope for this change. RCM Summary (`rcm_data`) stays fully
 independent of Import 2B's RCM-flagged (`reverse_charge = true`) documents,
 same as before — those are simply hidden from the Import 2B UI with a pointer
 to RCM Summary.
+
+## §6. Carry-forward incident (2026-08-14)
+
+Unrelated to the Import 2B work above, but the same tables: `FilingStatusPage.tsx`'s
+`carryForwardToNextMonth()` — the function that copies pending `bills_not_in_2b`
+/ `bills_not_in_books` rows into the next period the moment a GSTR-3B is
+marked Filed — never checked the errors on its `insert()` calls, and its
+outer `catch` deliberately swallowed any failure silently ("don't fail the
+filing just because carry forward failed"). Root-caused when a user reported
+carried-forward lines missing for several clients: roughly half of all
+clients who filed their June-2026 GSTR-3B never got their July carry-forward
+at all (21 clients, still happening live the same day it was diagnosed) —
+most likely a staff member navigating away right after clicking "Filed",
+before the sequential awaits finished, though the exact trigger couldn't be
+confirmed from server-side data alone.
+
+**Fixed**: every step now checks its error and the function returns a result
+instead of swallowing failures; a failed carry-forward surfaces a distinct
+warning (the Filed status itself already committed by that point, so it must
+not read as "filing failed"); a manual "Re-run carry forward" button
+(next to any Filed GSTR-3B/GSTR-3B (Q) record) makes this self-recoverable —
+safe to click any time, it's the exact same idempotent delete-then-insert as
+the automatic run. An in-flight guard also prevents the same client+period
+from running twice concurrently.
+
+**Data repair**: `supabase/migrations/20260814180000_backfill_missing_carry_forward.sql`
+reconstructs the missing rows from each client's still-intact filed-period
+data — purely additive (skips any client+period+table that already has
+carried-forward rows), safe to run more than once. Dry-run counted 355
+`bills_not_in_2b` + 1,111 `bills_not_in_books` rows. This one has to be run
+by hand via the Supabase SQL Editor — the environment's safety classifier
+blocked it as a bulk data mutation even after explicit user confirmation in
+chat, which is a tool-permission gate separate from conversational approval.
