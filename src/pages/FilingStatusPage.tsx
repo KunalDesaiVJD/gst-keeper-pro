@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Download, FileText, Lock, Unlock, Search, Filter, ChevronDown, Info, Upload, Eye, Trash2, LogIn, AlertTriangle } from 'lucide-react';
+import { Download, FileText, Lock, Unlock, Search, Filter, ChevronDown, Info, Upload, Eye, Trash2, LogIn, AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
 import { FilingStatusType, ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth, RegistrationType, RETURN_TYPES_BY_REGISTRATION, filingStatusDisplayLabel } from '@/types';
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
@@ -172,8 +172,34 @@ const FilingStatusPage: React.FC = () => {
   }, [selectedMonth, contextMonth, setContextMonth]);
   const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08', 'GSTR-1 (IFF)', 'GSTR-3B (Q)'];
 
-  // Carry forward function - transfers all 2B records to next month
-  const carryForwardToNextMonth = async (clientId: string, periodMonth: string) => {
+  // In-flight guard — the same (client, period) carry-forward must never run
+  // twice concurrently (e.g. a double-click, or a manual retry landing while
+  // the automatic one from filing is still running); a second run's delete
+  // could wipe what the first just inserted before re-inserting its own copy.
+  const carryForwardInFlight = useRef<Set<string>>(new Set());
+  // Record id currently retrying a carry-forward, for the button's spinner.
+  const [retryingCarryForwardId, setRetryingCarryForwardId] = useState<string | null>(null);
+
+  // Carry forward function - transfers all 2B records to next month.
+  // Returns a result instead of swallowing failures: the original version
+  // never checked the insert() calls' errors at all and its catch swallowed
+  // everything silently ("don't fail the filing just because carry forward
+  // failed") — so when a delete/insert failed (most likely the tab
+  // navigating away mid-flight, right after the "Filed" click), staff saw a
+  // normal success and had no way to know the next period's carry-forward
+  // never happened. See docs/2B_RECONCILIATION_FLOW.md and the migration
+  // 20260814180000_backfill_missing_carry_forward.sql for the incident this
+  // caused across ~21 clients.
+  const carryForwardToNextMonth = async (
+    clientId: string,
+    periodMonth: string,
+  ): Promise<{ success: boolean; totalCarried: number; error?: string }> => {
+    const lockKey = `${clientId}:${periodMonth}`;
+    if (carryForwardInFlight.current.has(lockKey)) {
+      return { success: false, totalCarried: 0, error: 'A carry-forward for this client/period is already running.' };
+    }
+    carryForwardInFlight.current.add(lockKey);
+
     // Calculate next month
     const [month, year] = periodMonth.split('/');
     let nextMonth = parseInt(month) + 1;
@@ -211,12 +237,13 @@ const FilingStatusPage: React.FC = () => {
       if (billsNotIn2B && billsNotIn2B.length > 0) {
         // Delete existing CF records in next month first to avoid duplicates
         // This ensures we always sync the latest state from current month
-        await supabase
+        const { error: delete2BError } = await supabase
           .from('bills_not_in_2b')
           .delete()
           .eq('client_id', clientId)
           .eq('period_month', nextPeriod)
           .eq('is_carried_forward', true);
+        if (delete2BError) throw delete2BError;
 
         // Now insert ALL records from current month as CF records in next month
         const records2B = billsNotIn2B.map(b => ({
@@ -232,10 +259,12 @@ const FilingStatusPage: React.FC = () => {
           period_month: nextPeriod,
           reversal_month: b.reversal_month,
           reclaim_month: b.reclaim_month,
+          reclaim_subtype: (b as any).reclaim_subtype ?? null,
           is_carried_forward: true,
         }));
 
-        await supabase.from('bills_not_in_2b').insert(records2B);
+        const { error: insert2BError } = await supabase.from('bills_not_in_2b').insert(records2B);
+        if (insert2BError) throw insert2BError;
         totalCarried += records2B.length;
       }
 
@@ -245,12 +274,13 @@ const FilingStatusPage: React.FC = () => {
       if (billsNotInBooks && billsNotInBooks.length > 0) {
         // Delete existing CF records in next month first to avoid duplicates
         // This ensures we always sync the latest state from current month
-        await supabase
+        const { error: deleteBooksError } = await supabase
           .from('bills_not_in_books')
           .delete()
           .eq('client_id', clientId)
           .eq('period_month', nextPeriod)
           .eq('is_carried_forward', true);
+        if (deleteBooksError) throw deleteBooksError;
 
         // Now insert ALL records from current month as CF records in next month
         const recordsBooks = billsNotInBooks.map(b => ({
@@ -269,14 +299,37 @@ const FilingStatusPage: React.FC = () => {
           is_carried_forward: true,
         }));
 
-        await supabase.from('bills_not_in_books').insert(recordsBooks);
+        const { error: insertBooksError } = await supabase.from('bills_not_in_books').insert(recordsBooks);
+        if (insertBooksError) throw insertBooksError;
         totalCarried += recordsBooks.length;
       }
 
-      console.log(`Carried forward ${totalCarried} records to ${nextPeriod}`);
+      return { success: true, totalCarried };
     } catch (error: any) {
       console.error('Error during carry forward:', error);
-      // Don't throw - we don't want to fail the filing just because carry forward failed
+      return { success: false, totalCarried: 0, error: error?.message || 'Unknown error' };
+    } finally {
+      carryForwardInFlight.current.delete(lockKey);
+    }
+  };
+
+  // Self-service recovery for a Filed GSTR-3B/GSTR-3B (Q) record whose
+  // automatic carry-forward didn't happen (or needs re-syncing after a later
+  // edit to this period's 2B Reconciliation) — no engineer needed. Safe to
+  // click any time: it's the exact same delete-then-insert as the automatic
+  // run, so it just re-syncs next period's carried-forward rows to match
+  // this period's current state.
+  const handleRetryCarryForward = async (record: FilingRecord) => {
+    setRetryingCarryForwardId(record.id);
+    try {
+      const result = await carryForwardToNextMonth(record.client_id, record.period_month);
+      if (result.success) {
+        toast.success(`Carried forward ${result.totalCarried} record(s) to next period.`);
+      } else {
+        toast.error(`Carry-forward failed: ${result.error || 'unknown error'}`);
+      }
+    } finally {
+      setRetryingCarryForwardId(null);
     }
   };
 
@@ -884,10 +937,20 @@ const FilingStatusPage: React.FC = () => {
           .update({ is_locked: true })
           .eq('id', record.id); // Only lock this specific record
         
-        // AUTO CARRY FORWARD: Transfer all 2B records to next month
-        await carryForwardToNextMonth(record.client_id, record.period_month);
-        
-        toast.success(`${record.return_type} filed. 2B and ITC sheets are now locked and data carried forward to next month.`);
+        // AUTO CARRY FORWARD: Transfer all 2B records to next month. The
+        // status/lock updates above already committed — a carry-forward
+        // failure here must not read as "filing failed" (the outer catch's
+        // generic message), it needs its own distinct, actionable warning.
+        const cfResult = await carryForwardToNextMonth(record.client_id, record.period_month);
+        if (cfResult.success) {
+          toast.success(`${record.return_type} filed. 2B and ITC sheets are now locked and data carried forward to next month.`);
+        } else {
+          toast.warning(
+            `${record.return_type} filed and sheets are locked, but carrying data forward to next month failed `
+            + `(${cfResult.error || 'unknown error'}). Use the retry button next to this record to try again.`,
+            { duration: 10000 },
+          );
+        }
       } else if (newStatus === 'Filed') {
         toast.success('Status updated to Filed.');
       } else if (wasFiledBefore) {
@@ -1532,6 +1595,19 @@ const FilingStatusPage: React.FC = () => {
                           </p>
                         </PopoverContent>
                       </Popover>
+                    )}
+                    {(returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)') && record.status === 'Filed' && (
+                      <button
+                        type="button"
+                        className="shrink-0 disabled:opacity-50"
+                        title="Re-run carry forward to next month — use this if pending 2B items look missing next period"
+                        disabled={retryingCarryForwardId === record.id}
+                        onClick={() => handleRetryCarryForward(record)}
+                      >
+                        {retryingCarryForwardId === record.id
+                          ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                          : <RefreshCw className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />}
+                      </button>
                     )}
                     {returnType === 'GSTR-3B' && gstr1IsNilByClient.get(record.client_id) === true && !record.is_nil && (
                       <Popover>
