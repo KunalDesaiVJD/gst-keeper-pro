@@ -3176,6 +3176,7 @@ export type Database = {
           id: string
           inactive_at_hand: boolean
           is_first_login: boolean | null
+          liberal_2b_reconciliation: boolean
           mobile: string | null
           name: string
           registration_cancellation_date: string | null
@@ -3205,6 +3206,7 @@ export type Database = {
           id?: string
           inactive_at_hand?: boolean
           is_first_login?: boolean | null
+          liberal_2b_reconciliation?: boolean
           mobile?: string | null
           name: string
           registration_cancellation_date?: string | null
@@ -3234,6 +3236,7 @@ export type Database = {
           id?: string
           inactive_at_hand?: boolean
           is_first_login?: boolean | null
+          liberal_2b_reconciliation?: boolean
           mobile?: string | null
           name?: string
           registration_cancellation_date?: string | null

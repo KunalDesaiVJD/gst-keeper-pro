@@ -41,12 +41,13 @@ interface ClientData {
   cancellation_date?: string | null;
   registration_cancellation_date?: string | null;
   inactive_at_hand?: boolean | null;
+  liberal_2b_reconciliation?: boolean | null;
 }
 
 const EditClientPage: React.FC = () => {
   const navigate = useNavigate();
   const { clientId } = useParams<{ clientId: string }>();
-  const { user, canEditGstr1ImportMode } = useAuth();
+  const { user, canEditGstr1ImportMode, canManage2BLiberalMode } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -66,6 +67,7 @@ const EditClientPage: React.FC = () => {
     cancellationDate: '',
     registrationCancellationDate: '',
     inactiveAtHand: false,
+    liberal2BReconciliation: false,
     defaultTargetDate: '',
     otherTargetDate: '',
     gstUserId: '',
@@ -123,6 +125,7 @@ const EditClientPage: React.FC = () => {
         cancellationDate: (data as any).cancellation_date || '',
         registrationCancellationDate: (data as any).registration_cancellation_date || '',
         inactiveAtHand: !!(data as any).inactive_at_hand,
+        liberal2BReconciliation: !!(data as any).liberal_2b_reconciliation,
         defaultTargetDate: defaultTarget,
         otherTargetDate: otherTarget,
         gstUserId: (data as any).gst_user_id || '',
@@ -307,6 +310,7 @@ const EditClientPage: React.FC = () => {
           cancellation_date: formData.cancellationDate || null,
           registration_cancellation_date: formData.registrationCancellationDate || null,
           inactive_at_hand: formData.inactiveAtHand,
+          liberal_2b_reconciliation: formData.liberal2BReconciliation,
           gst_user_id: formData.gstUserId || null,
           gst_password: formData.gstPassword || null,
           // Keep the client's app-login password in sync with the GST password,
@@ -840,6 +844,33 @@ const EditClientPage: React.FC = () => {
                     <span className="text-sm font-normal block">Mark client as inactive at hand</span>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       When ticked, this client will not appear in Filing Status. Untick to restore visibility.
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              <div className="space-y-2">
+                <Label>2B Reconciliation mode</Label>
+                <label
+                  htmlFor="liberal2BReconciliation"
+                  className={`flex items-start gap-2 p-3 border rounded-lg transition-colors ${
+                    canManage2BLiberalMode() ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'
+                  } ${formData.liberal2BReconciliation ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'}`}
+                >
+                  <Checkbox
+                    id="liberal2BReconciliation"
+                    checked={formData.liberal2BReconciliation}
+                    disabled={!canManage2BLiberalMode()}
+                    onCheckedChange={(v) => setFormData(prev => ({ ...prev, liberal2BReconciliation: v === true }))}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <span className="text-sm font-normal block">Liberal — allow direct edits on 2B Reconciliation</span>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Default (unticked) is Strict: 2B Reconciliation is read-only, entries only go through Import 2B.
+                      Tick to let staff edit this client's 2B Reconciliation directly, the way it worked before Import
+                      2B — Import 2B stays available either way.
+                      {!canManage2BLiberalMode() && ' Superadmin / GST Manager only.'}
                     </p>
                   </div>
                 </label>

@@ -6,6 +6,8 @@ How the write-through works, and the GST-law positions it encodes.
 a firm sign-off conversation** (the clarifying questions asked before this
 build were not answered) — flag it if any of the four below don't match how
 the firm actually wants it to work; each is a one-line change to reverse.
+(§5, the per-client Strict/Liberal toggle, *was* confirmed directly with the
+firm — see that section for the answers.)
 
 ---
 
@@ -94,7 +96,13 @@ Marking an item **Expense out** instead (no matching invoice — the credit is
 being written off, not reclaimed) is a direct action in Pending Items; it
 writes `reclaim_month` = this period with `reclaim_subtype = 'EXPENSE_OUT'`,
 same as before this section was reworked — that downstream behaviour
-(Suspended Reco's 4(D) 1.2 row, etc.) is untouched.
+(Suspended Reco's 4(D) 1.2 row, etc.) is untouched. A mistaken Expense out can
+be undone — Import 2B's Pending Items zone lists this period's expensed-out
+rows in their own "Expensed out — Undo" table, and Undo clears
+`reclaim_month`/`reclaim_subtype` back to `null`, returning the row to
+"Awaiting reclaim." (Undo covers Expense out only — undoing a RECLAIM link
+already works today by changing that 2B doc's action away from RECLAIM in
+Zone 1, per the paragraph above.)
 
 **Known gap:** deleting a period's imported 2B batch (or re-importing over
 it) deletes its `twob_import_docs` rows, which cascades `reclaimed_via_doc_id`
@@ -103,12 +111,13 @@ leaves `reclaim_month` set — an orphaned "reclaimed" row with no linked
 evidence. Not handled in this pass; re-run Post to Reconciliation and
 manually correct if it comes up.
 
-## §3. 2B Reconciliation is fully read-only
+## §3. 2B Reconciliation is read-only for Strict clients
 
-Every edit surface on that page — Save Changes, Import Excel, Add row,
-per-cell inputs, per-row delete — was removed. The only remaining actions are
-Export Excel, View Versions (+ Restore, for admins — an audit/recovery tool,
-not routine data entry) and Clear Data (destructive reset, already
+For a client in Strict mode (the default — see §5), every edit surface on
+that page — Save Changes, Import Excel, Add row, per-cell inputs, per-row
+delete — is hidden/disabled. The only remaining actions are Export Excel,
+View Versions (+ Restore, for admins — an audit/recovery tool, not routine
+data entry) and Clear Data (destructive reset, already
 superadmin/gst_manager-gated).
 
 **Consequence:** a *Restore* from an older version re-inserts rows without a
@@ -124,6 +133,30 @@ Shipping this doesn't walk every historical `twob_import_docs` /
 Reconciliation` click (new or re-run, for any period) writes through. To
 backfill a period that was already classified before this change, reopen it
 in Import 2B and click Post — the sync is idempotent and safe to re-run.
+
+## §5. Per-client Strict / Liberal toggle
+
+`clients.liberal_2b_reconciliation` (boolean, default `false`). Confirmed
+directly with the firm, not an engineering guess:
+
+- **Default is Strict for every client**, existing and new. Liberal is an
+  explicit opt-in per client, not the other way round.
+- **Liberal restores the full pre-#40 editable page** for that client — Add
+  row, edit any cell, Import Excel, Save Changes, per-row Delete. Nothing is
+  held back; that client's staff genuinely don't need Import 2B at all if
+  they don't want it.
+- **Only superadmin / GST Manager can flip the toggle** (`canManage2BLiberalMode()`
+  in `AuthContext.tsx`) — set from Edit Client. No employee permission grant
+  exists for this, unlike most other gated actions in this app.
+- **Import 2B stays fully usable for every client regardless of mode.** The
+  toggle only controls whether *direct* edits on 2B Reconciliation are also
+  allowed. A Liberal client's staff can use either path, or mix them — the
+  posting engine (`postImport2B.ts`) only ever touches rows carrying its own
+  `source_book_id`/`source_doc_id` link, so a manually-added row from direct
+  editing is invisible to it and never gets retracted or duplicated.
+- `readOnly` on the reconciliation page is `isLocked || !isLiberalClient` —
+  a filed period is always read-only on top of the client's mode, for both
+  Strict and Liberal clients alike.
 
 ## Row 5.1 auto-link
 

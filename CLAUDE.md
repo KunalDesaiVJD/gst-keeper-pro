@@ -67,8 +67,13 @@ data-entry surface for 2B classification, RCM aside. "Post to Reconciliation"
 (`src/lib/postImport2B.ts`) writes through to the live `bills_not_in_2b` /
 `bills_not_in_books` ledger that ITC Summary, Suspended Reco and
 month-to-month carry-forward already read from. `2B Reconciliation`
-(`TwoBReconciliationPage.tsx`) is **read-only** — display, export, version
-history/restore, and destructive Clear Data only; it is never edited directly.
+(`TwoBReconciliationPage.tsx`) is **read-only for Strict clients** (the
+default) — display, export, version history/restore, and destructive Clear
+Data only. A per-client `clients.liberal_2b_reconciliation` flag
+(superadmin/gst_manager only, set from Edit Client) opts a specific client
+into Liberal mode, which restores the full directly-editable page for that
+client — see §5 of the doc below before assuming every client behaves the
+same way.
 
 **Read `docs/2B_RECONCILIATION_FLOW.md` before changing this flow.** The
 per-document mapping (MATCHED/MISMATCHED claimed at the 2B value, INELIGIBLE
