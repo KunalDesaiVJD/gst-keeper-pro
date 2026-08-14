@@ -3,6 +3,11 @@
 // liability computed here flows into GSTR-3B Table 3.1, which is then settled
 // out of the Electronic Credit Ledger.
 //
+// Includes b2csa (Table 10 — amendments to earlier-period B2CS entries),
+// treated as purely additive to the current period's liability — mirrors
+// buildGstr3bJson.ts's computeOutward() interpretation for parity; not an
+// independently re-verified reading of the GSTN schema.
+//
 // Per project decision (June 2026): Cess is ignored entirely.
 //
 // Sign convention for credit/debit notes:
@@ -75,6 +80,14 @@ export const computeGstr1OutputTax = (rawJson: any): Gstr1OutputTotals => {
       const d = itm.itm_det || {};
       igst += sign * num(d.iamt);
     });
+  });
+
+  // Table 10 — amendments to earlier-period B2CS entries. Same flat shape as
+  // b2cs (not nested under itm_det).
+  (rawJson.b2csa || []).forEach((item: any) => {
+    igst += num(item.iamt);
+    cgst += num(item.camt);
+    sgst += num(item.samt);
   });
 
   // AT — advance tax received

@@ -13,7 +13,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { FileCheck2, Download, FileText, Loader2, FileJson, Send, CheckCircle2, XCircle, X, Lock, History, Info } from 'lucide-react';
+import { FileCheck2, Download, FileText, Loader2, FileJson, Send, CheckCircle2, XCircle, X, Lock, History, Info, AlertTriangle } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useMonth } from '@/contexts/MonthContext';
@@ -47,6 +47,21 @@ const toShort = (mmYyyy: string) => {
 const inr = (n: number | undefined) =>
   (n || n === 0 ? Number(n) : 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const sum3 = (t?: { igst: number; cgst: number; sgst: number }) => (t ? t.igst + t.cgst + t.sgst : 0);
+
+// The push extension (a separate, unversioned codebase this app doesn't
+// control) reports skipped fields as free-text strings, e.g. "3.1(a) Outward
+// taxable supplies — row not found". Matched with a tolerant regex rather
+// than a bare substring since wording there can drift without any test here
+// catching it. 3.1(a)/3.1(b) are singled out as "critical" because they're
+// the two fields that carry the outward-tax rupees this whole reconciliation
+// is about — a skip there means real tax never reached the portal.
+const CRITICAL_SKIP_PATTERNS = [/3\.1\s*\(\s*a\s*\)/i, /3\.1\s*\(\s*b\s*\)/i];
+type PushSeverity = 'ok' | 'warning' | 'critical';
+const pushSeverity = (skipped: string[] | null | undefined): PushSeverity => {
+  if (!skipped || skipped.length === 0) return 'ok';
+  const hasCritical = skipped.some((s) => CRITICAL_SKIP_PATTERNS.some((re) => re.test(s)));
+  return hasCritical ? 'critical' : 'warning';
+};
 
 // One line of a portal-style table (Particulars + up to four amount columns).
 const TRow: React.FC<{ label: string; txval?: number; igst?: number; cgst?: number; sgst?: number; bold?: boolean }> = ({ label, txval, igst, cgst, sgst, bold }) => (
@@ -456,28 +471,70 @@ const Gstr3bPage: React.FC = () => {
         </div>
       )}
 
+      {/* Draft-quality flags from buildGstr3bJson() — e.g. "No GSTR-1 data",
+          "No ITC Summary". These already exist and are already shown on the
+          client-facing preview dialog (Gstr3bPreviewDialog.tsx); they were
+          never surfaced here, so a client with a Filed GSTR-1 but no
+          gstr1_data row silently drafted a ₹0 GSTR-3B with nothing to explain
+          why. Data-gap flags (the ones that only fire when something is
+          actually missing) lead the list, ahead of the two routine
+          boilerplate notes (4D itc_inelg mapping, Table 5 not computed) that
+          buildGstr3bJson() pushes on every single computation regardless of
+          data completeness. */}
+      {result && result.flags.length > 0 && (() => {
+        const isDataGapFlag = (f: string) => f.startsWith('No GSTR-1 data') || f.startsWith('No ITC Summary');
+        const dataGapFlags = result.flags.filter(isDataGapFlag);
+        const routineFlags = result.flags.filter((f) => !isDataGapFlag(f));
+        return (
+          <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning-foreground">
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-warning" />
+            <div className="flex-1 space-y-1">
+              <p className="font-medium text-warning">Review before filing</p>
+              {dataGapFlags.map((f, i) => (
+                <p key={`gap-${i}`} className="font-medium text-foreground">• {f}</p>
+              ))}
+              {routineFlags.map((f, i) => (
+                <p key={`routine-${i}`} className="text-xs text-foreground/70">• {f}</p>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Push-to-portal result — what got filled, what didn't, and the
           standing reminder that Table 5 / 4(D)(1) are never touched. */}
-      {pushResult && (
-        <div
-          className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${
-            pushResult.ok ? 'border-success/30 bg-success/10 text-success' : 'border-destructive/30 bg-destructive/10 text-destructive'
-          }`}
-        >
-          {pushResult.ok ? <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-success" /> : <XCircle className="h-4 w-4 mt-0.5 shrink-0" />}
-          <div className="flex-1">
-            <p className="break-words">{pushResult.summary}</p>
-            {pushResult.skipped && pushResult.skipped.length > 0 && (
-              <ul className="mt-1 text-xs list-disc pl-4 text-foreground/70">
-                {pushResult.skipped.map((s, i) => <li key={i}>{s}</li>)}
-              </ul>
-            )}
+      {pushResult && (() => {
+        // A push that "succeeded" can still have silently dropped the fields
+        // that carry the actual outward-tax rupees (3.1(a)/3.1(b)) — that's
+        // not a success, it's a partial failure the extension doesn't know
+        // to report as one. Never let a non-empty skipped list render green.
+        const severity: PushSeverity = pushResult.ok ? pushSeverity(pushResult.skipped) : 'critical';
+        const styles: Record<PushSeverity, string> = {
+          ok: 'border-success/30 bg-success/10 text-success',
+          warning: 'border-warning/30 bg-warning/10 text-warning',
+          critical: 'border-destructive/30 bg-destructive/10 text-destructive',
+        };
+        const Icon = severity === 'ok' ? CheckCircle2 : severity === 'warning' ? AlertTriangle : XCircle;
+        return (
+          <div className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${styles[severity]}`}>
+            <Icon className={`h-4 w-4 mt-0.5 shrink-0 ${severity === 'ok' ? 'text-success' : ''}`} />
+            <div className="flex-1">
+              <p className="break-words">{pushResult.summary}</p>
+              {severity === 'critical' && pushResult.ok && (
+                <p className="mt-1 font-medium">⚠ Outward tax (3.1(a)/3.1(b)) was NOT filled on the portal — enter it manually before Confirm / Offset Liability / File.</p>
+              )}
+              {pushResult.skipped && pushResult.skipped.length > 0 && (
+                <ul className="mt-1 text-xs list-disc pl-4 text-foreground/70">
+                  {pushResult.skipped.map((s, i) => <li key={i}>{s}</li>)}
+                </ul>
+              )}
+            </div>
+            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 shrink-0" onClick={() => setPushResult(null)}>
+              <X className="h-4 w-4" />
+            </Button>
           </div>
-          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 shrink-0" onClick={() => setPushResult(null)}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-      )}
+        );
+      })()}
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
@@ -597,7 +654,13 @@ const Gstr3bPage: React.FC = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {versions.map((v) => (
+                {versions.map((v) => {
+                  const severity: PushSeverity = v.status === 'ok' ? pushSeverity(v.skipped) : 'critical';
+                  const statusClass = v.status === 'ok'
+                    ? (severity === 'ok' ? 'text-success' : severity === 'warning' ? 'text-warning' : 'text-destructive')
+                    : v.status === 'failed' ? 'text-destructive' : 'text-muted-foreground';
+                  const viewButtonClass = severity === 'critical' ? 'text-destructive hover:text-destructive' : severity === 'warning' ? 'text-warning hover:text-warning' : '';
+                  return (
                   <React.Fragment key={v.id}>
                     <TableRow>
                       <TableCell className="font-mono">v{v.version_number}</TableCell>
@@ -608,9 +671,10 @@ const Gstr3bPage: React.FC = () => {
                         })}
                       </TableCell>
                       <TableCell>
-                        <span className={v.status === 'ok' ? 'text-success font-medium' : v.status === 'failed' ? 'text-destructive font-medium' : 'text-muted-foreground'}>
+                        <span className={`${statusClass} font-medium`}>
                           {v.status === 'ok' ? `Filled ${v.filled_count ?? 0}` : v.status || '—'}
                         </span>
+                        {severity === 'critical' && <AlertTriangle className="inline-block h-3.5 w-3.5 ml-1 text-destructive" />}
                       </TableCell>
                       <TableCell className="text-xs max-w-md">{v.summary || '—'}</TableCell>
                       <TableCell>
@@ -618,7 +682,7 @@ const Gstr3bPage: React.FC = () => {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-7 text-xs"
+                            className={`h-7 text-xs ${viewButtonClass}`}
                             onClick={() => setExpandedVersionId(expandedVersionId === v.id ? null : v.id)}
                           >
                             {expandedVersionId === v.id ? 'Hide' : `View (${v.skipped.length})`}
@@ -638,7 +702,8 @@ const Gstr3bPage: React.FC = () => {
                       </TableRow>
                     )}
                   </React.Fragment>
-                ))}
+                  );
+                })}
                 {versions.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={6} className="text-center text-muted-foreground py-6">
