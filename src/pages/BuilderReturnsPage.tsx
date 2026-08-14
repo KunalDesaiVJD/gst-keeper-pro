@@ -150,6 +150,10 @@ const BuilderReturnsPage: React.FC = () => {
   const [projectFilter, setProjectFilter] = useState<string>('ALL');
   const [rows, setRows] = useState<PostingDbRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  /** BU_DIFFERENTIAL invoices' own milestone_label, keyed by invoice id — more
+   *  specific than SOURCE_LABEL's generic "Invoice" (it says "BU differential"
+   *  or "Dastavej differential", per the invoice's actual cut-off source). */
+  const [invoiceLabels, setInvoiceLabels] = useState<Record<string, string>>({});
 
   // ── Return preparation state ──────────────────────────────────────────────
   // The preview is always built for the whole client, never the project filter:
@@ -194,7 +198,21 @@ const BuilderReturnsPage: React.FC = () => {
       if (projectFilter !== 'ALL') q = q.eq('project_id', projectFilter);
       const { data, error } = await q;
       if (error) throw error;
-      setRows((data || []) as unknown as PostingDbRow[]);
+      const postings = (data || []) as unknown as PostingDbRow[];
+      setRows(postings);
+
+      const invoiceIds = postings.filter((r) => r.source_type === 'INVOICE_B2CS').map((r) => r.source_id);
+      if (invoiceIds.length) {
+        const { data: inv } = await supabase.from('builder_invoices')
+          .select('id, milestone_label').eq('invoice_type', 'BU_DIFFERENTIAL').in('id', invoiceIds);
+        const labels: Record<string, string> = {};
+        ((inv || []) as { id: string; milestone_label: string | null }[]).forEach((i) => {
+          if (i.milestone_label) labels[i.id] = i.milestone_label;
+        });
+        setInvoiceLabels(labels);
+      } else {
+        setInvoiceLabels({});
+      }
     } catch (e) {
       toast.error(`Could not load postings: ${(e as Error).message}`);
     } finally {
@@ -750,7 +768,9 @@ const BuilderReturnsPage: React.FC = () => {
                           <TableRow key={`${r.source_type}-${r.source_id}`}>
                             <TableCell className="text-sm">{r.doc_date}</TableCell>
                             <TableCell className="text-sm font-medium">{r.unit_no}</TableCell>
-                            <TableCell className="text-sm">{SOURCE_LABEL[r.source_type]}</TableCell>
+                            <TableCell className="text-sm">
+                              {invoiceLabels[r.source_id] || SOURCE_LABEL[r.source_type]}
+                            </TableCell>
                             <TableCell>
                               <Badge variant="outline" className="text-xs">{r.gstr1_table}</Badge>
                             </TableCell>

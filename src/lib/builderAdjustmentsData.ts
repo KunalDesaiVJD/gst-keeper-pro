@@ -445,14 +445,16 @@ export async function resyncUnfiledPostings(params: {
       .select('id, consideration, period_month')
       .eq('unit_id', unitId).neq('rate_code', targetRateCode),
     supabase.from('builder_invoices')
-      .select('id, consideration, period_month, rate_code')
+      .select('id, consideration, period_month, rate_code, invoice_type, milestone_label')
       .eq('unit_id', unitId).neq('invoice_type', 'DELAY_INTEREST'),
   ]);
 
   type Row = { id: string; consideration: number; period_month: string };
   const staleReceipts = ((rcp || []) as Row[]).filter((r) => !filedPeriods.has(r.period_month));
 
-  type InvRow = Row & { rate_code: string };
+  type InvRow = Row & {
+    rate_code: string; invoice_type: string; milestone_label: string | null;
+  };
   const unfiledInvoices = ((allInv || []) as InvRow[]).filter((r) => !filedPeriods.has(r.period_month));
   const staleInvoices = unfiledInvoices.filter((r) => r.rate_code !== targetRateCode);
 
@@ -474,6 +476,34 @@ export async function resyncUnfiledPostings(params: {
       taxable_value: t.taxableValue, cgst: t.cgst, sgst: t.sgst,
     }).eq('id', i.id);
     if (!error) invoicesUpdated++;
+  }
+
+  // A BU_DIFFERENTIAL invoice's milestone_label ("BU differential — cut-off
+  // ..." vs "Dastavej differential — cut-off ...") is written once, at post
+  // time, from builder_bu_event_units.cut_off_source — resolveCutOff()'s
+  // own <=/< off-by-one fix (13/08/2026) only corrects what NEW postings
+  // compute; an already-posted invoice's label stays exactly as frozen, even
+  // once its rate resyncs. Since this sweep already touches every one of the
+  // unit's unfiled invoices, correct any label that disagrees with the
+  // event's actual cut_off_source at the same time.
+  const buInvoiceIds = unfiledInvoices.filter((i) => i.invoice_type === 'BU_DIFFERENTIAL').map((i) => i.id);
+  const { data: cutOffRows } = buInvoiceIds.length
+    ? await supabase.from('builder_bu_event_units')
+      .select('invoice_id, cut_off_source').in('invoice_id', buInvoiceIds)
+    : { data: [] };
+  const cutOffByInvoice = new Map(
+    ((cutOffRows || []) as { invoice_id: string; cut_off_source: string }[])
+      .map((r) => [r.invoice_id, r.cut_off_source]),
+  );
+  for (const i of unfiledInvoices) {
+    const cutOffSource = cutOffByInvoice.get(i.id);
+    if (!cutOffSource || !i.milestone_label) continue;
+    const expected = i.milestone_label.replace(
+      /^(BU|Dastavej) differential/, `${cutOffSource === 'DASTAVEJ' ? 'Dastavej' : 'BU'} differential`,
+    );
+    if (expected !== i.milestone_label) {
+      await supabase.from('builder_invoices').update({ milestone_label: expected }).eq('id', i.id);
+    }
   }
 
   // Every unfiled invoice — freshly resynced above or already at the target
