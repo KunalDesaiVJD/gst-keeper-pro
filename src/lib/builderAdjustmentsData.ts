@@ -398,12 +398,20 @@ async function autoPostReclassification(params: {
  * Excludes DELAY_INTEREST invoices — they follow the client's own delay-
  * interest rate election, not the unit's classification.
  *
- * Known gap: does not touch `builder_advance_adjustments` rows that already
- * absorbed part of a resynced receipt into an invoice (11B). Those keep the
- * consideration/tax split computed at the time the invoice was raised. This
- * only matters if a unit's classification moves again in the same window an
- * invoice has already absorbed one of its receipts — narrow enough to flag
- * rather than build for now.
+ * A resynced invoice's own Table 11B adjustment legs (builder_advance_
+ * adjustments and builder_opening_balance_adjustments, both keyed to
+ * invoice_id) are resynced right along with it — same targetRateCode,
+ * consideration_adjusted held fixed exactly like the invoice's own
+ * consideration. This runs as a SEPARATE pass over every one of the unit's
+ * unfiled, non-DELAY_INTEREST invoices (not just the ones whose own
+ * rate_code needed updating this call) — an invoice resynced on an earlier
+ * call already carries the target rate, so it would never re-enter the
+ * "stale" set above, but its adjustment legs can still be the ones left
+ * behind. Found exactly this live on Plot No. 148, Shree Maruti Infra,
+ * 14/08/2026: an earlier commercial RREP→REP move had already resynced the
+ * invoice to 18%, but its opening-balance offset was still frozen at the old
+ * 5% — Table 7 and Table 11B disagreed on rate for the same invoice,
+ * producing a phantom net liability that should have netted to zero.
  */
 export async function resyncUnfiledPostings(params: {
   unitId: string;
@@ -412,18 +420,21 @@ export async function resyncUnfiledPostings(params: {
 }): Promise<{ receiptsUpdated: number; invoicesUpdated: number }> {
   const { unitId, targetRateCode, filedPeriods } = params;
 
-  const [{ data: rcp }, { data: inv }] = await Promise.all([
+  const [{ data: rcp }, { data: allInv }] = await Promise.all([
     supabase.from('builder_receipts')
       .select('id, consideration, period_month')
       .eq('unit_id', unitId).neq('rate_code', targetRateCode),
     supabase.from('builder_invoices')
-      .select('id, consideration, period_month')
-      .eq('unit_id', unitId).neq('rate_code', targetRateCode).neq('invoice_type', 'DELAY_INTEREST'),
+      .select('id, consideration, period_month, rate_code')
+      .eq('unit_id', unitId).neq('invoice_type', 'DELAY_INTEREST'),
   ]);
 
   type Row = { id: string; consideration: number; period_month: string };
   const staleReceipts = ((rcp || []) as Row[]).filter((r) => !filedPeriods.has(r.period_month));
-  const staleInvoices = ((inv || []) as Row[]).filter((r) => !filedPeriods.has(r.period_month));
+
+  type InvRow = Row & { rate_code: string };
+  const unfiledInvoices = ((allInv || []) as InvRow[]).filter((r) => !filedPeriods.has(r.period_month));
+  const staleInvoices = unfiledInvoices.filter((r) => r.rate_code !== targetRateCode);
 
   let receiptsUpdated = 0;
   for (const r of staleReceipts) {
@@ -443,6 +454,33 @@ export async function resyncUnfiledPostings(params: {
       taxable_value: t.taxableValue, cgst: t.cgst, sgst: t.sgst,
     }).eq('id', i.id);
     if (!error) invoicesUpdated++;
+  }
+
+  // Every unfiled invoice — freshly resynced above or already at the target
+  // rate from an earlier call — gets its adjustment legs checked, since a
+  // mismatch can be left behind either way.
+  type AdjRow = { id: string; consideration_adjusted: number; rate_code: string };
+  for (const i of unfiledInvoices) {
+    const [{ data: advAdj }, { data: openAdj }] = await Promise.all([
+      supabase.from('builder_advance_adjustments')
+        .select('id, consideration_adjusted, rate_code').eq('invoice_id', i.id),
+      supabase.from('builder_opening_balance_adjustments')
+        .select('id, consideration_adjusted, rate_code').eq('invoice_id', i.id),
+    ]);
+    for (const a of ((advAdj || []) as AdjRow[]).filter((a) => a.rate_code !== targetRateCode)) {
+      const at = computeTax(a.consideration_adjusted, targetRateCode);
+      await supabase.from('builder_advance_adjustments').update({
+        rate_code: targetRateCode, rate_pct: at.ratePct,
+        taxable_value_adjusted: at.taxableValue, cgst: at.cgst, sgst: at.sgst,
+      }).eq('id', a.id);
+    }
+    for (const a of ((openAdj || []) as AdjRow[]).filter((a) => a.rate_code !== targetRateCode)) {
+      const at = computeTax(a.consideration_adjusted, targetRateCode);
+      await supabase.from('builder_opening_balance_adjustments').update({
+        rate_code: targetRateCode, rate_pct: at.ratePct,
+        taxable_value_adjusted: at.taxableValue, cgst: at.cgst, sgst: at.sgst,
+      }).eq('id', a.id);
+    }
   }
 
   return { receiptsUpdated, invoicesUpdated };
