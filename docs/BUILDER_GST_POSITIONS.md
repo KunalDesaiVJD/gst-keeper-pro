@@ -122,6 +122,27 @@ The base deducted is value on which GST was **discharged up to the opening of
 the BU month** — not money received. Receipts inside the BU month are therefore
 **subsumed** into the differential rather than taxed separately.
 
+**The differential invoice is always raised gross, opening balance included
+(firm decision, 13/08/2026, per the firm's own Sales Guide).** A unit whose
+earlier consideration sits only in its `builder_opening_balances` snapshot —
+pre-onboarding history with no itemized receipts to attach an adjustment to —
+used to have that snapshot netted straight into the invoice leg
+(`invoiceValue = agreement − invoiced − opening`). Where the opening balance
+fully covered the agreement, that formula produced an invoice of ₹0: no Table
+7 entry, no Table 11B entry, nothing in the return at all — the Plot No. 148
+case (Shree Maruti Infra) that exposed this. The return must show the
+transaction on both legs regardless of whether any *new* tax is owed: the
+full sale gross in **Table 7**, offset by an equal **Table 11B** advance
+adjustment sourced from the opening balance
+(`builder_opening_balance_adjustments`, distinct from `builder_advance_adjustments`
+because there is no `builder_receipts` row for pre-onboarding money to key
+off). `computeDifferential()` in `src/utils/builderBuEvent.ts` now computes
+`invoiceValue = agreement − invoiced` (opening no longer subtracted here) and
+pools the opening balance into `advanceToAdjust` alongside real advances,
+real advances drawn down first. **Net new tax owed is unchanged** —
+`differentialValue` is the same figure either way — only the gross-vs-net
+*presentation* changed.
+
 Units **unbooked at the cut-off** fall under **Schedule III para 5** — sale of a
 building after completion is not a supply — and are omitted from GSTR-1 and 3B
 entirely.

@@ -12,6 +12,10 @@ export interface AgreementConfirmUnit {
   unitId: string;
   unitNo: string;
   agreementValue: number;
+  /** From builder_bu_event_units.cut_off_source — 'DASTAVEJ' for a
+   *  single-unit dastavej-triggered auto-post, whose bu_date is literally the
+   *  registered sale deed date, not a genuine BU permission date. */
+  cutOffSource?: string;
 }
 
 /**
@@ -71,6 +75,8 @@ export async function requestAgreementConfirmations(params: {
       unit_no: unit.unitNo,
       project_name: params.projectName,
       bu_date: params.buDate,
+      cutoff_label: unit.cutOffSource === 'DASTAVEJ'
+        ? 'registered sale deed (dastavej)' : 'building use permission',
       agreement_value: formatINR(unit.agreementValue),
       confirm_link: confirmLink,
       staff_name: params.staffName || GST_FIRM.team,

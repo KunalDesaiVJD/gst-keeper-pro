@@ -40,6 +40,7 @@ interface RecoRow {
   bu_date: string | null;
   booked_at_cutoff: boolean | null;
   variance: number | null;
+  cut_off_source: string | null;
 }
 
 interface PendingUnit {
@@ -79,10 +80,7 @@ const resolveAction = (r: RecoRow): Action => {
     return { kind: 'PENDING', label: 'Deed value not captured', tone: 'muted' };
   }
   const v = Number(r.variance) || 0;
-  // The event this row's bu_event_id points at was dated exactly at this
-  // deed — the signature of the automatic post rather than a later, separate
-  // BU sweep that happened to cover the same unit.
-  const autoTaxed = !!r.bu_event_id && !!r.bu_date && r.bu_date === r.dastavej_date;
+  const autoTaxed = !!r.bu_event_id && r.cut_off_source === 'DASTAVEJ';
   if (Math.abs(v) <= 1) {
     return autoTaxed
       ? { kind: 'AUTO_TAXED', label: 'Taxed in full at registration — posted automatically, not owed again', tone: 'info' }
@@ -457,7 +455,7 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
                         <TableHead>Project</TableHead>
                         <TableHead>Unit</TableHead>
                         <TableHead>Dastavej date</TableHead>
-                        <TableHead>BU date</TableHead>
+                        <TableHead>Cut-off date</TableHead>
                         <TableHead className="text-right">Deed value</TableHead>
                         <TableHead className="text-right">Value taxed</TableHead>
                         <TableHead className="text-right">Variance</TableHead>
@@ -476,7 +474,16 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
                               <span className="block text-xs text-muted-foreground">{r.unit_type}</span>
                             </TableCell>
                             <TableCell className="text-sm">{r.dastavej_date || '—'}</TableCell>
-                            <TableCell className="text-sm">{r.bu_date || '—'}</TableCell>
+                            <TableCell className="text-sm">
+                              {r.bu_date ? (
+                                <>
+                                  {r.bu_date}
+                                  <span className="block text-xs text-muted-foreground">
+                                    {r.cut_off_source === 'DASTAVEJ' ? 'via dastavej' : 'via BU'}
+                                  </span>
+                                </>
+                              ) : '—'}
+                            </TableCell>
                             <TableCell className="text-right text-sm">
                               {r.dastavej_value === null ? '—' : formatINR(r.dastavej_value)}
                             </TableCell>

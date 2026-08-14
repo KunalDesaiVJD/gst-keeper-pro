@@ -162,17 +162,25 @@ export interface Differential {
  *         This is the incremental liability and what 3B Table 3.1(a) receives.
  *
  *   GROSS invoice (Table 7) = agreement − invoices already raised
- *         advance adjusted (11B) = open advances at that opening
- *         These are what GSTR-1 needs: an advance sitting in Table 11A has to
- *         be adjusted out through 11B eventually, not left open forever.
+ *         advance adjusted (11B) = open advances at that opening, INCLUDING
+ *         the opening balance (firm decision, 13/08/2026, per the firm's own
+ *         Sales Guide — see docs/BUILDER_GST_POSITIONS.md §6): a unit whose
+ *         earlier consideration was recognised only via its opening balance
+ *         must still show the full sale gross in Table 7, offset by an equal
+ *         advance-adjustment in Table 11B — not netted invisibly out of the
+ *         invoice leg, which used to leave BOTH tables silent on a unit that
+ *         was genuinely taxable, just because the offsetting money predated
+ *         onboarding.
  *
  * The two agree by construction, because
  *   value taxed = opening + advances + invoices − adjustments,
  * so   agreement − value taxed
- *    = (agreement − invoices) − (advances − adjustments) − opening.
- * With no opening balance the identity is exact; where an opening balance
- * exists it is folded into the invoice leg, since the pre-app history is not
- * decomposable into invoices and advances.
+ *    = (agreement − invoices) − (advances − adjustments + opening).
+ * Real advances are drawn down before the opening balance (see
+ * postBuEvent() in src/lib/builderBuPosting.ts, which consumes
+ * openAdvances first and routes whatever's left of advanceToAdjust to
+ * builder_opening_balance_adjustments) — advances are period-specific and
+ * receipt-backed, so they're the more auditable trail to close out first.
  */
 export const computeDifferential = (input: DifferentialInput): Differential => {
   const agreement = round2(Number(input.agreementValue) || 0);
@@ -189,10 +197,11 @@ export const computeDifferential = (input: DifferentialInput): Differential => {
   const differentialValue = round2(Math.max(0, agreement - valueTaxed));
   const tax = computeTax(differentialValue, input.rateCode);
 
-  // The invoice leg absorbs the opening balance too, since pre-app history
-  // cannot be split into its invoice and advance components.
-  const invoiceValue = round2(Math.max(0, agreement - invoiced - opening));
-  const advanceToAdjust = round2(Math.min(openAdvance, invoiceValue));
+  // Gross Table 7: no longer nets the opening balance out — see doc comment.
+  const invoiceValue = round2(Math.max(0, agreement - invoiced));
+  // Gross Table 11B: real advances pooled with the opening balance, capped
+  // at the invoice value.
+  const advanceToAdjust = round2(Math.min(openAdvance + opening, invoiceValue));
 
   return {
     agreementValue: agreement,

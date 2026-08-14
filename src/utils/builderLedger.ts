@@ -191,6 +191,17 @@ export interface UnitLedger {
  * Note the shape of valueTaxed: advances add, invoices add, adjustments
  * subtract. An advance of 1L later absorbed into a 5L invoice yields
  * 1 + 5 − 1 = 5, not 6.
+ *
+ * `openingAdjustments` (builder_opening_balance_adjustments rows) subtract
+ * from valueTaxed the same way `adjustments` does, and for the same reason:
+ * a BU/dastavej differential invoice now carries its GROSS consideration
+ * (see computeDifferential in builderBuEvent.ts, 13/08/2026), and whatever
+ * slice of that gross was already reflected in the opening balance's own
+ * cumulative_value_taxed snapshot would otherwise be counted twice — once
+ * via the opening balance, once via the new invoice's gross. They must NOT
+ * feed openAdvance: that field is the receipt-sourced open-advance pool a
+ * milestone invoice draws down, and opening-balance money was never a
+ * receipt in this app — there is no receipt row for it to sit "open" against.
  */
 export const computeUnitLedger = (params: {
   agreementValue: number;
@@ -198,6 +209,7 @@ export const computeUnitLedger = (params: {
   receipts: LedgerReceipt[];
   invoices: LedgerInvoice[];
   adjustments: LedgerAdjustment[];
+  openingAdjustments?: LedgerAdjustment[];
 }): UnitLedger => {
   const ob = params.opening || {};
   let advCons = 0, advCgst = 0, advSgst = 0;
@@ -224,13 +236,24 @@ export const computeUnitLedger = (params: {
   const adjCgst = params.adjustments.reduce((s, a) => s + (Number(a.cgst) || 0), 0);
   const adjSgst = params.adjustments.reduce((s, a) => s + (Number(a.sgst) || 0), 0);
 
-  const valueTaxed = round2((Number(ob.cumulative_value_taxed) || 0) + advCons + invCons - adjCons);
+  const openingAdj = params.openingAdjustments || [];
+  const openingAdjCons = openingAdj.reduce((s, a) => s + (Number(a.consideration_adjusted) || 0), 0);
+  const openingAdjCgst = openingAdj.reduce((s, a) => s + (Number(a.cgst) || 0), 0);
+  const openingAdjSgst = openingAdj.reduce((s, a) => s + (Number(a.sgst) || 0), 0);
+
+  const valueTaxed = round2(
+    (Number(ob.cumulative_value_taxed) || 0) + advCons + invCons - adjCons - openingAdjCons,
+  );
   const agreementValue = Number(params.agreementValue) || 0;
 
   return {
     valueTaxed,
-    cgstDischarged: round2((Number(ob.cumulative_cgst) || 0) + advCgst + invCgst - adjCgst),
-    sgstDischarged: round2((Number(ob.cumulative_sgst) || 0) + advSgst + invSgst - adjSgst),
+    cgstDischarged: round2(
+      (Number(ob.cumulative_cgst) || 0) + advCgst + invCgst - adjCgst - openingAdjCgst,
+    ),
+    sgstDischarged: round2(
+      (Number(ob.cumulative_sgst) || 0) + advSgst + invSgst - adjSgst - openingAdjSgst,
+    ),
     openAdvance: round2(advCons - adjCons),
     totalReceived: round2((Number(ob.cumulative_receipts) || 0) + received),
     totalTds194ia: round2((Number(ob.cumulative_tds_194ia) || 0) + tds),
@@ -332,7 +355,7 @@ export const planAdvanceAbsorption = (
 
 // ─── Period roll-up for GSTR-1 / 3B ─────────────────────────────────────────
 
-export type PostingSource = 'ADVANCE_11A' | 'ADVANCE_11B' | 'INVOICE_B2CS';
+export type PostingSource = 'ADVANCE_11A' | 'ADVANCE_11B' | 'OPENING_11B' | 'INVOICE_B2CS';
 
 export interface PostingRow {
   source_type: PostingSource;
@@ -411,7 +434,7 @@ export const summarisePeriod = (rows: PostingRow[]): PeriodSummary => {
   const outward = bucketise(rows);
   return {
     table11A: bucketise(of('ADVANCE_11A')),
-    table11B: bucketise(of('ADVANCE_11B')),
+    table11B: bucketise([...of('ADVANCE_11B'), ...of('OPENING_11B')]),
     table7: bucketise(of('INVOICE_B2CS')),
     outward,
     totals: {

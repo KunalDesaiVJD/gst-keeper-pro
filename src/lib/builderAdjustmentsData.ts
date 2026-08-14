@@ -601,11 +601,15 @@ export async function runAutoReclassSweep(
   ((opn || []) as unknown as Opening[]).forEach((o) => { omap[o.unit_id] = o; });
 
   const invoiceIds = ((inv || []) as unknown as Invoice[]).map((i) => i.id);
-  const { data: adj } = invoiceIds.length
-    ? await supabase.from('builder_advance_adjustments').select('*').in('invoice_id', invoiceIds)
-    : { data: [] };
+  const [{ data: adj }, { data: obAdj }] = invoiceIds.length
+    ? await Promise.all([
+      supabase.from('builder_advance_adjustments').select('*').in('invoice_id', invoiceIds),
+      supabase.from('builder_opening_balance_adjustments').select('*').in('invoice_id', invoiceIds),
+    ])
+    : [{ data: [] }, { data: [] }];
   type Adjustment = { invoice_id: string; consideration_adjusted: number; cgst: number; sgst: number };
   const adjustments = (adj || []) as unknown as Adjustment[];
+  const openingAdjustments = (obAdj || []) as unknown as Adjustment[];
 
   let resi = 0, comm = 0;
   if (p.carpet_area_source === 'MANUAL') {
@@ -624,6 +628,7 @@ export async function runAutoReclassSweep(
   units.forEach((u) => {
     const invIds = new Set((imap[u.id] || []).map((i) => i.id));
     const unitAdjustments = adjustments.filter((a) => invIds.has(a.invoice_id));
+    const unitOpeningAdjustments = openingAdjustments.filter((a) => invIds.has(a.invoice_id));
     // knownConsideration: money already recognised (opening + receipts/
     // invoices to date) — see classifyUnit()'s doc comment. agreementValue
     // is irrelevant to considerationRecognized, so 0 is fine here.
@@ -639,6 +644,9 @@ export async function runAutoReclassSweep(
       })),
       invoices: (imap[u.id] || []).map((i) => ({ consideration: i.consideration, cgst: i.cgst, sgst: i.sgst })),
       adjustments: unitAdjustments.map((a) => ({
+        consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst,
+      })),
+      openingAdjustments: unitOpeningAdjustments.map((a) => ({
         consideration_adjusted: a.consideration_adjusted, cgst: a.cgst, sgst: a.sgst,
       })),
     });
