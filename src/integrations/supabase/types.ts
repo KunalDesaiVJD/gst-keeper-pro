@@ -94,7 +94,9 @@ export type Database = {
           period_month: string
           reclaim_month: string | null
           reclaim_subtype: string | null
+          reclaimed_via_doc_id: string | null
           reversal_month: string | null
+          source_book_id: string | null
           supplier_gstin: string | null
           supplier_invoice_number: string | null
           supplier_name: string
@@ -115,7 +117,9 @@ export type Database = {
           period_month: string
           reclaim_month?: string | null
           reclaim_subtype?: string | null
+          reclaimed_via_doc_id?: string | null
           reversal_month?: string | null
+          source_book_id?: string | null
           supplier_gstin?: string | null
           supplier_invoice_number?: string | null
           supplier_name: string
@@ -136,7 +140,9 @@ export type Database = {
           period_month?: string
           reclaim_month?: string | null
           reclaim_subtype?: string | null
+          reclaimed_via_doc_id?: string | null
           reversal_month?: string | null
+          source_book_id?: string | null
           supplier_gstin?: string | null
           supplier_invoice_number?: string | null
           supplier_name?: string
@@ -151,6 +157,20 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bills_not_in_2b_reclaimed_via_doc_id_fkey"
+            columns: ["reclaimed_via_doc_id"]
+            isOneToOne: false
+            referencedRelation: "twob_import_docs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bills_not_in_2b_source_book_id_fkey"
+            columns: ["source_book_id"]
+            isOneToOne: false
+            referencedRelation: "books_register"
             referencedColumns: ["id"]
           },
         ]
@@ -168,6 +188,7 @@ export type Database = {
           is_carried_forward: boolean | null
           is_locked: boolean | null
           period_month: string
+          source_doc_id: string | null
           supplier_gstin: string | null
           supplier_invoice_number: string | null
           supplier_name: string
@@ -188,6 +209,7 @@ export type Database = {
           is_carried_forward?: boolean | null
           is_locked?: boolean | null
           period_month: string
+          source_doc_id?: string | null
           supplier_gstin?: string | null
           supplier_invoice_number?: string | null
           supplier_name: string
@@ -208,6 +230,7 @@ export type Database = {
           is_carried_forward?: boolean | null
           is_locked?: boolean | null
           period_month?: string
+          source_doc_id?: string | null
           supplier_gstin?: string | null
           supplier_invoice_number?: string | null
           supplier_name?: string
@@ -224,6 +247,13 @@ export type Database = {
             referencedRelation: "clients"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "bills_not_in_books_source_doc_id_fkey"
+            columns: ["source_doc_id"]
+            isOneToOne: false
+            referencedRelation: "twob_import_docs"
+            referencedColumns: ["id"]
+          },
         ]
       }
       books_register: {
@@ -238,6 +268,8 @@ export type Database = {
           input_sgst: number | null
           matched_2b_id: string | null
           period_month: string
+          posted_at: string | null
+          posted_by: string | null
           supplier_gstin: string | null
           supplier_invoice_number: string | null
           supplier_name: string | null
@@ -256,6 +288,8 @@ export type Database = {
           input_sgst?: number | null
           matched_2b_id?: string | null
           period_month: string
+          posted_at?: string | null
+          posted_by?: string | null
           supplier_gstin?: string | null
           supplier_invoice_number?: string | null
           supplier_name?: string | null
@@ -274,6 +308,8 @@ export type Database = {
           input_sgst?: number | null
           matched_2b_id?: string | null
           period_month?: string
+          posted_at?: string | null
+          posted_by?: string | null
           supplier_gstin?: string | null
           supplier_invoice_number?: string | null
           supplier_name?: string | null
@@ -4525,6 +4561,8 @@ export type Database = {
           matched_book_id: string | null
           period_month: string
           place_of_supply: string | null
+          posted_at: string | null
+          posted_by: string | null
           reverse_charge: boolean
           source: string | null
           source_sheet: string | null
@@ -4558,6 +4596,8 @@ export type Database = {
           matched_book_id?: string | null
           period_month: string
           place_of_supply?: string | null
+          posted_at?: string | null
+          posted_by?: string | null
           reverse_charge?: boolean
           source?: string | null
           source_sheet?: string | null
@@ -4591,6 +4631,8 @@ export type Database = {
           matched_book_id?: string | null
           period_month?: string
           place_of_supply?: string | null
+          posted_at?: string | null
+          posted_by?: string | null
           reverse_charge?: boolean
           source?: string | null
           source_sheet?: string | null
