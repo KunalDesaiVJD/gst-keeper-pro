@@ -214,14 +214,35 @@ most likely a staff member navigating away right after clicking "Filed",
 before the sequential awaits finished, though the exact trigger couldn't be
 confirmed from server-side data alone.
 
-**Fixed**: every step now checks its error and the function returns a result
-instead of swallowing failures; a failed carry-forward surfaces a distinct
-warning (the Filed status itself already committed by that point, so it must
-not read as "filing failed"); a manual "Re-run carry forward" button
-(next to any Filed GSTR-3B/GSTR-3B (Q) record) makes this self-recoverable —
-safe to click any time, it's the exact same idempotent delete-then-insert as
-the automatic run. An in-flight guard also prevents the same client+period
-from running twice concurrently.
+**Fixed at the app layer**: every step now checks its error and the function
+returns a result instead of swallowing failures; a failed carry-forward
+surfaces a distinct warning (the Filed status itself already committed by
+that point, so it must not read as "filing failed"); a manual "Re-run carry
+forward" button (next to any Filed GSTR-3B/GSTR-3B (Q) record) makes this
+self-recoverable — safe to click any time, it's the exact same idempotent
+delete-then-insert as the automatic run. An in-flight guard also prevents the
+same client+period from running twice concurrently.
+
+**Fixed at the root, structurally**: the app-layer fix above still can't rule
+out the same class of failure recurring — it's still a sequence of separate
+network round-trips that a closed tab can interrupt between any two of them.
+So the carry-forward step was moved into `auto_lock_on_filed()`, the existing
+`BEFORE UPDATE ON filing_status` trigger that already locks the 2B/ITC sheets
+the instant a GSTR-3B is marked Filed
+(`20260814190000_carry_forward_trigger_hardening.sql`). A trigger runs inside
+the same atomic transaction as the filing_status row's own update — nothing
+in the browser can interrupt it, because by the time the browser's fetch for
+that update even resolves, the trigger has already committed server-side.
+This is now the primary, reliable mechanism; the app-side call stays as a
+redundant, now-error-checked second pass (harmless — delete-then-insert
+produces the same end state run twice) and remains the only path for a
+filing_status row created fresh as already-Filed (an `INSERT`, which this
+`UPDATE`-only trigger doesn't fire for), plus the manual retry button for
+on-demand re-sync. Scoped to `return_type = 'GSTR-3B'` only, matching the
+trigger's existing lock-logic gate — every incident found was on plain
+monthly GSTR-3B; `GSTR-3B (Q)` (quarterly) still relies on the app-side path,
+since widening this would need a quarter-aware next-period calculation (next
+quarter-end, not +1 month) that hasn't been verified.
 
 **Data repair**: `supabase/migrations/20260814180000_backfill_missing_carry_forward.sql`
 reconstructs the missing rows from each client's still-intact filed-period
@@ -229,5 +250,8 @@ data — purely additive (skips any client+period+table that already has
 carried-forward rows), safe to run more than once. Dry-run counted 355
 `bills_not_in_2b` + 1,111 `bills_not_in_books` rows. This one has to be run
 by hand via the Supabase SQL Editor — the environment's safety classifier
-blocked it as a bulk data mutation even after explicit user confirmation in
-chat, which is a tool-permission gate separate from conversational approval.
+blocked it as a bulk data mutation on three separate attempts, even after
+explicit user confirmation in chat, while the trigger-function migration
+above (schema/DDL, not a bulk data write) went through the same path without
+issue — that's a tool-permission gate distinguishing the two, separate from
+conversational approval.
