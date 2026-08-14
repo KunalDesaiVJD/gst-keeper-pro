@@ -588,10 +588,22 @@ export async function autoPostDastavejDifferential(params: {
     return { action: 'SCHEDULE_III' };
   }
 
-  if (wu.differentialValue <= 0) {
+  // opening = valueTaxedUptoOpening - openAdvanceBefore - invoicedBefore
+  // (computeDifferential's own identity, in reverse — WorkingUnit doesn't
+  // carry the raw opening figure, only what's derived from it).
+  const openingContribution = Math.round(
+    (wu.valueTaxedUptoOpening - wu.openAdvanceBefore - wu.invoicedBefore + Number.EPSILON) * 100,
+  ) / 100;
+  if (wu.differentialValue <= 0 && openingContribution <= 0.005) {
     // The normal case the Dastavej page already assumes: ordinary advances
     // already cover the agreement value by the time the deed is executed.
     // Nothing to post — dastavej stays pure reconciliation.
+    //
+    // An opening balance is different: it never runs through the ordinary
+    // milestone-invoice lifecycle the way real advances do, so if it alone
+    // covers the agreement (net differential 0, Plot 148's exact case), this
+    // dastavej is its ONE chance to ever reach a return — skipping here would
+    // silently drop it, same bug as the invoice leg netting it out used to.
     return { action: 'ALREADY_TAXED' };
   }
 
