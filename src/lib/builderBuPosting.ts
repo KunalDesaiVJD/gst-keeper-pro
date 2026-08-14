@@ -223,7 +223,7 @@ export async function postBuEvent(params: {
       unit_id: wu.unitId,
       invoice_date: params.postingDate,
       invoice_type: 'BU_DIFFERENTIAL',
-      milestone_label: `BU differential — cut-off ${wu.cutOffDate} (${wu.cutOffSource})`,
+      milestone_label: `${wu.cutOffSource === 'DASTAVEJ' ? 'Dastavej' : 'BU'} differential — cut-off ${wu.cutOffDate}`,
       consideration: tax.consideration,
       rate_code: wu.rateCode,
       rate_pct: tax.ratePct,

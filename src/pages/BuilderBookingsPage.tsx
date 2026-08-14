@@ -1209,7 +1209,11 @@ const BuilderBookingsPage: React.FC = () => {
       (invoices[u.id] || []).filter((i) => i.period_month === selectedMonth).forEach((i) => {
         rows.push({
           key: `i-${i.id}`, date: i.invoice_date, unitId: u.id, unitNo: u.unit_no, memberLabel,
-          docType: `${INVOICE_TYPE_LABEL[i.invoice_type]} ${i.doc_no || ''}`.trim(),
+          // A BU_DIFFERENTIAL invoice's own milestone_label already says
+          // "BU differential" or "Dastavej differential" per its actual
+          // cut-off source — more specific than the generic type-name map.
+          docType: `${i.invoice_type === 'BU_DIFFERENTIAL' && i.milestone_label
+            ? i.milestone_label : INVOICE_TYPE_LABEL[i.invoice_type]} ${i.doc_no || ''}`.trim(),
           tableTag: 'Table 7', ref: null,
           // Not fresh cash — an invoice bills value already received as an
           // advance, or value not yet received at all (a BU differential).

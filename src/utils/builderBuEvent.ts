@@ -99,9 +99,17 @@ export interface CutOff {
  * A unit registered before BU therefore closes out at registration rather than
  * waiting for the permission — by then the consideration is fixed and the
  * transfer has happened.
+ *
+ * `<=`, not `<`: the single-unit dastavej auto-post (autoPostDastavejDifferential
+ * in builderBuPosting.ts) passes the SAME date as both buDate and dastavejDate —
+ * there is no separate real BU event for it, the dastavej date stands in for
+ * both params. A strict `<` fell through to the BU branch on that always-equal
+ * case, so every dastavej-only posting was mislabeled DASTAVEJ_source='BU' in
+ * the DB — the label a real multi-unit BU sweep should carry — even though no
+ * BU permission was ever involved.
  */
 export const resolveCutOff = (buDate: string, dastavejDate?: string | null): CutOff => {
-  if (dastavejDate && dastavejDate < buDate) return { date: dastavejDate, source: 'DASTAVEJ' };
+  if (dastavejDate && dastavejDate <= buDate) return { date: dastavejDate, source: 'DASTAVEJ' };
   return { date: buDate, source: 'BU' };
 };
 
