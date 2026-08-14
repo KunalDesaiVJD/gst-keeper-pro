@@ -83,6 +83,7 @@ interface AuthContextType {
   canEditUpdateSheet: () => boolean;
   canImportExcel: () => boolean;
   canManualOverride: () => boolean;
+  canManage2BLiberalMode: () => boolean;
   canManageBuilderProjects: () => boolean;
   canManageBuilderUnits: () => boolean;
   canEnterBuilderReceipts: () => boolean;
@@ -548,6 +549,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return user.role === 'superadmin' || user.role === 'gst_manager';
   }, [user]);
 
+  // Switching a client between Strict (Import 2B only) and Liberal (directly
+  // editable) 2B Reconciliation changes what the whole team trusts that
+  // client's sheet to mean — superadmin/gst_manager only, no employee grant.
+  const canManage2BLiberalMode = useCallback((): boolean => {
+    if (!user) return false;
+    return user.role === 'superadmin' || user.role === 'gst_manager';
+  }, [user]);
+
   // ── Builder module ────────────────────────────────────────────────────────
   const canManageBuilderProjects = useCallback((): boolean => {
     if (!user) return false;
@@ -625,6 +634,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canEditUpdateSheet,
         canImportExcel,
         canManualOverride,
+        canManage2BLiberalMode,
         canManageBuilderProjects,
         canManageBuilderUnits,
         canEnterBuilderReceipts,

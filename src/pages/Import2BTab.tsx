@@ -165,6 +165,7 @@ const Import2BTab: React.FC = () => {
   // book-entry decision for this client + month.
   const [pendingBills2B, setPendingBills2B] = useState<PendingBill2B[]>([]);
   const [pendingBillsBooks, setPendingBillsBooks] = useState<PendingBillBooks[]>([]);
+  const [expensedOutItems, setExpensedOutItems] = useState<PendingBill2B[]>([]);
   const [isPosting, setIsPosting] = useState(false);
   const [lastPosted, setLastPosted] = useState<{ at: string; version: number | null } | null>(null);
   const [reclaimDialog, setReclaimDialog] = useState<ReclaimDialogState | null>(null);
@@ -208,12 +209,12 @@ const Import2BTab: React.FC = () => {
     setBulkValue('');
     if (!selectedClient || !selectedMonth) {
       setTwoBDocs([]); setBooks([]); setRcmHidden(0); setLastImportedAt(null); setImporterName(null); setIsLocked(false);
-      setPendingBills2B([]); setPendingBillsBooks([]); setLastPosted(null);
+      setPendingBills2B([]); setPendingBillsBooks([]); setExpensedOutItems([]); setLastPosted(null);
       return;
     }
     setIsLoading(true);
     try {
-      const [docsRes, rcmRes, booksRes, filingRes, pending2BRes, pendingBooksRes, lastVersionRes] = await Promise.all([
+      const [docsRes, rcmRes, booksRes, filingRes, pending2BRes, pendingBooksRes, expensedOutRes, lastVersionRes] = await Promise.all([
         supabase.from('twob_import_docs').select('*')
           .eq('client_id', selectedClient).eq('period_month', selectedMonth)
           .eq('reverse_charge', false).order('date'),
@@ -230,6 +231,9 @@ const Import2BTab: React.FC = () => {
           .eq('client_id', selectedClient).eq('period_month', selectedMonth).is('reclaim_month', null).order('date'),
         supabase.from('bills_not_in_books').select('id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, book_entry_month, bill_in_2b_month')
           .eq('client_id', selectedClient).eq('period_month', selectedMonth).is('book_entry_month', null).order('date'),
+        // Expensed out — kept separately so a mistaken write-off can be undone.
+        supabase.from('bills_not_in_2b').select('id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, reversal_month, reclaim_month, reclaim_subtype')
+          .eq('client_id', selectedClient).eq('period_month', selectedMonth).eq('reclaim_subtype', 'EXPENSE_OUT').order('date'),
         supabase.from('twob_versions').select('updated_at, version_number')
           .eq('client_id', selectedClient).eq('period_month', selectedMonth).eq('is_current', true).maybeSingle(),
       ]);
@@ -241,6 +245,7 @@ const Import2BTab: React.FC = () => {
       setIsLocked(!!filingRes.data?.is_locked);
       setPendingBills2B((pending2BRes.data || []) as PendingBill2B[]);
       setPendingBillsBooks((pendingBooksRes.data || []) as PendingBillBooks[]);
+      setExpensedOutItems((expensedOutRes.data || []) as PendingBill2B[]);
       setLastPosted(lastVersionRes.data ? { at: lastVersionRes.data.updated_at as string, version: lastVersionRes.data.version_number } : null);
 
       const importedById = docs[0]?.imported_by ?? null;
@@ -688,12 +693,26 @@ const Import2BTab: React.FC = () => {
   // above) — this is only the "never coming back, write it off" escape hatch,
   // which doesn't need a matching invoice.
   const setPendingExpenseOut = async (id: string) => {
+    const row = pendingBills2B.find((r) => r.id === id);
     const { error } = await supabase.from('bills_not_in_2b')
       .update({ reclaim_month: currentLabel, reclaim_subtype: 'EXPENSE_OUT', updated_by: user?.id, updated_at: new Date().toISOString() })
       .eq('id', id);
     if (error) { toast.error('Save failed: ' + error.message); return; }
     setPendingBills2B((prev) => prev.filter((r) => r.id !== id));
+    if (row) setExpensedOutItems((prev) => [{ ...row, reclaim_month: currentLabel, reclaim_subtype: 'EXPENSE_OUT' }, ...prev]);
     toast.success('Marked as expense out.');
+  };
+
+  // Undo — bring a mistakenly expensed-out item back to "awaiting reclaim".
+  const undoExpenseOut = async (id: string) => {
+    const row = expensedOutItems.find((r) => r.id === id);
+    const { error } = await supabase.from('bills_not_in_2b')
+      .update({ reclaim_month: null, reclaim_subtype: null, updated_by: user?.id, updated_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) { toast.error('Undo failed: ' + error.message); return; }
+    setExpensedOutItems((prev) => prev.filter((r) => r.id !== id));
+    if (row) setPendingBills2B((prev) => [{ ...row, reclaim_month: null, reclaim_subtype: null }, ...prev]);
+    toast.success('Expense out undone — back in Awaiting reclaim.');
   };
 
   const setPendingBookEntry = async (id: string, value: 'blank' | 'current') => {
@@ -1112,7 +1131,7 @@ const Import2BTab: React.FC = () => {
           </Card>
 
           {/* Zone 4 — pending items already on the ledger, awaiting a decision */}
-          {(pendingBills2B.length > 0 || pendingBillsBooks.length > 0) && (
+          {(pendingBills2B.length > 0 || pendingBillsBooks.length > 0 || expensedOutItems.length > 0) && (
             <Card>
               <CardContent className="p-4 space-y-5">
                 <div>
@@ -1232,6 +1251,55 @@ const Import2BTab: React.FC = () => {
                       Once booked, claim the ITC under ITC Summary row 5.2 "ITC for Previous Month" — this invoice
                       won't reappear in a future GSTR-2B pull.
                     </p>
+                  </div>
+                )}
+
+                {expensedOutItems.length > 0 && (
+                  <div>
+                    <p className="text-sm font-medium mb-2">Expensed out this period — Undo if this was a mistake</p>
+                    <ScrollArea className="w-full">
+                      <div className="min-w-[900px]">
+                        <table className="w-full text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-primary text-primary-foreground">
+                              <th className="border border-primary-foreground/20 p-2 text-left">Date</th>
+                              <th className="border border-primary-foreground/20 p-2 text-left">Supplier</th>
+                              <th className="border border-primary-foreground/20 p-2 text-left">Invoice</th>
+                              <th className="border border-primary-foreground/20 p-2 text-right">IGST</th>
+                              <th className="border border-primary-foreground/20 p-2 text-right">CGST</th>
+                              <th className="border border-primary-foreground/20 p-2 text-right">SGST</th>
+                              <th className="border border-primary-foreground/20 p-2 text-left w-24">Reversed</th>
+                              <th className="border border-primary-foreground/20 p-2 text-left w-28"></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {expensedOutItems.map((r) => (
+                              <tr key={r.id}>
+                                <td className="border border-border p-2 whitespace-nowrap tabular-nums">{isoToDisplay(r.date)}</td>
+                                <td className="border border-border p-2">{r.supplier_name}</td>
+                                <td className="border border-border p-2">{r.supplier_invoice_number}</td>
+                                <td className="border border-border p-2 text-right tabular-nums">{num(r.input_igst)}</td>
+                                <td className="border border-border p-2 text-right tabular-nums">{num(r.input_cgst)}</td>
+                                <td className="border border-border p-2 text-right tabular-nums">{num(r.input_sgst)}</td>
+                                <td className="border border-border p-2">{r.reversal_month || '-'}</td>
+                                <td className="border border-border p-2">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-xs"
+                                    disabled={readOnly}
+                                    onClick={() => undoExpenseOut(r.id)}
+                                  >
+                                    Undo
+                                  </Button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <ScrollBar orientation="horizontal" />
+                    </ScrollArea>
                   </div>
                 )}
               </CardContent>
