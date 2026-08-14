@@ -60,3 +60,20 @@ value *received*, and the 1%/5% cap on FSI is summed per unit rather than
 blended. Changing one of these without reading why it is that way will produce
 wrong tax, not just a failing test.
 
+## Import 2B → 2B Reconciliation → Suspended Reco → GSTR-3B
+
+`twob_import_docs` / `books_register` (Import 2B tab) is the **only**
+data-entry surface for 2B classification, RCM aside. "Post to Reconciliation"
+(`src/lib/postImport2B.ts`) writes through to the live `bills_not_in_2b` /
+`bills_not_in_books` ledger that ITC Summary, Suspended Reco and
+month-to-month carry-forward already read from. `2B Reconciliation`
+(`TwoBReconciliationPage.tsx`) is **read-only** — display, export, version
+history/restore, and destructive Clear Data only; it is never edited directly.
+
+**Read `docs/2B_RECONCILIATION_FLOW.md` before changing this flow.** The
+per-document mapping (MATCHED/MISMATCHED claimed at the 2B value, INELIGIBLE
+and ITC_OF_OTHERS excluded entirely, NOT_IN_BOOKS/NOT_IN_2B the only rows that
+reach the ledger) and ITC Summary row 5.1's auto-link are elected positions,
+not settled law — and were implemented without a firm sign-off conversation,
+so treat them as reversible defaults pending confirmation, not fixed rules.
+

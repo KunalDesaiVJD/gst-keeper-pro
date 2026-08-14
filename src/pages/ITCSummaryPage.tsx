@@ -23,6 +23,7 @@ import * as XLSX from 'xlsx';
 import {
   computeNet4C, computePartialItcSplit, computeSection4ATotal5, computeTotal4A, computeTotal4B,
 } from '@/utils/builderPartialItc';
+import { fetchImport2BEligibleTotal } from '@/lib/postImport2B';
 
 interface ITCRow {
   srNo: string;
@@ -60,7 +61,7 @@ const getDefaultITCData = (): ITCData => ({
     { srNo: '(3)', particular: 'RCM ITC', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
     { srNo: '(4)', particular: 'Inward Supplies from ISD', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
     { srNo: '(5)', particular: 'All other ITC', igst: 0, cgst: 0, sgst: 0, isHeader: true, reasons: '' },
-    { srNo: '5.1', particular: 'ITC for the Month', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '5.1', particular: 'ITC for the Month', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
     { srNo: '5.2', particular: 'ITC for Previous Month, if any', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
     { srNo: '5.3', particular: 'Debit Note', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
     { srNo: '5.4', particular: 'Reclaim of ITC Reversed for Previous months', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
@@ -95,7 +96,7 @@ const getPartialITCData = (): ITCData => ({
     { srNo: '(3)', particular: 'RCM ITC', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
     { srNo: '(4)', particular: 'Inward Supplies from ISD', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
     { srNo: '(5)', particular: 'All other ITC', igst: 0, cgst: 0, sgst: 0, isHeader: true, reasons: '' },
-    { srNo: '5.1', particular: 'ITC for the Month', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
+    { srNo: '5.1', particular: 'ITC for the Month', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
     { srNo: '5.2', particular: 'ITC wrongly adjusted', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
     { srNo: '5.3', particular: 'Debit Note', igst: 0, cgst: 0, sgst: 0, editable: true, reasons: '' },
     { srNo: '5.4', particular: 'Reclaim of ITC Reversed for the Previous months', igst: 0, cgst: 0, sgst: 0, isAutoLinked: true, reasons: '' },
@@ -166,6 +167,7 @@ const ITCSummaryPage: React.FC = () => {
   const [reversalFromReco, setReversalFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [reclaimFromReco, setReclaimFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [expenseOutFromReco, setExpenseOutFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
+  const [eligibleFromImport2B, setEligibleFromImport2B] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [rcmTotals, setRcmTotals] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [negativeValueError, setNegativeValueError] = useState<string | null>(null);
   const [dataLoadVersion, setDataLoadVersion] = useState(0);
@@ -378,6 +380,18 @@ const ITCSummaryPage: React.FC = () => {
     }
   }, [selectedClient, selectedMonth]);
 
+  // Row 5.1 "ITC for the Month" — auto-linked from Import 2B's classified
+  // total (MATCHED + MISMATCHED, claimed at the GSTR-2B figure). See
+  // src/lib/postImport2B.ts for the full GST-law reasoning.
+  const fetchImport2BEligible = useCallback(async () => {
+    if (!selectedClient || !selectedMonth) {
+      setEligibleFromImport2B({ igst: 0, cgst: 0, sgst: 0 });
+      return;
+    }
+    const totals = await fetchImport2BEligibleTotal(selectedClient, selectedMonth);
+    setEligibleFromImport2B(totals);
+  }, [selectedClient, selectedMonth]);
+
   // Fetch ITC Summary data when client/month changes
   const fetchITCSummary = useCallback(async () => {
     if (!selectedClient || !selectedMonth) return;
@@ -507,7 +521,8 @@ const ITCSummaryPage: React.FC = () => {
     fetchRecoData();
     fetchRCMTotals();
     fetchGSTUpdateReminder();
-  }, [fetchITCSummary, fetchRecoData, fetchRCMTotals, fetchGSTUpdateReminder]);
+    fetchImport2BEligible();
+  }, [fetchITCSummary, fetchRecoData, fetchRCMTotals, fetchGSTUpdateReminder, fetchImport2BEligible]);
 
   // Update auto-linked rows when reversal/reclaim/RCM data changes OR when data is loaded
   useEffect(() => {
@@ -531,11 +546,21 @@ const ITCSummaryPage: React.FC = () => {
         }
         // Row 5.4 - reclaim data
         if (row.srNo === '5.4') {
-          return { 
-            ...row, 
-            igst: reclaimFromReco.igst, 
-            cgst: reclaimFromReco.cgst, 
-            sgst: reclaimFromReco.sgst 
+          return {
+            ...row,
+            igst: reclaimFromReco.igst,
+            cgst: reclaimFromReco.cgst,
+            sgst: reclaimFromReco.sgst
+          };
+        }
+        // Row 5.1 - ITC for the Month, auto-linked from Import 2B's MATCHED +
+        // MISMATCHED total (claimed at the 2B figure — see postImport2B.ts).
+        if (row.srNo === '5.1') {
+          return {
+            ...row,
+            igst: eligibleFromImport2B.igst,
+            cgst: eligibleFromImport2B.cgst,
+            sgst: eligibleFromImport2B.sgst,
           };
         }
         return row;
@@ -582,7 +607,7 @@ const ITCSummaryPage: React.FC = () => {
       
       return newData;
     });
-  }, [reversalFromReco, reclaimFromReco, expenseOutFromReco, rcmTotals, dataLoadVersion]);
+  }, [reversalFromReco, reclaimFromReco, expenseOutFromReco, eligibleFromImport2B, rcmTotals, dataLoadVersion]);
 
   // Calculate Partial ITC formula values (used in rendering)
   // FORMULAS as per Excel:
