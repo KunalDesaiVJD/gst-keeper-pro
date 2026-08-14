@@ -478,29 +478,38 @@ export async function resyncUnfiledPostings(params: {
 
   // Every unfiled invoice — freshly resynced above or already at the target
   // rate from an earlier call — gets its adjustment legs checked, since a
-  // mismatch can be left behind either way.
-  type AdjRow = { id: string; consideration_adjusted: number; rate_code: string };
-  for (const i of unfiledInvoices) {
-    const [{ data: advAdj }, { data: openAdj }] = await Promise.all([
+  // mismatch can be left behind either way. Batched by invoice_id IN (...)
+  // rather than one query pair per invoice: a project with a couple hundred
+  // units easily has that many invoices, and this sweep runs on every Ledger
+  // tab load — an unbounded per-invoice round trip made the whole thing slow
+  // enough on a large project (Shree Maruti Infra, ~160 units) to risk never
+  // actually finishing before something (a re-render, a slow network) cut it
+  // short, which is exactly how Plot 148's own adjustment leg was still
+  // showing stale days after this fix first shipped.
+  type AdjRow = { id: string; consideration_adjusted: number; rate_code: string; invoice_id: string };
+  const invoiceIds = unfiledInvoices.map((i) => i.id);
+  const [{ data: advAdjAll }, { data: openAdjAll }] = invoiceIds.length
+    ? await Promise.all([
       supabase.from('builder_advance_adjustments')
-        .select('id, consideration_adjusted, rate_code').eq('invoice_id', i.id),
+        .select('id, consideration_adjusted, rate_code, invoice_id').in('invoice_id', invoiceIds),
       supabase.from('builder_opening_balance_adjustments')
-        .select('id, consideration_adjusted, rate_code').eq('invoice_id', i.id),
-    ]);
-    for (const a of ((advAdj || []) as AdjRow[]).filter((a) => a.rate_code !== targetRateCode)) {
-      const at = computeTax(a.consideration_adjusted, targetRateCode);
-      await supabase.from('builder_advance_adjustments').update({
-        rate_code: targetRateCode, rate_pct: at.ratePct,
-        taxable_value_adjusted: at.taxableValue, cgst: at.cgst, sgst: at.sgst,
-      }).eq('id', a.id);
-    }
-    for (const a of ((openAdj || []) as AdjRow[]).filter((a) => a.rate_code !== targetRateCode)) {
-      const at = computeTax(a.consideration_adjusted, targetRateCode);
-      await supabase.from('builder_opening_balance_adjustments').update({
-        rate_code: targetRateCode, rate_pct: at.ratePct,
-        taxable_value_adjusted: at.taxableValue, cgst: at.cgst, sgst: at.sgst,
-      }).eq('id', a.id);
-    }
+        .select('id, consideration_adjusted, rate_code, invoice_id').in('invoice_id', invoiceIds),
+    ])
+    : [{ data: [] }, { data: [] }];
+
+  for (const a of ((advAdjAll || []) as AdjRow[]).filter((a) => a.rate_code !== targetRateCode)) {
+    const at = computeTax(a.consideration_adjusted, targetRateCode);
+    await supabase.from('builder_advance_adjustments').update({
+      rate_code: targetRateCode, rate_pct: at.ratePct,
+      taxable_value_adjusted: at.taxableValue, cgst: at.cgst, sgst: at.sgst,
+    }).eq('id', a.id);
+  }
+  for (const a of ((openAdjAll || []) as AdjRow[]).filter((a) => a.rate_code !== targetRateCode)) {
+    const at = computeTax(a.consideration_adjusted, targetRateCode);
+    await supabase.from('builder_opening_balance_adjustments').update({
+      rate_code: targetRateCode, rate_pct: at.ratePct,
+      taxable_value_adjusted: at.taxableValue, cgst: at.cgst, sgst: at.sgst,
+    }).eq('id', a.id);
   }
 
   return { receiptsUpdated, invoicesUpdated };
@@ -547,19 +556,36 @@ export async function autoReclassifyProject(
   const candidates = mergeCandidates(appTracked, historical)
     .filter((c) => !done.has(c.unitId));
 
+  // Every unit runs in isolation: one unit's failure (a network hiccup, a
+  // constraint violation) must not silently strand every unit after it in
+  // iteration order — a project can easily run to a couple hundred units, and
+  // an unguarded loop here means one bad apple leaves the REST unswept with
+  // no visible sign anything went wrong short of a generic toast upstream.
+  // Exactly this shape of gap is why Plot 148's own adjustment leg was still
+  // showing stale days after the fix for it first shipped.
   const postingPeriod = currentPeriod();
   for (const c of candidates) {
-    const schedule = scheduleFor(c, postingPeriod);
-    await autoPostReclassification({ candidate: c, schedule, postingPeriod, userId });
+    try {
+      const schedule = scheduleFor(c, postingPeriod);
+      await autoPostReclassification({ candidate: c, schedule, postingPeriod, userId });
+    } catch {
+      // Leave it as a candidate — the next sweep (next Ledger tab load,
+      // or Builder Returns' Generate) retries it from scratch.
+    }
   }
 
   const resynced: ReclassifySweepResult['resynced'] = [];
   for (const unitId of unitIds) {
     const cls = classification[unitId];
-    const r = await resyncUnfiledPostings({
-      unitId, targetRateCode: cls.rateCode as BuilderRateCode, filedPeriods,
-    });
-    if (r.receiptsUpdated + r.invoicesUpdated > 0) resynced.push({ unitId, ...r });
+    try {
+      const r = await resyncUnfiledPostings({
+        unitId, targetRateCode: cls.rateCode as BuilderRateCode, filedPeriods,
+      });
+      if (r.receiptsUpdated + r.invoicesUpdated > 0) resynced.push({ unitId, ...r });
+    } catch {
+      // Same reasoning — this unit's resync failed, but every other unit
+      // still needs its turn.
+    }
   }
 
   return { posted: candidates, resynced };
