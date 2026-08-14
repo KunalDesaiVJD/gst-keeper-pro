@@ -1042,7 +1042,7 @@ const GSTR1DataPage: React.FC = () => {
             ctin: party.ctin,
             ntNum: nt.nt_num,
             ntDt: nt.nt_dt,
-            ntTyp: nt.typ,
+            ntTyp: nt.ntty ?? nt.typ,
             val: nt.val,
             pos: nt.pos,
             rt: itm.itm_det?.rt,
@@ -1066,7 +1066,7 @@ const GSTR1DataPage: React.FC = () => {
         rows.push({
           ntNum: nt.nt_num,
           ntDt: nt.nt_dt,
-          ntTyp: nt.typ,
+          ntTyp: nt.ntty ?? nt.typ,
           val: nt.val,
           pos: nt.pos,
           rt: itm.itm_det?.rt,

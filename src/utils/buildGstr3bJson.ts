@@ -74,6 +74,10 @@ export interface Gstr3bResult {
 
 const r2 = (n: number) => Math.round((n || 0) * 100) / 100;
 const num = (v: any) => (typeof v === 'number' ? v : parseFloat(v) || 0);
+// Note type lives in `ntty` on real portal/GSTN exports (`typ` on some older
+// exports) — check both, defaulting to credit if neither is present.
+const noteSign = (nt: any): 1 | -1 =>
+  String(nt?.ntty ?? nt?.typ ?? 'C').toUpperCase().startsWith('D') ? 1 : -1;
 
 function retPeriod(mmYyyy: string): string {
   const [mm, yyyy] = (mmYyyy || '').split('/');
@@ -106,8 +110,8 @@ function computeOutward(g: any) {
     (g.b2cl || []).forEach((s: any) => (s.inv || []).forEach((inv: any) => (inv.itms || []).forEach((i: any) => addDet(i.itm_det || {}))));
     (g.b2cs || []).forEach((i: any) => addDet(i));
     // Credit note subtracts, debit note adds (same convention as computeGstr1OutputTax).
-    (g.cdnr || []).forEach((p: any) => (p.nt || []).forEach((nt: any) => (nt.itms || []).forEach((i: any) => addDet(i.itm_det || {}, nt.typ === 'C' ? -1 : 1))));
-    (g.cdnur || []).forEach((nt: any) => (nt.itms || []).forEach((i: any) => addDet(i.itm_det || {}, nt.typ === 'C' ? -1 : 1)));
+    (g.cdnr || []).forEach((p: any) => (p.nt || []).forEach((nt: any) => (nt.itms || []).forEach((i: any) => addDet(i.itm_det || {}, noteSign(nt)))));
+    (g.cdnur || []).forEach((nt: any) => (nt.itms || []).forEach((i: any) => addDet(i.itm_det || {}, noteSign(nt))));
     // Table 10 — amendments to earlier B2CS entries. Same shape as b2cs, and
     // they carry a real liability (a retrospective re-rating is reported here,
     // not as a debit note), so they belong in 3.1(a) like any other outward row.
