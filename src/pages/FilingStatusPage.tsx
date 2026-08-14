@@ -1518,7 +1518,7 @@ const FilingStatusPage: React.FC = () => {
                         <SelectItem value="Filed">Filed</SelectItem>
                       </SelectContent>
                     </Select>
-                    {returnType === 'GSTR-1' && record.status === 'Filed' && !gstr1DataClientIds.has(record.client_id) && (
+                    {returnType === 'GSTR-1' && record.status === 'Filed' && !record.is_nil && !gstr1DataClientIds.has(record.client_id) && (
                       <Popover>
                         <PopoverTrigger asChild>
                           <button className="shrink-0" title="GSTR-1 data not imported">
