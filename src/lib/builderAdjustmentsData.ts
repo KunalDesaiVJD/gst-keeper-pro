@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import {
-  classifyUnit, computeTax, testRrep,
+  classifyUnit, computeTax, testRrep, NOTIFIED_RATE_PCT, RATE_CODE_LABEL,
   type BuilderRateCode, type ChargeInclusionSettings,
 } from '@/utils/builderRates';
 import { computeUnitLedger } from '@/utils/builderLedger';
@@ -48,6 +48,8 @@ export async function fetchFiledPeriods(clientId: string): Promise<Set<string>> 
 export interface ReclassCandidate {
   unitId: string;
   unitNo: string;
+  /** The rate the affected periods were actually filed at. */
+  oldRateCode: BuilderRateCode;
   currentRateCode: BuilderRateCode;
   currentRatePct: number;
   grossConsideration: number;
@@ -56,15 +58,23 @@ export interface ReclassCandidate {
 }
 
 /**
- * Units carrying affordable-rate entries in ALREADY-FILED returns whose
- * current classification is no longer affordable — the only case a formal
- * Table 10 amendment is needed for. A crossing whose affected periods are
- * all still unfiled produces no candidate here; resyncUnfiledPostings()
- * handles those by correcting the postings directly instead.
+ * Units carrying ALREADY-FILED postings at a rate that no longer matches
+ * their current live classification — the only case a formal Table 10
+ * amendment is needed for. A crossing whose affected periods are all still
+ * unfiled produces no candidate here; resyncUnfiledPostings() handles those
+ * by correcting the postings directly instead.
  *
- * The trigger is always the Rs. 45 lakh limb — carpet area is physical and
- * cannot move. Typically a PLC, parking or club charge added long after
- * booking quietly pushes the unit over.
+ * Not scoped to any one rate code: the Rs. 45 lakh affordable ceiling is the
+ * most common trigger (a PLC, parking or club charge added long after
+ * booking quietly pushes a residential unit over it), but a project's
+ * commercial mix crossing the 15% RREP/REP threshold moves EVERY commercial
+ * unit's rate at once, and is exactly as real a mismatch. Both are just "what
+ * got filed no longer equals what the unit currently classifies as" — this
+ * used to only check for the affordable case specifically (`.eq('rate_code',
+ * 'AFFORDABLE')`), which is why a commercial RREP→REP move on Shree Maruti
+ * Infra (14/08/2026) was invisible to this sweep even after the project's
+ * carpet area mix was corrected — see resyncUnfiledPostings()'s doc comment
+ * for the unfiled half of that same incident.
  */
 export async function findReclassCandidates(
   projectId: string,
@@ -74,23 +84,26 @@ export async function findReclassCandidates(
   const { data } = await supabase
     .from('builder_period_postings')
     .select('unit_id, unit_no, period_month, rate_code, taxable_value')
-    .eq('project_id', projectId)
-    .eq('rate_code', 'AFFORDABLE');
+    .eq('project_id', projectId);
 
-  type Row = { unit_id: string; unit_no: string; period_month: string; taxable_value: number };
+  type Row = {
+    unit_id: string; unit_no: string; period_month: string; rate_code: string; taxable_value: number;
+  };
   const rows = (data || []) as unknown as Row[];
 
   const byUnit = new Map<string, ReclassCandidate>();
   rows.forEach((r) => {
     const cls = classification[r.unit_id];
-    // Still affordable, or unknown — nothing to correct.
-    if (!cls || cls.rateCode === 'AFFORDABLE') return;
+    // What was posted already agrees with the unit's current rate, or the
+    // unit is unknown — nothing to correct.
+    if (!cls || r.rate_code === cls.rateCode) return;
     // Not filed yet — resyncUnfiledPostings() will just correct it in place.
     if (!filedPeriods.has(r.period_month)) return;
 
     const entry = byUnit.get(r.unit_id) || {
       unitId: r.unit_id,
       unitNo: r.unit_no,
+      oldRateCode: r.rate_code as BuilderRateCode,
       currentRateCode: cls.rateCode as BuilderRateCode,
       currentRatePct: cls.ratePct,
       grossConsideration: cls.agreementValue,
@@ -245,6 +258,7 @@ export async function findHistoricalReclassCandidates(
     candidates.push({
       unitId,
       unitNo: unitNoOf.get(unitId) || '',
+      oldRateCode: 'AFFORDABLE',
       currentRateCode: cls.rateCode as BuilderRateCode,
       currentRatePct: cls.ratePct,
       grossConsideration: cls.agreementValue,
@@ -279,7 +293,7 @@ export function scheduleFor(
 ): ReclassSchedule {
   return buildReclassSchedule({
     periods: candidate.periods,
-    fromRateCode: 'AFFORDABLE',
+    fromRateCode: candidate.oldRateCode,
     toRateCode: candidate.currentRateCode,
     postingPeriod,
   });
@@ -296,8 +310,8 @@ export async function saveReclassification(params: {
   const { candidate: c, schedule: s } = params;
   const { data, error } = await supabase.from('builder_reclassifications').insert({
     unit_id: c.unitId,
-    from_rate_code: 'AFFORDABLE',
-    from_rate_pct: 1.5,
+    from_rate_code: c.oldRateCode,
+    from_rate_pct: NOTIFIED_RATE_PCT[c.oldRateCode],
     to_rate_code: c.currentRateCode,
     to_rate_pct: c.currentRatePct,
     gross_before: 0,
@@ -331,11 +345,13 @@ export async function saveReclassification(params: {
 }
 
 /**
- * Post a re-rating with no staff review step. The firm's position (§8 of
- * BUILDER_GST_POSITIONS.md) is that a unit crossing ₹45L was never
- * affordable — nothing about the correction is a judgment call once the
- * crossing itself is detected, so it is posted directly rather than staged
- * as a DRAFT waiting on a "Post" click.
+ * Post a re-rating with no staff review step. Once a mismatch between what
+ * was filed and the unit's current live classification is detected, nothing
+ * about the correction is a judgment call — the firm's position (§8 of
+ * BUILDER_GST_POSITIONS.md) is that the old rate never applied, whether the
+ * trigger is a residential unit crossing ₹45L or a project's commercial mix
+ * crossing the 15% RREP/REP threshold — so it is posted directly rather than
+ * staged as a DRAFT waiting on a "Post" click.
  */
 async function autoPostReclassification(params: {
   candidate: ReclassCandidate;
@@ -345,15 +361,19 @@ async function autoPostReclassification(params: {
 }): Promise<string> {
   const { candidate: c, schedule: s } = params;
   const nowIso = new Date().toISOString();
+  const reason = c.oldRateCode === 'AFFORDABLE'
+    ? 'Auto-posted: gross consideration crossed ₹45,00,000 — the affordable concession never applied.'
+    : `Auto-posted: unit's classification moved from ${RATE_CODE_LABEL[c.oldRateCode]} to `
+      + `${RATE_CODE_LABEL[c.currentRateCode]} — what was filed no longer matches its current rate.`;
   const { data, error } = await supabase.from('builder_reclassifications').insert({
     unit_id: c.unitId,
-    from_rate_code: 'AFFORDABLE',
-    from_rate_pct: 1.5,
+    from_rate_code: c.oldRateCode,
+    from_rate_pct: NOTIFIED_RATE_PCT[c.oldRateCode],
     to_rate_code: c.currentRateCode,
     to_rate_pct: c.currentRatePct,
     gross_before: 0,
     gross_after: c.grossConsideration,
-    reason: 'Auto-posted: gross consideration crossed ₹45,00,000 — the affordable concession never applied.',
+    reason,
     posting_period: params.postingPeriod,
     total_value_retaxed: s.totalValueRetaxed,
     total_differential_tax: s.totalDifferentialTax,
