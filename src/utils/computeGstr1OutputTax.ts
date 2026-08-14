@@ -11,8 +11,10 @@
 // Per project decision (June 2026): Cess is ignored entirely.
 //
 // Sign convention for credit/debit notes:
-//   nt.typ === 'C'  → credit note → REDUCES outward tax
-//   nt.typ === 'D'  → debit note  → INCREASES outward tax
+//   note type "C" (credit note) → REDUCES outward tax
+//   note type "D" (debit note)  → INCREASES outward tax
+// The type lives in `ntty` on real portal/GSTN exports (`typ` on some older
+// exports) — check both, defaulting to credit if neither is present.
 // Advance receipts (`at`) add to outward tax for the period; advance
 // adjustments (`txpd`) subtract because the tax was paid in an earlier period.
 
@@ -26,6 +28,9 @@ const num = (v: any): number => {
   const n = typeof v === 'number' ? v : parseFloat(v);
   return Number.isFinite(n) ? n : 0;
 };
+
+const noteSign = (nt: any): 1 | -1 =>
+  String(nt?.ntty ?? nt?.typ ?? 'C').toUpperCase().startsWith('D') ? 1 : -1;
 
 export const computeGstr1OutputTax = (rawJson: any): Gstr1OutputTotals => {
   let igst = 0, cgst = 0, sgst = 0;
@@ -63,7 +68,7 @@ export const computeGstr1OutputTax = (rawJson: any): Gstr1OutputTotals => {
   // CDNR (credit/debit notes, registered)
   (rawJson.cdnr || []).forEach((party: any) => {
     (party.nt || []).forEach((nt: any) => {
-      const sign = nt.typ === 'C' ? -1 : 1;
+      const sign = noteSign(nt);
       (nt.itms || []).forEach((itm: any) => {
         const d = itm.itm_det || {};
         igst += sign * num(d.iamt);
@@ -75,7 +80,7 @@ export const computeGstr1OutputTax = (rawJson: any): Gstr1OutputTotals => {
 
   // CDNUR (credit/debit notes, unregistered — IGST only)
   (rawJson.cdnur || []).forEach((nt: any) => {
-    const sign = nt.typ === 'C' ? -1 : 1;
+    const sign = noteSign(nt);
     (nt.itms || []).forEach((itm: any) => {
       const d = itm.itm_det || {};
       igst += sign * num(d.iamt);
