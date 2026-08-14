@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Download, FileText, Lock, Unlock, Search, Filter, ChevronDown, Info, Upload, Eye, Trash2, LogIn } from 'lucide-react';
+import { Download, FileText, Lock, Unlock, Search, Filter, ChevronDown, Info, Upload, Eye, Trash2, LogIn, AlertTriangle } from 'lucide-react';
 import { FilingStatusType, ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth, RegistrationType, RETURN_TYPES_BY_REGISTRATION, filingStatusDisplayLabel } from '@/types';
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
@@ -47,6 +47,14 @@ const filingStatusAccent = (status: string): string => {
   }
 };
 
+
+// MM/YYYY -> "Jul-26", matching gstr1_data.period_month (same conversion as
+// fetchGstr3b.ts / Gstr3bPage.tsx).
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const toShortMonth = (mmYyyy: string): string => {
+  const [mm, yyyy] = (mmYyyy || '').split('/');
+  return mm && yyyy ? `${MONTH_SHORT[Number(mm) - 1]}-${String(yyyy).slice(-2)}` : '';
+};
 
 // Due date constants for each return type
 const RETURN_DUE_DATES: Record<string, number> = {
@@ -91,6 +99,7 @@ interface FilingRecord {
   updated_at: string | null;
   arn: string | null;
   return_pdf_url: string | null;
+  is_nil?: boolean | null;
   // Joined client data
   clientName?: string;
   clientEmail?: string;
@@ -113,6 +122,10 @@ const FilingStatusPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [lateFilingsFilter, setLateFilingsFilter] = useState<boolean>(false);
   const [schemeHistoryMap, setSchemeHistoryMap] = useState<Record<string, SchemeHistoryEntry[]>>({});
+  // Which clients have a gstr1_data row for the selected period — used to flag
+  // "GSTR-1 marked Filed but no data imported into GST Keeper" on the GSTR-1
+  // tab (that gap silently drafts a ₹0 GSTR-3B with no explanation).
+  const [gstr1DataClientIds, setGstr1DataClientIds] = useState<Set<string>>(new Set());
   
   // Filter states
   const [clientNameFilter, setClientNameFilter] = useState<string>('');
@@ -330,6 +343,23 @@ const FilingStatusPage: React.FC = () => {
     setFilingRecords(enrichedRecords);
   }, [selectedMonth]);
 
+  // Bulk lookup of which clients have GSTR-1 data saved for the period —
+  // gstr1_data.period_month uses short-month format ("Jul-26"), unlike
+  // filing_status which uses MM/YYYY.
+  const fetchGstr1DataClientIds = useCallback(async () => {
+    const short = toShortMonth(selectedMonth);
+    if (!short) { setGstr1DataClientIds(new Set()); return; }
+    const { data, error } = await supabase
+      .from('gstr1_data')
+      .select('client_id')
+      .eq('period_month', short);
+    if (error) {
+      console.error('Error fetching gstr1_data client ids:', error);
+      return;
+    }
+    setGstr1DataClientIds(new Set((data || []).map((r) => r.client_id)));
+  }, [selectedMonth]);
+
   // Build target date lookup from clients table (single source of truth)
   const buildTargetDateLookup = useCallback(() => {
     const lookup: Record<string, number> = {};
@@ -402,11 +432,11 @@ const FilingStatusPage: React.FC = () => {
   useEffect(() => {
     const loadData = async () => {
       setIsLoading(true);
-      await Promise.all([fetchClients(), fetchFilingRecords(), fetchSchemeHistories()]);
+      await Promise.all([fetchClients(), fetchFilingRecords(), fetchSchemeHistories(), fetchGstr1DataClientIds()]);
       setIsLoading(false);
     };
     loadData();
-  }, [fetchClients, fetchFilingRecords, fetchSchemeHistories]);
+  }, [fetchClients, fetchFilingRecords, fetchSchemeHistories, fetchGstr1DataClientIds]);
 
   // Real-time subscription
   useEffect(() => {
@@ -418,12 +448,27 @@ const FilingStatusPage: React.FC = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => {
         fetchClients();
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'gstr1_data' }, () => {
+        fetchGstr1DataClientIds();
+      })
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchClients, fetchFilingRecords]);
+  }, [fetchClients, fetchFilingRecords, fetchGstr1DataClientIds]);
+
+  // GSTR-1's is_nil per client for the selected period, keyed off the raw
+  // filing_status rows already fetched (filing_status.select('*') already
+  // includes is_nil — no extra query). Covers the IFF sub-type too, since IFF
+  // clients are shown under the same "GSTR-1" tab.
+  const gstr1IsNilByClient = useMemo(() => {
+    const map = new Map<string, boolean>();
+    filingRecords
+      .filter((r) => r.return_type === 'GSTR-1' || r.return_type === 'GSTR-1 (IFF)')
+      .forEach((r) => map.set(r.client_id, !!r.is_nil));
+    return map;
+  }, [filingRecords]);
 
   // Generate filing records for display. Delegates to the shared helper so the
   // Dashboard and this page always derive their counts from the same logic.
@@ -1455,23 +1500,55 @@ const FilingStatusPage: React.FC = () => {
                   </Badge>
                 </td>
                 <td>
-                  <Select 
-                    value={record.status} 
-                    disabled={record.is_locked && !canUnlockSheets()}
-                    onValueChange={(value) => handleStatusChange(record, value as FilingStatusType, editingArn[record.id])}
-                  >
-                    <SelectTrigger className={`w-full h-8 text-xs [appearance:none] ${filingStatusAccent(record.status)}`}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Prepared">Prepared</SelectItem>
-                      <SelectItem value="Prepared Pending">Not to File</SelectItem>
-                      <SelectItem value="Data Pending">Data Pending</SelectItem>
-                      <SelectItem value="Data Received">Data Received</SelectItem>
-                      <SelectItem value="Mismatch in Data">Mismatch in Data</SelectItem>
-                      <SelectItem value="Filed">Filed</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <div className="flex items-center gap-1">
+                    <Select
+                      value={record.status}
+                      disabled={record.is_locked && !canUnlockSheets()}
+                      onValueChange={(value) => handleStatusChange(record, value as FilingStatusType, editingArn[record.id])}
+                    >
+                      <SelectTrigger className={`w-full h-8 text-xs [appearance:none] ${filingStatusAccent(record.status)}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Prepared">Prepared</SelectItem>
+                        <SelectItem value="Prepared Pending">Not to File</SelectItem>
+                        <SelectItem value="Data Pending">Data Pending</SelectItem>
+                        <SelectItem value="Data Received">Data Received</SelectItem>
+                        <SelectItem value="Mismatch in Data">Mismatch in Data</SelectItem>
+                        <SelectItem value="Filed">Filed</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {returnType === 'GSTR-1' && record.status === 'Filed' && !gstr1DataClientIds.has(record.client_id) && (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button className="shrink-0" title="GSTR-1 data not imported">
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent side="left" className="w-[260px] p-3 text-xs">
+                          <p className="text-amber-600 dark:text-amber-400 font-medium">GSTR-1 data not imported</p>
+                          <p className="text-muted-foreground mt-1">
+                            Marked Filed, but no GSTR-1 data has been imported into GST Keeper for this period — the GSTR-3B draft will show ₹0 outward tax until this is imported.
+                          </p>
+                        </PopoverContent>
+                      </Popover>
+                    )}
+                    {returnType === 'GSTR-3B' && gstr1IsNilByClient.get(record.client_id) === true && !record.is_nil && (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button className="shrink-0" title="NIL not carried forward from GSTR-1">
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent side="left" className="w-[260px] p-3 text-xs">
+                          <p className="text-amber-600 dark:text-amber-400 font-medium">NIL not carried forward</p>
+                          <p className="text-muted-foreground mt-1">
+                            GSTR-1 for this period is marked NIL — consider marking GSTR-3B NIL too (see the NIL Return checkbox on the GSTR-3B page).
+                          </p>
+                        </PopoverContent>
+                      </Popover>
+                    )}
+                  </div>
                 </td>
                 <td>
                   <Input
