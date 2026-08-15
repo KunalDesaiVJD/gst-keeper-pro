@@ -588,7 +588,7 @@ const BulkReceiptsDialog: React.FC<Props> = ({
                 );
               })}
             </TableBody>
-            <TableFooter>
+            <TableFooter className="sticky bottom-0 bg-background">
               <TableRow>
                 <TableCell colSpan={3} className="font-semibold">
                   {active.length} of {units.length} units

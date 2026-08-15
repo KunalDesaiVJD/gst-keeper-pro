@@ -167,6 +167,19 @@ The split is derived from the project master and offered on the ITC Summary
 page; adopting it is a deliberate action, because the areas drive a real
 reversal.
 
+**No-ITC clients (`builder_itc_type = 'NO_ITC'`, 14/08/2026).** Treated as the
+100% case of the same mechanism rather than a separate code path: 4A still
+shows the true ITC 2B reconciliation found (useful for audit trail), and
+4(B)(1) reverses all of it — the carpet-area ratio is forced to 1 rather than
+read from `commercial_area`/`residential_area`, since a No-ITC builder's real
+area mix is irrelevant to a reversal that is always total. Net ITC (4C) lands
+at nil either way. Before this date the `NO_ITC` flag existed on the client
+record and in the client-setup form but was never actually read anywhere
+downstream — 2B Reconciliation classified a No-ITC client's purchase invoices
+exactly like any other client's, and that classified total flowed straight
+into ITC Summary row 5.1 and Net ITC as a real, claimable-looking figure with
+nothing to suppress it. Fixed live on Elenza Callista Buildcon.
+
 ## 8. Retrospective re-rating
 
 **The ₹45L test floors at money already recognised, not just the unit

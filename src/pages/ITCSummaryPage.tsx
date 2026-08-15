@@ -186,6 +186,14 @@ const ITCSummaryPage: React.FC = () => {
 
   // Check if client is a Partial ITC Builder client
   const isPartialITCClient = selectedClientData?.builder_itc_type === 'PARTIAL_ITC';
+  // A No-ITC builder client is the 100% case of the same reversal machinery:
+  // every rupee of input tax the 2B reconciliation finds gets reversed in
+  // 4(B)(1), same as a Partial-ITC client's residential share does, just at
+  // a ratio of 1 instead of whatever the project carpet-area mix works out
+  // to. This is what keeps ITC Summary from surfacing a claimable-looking
+  // Net ITC (4C) for a client whose scheme structurally cannot claim any.
+  const isNoItcClient = selectedClientData?.builder_itc_type === 'NO_ITC';
+  const isReversalClient = isPartialITCClient || isNoItcClient;
   // Carpet areas derived from the builder project master. The apportionment
   // key is a fact about the projects, so it is better read from them than
   // hand-keyed onto the client record and left to drift.
@@ -193,8 +201,11 @@ const ITCSummaryPage: React.FC = () => {
     residential: number; commercial: number; projects: number;
   } | null>(null);
   const [isSyncingAreas, setIsSyncingAreas] = useState(false);
-  const commercialArea = selectedClientData?.commercial_area || 0;
-  const residentialArea = selectedClientData?.residential_area || 0;
+  // A No-ITC client's real carpet-area mix is irrelevant — the reversal is
+  // 100% by definition of the scheme, not by apportionment — so the ratio is
+  // forced to 1 rather than read from (likely unset) client fields.
+  const commercialArea = isNoItcClient ? 0 : (selectedClientData?.commercial_area || 0);
+  const residentialArea = isNoItcClient ? 1 : (selectedClientData?.residential_area || 0);
 
   // Check if client requires quarterly months only (IFF or Composition)
   const isQuarterlyClient = selectedClientData?.registration_type === 'IFF' || selectedClientData?.registration_type === 'Composition';
@@ -396,9 +407,11 @@ const ITCSummaryPage: React.FC = () => {
   const fetchITCSummary = useCallback(async () => {
     if (!selectedClient || !selectedMonth) return;
 
-    // Get client data to check for Partial ITC type
+    // Get client data to check for Partial ITC / No-ITC type — both use the
+    // same reversal template, just at a different reversal ratio.
     const clientData = clients.find(c => c.id === selectedClient);
-    const isPartial = clientData?.builder_itc_type === 'PARTIAL_ITC';
+    const isPartial = clientData?.builder_itc_type === 'PARTIAL_ITC'
+      || clientData?.builder_itc_type === 'NO_ITC';
     const commArea = clientData?.commercial_area || 0;
     const resArea = clientData?.residential_area || 0;
 
@@ -617,14 +630,14 @@ const ITCSummaryPage: React.FC = () => {
   // - iii) On Other reversal = -Total(4B)(2) × (Residential / Total Area) - AUTO-CALCULATED
   // - 4(B)(2) = SUM of sub-rows - AUTO-CALCULATED
   const partialITCCalculatedValues = useMemo(() => {
-    if (!isPartialITCClient) return null;
+    if (!isReversalClient) return null;
     return computePartialItcSplit({
       section4A: itcData.section4A,
       section4B: itcData.section4B,
       commercialArea,
       residentialArea,
     });
-  }, [isPartialITCClient, commercialArea, residentialArea, itcData.section4A, itcData.section4B]);
+  }, [isReversalClient, commercialArea, residentialArea, itcData.section4A, itcData.section4B]);
 
   // Pull the derived split whenever a partial-ITC client is selected.
   useEffect(() => {
@@ -688,7 +701,7 @@ const ITCSummaryPage: React.FC = () => {
             setItcSummaryId(newData.id);
             setIsLocked(newData.is_locked || false);
             if (newData.data && newData.data.section4A) {
-              const template = isPartialITCClient ? getPartialITCData() : getDefaultITCData();
+              const template = isReversalClient ? getPartialITCData() : getDefaultITCData();
               setItcData(applyStructuralFlags(newData.data as ITCData, template));
               toast.info('ITC Summary updated by another user');
             }
@@ -975,9 +988,9 @@ const ITCSummaryPage: React.FC = () => {
   // For Partial ITC: Total 4B = (1) calculated + (2) calculated
   const total4B = useMemo(
     () => computeTotal4B({
-      isPartialITCClient, section4B: itcData.section4B, partial: partialITCCalculatedValues,
+      isPartialITCClient: isReversalClient, section4B: itcData.section4B, partial: partialITCCalculatedValues,
     }),
-    [itcData.section4B, isPartialITCClient, partialITCCalculatedValues],
+    [itcData.section4B, isReversalClient, partialITCCalculatedValues],
   );
 
   // Net ITC (4C) = 4A - 4B
@@ -989,7 +1002,7 @@ const ITCSummaryPage: React.FC = () => {
 
   // Total Reversal for Partial ITC also needs special handling
   const totalReversal = useMemo(() => {
-    if (isPartialITCClient && partialITCCalculatedValues) {
+    if (isReversalClient && partialITCCalculatedValues) {
       // Use auto-calculated values
       const row1Vals = partialITCCalculatedValues.main1Calculated;
       const row2Vals = partialITCCalculatedValues.row2Calculated;
@@ -1001,7 +1014,7 @@ const ITCSummaryPage: React.FC = () => {
         .filter(r => !r.isHeader)
         .reduce((acc, r) => acc + r.igst + r.cgst + r.sgst, 0);
     }
-  }, [itcData.section4B, isPartialITCClient, partialITCCalculatedValues]);
+  }, [itcData.section4B, isReversalClient, partialITCCalculatedValues]);
 
   const formatNumber = (num: number): string => {
     // Handle -0 case by converting to 0
@@ -1363,8 +1376,8 @@ const ITCSummaryPage: React.FC = () => {
                         );
                       }
 
-                      // For Partial ITC: Use calculated values for auto-calculated rows
-                      if (isPartialITCClient && partialITCCalculatedValues) {
+                      // For Partial ITC / No-ITC: Use calculated values for auto-calculated rows
+                      if (isReversalClient && partialITCCalculatedValues) {
                         // (1) main row - AUTO-CALCULATED = SUM(i + ii + iii)
                         if (row.srNo === '(1)' && row.particular.includes('Calculation of Ineligible ITC')) {
                           const vals = partialITCCalculatedValues.main1Calculated;
@@ -1624,6 +1637,17 @@ const ITCSummaryPage: React.FC = () => {
                       )}
                     </tbody>
                   </table>
+                </div>
+              )}
+
+              {/* No-ITC builder: the reversal is 100% by definition of the scheme,
+                  not by carpet-area apportionment, so there is no area mix to show. */}
+              {isNoItcClient && (
+                <div className="mt-6 flex justify-end">
+                  <p className="text-sm text-muted-foreground max-w-md text-right">
+                    No-ITC builder client — every rupee of ITC found in 2B reconciliation is
+                    reversed in full at 4(B)(1), so Net ITC (4C) is always nil.
+                  </p>
                 </div>
               )}
 
