@@ -142,8 +142,27 @@ function computeOutward(g: any, periodMonth: string, alreadyFiled: boolean) {
     (g.b2cl || []).forEach((s: any) => (s.inv || []).forEach((inv: any) => (inv.itms || []).forEach((i: any) => addDet(i.itm_det || {}))));
     (g.b2cs || []).forEach((i: any) => addDet(i));
     // Credit note subtracts, debit note adds (same convention as computeGstr1OutputTax).
-    (g.cdnr || []).forEach((p: any) => (p.nt || []).forEach((nt: any) => (nt.itms || []).forEach((i: any) => addDet(i.itm_det || {}, noteSign(nt)))));
-    (g.cdnur || []).forEach((nt: any) => (nt.itms || []).forEach((i: any) => addDet(i.itm_det || {}, noteSign(nt))));
+    // A note against an RCM invoice carries its own rchrg='Y' (GSTN's real
+    // schema puts it on the note, not just the original invoice) and must get
+    // the same treatment as the B2B RCM branch above — value only, no tax —
+    // or its tax adjustment nets against nothing (the original invoice's tax
+    // was never added) and produces a phantom negative liability.
+    (g.cdnr || []).forEach((p: any) => (p.nt || []).forEach((nt: any) => {
+      const isRcmNote = applyRcmFix && String(nt.rchrg || 'N').toUpperCase() === 'Y';
+      const sign = noteSign(nt);
+      (nt.itms || []).forEach((i: any) => {
+        if (isRcmNote) det.txval += sign * num((i.itm_det || {}).txval);
+        else addDet(i.itm_det || {}, sign);
+      });
+    }));
+    (g.cdnur || []).forEach((nt: any) => {
+      const isRcmNote = applyRcmFix && String(nt.rchrg || 'N').toUpperCase() === 'Y';
+      const sign = noteSign(nt);
+      (nt.itms || []).forEach((i: any) => {
+        if (isRcmNote) det.txval += sign * num((i.itm_det || {}).txval);
+        else addDet(i.itm_det || {}, sign);
+      });
+    });
     // Table 10 — amendments to earlier B2CS entries. Same shape as b2cs, and
     // they carry a real liability (a retrospective re-rating is reported here,
     // not as a debit note), so they belong in 3.1(a) like any other outward row.

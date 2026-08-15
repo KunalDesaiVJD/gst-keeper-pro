@@ -18,8 +18,9 @@
 // Advance receipts (`at`) add to outward tax for the period; advance
 // adjustments (`txpd`) subtract because the tax was paid in an earlier period.
 //
-// B2B invoices under reverse charge (`rchrg: 'Y'`, Table 4B) are excluded —
-// see RCM_RCHRG_FIX_FROM below for the period this starts applying from.
+// B2B invoices under reverse charge (`rchrg: 'Y'`, Table 4B) are excluded, and
+// so are CDNR/CDNUR notes carrying the same rchrg='Y' — see RCM_RCHRG_FIX_FROM
+// below for the period this starts applying from.
 
 export interface Gstr1OutputTotals {
   igst: number;
@@ -81,9 +82,14 @@ export const computeGstr1OutputTax = (rawJson: any, periodMonth: string): Gstr1O
     sgst += num(item.samt);
   });
 
-  // CDNR (credit/debit notes, registered)
+  // CDNR (credit/debit notes, registered). A note against an RCM invoice
+  // carries its own rchrg: 'Y' in GSTN's schema and must be excluded the same
+  // way as the B2B branch above — otherwise its tax adjustment nets against
+  // an invoice tax that was never added in the first place, producing a
+  // phantom (often negative) output-tax figure.
   (rawJson.cdnr || []).forEach((party: any) => {
     (party.nt || []).forEach((nt: any) => {
+      if (applyRcmFix && String(nt.rchrg || 'N').toUpperCase() === 'Y') return;
       const sign = noteSign(nt);
       (nt.itms || []).forEach((itm: any) => {
         const d = itm.itm_det || {};
@@ -96,6 +102,7 @@ export const computeGstr1OutputTax = (rawJson: any, periodMonth: string): Gstr1O
 
   // CDNUR (credit/debit notes, unregistered — IGST only)
   (rawJson.cdnur || []).forEach((nt: any) => {
+    if (applyRcmFix && String(nt.rchrg || 'N').toUpperCase() === 'Y') return;
     const sign = noteSign(nt);
     (nt.itms || []).forEach((itm: any) => {
       const d = itm.itm_det || {};
