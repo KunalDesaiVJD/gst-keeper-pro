@@ -4,10 +4,11 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { Upload, Loader2, Trash2, Plus, Lock, X, RefreshCw, Inbox, FileSpreadsheet, Send, Clock } from 'lucide-react';
+import { Upload, Loader2, Trash2, Plus, Lock, X, RefreshCw, Inbox, FileSpreadsheet, Send, Clock, ChevronDown } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -169,12 +170,25 @@ const Import2BTab: React.FC = () => {
   const [isPosting, setIsPosting] = useState(false);
   const [lastPosted, setLastPosted] = useState<{ at: string; version: number | null } | null>(null);
   const [reclaimDialog, setReclaimDialog] = useState<ReclaimDialogState | null>(null);
+  // Zone 4's three sub-tables can each run to dozens of rows — collapsible,
+  // open by default.
+  const [zone4Open, setZone4Open] = useState({ reclaim: true, bookEntry: true, expensedOut: true });
 
   // Multi-select + bulk apply (2B table)
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkValue, setBulkValue] = useState('');
   // Column header filters (2B table)
   const [filters, setFilters] = useState({ supplier: '', invoice: '', gstin: '', action: '' });
+
+  // Row-action edits are staged here (docId -> new itc_action) rather than
+  // written on every dropdown change — "Save changes" below commits the
+  // batch. RECLAIM is the one exception: it always goes straight through the
+  // matching dialog (see handleDocActionChange), since that's a deliberate,
+  // evidence-confirmed action, not a routine classification pick.
+  const [pendingActions, setPendingActions] = useState<Record<string, string>>({});
+  const [isSavingActions, setIsSavingActions] = useState(false);
+  const pendingActionsRef = useRef(pendingActions);
+  pendingActionsRef.current = pendingActions;
 
   const isStaff = isStaffRole();
   const readOnly = isLocked || !isStaff;
@@ -264,6 +278,15 @@ const Import2BTab: React.FC = () => {
 
   useEffect(() => { fetchClients(); }, [fetchClients]);
   useEffect(() => { fetchAll(); }, [fetchAll]);
+  // Switching client/month leaves any staged-but-unsaved row actions behind —
+  // warn rather than silently drop them. Scoped to this effect (not fetchAll
+  // itself) so a post-Save refresh doesn't also trip this warning.
+  useEffect(() => {
+    if (Object.keys(pendingActionsRef.current).length > 0) {
+      toast.warning('Unsaved row-action changes were discarded — save before switching client/month next time.');
+    }
+    setPendingActions({});
+  }, [selectedClient, selectedMonth]);
 
   const twoBLites: TwoBLite[] = useMemo(
     () => twoBDocs.map((d) => ({
@@ -273,16 +296,22 @@ const Import2BTab: React.FC = () => {
     [twoBDocs],
   );
 
+  // The row's current action — a staged, unsaved pick if there is one,
+  // otherwise whatever's in the DB.
+  const effectiveAction = useCallback((d: TwoBDoc) => pendingActions[d.id] ?? d.itc_action, [pendingActions]);
+  const pendingCount = Object.keys(pendingActions).length;
+
   const filteredDocs = useMemo(() => twoBDocs.filter((d) => {
     if (filters.supplier && !(d.supplier_name || '').toLowerCase().includes(filters.supplier.toLowerCase())) return false;
     if (filters.invoice && !(d.supplier_invoice_number || '').toLowerCase().includes(filters.invoice.toLowerCase())) return false;
     if (filters.gstin && !(d.supplier_gstin || '').toLowerCase().includes(filters.gstin.toLowerCase())) return false;
-    if (filters.action && d.itc_action !== filters.action) return false;
+    if (filters.action && effectiveAction(d) !== filters.action) return false;
     return true;
-  }), [twoBDocs, filters]);
+  }), [twoBDocs, filters, effectiveAction]);
 
   const anyFilter = filters.supplier || filters.invoice || filters.gstin || filters.action;
   const allFilteredSelected = filteredDocs.length > 0 && filteredDocs.every((d) => selected.has(d.id));
+  const docsTotals = useMemo(() => sumRows(filteredDocs), [filteredDocs]);
 
   // ---- Import ----------------------------------------------------------------
   const handleImportClick = () => {
@@ -438,11 +467,10 @@ const Import2BTab: React.FC = () => {
   };
 
   // ---- 2B doc action (single + bulk) ----------------------------------------
-  const setDocAction = async (docId: string, action: string) => {
-    setTwoBDocs((prev) => prev.map((d) => (d.id === docId ? { ...d, itc_action: action } : d)));
-    const { error } = await supabase.from('twob_import_docs')
-      .update({ itc_action: action, updated_by: user?.id, updated_at: new Date().toISOString() }).eq('id', docId);
-    if (error) { toast.error('Save failed: ' + error.message); fetchAll(); }
+  // Stages a classification locally — nothing is written to twob_import_docs
+  // until "Save changes" is clicked (see saveActions below).
+  const stageDocAction = (docId: string, action: string) => {
+    setPendingActions((prev) => ({ ...prev, [docId]: action }));
   };
 
   // ---- Reclaim by matching ---------------------------------------------------
@@ -470,9 +498,11 @@ const Import2BTab: React.FC = () => {
     return [...list].sort((a, b) => score(a) - score(b) || (b.date || '').localeCompare(a.date || ''));
   };
 
-  const handleDocActionChange = async (doc: TwoBDoc, newAction: string) => {
+  const handleDocActionChange = (doc: TwoBDoc, newAction: string) => {
     if (readOnly) return;
     if (newAction === 'RECLAIM') {
+      // Reclaim always goes straight through the matching dialog — a
+      // deliberate, evidence-confirmed action, not something to stage.
       setReclaimDialog({
         mode: 'fromDoc',
         anchor: toReclaimLite(doc),
@@ -483,17 +513,9 @@ const Import2BTab: React.FC = () => {
       });
       return;
     }
-    const wasReclaim = doc.itc_action === 'RECLAIM';
-    if (wasReclaim) {
-      // Moving away from RECLAIM — release whichever pending item this doc
-      // was linked to, so it goes back to "awaiting reclaim".
-      const { error } = await supabase.from('bills_not_in_2b')
-        .update({ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null, updated_by: user?.id, updated_at: new Date().toISOString() })
-        .eq('reclaimed_via_doc_id', doc.id);
-      if (error) { toast.error('Could not unlink reclaim: ' + error.message); return; }
-    }
-    await setDocAction(doc.id, newAction);
-    if (wasReclaim) await fetchAll();
+    // Moving a currently-RECLAIM doc to something else releases its linked
+    // pending item on Save (see saveActions) — nothing to do here yet.
+    stageDocAction(doc.id, newAction);
   };
 
   const openReclaimFromPending = (row: PendingBill2B) => {
@@ -542,27 +564,56 @@ const Import2BTab: React.FC = () => {
     return next;
   });
 
-  const applyBulk = async () => {
+  const applyBulk = () => {
     if (!bulkValue || selected.size === 0 || readOnly) return;
     const ids = [...selected];
-    // Bulk-apply never targets RECLAIM itself (see BULK_TWOB_ACTIONS), but a
-    // selected doc might already BE one — release its linked pending item
-    // first so it doesn't dangle, pointing at a doc that no longer reclaims it.
-    const reclaimIds = twoBDocs.filter((d) => ids.includes(d.id) && d.itc_action === 'RECLAIM').map((d) => d.id);
-    if (reclaimIds.length > 0) {
-      const { error: unlinkError } = await supabase.from('bills_not_in_2b')
-        .update({ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null, updated_by: user?.id, updated_at: new Date().toISOString() })
-        .in('reclaimed_via_doc_id', reclaimIds);
-      if (unlinkError) { toast.error('Could not unlink reclaim: ' + unlinkError.message); return; }
-    }
-    setTwoBDocs((prev) => prev.map((d) => (ids.includes(d.id) ? { ...d, itc_action: bulkValue } : d)));
-    const { error } = await supabase.from('twob_import_docs')
-      .update({ itc_action: bulkValue, updated_by: user?.id, updated_at: new Date().toISOString() }).in('id', ids);
-    if (error) { toast.error('Bulk update failed: ' + error.message); fetchAll(); return; }
-    toast.success(`Set ${ids.length} row(s) to ${TWOB_ACTIONS.find((a) => a.value === bulkValue)?.label}.`);
+    setPendingActions((prev) => {
+      const next = { ...prev };
+      ids.forEach((id) => { next[id] = bulkValue; });
+      return next;
+    });
+    toast.success(`Staged ${ids.length} row(s) to ${TWOB_ACTIONS.find((a) => a.value === bulkValue)?.label} — click Save changes to commit.`);
     setSelected(new Set());
     setBulkValue('');
-    if (reclaimIds.length > 0) await fetchAll();
+  };
+
+  // ---- Save staged row-action changes ----------------------------------------
+  const saveActions = async () => {
+    const entries = Object.entries(pendingActions);
+    if (entries.length === 0 || readOnly) return;
+    setIsSavingActions(true);
+    try {
+      const nowIso = new Date().toISOString();
+      // Any doc that WAS RECLAIM in the DB but is being staged to something
+      // else needs its linked pending item released first, same as before —
+      // just deferred to Save time instead of the moment of the dropdown change.
+      const releaseIds = entries
+        .filter(([id, newAction]) => twoBDocs.find((d) => d.id === id)?.itc_action === 'RECLAIM' && newAction !== 'RECLAIM')
+        .map(([id]) => id);
+      if (releaseIds.length > 0) {
+        const { error } = await supabase.from('bills_not_in_2b')
+          .update({ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null, updated_by: user?.id, updated_at: nowIso })
+          .in('reclaimed_via_doc_id', releaseIds);
+        if (error) { toast.error('Could not unlink reclaim: ' + error.message); return; }
+      }
+      // Group by target action so this is a handful of round-trips, not one per row.
+      const byAction = new Map<string, string[]>();
+      entries.forEach(([id, action]) => {
+        if (!byAction.has(action)) byAction.set(action, []);
+        byAction.get(action)!.push(id);
+      });
+      for (const [action, ids] of byAction) {
+        const { error } = await supabase.from('twob_import_docs')
+          .update({ itc_action: action, updated_by: user?.id, updated_at: nowIso })
+          .in('id', ids);
+        if (error) { toast.error('Save failed: ' + error.message); return; }
+      }
+      toast.success(`Saved ${entries.length} row(s).`);
+      setPendingActions({});
+      await fetchAll();
+    } finally {
+      setIsSavingActions(false);
+    }
   };
 
   // ---- Books register --------------------------------------------------------
@@ -726,8 +777,8 @@ const Import2BTab: React.FC = () => {
 
   // ---- Amount-wise summary ---------------------------------------------------
   const summary2b = useMemo(
-    () => TWOB_ACTIONS.map((a) => ({ label: a.label, ...sumRows(twoBDocs.filter((d) => d.itc_action === a.value)) })),
-    [twoBDocs],
+    () => TWOB_ACTIONS.map((a) => ({ label: a.label, ...sumRows(twoBDocs.filter((d) => effectiveAction(d) === a.value)) })),
+    [twoBDocs, effectiveAction],
   );
   const summaryBooks = useMemo(
     () => BOOK_TREATMENTS.map((t) => ({ label: t.label, ...sumRows(books.filter((b) => b.book_treatment === t.value)) })),
@@ -815,8 +866,10 @@ const Import2BTab: React.FC = () => {
             {(twoBDocs.length > 0 || books.length > 0) && (
               <Button
                 onClick={handlePostToReconciliation}
-                disabled={isPosting || readOnly}
-                title="Write NOT_IN_BOOKS / NOT_IN_2B classifications through to the live 2B Reconciliation ledger"
+                disabled={isPosting || readOnly || pendingCount > 0}
+                title={pendingCount > 0
+                  ? 'Save your row-action changes first — Post to Reconciliation reads the saved classifications.'
+                  : 'Write NOT_IN_BOOKS / NOT_IN_2B classifications through to the live 2B Reconciliation ledger'}
               >
                 {isPosting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
                 Post to Reconciliation
@@ -894,26 +947,47 @@ const Import2BTab: React.FC = () => {
                     {filteredDocs.length}{anyFilter ? ` of ${twoBDocs.length}` : ''} B2B docs{rcmHidden ? ` · ${rcmHidden} RCM hidden (RCM Summary)` : ''} · set the action per row
                   </p>
                 </div>
-                {/* Bulk apply bar */}
-                {!readOnly && selected.size > 0 && (
-                  <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1">
-                    <span className="text-xs font-medium">{selected.size} selected</span>
-                    <select className="h-7 rounded-md border border-input bg-background px-2 text-xs" value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}>
-                      <option value="">Set action to…</option>
-                      {BULK_TWOB_ACTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                    </select>
-                    <Button size="sm" className="h-7" onClick={applyBulk} disabled={!bulkValue}>Apply</Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                      onClick={() => setSelected(new Set())}
-                      aria-label="Clear selection"
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                )}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Bulk apply bar */}
+                  {!readOnly && selected.size > 0 && (
+                    <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1">
+                      <span className="text-xs font-medium">{selected.size} selected</span>
+                      <select className="h-7 rounded-md border border-input bg-background px-2 text-xs" value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}>
+                        <option value="">Set action to…</option>
+                        {BULK_TWOB_ACTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                      <Button size="sm" className="h-7" onClick={applyBulk} disabled={!bulkValue}>Apply</Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                        onClick={() => setSelected(new Set())}
+                        aria-label="Clear selection"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
+                  {/* Save staged row-action changes — nothing writes to the DB until this is clicked. */}
+                  {!readOnly && pendingCount > 0 && (
+                    <div className="flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-2 py-1">
+                      <span className="text-xs font-medium text-warning-foreground">{pendingCount} unsaved change{pendingCount === 1 ? '' : 's'}</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                        onClick={() => setPendingActions({})}
+                        disabled={isSavingActions}
+                      >
+                        Discard
+                      </Button>
+                      <Button size="sm" className="h-7" onClick={saveActions} disabled={isSavingActions}>
+                        {isSavingActions ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : null}
+                        Save changes
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </div>
               {twoBDocs.length === 0 ? (
                 <TableEmptyState
@@ -981,8 +1055,10 @@ const Import2BTab: React.FC = () => {
                             title="No rows match the filters"
                             description="Clear or change the column filters above to see imported documents."
                           />
-                        ) : filteredDocs.map((d) => (
-                          <tr key={d.id} className={selected.has(d.id) ? 'bg-primary/5' : 'hover:bg-muted/40'}>
+                        ) : filteredDocs.map((d) => {
+                          const isDirty = d.id in pendingActions;
+                          return (
+                          <tr key={d.id} className={selected.has(d.id) ? 'bg-primary/5' : isDirty ? 'bg-warning/10' : 'hover:bg-muted/40'}>
                             <td className="border border-border p-2 text-center">
                               <div className="flex items-center justify-center">
                                 <Checkbox
@@ -1002,13 +1078,32 @@ const Import2BTab: React.FC = () => {
                             <td className="border border-border p-2 text-right tabular-nums">{num(d.input_cgst)}</td>
                             <td className="border border-border p-2 text-right tabular-nums">{num(d.input_sgst)}</td>
                             <td className="border border-border p-2">
-                              <select className={rowSelectCls} value={d.itc_action} disabled={readOnly} onChange={(e) => handleDocActionChange(d, e.target.value)}>
+                              <select
+                                className={rowSelectCls + (isDirty ? ' border-warning' : '')}
+                                value={effectiveAction(d)}
+                                disabled={readOnly}
+                                title={isDirty ? 'Unsaved — click Save changes above to commit' : undefined}
+                                onChange={(e) => handleDocActionChange(d, e.target.value)}
+                              >
                                 {TWOB_ACTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                               </select>
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
+                      {filteredDocs.length > 0 && (
+                        <tfoot>
+                          <tr className="bg-muted/50 font-semibold">
+                            <td className="border border-border p-2" colSpan={5}>Total</td>
+                            <td className="border border-border p-2 text-right tabular-nums">{num(docsTotals.taxable)}</td>
+                            <td className="border border-border p-2 text-right tabular-nums">{num(docsTotals.igst)}</td>
+                            <td className="border border-border p-2 text-right tabular-nums">{num(docsTotals.cgst)}</td>
+                            <td className="border border-border p-2 text-right tabular-nums">{num(docsTotals.sgst)}</td>
+                            <td className="border border-border p-2"></td>
+                          </tr>
+                        </tfoot>
+                      )}
                     </table>
                   </div>
                   <ScrollBar orientation="horizontal" />
@@ -1142,8 +1237,14 @@ const Import2BTab: React.FC = () => {
                 </div>
 
                 {pendingBills2B.length > 0 && (
-                  <div>
-                    <p className="text-sm font-medium mb-2">Awaiting reclaim (booked, reversed — not yet back in 2B)</p>
+                  <Collapsible open={zone4Open.reclaim} onOpenChange={(open) => setZone4Open((z) => ({ ...z, reclaim: open }))}>
+                    <CollapsibleTrigger className="flex w-full items-center gap-1.5 mb-2 text-left group">
+                      <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${zone4Open.reclaim ? '' : '-rotate-90'}`} />
+                      <p className="text-sm font-medium group-hover:text-foreground">
+                        Awaiting reclaim (booked, reversed — not yet back in 2B) · {pendingBills2B.length}
+                      </p>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
                     <ScrollArea className="w-full">
                       <div className="min-w-[900px]">
                         <table className="w-full text-xs border-collapse">
@@ -1198,12 +1299,19 @@ const Import2BTab: React.FC = () => {
                       </div>
                       <ScrollBar orientation="horizontal" />
                     </ScrollArea>
-                  </div>
+                    </CollapsibleContent>
+                  </Collapsible>
                 )}
 
                 {pendingBillsBooks.length > 0 && (
-                  <div>
-                    <p className="text-sm font-medium mb-2">Awaiting book entry (in 2B — not yet booked)</p>
+                  <Collapsible open={zone4Open.bookEntry} onOpenChange={(open) => setZone4Open((z) => ({ ...z, bookEntry: open }))}>
+                    <CollapsibleTrigger className="flex w-full items-center gap-1.5 mb-2 text-left group">
+                      <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${zone4Open.bookEntry ? '' : '-rotate-90'}`} />
+                      <p className="text-sm font-medium group-hover:text-foreground">
+                        Awaiting book entry (in 2B — not yet booked) · {pendingBillsBooks.length}
+                      </p>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
                     <ScrollArea className="w-full">
                       <div className="min-w-[900px]">
                         <table className="w-full text-xs border-collapse">
@@ -1251,12 +1359,19 @@ const Import2BTab: React.FC = () => {
                       Once booked, claim the ITC under ITC Summary row 5.2 "ITC for Previous Month" — this invoice
                       won't reappear in a future GSTR-2B pull.
                     </p>
-                  </div>
+                    </CollapsibleContent>
+                  </Collapsible>
                 )}
 
                 {expensedOutItems.length > 0 && (
-                  <div>
-                    <p className="text-sm font-medium mb-2">Expensed out this period — Undo if this was a mistake</p>
+                  <Collapsible open={zone4Open.expensedOut} onOpenChange={(open) => setZone4Open((z) => ({ ...z, expensedOut: open }))}>
+                    <CollapsibleTrigger className="flex w-full items-center gap-1.5 mb-2 text-left group">
+                      <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${zone4Open.expensedOut ? '' : '-rotate-90'}`} />
+                      <p className="text-sm font-medium group-hover:text-foreground">
+                        Expensed out this period — Undo if this was a mistake · {expensedOutItems.length}
+                      </p>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
                     <ScrollArea className="w-full">
                       <div className="min-w-[900px]">
                         <table className="w-full text-xs border-collapse">
@@ -1300,7 +1415,8 @@ const Import2BTab: React.FC = () => {
                       </div>
                       <ScrollBar orientation="horizontal" />
                     </ScrollArea>
-                  </div>
+                    </CollapsibleContent>
+                  </Collapsible>
                 )}
               </CardContent>
             </Card>

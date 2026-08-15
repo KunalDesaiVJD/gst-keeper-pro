@@ -18,7 +18,7 @@ export async function fetchGstr3b(
   periodMonth: string, // MM/YYYY
 ): Promise<Gstr3bResult> {
   const short = toShort(periodMonth);
-  const [g, itcRes, rcmRes, adjRes, fsiRes] = await Promise.all([
+  const [g, itcRes, rcmRes, adjRes, fsiRes, filingRes] = await Promise.all([
     supabase.from('gstr1_data').select('raw_json').eq('client_id', clientId).eq('period_month', short).maybeSingle(),
     supabase.from('itc_summaries').select('data').eq('client_id', clientId).eq('period_month', periodMonth).maybeSingle(),
     supabase.from('rcm_data').select('taxable_value, cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18').eq('client_id', clientId).eq('month', short),
@@ -37,7 +37,15 @@ export async function fetchGstr3b(
     supabase.from('builder_rcm_postings')
       .select('taxable_value, cgst, sgst')
       .eq('client_id', clientId).eq('period_month', periodMonth),
+    // Has this client's GSTR-3B (monthly or quarterly) for this period
+    // already been filed? Drives the RCM reverse-charge exclusion below —
+    // see RCM_RCHRG_FIX_FROM in buildGstr3bJson.ts.
+    supabase.from('filing_status').select('status')
+      .eq('client_id', clientId).eq('period_month', periodMonth)
+      .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']),
   ]);
+
+  const alreadyFiled = ((filingRes.data as { status: string }[]) || []).some((r) => r.status === 'Filed');
 
   let itc: ItcData | null = null;
   const rawItc = (itcRes.data as any)?.data;
@@ -72,5 +80,5 @@ export async function fetchGstr3b(
     cess: Number(a.cess) || 0,
   }));
 
-  return buildGstr3bJson({ gstin, periodMonth, gstr1Raw: (g.data as any)?.raw_json ?? null, itc, rcm, adjustments });
+  return buildGstr3bJson({ gstin, periodMonth, gstr1Raw: (g.data as any)?.raw_json ?? null, itc, rcm, adjustments, alreadyFiled });
 }

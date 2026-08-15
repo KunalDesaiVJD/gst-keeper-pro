@@ -40,6 +40,10 @@ export interface Gstr3bInput {
   itc: ItcData | null;    // itc_summaries.data
   rcm: RcmTotals;         // RCM liability/ITC totals for the period
   adjustments?: Gstr3bAdjustment[]; // GSTR-3B Adjustments module rows for this period
+  // Whether this client's GSTR-3B (or GSTR-3B (Q)) for periodMonth is already
+  // Filed. Required (not defaulted) so every caller makes an explicit choice —
+  // see RCM_RCHRG_FIX_FROM below for why this matters.
+  alreadyFiled: boolean;
 }
 
 export interface TaxHead { igst: number; cgst: number; sgst: number }
@@ -82,9 +86,13 @@ const noteSign = (nt: any): 1 | -1 =>
 // B2B invoices marked `rchrg: 'Y'` (Table 4B — reverse charge) are the
 // recipient's liability, not the supplier's: GSTN's own "Total Liability"
 // line on the filed acknowledgement counts their taxable value but zeroes
-// their tax. Gated from Aug-2026 onward only — periods before that were
-// already filed with the un-gated (incorrect) figure, and recomputing them
-// now would show a number that no longer matches what was actually filed.
+// their tax. Gated from Aug-2026 onward, OR any earlier period that is
+// genuinely still unfiled — periods that were already filed (regardless of
+// month) keep the un-gated figure, since recomputing them now would show a
+// number that no longer matches what was actually filed. A calendar cutoff
+// alone isn't enough: a straggling pre-Aug-2026 period that hasn't been
+// filed yet (e.g. still Data Pending) must get the correct figure too, since
+// nothing has been filed against the wrong number yet.
 const RCM_RCHRG_FIX_FROM = 202608; // YYYY * 100 + MM
 const periodSortKey = (mmYyyy: string): number => {
   const [mm, yyyy] = (mmYyyy || '').split('/');
@@ -107,7 +115,7 @@ const sub3 = (a: TaxHead, b: TaxHead): TaxHead => ({ igst: a.igst - b.igst, cgst
 const round3 = (t: TaxHead): TaxHead => ({ igst: r2(t.igst), cgst: r2(t.cgst), sgst: r2(t.sgst) });
 
 // ---- Table 3.1 outward, computed from the GSTR-1 raw JSON ------------------
-function computeOutward(g: any, periodMonth: string) {
+function computeOutward(g: any, periodMonth: string, alreadyFiled: boolean) {
   const det = { txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 }; // 3.1(a)
   const zero = { txval: 0, iamt: 0, csamt: 0 };                  // 3.1(b)
   let nilExempt = 0;                                             // 3.1(c) txval
@@ -117,7 +125,7 @@ function computeOutward(g: any, periodMonth: string) {
     det.txval += sign * num(it.txval); det.iamt += sign * num(it.iamt);
     det.camt += sign * num(it.camt); det.samt += sign * num(it.samt); det.csamt += sign * num(it.csamt);
   };
-  const applyRcmFix = periodSortKey(periodMonth) >= RCM_RCHRG_FIX_FROM;
+  const applyRcmFix = periodSortKey(periodMonth) >= RCM_RCHRG_FIX_FROM || !alreadyFiled;
   if (g) {
     (g.b2b || []).forEach((p: any) => (p.inv || []).forEach((inv: any) => {
       const isRcmInvoice = applyRcmFix && String(inv.rchrg || 'N').toUpperCase() === 'Y';
@@ -189,7 +197,7 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   if (!g) flags.push('No GSTR-1 data — outward (Table 3.1 a/b/c/e, 3.2) is all zero.');
   if (!itc) flags.push('No ITC Summary — Table 4 (ITC) is all zero.');
 
-  const out = computeOutward(g, input.periodMonth);
+  const out = computeOutward(g, input.periodMonth, input.alreadyFiled);
 
   // ---- GSTR-3B Adjustments module — fold mapped rows into the relevant
   // Table 3.1 / Table 4 bucket before anything downstream (totalLiability,
