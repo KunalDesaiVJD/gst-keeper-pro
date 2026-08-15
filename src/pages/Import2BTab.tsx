@@ -173,6 +173,10 @@ const Import2BTab: React.FC = () => {
   // Zone 4's three sub-tables can each run to dozens of rows — collapsible,
   // open by default.
   const [zone4Open, setZone4Open] = useState({ reclaim: true, bookEntry: true, expensedOut: true });
+  // Zone 1 (imported 2B) and Zone 2 (books register) are the biggest tables
+  // on this page — collapsible for the same reason as Zone 4.
+  const [zone1Open, setZone1Open] = useState(true);
+  const [zone2Open, setZone2Open] = useState(true);
 
   // Multi-select + bulk apply (2B table)
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -940,13 +944,17 @@ const Import2BTab: React.FC = () => {
           {/* Zone 1 — imported 2B */}
           <Card>
             <CardContent className="p-4">
+              <Collapsible open={zone1Open} onOpenChange={setZone1Open}>
               <div className="mb-3 flex items-center justify-between gap-3 flex-wrap">
-                <div>
-                  <p className="font-semibold text-foreground">1 · GSTR-2B (imported)</p>
-                  <p className="text-xs text-muted-foreground">
-                    {filteredDocs.length}{anyFilter ? ` of ${twoBDocs.length}` : ''} B2B docs{rcmHidden ? ` · ${rcmHidden} RCM hidden (RCM Summary)` : ''} · set the action per row
-                  </p>
-                </div>
+                <CollapsibleTrigger className="flex items-center gap-1.5 text-left group">
+                  <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${zone1Open ? '' : '-rotate-90'}`} />
+                  <div>
+                    <p className="font-semibold text-foreground group-hover:text-foreground">1 · GSTR-2B (imported)</p>
+                    <p className="text-xs text-muted-foreground">
+                      {filteredDocs.length}{anyFilter ? ` of ${twoBDocs.length}` : ''} B2B docs{rcmHidden ? ` · ${rcmHidden} RCM hidden (RCM Summary)` : ''} · set the action per row
+                    </p>
+                  </div>
+                </CollapsibleTrigger>
                 <div className="flex items-center gap-2 flex-wrap">
                   {/* Bulk apply bar */}
                   {!readOnly && selected.size > 0 && (
@@ -989,6 +997,7 @@ const Import2BTab: React.FC = () => {
                   )}
                 </div>
               </div>
+              <CollapsibleContent>
               {twoBDocs.length === 0 ? (
                 <TableEmptyState
                   icon={<FileSpreadsheet className="h-6 w-6" />}
@@ -1109,21 +1118,28 @@ const Import2BTab: React.FC = () => {
                   <ScrollBar orientation="horizontal" />
                 </ScrollArea>
               )}
+              </CollapsibleContent>
+              </Collapsible>
             </CardContent>
           </Card>
 
           {/* Zone 2 — books register */}
           <Card>
             <CardContent className="p-4">
+              <Collapsible open={zone2Open} onOpenChange={setZone2Open}>
               <div className="mb-3 flex items-center justify-between">
-                <div>
-                  <p className="font-semibold text-foreground">2 · Books / purchase register</p>
-                  <p className="text-xs text-muted-foreground">Add invoices booked but missing from 2B · CGST fills SGST</p>
-                </div>
+                <CollapsibleTrigger className="flex items-center gap-1.5 text-left group">
+                  <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${zone2Open ? '' : '-rotate-90'}`} />
+                  <div>
+                    <p className="font-semibold text-foreground group-hover:text-foreground">2 · Books / purchase register</p>
+                    <p className="text-xs text-muted-foreground">Add invoices booked but missing from 2B · CGST fills SGST</p>
+                  </div>
+                </CollapsibleTrigger>
                 {!readOnly && (
                   <Button variant="outline" size="sm" onClick={addBookRow}><Plus className="h-4 w-4 mr-1" />Add row</Button>
                 )}
               </div>
+              <CollapsibleContent>
               <ScrollArea className="w-full">
                 <div className="min-w-[1050px]">
                   <table className="w-full text-xs border-collapse">
@@ -1225,6 +1241,8 @@ const Import2BTab: React.FC = () => {
                 </div>
                 <ScrollBar orientation="horizontal" />
               </ScrollArea>
+              </CollapsibleContent>
+              </Collapsible>
             </CardContent>
           </Card>
 
