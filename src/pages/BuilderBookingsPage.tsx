@@ -1123,6 +1123,24 @@ const BuilderBookingsPage: React.FC = () => {
   }, [sortedUnits, unitTypeFilter, unitNoFilter, bookingFilter, rateFilter, activeBookingFor, members, hasOpeningActivity,
     classifyFor]);
 
+  /** Footer totals for the Units table — same figures each row computes,
+   *  summed across whatever the current filters leave visible. */
+  const unitTotals = useMemo(() => {
+    const t = { agreement: 0, opening: 0, received: 0, closing: 0, openAdvance: 0 };
+    filteredUnits.forEach((u) => {
+      const cls = classifyFor(u);
+      const led = ledgerForAsOf(u, selectedMonth);
+      const openingLed = ledgerForAsOf(u, previousPeriod(selectedMonth));
+      const agreement = openings[u.id]?.agreement_value || cls.gross.gross;
+      t.agreement += agreement;
+      t.opening += openingLed.valueTaxed;
+      t.received += led.valueTaxed - openingLed.valueTaxed;
+      t.closing += led.valueTaxed;
+      t.openAdvance += led.openAdvance;
+    });
+    return t;
+  }, [filteredUnits, classifyFor, ledgerForAsOf, openings, selectedMonth]);
+
   const atRisk = useMemo(
     () => units.filter((u) => {
       const h = headroomOf(u);
@@ -2185,6 +2203,23 @@ const BuilderBookingsPage: React.FC = () => {
                     );
                   })}
                 </TableBody>
+                {filteredUnits.length > 0 && (
+                  <TableFooter>
+                    <TableRow>
+                      <TableCell colSpan={5} className="font-semibold">
+                        Total ({filteredUnits.length} unit{filteredUnits.length === 1 ? '' : 's'})
+                      </TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">{formatINR(unitTotals.agreement)}</TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">{formatINR(unitTotals.opening)}</TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">{formatINR(unitTotals.received)}</TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">{formatINR(unitTotals.closing)}</TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">
+                        {unitTotals.openAdvance > 0 ? formatINR(unitTotals.openAdvance) : '—'}
+                      </TableCell>
+                      <TableCell colSpan={2} />
+                    </TableRow>
+                  </TableFooter>
+                )}
               </Table>
             </div>
           )}
