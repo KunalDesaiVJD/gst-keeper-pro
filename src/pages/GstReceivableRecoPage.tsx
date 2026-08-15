@@ -497,6 +497,11 @@ const GstReceivableRecoPage: React.FC = () => {
           const { summary } = buildGstr3bJson({
             gstin: '', periodMonth: prevMonth || '', gstr1Raw: gstr1Data.raw_json,
             itc: null, rcm: { taxable: 0, igst: 0, cgst: 0, sgst: 0 },
+            // This fallback only estimates "ITC utilized" for the Credit Ledger
+            // closing math, not a live filing — kept on the pre-existing
+            // date-only RCM gate (unaffected by the unfiled-period widening in
+            // buildGstr3bJson.ts) so historical closing figures don't shift.
+            alreadyFiled: true,
           });
           setUtilizedCgst(summary.outward.cgst);
           setUtilizedSgst(summary.outward.sgst);
