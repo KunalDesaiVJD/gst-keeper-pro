@@ -79,6 +79,18 @@ const num = (v: any) => (typeof v === 'number' ? v : parseFloat(v) || 0);
 const noteSign = (nt: any): 1 | -1 =>
   String(nt?.ntty ?? nt?.typ ?? 'C').toUpperCase().startsWith('D') ? 1 : -1;
 
+// B2B invoices marked `rchrg: 'Y'` (Table 4B — reverse charge) are the
+// recipient's liability, not the supplier's: GSTN's own "Total Liability"
+// line on the filed acknowledgement counts their taxable value but zeroes
+// their tax. Gated from Aug-2026 onward only — periods before that were
+// already filed with the un-gated (incorrect) figure, and recomputing them
+// now would show a number that no longer matches what was actually filed.
+const RCM_RCHRG_FIX_FROM = 202608; // YYYY * 100 + MM
+const periodSortKey = (mmYyyy: string): number => {
+  const [mm, yyyy] = (mmYyyy || '').split('/');
+  return (parseInt(yyyy, 10) || 0) * 100 + (parseInt(mm, 10) || 0);
+};
+
 function retPeriod(mmYyyy: string): string {
   const [mm, yyyy] = (mmYyyy || '').split('/');
   return mm && yyyy ? `${mm}${yyyy}` : '';
@@ -95,7 +107,7 @@ const sub3 = (a: TaxHead, b: TaxHead): TaxHead => ({ igst: a.igst - b.igst, cgst
 const round3 = (t: TaxHead): TaxHead => ({ igst: r2(t.igst), cgst: r2(t.cgst), sgst: r2(t.sgst) });
 
 // ---- Table 3.1 outward, computed from the GSTR-1 raw JSON ------------------
-function computeOutward(g: any) {
+function computeOutward(g: any, periodMonth: string) {
   const det = { txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 }; // 3.1(a)
   const zero = { txval: 0, iamt: 0, csamt: 0 };                  // 3.1(b)
   let nilExempt = 0;                                             // 3.1(c) txval
@@ -105,8 +117,20 @@ function computeOutward(g: any) {
     det.txval += sign * num(it.txval); det.iamt += sign * num(it.iamt);
     det.camt += sign * num(it.camt); det.samt += sign * num(it.samt); det.csamt += sign * num(it.csamt);
   };
+  const applyRcmFix = periodSortKey(periodMonth) >= RCM_RCHRG_FIX_FROM;
   if (g) {
-    (g.b2b || []).forEach((p: any) => (p.inv || []).forEach((inv: any) => (inv.itms || []).forEach((i: any) => addDet(i.itm_det || {}))));
+    (g.b2b || []).forEach((p: any) => (p.inv || []).forEach((inv: any) => {
+      const isRcmInvoice = applyRcmFix && String(inv.rchrg || 'N').toUpperCase() === 'Y';
+      (inv.itms || []).forEach((i: any) => {
+        if (isRcmInvoice) {
+          // Table 4B: recipient's liability under RCM, not ours — value counts
+          // toward taxable turnover, tax does not.
+          det.txval += num((i.itm_det || {}).txval);
+        } else {
+          addDet(i.itm_det || {});
+        }
+      });
+    }));
     (g.b2cl || []).forEach((s: any) => (s.inv || []).forEach((inv: any) => (inv.itms || []).forEach((i: any) => addDet(i.itm_det || {}))));
     (g.b2cs || []).forEach((i: any) => addDet(i));
     // Credit note subtracts, debit note adds (same convention as computeGstr1OutputTax).
@@ -165,7 +189,7 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   if (!g) flags.push('No GSTR-1 data — outward (Table 3.1 a/b/c/e, 3.2) is all zero.');
   if (!itc) flags.push('No ITC Summary — Table 4 (ITC) is all zero.');
 
-  const out = computeOutward(g);
+  const out = computeOutward(g, input.periodMonth);
 
   // ---- GSTR-3B Adjustments module — fold mapped rows into the relevant
   // Table 3.1 / Table 4 bucket before anything downstream (totalLiability,

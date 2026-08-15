@@ -118,6 +118,7 @@ const computeCreditClosing = (
   gr: any | undefined,
   itc: any | undefined,
   rawJson: any | undefined,
+  periodMonth: string,
 ): CreditClosing => {
   const openingCgst = safeNum(gr?.opening_cgst);
   const openingSgst = safeNum(gr?.opening_sgst);
@@ -125,7 +126,7 @@ const computeCreditClosing = (
   const availed = itc ? sumSection(itc.section4A) : { cgst: 0, sgst: 0, igst: 0 };
   const reversed = itc ? sumSection(itc.section4B) : { cgst: 0, sgst: 0, igst: 0 };
   const reclaimed = itc ? sumSection(itc.section4D) : { cgst: 0, sgst: 0, igst: 0 };
-  const output = rawJson ? computeGstr1OutputTax(rawJson) : { igst: 0, cgst: 0, sgst: 0 };
+  const output = rawJson ? computeGstr1OutputTax(rawJson, periodMonth) : { igst: 0, cgst: 0, sgst: 0 };
   const availableCgst = Math.max(0, openingCgst + availed.cgst - reversed.cgst + reclaimed.cgst);
   const availableSgst = Math.max(0, openingSgst + availed.sgst - reversed.sgst + reclaimed.sgst);
   const availableIgst = Math.max(0, openingIgst + availed.igst - reversed.igst + reclaimed.igst);
@@ -216,7 +217,7 @@ export const buildCreditClosingAllClients = async (month: string): Promise<Repor
   (gstr1Res.data || []).forEach((r: any) => gstr1ByClient.set(r.client_id, r.raw_json));
 
   const rows = clients.map((client, idx) => {
-    const c = computeCreditClosing(grByClient.get(client.id), itcByClient.get(client.id), gstr1ByClient.get(client.id));
+    const c = computeCreditClosing(grByClient.get(client.id), itcByClient.get(client.id), gstr1ByClient.get(client.id), month);
     return [
       idx + 1,
       client.name,
@@ -304,7 +305,7 @@ export const buildCreditClosingPerClient = async (clientId: string, anyMonthInFy
 
   let tCl = 0, tCS = 0, tCI = 0, tPC = 0, tPS = 0, tPI = 0;
   const rows: (string | number)[][] = months.map((m, idx) => {
-    const c = computeCreditClosing(grByMonth.get(m), itcByMonth.get(m), gstr1ByShort.get(mmYyyyToShort(m)));
+    const c = computeCreditClosing(grByMonth.get(m), itcByMonth.get(m), gstr1ByShort.get(mmYyyyToShort(m)), m);
     tCl += c.closingCgst; tCS += c.closingSgst; tCI += c.closingIgst;
     tPC += c.payableCgst; tPS += c.payableSgst; tPI += c.payableIgst;
     return [

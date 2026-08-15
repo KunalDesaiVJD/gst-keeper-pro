@@ -17,6 +17,9 @@
 // exports) — check both, defaulting to credit if neither is present.
 // Advance receipts (`at`) add to outward tax for the period; advance
 // adjustments (`txpd`) subtract because the tax was paid in an earlier period.
+//
+// B2B invoices under reverse charge (`rchrg: 'Y'`, Table 4B) are excluded —
+// see RCM_RCHRG_FIX_FROM below for the period this starts applying from.
 
 export interface Gstr1OutputTotals {
   igst: number;
@@ -32,13 +35,26 @@ const num = (v: any): number => {
 const noteSign = (nt: any): 1 | -1 =>
   String(nt?.ntty ?? nt?.typ ?? 'C').toUpperCase().startsWith('D') ? 1 : -1;
 
-export const computeGstr1OutputTax = (rawJson: any): Gstr1OutputTotals => {
+// B2B invoices marked `rchrg: 'Y'` (Table 4B — reverse charge) are the
+// recipient's liability under RCM, not the supplier's own output tax.
+// Gated from Aug-2026 onward only — periods before that were already filed
+// with the un-gated (incorrect) figure, and recomputing them now would show
+// a number that no longer matches what was actually filed.
+const RCM_RCHRG_FIX_FROM = 202608; // YYYY * 100 + MM
+const periodSortKey = (mmYyyy: string): number => {
+  const [mm, yyyy] = (mmYyyy || '').split('/');
+  return (parseInt(yyyy, 10) || 0) * 100 + (parseInt(mm, 10) || 0);
+};
+
+export const computeGstr1OutputTax = (rawJson: any, periodMonth: string): Gstr1OutputTotals => {
   let igst = 0, cgst = 0, sgst = 0;
   if (!rawJson || typeof rawJson !== 'object') return { igst, cgst, sgst };
+  const applyRcmFix = periodSortKey(periodMonth) >= RCM_RCHRG_FIX_FROM;
 
-  // B2B
+  // B2B — Table 4B (reverse charge) invoices are excluded from output tax.
   (rawJson.b2b || []).forEach((party: any) => {
     (party.inv || []).forEach((inv: any) => {
+      if (applyRcmFix && String(inv.rchrg || 'N').toUpperCase() === 'Y') return;
       (inv.itms || []).forEach((itm: any) => {
         const d = itm.itm_det || {};
         igst += num(d.iamt);
