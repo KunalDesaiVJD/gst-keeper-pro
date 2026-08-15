@@ -61,13 +61,16 @@ export async function fetchBuilderOutputTaxSplit(params: {
 }
 
 /**
- * Net ITC available for the period (4C), for a Partial-ITC builder client —
- * the same figure the ITC Summary page shows, computed through the same
- * shared function so the two can never disagree.
+ * Net ITC available for the period (4C), for a Partial-ITC or No-ITC builder
+ * client — the same figure the ITC Summary page shows, computed through the
+ * same shared function so the two can never disagree. A No-ITC client is the
+ * 100% case of the same reversal: its real carpet-area mix doesn't matter,
+ * so the ratio is forced to 1 rather than read off the client record.
  *
- * Returns null where the client isn't on Partial ITC, has no saved ITC
- * summary for the period yet, or has no carpet area synced to apportion by —
- * any of which means there is nothing yet for this working paper to show.
+ * Returns null where the client is on neither reversal type or has no saved
+ * ITC summary for the period yet. A Partial-ITC client with no carpet area
+ * synced also returns null (nothing to apportion by yet); a No-ITC client
+ * never does, since its ratio never depends on synced area.
  */
 export async function fetchNetItcAvailable(params: {
   clientId: string;
@@ -80,7 +83,8 @@ export async function fetchNetItcAvailable(params: {
     .maybeSingle();
   if (cErr) throw cErr;
   const c = client as { builder_itc_type: string | null; commercial_area: number | null; residential_area: number | null } | null;
-  if (!c || c.builder_itc_type !== 'PARTIAL_ITC') return null;
+  const isNoItc = c?.builder_itc_type === 'NO_ITC';
+  if (!c || (c.builder_itc_type !== 'PARTIAL_ITC' && !isNoItc)) return null;
 
   const { data: summary, error: sErr } = await supabase
     .from('itc_summaries')
@@ -93,8 +97,8 @@ export async function fetchNetItcAvailable(params: {
     { section4A?: ItcRowLike[]; section4B?: (ItcRowLike & { particular: string; isHeader?: boolean })[] } | undefined;
   if (!data?.section4A) return null;
 
-  const commercialArea = c.commercial_area || 0;
-  const residentialArea = c.residential_area || 0;
+  const commercialArea = isNoItc ? 0 : (c.commercial_area || 0);
+  const residentialArea = isNoItc ? 1 : (c.residential_area || 0);
   const partial = computePartialItcSplit({
     section4A: data.section4A, section4B: data.section4B || [], commercialArea, residentialArea,
   });

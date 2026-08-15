@@ -396,12 +396,17 @@ const GstReceivableRecoPage: React.FC = () => {
         // sub-rows) gives the wrong 4B. Replicate ITC Summary's exact formula
         // so both pages produce the identical 4C.
         const clientForCalc = clients.find(c => c.id === selectedClientId);
-        const isPartialITC = clientForCalc?.builder_itc_type === 'PARTIAL_ITC';
+        // A No-ITC builder client reverses 100% of its input tax by definition
+        // of the scheme, not by carpet-area apportionment — same 4(B)(1)/(2)
+        // formula as Partial-ITC, just with the ratio forced to 1 instead of
+        // read off the (likely unset) client area fields.
+        const isNoITC = clientForCalc?.builder_itc_type === 'NO_ITC';
+        const isPartialITC = clientForCalc?.builder_itc_type === 'PARTIAL_ITC' || isNoITC;
 
         let total4B: { cgst: number; sgst: number; igst: number };
         if (isPartialITC) {
-          const commercialArea = Number(clientForCalc?.commercial_area) || 0;
-          const residentialArea = Number(clientForCalc?.residential_area) || 0;
+          const commercialArea = isNoITC ? 0 : (Number(clientForCalc?.commercial_area) || 0);
+          const residentialArea = isNoITC ? 1 : (Number(clientForCalc?.residential_area) || 0);
           const totalArea = commercialArea + residentialArea;
           const residentialRatio = totalArea > 0 ? residentialArea / totalArea : 0;
 
