@@ -124,10 +124,26 @@ const getPartialITCData = (): ITCData => ({
   ],
 });
 
-// Re-apply structural flags (isHeader, isAutoLinked, editable) to loaded data
-// This prevents flags from being lost when data is saved/loaded from DB
+// Re-apply structural flags (isHeader, isAutoLinked, editable) to loaded data.
+// This prevents flags from being lost when data is saved/loaded from DB — but
+// only holds when the loaded row count matches the template's: it merges
+// PURELY BY ARRAY POSITION, not by matching srNo/particular. The default and
+// Partial-ITC (used for both Partial-ITC and, since 14/08/2026, No-ITC)
+// templates have different section4B row counts (5 vs 7) — a record saved
+// under one shape and reloaded under the other (e.g. a client's builder_itc_type
+// is corrected after they already had a saved period) produces a garbled,
+// truncated merge: rows get the new template's labels at the wrong index,
+// several rows vanish entirely, and text-matched lookups elsewhere (the
+// auto-link effect's "current month as per 2B RECO" row,
+// computePartialItcSplit's "Previous Month Adjustment" row) silently stop
+// finding anything. When the shapes disagree, start fresh from the template
+// instead of attempting the merge — every auto-linked row gets repopulated
+// from its live source moments later by the auto-link effect regardless, so
+// nothing genuine is lost; only a stale, structurally incompatible saved
+// state is discarded.
 const applyStructuralFlags = (loaded: ITCData, template: ITCData): ITCData => {
   const applyFlags = (loadedRows: ITCRow[], templateRows: ITCRow[]): ITCRow[] => {
+    if (loadedRows.length !== templateRows.length) return templateRows.map((row) => ({ ...row }));
     return loadedRows.map((row, idx) => {
       const tmpl = templateRows[idx];
       if (!tmpl) return row;

@@ -1204,6 +1204,23 @@ const Import2BTab: React.FC = () => {
                         </tr>
                       ))}
                     </tbody>
+                    {books.length > 0 && (() => {
+                      const bookTotals = sumRows(books);
+                      return (
+                        <tfoot>
+                          <tr className="font-medium bg-muted/30">
+                            <td className="border border-border p-2" colSpan={4}>
+                              Total ({bookTotals.count})
+                            </td>
+                            <td className="border border-border p-2 text-right tabular-nums">{num(bookTotals.taxable)}</td>
+                            <td className="border border-border p-2 text-right tabular-nums">{num(bookTotals.igst)}</td>
+                            <td className="border border-border p-2 text-right tabular-nums">{num(bookTotals.cgst)}</td>
+                            <td className="border border-border p-2 text-right tabular-nums">{num(bookTotals.sgst)}</td>
+                            <td className="border border-border p-2" colSpan={readOnly ? 1 : 2} />
+                          </tr>
+                        </tfoot>
+                      );
+                    })()}
                   </table>
                 </div>
                 <ScrollBar orientation="horizontal" />
