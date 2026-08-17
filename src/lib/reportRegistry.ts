@@ -69,12 +69,15 @@ export interface ReportRunArgs {
 /**
  * One entry per report. `needs` mirrors the filter shapes the app has
  * pickers for: an all-clients snapshot for one month, one client plus the
- * selected month, or (for a master-data report scoped to no period at all,
- * e.g. Client Master) neither. The `client+month` shape covers two
- * different meanings depending on the report — "one client across the full
- * financial year containing this month" (the Ledger reports) or "one client
- * for this exact period" (the GSTR-1 family) — the build function alone
- * decides which; ReportRunArgs itself doesn't need to know.
+ * selected month, one client with no period at all (e.g. the Notice/Refund/
+ * DRC-03 reports — a notice isn't tied to one GST return period the way a
+ * GSTR-1 figure is, so these read everything on record for the client), or
+ * (for a master-data report scoped to no period AND no client, e.g. Client
+ * Master) neither. The `client+month` shape covers two different meanings
+ * depending on the report — "one client across the full financial year
+ * containing this month" (the Ledger reports) or "one client for this exact
+ * period" (the GSTR-1 family) — the build function alone decides which;
+ * ReportRunArgs itself doesn't need to know.
  */
 export interface ReportDefinition {
   key: string;
@@ -83,6 +86,6 @@ export interface ReportDefinition {
   category: ReportCategory;
   status: ReportStatus;
   icon: LucideIcon;
-  needs: 'month' | 'client+month' | 'none';
+  needs: 'month' | 'client+month' | 'client' | 'none';
   build: (args: ReportRunArgs) => Promise<ReportTable>;
 }

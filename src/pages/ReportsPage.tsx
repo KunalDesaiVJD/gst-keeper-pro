@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search, Percent, ClipboardList, Hash, Users, AlertTriangle, History, Scale, ArrowRightLeft, Rows3, BadgeCheck, Building2, ShoppingCart, Receipt, Layers, Repeat, Ship, PackageOpen, Package, ArrowLeftRight, RotateCcw, ListChecks, Gauge, IdCard, Link2, Layers3 } from 'lucide-react';
+import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search, Percent, ClipboardList, Hash, Users, AlertTriangle, History, Scale, ArrowRightLeft, Rows3, BadgeCheck, Building2, ShoppingCart, Receipt, Layers, Repeat, Ship, PackageOpen, Package, ArrowLeftRight, RotateCcw, ListChecks, Gauge, IdCard, Link2, Layers3, Bell, BellRing, Banknote, Coins, HandCoins, FileWarning, Wallet2, CreditCard } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -53,6 +53,16 @@ import {
   buildPanLiabilityVsItcClaimedReport,
   buildPanMultipleCompany2A2BReport,
 } from '@/utils/panReports';
+import {
+  buildViewNoticesAndOrdersReport,
+  buildAdditionalNoticesAndOrdersReport,
+  buildRefundFiledOnPortalReport,
+  buildRefundClaimedFromItcLedgerReport,
+  buildRefundClaimedFromCashLedgerReport,
+  buildDrc03FiledOnPortalReport,
+  buildDrc03VoluntaryCashLedgerReport,
+  buildDrc03VoluntaryCreditLedgerReport,
+} from '@/utils/noticeRefundDrc03Reports';
 import {
   buildLiabilityDeclaredVsPaidReport,
   buildTaxLiabilityAndItcSummaryReport,
@@ -458,6 +468,86 @@ const REPORTS: ReportDefinition[] = [
     build: ({ clientId, month }) => buildPanMultipleCompany2A2BReport(clientId!, month),
   },
   {
+    key: 'view-notices-and-orders',
+    title: 'View Notice and Orders',
+    description: 'Every notice/order on record for the client, most recent first. No automated portal pull yet — see the report\'s error for how to populate it.',
+    icon: Bell,
+    category: 'notice',
+    status: 'extends-login',
+    needs: 'client',
+    build: ({ clientId }) => buildViewNoticesAndOrdersReport(clientId!),
+  },
+  {
+    key: 'additional-notices-and-orders',
+    title: 'Additional Notices and Orders',
+    description: 'The portal\'s separate "Additional Notices and Orders" list. No automated portal pull yet — see the report\'s error for how to populate it.',
+    icon: BellRing,
+    category: 'notice',
+    status: 'extends-login',
+    needs: 'client',
+    build: ({ clientId }) => buildAdditionalNoticesAndOrdersReport(clientId!),
+  },
+  {
+    key: 'refund-filed-on-portal',
+    title: 'Refund Filed On Portal',
+    description: 'Every refund application on record for the client, most recent first. No automated portal pull yet — see the report\'s error for how to populate it.',
+    icon: Banknote,
+    category: 'refund',
+    status: 'extends-login',
+    needs: 'client',
+    build: ({ clientId }) => buildRefundFiledOnPortalReport(clientId!),
+  },
+  {
+    key: 'refund-claimed-from-itc-ledger',
+    title: 'Refund Claimed From ITC Ledger',
+    description: 'Refund applications claimed against the Electronic Credit Ledger. No automated portal pull yet — see the report\'s error for how to populate it.',
+    icon: Coins,
+    category: 'refund',
+    status: 'extends-login',
+    needs: 'client',
+    build: ({ clientId }) => buildRefundClaimedFromItcLedgerReport(clientId!),
+  },
+  {
+    key: 'refund-claimed-from-cash-ledger',
+    title: 'Refund Claimed From Cash Ledger',
+    description: 'Refund applications claimed against the Electronic Cash Ledger. No automated portal pull yet — see the report\'s error for how to populate it.',
+    icon: HandCoins,
+    category: 'refund',
+    status: 'extends-login',
+    needs: 'client',
+    build: ({ clientId }) => buildRefundClaimedFromCashLedgerReport(clientId!),
+  },
+  {
+    key: 'drc03-filed-on-portal',
+    title: 'DRC-03 Filed On Portal',
+    description: 'Every DRC-03 voluntary payment on record for the client, most recent first. No automated portal pull yet — see the report\'s error for how to populate it.',
+    icon: FileWarning,
+    category: 'drc03',
+    status: 'extends-login',
+    needs: 'client',
+    build: ({ clientId }) => buildDrc03FiledOnPortalReport(clientId!),
+  },
+  {
+    key: 'drc03-voluntary-cash-ledger',
+    title: 'Voluntary Payment Of Cash Ledger',
+    description: 'DRC-03 payments discharged from the Cash Ledger. No automated portal pull yet — see the report\'s error for how to populate it.',
+    icon: Wallet2,
+    category: 'drc03',
+    status: 'extends-login',
+    needs: 'client',
+    build: ({ clientId }) => buildDrc03VoluntaryCashLedgerReport(clientId!),
+  },
+  {
+    key: 'drc03-voluntary-credit-ledger',
+    title: 'Voluntary Payment Of Credit Ledger',
+    description: 'DRC-03 payments discharged from the Credit Ledger. No automated portal pull yet — see the report\'s error for how to populate it.',
+    icon: CreditCard,
+    category: 'drc03',
+    status: 'extends-login',
+    needs: 'client',
+    build: ({ clientId }) => buildDrc03VoluntaryCreditLedgerReport(clientId!),
+  },
+  {
     key: 'pan-output-liability',
     title: 'Output Liability as per GSTR 1 and GSTR 3B (PAN-Based)',
     description: "Pick any GSTIN under a PAN — rolls up every client sharing that PAN's GSTR-1 output tax vs computed GSTR-3B liability, side by side.",
@@ -533,11 +623,11 @@ const ReportsPage: React.FC = () => {
   }, [search, activeCategory]);
 
   const handleDownload = async (report: ReportDefinition, format: 'xlsx' | 'pdf') => {
-    if (report.needs !== 'none' && !selectedMonth) {
+    if ((report.needs === 'month' || report.needs === 'client+month') && !selectedMonth) {
       toast.error('Pick a month first.');
       return;
     }
-    if (report.needs === 'client+month' && !selectedClientId) {
+    if ((report.needs === 'client+month' || report.needs === 'client') && !selectedClientId) {
       toast.error('Pick a client first.');
       return;
     }
@@ -558,8 +648,9 @@ const ReportsPage: React.FC = () => {
     const Icon = report.icon;
     const xlsxBusy = busy?.key === report.key && busy.format === 'xlsx';
     const pdfBusy = busy?.key === report.key && busy.format === 'pdf';
-    const needsClient = report.needs === 'client+month';
-    const isDisabled = (report.needs !== 'none' && !selectedMonth) || (needsClient && !selectedClientId);
+    const needsClient = report.needs === 'client+month' || report.needs === 'client';
+    const needsMonth = report.needs === 'month' || report.needs === 'client+month';
+    const isDisabled = (needsMonth && !selectedMonth) || (needsClient && !selectedClientId);
     const statusMeta = REPORT_STATUS_META[report.status];
 
     return (
