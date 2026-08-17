@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search, Percent, ClipboardList, Hash, Users, AlertTriangle, History, Scale, ArrowRightLeft, Rows3, BadgeCheck, Building2, ShoppingCart } from 'lucide-react';
+import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search, Percent, ClipboardList, Hash, Users, AlertTriangle, History, Scale, ArrowRightLeft, Rows3, BadgeCheck, Building2, ShoppingCart, Receipt, Layers, Repeat, Ship, PackageOpen, Package, ArrowLeftRight } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -42,6 +42,16 @@ import {
   buildPurchaseRateWiseReport,
   buildGstr2bPyInCyReport,
 } from '@/utils/gstr2bReports';
+import {
+  buildLiabilityDeclaredVsPaidReport,
+  buildTaxLiabilityAndItcSummaryReport,
+  buildTaxLiabilityExclExportRcmReport,
+  buildTaxLiabilityRcmReport,
+  buildTaxLiabilityExportSezReport,
+  buildItcClaimedExclImportGoodsReport,
+  buildItcClaimedImportGoodsReport,
+  buildRcmLiabilityVsItcReport,
+} from '@/utils/taxLiabilityReports';
 import {
   REPORT_CATEGORY_LABELS,
   REPORT_CATEGORY_ORDER,
@@ -237,6 +247,86 @@ const REPORTS: ReportDefinition[] = [
     status: 'ready',
     needs: 'client+month',
     build: ({ clientId, month }) => buildGstr2bPyInCyReport(clientId!, month),
+  },
+  {
+    key: 'liability-declared-vs-paid',
+    title: 'Difference in Liability Declared and Paid',
+    description: 'Total output liability (before ITC set-off) vs the indicative net payable after set-off, by tax head, for the selected client and period.',
+    icon: Receipt,
+    category: 'tax-liability',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildLiabilityDeclaredVsPaidReport(clientId!, month),
+  },
+  {
+    key: 'tax-liability-itc-summary',
+    title: 'Tax Liability and ITC Summary',
+    description: "A one-page digest of this app's computed draft GSTR-3B — outward, RCM and total liability alongside ITC available, reversed, net and payable.",
+    icon: Layers,
+    category: 'tax-liability',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildTaxLiabilityAndItcSummaryReport(clientId!, month),
+  },
+  {
+    key: 'tax-liability-excl-export-rcm',
+    title: 'Tax Liability Other Than Export/Reverse Charge',
+    description: 'Domestic taxable supplies (B2B, B2CL, B2CS, net of notes) by rate — excludes exports/SEZ and Nil-rated/Exempt.',
+    icon: Percent,
+    category: 'tax-liability',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildTaxLiabilityExclExportRcmReport(clientId!, month),
+  },
+  {
+    key: 'tax-liability-rcm',
+    title: 'Tax Liability Due to Reverse Charge',
+    description: 'RCM liability from RCM Summary broken down by rate and head (IGST vs CGST+SGST), plus Builder TDR/FSI reverse charge where applicable.',
+    icon: Repeat,
+    category: 'tax-liability',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildTaxLiabilityRcmReport(clientId!, month),
+  },
+  {
+    key: 'tax-liability-export-sez',
+    title: 'Tax Liability Due to Export and SEZ Supplies',
+    description: 'GSTR-1 Tables 6A (Exports), 6B (SEZ) and 6C (Deemed Exports) for the selected client and period.',
+    icon: Ship,
+    category: 'tax-liability',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildTaxLiabilityExportSezReport(clientId!, month),
+  },
+  {
+    key: 'itc-claimed-excl-import-goods',
+    title: 'ITC Claimed and Due (Other Than Import of Goods)',
+    description: 'GSTR-3B Table 4(A) rows (2)-(5) — import of services, RCM ITC, ISD, and all other ITC.',
+    icon: PackageOpen,
+    category: 'tax-liability',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildItcClaimedExclImportGoodsReport(clientId!, month),
+  },
+  {
+    key: 'itc-claimed-import-goods',
+    title: 'ITC Claimed and Due (Import of Goods)',
+    description: 'GSTR-3B Table 4(A)(1) — import of goods, entered directly in ITC Summary.',
+    icon: Package,
+    category: 'tax-liability',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildItcClaimedImportGoodsReport(clientId!, month),
+  },
+  {
+    key: 'rcm-liability-vs-itc',
+    title: 'Reverse Charge Liability Declared and ITC Claimed Thereon',
+    description: 'Table 3.1(d) RCM liability vs Table 4(A)(3) RCM ITC claimed — a variance points to a manual GSTR-3B adjustment on one side but not the other.',
+    icon: ArrowLeftRight,
+    category: 'tax-liability',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildRcmLiabilityVsItcReport(clientId!, month),
   },
 ];
 
