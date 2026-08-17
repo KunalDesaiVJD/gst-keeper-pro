@@ -168,7 +168,7 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4'];
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -190,6 +190,8 @@
     else if (job.step === 'efiledview') await handleReturnView(job, cur, progress);
     else if (job.step === 'twob') await handleTwob(job, cur, progress);
     else if (job.step === 'twobdwld') await handleTwobDownload(job, cur, progress);
+    else if (job.step === 'twoa') await handleTwoA(job, cur, progress);
+    else if (job.step === 'twoadwld') await handleTwoADownload(job, cur, progress);
     else if (job.step === 'filing') await handleFiling(job, cur, progress);
     else if (job.step === 'gstr1_dash') await handleGstr1UploadDashboard(job, cur, progress);
     else if (job.step === 'gstr1_upload') await handleGstr1Upload(job, cur, progress);
@@ -236,6 +238,11 @@
       } else if (job.mode === 'twob') {
         banner('Logged in — opening the returns dashboard…' + progress);
         job.step = 'twob';
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      } else if (job.mode === 'twoa') {
+        banner('Logged in — opening the returns dashboard…' + progress);
+        job.step = 'twoa';
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
       } else if (job.mode === 'filing') {
@@ -1600,6 +1607,110 @@
   async function storeTwobResult(cur, period, dataUrl) {
     const fileName = 'GSTR2B_' + cur.clientId + '_' + String(period).replace('/', '-') + '.xlsx';
     await store.set({ gstk_twob_result: {
+      ok: true, clientId: cur.clientId, gstin: (cur.creds && cur.creds.gstin) || '', period,
+      fileB64: dataUrl, fileName, at: Date.now(),
+    } });
+  }
+
+  // GSTR-2A pull — same returns-dashboard tile pattern as handleTwob, adjacent
+  // tile. UNVERIFIED: the tile-finding + cascading-dropdown steps reuse code
+  // already proven working for the GSTR-2B tile on this exact dashboard, so
+  // those are high-confidence; the download page itself (handleTwoADownload)
+  // has NOT been tested against a real GSTR-2A download — it mirrors
+  // handleTwobDownload's structure on the assumption GSTR-2A offers the same
+  // "Generate Excel" flow. If the button text or page shape differs, this
+  // will fail loudly (a clear banner + no import) rather than silently
+  // importing the wrong file — see the guard at the top of
+  // handleTwoADownload. Confirm against a real pull and adjust the selectors
+  // below if needed.
+  async function handleTwoA(job, cur, progress) {
+    if (!/returns\/auth\/dashboard/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
+    if (!(await waitFor('select', 20000))) { banner('Returns dashboard did not load.', '#dc2626'); await clearJob(); return; }
+    const MONTHS_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) { banner('Bad 2A period.', '#dc2626'); await clearJob(); return; }
+    const fyStart = mm >= 4 ? yyyy : yyyy - 1;
+    const fyShort = fyStart + '-' + String((fyStart + 1) % 100).padStart(2, '0');
+    const monthName = MONTHS_FULL[mm - 1];
+    const q = mm >= 4 ? Math.ceil((mm - 3) / 3) : 4;
+
+    banner('Selecting ' + monthName + ' ' + yyyy + ' on the dashboard…' + progress);
+    if (!(await selectWhereOption(fyShort))) { banner('Could not set the financial year on the dashboard.', '#dc2626'); await clearJob(); return; }
+    await sleep(700);
+    await selectWhereOption('Quarter ' + q, { startsWith: true, timeout: 8000 });
+    await sleep(700);
+    if (!(await selectWhereOption(monthName, { timeout: 12000 }))) { banner('Could not set the month on the dashboard.', '#dc2626'); await clearJob(); return; }
+    await sleep(300);
+    const search = $('button.srchbtn') || $$('button').find((b) => /^search$/i.test((b.textContent || '').trim()));
+    if (!search) { banner('Could not find the dashboard Search button.', '#dc2626'); await clearJob(); return; }
+    search.click();
+
+    // GSTR-2A tile's OWN View/Download button — never a wrapper's. Excludes
+    // reject any element that also names another return (a wrapper), same
+    // guard as the GSTR-2B tile-finder.
+    let dlBtn = null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 15000 && !dlBtn) {
+      await sleep(400);
+      dlBtn = findTileButton(/gstr[\s-]*2a/i, /^(view|download)$/i, [/gstr[\s-]*1\b/i, /gstr[\s-]*2b/i, /gstr[\s-]*3b/i]);
+    }
+    if (!dlBtn) { banner('Could not find the GSTR-2A tile / View-Download after Search — is GSTR-2A available for ' + monthName + ' ' + yyyy + '?', '#dc2626'); await clearJob(); return; }
+    job.step = 'twoadwld';
+    await setJob(job);
+    banner('Opening the GSTR-2A page…' + progress);
+    dlBtn.click();
+  }
+
+  async function handleTwoADownload(job, cur, progress) {
+    const pageText = (document.body && document.body.innerText) || '';
+    if (!(/gstr2a/.test(url) || /gstr-?2a/i.test(pageText))) { banner('Did not reach the GSTR-2A page (at ' + location.pathname + '). This page/flow is unverified — tell me what you see and I\'ll adjust the selectors.', '#dc2626'); await clearJob(); return; }
+
+    banner('Generating the GSTR-2A Excel…' + progress);
+    let genBtn = null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 15000 && !genBtn) {
+      genBtn = $$('button, a').find((x) => /generate\s+excel/i.test(x.textContent || ''));
+      if (!genBtn) await sleep(400);
+    }
+    if (!genBtn) { banner('No "Generate Excel" button on the GSTR-2A page — this flow is unverified against the real portal; tell me what buttons you see and I\'ll adjust.', '#dc2626'); await clearJob(); return; }
+
+    const resultWritten = new Promise((resolve) => {
+      const onChg = (changes, area) => {
+        if (area === 'local' && changes.gstk_twoa_result && changes.gstk_twoa_result.newValue) {
+          chrome.storage.onChanged.removeListener(onChg);
+          resolve(true);
+        }
+      };
+      chrome.storage.onChanged.addListener(onChg);
+      setTimeout(() => { chrome.storage.onChanged.removeListener(onChg); resolve(false); }, 90000);
+    });
+    const onPdf = (e) => { if (e.data && e.data.__gstkPdf) { window.removeEventListener('message', onPdf); storeTwoAResult(cur, job.period, e.data.__gstkPdf); } };
+    window.addEventListener('message', onPdf);
+
+    genBtn.click();
+    banner('Waiting for the GSTR-2A file (generation can take a moment)…' + progress);
+    let done = false;
+    const clicked = new Set();
+    (async () => {
+      while (!done) {
+        await sleep(2000);
+        const link = $$('a, button').filter((x) => x.offsetParent !== null &&
+          !x.closest('nav, header, .navbar, .nav, .dropdown-menu')).find((x) => /click here/i.test((x.textContent || '').trim()) && !clicked.has(x));
+        if (link) { clicked.add(link); try { link.click(); } catch (e) { /* noop */ } }
+      }
+    })();
+
+    const ok = await resultWritten;
+    done = true;
+    window.removeEventListener('message', onPdf);
+    if (!ok) { banner('GSTR-2A downloaded but I could not capture its data to import — tell me and I\'ll adjust.', '#dc2626'); await clearJob(); return; }
+    banner('GSTR-2A captured ✓ — importing into GST Keeper. Your downloaded file is untouched. You can close this tab.', '#16a34a');
+    await clearJob();
+  }
+
+  async function storeTwoAResult(cur, period, dataUrl) {
+    const fileName = 'GSTR2A_' + cur.clientId + '_' + String(period).replace('/', '-') + '.xlsx';
+    await store.set({ gstk_twoa_result: {
       ok: true, clientId: cur.clientId, gstin: (cur.creds && cur.creds.gstin) || '', period,
       fileB64: dataUrl, fileName, at: Date.now(),
     } });

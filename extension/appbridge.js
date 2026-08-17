@@ -45,6 +45,21 @@ window.addEventListener('message', (e) => {
     return;
   }
 
+  // The GSTR-2A Import card's "Pull from portal" button asked to pull the
+  // GSTR-2A. Mirrors __gstkPull2B exactly — opens a portal tab; the downloaded
+  // file arrives later via chrome.storage.onChanged.
+  if (d.__gstkPull2A) {
+    const info = d.__gstkPull2A;
+    if (!info.clientId || !info.period_month) return;
+    chrome.runtime.sendMessage({ gstk: true, fn: 'startTwoAPull', args: [info] }, (resp) => {
+      if (!(resp && resp.ok)) {
+        const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
+        window.postMessage({ __gstkPull2AResult: { ok: false, error } }, '*');
+      }
+    });
+    return;
+  }
+
   // The Filing Status login icon asked to log a client in and open a return's
   // filing page. Opens a portal tab; the human does the CAPTCHA + OTP/DSC submit.
   if (d.__gstkOpenFiling) {
@@ -145,6 +160,13 @@ chrome.storage.onChanged.addListener((changes, area) => {
     if (v) {
       window.postMessage({ __gstkPull2BResult: v }, '*');
       chrome.storage.local.remove('gstk_twob_result');
+    }
+  }
+  if (changes.gstk_twoa_result) {
+    const v = changes.gstk_twoa_result.newValue;
+    if (v) {
+      window.postMessage({ __gstkPull2AResult: v }, '*');
+      chrome.storage.local.remove('gstk_twoa_result');
     }
   }
   // Portal upload finished (accepted / partial / failed + per-invoice errors).

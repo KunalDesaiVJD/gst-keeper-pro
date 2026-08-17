@@ -43,6 +43,11 @@ import {
   buildGstr2bPyInCyReport,
 } from '@/utils/gstr2bReports';
 import {
+  buildGstr2aRateWiseReport,
+  buildGstr2aSupplierWiseReport,
+  buildGstr2aPyInCyReport,
+} from '@/utils/gstr2aReports';
+import {
   buildLiabilityDeclaredVsPaidReport,
   buildTaxLiabilityAndItcSummaryReport,
   buildTaxLiabilityExclExportRcmReport,
@@ -395,6 +400,36 @@ const REPORTS: ReportDefinition[] = [
     status: 'ready',
     needs: 'none',
     build: () => buildClientMasterReport(),
+  },
+  {
+    key: 'gstr2a-rate-wise',
+    title: 'GSTR 2A Rate Wise Report',
+    description: 'Imported GSTR-2A documents broken down by tax rate (derived from tax ÷ taxable value). Pull it first from Import 2B\'s GSTR-2A Import card.',
+    icon: Percent,
+    category: 'gstr2a2b',
+    status: 'extends-login',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr2aRateWiseReport(clientId!, month),
+  },
+  {
+    key: 'gstr2a-supplier-wise',
+    title: 'GSTR 2A Supplier Wise Report',
+    description: 'Imported GSTR-2A documents grouped by supplier GSTIN, sorted by taxable value.',
+    icon: Building2,
+    category: 'gstr2a2b',
+    status: 'extends-login',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr2aSupplierWiseReport(clientId!, month),
+  },
+  {
+    key: 'gstr2a-py-in-cy',
+    title: 'GSTR 2A (P.Y Invoices showing in C.Y)',
+    description: 'Flags imported GSTR-2A documents dated in an earlier financial year than the selected return period.',
+    icon: History,
+    category: 'gstr2a2b',
+    status: 'extends-login',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr2aPyInCyReport(clientId!, month),
   },
 ];
 

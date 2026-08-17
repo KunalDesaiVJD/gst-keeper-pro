@@ -19,6 +19,7 @@ import { parseGstr2bFile } from '@/utils/parseGstr2b';
 import { classifyBookAgainst2b, invoiceSimilar, TwoBLite } from '@/utils/matchTwob';
 import { periodMonthLabel, planImport2BPost, postImport2BToLedger, isPostPlanEmpty } from '@/lib/postImport2B';
 import ReclaimMatchDialog, { ReclaimInvoiceLite } from '@/components/dialogs/ReclaimMatchDialog';
+import Gstr2aImportCard from '@/components/gstr2a/Gstr2aImportCard';
 
 // Phase 3 — the "Import 2B" tab. Import the portal's GSTR-2B .xlsx into the
 // twob_import_docs staging table (non-RCM B2B only shown), let staff classify
@@ -919,6 +920,16 @@ const Import2BTab: React.FC = () => {
           </div>
         </CardContent>
       </Card>
+
+      {selectedClient && selectedMonth && (
+        <Gstr2aImportCard
+          clientId={selectedClient}
+          clientName={selectedClientName}
+          clientGstin={clients.find((c) => c.id === selectedClient)?.gstin || ''}
+          month={selectedMonth}
+          readOnly={!isStaff}
+        />
+      )}
 
       {isLocked && (
         <div className="flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3 text-warning">
