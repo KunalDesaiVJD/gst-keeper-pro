@@ -67,13 +67,14 @@ export interface ReportRunArgs {
 }
 
 /**
- * One entry per report. `needs` mirrors the two filter shapes the app
- * already has pickers for: an all-clients snapshot for one month, or one
- * client plus the selected month. That second shape covers two different
- * meanings depending on the report — "one client across the full financial
- * year containing this month" (the Ledger reports) or "one client for this
- * exact period" (the GSTR-1 family) — the build function alone decides
- * which; ReportRunArgs itself doesn't need to know.
+ * One entry per report. `needs` mirrors the filter shapes the app has
+ * pickers for: an all-clients snapshot for one month, one client plus the
+ * selected month, or (for a master-data report scoped to no period at all,
+ * e.g. Client Master) neither. The `client+month` shape covers two
+ * different meanings depending on the report — "one client across the full
+ * financial year containing this month" (the Ledger reports) or "one client
+ * for this exact period" (the GSTR-1 family) — the build function alone
+ * decides which; ReportRunArgs itself doesn't need to know.
  */
 export interface ReportDefinition {
   key: string;
@@ -82,6 +83,6 @@ export interface ReportDefinition {
   category: ReportCategory;
   status: ReportStatus;
   icon: LucideIcon;
-  needs: 'month' | 'client+month';
+  needs: 'month' | 'client+month' | 'none';
   build: (args: ReportRunArgs) => Promise<ReportTable>;
 }

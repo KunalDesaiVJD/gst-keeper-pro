@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search, Percent, ClipboardList, Hash, Users, AlertTriangle, History, Scale, ArrowRightLeft, Rows3, BadgeCheck, Building2, ShoppingCart, Receipt, Layers, Repeat, Ship, PackageOpen, Package, ArrowLeftRight } from 'lucide-react';
+import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search, Percent, ClipboardList, Hash, Users, AlertTriangle, History, Scale, ArrowRightLeft, Rows3, BadgeCheck, Building2, ShoppingCart, Receipt, Layers, Repeat, Ship, PackageOpen, Package, ArrowLeftRight, RotateCcw, ListChecks, Gauge, IdCard } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -52,6 +52,14 @@ import {
   buildItcClaimedImportGoodsReport,
   buildRcmLiabilityVsItcReport,
 } from '@/utils/taxLiabilityReports';
+import {
+  buildCreditReversalReclaimStatement,
+  buildRcmLedgerPerClient,
+  buildFilingStatusReport,
+  buildRcmTaxPaidVsItcClaimedAllClients,
+  buildItcClaimedVsUtilizedAllClients,
+  buildClientMasterReport,
+} from '@/utils/extraLedgerReports';
 import {
   REPORT_CATEGORY_LABELS,
   REPORT_CATEGORY_ORDER,
@@ -328,6 +336,66 @@ const REPORTS: ReportDefinition[] = [
     needs: 'client+month',
     build: ({ clientId, month }) => buildRcmLiabilityVsItcReport(clientId!, month),
   },
+  {
+    key: 'credit-reversal-reclaim-statement',
+    title: 'Credit Reversal and Reclaim Statement',
+    description: 'For the picked client, month-by-month suspended-ITC movement across the financial year: reversed, reclaimed, expensed out, and still-suspended closing balance.',
+    icon: RotateCcw,
+    category: 'ledgers',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildCreditReversalReclaimStatement(clientId!, month),
+  },
+  {
+    key: 'rcm-liability-itc-ledger',
+    title: 'RCM Liability/ITC',
+    description: 'For the picked client, RCM liability by month across the financial year, from RCM Summary.',
+    icon: Repeat,
+    category: 'ledgers',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildRcmLedgerPerClient(clientId!, month),
+  },
+  {
+    key: 'filing-status-report',
+    title: 'Filing Status Report',
+    description: 'Every client and return type for the selected month, with status and filed date — one row per client per return.',
+    icon: ListChecks,
+    category: 'extra',
+    status: 'ready',
+    needs: 'month',
+    build: ({ month }) => buildFilingStatusReport(month),
+  },
+  {
+    key: 'rcm-tax-paid-vs-itc-claimed-all',
+    title: 'Tax Paid under RCM vs ITC Claimed',
+    description: 'All clients for the selected month: RCM tax paid (Table 3.1d) vs RCM ITC claimed (Table 4A(3)), from this app\'s computed draft GSTR-3B.',
+    icon: ArrowLeftRight,
+    category: 'extra',
+    status: 'ready',
+    needs: 'month',
+    build: ({ month }) => buildRcmTaxPaidVsItcClaimedAllClients(month),
+  },
+  {
+    key: 'itc-claimed-vs-utilized-all',
+    title: 'ITC Claimed vs ITC Utilized',
+    description: 'All clients for the selected month: ITC claimed (Table 4A gross) vs ITC actually utilized against this month\'s liability.',
+    icon: Gauge,
+    category: 'extra',
+    status: 'ready',
+    needs: 'month',
+    build: ({ month }) => buildItcClaimedVsUtilizedAllClients(month),
+  },
+  {
+    key: 'client-master',
+    title: 'Client Master',
+    description: 'Every client with registration type, sub type, registration date, contact details and assigned accountant — no period needed.',
+    icon: IdCard,
+    category: 'extra',
+    status: 'ready',
+    needs: 'none',
+    build: () => buildClientMasterReport(),
+  },
 ];
 
 const ReportsPage: React.FC = () => {
@@ -384,7 +452,7 @@ const ReportsPage: React.FC = () => {
   }, [search, activeCategory]);
 
   const handleDownload = async (report: ReportDefinition, format: 'xlsx' | 'pdf') => {
-    if (!selectedMonth) {
+    if (report.needs !== 'none' && !selectedMonth) {
       toast.error('Pick a month first.');
       return;
     }
@@ -410,7 +478,7 @@ const ReportsPage: React.FC = () => {
     const xlsxBusy = busy?.key === report.key && busy.format === 'xlsx';
     const pdfBusy = busy?.key === report.key && busy.format === 'pdf';
     const needsClient = report.needs === 'client+month';
-    const isDisabled = !selectedMonth || (needsClient && !selectedClientId);
+    const isDisabled = (report.needs !== 'none' && !selectedMonth) || (needsClient && !selectedClientId);
     const statusMeta = REPORT_STATUS_META[report.status];
 
     return (
