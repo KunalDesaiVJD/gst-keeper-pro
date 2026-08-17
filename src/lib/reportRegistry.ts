@@ -53,12 +53,17 @@ export const REPORT_CATEGORY_ORDER: ReportCategory[] = [
  */
 export type ReportStatus = 'ready' | 'ready-approx' | 'extends-login' | 'new-login' | 'ai-assisted';
 
-export const REPORT_STATUS_META: Record<ReportStatus, { label: string; badgeVariant: BadgeProps['variant'] }> = {
-  ready: { label: 'Ready', badgeVariant: 'success' },
-  'ready-approx': { label: 'Ready (approx.)', badgeVariant: 'success' },
-  'extends-login': { label: 'Extends portal login', badgeVariant: 'info' },
-  'new-login': { label: 'New portal login', badgeVariant: 'warning' },
-  'ai-assisted': { label: 'AI-assisted', badgeVariant: 'secondary' },
+/**
+ * `label` is the full-length text (used in the grid/detail contexts);
+ * `shortLabel` is a tight 1-2 word form for dense list rows, with `label`
+ * available as its tooltip.
+ */
+export const REPORT_STATUS_META: Record<ReportStatus, { label: string; shortLabel: string; badgeVariant: BadgeProps['variant'] }> = {
+  ready: { label: 'Ready', shortLabel: 'Ready', badgeVariant: 'success' },
+  'ready-approx': { label: 'Ready (approx.)', shortLabel: 'Approx.', badgeVariant: 'success' },
+  'extends-login': { label: 'Extends portal login — needs a browser-extension pull first', shortLabel: 'Needs Pull', badgeVariant: 'info' },
+  'new-login': { label: 'Needs a new portal login (separate credentials)', shortLabel: 'New Login', badgeVariant: 'warning' },
+  'ai-assisted': { label: 'AI-assisted analysis', shortLabel: 'AI-Assisted', badgeVariant: 'secondary' },
 };
 
 export interface ReportRunArgs {
