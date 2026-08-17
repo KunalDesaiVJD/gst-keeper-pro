@@ -52,6 +52,7 @@ interface Client {
   builder_itc_type?: string | null;
   commercial_area?: number | null;
   residential_area?: number | null;
+  liberal_2b_reconciliation?: boolean | null;
 }
 
 const getDefaultITCData = (): ITCData => ({
@@ -210,6 +211,15 @@ const ITCSummaryPage: React.FC = () => {
   // Net ITC (4C) for a client whose scheme structurally cannot claim any.
   const isNoItcClient = selectedClientData?.builder_itc_type === 'NO_ITC';
   const isReversalClient = isPartialITCClient || isNoItcClient;
+  // A Liberal-mode client's staff can bypass Import 2B entirely and edit 2B
+  // Reconciliation directly (see clients.liberal_2b_reconciliation) — so
+  // twob_import_docs, which row 5.1 below is normally auto-linked from, may
+  // never get populated for them. Rows 5.4 / 4D(1)/(1.1) / the 4B "2B RECO"
+  // row stay auto-linked regardless of mode: they read bills_not_in_2b /
+  // bills_not_in_books, the shared ledger both modes write to (Liberal just
+  // writes to it directly instead of via Import 2B) — only row 5.1's source
+  // is Import-2B-exclusive.
+  const isLiberalClient = selectedClientData?.liberal_2b_reconciliation === true;
   // Carpet areas derived from the builder project master. The apportionment
   // key is a fact about the projects, so it is better read from them than
   // hand-keyed onto the client record and left to drift.
@@ -263,7 +273,7 @@ const ITCSummaryPage: React.FC = () => {
       console.log('Fetching clients from Supabase...');
       let query = supabase
         .from('clients')
-        .select('id, name, gstin, registration_type, regular_sub_type, builder_itc_type, commercial_area, residential_area')
+        .select('id, name, gstin, registration_type, regular_sub_type, builder_itc_type, commercial_area, residential_area, liberal_2b_reconciliation')
         .order('name');
       
       // If user is a client, match by their client id (user.id is client's id for client login)
@@ -584,12 +594,20 @@ const ITCSummaryPage: React.FC = () => {
         }
         // Row 5.1 - ITC for the Month, auto-linked from Import 2B's MATCHED +
         // MISMATCHED total (claimed at the 2B figure — see postImport2B.ts).
+        // Liberal clients don't necessarily run their invoices through
+        // Import 2B's classification at all, so that total may not reflect
+        // their real figure — leave the row exactly as loaded/typed and let
+        // staff edit it directly, the way it worked before Import 2B.
         if (row.srNo === '5.1') {
+          if (isLiberalClient) {
+            return { ...row, isAutoLinked: false, editable: true };
+          }
           return {
             ...row,
             igst: eligibleFromImport2B.igst,
             cgst: eligibleFromImport2B.cgst,
             sgst: eligibleFromImport2B.sgst,
+            isAutoLinked: true,
           };
         }
         return row;
@@ -636,7 +654,7 @@ const ITCSummaryPage: React.FC = () => {
       
       return newData;
     });
-  }, [reversalFromReco, reclaimFromReco, expenseOutFromReco, eligibleFromImport2B, rcmTotals, dataLoadVersion]);
+  }, [reversalFromReco, reclaimFromReco, expenseOutFromReco, eligibleFromImport2B, rcmTotals, dataLoadVersion, isLiberalClient]);
 
   // Calculate Partial ITC formula values (used in rendering)
   // FORMULAS as per Excel:
