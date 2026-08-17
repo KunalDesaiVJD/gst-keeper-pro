@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Users, User } from 'lucide-react';
+import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -18,29 +20,31 @@ import {
   buildCreditClosingPerClient,
   renderReportToExcel,
   fyMonthsForKey,
-  type ReportTable,
 } from '@/utils/allClientsReports';
 import { renderReportToPdf } from '@/utils/closingBalanceReportsPdf';
+import {
+  REPORT_CATEGORY_LABELS,
+  REPORT_CATEGORY_ORDER,
+  REPORT_STATUS_META,
+  type ReportCategory,
+  type ReportDefinition,
+} from '@/lib/reportRegistry';
 
 interface ClientLite { id: string; name: string; gstin: string; }
 
-type ReportKey = 'sus-all' | 'cred-all' | 'sus-one' | 'cred-one';
-
-interface ReportDef {
-  key: ReportKey;
-  title: string;
-  description: string;
-  icon: React.ElementType;
-  needs: 'month' | 'client+month';
-  build: (args: { month: string; clientId?: string }) => Promise<ReportTable>;
-}
-
-const REPORTS: ReportDef[] = [
+/**
+ * The registry for this page. Every report — today's 4 and every one the
+ * roadmap adds later — is one entry here; the page below only ever reads
+ * from this list, never branches on individual report keys.
+ */
+const REPORTS: ReportDefinition[] = [
   {
     key: 'sus-all',
     title: 'Suspended Ledger — All Clients',
     description: 'One row per client showing the suspended ITC closing balance for the selected month.',
     icon: Pause,
+    category: 'ledgers',
+    status: 'ready',
     needs: 'month',
     build: ({ month }) => buildSuspendedClosingAllClients(month),
   },
@@ -49,6 +53,8 @@ const REPORTS: ReportDef[] = [
     title: 'Credit Ledger — All Clients',
     description: 'One row per client showing the GST Receivable (Credit Ledger) closing balance for the selected month, plus any cash GST payable.',
     icon: Wallet,
+    category: 'ledgers',
+    status: 'ready',
     needs: 'month',
     build: ({ month }) => buildCreditClosingAllClients(month),
   },
@@ -57,6 +63,8 @@ const REPORTS: ReportDef[] = [
     title: 'Suspended Ledger — One Client × All Months',
     description: 'For the picked client, suspended ITC closing balance per month across the financial year of the selected month.',
     icon: Pause,
+    category: 'ledgers',
+    status: 'ready',
     needs: 'client+month',
     build: ({ clientId, month }) => buildSuspendedClosingPerClient(clientId!, month),
   },
@@ -65,6 +73,8 @@ const REPORTS: ReportDef[] = [
     title: 'Credit Ledger — One Client × All Months',
     description: 'For the picked client, Credit Ledger closing balance per month across the financial year of the selected month, plus cash GST payable.',
     icon: Wallet,
+    category: 'ledgers',
+    status: 'ready',
     needs: 'client+month',
     build: ({ clientId, month }) => buildCreditClosingPerClient(clientId!, month),
   },
@@ -75,7 +85,9 @@ const ReportsPage: React.FC = () => {
   const { selectedMonth, setSelectedMonth } = useMonth();
   const { selectedClientId, setSelectedClientId } = useClient();
   const [clients, setClients] = useState<ClientLite[]>([]);
-  const [busy, setBusy] = useState<{ key: ReportKey; format: 'xlsx' | 'pdf' } | null>(null);
+  const [busy, setBusy] = useState<{ key: string; format: 'xlsx' | 'pdf' } | null>(null);
+  const [search, setSearch] = useState('');
+  const [activeCategory, setActiveCategory] = useState<ReportCategory | 'all'>('all');
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
@@ -106,7 +118,22 @@ const ReportsPage: React.FC = () => {
 
   const fyLabel = useMemo(() => (selectedMonth ? fyMonthsForKey(selectedMonth).fyLabel : ''), [selectedMonth]);
 
-  const handleDownload = async (report: ReportDef, format: 'xlsx' | 'pdf') => {
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<ReportCategory, number>();
+    for (const r of REPORTS) counts.set(r.category, (counts.get(r.category) || 0) + 1);
+    return counts;
+  }, []);
+
+  const visibleReports = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return REPORTS.filter((r) => {
+      if (activeCategory !== 'all' && r.category !== activeCategory) return false;
+      if (!q) return true;
+      return r.title.toLowerCase().includes(q) || r.description.toLowerCase().includes(q);
+    });
+  }, [search, activeCategory]);
+
+  const handleDownload = async (report: ReportDefinition, format: 'xlsx' | 'pdf') => {
     if (!selectedMonth) {
       toast.error('Pick a month first.');
       return;
@@ -128,20 +155,24 @@ const ReportsPage: React.FC = () => {
     }
   };
 
-  const ReportCard: React.FC<{ report: ReportDef }> = ({ report }) => {
+  const ReportCard: React.FC<{ report: ReportDefinition }> = ({ report }) => {
     const Icon = report.icon;
     const xlsxBusy = busy?.key === report.key && busy.format === 'xlsx';
     const pdfBusy = busy?.key === report.key && busy.format === 'pdf';
     const needsClient = report.needs === 'client+month';
     const isDisabled = !selectedMonth || (needsClient && !selectedClientId);
+    const statusMeta = REPORT_STATUS_META[report.status];
 
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Icon className="h-5 w-5 text-primary" />
-            {report.title}
-          </CardTitle>
+          <div className="flex items-start justify-between gap-2">
+            <CardTitle className="flex items-center gap-2">
+              <Icon className="h-5 w-5 text-primary" />
+              {report.title}
+            </CardTitle>
+            <Badge variant={statusMeta.badgeVariant} className="shrink-0">{statusMeta.label}</Badge>
+          </div>
           <CardDescription>{report.description}</CardDescription>
         </CardHeader>
         <CardContent className="flex gap-2 flex-wrap">
@@ -172,7 +203,7 @@ const ReportsPage: React.FC = () => {
     <div className="space-y-6 animate-fade-in">
       <PageHeader
         title="Reports"
-        subtitle="Cross-client and per-client closing-balance reports"
+        subtitle={`${REPORTS.length} reports across ${categoryCounts.size} categories today — more land here as each phase ships`}
         icon={<FileSpreadsheet className="h-6 w-6" />}
       />
 
@@ -208,23 +239,49 @@ const ReportsPage: React.FC = () => {
         </CardContent>
       </Card>
 
-      <div className="space-y-4">
-        <h2 className="flex items-center gap-2 text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-          <Users className="h-4 w-4" /> Cross-Client Reports (per month)
-        </h2>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {REPORTS.filter(r => r.needs === 'month').map(r => <ReportCard key={r.key} report={r} />)}
-        </div>
+      <div className="relative max-w-md">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search reports..."
+          className="pl-9"
+          aria-label="Search reports"
+        />
       </div>
 
-      <div className="space-y-4">
-        <h2 className="flex items-center gap-2 text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-          <User className="h-4 w-4" /> Per-Client Reports (full FY)
-        </h2>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {REPORTS.filter(r => r.needs === 'client+month').map(r => <ReportCard key={r.key} report={r} />)}
-        </div>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          size="sm"
+          variant={activeCategory === 'all' ? 'default' : 'outline'}
+          onClick={() => setActiveCategory('all')}
+        >
+          All ({REPORTS.length})
+        </Button>
+        {REPORT_CATEGORY_ORDER.map((cat) => (
+          <Button
+            key={cat}
+            size="sm"
+            variant={activeCategory === cat ? 'default' : 'outline'}
+            onClick={() => setActiveCategory(cat)}
+            disabled={!categoryCounts.get(cat)}
+          >
+            {REPORT_CATEGORY_LABELS[cat]} ({categoryCounts.get(cat) || 0})
+          </Button>
+        ))}
       </div>
+
+      {visibleReports.length === 0 ? (
+        <Card>
+          <CardContent className="p-8 text-center text-sm text-muted-foreground">
+            No reports here yet — this category is on the roadmap for a later phase.
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {visibleReports.map((r) => <ReportCard key={r.key} report={r} />)}
+        </div>
+      )}
     </div>
   );
 };
