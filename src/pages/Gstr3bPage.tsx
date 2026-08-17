@@ -24,6 +24,9 @@ import { toast } from 'sonner';
 import { fetchGstr3b } from '@/utils/fetchGstr3b';
 import type { Gstr3bResult } from '@/utils/buildGstr3bJson';
 import { exportGstr3bToPDF } from '@/utils/gstr3bPdf';
+import { computeSuspendedRecoDiff } from '@/lib/suspendedRecoCalc';
+import type { RecoDiffResult } from '@/lib/suspendedRecoCalc';
+import { computeGstReceivableRecoDiff } from '@/lib/gstReceivableRecoCalc';
 
 interface Client { id: string; name: string; gstin: string; }
 
@@ -269,6 +272,34 @@ const Gstr3bPage: React.FC = () => {
 
   useEffect(() => { compute(); }, [compute]);
 
+  // Reconciliation check — Suspended Reco and GST Receivable Reco each carry
+  // their own live "DIFFERENCE" figure (opening + portal − books, Rs.10
+  // tolerance applied). Neither is otherwise surfaced here, so a client could
+  // get pushed to the portal with an unresolved balance mismatch and nobody
+  // would know until someone happened to open those pages. Advisory only —
+  // matches the existing "Review before filing" flags, doesn't block Push.
+  const [recoCheck, setRecoCheck] = useState<{ suspended: RecoDiffResult | null; receivable: RecoDiffResult | null }>({ suspended: null, receivable: null });
+  const [recoCheckLoading, setRecoCheckLoading] = useState(false);
+
+  const checkReconciliation = useCallback(async () => {
+    if (!selectedClient || !selectedMonth) { setRecoCheck({ suspended: null, receivable: null }); return; }
+    setRecoCheckLoading(true);
+    try {
+      const [suspended, receivable] = await Promise.all([
+        computeSuspendedRecoDiff(selectedClient, selectedMonth),
+        computeGstReceivableRecoDiff(selectedClient, selectedMonth),
+      ]);
+      setRecoCheck({ suspended, receivable });
+    } catch {
+      // Advisory check — a failure here shouldn't block anything, just skip the banner.
+      setRecoCheck({ suspended: null, receivable: null });
+    } finally {
+      setRecoCheckLoading(false);
+    }
+  }, [selectedClient, selectedMonth]);
+
+  useEffect(() => { checkReconciliation(); }, [checkReconciliation]);
+
   const s = result?.summary;
 
   const handleDownloadJson = () => {
@@ -442,6 +473,39 @@ const Gstr3bPage: React.FC = () => {
           <div className="flex-1">
             <p className="font-medium text-success">GSTR-3B already Filed for this period</p>
             <p className="text-xs mt-0.5 text-foreground/80">Push to GST Portal is locked to preserve the record of what was actually filed.</p>
+          </div>
+        </div>
+      )}
+
+      {/* Reconciliation difference — Suspended Reco and/or GST Receivable Reco
+          don't tie out for this client/period. Advisory, not a block: staff
+          should look before filing, but the push itself isn't held up. */}
+      {!recoCheckLoading && selectedClient && selectedMonth && (
+        (recoCheck.suspended && recoCheck.suspended.total !== 0) ||
+        (recoCheck.receivable && recoCheck.receivable.total !== 0)
+      ) && (
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-destructive" />
+          <div className="flex-1 space-y-1">
+            <p className="font-medium">Reconciliation difference found — review before filing</p>
+            {recoCheck.suspended && recoCheck.suspended.total !== 0 && (
+              <p>
+                <span className="font-medium">Suspended Reco</span> difference: ₹{inr(recoCheck.suspended.total)} (2B and RCM → Suspended Reco).
+              </p>
+            )}
+            {recoCheck.receivable && recoCheck.receivable.total !== 0 && (
+              <p>
+                <span className="font-medium">GST Receivable Reco</span> difference: ₹{inr(recoCheck.receivable.total)}.
+              </p>
+            )}
+          </div>
+          <div className="flex flex-col gap-1.5 shrink-0">
+            {recoCheck.suspended && recoCheck.suspended.total !== 0 && (
+              <Button variant="outline" size="sm" onClick={() => navigate('/2b-and-rcm')}>Suspended Reco</Button>
+            )}
+            {recoCheck.receivable && recoCheck.receivable.total !== 0 && (
+              <Button variant="outline" size="sm" onClick={() => navigate('/itc-summary')}>GST Receivable Reco</Button>
+            )}
           </div>
         </div>
       )}
