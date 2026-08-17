@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search, Percent, ClipboardList, Hash, Users, AlertTriangle, History, Scale, ArrowRightLeft, Rows3, BadgeCheck, Building2, ShoppingCart, Receipt, Layers, Repeat, Ship, PackageOpen, Package, ArrowLeftRight, RotateCcw, ListChecks, Gauge, IdCard, Link2, Layers3, Bell, BellRing, Banknote, Coins, HandCoins, FileWarning, Wallet2, CreditCard } from 'lucide-react';
+import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search, Percent, ClipboardList, Hash, Users, AlertTriangle, History, Scale, ArrowRightLeft, Rows3, BadgeCheck, Building2, ShoppingCart, Receipt, Layers, Repeat, Ship, PackageOpen, Package, ArrowLeftRight, RotateCcw, ListChecks, Gauge, IdCard, Link2, Layers3, Bell, BellRing, Banknote, Coins, HandCoins, FileWarning, Wallet2, CreditCard, BookOpen, Landmark, PiggyBank } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -63,6 +63,11 @@ import {
   buildDrc03VoluntaryCashLedgerReport,
   buildDrc03VoluntaryCreditLedgerReport,
 } from '@/utils/noticeRefundDrc03Reports';
+import {
+  buildCreditLedgerTransactionsReport,
+  buildLiabilityLedgerReport,
+  buildCashLedgerReport,
+} from '@/utils/portalLedgerReports';
 import {
   buildLiabilityDeclaredVsPaidReport,
   buildTaxLiabilityAndItcSummaryReport,
@@ -546,6 +551,36 @@ const REPORTS: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'client',
     build: ({ clientId }) => buildDrc03VoluntaryCreditLedgerReport(clientId!),
+  },
+  {
+    key: 'credit-ledger-transaction-detail',
+    title: 'Credit Ledger (Transaction Detail)',
+    description: 'Every portal transaction row for the picked client across the financial year — not just the opening balance the other Credit Ledger reports use.',
+    icon: BookOpen,
+    category: 'ledgers',
+    status: 'extends-login',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildCreditLedgerTransactionsReport(clientId!, month),
+  },
+  {
+    key: 'liability-ledger',
+    title: 'Liability Ledger',
+    description: 'Electronic Liability Register entries for the picked client across the financial year. No automated portal pull yet — see the report\'s error for how to populate it.',
+    icon: Landmark,
+    category: 'ledgers',
+    status: 'extends-login',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildLiabilityLedgerReport(clientId!, month),
+  },
+  {
+    key: 'cash-ledger',
+    title: 'Cash Ledger',
+    description: 'Electronic Cash Ledger entries for the picked client across the financial year. No automated portal pull yet — see the report\'s error for how to populate it.',
+    icon: PiggyBank,
+    category: 'ledgers',
+    status: 'extends-login',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildCashLedgerReport(clientId!, month),
   },
   {
     key: 'pan-output-liability',

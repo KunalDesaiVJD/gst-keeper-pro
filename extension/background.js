@@ -47,6 +47,16 @@ const API = {
     return rows.length ? post('twob_import_docs', rows) : true;
   },
 
+  // Persist the full credit-ledger transaction rows a 'ledger' pull already
+  // scrapes (readLedgerRows() in content.js) but previously only used to
+  // derive ITC-utilised/DRC-03 totals for GST Receivable Reco, discarding
+  // the individual rows afterward. Feeds the "Credit Ledger" (full detail)
+  // report. Delete-then-insert per client+period, same pattern as 2B.
+  replaceCreditLedgerTxns: async (clientId, period, rows) => {
+    await del('gst_credit_ledger_transactions', `client_id=eq.${clientId}&period_month=eq.${enc(period)}`);
+    return rows.length ? post('gst_credit_ledger_transactions', rows) : true;
+  },
+
   // Upload a base64 data-URL PDF to the return-pdfs bucket, return its public URL.
   uploadPdf: async (path, dataUrl) => {
     const b64 = String(dataUrl).split(',')[1] || '';

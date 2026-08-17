@@ -1955,6 +1955,16 @@
     // return set-off posts in the following month, so it's already in this range).
     const ledgerRows = readLedgerRows();
     const { utilised, drc } = classifyLedgerRows(ledgerRows);
+    // Persist every row (not just the utilised/DRC-03 totals above) for the
+    // "Credit Ledger" full-detail report. Best-effort — a failure here must
+    // not block the GST Receivable Reco write below, which the rest of this
+    // handler already depends on.
+    try {
+      await GSTKdb.replaceCreditLedgerTxns(cur.clientId, job.period, ledgerRows.map((r) => ({
+        client_id: cur.clientId, period_month: job.period,
+        is_debit: r.isDebit, description: r.text, igst: r.igst, cgst: r.cgst, sgst: r.sgst,
+      })));
+    } catch (e) { /* non-fatal — the reco write below is what actually matters */ }
     debugPanel([
       'STEP: Electronic Credit ledger  (' + location.pathname + ')',
       'requested period : ' + per.from + ' – ' + per.to,
