@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search, Percent, ClipboardList, Hash, Users, AlertTriangle, History, Scale, ArrowRightLeft, Rows3, BadgeCheck } from 'lucide-react';
+import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search, Percent, ClipboardList, Hash, Users, AlertTriangle, History, Scale, ArrowRightLeft, Rows3, BadgeCheck, Building2, ShoppingCart } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -36,6 +36,12 @@ import {
   buildGstr3bVsGstr1ComparisonReport,
   buildGstr3bVsGstr2bItcReport,
 } from '@/utils/gstr3bReports';
+import {
+  buildGstr2bRateWiseReport,
+  buildGstr2bSupplierWiseReport,
+  buildPurchaseRateWiseReport,
+  buildGstr2bPyInCyReport,
+} from '@/utils/gstr2bReports';
 import {
   REPORT_CATEGORY_LABELS,
   REPORT_CATEGORY_ORDER,
@@ -191,6 +197,46 @@ const REPORTS: ReportDefinition[] = [
     status: 'ready-approx',
     needs: 'client+month',
     build: ({ clientId, month }) => buildGstr3bVsGstr2bItcReport(clientId!, month),
+  },
+  {
+    key: 'gstr2b-rate-wise',
+    title: 'GSTR 2B Rate Wise Report',
+    description: 'Imported GSTR-2B documents broken down by tax rate (derived from tax ÷ taxable value) for the selected client and period.',
+    icon: Percent,
+    category: 'gstr2a2b',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr2bRateWiseReport(clientId!, month),
+  },
+  {
+    key: 'gstr2b-supplier-wise',
+    title: 'GSTR 2B Supplier Wise Report',
+    description: 'Imported GSTR-2B documents grouped by supplier GSTIN, sorted by taxable value, for the selected client and period.',
+    icon: Building2,
+    category: 'gstr2a2b',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr2bSupplierWiseReport(clientId!, month),
+  },
+  {
+    key: 'purchase-rate-wise',
+    title: 'Purchase Rate Wise Report',
+    description: "The client's own books register (not GSTR-2B) broken down by tax rate for the selected client and period.",
+    icon: ShoppingCart,
+    category: 'gstr2a2b',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildPurchaseRateWiseReport(clientId!, month),
+  },
+  {
+    key: 'gstr2b-py-in-cy',
+    title: 'GSTR 2B (P.Y Invoices showing in C.Y)',
+    description: 'Flags imported GSTR-2B documents dated in an earlier financial year than the selected return period.',
+    icon: History,
+    category: 'gstr2a2b',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr2bPyInCyReport(clientId!, month),
   },
 ];
 
