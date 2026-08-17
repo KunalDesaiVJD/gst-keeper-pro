@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search } from 'lucide-react';
+import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search, Percent, ClipboardList, Hash, Users, AlertTriangle, History } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -22,6 +22,14 @@ import {
   fyMonthsForKey,
 } from '@/utils/allClientsReports';
 import { renderReportToPdf } from '@/utils/closingBalanceReportsPdf';
+import {
+  buildGstr1RateWiseReport,
+  buildGstr1SummaryReport,
+  buildGstr1HsnSummaryReport,
+  buildGstr1CustomerWiseReport,
+  buildGstr1ErrorLogReport,
+  buildGstr1PyInCyReport,
+} from '@/utils/gstr1Reports';
 import {
   REPORT_CATEGORY_LABELS,
   REPORT_CATEGORY_ORDER,
@@ -77,6 +85,66 @@ const REPORTS: ReportDefinition[] = [
     status: 'ready',
     needs: 'client+month',
     build: ({ clientId, month }) => buildCreditClosingPerClient(clientId!, month),
+  },
+  {
+    key: 'gstr1-rate-wise',
+    title: 'GSTR 1 Rate Wise Report',
+    description: 'Outward supplies for the selected client and period broken down by tax rate, with a Nil-rated/exempt row and grand total.',
+    icon: Percent,
+    category: 'gstr1',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr1RateWiseReport(clientId!, month),
+  },
+  {
+    key: 'gstr1-summary',
+    title: 'GSTR 1 Summary Report',
+    description: 'The portal-style table-wise consolidated summary (4A, 4B, 5, 6A-C, 7, 8, 9B, 10, 11A-B, 12, 13) for the selected client and period.',
+    icon: ClipboardList,
+    category: 'gstr1',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr1SummaryReport(clientId!, month),
+  },
+  {
+    key: 'gstr1-hsn-summary',
+    title: 'GSTR 1 HSN Summary Report',
+    description: 'Table 12 HSN-wise summary of outward supplies for the selected client and period, sorted by HSN/SAC code.',
+    icon: Hash,
+    category: 'gstr1',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr1HsnSummaryReport(clientId!, month),
+  },
+  {
+    key: 'gstr1-customer-wise',
+    title: 'GSTR 1 Customer Wise Report',
+    description: 'B2B outward supplies (net of credit/debit notes) grouped by registered customer GSTIN for the selected client and period.',
+    icon: Users,
+    category: 'gstr1',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr1CustomerWiseReport(clientId!, month),
+  },
+  {
+    key: 'gstr1-error-log',
+    title: 'GSTR 1 Error Log',
+    description: 'Every upload attempt for the selected client and period with its per-invoice portal validation errors, oldest first.',
+    icon: AlertTriangle,
+    category: 'gstr1',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr1ErrorLogReport(clientId!, month),
+  },
+  {
+    key: 'gstr1-py-in-cy',
+    title: 'GSTR 1 (P.Y invoice showing in C.Y)',
+    description: 'Flags invoices, credit notes and debit notes dated in an earlier financial year but reported in the selected period\'s GSTR-1.',
+    icon: History,
+    category: 'gstr1',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr1PyInCyReport(clientId!, month),
   },
 ];
 

@@ -69,10 +69,11 @@ export interface ReportRunArgs {
 /**
  * One entry per report. `needs` mirrors the two filter shapes the app
  * already has pickers for: an all-clients snapshot for one month, or one
- * client across the full financial year of the selected month. Reports
- * that need a single client for a single specific period (most of the
- * Phase 1 additions) are a third shape to add once the first one of those
- * lands — not introduced speculatively ahead of an actual report needing it.
+ * client plus the selected month. That second shape covers two different
+ * meanings depending on the report — "one client across the full financial
+ * year containing this month" (the Ledger reports) or "one client for this
+ * exact period" (the GSTR-1 family) — the build function alone decides
+ * which; ReportRunArgs itself doesn't need to know.
  */
 export interface ReportDefinition {
   key: string;
