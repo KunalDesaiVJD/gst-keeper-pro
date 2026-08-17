@@ -80,17 +80,93 @@ window.addEventListener('message', (e) => {
       const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
       window.postMessage({ __gstkPullLedgersResult: ok ? { ok: true } : { ok: false, error } }, '*');
     });
+    return;
+  }
+
+  // The GSTR-1 "Upload to GST Portal" button asked to push the stored JSON to
+  // the portal. Background fetches the JSON + credentials and opens a portal
+  // tab; the final result (accepted / partial / failed + per-invoice errors)
+  // comes back later via chrome.storage.local -> the change listener below.
+  if (d.__gstkUploadGstr1) {
+    const info = d.__gstkUploadGstr1;
+    if (!info.clientId || !info.period_month) return;
+    chrome.runtime.sendMessage({ gstk: true, fn: 'startGstr1Upload', args: [info] }, (resp) => {
+      if (!(resp && resp.ok)) {
+        const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
+        window.postMessage({ __gstkUploadGstr1Result: { ok: false, error } }, '*');
+      }
+      // On resp.ok the portal automation continues asynchronously; the final
+      // result is broadcast via the storage listener below.
+    });
+    return;
+  }
+
+  // The GSTR-1 "Refresh errors" button asked to re-check the portal for the
+  // per-invoice Error Report that GSTN generates asynchronously (up to 20 min
+  // after a "Processed with Error" upload). Same open-portal-tab flow as
+  // Upload but without re-sending the JSON.
+  if (d.__gstkRefreshGstr1Errors) {
+    const info = d.__gstkRefreshGstr1Errors;
+    if (!info.clientId || !info.period_month) return;
+    chrome.runtime.sendMessage({ gstk: true, fn: 'startGstr1RefreshErrors', args: [info] }, (resp) => {
+      if (!(resp && resp.ok)) {
+        const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
+        window.postMessage({ __gstkUploadGstr1Result: { ok: false, error } }, '*');
+      }
+    });
+  }
+
+  // The GSTR-3B "Push to GST Portal" button. Unlike GSTR-1 this carries the
+  // already-computed draft JSON straight in the message (info.gstr3bJson) —
+  // there's no stored row to fetch by id, the app computes GSTR-3B fresh
+  // every time. Background opens a portal tab; the fill result comes back
+  // later via chrome.storage.local -> the change listener below.
+  if (d.__gstkPushGstr3b) {
+    const info = d.__gstkPushGstr3b;
+    if (!info.clientId || !info.period_month || !info.gstr3bJson) return;
+    chrome.runtime.sendMessage({ gstk: true, fn: 'startGstr3bPush', args: [info] }, (resp) => {
+      if (!(resp && resp.ok)) {
+        const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
+        window.postMessage({ __gstkPushGstr3bResult: { ok: false, error } }, '*');
+      }
+      // On resp.ok the portal automation continues asynchronously; the final
+      // result is broadcast via the storage listener below.
+    });
+    return;
   }
 });
 
 // The portal tab stashes the captured GSTR-2B file in chrome.storage; relay it to
 // the app page so it can import via its own parser, then clear it.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !changes.gstk_twob_result) return;
-  const v = changes.gstk_twob_result.newValue;
-  if (!v) return;
-  window.postMessage({ __gstkPull2BResult: v }, '*');
-  chrome.storage.local.remove('gstk_twob_result');
+  if (area !== 'local') return;
+  if (changes.gstk_twob_result) {
+    const v = changes.gstk_twob_result.newValue;
+    if (v) {
+      window.postMessage({ __gstkPull2BResult: v }, '*');
+      chrome.storage.local.remove('gstk_twob_result');
+    }
+  }
+  // Portal upload finished (accepted / partial / failed + per-invoice errors).
+  // The content script writes this after reading the portal's post-processing
+  // status + Error Report; we relay it to the app and clear.
+  if (changes.gstk_gstr1_upload_result) {
+    const v = changes.gstk_gstr1_upload_result.newValue;
+    if (v) {
+      window.postMessage({ __gstkUploadGstr1Result: v }, '*');
+      chrome.storage.local.remove('gstk_gstr1_upload_result');
+    }
+  }
+  // GSTR-3B form-fill finished (or the whole flow errored out before it got
+  // that far — failUpload also stashes its message under this same key via
+  // the shared job machinery's session-bounce/timeout paths).
+  if (changes.gstk_gstr3b_push_result) {
+    const v = changes.gstk_gstr3b_push_result.newValue;
+    if (v) {
+      window.postMessage({ __gstkPushGstr3bResult: v }, '*');
+      chrome.storage.local.remove('gstk_gstr3b_push_result');
+    }
+  }
 });
 
 // Announce on load too (covers the case where the app's listener is already

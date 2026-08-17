@@ -151,6 +151,150 @@ const API = {
     await chrome.storage.local.set({ gstk_active_job: job });
     return { started: true, client: c.name };
   },
+
+  // From the GSTR-1 "Upload to GST Portal" button. Fetches the stored GSTR-1
+  // JSON + client credentials, then opens a portal tab. The content script
+  // logs in, navigates to the return dashboard, uploads the JSON, waits for
+  // the portal to finish processing, and writes the outcome (accepted /
+  // partial / failed + per-invoice errors) to chrome.storage — appbridge.js
+  // relays it to the app. Filing / signing stays manual.
+  startGstr1Upload: async (info) => {
+    const c = await API.getClient(info.clientId);
+    if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
+    // gstr1_data.period_month is stored as the short label (e.g. "Jun-26")
+    // — convert from the app's MM/YYYY.
+    const [mm, yyyy] = String(info.period_month).split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) throw new Error('Bad period_month.');
+    const short = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][mm - 1] + '-' + String(yyyy).slice(-2);
+    const rows = await sel(`gstr1_data?client_id=eq.${c.id}&period_month=eq.${enc(short)}&select=id,raw_json&limit=1`);
+    const stored = rows && rows[0];
+    if (!stored) throw new Error(`No stored GSTR-1 JSON for ${c.name} / ${short}. Import a JSON first.`);
+    const job = {
+      mode: 'gstr1_upload',
+      idx: 0,
+      step: 'login',
+      startedAt: Date.now(),
+      period: info.period_month,
+      actorId: info.actorId || null,
+      clients: [{
+        clientId: c.id,
+        creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },
+      }],
+      gstr1: {
+        rowId: stored.id,
+        periodShort: short,
+        // Serialize once here — content.js will reconstruct a File from this.
+        json: stored.raw_json,
+      },
+    };
+    const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
+    job.tabId = tab.id;
+    await chrome.storage.local.set({ gstk_active_job: job });
+    return { started: true, client: c.name, period: short };
+  },
+
+  // From the GSTR-3B "Push to GST Portal" button. Unlike GSTR-1, there is no
+  // gstr3b_data table — GSTR-3B is computed on the fly by the app's own
+  // buildGstr3bJson() every time the page loads — so the app computes the
+  // draft itself and passes the finished JSON straight through here rather
+  // than this function re-deriving it from gstr1_data/itc_summaries/rcm_data
+  // a second time (which would duplicate real tax-computation logic in two
+  // languages and risk them drifting apart).
+  startGstr3bPush: async (info) => {
+    const c = await API.getClient(info.clientId);
+    if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
+    if (!info.gstr3bJson) throw new Error('No GSTR-3B draft data was passed in — recompute the page and try again.');
+    const job = {
+      mode: 'gstr3b_push',
+      idx: 0,
+      step: 'login',
+      startedAt: Date.now(),
+      period: info.period_month,
+      actorId: info.actorId || null,
+      clients: [{
+        clientId: c.id,
+        creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },
+      }],
+      gstr3b: { json: info.gstr3bJson },
+    };
+    const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
+    job.tabId = tab.id;
+    await chrome.storage.local.set({ gstk_active_job: job });
+    return { started: true, client: c.name };
+  },
+
+  // Content script calls this after the portal finishes processing an upload,
+  // to persist the outcome so the "last uploaded" indicator survives a refresh.
+  // Also records the attempt in gstr1_upload_versions for the Version History
+  // dialog — one row per portal upload / refresh so the audit trail is
+  // complete no matter which path triggered it.
+  saveGstr1UploadResult: async ({ rowId, status, summary, errors, actorId, actionType }) => {
+    // Pull client_id + period_month back from gstr1_data — we need them for
+    // the versions insert but the content script only knows the row id.
+    const rows = await sel(`gstr1_data?id=eq.${rowId}&select=client_id,period_month&limit=1`);
+    const row = rows && rows[0];
+
+    await patch(`gstr1_data?id=eq.${rowId}`, {
+      last_uploaded_at: new Date().toISOString(),
+      last_uploaded_by: actorId || null,
+      last_upload_status: status,
+      last_upload_summary: summary || null,
+      last_upload_errors: errors || null,
+    });
+
+    if (row) {
+      // action_type defaults to UPLOAD; content.js passes 'REFRESH_ERRORS'
+      // when this write comes from the refresh flow.
+      try {
+        await post('gstr1_upload_versions', [{
+          client_id: row.client_id,
+          period_month: row.period_month,
+          action_type: actionType || 'UPLOAD',
+          actor_id: actorId || null,
+          status: status || null,
+          summary: summary || null,
+          errors: errors || null,
+        }]);
+      } catch (e) {
+        // Don't fail the whole write if the versions table isn't there yet
+        // (migration not applied); the main row update still succeeds.
+      }
+    }
+    return true;
+  },
+
+  // From the GSTR-1 "Refresh errors" button — same client + period as a
+  // previous Upload, but without re-sending the JSON. The content script
+  // logs in, navigates to Offline Upload → Download tab, and scrapes the
+  // now-generated Error Report so per-invoice reasons can be surfaced in the
+  // app.
+  startGstr1RefreshErrors: async (info) => {
+    const c = await API.getClient(info.clientId);
+    if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
+    const [mm, yyyy] = String(info.period_month).split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) throw new Error('Bad period_month.');
+    const short = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][mm - 1] + '-' + String(yyyy).slice(-2);
+    const rows = await sel(`gstr1_data?client_id=eq.${c.id}&period_month=eq.${enc(short)}&select=id&limit=1`);
+    const stored = rows && rows[0];
+    if (!stored) throw new Error(`No stored GSTR-1 row for ${c.name} / ${short}.`);
+    const job = {
+      mode: 'gstr1_refresh',
+      idx: 0,
+      step: 'login',
+      startedAt: Date.now(),
+      period: info.period_month,
+      actorId: info.actorId || null,
+      clients: [{
+        clientId: c.id,
+        creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },
+      }],
+      gstr1: { rowId: stored.id, periodShort: short },
+    };
+    const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
+    job.tabId = tab.id;
+    await chrome.storage.local.set({ gstk_active_job: job });
+    return { started: true, client: c.name, period: short };
+  },
 };
 
 // ---- GSTR-2B Excel capture (to-disk download) ------------------------------
