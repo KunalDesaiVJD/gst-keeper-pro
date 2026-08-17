@@ -300,6 +300,11 @@ const Gstr3bPage: React.FC = () => {
 
   useEffect(() => { checkReconciliation(); }, [checkReconciliation]);
 
+  const hasRecoDiff = !!(
+    (recoCheck.suspended && recoCheck.suspended.total !== 0) ||
+    (recoCheck.receivable && recoCheck.receivable.total !== 0)
+  );
+
   const s = result?.summary;
 
   const handleDownloadJson = () => {
@@ -334,6 +339,10 @@ const Gstr3bPage: React.FC = () => {
     }
     if (!selectedClientData?.gstin) {
       toast.error('Selected client has no GSTIN on file.');
+      return;
+    }
+    if (recoCheckLoading || hasRecoDiff) {
+      toast.error('Resolve the Suspended Reco / GST Receivable Reco difference before pushing to the portal.');
       return;
     }
     setIsPushing(true);
@@ -378,14 +387,18 @@ const Gstr3bPage: React.FC = () => {
             {isStaff && (
               <Button
                 onClick={handlePush}
-                disabled={isPushing || !extReady || isFiled}
+                disabled={isPushing || !extReady || isFiled || recoCheckLoading || hasRecoDiff}
                 className="bg-success text-success-foreground hover:bg-success/90"
                 title={
                   isFiled
                     ? 'GSTR-3B already Filed for this period — push is locked'
-                    : !extReady
-                      ? 'Install / enable the GST Keeper browser extension'
-                      : 'Fills Table 3.1 + Table 4 on the live GSTR-3B form; stops before Confirm/Offset/File'
+                    : recoCheckLoading
+                      ? 'Checking Suspended Reco / GST Receivable Reco…'
+                      : hasRecoDiff
+                        ? 'Suspended Reco / GST Receivable Reco difference must be resolved before pushing'
+                        : !extReady
+                          ? 'Install / enable the GST Keeper browser extension'
+                          : 'Fills Table 3.1 + Table 4 on the live GSTR-3B form; stops before Confirm/Offset/File'
                 }
               >
                 {isPushing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
@@ -487,7 +500,7 @@ const Gstr3bPage: React.FC = () => {
         <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
           <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-destructive" />
           <div className="flex-1 space-y-1">
-            <p className="font-medium">Reconciliation difference found — review before filing</p>
+            <p className="font-medium">Reconciliation difference found — Push to GST Portal is locked</p>
             {recoCheck.suspended && recoCheck.suspended.total !== 0 && (
               <p>
                 <span className="font-medium">Suspended Reco</span> difference: ₹{inr(recoCheck.suspended.total)} (2B and RCM → Suspended Reco).
@@ -498,6 +511,7 @@ const Gstr3bPage: React.FC = () => {
                 <span className="font-medium">GST Receivable Reco</span> difference: ₹{inr(recoCheck.receivable.total)}.
               </p>
             )}
+            <p className="text-xs text-foreground/70">Resolve the difference on the relevant page to unlock the push.</p>
           </div>
           <div className="flex flex-col gap-1.5 shrink-0">
             {recoCheck.suspended && recoCheck.suspended.total !== 0 && (
