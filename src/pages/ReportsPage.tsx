@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search, Percent, ClipboardList, Hash, Users, AlertTriangle, History, Scale, ArrowRightLeft, Rows3, BadgeCheck, Building2, ShoppingCart, Receipt, Layers, Repeat, Ship, PackageOpen, Package, ArrowLeftRight, RotateCcw, ListChecks, Gauge, IdCard, Link2, Layers3, Bell, BellRing, Banknote, Coins, HandCoins, FileWarning, Wallet2, CreditCard, BookOpen, Landmark, PiggyBank } from 'lucide-react';
+import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search, Percent, ClipboardList, Hash, Users, AlertTriangle, History, Scale, ArrowRightLeft, Rows3, BadgeCheck, Building2, ShoppingCart, Receipt, Layers, Repeat, Ship, PackageOpen, Package, ArrowLeftRight, RotateCcw, ListChecks, Gauge, IdCard, Link2, Layers3, Bell, BellRing, Banknote, Coins, HandCoins, FileWarning, Wallet2, CreditCard, BookOpen, Landmark, PiggyBank, CalendarRange, SplitSquareHorizontal, UserSquare2, FileBadge, ReceiptText, FileClock } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -36,6 +36,8 @@ import {
   buildGstr3bVsGstr1ComparisonReport,
   buildGstr3bVsGstr2bItcReport,
   buildGstr3bVsGstr2aItcReport,
+  buildGstr3bAnnualSummaryReport,
+  buildGstr3bOffsetSummaryReport,
 } from '@/utils/gstr3bReports';
 import {
   buildGstr2bRateWiseReport,
@@ -52,6 +54,7 @@ import {
   buildPanOutputLiabilityReport,
   buildPanLiabilityVsItcClaimedReport,
   buildPanMultipleCompany2A2BReport,
+  buildPanNetOutputLiabilityReport,
 } from '@/utils/panReports';
 import {
   buildViewNoticesAndOrdersReport,
@@ -68,6 +71,13 @@ import {
   buildLiabilityLedgerReport,
   buildCashLedgerReport,
 } from '@/utils/portalLedgerReports';
+import {
+  buildCreditAndLiabilityStatementReport,
+  buildTaxpayerInformationReport,
+  buildRegistrationCertificateReport,
+  buildChallanSummaryReport,
+  buildTransitionalCreditClaimedReport,
+} from '@/utils/extraPortalReports';
 import {
   buildLiabilityDeclaredVsPaidReport,
   buildTaxLiabilityAndItcSummaryReport,
@@ -251,6 +261,26 @@ const REPORTS: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'client+month',
     build: ({ clientId, month }) => buildGstr3bVsGstr2aItcReport(clientId!, month),
+  },
+  {
+    key: 'gstr3b-annual-summary',
+    title: 'GSTR 3B Annual Summary Report',
+    description: "For the picked client, this app's computed draft GSTR-3B for every month across the financial year, with an annual total.",
+    icon: CalendarRange,
+    category: 'gstr3b',
+    status: 'ready-approx',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr3bAnnualSummaryReport(clientId!, month),
+  },
+  {
+    key: 'gstr3b-offset-summary',
+    title: 'GSTR 3B Offset Summary',
+    description: 'This app\'s computed indicative ITC-vs-cash offset for the period, following the standard Rule 88A cross-utilization order.',
+    icon: SplitSquareHorizontal,
+    category: 'gstr3b',
+    status: 'ready-approx',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr3bOffsetSummaryReport(clientId!, month),
   },
   {
     key: 'gstr2b-rate-wise',
@@ -583,6 +613,56 @@ const REPORTS: ReportDefinition[] = [
     build: ({ clientId, month }) => buildCashLedgerReport(clientId!, month),
   },
   {
+    key: 'credit-and-liability-statement',
+    title: 'Credit And Liability Statement',
+    description: "For the picked client, month-by-month total liability, ITC set off, cash paid and ITC carried forward across the financial year — this app's computed draft.",
+    icon: SplitSquareHorizontal,
+    category: 'extra',
+    status: 'ready-approx',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildCreditAndLiabilityStatementReport(clientId!, month),
+  },
+  {
+    key: 'taxpayer-information',
+    title: 'Taxpayer Information',
+    description: "The client's portal registration profile (legal/trade name, constitution, jurisdiction). No automated portal pull yet — see the report's error for how to populate it.",
+    icon: UserSquare2,
+    category: 'extra',
+    status: 'extends-login',
+    needs: 'client',
+    build: ({ clientId }) => buildTaxpayerInformationReport(clientId!),
+  },
+  {
+    key: 'registration-certificate',
+    title: 'Download Registration Certificate',
+    description: 'Points to the client\'s Registration Certificate on record. No automated portal pull yet — see the report\'s error for how to populate it.',
+    icon: FileBadge,
+    category: 'extra',
+    status: 'extends-login',
+    needs: 'client',
+    build: ({ clientId }) => buildRegistrationCertificateReport(clientId!),
+  },
+  {
+    key: 'challan-summary',
+    title: 'Challan Summary Report',
+    description: 'Every challan on record for the client, most recent first. No automated portal pull yet — see the report\'s error for how to populate it.',
+    icon: ReceiptText,
+    category: 'extra',
+    status: 'extends-login',
+    needs: 'client',
+    build: ({ clientId }) => buildChallanSummaryReport(clientId!),
+  },
+  {
+    key: 'transitional-credit-claimed',
+    title: 'Transitional Credit Claimed Report',
+    description: 'TRAN-1/TRAN-2 one-time 2017 transitional credit on record. No automated portal pull yet, and it\'s unconfirmed whether the portal still exposes this data.',
+    icon: FileClock,
+    category: 'extra',
+    status: 'extends-login',
+    needs: 'client',
+    build: ({ clientId }) => buildTransitionalCreditClaimedReport(clientId!),
+  },
+  {
     key: 'pan-output-liability',
     title: 'Output Liability as per GSTR 1 and GSTR 3B (PAN-Based)',
     description: "Pick any GSTIN under a PAN — rolls up every client sharing that PAN's GSTR-1 output tax vs computed GSTR-3B liability, side by side.",
@@ -601,6 +681,16 @@ const REPORTS: ReportDefinition[] = [
     status: 'ready-approx',
     needs: 'client+month',
     build: ({ clientId, month }) => buildPanLiabilityVsItcClaimedReport(clientId!, month),
+  },
+  {
+    key: 'pan-net-output-liability',
+    title: 'Net Output Liability Report (PAN-Based)',
+    description: "Pick any GSTIN under a PAN — rolls up every client sharing that PAN's NET indicative payable (after ITC set-off), the group's actual cash-flow exposure.",
+    icon: Gauge,
+    category: 'pan',
+    status: 'ready-approx',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildPanNetOutputLiabilityReport(clientId!, month),
   },
 ];
 

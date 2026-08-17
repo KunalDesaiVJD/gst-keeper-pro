@@ -1,13 +1,14 @@
-// 2 of the roadmap's 4 PAN-Based reports, reclassified from "extends portal
+// 3 of the roadmap's 4 PAN-Based reports, reclassified from "extends portal
 // login" to "ready (approx.)": a GSTIN's PAN is embedded in the GSTIN itself
 // (characters 3-12 of the standard 15-char format — state code, then PAN,
 // then entity number, 'Z', checksum), so grouping every client under the
 // same firm-PAN needs no portal call and no new schema. What DOES still need
-// the portal (kept out of scope here) is the other two PAN reports — Net
-// Output Liability and the PAN Ledger Report — since those need the actual
-// filed/portal ledger figures, not this app's own draft.
+// the portal (out of scope here — see reportsPage.tsx's registry comments
+// for the explicit decision) is the 4th PAN report, "Ledger Report" — that
+// needs actual filed/portal ledger figures at PAN level, which this app
+// doesn't have automated yet.
 //
-// Both reports below roll up this app's own computed GSTR-1/GSTR-3B draft
+// All reports below roll up this app's own computed GSTR-1/GSTR-3B draft
 // (same "approximate" caveat as the single-GSTIN GSTR-3B-vs-GSTR-1 reports)
 // across every GSTIN sharing a PAN with the picked client.
 
@@ -131,5 +132,37 @@ export const buildPanMultipleCompany2A2BReport = async (clientId: string, month:
     rows,
     fileNameBase: `PAN_Multiple_Company_2A2B_${pan}_${month.replace('/', '-')}`,
     columnWidths: [28, 18, 12, 18, 12, 18, 14],
+  };
+};
+
+// ────── REPORT 4: Net Output Liability Report (PAN) ───────────────────────
+// Distinct from "Output Liability as per GSTR 1 and GSTR 3B" above: that
+// report compares two independent computations of the same GROSS liability;
+// this one rolls up the NET indicative payable (after ITC set-off) per
+// GSTIN under a PAN — the actual cash-flow exposure across the group.
+
+export const buildPanNetOutputLiabilityReport = async (clientId: string, month: string): Promise<ReportTable> => {
+  const { pan, group } = await fetchPanGroup(clientId);
+
+  let totLiab = 0, totItcNet = 0, totPayable = 0;
+  const rows: (string | number)[][] = [];
+  for (const c of group) {
+    const g3b = await fetchGstr3b(c.id, c.gstin || '', month).catch(() => null);
+    const s = g3b?.summary;
+    const liab = s ? s.totalLiability.igst + s.totalLiability.cgst + s.totalLiability.sgst : 0;
+    const itcNet = s ? s.itcNet.igst + s.itcNet.cgst + s.itcNet.sgst : 0;
+    const payable = s ? s.indicativeNetPayable.igst + s.indicativeNetPayable.cgst + s.indicativeNetPayable.sgst : 0;
+    totLiab += liab; totItcNet += itcNet; totPayable += payable;
+    rows.push([c.name, c.gstin || '—', liab, itcNet, payable]);
+  }
+  rows.push(['TOTAL — PAN ' + pan, '', totLiab, totItcNet, totPayable]);
+
+  return {
+    title: 'Net Output Liability Report (PAN-Based)',
+    subtitle: `PAN: ${pan}   |   ${group.length} GSTIN(s)   |   Period: ${formatMonthLabel(month)}   |   Approximate — this app's own computed GSTR-3B draft, not the as-filed portal figures.`,
+    headers: ['Entity (GSTIN)', 'GSTIN', 'Total Liability', 'Net ITC Available', 'Indicative Net Payable'],
+    rows,
+    fileNameBase: `PAN_Net_Output_Liability_${pan}_${month.replace('/', '-')}`,
+    columnWidths: [30, 18, 18, 18, 20],
   };
 };
