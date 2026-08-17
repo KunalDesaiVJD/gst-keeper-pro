@@ -21,9 +21,9 @@ interface ClientLite { id: string; name: string; gstin: string; }
 
 const fileSafe = (s: string) => s.replace(/\s+/g, '_');
 
-const derivePan = (gstin: string): string => (gstin || '').toUpperCase().trim().slice(2, 12);
+export const derivePan = (gstin: string): string => (gstin || '').toUpperCase().trim().slice(2, 12);
 
-const fetchPanGroup = async (clientId: string): Promise<{ pan: string; group: ClientLite[] }> => {
+export const fetchPanGroup = async (clientId: string): Promise<{ pan: string; group: ClientLite[] }> => {
   const { data: clientRow } = await supabase.from('clients').select('id, name, gstin').eq('id', clientId).maybeSingle();
   const client = (clientRow || { id: clientId, name: 'Unknown', gstin: '' }) as ClientLite;
   const pan = derivePan(client.gstin);
@@ -94,5 +94,42 @@ export const buildPanLiabilityVsItcClaimedReport = async (clientId: string, mont
     rows,
     fileNameBase: `PAN_Liability_vs_ITC_Claimed_${pan}_${month.replace('/', '-')}`,
     columnWidths: [30, 18, 20, 24, 16],
+  };
+};
+
+// ────── REPORT 3: GSTR 2A/2B Multiple Company Report (PAN) ───────────────
+// Rolls up the already-imported gstr2a_import_docs / twob_import_docs across
+// every GSTIN sharing a PAN — no new portal call beyond the per-GSTIN 2A/2B
+// pulls each entity already needs (Import 2B's own pull + GSTR-2A Import
+// card). "Approximate" because it inherits the GSTR-2A rate-derivation
+// caveat, not because this rollup itself is uncertain.
+
+export const buildPanMultipleCompany2A2BReport = async (clientId: string, month: string): Promise<ReportTable> => {
+  const { pan, group } = await fetchPanGroup(clientId);
+  const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+
+  let tot2a = 0, tot2b = 0;
+  const rows: (string | number)[][] = [];
+  for (const c of group) {
+    const [gstr2aRes, gstr2bRes] = await Promise.all([
+      supabase.from('gstr2a_import_docs').select('taxable_value, input_igst, input_cgst, input_sgst').eq('client_id', c.id).eq('period_month', month),
+      supabase.from('twob_import_docs').select('taxable_value, input_igst, input_cgst, input_sgst').eq('client_id', c.id).eq('period_month', month),
+    ]);
+    const sum = (docs: { taxable_value: number | null; input_igst: number | null; input_cgst: number | null; input_sgst: number | null }[] | null) =>
+      (docs || []).reduce((a, d) => a + num(d.taxable_value) + num(d.input_igst) + num(d.input_cgst) + num(d.input_sgst), 0);
+    const g2a = sum(gstr2aRes.data);
+    const g2b = sum(gstr2bRes.data);
+    tot2a += g2a; tot2b += g2b;
+    rows.push([c.name, c.gstin || '—', (gstr2aRes.data || []).length, g2a, (gstr2bRes.data || []).length, g2b, g2b - g2a]);
+  }
+  rows.push(['TOTAL — PAN ' + pan, '', '', tot2a, '', tot2b, tot2b - tot2a]);
+
+  return {
+    title: 'GSTR 2A/2B Multiple Company Report',
+    subtitle: `PAN: ${pan}   |   ${group.length} GSTIN(s)   |   Period: ${formatMonthLabel(month)}   |   Approximate — GSTR-2A totals inherit the rate-derivation caveat from the GSTR-2A Rate Wise Report; zero for a GSTIN means it hasn't been imported for this period yet.`,
+    headers: ['Entity (GSTIN)', 'GSTIN', '2A Doc Count', '2A Total (Value + Tax)', '2B Doc Count', '2B Total (Value + Tax)', '2B − 2A'],
+    rows,
+    fileNameBase: `PAN_Multiple_Company_2A2B_${pan}_${month.replace('/', '-')}`,
+    columnWidths: [28, 18, 12, 18, 12, 18, 14],
   };
 };

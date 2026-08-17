@@ -51,6 +51,7 @@ import {
 import {
   buildPanOutputLiabilityReport,
   buildPanLiabilityVsItcClaimedReport,
+  buildPanMultipleCompany2A2BReport,
 } from '@/utils/panReports';
 import {
   buildLiabilityDeclaredVsPaidReport,
@@ -445,6 +446,16 @@ const REPORTS: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'client+month',
     build: ({ clientId, month }) => buildGstr2aPyInCyReport(clientId!, month),
+  },
+  {
+    key: 'pan-multiple-company-2a2b',
+    title: 'GSTR 2A/2B Multiple Company Report',
+    description: 'Pick any GSTIN under a PAN — rolls up every client sharing that PAN\'s imported GSTR-2A and GSTR-2B totals, side by side.',
+    icon: Layers3,
+    category: 'gstr2a2b',
+    status: 'ready-approx',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildPanMultipleCompany2A2BReport(clientId!, month),
   },
   {
     key: 'pan-output-liability',
