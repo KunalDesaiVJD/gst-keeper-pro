@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search, Percent, ClipboardList, Hash, Users, AlertTriangle, History } from 'lucide-react';
+import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search, Percent, ClipboardList, Hash, Users, AlertTriangle, History, Scale, ArrowRightLeft, Rows3, BadgeCheck } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -30,6 +30,12 @@ import {
   buildGstr1ErrorLogReport,
   buildGstr1PyInCyReport,
 } from '@/utils/gstr1Reports';
+import {
+  buildGstr3bLiabilityReport,
+  buildGstr3bVsGstr1TaxReport,
+  buildGstr3bVsGstr1ComparisonReport,
+  buildGstr3bVsGstr2bItcReport,
+} from '@/utils/gstr3bReports';
 import {
   REPORT_CATEGORY_LABELS,
   REPORT_CATEGORY_ORDER,
@@ -145,6 +151,46 @@ const REPORTS: ReportDefinition[] = [
     status: 'ready',
     needs: 'client+month',
     build: ({ clientId, month }) => buildGstr1PyInCyReport(clientId!, month),
+  },
+  {
+    key: 'gstr3b-liability',
+    title: 'GSTR 3B Liability Report',
+    description: "This app's computed draft GSTR-3B — Table 3.1 outward/RCM liability and Table 4 ITC available/reversed/net — for the selected client and period.",
+    icon: Scale,
+    category: 'gstr3b',
+    status: 'ready',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr3bLiabilityReport(clientId!, month),
+  },
+  {
+    key: 'gstr3b-vs-gstr1-tax',
+    title: 'GSTR 3B vs GSTR 1 Tax Report',
+    description: 'Side-by-side tax total from GSTR-1 vs this app\'s computed GSTR-3B Table 3.1, with a variance column. Approximate — see the report for what a variance means.',
+    icon: ArrowRightLeft,
+    category: 'gstr3b',
+    status: 'ready-approx',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr3bVsGstr1TaxReport(clientId!, month),
+  },
+  {
+    key: 'gstr3b-vs-gstr1-comparison',
+    title: 'GSTR 3B vs GSTR 1 Comparison Report',
+    description: 'Every GSTR-1 table alongside the GSTR-3B Table 3.1 row it feeds, so a mismatch traces to its source section. Approximate — this app\'s draft only, not the as-filed return.',
+    icon: Rows3,
+    category: 'gstr3b',
+    status: 'ready-approx',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr3bVsGstr1ComparisonReport(clientId!, month),
+  },
+  {
+    key: 'gstr3b-vs-gstr2b-itc',
+    title: 'GSTR 3B vs GSTR 2B ITC Report',
+    description: 'Eligible ITC per Import 2B vs GSTR-3B Table 4(A) ITC Available, with a variance column — catches a stale ITC Summary save. Approximate.',
+    icon: BadgeCheck,
+    category: 'gstr3b',
+    status: 'ready-approx',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr3bVsGstr2bItcReport(clientId!, month),
   },
 ];
 
