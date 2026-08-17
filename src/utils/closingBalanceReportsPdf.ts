@@ -41,7 +41,7 @@ export const renderReportToPdf = (report: ReportTable) => {
   // are left-aligned. Detect by header text: anything with CGST/SGST/IGST/
   // TOTAL/CASH/PAYABLE goes right.
   const isNumericHeader = (h: string) =>
-    /CGST|SGST|IGST|TOTAL|PAYABLE|CASH/i.test(h);
+    /CGST|SGST|IGST|TOTAL|PAYABLE|CASH|CESS|VALUE|QTY|COUNT|RATE/i.test(h);
 
   const columnStyles: Record<number, any> = {};
   report.headers.forEach((h, i) => {

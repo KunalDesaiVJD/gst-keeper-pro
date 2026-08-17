@@ -21,13 +21,13 @@ interface ClientRow { id: string; name: string; gstin: string; }
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-const mmYyyyToShort = (mmYyyy: string): string => {
+export const mmYyyyToShort = (mmYyyy: string): string => {
   const [mm, yyyy] = mmYyyy.split('/').map(Number);
   if (!mm || !yyyy) return '';
   return `${MONTH_SHORT[mm - 1]}-${String(yyyy).slice(-2)}`;
 };
 
-const formatMonthLabel = (mmYyyy: string): string => {
+export const formatMonthLabel = (mmYyyy: string): string => {
   const [mm, yyyy] = mmYyyy.split('/').map(Number);
   if (!mm || !yyyy) return mmYyyy;
   return `${MONTH_SHORT[mm - 1]} ${yyyy}`;

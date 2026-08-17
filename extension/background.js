@@ -103,6 +103,28 @@ const API = {
     return { started: true, client: c.name };
   },
 
+  // From the GSTR-2A Import card's "Pull from portal" button. Mirrors
+  // startTwobPull exactly — same dashboard, same tile-and-download pattern,
+  // different tile (GSTR-2A instead of GSTR-2B). See content.js handleTwoA /
+  // handleTwoADownload — this is the one new-page automation in this batch
+  // that has NOT been verified against a real GSTR-2A download; the tile
+  // click and cascading-dropdown steps reuse code already proven against the
+  // sibling GSTR-2B tile on the same dashboard, but the download page itself
+  // (button label, whether it's a direct file or a blob) is inferred from
+  // that same pattern, not confirmed against a real GSTR-2A download page.
+  startTwoAPull: async (info) => {
+    const c = await API.getClient(info.clientId);
+    if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
+    const job = {
+      mode: 'twoa', period: info.period_month, idx: 0, step: 'login', startedAt: Date.now(),
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+    };
+    const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
+    job.tabId = tab.id;
+    await chrome.storage.local.set({ gstk_active_job: job });
+    return { started: true, client: c.name };
+  },
+
   // From the Filing Status login icon: log the client in and open the given
   // return's filing page (current tab's return + period). The human does the
   // CAPTCHA and the final OTP/DSC submission — we only log in + navigate.
@@ -314,11 +336,15 @@ if (chrome.downloads && chrome.downloads.onCreated) {
 chrome.downloads.onCreated.addListener(async (item) => {
   try {
     const { gstk_active_job: job } = await chrome.storage.local.get('gstk_active_job');
-    if (!job || job.mode !== 'twob' || !job.clients) return;
+    if (!job || !job.clients) return;
+    if (job.mode !== 'twob' && job.mode !== 'twoa') return;
+    const is2a = job.mode === 'twoa';
     const fileUrl = item.finalUrl || item.url || '';
     const hint = (item.filename || '') + ' ' + fileUrl;
-    const looksLike2b = /\.(xlsx|xls|zip)(\?|$)/i.test(hint) || /gstr-?2b|gstr2b/i.test(hint);
-    if (!looksLike2b || !/^https?:/i.test(fileUrl)) return; // blob:/data: handled in-page
+    const looksLikeMatch = is2a
+      ? ((/\.(xlsx|xls|zip)(\?|$)/i.test(hint) || /gstr-?2a|gstr2a/i.test(hint)))
+      : ((/\.(xlsx|xls|zip)(\?|$)/i.test(hint) || /gstr-?2b|gstr2b/i.test(hint)));
+    if (!looksLikeMatch || !/^https?:/i.test(fileUrl)) return; // blob:/data: handled in-page
     const resp = await fetch(fileUrl, { credentials: 'include' });
     if (!resp.ok) return;
     const buf = await resp.arrayBuffer();
@@ -327,9 +353,11 @@ chrome.downloads.onCreated.addListener(async (item) => {
     const dataUrl = 'data:' + mime + ';base64,' + abToBase64(buf);
     const cur = job.clients[job.idx || 0];
     if (!cur) return;
-    await chrome.storage.local.set({ gstk_twob_result: {
+    const resultKey = is2a ? 'gstk_twoa_result' : 'gstk_twob_result';
+    const fileNamePrefix = is2a ? 'GSTR2A_' : 'GSTR2B_';
+    await chrome.storage.local.set({ [resultKey]: {
       ok: true, clientId: cur.clientId, gstin: (cur.creds && cur.creds.gstin) || '', period: job.period,
-      fileB64: dataUrl, fileName: item.filename || ('GSTR2B_' + cur.clientId + '.xlsx'), at: Date.now(),
+      fileB64: dataUrl, fileName: item.filename || (fileNamePrefix + cur.clientId + '.xlsx'), at: Date.now(),
     } });
   } catch (e) { /* ignore — the in-page path or a timeout will report */ }
 });
