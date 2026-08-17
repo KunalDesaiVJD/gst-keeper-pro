@@ -8,7 +8,7 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import type { ReportTable } from './allClientsReports';
-import { mmYyyyToShort, formatMonthLabel } from './allClientsReports';
+import { mmYyyyToShort, formatMonthLabel, fyMonthsForKey } from './allClientsReports';
 import { buildGstr1Summary } from './buildGstr1Summary';
 import { fetchGstr3b } from './fetchGstr3b';
 import { fetchImport2BEligibleTotal } from '@/lib/postImport2B';
@@ -212,5 +212,94 @@ export const buildGstr3bVsGstr2aItcReport = async (clientId: string, month: stri
     rows,
     fileNameBase: `GSTR3B_vs_GSTR2A_ITC_${fileSafe(client.name)}_${month.replace('/', '-')}`,
     columnWidths: [12, 28, 32, 14],
+  };
+};
+
+// ────────────── REPORT 6: GSTR-3B Annual Summary Report ──────────────────
+
+export const buildGstr3bAnnualSummaryReport = async (clientId: string, anyMonthInFy: string): Promise<ReportTable> => {
+  const client = await fetchClient(clientId);
+  const { fyLabel, months } = fyMonthsForKey(anyMonthInFy);
+
+  const results = await Promise.all(months.map((m) => fetchGstr3b(clientId, client.gstin || '', m).catch(() => null)));
+
+  let totOut = 0, totRcm = 0, totLiab = 0, totItcAvail = 0, totItcNet = 0, totPayable = 0;
+  const rows: (string | number)[][] = months.map((m, idx) => {
+    const s = results[idx]?.summary;
+    const outward = s ? s.outward.igst + s.outward.cgst + s.outward.sgst : 0;
+    const rcm = s ? s.rcmLiability.igst + s.rcmLiability.cgst + s.rcmLiability.sgst : 0;
+    const liab = s ? s.totalLiability.igst + s.totalLiability.cgst + s.totalLiability.sgst : 0;
+    const itcAvail = s ? s.itcAvailable.igst + s.itcAvailable.cgst + s.itcAvailable.sgst : 0;
+    const itcNet = s ? s.itcNet.igst + s.itcNet.cgst + s.itcNet.sgst : 0;
+    const payable = s ? s.indicativeNetPayable.igst + s.indicativeNetPayable.cgst + s.indicativeNetPayable.sgst : 0;
+    totOut += outward; totRcm += rcm; totLiab += liab; totItcAvail += itcAvail; totItcNet += itcNet; totPayable += payable;
+    return [formatMonthLabel(m), outward, rcm, liab, itcAvail, itcNet, payable];
+  });
+  rows.push(['TOTAL — ' + fyLabel, totOut, totRcm, totLiab, totItcAvail, totItcNet, totPayable]);
+
+  return {
+    title: 'GSTR 3B Annual Summary Report',
+    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   ${fyLabel}   |   Approximate — this app's own computed draft GSTR-3B for each month, not the as-filed portal figures.`,
+    headers: ['Month', 'Outward Liability', 'RCM Liability', 'Total Liability', 'ITC Available', 'Net ITC', 'Indicative Net Payable'],
+    rows,
+    fileNameBase: `GSTR3B_Annual_Summary_${fileSafe(client.name)}_${fyLabel.replace(/\s+/g, '_')}`,
+    columnWidths: [14, 18, 16, 16, 16, 14, 20],
+  };
+};
+
+// ────────────── ITC cross-utilization (Rule 88A) ──────────────────────────
+
+export interface TaxHeadAmounts { igst: number; cgst: number; sgst: number }
+
+// Standard IGST-first cross-utilization order under Rule 88A (inserted 2019):
+// IGST ITC must be fully exhausted (against IGST, then CGST, then SGST
+// liability) before CGST/SGST ITC can be used at all; CGST ITC then covers
+// CGST liability first with any remainder going to IGST liability, and SGST
+// ITC mirrors that for SGST — CGST ITC can never offset SGST liability or
+// vice versa. This is the common practical ordering GST software uses within
+// the law's permitted flexibility — the portal's actual filing-time
+// allocation can differ if the filer chose a different order.
+export function computeItcOffset(liability: TaxHeadAmounts, itcAvailable: TaxHeadAmounts) {
+  let igstItc = itcAvailable.igst, cgstItc = itcAvailable.cgst, sgstItc = itcAvailable.sgst;
+  let igstLiab = liability.igst, cgstLiab = liability.cgst, sgstLiab = liability.sgst;
+
+  const igstFromIgst = Math.min(igstItc, igstLiab); igstItc -= igstFromIgst; igstLiab -= igstFromIgst;
+  const cgstFromIgst = Math.min(igstItc, cgstLiab); igstItc -= cgstFromIgst; cgstLiab -= cgstFromIgst;
+  const sgstFromIgst = Math.min(igstItc, sgstLiab); igstItc -= sgstFromIgst; sgstLiab -= sgstFromIgst;
+  const cgstFromCgst = Math.min(cgstItc, cgstLiab); cgstItc -= cgstFromCgst; cgstLiab -= cgstFromCgst;
+  const igstFromCgst = Math.min(cgstItc, igstLiab); cgstItc -= igstFromCgst; igstLiab -= igstFromCgst;
+  const sgstFromSgst = Math.min(sgstItc, sgstLiab); sgstItc -= sgstFromSgst; sgstLiab -= sgstFromSgst;
+  const igstFromSgst = Math.min(sgstItc, igstLiab); sgstItc -= igstFromSgst; igstLiab -= igstFromSgst;
+
+  return {
+    offset: { igstFromIgst, cgstFromIgst, sgstFromIgst, cgstFromCgst, igstFromCgst, sgstFromSgst, igstFromSgst },
+    cashPayable: { igst: igstLiab, cgst: cgstLiab, sgst: sgstLiab },
+    itcCarriedForward: { igst: igstItc, cgst: cgstItc, sgst: sgstItc },
+  };
+}
+
+// ────────────── REPORT 7: GSTR-3B Offset Summary ──────────────────────────
+
+export const buildGstr3bOffsetSummaryReport = async (clientId: string, month: string): Promise<ReportTable> => {
+  const client = await fetchClient(clientId);
+  const result = await fetchGstr3b(clientId, client.gstin || '', month);
+  const s = result.summary;
+  const { offset, cashPayable, itcCarriedForward } = computeItcOffset(s.totalLiability, s.itcNet);
+
+  const rows: (string | number)[][] = [
+    ['IGST Liability', s.totalLiability.igst, offset.igstFromIgst, offset.igstFromCgst, offset.igstFromSgst, cashPayable.igst],
+    ['CGST Liability', s.totalLiability.cgst, offset.cgstFromIgst, offset.cgstFromCgst, 0, cashPayable.cgst],
+    ['SGST Liability', s.totalLiability.sgst, offset.sgstFromIgst, 0, offset.sgstFromSgst, cashPayable.sgst],
+    ['', '', '', '', '', ''],
+    ['ITC Carried Forward', '', itcCarriedForward.igst, itcCarriedForward.cgst, itcCarriedForward.sgst, ''],
+  ];
+
+  return {
+    title: 'GSTR 3B Offset Summary',
+    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}   |   Approximate — this app's own computed indicative offset, following the standard IGST-first cross-utilization order (Rule 88A). The portal's actual filing-time allocation may differ if the filer chose a different (still legally valid) order.`,
+    headers: ['Liability Head', 'Total Liability', 'Set Off from IGST ITC', 'Set Off from CGST ITC', 'Set Off from SGST ITC', 'Paid in Cash'],
+    rows,
+    fileNameBase: `GSTR3B_Offset_Summary_${fileSafe(client.name)}_${month.replace('/', '-')}`,
+    columnWidths: [18, 16, 18, 18, 18, 14],
   };
 };
