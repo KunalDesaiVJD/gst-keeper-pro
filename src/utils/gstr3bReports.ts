@@ -175,3 +175,42 @@ export const buildGstr3bVsGstr2bItcReport = async (clientId: string, month: stri
     columnWidths: [12, 26, 32, 14],
   };
 };
+
+// ────────────── REPORT 5: GSTR-3B vs GSTR-2A ITC Report ──────────────────
+// Extends-portal-login: needs gstr2a_import_docs (Import 2B's GSTR-2A Import
+// card) populated first, hence a separate category/status from the 2B
+// version above even though the shape is identical.
+
+export const buildGstr3bVsGstr2aItcReport = async (clientId: string, month: string): Promise<ReportTable> => {
+  const client = await fetchClient(clientId);
+  const [result, gstr2aRes] = await Promise.all([
+    fetchGstr3b(clientId, client.gstin || '', month),
+    supabase.from('gstr2a_import_docs').select('input_igst, input_cgst, input_sgst').eq('client_id', clientId).eq('period_month', month).eq('reverse_charge', false),
+  ]);
+  const docs = gstr2aRes.data || [];
+  const gstr2aTotal = docs.reduce((a, d: any) => ({
+    igst: a.igst + (Number(d.input_igst) || 0),
+    cgst: a.cgst + (Number(d.input_cgst) || 0),
+    sgst: a.sgst + (Number(d.input_sgst) || 0),
+  }), { igst: 0, cgst: 0, sgst: 0 });
+  const s = result.summary;
+
+  const g2aTotal = gstr2aTotal.igst + gstr2aTotal.cgst + gstr2aTotal.sgst;
+  const g3bTotal = s.itcAvailable.igst + s.itcAvailable.cgst + s.itcAvailable.sgst;
+
+  const rows: (string | number)[][] = [
+    ['IGST', gstr2aTotal.igst, s.itcAvailable.igst, s.itcAvailable.igst - gstr2aTotal.igst],
+    ['CGST', gstr2aTotal.cgst, s.itcAvailable.cgst, s.itcAvailable.cgst - gstr2aTotal.cgst],
+    ['SGST', gstr2aTotal.sgst, s.itcAvailable.sgst, s.itcAvailable.sgst - gstr2aTotal.sgst],
+    ['Total', g2aTotal, g3bTotal, g3bTotal - g2aTotal],
+  ];
+
+  return {
+    title: 'GSTR 3B vs GSTR 2A ITC Report',
+    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}   |   Approximate — "As per GSTR-2A" is every non-RCM document imported for the period (2A has no eligibility classification, unlike 2B, so this is a broader, rougher universe than the vs-GSTR-2B report). "As per GSTR-3B" is Table 4(A) ITC Available. Import GSTR-2A first from Import 2B's GSTR-2A Import card.`,
+    headers: ['Tax Head', 'As per GSTR-2A (all non-RCM docs)', 'As per GSTR-3B (Table 4A, total ITC available)', 'Variance'],
+    rows,
+    fileNameBase: `GSTR3B_vs_GSTR2A_ITC_${fileSafe(client.name)}_${month.replace('/', '-')}`,
+    columnWidths: [12, 28, 32, 14],
+  };
+};

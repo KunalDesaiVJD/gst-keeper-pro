@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search, Percent, ClipboardList, Hash, Users, AlertTriangle, History, Scale, ArrowRightLeft, Rows3, BadgeCheck, Building2, ShoppingCart, Receipt, Layers, Repeat, Ship, PackageOpen, Package, ArrowLeftRight, RotateCcw, ListChecks, Gauge, IdCard } from 'lucide-react';
+import { FileSpreadsheet, FileText, Loader2, Pause, Wallet, Search, Percent, ClipboardList, Hash, Users, AlertTriangle, History, Scale, ArrowRightLeft, Rows3, BadgeCheck, Building2, ShoppingCart, Receipt, Layers, Repeat, Ship, PackageOpen, Package, ArrowLeftRight, RotateCcw, ListChecks, Gauge, IdCard, Link2, Layers3 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -35,6 +35,7 @@ import {
   buildGstr3bVsGstr1TaxReport,
   buildGstr3bVsGstr1ComparisonReport,
   buildGstr3bVsGstr2bItcReport,
+  buildGstr3bVsGstr2aItcReport,
 } from '@/utils/gstr3bReports';
 import {
   buildGstr2bRateWiseReport,
@@ -47,6 +48,10 @@ import {
   buildGstr2aSupplierWiseReport,
   buildGstr2aPyInCyReport,
 } from '@/utils/gstr2aReports';
+import {
+  buildPanOutputLiabilityReport,
+  buildPanLiabilityVsItcClaimedReport,
+} from '@/utils/panReports';
 import {
   buildLiabilityDeclaredVsPaidReport,
   buildTaxLiabilityAndItcSummaryReport,
@@ -220,6 +225,16 @@ const REPORTS: ReportDefinition[] = [
     status: 'ready-approx',
     needs: 'client+month',
     build: ({ clientId, month }) => buildGstr3bVsGstr2bItcReport(clientId!, month),
+  },
+  {
+    key: 'gstr3b-vs-gstr2a-itc',
+    title: 'GSTR 3B vs GSTR 2A ITC Report',
+    description: 'Every non-RCM document in the imported GSTR-2A vs GSTR-3B Table 4(A) ITC Available, with a variance column. Needs GSTR-2A imported first.',
+    icon: BadgeCheck,
+    category: 'gstr3b',
+    status: 'extends-login',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildGstr3bVsGstr2aItcReport(clientId!, month),
   },
   {
     key: 'gstr2b-rate-wise',
@@ -430,6 +445,26 @@ const REPORTS: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'client+month',
     build: ({ clientId, month }) => buildGstr2aPyInCyReport(clientId!, month),
+  },
+  {
+    key: 'pan-output-liability',
+    title: 'Output Liability as per GSTR 1 and GSTR 3B (PAN-Based)',
+    description: "Pick any GSTIN under a PAN — rolls up every client sharing that PAN's GSTR-1 output tax vs computed GSTR-3B liability, side by side.",
+    icon: Link2,
+    category: 'pan',
+    status: 'ready-approx',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildPanOutputLiabilityReport(clientId!, month),
+  },
+  {
+    key: 'pan-liability-vs-itc-claimed',
+    title: 'Liability as per GSTR 1 and ITC Claimed as per GSTR 3B (PAN-Based)',
+    description: "Pick any GSTIN under a PAN — rolls up every client sharing that PAN's GSTR-1 output liability vs GSTR-3B ITC claimed, side by side.",
+    icon: Layers3,
+    category: 'pan',
+    status: 'ready-approx',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildPanLiabilityVsItcClaimedReport(clientId!, month),
   },
 ];
 
