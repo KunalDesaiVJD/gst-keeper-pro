@@ -9,6 +9,7 @@ import {
   ArrowLeftRight, RotateCcw, ListChecks, Gauge, IdCard, Link2, Layers3, Bell, BellRing, Banknote, Coins,
   HandCoins, FileWarning, Wallet2, CreditCard, BookOpen, Landmark, PiggyBank, CalendarRange,
   SplitSquareHorizontal, UserSquare2, FileBadge, ReceiptText, FileClock,
+  Calculator, AlarmClock, ShieldAlert, PieChart, Undo2,
 } from 'lucide-react';
 import {
   buildSuspendedClosingAllClients,
@@ -90,6 +91,13 @@ import {
   buildItcClaimedVsUtilizedAllClients,
   buildClientMasterReport,
 } from '@/utils/extraLedgerReports';
+import {
+  buildInterestLateFeeCalculatorReport,
+  buildInterestLateFeeAllClientsReport,
+  buildInterestScrutinyReport,
+  buildRule42ShortReversalReport,
+  buildRule42ShortReversalAllClientsReport,
+} from '@/utils/interestScrutinyReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 
 export const REPORTS_CATALOG: ReportDefinition[] = [
@@ -672,5 +680,55 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     status: 'ready-approx',
     needs: 'client+month',
     build: ({ clientId, month }) => buildPanNetOutputLiabilityReport(clientId!, month),
+  },
+  {
+    key: 'interest-late-fee-calculator',
+    title: 'Interest and Late Fee Calculator',
+    description: 'For the selected client and period — computed interest (Rule 88B, net of ITC) and late fee (s.47) working, with due date, filed date and days late.',
+    icon: Calculator,
+    category: 'interest',
+    status: 'ready-approx',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildInterestLateFeeCalculatorReport(clientId!, month),
+  },
+  {
+    key: 'interest-late-fee-all-clients',
+    title: 'Interest and Late Fees Report — All Clients',
+    description: 'One row per client with a GSTR-3B filing record for the selected month — computed interest and late fee, side by side.',
+    icon: AlarmClock,
+    category: 'interest',
+    status: 'ready-approx',
+    needs: 'month',
+    build: ({ month }) => buildInterestLateFeeAllClientsReport(month),
+  },
+  {
+    key: 'interest-scrutiny',
+    title: 'Scrutiny of Interest due to Late Payment of 3B',
+    description: 'Exceptions only — clients with computed interest greater than zero for the selected month, so late filings surface without scanning the full client list.',
+    icon: ShieldAlert,
+    category: 'scrutiny',
+    status: 'ready-approx',
+    needs: 'month',
+    build: ({ month }) => buildInterestScrutinyReport(month),
+  },
+  {
+    key: 'rule42-short-reversal',
+    title: 'Short Reversal of ITC — Section 17(2) & Rule 42',
+    description: "For the selected client and period — the Rule 42 common-credit reversal working (exempt/aggregate turnover ratio) vs what's already declared as reversed, and the shortfall. Rule 42 (inputs) only — Rule 43 (capital goods) out of scope.",
+    icon: PieChart,
+    category: 'scrutiny',
+    status: 'ready-approx',
+    needs: 'client+month',
+    build: ({ clientId, month }) => buildRule42ShortReversalReport(clientId!, month),
+  },
+  {
+    key: 'rule42-short-reversal-all-clients',
+    title: 'Short Reversal of ITC in GSTR-3B',
+    description: 'Exceptions only — clients with a computed Rule 42 shortfall greater than zero for the selected month (needs annual turnover on record).',
+    icon: Undo2,
+    category: 'scrutiny',
+    status: 'ready-approx',
+    needs: 'month',
+    build: ({ month }) => buildRule42ShortReversalAllClientsReport(month),
   },
 ];
