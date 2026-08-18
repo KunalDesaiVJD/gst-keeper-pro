@@ -34,7 +34,7 @@ export const REPORT_CATEGORY_LABELS: Record<ReportCategory, string> = {
   refund: 'Refund Reports',
   drc03: 'DRC-03 Reports',
   notice: 'Notice & Order Reports',
-  scrutiny: 'GSTR-9 Scrutiny Reports',
+  scrutiny: 'Scrutiny Reports',
   interest: 'Interest Reports',
   eway: 'E-Way Bill Reports',
   einvoice: 'E-Invoice Reports',
