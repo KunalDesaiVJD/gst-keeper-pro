@@ -168,10 +168,16 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4'];
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
+      // Leave a trace in the table itself (delete-then-insert, so a later
+      // successful pull overwrites it) — this job's tab is usually not being
+      // watched live, so a silent give-up here would look identical to "ran
+      // fine, portal just had nothing to report."
+      if (job.step === 'liabilityledger') await writeLedgerFailureRow(GSTKdb.replaceLiabilityLedgerEntries, cur, job, 'session kept dropping (bounced to login/error page 3x) while reading the Liability Register');
+      else if (job.step === 'cashledger') await writeLedgerFailureRow(GSTKdb.replaceCashLedgerEntries, cur, job, 'session kept dropping (bounced to login/error page 3x) while reading the Cash Ledger');
       await advance(job);
       return;
     }
@@ -186,6 +192,8 @@
     if (job.step === 'login') await handleLogin(job, cur, progress);
     else if (job.step === 'ledger') await handleLedger(job, cur, progress);
     else if (job.step === 'reversal') await handleReversal(job, cur, progress);
+    else if (job.step === 'liabilityledger') await handleLiabilityLedger(job, cur, progress);
+    else if (job.step === 'cashledger') await handleCashLedger(job, cur, progress);
     else if (job.step === 'efiledpdf') await handleReturnPdf(job, cur, progress);
     else if (job.step === 'efiledview') await handleReturnView(job, cur, progress);
     else if (job.step === 'twob') await handleTwob(job, cur, progress);
@@ -2010,7 +2018,7 @@
   async function handleReversal(job, cur, progress) {
     if (!/revreclaimdetledger/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/ledger/revreclaimdetledger'; return; }
     banner('Reading ITC-reversal ledger opening…' + progress);
-    if (!(await waitFor('input', 20000))) { banner('Reversal ledger form did not load — moving on.' + progress, '#f59e0b'); await advance(job); return; }
+    if (!(await waitFor('input', 20000))) { banner('Reversal ledger form did not load — moving on.' + progress, '#f59e0b'); await proceedToLiabilityLedger(job); return; }
     const per = await loadLedgerPeriod(job.period);
     if (!per.ok) {
       debugPanel([
@@ -2022,7 +2030,7 @@
       ]);
       banner('Reversal ledger: could not load ' + per.from + ' – ' + per.to + ' (' + per.why + '). Nothing saved — see the diagnostic box.', '#dc2626');
       await sleep(4000);
-      await advance(job);
+      await proceedToLiabilityLedger(job);
       return;
     }
     // Suspended Reco takes the CLOSING balance of the month's range (the balance
@@ -2047,7 +2055,132 @@
     } else {
       banner('No reversal opening-balance row found.' + progress, '#f59e0b');
     }
+    await proceedToLiabilityLedger(job);
+  }
+
+  // Best-effort diagnostic breadcrumb for the two new ledger pulls: on any
+  // failure, write ONE row saying so instead of leaving the table silently
+  // empty (which is indistinguishable from "portal genuinely had nothing").
+  // A later successful pull naturally overwrites it (delete-then-insert).
+  async function writeLedgerFailureRow(replaceFn, cur, job, reason) {
+    try {
+      await replaceFn(cur.clientId, job.period, [{
+        client_id: cur.clientId, period_month: job.period,
+        description: 'PULL FAILED: ' + reason, is_debit: null,
+        igst: 0, cgst: 0, sgst: 0, cess: 0, balance: 0,
+      }]);
+    } catch (e) { /* diagnostic only — nothing else to do if even this fails */ }
+  }
+
+  async function proceedToLiabilityLedger(job) {
+    job.step = 'liabilityledger';
+    await setJob(job);
+    location.href = 'https://return.gst.gov.in/returns/auth/ledger/taxdetailedledger';
+  }
+
+  // Electronic Liability Register (Part-I, return-related liabilities) -> the
+  // "Liability Ledger" report. The page (taxdetailedledger) is Angular over a
+  // plain JSON API (retdtl) — confirmed live via DevTools network tab — so this
+  // reads that API directly rather than scraping the rendered table, the way
+  // the credit/reversal ledgers above have to (those pages have no such API).
+  async function handleLiabilityLedger(job, cur, progress) {
+    if (!/taxdetailedledger/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/ledger/taxdetailedledger'; return; }
+    banner('Reading Electronic Liability Register…' + progress);
+    const [mm, yyyy] = String(job.period).split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) { banner('Bad period for Liability Register — skipped.' + progress, '#f59e0b'); await proceedToCashLedger(job); return; }
+    const mmyyyy = String(mm).padStart(2, '0') + yyyy;
+    let rows = [];
+    try {
+      const r = await fetch('https://return.gst.gov.in/returns/auth/api/retdtl?fdate=' + mmyyyy + '&to_dt=' + mmyyyy + '&gstin=' + encodeURIComponent(cur.creds.gstin || ''), { credentials: 'include' });
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' from retdtl');
+      const j = await r.json();
+      rows = parseLedgerTxns(j, 'dt').map((row) => Object.assign({ client_id: cur.clientId, period_month: job.period }, row));
+    } catch (e) {
+      debugPanel(['STEP: Electronic Liability Register  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
+      banner('Liability Register: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
+      await writeLedgerFailureRow(GSTKdb.replaceLiabilityLedgerEntries, cur, job, (e && e.message) || 'unknown error');
+      await sleep(1500);
+      await proceedToCashLedger(job);
+      return;
+    }
+    try { await GSTKdb.replaceLiabilityLedgerEntries(cur.clientId, job.period, rows); } catch (e) { /* non-fatal — still move on to the cash ledger */ }
+    debugPanel([
+      'STEP: Electronic Liability Register  (' + location.pathname + ')',
+      'period            : ' + job.period + '  (fdate=to_dt=' + mmyyyy + ')',
+      'rows read         : ' + rows.length,
+    ]);
+    banner('Liability Register → ' + rows.length + ' entries saved. Now the cash ledger…' + progress, '#16a34a');
+    await sleep(1000);
+    await proceedToCashLedger(job);
+  }
+
+  async function proceedToCashLedger(job) {
+    job.step = 'cashledger';
+    await setJob(job);
+    location.href = 'https://payment.gst.gov.in/payment/auth/ledger/detailedledger';
+  }
+
+  // Electronic Cash Ledger -> the "Cash Ledger" report. Same JSON-API approach
+  // as the Liability Register, on payment.gst.gov.in's own API (cashdetls). A
+  // NEW domain crossing for this extension's automation (everything else stays
+  // on return.gst.gov.in) — the shared *.gst.gov.in session cookie carries
+  // over, matching how the portal's own "Check Cash Balance" quick link works.
+  async function handleCashLedger(job, cur, progress) {
+    if (!/payment\.gst\.gov\.in/.test(location.hostname) || !/detailedledger/.test(url)) {
+      location.href = 'https://payment.gst.gov.in/payment/auth/ledger/detailedledger';
+      return;
+    }
+    banner('Reading Electronic Cash Ledger…' + progress);
+    const [mm, yyyy] = String(job.period).split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) { banner('Bad period for Cash Ledger — skipped.' + progress, '#f59e0b'); await advance(job); return; }
+    const lastDay = new Date(yyyy, mm, 0).getDate();
+    const p2 = (n) => String(n).padStart(2, '0');
+    const from = '01/' + p2(mm) + '/' + yyyy;
+    const to = p2(lastDay) + '/' + p2(mm) + '/' + yyyy;
+    let rows = [];
+    try {
+      const r = await fetch('https://payment.gst.gov.in/payment/auth/api/cashdetls?fdate=' + from + '&tdate=' + to, { credentials: 'include' });
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' from cashdetls');
+      const j = await r.json();
+      rows = parseLedgerTxns(j, 'dpt_dt').map((row) => Object.assign({ client_id: cur.clientId, period_month: job.period }, row));
+    } catch (e) {
+      debugPanel(['STEP: Electronic Cash Ledger  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
+      banner('Cash Ledger: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
+      await writeLedgerFailureRow(GSTKdb.replaceCashLedgerEntries, cur, job, (e && e.message) || 'unknown error');
+      await sleep(1500);
+      await advance(job);
+      return;
+    }
+    try { await GSTKdb.replaceCashLedgerEntries(cur.clientId, job.period, rows); } catch (e) { /* non-fatal */ }
+    debugPanel([
+      'STEP: Electronic Cash Ledger  (' + location.pathname + ')',
+      'period            : ' + from + ' – ' + to,
+      'rows read         : ' + rows.length,
+    ]);
+    banner('Cash Ledger → ' + rows.length + ' entries saved.' + progress, '#16a34a');
+    await sleep(1000);
     await advance(job);
+  }
+
+  // Shared parser for the retdtl / cashdetls portal JSON APIs — both return
+  // { tr: [...] } with an identical per-transaction shape apart from the date
+  // field name (dt for Liability, dpt_dt for Cash): desc/tr_typ/ref_no, plus
+  // igst/cgst/sgst/cess sub-objects whose .tx is this transaction's figure,
+  // and tot_rng_bal as the running balance after the row. The lead "Opening
+  // Balance" row carries no tr_typ — kept (is_debit: null) rather than
+  // dropped, so the report shows the same starting point the portal does.
+  function parseLedgerTxns(json, dateField) {
+    const rows = Array.isArray(json && json.tr) ? json.tr : [];
+    return rows.map((r) => ({
+      entry_date: ddmmyyyyToIso(r[dateField] || ''),
+      description: r.desc || '',
+      is_debit: r.tr_typ === 'Dr' ? true : r.tr_typ === 'Cr' ? false : null,
+      igst: (r.igst && r.igst.tx) || 0,
+      cgst: (r.cgst && r.cgst.tx) || 0,
+      sgst: (r.sgst && r.sgst.tx) || 0,
+      cess: (r.cess && r.cess.tx) || 0,
+      balance: r.tot_rng_bal || 0,
+    }));
   }
 
   // --- mapping helpers (mirror the agent) ---

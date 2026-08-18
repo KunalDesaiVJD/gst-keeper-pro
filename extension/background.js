@@ -57,6 +57,19 @@ const API = {
     return rows.length ? post('gst_credit_ledger_transactions', rows) : true;
   },
 
+  // Electronic Liability Register (Part-I, return-related) and Electronic Cash
+  // Ledger — same delete-then-insert pattern as the credit ledger, fed by the
+  // 'liabilityledger'/'cashledger' job steps in content.js (direct fetch of
+  // the portal's own JSON APIs, not DOM scraping).
+  replaceLiabilityLedgerEntries: async (clientId, period, rows) => {
+    await del('gst_liability_ledger_entries', `client_id=eq.${clientId}&period_month=eq.${enc(period)}`);
+    return rows.length ? post('gst_liability_ledger_entries', rows) : true;
+  },
+  replaceCashLedgerEntries: async (clientId, period, rows) => {
+    await del('gst_cash_ledger_entries', `client_id=eq.${clientId}&period_month=eq.${enc(period)}`);
+    return rows.length ? post('gst_cash_ledger_entries', rows) : true;
+  },
+
   // Upload a base64 data-URL PDF to the return-pdfs bucket, return its public URL.
   uploadPdf: async (path, dataUrl) => {
     const b64 = String(dataUrl).split(',')[1] || '';
