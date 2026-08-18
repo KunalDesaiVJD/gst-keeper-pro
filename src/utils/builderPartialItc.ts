@@ -59,6 +59,18 @@ export interface PartialItcSplit {
   main1Calculated: ItcTotals;
   /** 4(B)(2): the ordinary (non-apportionment) reversal, current + previous months. */
   row2Calculated: ItcTotals;
+  /**
+   * The actual (1)/(2) split to show/file for a builder client, per firm
+   * instruction (2026-08-18): a promoter has no "ordinary Others" ITC bucket
+   * at all — GST notification 03/2019-CT(Rate) makes every rupee ineligible
+   * under the same Rule 38/42/43 mechanism, so the 2B-reco/180-day reversal
+   * that `row2Calculated` carries (which would sit in "(2) Others" for a
+   * non-builder client) is reclassified entirely into "(1)" instead. The sum
+   * is unchanged from main1Calculated + row2Calculated — only which row
+   * carries it changes, so Total 4B / Net ITC (4C) are unaffected.
+   */
+  row1Reclassified: ItcTotals;
+  row2Reclassified: ItcTotals;
 }
 
 /**
@@ -111,7 +123,10 @@ export const computePartialItcSplit = (params: {
     sgst: round2(onITCAsPerA.sgst + prevMonthAdj.sgst + onOtherReversal.sgst),
   };
 
-  return { onITCAsPerA, onOtherReversal, main1Calculated, row2Calculated };
+  const row1Reclassified = sum4(main1Calculated, row2Calculated);
+  const row2Reclassified = ZERO;
+
+  return { onITCAsPerA, onOtherReversal, main1Calculated, row2Calculated, row1Reclassified, row2Reclassified };
 };
 
 /**
@@ -125,7 +140,7 @@ export const computeTotal4B = (params: {
   partial: PartialItcSplit | null;
 }): ItcTotals => {
   if (params.isPartialITCClient && params.partial) {
-    return sum4(params.partial.main1Calculated, params.partial.row2Calculated);
+    return sum4(params.partial.row1Reclassified, params.partial.row2Reclassified);
   }
   return params.section4B.filter((row) => !row.isHeader).reduce((acc, row) => sum4(acc, row), ZERO);
 };

@@ -13,7 +13,9 @@
 //   Table 4D(2) ineligible      ← ITC Summary 4D(2)  [4D(1) reclaim already sits inside 4A(5)]
 //   Table 5 (exempt inward)     ← NOT computed by the app → left 0 (REVIEW)
 
-export interface ItcRow { srNo: string; igst: number; cgst: number; sgst: number }
+import { computePartialItcSplit } from './builderPartialItc';
+
+export interface ItcRow { srNo: string; igst: number; cgst: number; sgst: number; particular?: string }
 export interface ItcData { section4A: ItcRow[]; section4B: ItcRow[]; section4D: ItcRow[] }
 export interface RcmTotals { taxable: number; igst: number; cgst: number; sgst: number }
 
@@ -44,6 +46,12 @@ export interface Gstr3bInput {
   // Filed. Required (not defaulted) so every caller makes an explicit choice —
   // see RCM_RCHRG_FIX_FROM below for why this matters.
   alreadyFiled: boolean;
+  // Builder Partial-ITC / No-ITC clients (docs/BUILDER_GST_POSITIONS.md §7)
+  // reverse ITC by carpet-area apportionment instead of the plain default
+  // Table 4(B) rows — omit for a non-builder or Regular-scheme client.
+  builderItcType?: string | null;
+  commercialArea?: number | null;
+  residentialArea?: number | null;
 }
 
 export interface TaxHead { igst: number; cgst: number; sgst: number }
@@ -288,14 +296,50 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
     { igst: adj4A5.igst, cgst: adj4A5.cgst, sgst: adj4A5.sgst },
   ));
 
-  const adj4B1 = sumAdj('4B(1)');
-  const revRul = round3(add3(row(B, '(1)'), { igst: adj4B1.igst, cgst: adj4B1.cgst, sgst: adj4B1.sgst })); // 4B(1) rule 38/42/43 & 17(5)
-  const revOth = round3(add3(row(B, '(i)'), row(B, '(ii)'), row(B, '(iii)'))); // 4B(2) others
+  // Table 4(B) — Partial-ITC / No-ITC builder clients (docs/BUILDER_GST_
+  // POSITIONS.md §7) reverse ITC by carpet-area apportionment, computed by
+  // the SAME shared function ITC Summary itself uses (builderPartialItc.ts),
+  // not the plain default-template row lookup below. That default lookup
+  // matches sub-rows by literal srNo '(i)'/'(ii)'/'(iii)', but the Partial-
+  // ITC/No-ITC row template leaves those sub-rows' srNo empty (matched by
+  // particular text instead) — reading it with the default lookup silently
+  // computed 4(B)(2) as 0 for every such client, understating the reversal
+  // and overstating 4C Net ITC.
+  const isNoITC = input.builderItcType === 'NO_ITC';
+  const isPartialITC = input.builderItcType === 'PARTIAL_ITC' || isNoITC;
+  // No-ITC reverses 100% regardless of the client's real area mix — force
+  // the ratio to 1 rather than reading commercial_area/residential_area.
+  const commercialArea = isNoITC ? 0 : (input.commercialArea || 0);
+  const residentialArea = isNoITC ? 1 : (input.residentialArea || 0);
+  // Keep Total 4A consistent with `itcAvail` below (which already folds in
+  // the manual 4A(5) adjustment) so the apportionment ratio isn't applied
+  // against a stale pre-adjustment total.
+  const adjustedA = (adj4A5.igst || adj4A5.cgst || adj4A5.sgst)
+    ? A.map((r) => (r.srNo === '5.1' ? { ...r, igst: r.igst + adj4A5.igst, cgst: r.cgst + adj4A5.cgst, sgst: r.sgst + adj4A5.sgst } : r))
+    : A;
+  const partialSplit = isPartialITC
+    ? computePartialItcSplit({ section4A: adjustedA, section4B: B.map((r) => ({ ...r, particular: r.particular || '' })), commercialArea, residentialArea })
+    : null;
+  if (isPartialITC && !partialSplit) {
+    flags.push('Partial/No-ITC client but no carpet area set on the client record — Table 4(B) fell back to the default (non-apportioned) formula; set commercial/residential area to get the correct reversal.');
+  }
 
+  const adj4B1 = sumAdj('4B(1)');
+  // Builder clients: the full split (including the 2B-reco/180-day reversal)
+  // is reclassified into (1) — see row1Reclassified's doc comment in
+  // builderPartialItc.ts. A promoter has no "ordinary Others" ITC bucket.
+  const revRul = partialSplit
+    ? round3(add3(partialSplit.row1Reclassified, { igst: adj4B1.igst, cgst: adj4B1.cgst, sgst: adj4B1.sgst })) // 4B(1) rule 38/42/43 & 17(5)
+    : round3(add3(row(B, '(1)'), { igst: adj4B1.igst, cgst: adj4B1.cgst, sgst: adj4B1.sgst })); // 4B(1) rule 38/42/43 & 17(5)
+  const revOth = partialSplit
+    ? round3(partialSplit.row2Reclassified) // 4B(2) others — always 0 for a builder client
+    : round3(add3(row(B, '(i)'), row(B, '(ii)'), row(B, '(iii)'))); // 4B(2) others
+
+  const rclmd1 = row(D, '(1)');                       // 4D(1) ITC reclaimed which was reversed under 4B(2) in an earlier period
   const inelgOth = row(D, '(2)');                     // 4D(2) 16(4) & PoS
   // Full 4(D) Other Details, as shown in ITC Summary and the portal GSTR-3B.
   const itcOtherDetails = [
-    { srNo: '(1)', label: 'ITC reclaimed which was reversed under Table 4(B)(2) in earlier tax period', ...round3(row(D, '(1)')) },
+    { srNo: '(1)', label: 'ITC reclaimed which was reversed under Table 4(B)(2) in earlier tax period', ...round3(rclmd1) },
     { srNo: '(1.1)', label: 'Reclaim of ITC Reversed for Previous months', ...round3(row(D, '1.1')) },
     { srNo: '(1.2)', label: 'Reclaim of ITC Reversed due to 180 days rule/Others', ...round3(row(D, '1.2')) },
     { srNo: '(2)', label: 'Ineligible ITC under section 16(4) & ITC restricted due to PoS rules', ...round3(inelgOth) },
@@ -352,6 +396,13 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
         { ty: 'OTH', ...revOth },
       ].map(stripSr),
       itc_net: itcNet,
+      // 4(D)(1) — reclaim of ITC previously reversed under 4(B)(2). Computed
+      // by ITC Summary (auto-linked from the current period's reclaim bills)
+      // same as 4(B)(2)(i)/row 5.4 — not "always 0", despite what the push
+      // extension used to assume when this field didn't exist here yet.
+      itc_rclmd: [
+        { ty: 'OTH', ...rclmd1 },
+      ].map(stripSr),
       itc_inelg: [
         { ty: 'RUL', igst: 0, cgst: 0, sgst: 0 },
         { ty: 'OTH', ...inelgOth },
