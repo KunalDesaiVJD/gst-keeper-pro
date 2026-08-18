@@ -43,7 +43,7 @@ to Reconciliation" button.
 | 2B doc: **ITC_OF_OTHERS** | Not the taxpayer's ITC at all (wrong GSTIN / duplicate) | Excluded entirely — not eligible, not ineligible, just not counted |
 | 2B doc: **NOT_IN_BOOKS** | In 2B, not yet booked | → `bills_not_in_books` row; `bill_in_2b_month` = this period, `book_entry_month` blank until booked |
 | 2B doc: **RECLAIM** | This is a previously-reversed invoice reappearing in 2B | Linked (not summed into row 5.1) — see §2 |
-| Books row: **NOT_IN_2B** | Booked, supplier hasn't filed / not in 2B this period | → `bills_not_in_2b` row; `reversal_month` = this period (see §2), `reclaim_month` blank until resolved |
+| Books row: **NOT_IN_2B** | Booked, supplier hasn't filed / not in 2B this period | → `bills_not_in_2b` row; `reversal_month` = this period (see §2), `reclaim_month` blank until resolved. **Also** feeds ITC Summary row 5.1 this period (gross claim), reversed straight back out via 4B(2)(i) at the same amount — see "Row 5.1 auto-link" below |
 | Books row: **MISMATCHED** | Paired to a 2B doc that differs by >₹10 | No ledger row — covered by the 2B doc's own MISMATCHED handling above |
 | Books row: **NOT_ELIGIBLE** | Booked but the firm has determined it's blocked credit | No ledger row — permanently excluded, not a timing gap |
 
@@ -161,9 +161,25 @@ directly with the firm, not an engineering guess:
 ## Row 5.1 auto-link
 
 `ITC Summary` row 5.1 "ITC for the Month" was a hand-typed figure before this
-change. It is now `isAutoLinked` from `fetchImport2BEligibleTotal()` — the sum
-of MATCHED + MISMATCHED, non-RCM `twob_import_docs` rows for the client/period
-— the same live-query pattern already used for rows 4B(2)(i), 5.4 and 4D(1)/(1.1).
+change. It is now `isAutoLinked`, computed as `fetchImport2BEligibleTotal()`
+(the sum of MATCHED + MISMATCHED, non-RCM `twob_import_docs` rows for the
+client/period) **plus** this period's NOT_IN_2B reversal total (the same
+`bills_not_in_2b` rows, filtered the same way, that 4B(2)(i) below reverses)
+— the same live-query pattern already used for rows 4B(2)(i), 5.4 and
+4D(1)/(1.1).
+
+**Gross, not net:** a NOT_IN_2B invoice is booked ITC for the month that
+just isn't in GSTR-2B yet — under the restricted-period regime it can't be
+retained, so it has to come straight back out, but it was still claimed this
+month. Row 5.1 now shows it going in and 4B(2)(i) shows it coming back out,
+matching how the portal's own Table 4 is meant to read (claim gross, reverse
+separately) instead of silently excluding it from 5.1 and leaving nothing for
+4B(2)(i) to visibly reverse. **Total 4C (Net ITC) is unaffected either way** —
+this only corrects the gross presentation on 5.1/4B(2)(i), not the final
+number. (A carried-forward pending item keeps its *original* `reversal_month`
+across the carry — see §2 — so it is added to 5.1 exactly once, in its
+origination month, never again while it sits in Pending Items.)
+
 Staff can no longer hand-type row 5.1; if a client needs an adjustment outside
 what Import 2B captures, it has to go through Import 2B's classification, not
 a manual override on this row.
