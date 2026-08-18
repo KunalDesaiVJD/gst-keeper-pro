@@ -168,7 +168,7 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4'];
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'notices' || job.step === 'noticesAdditional' || job.step === 'refund' || job.step === 'drc03' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -192,6 +192,10 @@
     else if (job.step === 'twobdwld') await handleTwobDownload(job, cur, progress);
     else if (job.step === 'twoa') await handleTwoA(job, cur, progress);
     else if (job.step === 'twoadwld') await handleTwoADownload(job, cur, progress);
+    else if (job.step === 'notices') await handleNotices(job, cur, progress);
+    else if (job.step === 'noticesAdditional') await handleNoticesAdditional(job, cur, progress);
+    else if (job.step === 'refund') await handleRefund(job, cur, progress);
+    else if (job.step === 'drc03') await handleDrc03(job, cur, progress);
     else if (job.step === 'filing') await handleFiling(job, cur, progress);
     else if (job.step === 'gstr1_dash') await handleGstr1UploadDashboard(job, cur, progress);
     else if (job.step === 'gstr1_upload') await handleGstr1Upload(job, cur, progress);
@@ -245,6 +249,21 @@
         job.step = 'twoa';
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      } else if (job.mode === 'notices') {
+        banner('Logged in — opening Notices and Orders…' + progress);
+        job.step = 'notices';
+        await setJob(job);
+        location.href = 'https://services.gst.gov.in/services/notices';
+      } else if (job.mode === 'refund') {
+        banner('Logged in — opening Refund application status…' + progress);
+        job.step = 'refund';
+        await setJob(job);
+        location.href = 'https://services.gst.gov.in/services/refund/application/status';
+      } else if (job.mode === 'drc03') {
+        banner('Logged in — opening My Applications…' + progress);
+        job.step = 'drc03';
+        await setJob(job);
+        location.href = 'https://services.gst.gov.in/services/quickLink/myapplications';
       } else if (job.mode === 'filing') {
         banner('Logged in — opening the filing page…' + progress);
         job.step = 'filing';
@@ -1714,6 +1733,275 @@
       ok: true, clientId: cur.clientId, gstin: (cur.creds && cur.creds.gstin) || '', period,
       fileB64: dataUrl, fileName, at: Date.now(),
     } });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Notices / Refund / DRC-03 — UNVERIFIED against the real portal.
+  //
+  // Unlike GSTR-2A (which could mirror the already-proven GSTR-2B tile-and-
+  // download flow on the same Returns Dashboard), there is no existing page
+  // in this codebase to mirror for these three: they live under a completely
+  // different part of the portal (Services > User Services / Refunds), never
+  // scraped here before. The navigation URLs and table column-matching below
+  // are a best-effort guess, not a confirmed selector set. Every step banners
+  // red and leaves a debugPanel dump if the expected page/table isn't found —
+  // if that happens, tell the developer exactly what debugPanel shows (menu
+  // labels, table headers, URL) so the selectors can be corrected.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Portal dates are typically DD/MM/YYYY; Postgres `date` columns need
+  // YYYY-MM-DD. Returns null (not a guess) for anything that doesn't parse.
+  function parsePortalDate(raw) {
+    const s = (raw || '').trim();
+    const m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+    if (!m) return null;
+    const [, d, mo, y] = m;
+    return y + '-' + mo.padStart(2, '0') + '-' + d.padStart(2, '0');
+  }
+
+  // Find a table whose HEADER row matches at least `minMatches` of the given
+  // keyword patterns, then return { headers, rows } with every data row's
+  // cells in DOM order. Matching by header LABEL rather than a fixed column
+  // position, because the real column order on these unverified pages is
+  // unknown — this is more resilient to a guess being close-but-not-exact
+  // than the positional parsing the (already-proven) ledger scrapers use.
+  function readGenericTable(headerPatterns, minMatches = 2) {
+    for (const table of $$('table')) {
+      const headRow = table.querySelector('thead tr') || table.querySelector('tr');
+      if (!headRow) continue;
+      const headCells = [...headRow.querySelectorAll('th,td')].map((c) => (c.textContent || '').replace(/\s+/g, ' ').trim());
+      if (!headCells.length) continue;
+      const matched = headerPatterns.filter((re) => headCells.some((h) => re.test(h)));
+      if (matched.length < minMatches) continue;
+      const dataRows = [...table.querySelectorAll('tbody tr, tr')].filter(
+        (tr) => tr !== headRow && !tr.closest('thead') && tr.querySelectorAll('td').length > 0
+      );
+      const rows = dataRows.map((tr) => [...tr.querySelectorAll('td')].map((td) => (td.textContent || '').replace(/\s+/g, ' ').trim()));
+      return { headers: headCells, rows };
+    }
+    return null;
+  }
+
+  const colIndex = (headers, re) => headers.findIndex((h) => re.test(h));
+
+  // Poll readGenericTable() until a matching table shows up or we time out —
+  // these pages can render their grid asynchronously, same as every other
+  // portal table this file already waits on.
+  async function pollForTable(headerPatterns, minMatches, ms) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      const t = readGenericTable(headerPatterns, minMatches);
+      if (t) return t;
+      await sleep(400);
+    }
+    return null;
+  }
+
+  // Click the first visible link/button whose text matches `re`, skipping nav
+  // chrome. Returns true if something was clicked.
+  function clickMenuItem(re) {
+    const el = $$('a, button, li, span').filter((x) => x.offsetParent !== null)
+      .find((x) => re.test((x.textContent || '').trim()) && (x.textContent || '').trim().length < 60);
+    if (!el) return false;
+    try { el.click(); return true; } catch (e) { return false; }
+  }
+
+  async function handleNotices(job, cur, progress) {
+    if (!/notices/i.test(location.pathname)) {
+      banner('Looking for "View Notices and Orders"…' + progress);
+      if (!clickMenuItem(/view\s+notices\s+and\s+orders/i)) {
+        location.href = 'https://services.gst.gov.in/services/notices';
+        return;
+      }
+      await sleep(1500);
+    }
+    banner('Reading Notices and Orders…' + progress);
+    const table = await pollForTable([/reference|arn/i, /type/i, /date/i, /status/i], 2, 20000);
+    if (!table) {
+      banner('Could not find a Notices table (' + location.pathname + ') — this flow is unverified against the real portal; tell me what you see and I\'ll adjust the selectors.', '#dc2626');
+      await store.set({ gstk_notices_result: { ok: false, clientId: cur.clientId, error: 'No Notices table found at ' + location.pathname } });
+      await clearJob();
+      return;
+    }
+    const refIdx = colIndex(table.headers, /reference|arn/i);
+    const typeIdx = colIndex(table.headers, /type/i);
+    const descIdx = colIndex(table.headers, /description|particulars|subject/i);
+    const issueIdx = colIndex(table.headers, /issue.*date|date.*issue/i);
+    const dueIdx = colIndex(table.headers, /due.*date/i);
+    const statusIdx = colIndex(table.headers, /status/i);
+    const rows = table.rows.map((r) => ({
+      client_id: cur.clientId, source: 'notices',
+      reference_number: r[refIdx] || null, notice_type: r[typeIdx] || null, description: r[descIdx] || null,
+      issue_date: parsePortalDate(r[issueIdx]), due_date: parsePortalDate(r[dueIdx]), status: r[statusIdx] || null,
+    }));
+    debugPanel([
+      'STEP: Notices and Orders (' + location.pathname + ')',
+      'headers seen: ' + JSON.stringify(table.headers),
+      'rows found  : ' + rows.length,
+    ]);
+    try {
+      await GSTKdb.replaceNotices(cur.clientId, 'notices', rows);
+    } catch (e) {
+      banner('Notices read but save failed: ' + (e && e.message), '#dc2626');
+      await store.set({ gstk_notices_result: { ok: false, clientId: cur.clientId, error: String(e && e.message) } });
+      await clearJob();
+      return;
+    }
+    job.step = 'noticesAdditional';
+    await setJob(job);
+    banner('Notices saved (' + rows.length + ') — opening Additional Notices and Orders…' + progress);
+    if (!clickMenuItem(/additional\s+notices/i)) location.href = 'https://services.gst.gov.in/services/notices/additional';
+  }
+
+  async function handleNoticesAdditional(job, cur, progress) {
+    banner('Reading Additional Notices and Orders…' + progress);
+    const table = await pollForTable([/reference|arn/i, /type/i, /date/i, /status/i], 2, 20000);
+    let rows = [];
+    if (!table) {
+      banner('Could not find an Additional Notices table (' + location.pathname + ') — unverified against the real portal; the plain Notices list above was still saved. Tell me what you see and I\'ll adjust.', '#f59e0b');
+    } else {
+      const refIdx = colIndex(table.headers, /reference|arn/i);
+      const typeIdx = colIndex(table.headers, /type/i);
+      const descIdx = colIndex(table.headers, /description|particulars|subject/i);
+      const issueIdx = colIndex(table.headers, /issue.*date|date.*issue/i);
+      const dueIdx = colIndex(table.headers, /due.*date/i);
+      const statusIdx = colIndex(table.headers, /status/i);
+      rows = table.rows.map((r) => ({
+        client_id: cur.clientId, source: 'additional_notices',
+        reference_number: r[refIdx] || null, notice_type: r[typeIdx] || null, description: r[descIdx] || null,
+        issue_date: parsePortalDate(r[issueIdx]), due_date: parsePortalDate(r[dueIdx]), status: r[statusIdx] || null,
+      }));
+      debugPanel([
+        'STEP: Additional Notices and Orders (' + location.pathname + ')',
+        'headers seen: ' + JSON.stringify(table.headers),
+        'rows found  : ' + rows.length,
+      ]);
+      try {
+        await GSTKdb.replaceNotices(cur.clientId, 'additional_notices', rows);
+      } catch (e) {
+        banner('Additional Notices read but save failed: ' + (e && e.message), '#dc2626');
+        await store.set({ gstk_notices_result: { ok: false, clientId: cur.clientId, error: String(e && e.message) } });
+        await clearJob();
+        return;
+      }
+    }
+    await store.set({ gstk_notices_result: { ok: true, clientId: cur.clientId, at: Date.now() } });
+    banner('Notices pull done ✓ (' + rows.length + ' additional) — you can close this tab.', '#16a34a');
+    await clearJob();
+  }
+
+  async function handleRefund(job, cur, progress) {
+    if (!/refund/i.test(location.pathname)) {
+      banner('Looking for "Track Application Status" under Refunds…' + progress);
+      if (!clickMenuItem(/track\s+application\s+status/i)) {
+        location.href = 'https://services.gst.gov.in/services/refund/application/status';
+        return;
+      }
+      await sleep(1500);
+    }
+    banner('Reading refund applications…' + progress);
+    const table = await pollForTable([/arn/i, /date/i, /status/i, /amount|claim/i], 2, 20000);
+    if (!table) {
+      banner('Could not find a Refund applications table (' + location.pathname + ') — this flow is unverified against the real portal; tell me what you see and I\'ll adjust the selectors.', '#dc2626');
+      await store.set({ gstk_refund_result: { ok: false, clientId: cur.clientId, error: 'No Refund table found at ' + location.pathname } });
+      await clearJob();
+      return;
+    }
+    const arnIdx = colIndex(table.headers, /arn/i);
+    const typeIdx = colIndex(table.headers, /type|reason|category/i);
+    const filedIdx = colIndex(table.headers, /filed|application.*date|date.*filed/i);
+    const claimedIdx = colIndex(table.headers, /claim/i);
+    const sanctionedIdx = colIndex(table.headers, /sanction/i);
+    const statusIdx = colIndex(table.headers, /status/i);
+    // The list view rarely says ITC vs Cash ledger explicitly — source_ledger
+    // stays null (unclassified) unless the refund-type text itself names one;
+    // the "Refund Filed On Portal" report (the all-applications view) still
+    // works either way, only the two ledger-split reports need this filled.
+    const rows = table.rows.map((r) => {
+      const type = r[typeIdx] || null;
+      let sourceLedger = null;
+      if (type && /itc|credit\s*ledger/i.test(type)) sourceLedger = 'ITC';
+      else if (type && /cash\s*ledger/i.test(type)) sourceLedger = 'Cash';
+      return {
+        client_id: cur.clientId, arn: r[arnIdx] || null, refund_type: type, source_ledger: sourceLedger,
+        filed_date: parsePortalDate(r[filedIdx]),
+        claimed_amount: claimedIdx >= 0 ? Number((r[claimedIdx] || '').replace(/[,₹\s]/g, '')) || null : null,
+        sanctioned_amount: sanctionedIdx >= 0 ? Number((r[sanctionedIdx] || '').replace(/[,₹\s]/g, '')) || null : null,
+        status: r[statusIdx] || null,
+      };
+    });
+    debugPanel([
+      'STEP: Refund applications (' + location.pathname + ')',
+      'headers seen: ' + JSON.stringify(table.headers),
+      'rows found  : ' + rows.length,
+    ]);
+    try {
+      await GSTKdb.replaceRefunds(cur.clientId, rows);
+    } catch (e) {
+      banner('Refunds read but save failed: ' + (e && e.message), '#dc2626');
+      await store.set({ gstk_refund_result: { ok: false, clientId: cur.clientId, error: String(e && e.message) } });
+      await clearJob();
+      return;
+    }
+    await store.set({ gstk_refund_result: { ok: true, clientId: cur.clientId, count: rows.length, at: Date.now() } });
+    banner('Refund applications saved (' + rows.length + ') ✓ — you can close this tab.', '#16a34a');
+    await clearJob();
+  }
+
+  async function handleDrc03(job, cur, progress) {
+    if (!/myapplications|applications/i.test(location.pathname)) {
+      banner('Looking for "My Applications"…' + progress);
+      if (!clickMenuItem(/my\s+applications/i)) {
+        location.href = 'https://services.gst.gov.in/services/quickLink/myapplications';
+        return;
+      }
+      await sleep(1500);
+    }
+    // "My Applications" covers more than DRC-03 — try to filter to it if there's
+    // an application-type picker; if not found, fall back to reading whatever
+    // table is showing (the header-keyword match below still guards against
+    // reading the wrong list).
+    if (!(await selectWhereOption('Intimation of Voluntary Payment', { startsWith: true, timeout: 4000 }))) {
+      await selectWhereOption('DRC-03', { startsWith: true, timeout: 3000 });
+    }
+    banner('Reading DRC-03 filings…' + progress);
+    const table = await pollForTable([/arn/i, /cause|reason/i, /date/i, /status/i], 2, 20000);
+    if (!table) {
+      banner('Could not find a DRC-03 table (' + location.pathname + ') — this flow is unverified against the real portal; tell me what you see and I\'ll adjust the selectors.', '#dc2626');
+      await store.set({ gstk_drc03_result: { ok: false, clientId: cur.clientId, error: 'No DRC-03 table found at ' + location.pathname } });
+      await clearJob();
+      return;
+    }
+    const arnIdx = colIndex(table.headers, /arn/i);
+    const causeIdx = colIndex(table.headers, /cause|reason/i);
+    const filedIdx = colIndex(table.headers, /filed|application.*date|date.*filed/i);
+    const fromIdx = colIndex(table.headers, /from/i);
+    const toIdx = colIndex(table.headers, /to/i);
+    const cashIdx = colIndex(table.headers, /cash/i);
+    const creditIdx = colIndex(table.headers, /credit/i);
+    const statusIdx = colIndex(table.headers, /status/i);
+    const amt = (v) => (v ? Number(v.replace(/[,₹\s]/g, '')) || 0 : 0);
+    const rows = table.rows.map((r) => ({
+      client_id: cur.clientId, arn: r[arnIdx] || null, cause_of_payment: r[causeIdx] || null,
+      filed_date: parsePortalDate(r[filedIdx]), period_from: parsePortalDate(r[fromIdx]), period_to: parsePortalDate(r[toIdx]),
+      cash_amount: amt(r[cashIdx]), credit_amount: amt(r[creditIdx]), status: r[statusIdx] || null,
+    }));
+    debugPanel([
+      'STEP: DRC-03 filings (' + location.pathname + ')',
+      'headers seen: ' + JSON.stringify(table.headers),
+      'rows found  : ' + rows.length,
+    ]);
+    try {
+      await GSTKdb.replaceDrc03(cur.clientId, rows);
+    } catch (e) {
+      banner('DRC-03 read but save failed: ' + (e && e.message), '#dc2626');
+      await store.set({ gstk_drc03_result: { ok: false, clientId: cur.clientId, error: String(e && e.message) } });
+      await clearJob();
+      return;
+    }
+    await store.set({ gstk_drc03_result: { ok: true, clientId: cur.clientId, count: rows.length, at: Date.now() } });
+    banner('DRC-03 filings saved (' + rows.length + ') ✓ — you can close this tab.', '#16a34a');
+    await clearJob();
   }
 
   // Read the "Opening Balance" row from whichever ledger table actually has it.

@@ -57,6 +57,29 @@ const API = {
     return rows.length ? post('gst_credit_ledger_transactions', rows) : true;
   },
 
+  // Notices/Refund/DRC-03 pulls (handleNotices, handleNoticesAdditional,
+  // handleRefund, handleDrc03 in content.js) — the first batch of the
+  // remaining "no adjacent page to mirror" automation (Liability/Cash
+  // Ledger, Taxpayer Profile, Challans are a separate later batch). These
+  // are NOT period-scoped like 2B/2A — the portal shows a client's full
+  // history in one list — so each is delete-then-insert for the WHOLE
+  // client, not a period. UNVERIFIED against the real portal (see
+  // content.js) — the write shape below is fixed by gst_notices/
+  // gst_refund_applications/gst_drc03_filings' schema regardless of what the
+  // scraper selectors need correcting to.
+  replaceNotices: async (clientId, source, rows) => {
+    await del('gst_notices', `client_id=eq.${clientId}&source=eq.${enc(source)}`);
+    return rows.length ? post('gst_notices', rows) : true;
+  },
+  replaceRefunds: async (clientId, rows) => {
+    await del('gst_refund_applications', `client_id=eq.${clientId}`);
+    return rows.length ? post('gst_refund_applications', rows) : true;
+  },
+  replaceDrc03: async (clientId, rows) => {
+    await del('gst_drc03_filings', `client_id=eq.${clientId}`);
+    return rows.length ? post('gst_drc03_filings', rows) : true;
+  },
+
   // Upload a base64 data-URL PDF to the return-pdfs bucket, return its public URL.
   uploadPdf: async (path, dataUrl) => {
     const b64 = String(dataUrl).split(',')[1] || '';
@@ -127,6 +150,60 @@ const API = {
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
     const job = {
       mode: 'twoa', period: info.period_month, idx: 0, step: 'login', startedAt: Date.now(),
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+    };
+    const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
+    job.tabId = tab.id;
+    await chrome.storage.local.set({ gstk_active_job: job });
+    return { started: true, client: c.name };
+  },
+
+  // From a Reports Hub "Pull Notices" button. Pulls BOTH "View Notices and
+  // Orders" and "View Additional Notices and Orders" in one job (content.js
+  // handleNotices -> handleNoticesAdditional). UNVERIFIED: no existing page
+  // in this codebase to mirror the way GSTR-2A mirrored GSTR-2B's proven
+  // tile-and-download flow — the menu path and table selectors are a
+  // best-effort guess at the real portal's "Services > User Services" menu,
+  // not confirmed against it. See content.js handleNotices for the exact
+  // caveats and the diagnostic panel it leaves for correcting selectors.
+  startNoticesPull: async (info) => {
+    const c = await API.getClient(info.clientId);
+    if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
+    const job = {
+      mode: 'notices', idx: 0, step: 'login', startedAt: Date.now(),
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+    };
+    const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
+    job.tabId = tab.id;
+    await chrome.storage.local.set({ gstk_active_job: job });
+    return { started: true, client: c.name };
+  },
+
+  // From a Reports Hub "Pull Refunds" button. Same UNVERIFIED caveat as
+  // startNoticesPull — best-effort guess at "Services > Refunds > Track
+  // Application Status", not confirmed against the real portal.
+  startRefundPull: async (info) => {
+    const c = await API.getClient(info.clientId);
+    if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
+    const job = {
+      mode: 'refund', idx: 0, step: 'login', startedAt: Date.now(),
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+    };
+    const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
+    job.tabId = tab.id;
+    await chrome.storage.local.set({ gstk_active_job: job });
+    return { started: true, client: c.name };
+  },
+
+  // From a Reports Hub "Pull DRC-03" button. Same UNVERIFIED caveat — best-
+  // effort guess at "Services > User Services > My Applications" filtered to
+  // DRC-03 (Intimation of Voluntary Payment), not confirmed against the
+  // real portal.
+  startDrc03Pull: async (info) => {
+    const c = await API.getClient(info.clientId);
+    if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
+    const job = {
+      mode: 'drc03', idx: 0, step: 'login', startedAt: Date.now(),
       clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
