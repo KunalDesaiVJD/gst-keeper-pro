@@ -4,7 +4,8 @@
 // dialog so both compute the return the exact same way.
 
 import { supabase } from '@/integrations/supabase/client';
-import { buildGstr3bJson, type Gstr3bAdjustment, type Gstr3bResult, type ItcData, type RcmTotals } from './buildGstr3bJson';
+import { buildGstr3bJson, type Gstr3bAdjustment, type Gstr3bResult, type ItcData, type ItcRow, type RcmTotals } from './buildGstr3bJson';
+import { fetchItcAutoLinkTotals } from '@/lib/itcAutoLink';
 
 const SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const toShort = (mmYyyy: string) => {
@@ -18,7 +19,7 @@ export async function fetchGstr3b(
   periodMonth: string, // MM/YYYY
 ): Promise<Gstr3bResult> {
   const short = toShort(periodMonth);
-  const [g, itcRes, rcmRes, adjRes, fsiRes, filingRes, clientRes] = await Promise.all([
+  const [g, itcRes, rcmRes, adjRes, fsiRes, filingRes, clientRes, autoLink] = await Promise.all([
     supabase.from('gstr1_data').select('raw_json').eq('client_id', clientId).eq('period_month', short).maybeSingle(),
     supabase.from('itc_summaries').select('data').eq('client_id', clientId).eq('period_month', periodMonth).maybeSingle(),
     supabase.from('rcm_data').select('taxable_value, cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18').eq('client_id', clientId).eq('month', short),
@@ -44,8 +45,10 @@ export async function fetchGstr3b(
       .eq('client_id', clientId).eq('period_month', periodMonth)
       .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']),
     // Builder Partial-ITC / No-ITC carpet-area apportionment — see
-    // docs/BUILDER_GST_POSITIONS.md §7 and builderPartialItc.ts.
-    supabase.from('clients').select('builder_itc_type, commercial_area, residential_area').eq('id', clientId).maybeSingle(),
+    // docs/BUILDER_GST_POSITIONS.md §7 and builderPartialItc.ts. Also carries
+    // liberal_2b_reconciliation, which gates the row-5.1 auto-link below.
+    supabase.from('clients').select('builder_itc_type, commercial_area, residential_area, liberal_2b_reconciliation').eq('id', clientId).maybeSingle(),
+    fetchItcAutoLinkTotals(clientId, periodMonth),
   ]);
 
   const alreadyFiled = ((filingRes.data as { status: string }[]) || []).some((r) => r.status === 'Filed');
@@ -54,6 +57,39 @@ export async function fetchGstr3b(
   const rawItc = (itcRes.data as any)?.data;
   const parsed = typeof rawItc === 'string' ? JSON.parse(rawItc) : rawItc;
   if (parsed) itc = { section4A: parsed.section4A || [], section4B: parsed.section4B || [], section4D: parsed.section4D || [] };
+
+  // ITC Summary's auto-linked rows (5.1, 5.4, 4B's "current month as per 2B
+  // RECO", 4D's reclaim rows) are computed LIVE on that page and only ever
+  // written back to itc_summaries.data on a manual Save — so reading the
+  // saved snapshot for them drifts the moment Import 2B / 2B Reconciliation
+  // changes without someone reopening and resaving ITC Summary. Patch them
+  // with the same live figures ITC Summary itself would show right now,
+  // mirroring its own auto-link effect exactly (including row 5.1 = eligible
+  // + this period's reversal, gross not netted, per the ITC Summary fix this
+  // mirrors). Liberal clients leave row 5.1 exactly as saved/typed — same
+  // carve-out ITC Summary itself applies, since their invoices don't
+  // necessarily go through Import 2B's classification at all.
+  if (itc) {
+    const isLiberal = !!clientRes.data?.liberal_2b_reconciliation;
+    const { eligibleFromImport2B, reversalFromReco, reclaimFromReco, expenseOutFromReco } = autoLink;
+    itc.section4A = itc.section4A.map((r: ItcRow) => {
+      if (r.srNo === '5.1' && !isLiberal) {
+        return { ...r, igst: eligibleFromImport2B.igst + reversalFromReco.igst, cgst: eligibleFromImport2B.cgst + reversalFromReco.cgst, sgst: eligibleFromImport2B.sgst + reversalFromReco.sgst };
+      }
+      if (r.srNo === '5.4') return { ...r, igst: reclaimFromReco.igst, cgst: reclaimFromReco.cgst, sgst: reclaimFromReco.sgst };
+      return r;
+    });
+    itc.section4B = itc.section4B.map((r: ItcRow) =>
+      (r.particular || '').includes('current month as per 2B RECO')
+        ? { ...r, igst: reversalFromReco.igst, cgst: reversalFromReco.cgst, sgst: reversalFromReco.sgst }
+        : r,
+    );
+    itc.section4D = itc.section4D.map((r: ItcRow) => {
+      if (r.srNo === '(1)' || r.srNo === '1.1') return { ...r, igst: reclaimFromReco.igst, cgst: reclaimFromReco.cgst, sgst: reclaimFromReco.sgst };
+      if (r.srNo === '1.2') return { ...r, igst: expenseOutFromReco.igst, cgst: expenseOutFromReco.cgst, sgst: expenseOutFromReco.sgst };
+      return r;
+    });
+  }
 
   const rcmRows = ((rcmRes.data as any[]) || []);
   const rcm: RcmTotals = rcmRows.reduce((a, r) => ({
