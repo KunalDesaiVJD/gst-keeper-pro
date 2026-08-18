@@ -593,7 +593,15 @@ const ITCSummaryPage: React.FC = () => {
           };
         }
         // Row 5.1 - ITC for the Month, auto-linked from Import 2B's MATCHED +
-        // MISMATCHED total (claimed at the 2B figure — see postImport2B.ts).
+        // MISMATCHED total (claimed at the 2B figure — see postImport2B.ts)
+        // PLUS this period's freshly-classified NOT_IN_2B books amount (the
+        // same figure 4B(2)(i) below reverses). Table 4 is meant to show the
+        // GROSS claim here and the reversal separately, not a pre-netted
+        // figure — a NOT_IN_2B invoice is genuinely booked ITC for the month,
+        // it just isn't in 2B yet, so it belongs in 5.1 like every other
+        // booked invoice and gets pulled back out via the reversal row. Net
+        // effect on Total 4A/4B/4C is unchanged; this only fixes the gross
+        // presentation to match how the portal's own Table 4 works.
         // Liberal clients don't necessarily run their invoices through
         // Import 2B's classification at all, so that total may not reflect
         // their real figure — leave the row exactly as loaded/typed and let
@@ -604,9 +612,9 @@ const ITCSummaryPage: React.FC = () => {
           }
           return {
             ...row,
-            igst: eligibleFromImport2B.igst,
-            cgst: eligibleFromImport2B.cgst,
-            sgst: eligibleFromImport2B.sgst,
+            igst: eligibleFromImport2B.igst + reversalFromReco.igst,
+            cgst: eligibleFromImport2B.cgst + reversalFromReco.cgst,
+            sgst: eligibleFromImport2B.sgst + reversalFromReco.sgst,
             isAutoLinked: true,
           };
         }
