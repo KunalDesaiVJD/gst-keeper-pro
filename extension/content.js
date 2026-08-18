@@ -168,7 +168,7 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4'];
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds' || job.step === 'drc03' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -184,7 +184,12 @@
         try { await GSTKdb.replaceRefundApplications(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Refund applications' }]); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'drc03') {
         try { await GSTKdb.replaceDrc03Filings(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading DRC-03 filings' }]); } catch (e2) { /* diagnostic only */ }
+      } else if (job.step === 'challans') {
+        try { await GSTKdb.replaceChallans(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Challan Summary' }]); } catch (e2) { /* diagnostic only */ }
       }
+      // 'taxpayerprofile' has no diagnostic row: it's a single-row upsert
+      // per client, so a failed pull just leaves any prior good data as-is
+      // rather than needing a "pull failed" marker.
       await advance(job);
       return;
     }
@@ -204,6 +209,8 @@
     else if (job.step === 'notices') await handleNotices(job, cur, progress);
     else if (job.step === 'refunds') await handleRefunds(job, cur, progress);
     else if (job.step === 'drc03') await handleDrc03(job, cur, progress);
+    else if (job.step === 'taxpayerprofile') await handleTaxpayerProfile(job, cur, progress);
+    else if (job.step === 'challans') await handleChallans(job, cur, progress);
     else if (job.step === 'efiledpdf') await handleReturnPdf(job, cur, progress);
     else if (job.step === 'efiledview') await handleReturnView(job, cur, progress);
     else if (job.step === 'twob') await handleTwob(job, cur, progress);
@@ -2365,7 +2372,7 @@
       banner('DRC-03: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       try { await GSTKdb.replaceDrc03Filings(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }]); } catch (e2) { /* diagnostic only */ }
       await sleep(1500);
-      await advance(job);
+      await proceedToTaxpayerProfile(job);
       return;
     }
 
@@ -2403,7 +2410,141 @@
       'rows saved        : ' + rows.length,
       'PDFs captured     : ' + pdfOk + ' ok, ' + pdfFail + ' failed',
     ]);
-    banner('DRC-03 filings → ' + rows.length + ' entries saved (' + pdfOk + ' PDFs).' + progress, '#16a34a');
+    banner('DRC-03 filings → ' + rows.length + ' entries saved (' + pdfOk + ' PDFs). Now Taxpayer Profile…' + progress, '#16a34a');
+    await sleep(1000);
+    await proceedToTaxpayerProfile(job);
+  }
+
+  async function proceedToTaxpayerProfile(job) {
+    job.step = 'taxpayerprofile';
+    await setJob(job);
+    location.href = 'https://services.gst.gov.in/services/auth/myprofile';
+  }
+
+  // Taxpayer Information + Registration Certificate. services.gst.gov.in's
+  // own JSON API (profile/detail), confirmed live — exact match against the
+  // rendered "My Profile" page. The Registration Certificate PDF is a much
+  // simpler flow than DRC-03's: GET api/get/regcert returns {docid,
+  // applnId}, then GET /document/{docid}/{applnId} serves the PDF directly —
+  // no hash token needed, confirmed live with real PDF bytes.
+  async function handleTaxpayerProfile(job, cur, progress) {
+    if (!/\/services\/auth\/myprofile/.test(url)) { location.href = 'https://services.gst.gov.in/services/auth/myprofile'; return; }
+    banner('Reading Taxpayer Profile…' + progress);
+    let patchObj = null;
+    try {
+      const r = await fetch('https://services.gst.gov.in/services/auth/profile/detail', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' from profile/detail');
+      const j = await r.json();
+      patchObj = {
+        legal_name: j.lgnm || null, trade_name: j.tradeNam || null, constitution_of_business: j.ctb || null,
+        registration_date: ddmmyyyyToIso(j.rgdt || ''), jurisdiction_state: j.stj || null, jurisdiction_centre: j.ctj || null,
+        principal_place_address: (j.pradr && j.pradr.adr) || null, aadhaar_authentication_status: j.adhrVFlag || null,
+        updated_at: new Date().toISOString(),
+      };
+    } catch (e) {
+      debugPanel(['STEP: Taxpayer Profile  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
+      banner('Taxpayer Profile: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
+      await sleep(1500);
+      await proceedToChallans(job);
+      return;
+    }
+
+    // Registration certificate PDF — best-effort, must not drop the profile
+    // fields above if it fails.
+    try {
+      const cr = await fetch('https://services.gst.gov.in/services/auth/api/get/regcert', { credentials: 'include' });
+      if (cr.ok) {
+        const cj = await cr.json();
+        if (cj && cj.docid && cj.applnId) {
+          const pdfR = await fetch('https://services.gst.gov.in/document/' + cj.docid + '/' + cj.applnId, { credentials: 'include' });
+          if (pdfR.ok) {
+            const buf = await pdfR.arrayBuffer();
+            const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
+            const path = 'regcert/' + cur.clientId + '.pdf';
+            patchObj.registration_certificate_url = await GSTKdb.uploadPdf(path, dataUrl);
+          }
+        }
+      }
+    } catch (e) { /* non-fatal */ }
+
+    try { await GSTKdb.upsertTaxpayerProfile(cur.clientId, patchObj); } catch (e) { /* non-fatal */ }
+    debugPanel([
+      'STEP: Taxpayer Profile  (' + location.pathname + ')',
+      'legal name        : ' + (patchObj.legal_name || '(none)'),
+      'registration cert : ' + (patchObj.registration_certificate_url ? 'saved' : 'not captured'),
+    ]);
+    banner('Taxpayer Profile → saved. Now Challan Summary…' + progress, '#16a34a');
+    await sleep(1000);
+    await proceedToChallans(job);
+  }
+
+  async function proceedToChallans(job) {
+    job.step = 'challans';
+    await setJob(job);
+    location.href = 'https://payment.gst.gov.in/payment/auth/challanhistory';
+  }
+
+  // Challan Summary. payment.gst.gov.in's own JSON API
+  // (payment/auth/challan/getlist?fm_dt=..&to_dt=..&gstin=..), confirmed
+  // live — already includes the full CGST/SGST/IGST/Cess breakdown, no need
+  // to open each challan individually. The portal enforces a real
+  // server-side date-range cap per call (confirmed live: ~5.5 months works,
+  // 6 months fails with error PMT9071 "Invalid Search Limit"), so this walks
+  // history in fixed 150-day windows back to GST inception (01/07/2017).
+  async function handleChallans(job, cur, progress) {
+    if (!/payment\.gst\.gov\.in/.test(location.hostname) || !/challanhistory/.test(url)) {
+      location.href = 'https://payment.gst.gov.in/payment/auth/challanhistory';
+      return;
+    }
+    banner('Reading Challan Summary…' + progress);
+    const gstin = cur.creds && cur.creds.gstin;
+    if (!gstin) { banner('No GSTIN on record for Challan Summary — skipped.' + progress, '#f59e0b'); await advance(job); return; }
+
+    const p2 = (n) => String(n).padStart(2, '0');
+    const fmt = (d) => p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + '/' + d.getFullYear();
+    const windows = [];
+    let winStart = new Date(2017, 6, 1); // 01 Jul 2017 — GST inception
+    const today = new Date();
+    while (winStart <= today) {
+      const winEnd = new Date(winStart.getTime() + 149 * 24 * 60 * 60 * 1000);
+      windows.push([fmt(winStart), fmt(winEnd > today ? today : winEnd)]);
+      winStart = new Date(winEnd.getTime() + 24 * 60 * 60 * 1000);
+    }
+
+    const seen = new Map();
+    let windowsFailed = 0;
+    for (const [fm, to] of windows) {
+      try {
+        const r = await fetch('https://payment.gst.gov.in/payment/auth/challan/getlist?fm_dt=' + fm + '&to_dt=' + to + '&gstin=' + encodeURIComponent(gstin), { credentials: 'include' });
+        if (!r.ok) { windowsFailed++; continue; }
+        const list = await r.json();
+        if (!Array.isArray(list)) { windowsFailed++; continue; }
+        for (const c of list) {
+          if (!c.cpin || seen.has(c.cpin)) continue;
+          seen.set(c.cpin, {
+            client_id: cur.clientId, cpin: c.cpin,
+            challan_date: ddmmyyyyToIso((c.chln_cre_dt || '').split(' ')[0]),
+            payment_mode: c.payment_mod || null,
+            total_amount: Number(c.total_amt) || 0,
+            cgst_amount: Number(c.cgst_tot_amt) || 0, sgst_amount: Number(c.sgst_tot_amt) || 0,
+            igst_amount: Number(c.igst_tot_amt) || 0, cess_amount: Number(c.cess_tot_amt) || 0,
+            status: c.status === 'S' ? 'PAID' : c.status === 'F' ? 'FAILED' : (c.status || null),
+          });
+        }
+      } catch (e) { windowsFailed++; }
+    }
+
+    const rows = [...seen.values()];
+    try { await GSTKdb.replaceChallans(cur.clientId, rows); } catch (e) { /* non-fatal */ }
+    debugPanel([
+      'STEP: Challan Summary  (' + location.pathname + ')',
+      'windows checked   : ' + windows.length + ' (150-day steps back to 01/07/2017)',
+      'windows failed    : ' + windowsFailed,
+      'rows saved        : ' + rows.length,
+    ]);
+    banner('Challan Summary → ' + rows.length + ' entries saved.' + progress, '#16a34a');
     await sleep(1000);
     await advance(job);
   }

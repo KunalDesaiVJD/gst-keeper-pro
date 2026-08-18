@@ -29,6 +29,8 @@
     replaceNotices: (clientId, rows) => call('replaceNotices', clientId, rows),
     replaceRefundApplications: (clientId, rows) => call('replaceRefundApplications', clientId, rows),
     replaceDrc03Filings: (clientId, rows) => call('replaceDrc03Filings', clientId, rows),
+    upsertTaxpayerProfile: (clientId, patchObj) => call('upsertTaxpayerProfile', clientId, patchObj),
+    replaceChallans: (clientId, rows) => call('replaceChallans', clientId, rows),
     uploadPdf: (path, dataUrl) => call('uploadPdf', path, dataUrl),
     markFiled: (row) => call('markFiled', row),
     logEvent: (clientId, level, message) => { console.log('[GSTKeeper]', level, clientId, message); },

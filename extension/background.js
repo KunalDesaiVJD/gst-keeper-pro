@@ -92,6 +92,23 @@ const API = {
     return rows.length ? post('gst_drc03_filings', rows) : true;
   },
 
+  // Taxpayer profile — one row per client (client_id UNIQUE), so this is a
+  // true upsert rather than delete-then-insert: a failed re-pull leaves
+  // whatever the last successful pull wrote untouched instead of blanking
+  // it, unlike the list tables above.
+  upsertTaxpayerProfile: async (clientId, patchObj) => {
+    const ex = await sel(`gst_taxpayer_profile?client_id=eq.${clientId}&select=id&limit=1`);
+    if (ex[0]) return patch(`gst_taxpayer_profile?id=eq.${ex[0].id}`, patchObj);
+    return post('gst_taxpayer_profile', [{ client_id: clientId, ...patchObj }]);
+  },
+
+  // Challans. Also not period-scoped — delete-all-then-insert per client,
+  // fed by the 'challans' job step.
+  replaceChallans: async (clientId, rows) => {
+    await del('gst_challans', `client_id=eq.${clientId}`);
+    return rows.length ? post('gst_challans', rows) : true;
+  },
+
   // Upload a base64 data-URL PDF to the return-pdfs bucket, return its public URL.
   uploadPdf: async (path, dataUrl) => {
     const b64 = String(dataUrl).split(',')[1] || '';
