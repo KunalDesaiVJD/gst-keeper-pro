@@ -1,10 +1,9 @@
-// 5 more reports: Credit and Liability Statement (computed, reuses the
+// 4 more reports: Credit and Liability Statement (computed, reuses the
 // existing GSTR-3B draft + the Rule 88A offset helper — zero new
-// automation), Taxpayer Information, Download Registration Certificate,
-// Challan Summary Report, and Transitional Credit Claimed Report (all
-// schema + report only, same no-automation-yet reasoning as the
-// Notice/Refund/DRC-03 batch — see gst_taxpayer_profile / gst_challans /
-// gst_transitional_credit in the migration for why).
+// automation), Taxpayer Information, Download Registration Certificate, and
+// Challan Summary Report (schema + report only, same no-automation-yet
+// reasoning as the Notice/Refund/DRC-03 batch — see gst_taxpayer_profile /
+// gst_challans in the migration for why).
 
 import { supabase } from '@/integrations/supabase/client';
 import type { ReportTable } from './allClientsReports';
@@ -143,41 +142,5 @@ export const buildChallanSummaryReport = async (clientId: string): Promise<Repor
     rows: tableRows,
     fileNameBase: `Challan_Summary_${fileSafe(client.name)}`,
     columnWidths: [16, 12, 14, 14, 14, 14, 12, 16, 14],
-  };
-};
-
-// ─────────────────── Transitional Credit Claimed Report ───────────────────
-// TRAN-1/2 was a one-time 2017 GST-transition claim — it hasn't been
-// confirmed the portal still exposes this data years later (flagged in the
-// roadmap before this table existed). If it doesn't, this report just stays
-// empty — same honest outcome as any other unpopulated report here.
-
-export const buildTransitionalCreditClaimedReport = async (clientId: string): Promise<ReportTable> => {
-  const client = await fetchClient(clientId);
-  const { data, error } = await supabase
-    .from('gst_transitional_credit')
-    .select('form_type, arn, filed_date, cgst_credit_claimed, sgst_credit_claimed, status')
-    .eq('client_id', clientId)
-    .order('filed_date', { ascending: false });
-  if (error) throw error;
-  const rows = data || [];
-  if (rows.length === 0) {
-    throw new Error(`No TRAN-1/TRAN-2 transitional credit on record for ${client.name}. This is a one-time 2017 GST-transition claim — this report has no automated portal pull yet, and it's unconfirmed whether the portal still exposes this data years later. Enter records directly if applicable.`);
-  }
-
-  let totCgst = 0, totSgst = 0;
-  const tableRows: (string | number)[][] = rows.map((r) => {
-    totCgst += num(r.cgst_credit_claimed); totSgst += num(r.sgst_credit_claimed);
-    return [r.form_type || '—', r.arn || '—', r.filed_date || '—', num(r.cgst_credit_claimed), num(r.sgst_credit_claimed), r.status || '—'];
-  });
-  tableRows.push(['', '', 'TOTAL', totCgst, totSgst, '']);
-
-  return {
-    title: 'Transitional Credit Claimed Report',
-    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}`,
-    headers: ['Form', 'ARN', 'Filed Date', 'CGST Credit Claimed', 'SGST Credit Claimed', 'Status'],
-    rows: tableRows,
-    fileNameBase: `Transitional_Credit_Claimed_${fileSafe(client.name)}`,
-    columnWidths: [12, 18, 12, 18, 18, 14],
   };
 };

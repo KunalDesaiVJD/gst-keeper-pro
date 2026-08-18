@@ -8,7 +8,7 @@ import {
   Rows3, BadgeCheck, Building2, ShoppingCart, Receipt, Layers, Repeat, Ship, PackageOpen, Package,
   ArrowLeftRight, RotateCcw, ListChecks, Gauge, IdCard, Link2, Layers3, Bell, BellRing, Banknote, Coins,
   HandCoins, FileWarning, Wallet2, CreditCard, BookOpen, Landmark, PiggyBank, CalendarRange,
-  SplitSquareHorizontal, UserSquare2, FileBadge, ReceiptText, FileClock,
+  SplitSquareHorizontal, UserSquare2, FileBadge, ReceiptText,
   Calculator, AlarmClock, ShieldAlert, PieChart, Undo2,
 } from 'lucide-react';
 import {
@@ -71,7 +71,6 @@ import {
   buildTaxpayerInformationReport,
   buildRegistrationCertificateReport,
   buildChallanSummaryReport,
-  buildTransitionalCreditClaimedReport,
 } from '@/utils/extraPortalReports';
 import {
   buildLiabilityDeclaredVsPaidReport,
@@ -640,16 +639,6 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'client',
     build: ({ clientId }) => buildChallanSummaryReport(clientId!),
-  },
-  {
-    key: 'transitional-credit-claimed',
-    title: 'Transitional Credit Claimed Report',
-    description: 'TRAN-1/TRAN-2 one-time 2017 transitional credit on record. No automated portal pull yet, and it\'s unconfirmed whether the portal still exposes this data.',
-    icon: FileClock,
-    category: 'extra',
-    status: 'extends-login',
-    needs: 'client',
-    build: ({ clientId }) => buildTransitionalCreditClaimedReport(clientId!),
   },
   {
     key: 'pan-output-liability',
