@@ -325,11 +325,14 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   }
 
   const adj4B1 = sumAdj('4B(1)');
+  // Builder clients: the full split (including the 2B-reco/180-day reversal)
+  // is reclassified into (1) — see row1Reclassified's doc comment in
+  // builderPartialItc.ts. A promoter has no "ordinary Others" ITC bucket.
   const revRul = partialSplit
-    ? round3(add3(partialSplit.main1Calculated, { igst: adj4B1.igst, cgst: adj4B1.cgst, sgst: adj4B1.sgst })) // 4B(1) — residential-attributable reversal
+    ? round3(add3(partialSplit.row1Reclassified, { igst: adj4B1.igst, cgst: adj4B1.cgst, sgst: adj4B1.sgst })) // 4B(1) rule 38/42/43 & 17(5)
     : round3(add3(row(B, '(1)'), { igst: adj4B1.igst, cgst: adj4B1.cgst, sgst: adj4B1.sgst })); // 4B(1) rule 38/42/43 & 17(5)
   const revOth = partialSplit
-    ? round3(partialSplit.row2Calculated) // 4B(2) — ordinary (non-apportionment) reversal
+    ? round3(partialSplit.row2Reclassified) // 4B(2) others — always 0 for a builder client
     : round3(add3(row(B, '(i)'), row(B, '(ii)'), row(B, '(iii)'))); // 4B(2) others
 
   const rclmd1 = row(D, '(1)');                       // 4D(1) ITC reclaimed which was reversed under 4B(2) in an earlier period

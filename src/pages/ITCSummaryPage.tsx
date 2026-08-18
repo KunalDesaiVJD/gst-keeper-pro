@@ -1045,9 +1045,10 @@ const ITCSummaryPage: React.FC = () => {
   // Total Reversal for Partial ITC also needs special handling
   const totalReversal = useMemo(() => {
     if (isReversalClient && partialITCCalculatedValues) {
-      // Use auto-calculated values
-      const row1Vals = partialITCCalculatedValues.main1Calculated;
-      const row2Vals = partialITCCalculatedValues.row2Calculated;
+      // Use auto-calculated values (sum is the same whether read before or
+      // after reclassification — using the reclassified fields for clarity).
+      const row1Vals = partialITCCalculatedValues.row1Reclassified;
+      const row2Vals = partialITCCalculatedValues.row2Reclassified;
       
       return (row1Vals.igst + row1Vals.cgst + row1Vals.sgst) +
              (row2Vals.igst + row2Vals.cgst + row2Vals.sgst);
@@ -1420,9 +1421,13 @@ const ITCSummaryPage: React.FC = () => {
 
                       // For Partial ITC / No-ITC: Use calculated values for auto-calculated rows
                       if (isReversalClient && partialITCCalculatedValues) {
-                        // (1) main row - AUTO-CALCULATED = SUM(i + ii + iii)
+                        // (1) main row — reclassified: a builder client has no "ordinary
+                        // Others" ITC bucket, so (2)'s 2B-reco/180-day reversal is folded
+                        // in here too (see row1Reclassified in builderPartialItc.ts). Note
+                        // this total no longer equals i)+ii)+iii) below, which still show
+                        // the pre-reclassification apportionment math for reference.
                         if (row.srNo === '(1)' && row.particular.includes('Calculation of Ineligible ITC')) {
-                          const vals = partialITCCalculatedValues.main1Calculated;
+                          const vals = partialITCCalculatedValues.row1Reclassified;
                           return (
                             <tr key={`4b-${idx}`} className="cell-locked">
                               <td>{row.srNo}</td>
@@ -1516,9 +1521,11 @@ const ITCSummaryPage: React.FC = () => {
                             </tr>
                           );
                         }
-                        // (2) Others row - AUTO-CALCULATED = SUM of sub-rows
+                        // (2) Others row — always 0 for a builder client (reclassified into
+                        // (1) above); sub-rows below still show the raw 2B-reco/180-day
+                        // source figures for audit trail.
                         if (row.srNo === '(2)' && row.particular === 'Others') {
-                          const vals = partialITCCalculatedValues.row2Calculated;
+                          const vals = partialITCCalculatedValues.row2Reclassified;
                           return (
                             <tr key={`4b-${idx}`} className="cell-locked">
                               <td>{row.srNo}</td>
