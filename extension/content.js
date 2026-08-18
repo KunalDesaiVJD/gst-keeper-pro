@@ -566,9 +566,15 @@
   // app's already-computed draft numbers (job.gstr3b.json, same GSTN-schema
   // shape gstr1's assembleGstr1Json produces, built by the app's own
   // buildGstr3bJson()). It deliberately never touches Table 5 (inward exempt/
-  // nil/non-GST — the app doesn't compute it) or Table 4(D)(1) (rule-based
-  // ineligible ITC — always 0, not computed) and NEVER clicks Confirm /
+  // nil/non-GST — the app doesn't compute it, and NEVER clicks Confirm /
   // Offset Liability / File — the human reviews the whole form and submits.
+  // Table 4(D)(1) — ITC reclaimed which was reversed under 4(B)(2) in an
+  // earlier period — IS computed by the app (auto-linked from this period's
+  // reclaim bills, same source as 4(B)(2)(i)) and is now filled from
+  // job.gstr3b.json.itc_elg.itc_rclmd (see the app's buildGstr3bJson.ts). It
+  // used to be skipped here on the wrong assumption that it was always 0 —
+  // that field simply didn't exist in the JSON yet, so there was nothing to
+  // read; it does now.
   //
   // Portal flow:
   //   gstr3b_dash   → Returns Dashboard, pick FY + Quarter + Month, Search,
@@ -923,6 +929,7 @@
     const skipped = [];
     const avl = (ty) => (j.itc_elg?.itc_avl || []).find((r) => r.ty === ty) || {};
     const rvs = (ty) => (j.itc_elg?.itc_rev || []).find((r) => r.ty === ty) || {};
+    const rclmd = (ty) => (j.itc_elg?.itc_rclmd || []).find((r) => r.ty === ty) || {};
     const inelg = (ty) => (j.itc_elg?.itc_inelg || []).find((r) => r.ty === ty) || {};
     if (await openGstr3bTile(/4\.\s*eligible itc/i)) {
       await fillGstr3bRow(filled, skipped, '4A(1) Import of goods', /import of goods/i, [gstr3bNum(avl('IMPG').igst), gstr3bNum(avl('IMPG').cgst), gstr3bNum(avl('IMPG').sgst)]);
@@ -930,11 +937,12 @@
       await fillGstr3bRow(filled, skipped, '4A(3) Inward RCM ITC', /inward supplies liable to reverse charge/i, [gstr3bNum(avl('ISRC').igst), gstr3bNum(avl('ISRC').cgst), gstr3bNum(avl('ISRC').sgst)]);
       await fillGstr3bRow(filled, skipped, '4A(4) ISD', /inward supplies from isd/i, [gstr3bNum(avl('ISD').igst), gstr3bNum(avl('ISD').cgst), gstr3bNum(avl('ISD').sgst)]);
       await fillGstr3bRow(filled, skipped, '4A(5) All other ITC', /all other itc/i, [gstr3bNum(avl('OTH').igst), gstr3bNum(avl('OTH').cgst), gstr3bNum(avl('OTH').sgst)]);
-      // 4(B) both rows ARE computed by the app (unlike 4(D)(1) below).
       await fillGstr3bRow(filled, skipped, '4B(1) Reversed — rules 38/42/43 & 17(5)', /as per rules?\s*38[\s\S]{0,30}42[\s\S]{0,30}43/i, [gstr3bNum(rvs('RUL').igst), gstr3bNum(rvs('RUL').cgst), gstr3bNum(rvs('RUL').sgst)]);
       await fillGstr3bRow(filled, skipped, '4B(2) Reversed — others', /\(2\)\s*others/i, [gstr3bNum(rvs('OTH').igst), gstr3bNum(rvs('OTH').cgst), gstr3bNum(rvs('OTH').sgst)]);
-      // 4(D)(2) ONLY — 4(D)(1) is never computed by the app (always 0) and is
-      // deliberately left completely untouched, not even zeroed.
+      // 4D(1) — reclaim of ITC reversed under 4(B)(2) in an earlier period.
+      // Computed by the app (job.itc_elg.itc_rclmd, see buildGstr3bJson.ts) —
+      // was skipped here before that field existed; not the case anymore.
+      await fillGstr3bRow(filled, skipped, '4D(1) ITC reclaimed — reversed under 4(B)(2)', /itc reclaimed which was reversed under table 4\(b\)\(2\)/i, [gstr3bNum(rclmd('OTH').igst), gstr3bNum(rclmd('OTH').cgst), gstr3bNum(rclmd('OTH').sgst)]);
       await fillGstr3bRow(filled, skipped, '4D(2) Ineligible — 16(4) & PoS', /ineligible itc under section 16\(4\)|itc restricted due to (pos|place of supply)/i, [gstr3bNum(inelg('OTH').igst), gstr3bNum(inelg('OTH').cgst), gstr3bNum(inelg('OTH').sgst)]);
       await saveGstr3bIfPresent();
     } else {
@@ -948,7 +956,7 @@
     const resultSummary =
       `Filled ${allFilled.length} field(s).` +
       (allSkipped.length ? ` Could not set ${allSkipped.length}: ${allSkipped.slice(0, 6).join('; ')}${allSkipped.length > 6 ? '…' : ''}.` : '') +
-      ' Table 5 and Table 4(D)(1) were left untouched by design — review those (and everything else, including both tiles\' Save) before Confirm / Offset Liability / File.';
+      ' Table 5 was left untouched by design (not computed by the app) — review that (and everything else, including both tiles\' Save) before Confirm / Offset Liability / File.';
     banner(resultSummary, allSkipped.length ? '#f59e0b' : '#16a34a');
 
     await chrome.storage.local.set({ gstk_gstr3b_push_result: {

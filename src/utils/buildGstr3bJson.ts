@@ -292,10 +292,11 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   const revRul = round3(add3(row(B, '(1)'), { igst: adj4B1.igst, cgst: adj4B1.cgst, sgst: adj4B1.sgst })); // 4B(1) rule 38/42/43 & 17(5)
   const revOth = round3(add3(row(B, '(i)'), row(B, '(ii)'), row(B, '(iii)'))); // 4B(2) others
 
+  const rclmd1 = row(D, '(1)');                       // 4D(1) ITC reclaimed which was reversed under 4B(2) in an earlier period
   const inelgOth = row(D, '(2)');                     // 4D(2) 16(4) & PoS
   // Full 4(D) Other Details, as shown in ITC Summary and the portal GSTR-3B.
   const itcOtherDetails = [
-    { srNo: '(1)', label: 'ITC reclaimed which was reversed under Table 4(B)(2) in earlier tax period', ...round3(row(D, '(1)')) },
+    { srNo: '(1)', label: 'ITC reclaimed which was reversed under Table 4(B)(2) in earlier tax period', ...round3(rclmd1) },
     { srNo: '(1.1)', label: 'Reclaim of ITC Reversed for Previous months', ...round3(row(D, '1.1')) },
     { srNo: '(1.2)', label: 'Reclaim of ITC Reversed due to 180 days rule/Others', ...round3(row(D, '1.2')) },
     { srNo: '(2)', label: 'Ineligible ITC under section 16(4) & ITC restricted due to PoS rules', ...round3(inelgOth) },
@@ -352,6 +353,13 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
         { ty: 'OTH', ...revOth },
       ].map(stripSr),
       itc_net: itcNet,
+      // 4(D)(1) — reclaim of ITC previously reversed under 4(B)(2). Computed
+      // by ITC Summary (auto-linked from the current period's reclaim bills)
+      // same as 4(B)(2)(i)/row 5.4 — not "always 0", despite what the push
+      // extension used to assume when this field didn't exist here yet.
+      itc_rclmd: [
+        { ty: 'OTH', ...rclmd1 },
+      ].map(stripSr),
       itc_inelg: [
         { ty: 'RUL', igst: 0, cgst: 0, sgst: 0 },
         { ty: 'OTH', ...inelgOth },
