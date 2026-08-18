@@ -70,6 +70,21 @@ const API = {
     return rows.length ? post('gst_cash_ledger_entries', rows) : true;
   },
 
+  // View Notices and Orders. Not period-scoped (the report reads full
+  // history), so this is a delete-all-then-insert per client, not per
+  // period, fed by the 'notices' job step in content.js.
+  replaceNotices: async (clientId, rows) => {
+    await del('gst_notices', `client_id=eq.${clientId}`);
+    return rows.length ? post('gst_notices', rows) : true;
+  },
+
+  // Refund applications (Track Application Status). Also not period-scoped —
+  // delete-all-then-insert per client, fed by the 'refunds' job step.
+  replaceRefundApplications: async (clientId, rows) => {
+    await del('gst_refund_applications', `client_id=eq.${clientId}`);
+    return rows.length ? post('gst_refund_applications', rows) : true;
+  },
+
   // Upload a base64 data-URL PDF to the return-pdfs bucket, return its public URL.
   uploadPdf: async (path, dataUrl) => {
     const b64 = String(dataUrl).split(',')[1] || '';

@@ -26,6 +26,8 @@
     replaceCreditLedgerTxns: (clientId, period, rows) => call('replaceCreditLedgerTxns', clientId, period, rows),
     replaceLiabilityLedgerEntries: (clientId, period, rows) => call('replaceLiabilityLedgerEntries', clientId, period, rows),
     replaceCashLedgerEntries: (clientId, period, rows) => call('replaceCashLedgerEntries', clientId, period, rows),
+    replaceNotices: (clientId, rows) => call('replaceNotices', clientId, rows),
+    replaceRefundApplications: (clientId, rows) => call('replaceRefundApplications', clientId, rows),
     uploadPdf: (path, dataUrl) => call('uploadPdf', path, dataUrl),
     markFiled: (row) => call('markFiled', row),
     logEvent: (clientId, level, message) => { console.log('[GSTKeeper]', level, clientId, message); },

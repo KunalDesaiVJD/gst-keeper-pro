@@ -168,7 +168,7 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4'];
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -178,6 +178,11 @@
       // fine, portal just had nothing to report."
       if (job.step === 'liabilityledger') await writeLedgerFailureRow(GSTKdb.replaceLiabilityLedgerEntries, cur, job, 'session kept dropping (bounced to login/error page 3x) while reading the Liability Register');
       else if (job.step === 'cashledger') await writeLedgerFailureRow(GSTKdb.replaceCashLedgerEntries, cur, job, 'session kept dropping (bounced to login/error page 3x) while reading the Cash Ledger');
+      else if (job.step === 'notices') {
+        try { await GSTKdb.replaceNotices(cur.clientId, [{ client_id: cur.clientId, source: 'notices', description: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Notices & Orders' }]); } catch (e2) { /* diagnostic only */ }
+      } else if (job.step === 'refunds') {
+        try { await GSTKdb.replaceRefundApplications(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Refund applications' }]); } catch (e2) { /* diagnostic only */ }
+      }
       await advance(job);
       return;
     }
@@ -194,6 +199,8 @@
     else if (job.step === 'reversal') await handleReversal(job, cur, progress);
     else if (job.step === 'liabilityledger') await handleLiabilityLedger(job, cur, progress);
     else if (job.step === 'cashledger') await handleCashLedger(job, cur, progress);
+    else if (job.step === 'notices') await handleNotices(job, cur, progress);
+    else if (job.step === 'refunds') await handleRefunds(job, cur, progress);
     else if (job.step === 'efiledpdf') await handleReturnPdf(job, cur, progress);
     else if (job.step === 'efiledview') await handleReturnView(job, cur, progress);
     else if (job.step === 'twob') await handleTwob(job, cur, progress);
@@ -2132,7 +2139,7 @@
     }
     banner('Reading Electronic Cash Ledger…' + progress);
     const [mm, yyyy] = String(job.period).split('/').map((n) => parseInt(n, 10));
-    if (!mm || !yyyy) { banner('Bad period for Cash Ledger — skipped.' + progress, '#f59e0b'); await advance(job); return; }
+    if (!mm || !yyyy) { banner('Bad period for Cash Ledger — skipped.' + progress, '#f59e0b'); await proceedToNotices(job); return; }
     const lastDay = new Date(yyyy, mm, 0).getDate();
     const p2 = (n) => String(n).padStart(2, '0');
     const from = '01/' + p2(mm) + '/' + yyyy;
@@ -2148,7 +2155,7 @@
       banner('Cash Ledger: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       await writeLedgerFailureRow(GSTKdb.replaceCashLedgerEntries, cur, job, (e && e.message) || 'unknown error');
       await sleep(1500);
-      await advance(job);
+      await proceedToNotices(job);
       return;
     }
     try { await GSTKdb.replaceCashLedgerEntries(cur.clientId, job.period, rows); } catch (e) { /* non-fatal */ }
@@ -2157,7 +2164,152 @@
       'period            : ' + from + ' – ' + to,
       'rows read         : ' + rows.length,
     ]);
-    banner('Cash Ledger → ' + rows.length + ' entries saved.' + progress, '#16a34a');
+    banner('Cash Ledger → ' + rows.length + ' entries saved. Now Notices & Orders…' + progress, '#16a34a');
+    await sleep(1000);
+    await proceedToNotices(job);
+  }
+
+  async function proceedToNotices(job) {
+    job.step = 'notices';
+    await setJob(job);
+    location.href = 'https://services.gst.gov.in/services/auth/notices';
+  }
+
+  // View Notices and Orders. Not period-scoped — pulls FULL history every
+  // time (the portal itself merged "Additional Notices and Orders" into this
+  // single feed: confirmed live, the page shows a banner saying so — so
+  // that second report in the Hub has no separate data source anymore).
+  // services.gst.gov.in's own JSON API (get/notices), confirmed live via
+  // DevTools network tab, same story as the ledger APIs above.
+  async function handleNotices(job, cur, progress) {
+    if (!/\/services\/auth\/notices/.test(url)) { location.href = 'https://services.gst.gov.in/services/auth/notices'; return; }
+    banner('Reading Notices & Orders…' + progress);
+    let rows = [];
+    try {
+      const r = await fetch('https://services.gst.gov.in/services/auth/api/get/notices', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ onLoad: true, type: '', from: '01/01/2017', to: shownTodayDdMmYyyy() }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' from get/notices');
+      const j = await r.json();
+      const list = Array.isArray(j) ? j : Object.keys(j || {}).filter((k) => /^\d+$/.test(k)).map((k) => j[k]);
+      rows = list.map((n) => ({
+        client_id: cur.clientId, source: 'notices',
+        reference_number: n.noticeOrderId || null, notice_type: n.type || null,
+        description: n.descr || null, issue_date: ddmmyyyyToIso(n.dtOfIssue || ''),
+        due_date: /^\d{2}\/\d{2}\/\d{4}$/.test(n.dueDate || '') ? ddmmyyyyToIso(n.dueDate) : null,
+        status: n.status || null,
+      }));
+    } catch (e) {
+      debugPanel(['STEP: View Notices and Orders  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
+      banner('Notices & Orders: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
+      try { await GSTKdb.replaceNotices(cur.clientId, [{ client_id: cur.clientId, source: 'notices', description: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }]); } catch (e2) { /* diagnostic only */ }
+      await sleep(1500);
+      await proceedToRefunds(job);
+      return;
+    }
+    try { await GSTKdb.replaceNotices(cur.clientId, rows); } catch (e) { /* non-fatal */ }
+    debugPanel([
+      'STEP: View Notices and Orders  (' + location.pathname + ')',
+      'rows read         : ' + rows.length,
+    ]);
+    banner('Notices & Orders → ' + rows.length + ' entries saved. Now Refund applications…' + progress, '#16a34a');
+    await sleep(1000);
+    await proceedToRefunds(job);
+  }
+
+  // DD/MM/YYYY for "today" — the notices API wants an explicit upper bound,
+  // not an open-ended range.
+  function shownTodayDdMmYyyy() {
+    const d = new Date();
+    const p2 = (n) => String(n).padStart(2, '0');
+    return p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + '/' + d.getFullYear();
+  }
+
+  async function proceedToRefunds(job) {
+    job.step = 'refunds';
+    await setJob(job);
+    location.href = 'https://services.gst.gov.in/services/auth/trackstatus';
+  }
+
+  // Refund applications (Track Application Status) -> the 3 Refund reports.
+  // DOM-scraped, unlike the ledger/notices JSON APIs above: the underlying
+  // postTrackARNFiling response can't be read via a page-context script (CORS
+  // blocks it even though the portal's own Angular app can call it), so this
+  // reads the rendered table instead, the same fallback the credit/reversal
+  // ledgers already use. Confirmed live against a client with real refund
+  // history: Module=Refunds, "Filing Year" radio, one search per year option
+  // the portal actually offers, "«  1 2  »" pagination (5 rows/page, no
+  // page-size control) walked until a click produces no change.
+  async function handleRefunds(job, cur, progress) {
+    if (!/trackstatus/.test(url)) { location.href = 'https://services.gst.gov.in/services/auth/trackstatus'; return; }
+    banner('Reading Refund applications…' + progress);
+    if (!(await waitFor('select', 15000))) { banner('Refund tracker did not load — skipped.' + progress, '#f59e0b'); await advance(job); return; }
+    const modSel = await selectWhereOption('Refunds', { timeout: 8000 });
+    if (!modSel) { banner('Could not select the Refunds module — skipped.' + progress, '#f59e0b'); await advance(job); return; }
+    await sleep(700);
+
+    // "Filing Year" is the first of the two radio buttons (Filing Year / ARN).
+    const radios = $$('input[type=radio]');
+    if (radios[0]) { radios[0].click(); radios[0].dispatchEvent(new Event('change', { bubbles: true })); }
+    await sleep(500);
+
+    const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    const isRefundTable = (t) => /ARN/i.test(t.textContent || '') && /GSTIN/i.test(t.textContent || '');
+
+    // Read every year option the portal actually offers for this GSTIN,
+    // rather than assuming a fixed range.
+    const yearSelect = $$('select').find((s) => [...s.options].some((o) => /^\d{4}-\d{2}$/.test(clean(o.textContent))));
+    const years = yearSelect ? [...yearSelect.options].map((o) => clean(o.textContent)).filter((t) => /^\d{4}-\d{2}$/.test(t)) : [];
+
+    const allRows = [];
+    for (const year of years) {
+      const sel = await selectWhereOption(year, { timeout: 5000 });
+      if (!sel) continue;
+      await sleep(300);
+      const searchBtn = $$('button').find((b) => /^search$/i.test(clean(b.textContent)));
+      if (!searchBtn) continue;
+      searchBtn.click();
+      await sleep(1500);
+
+      for (let page = 0; page < 20; page++) {
+        const table = $$('table').find(isRefundTable);
+        if (!table) break;
+        const dataRows = [...table.querySelectorAll('tr')].filter((tr) => !tr.closest('thead') && tr.querySelectorAll('td').length >= 8);
+        for (const tr of dataRows) {
+          const tds = [...tr.children].map((td) => clean(td.textContent));
+          const arn = tds[1];
+          if (!arn) continue;
+          // Columns: GSTIN, ARN, ARN Date, Category, Tax Period, Jurisdiction
+          // Information, Refund Amount Claimed, Action/Status.
+          const category = tds[3] || '';
+          allRows.push({
+            client_id: cur.clientId, arn,
+            refund_type: category || null,
+            source_ledger: /\bITC\b/i.test(category) ? 'ITC' : null,
+            filed_date: ddmmyyyyToIso(tds[2] || ''),
+            claimed_amount: Number((tds[6] || '').replace(/,/g, '')) || 0,
+            sanctioned_amount: null,
+            status: tds[7] || null,
+          });
+        }
+        const next = $$('a, button').find((a) => clean(a.textContent) === '»');
+        if (!next) break;
+        const before = table.textContent;
+        next.click();
+        await sleep(1200);
+        const tableAfter = $$('table').find(isRefundTable);
+        if (!tableAfter || tableAfter.textContent === before) break; // no change -> no more pages
+      }
+    }
+
+    try { await GSTKdb.replaceRefundApplications(cur.clientId, allRows); } catch (e) { /* non-fatal */ }
+    debugPanel([
+      'STEP: Refund Applications  (' + location.pathname + ')',
+      'years checked     : ' + years.join(', '),
+      'rows read         : ' + allRows.length,
+    ]);
+    banner('Refund applications → ' + allRows.length + ' entries saved.' + progress, '#16a34a');
     await sleep(1000);
     await advance(job);
   }
