@@ -168,7 +168,7 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4'];
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds' || job.step === 'drc03' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -182,6 +182,8 @@
         try { await GSTKdb.replaceNotices(cur.clientId, [{ client_id: cur.clientId, source: 'notices', description: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Notices & Orders' }]); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'refunds') {
         try { await GSTKdb.replaceRefundApplications(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Refund applications' }]); } catch (e2) { /* diagnostic only */ }
+      } else if (job.step === 'drc03') {
+        try { await GSTKdb.replaceDrc03Filings(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading DRC-03 filings' }]); } catch (e2) { /* diagnostic only */ }
       }
       await advance(job);
       return;
@@ -201,6 +203,7 @@
     else if (job.step === 'cashledger') await handleCashLedger(job, cur, progress);
     else if (job.step === 'notices') await handleNotices(job, cur, progress);
     else if (job.step === 'refunds') await handleRefunds(job, cur, progress);
+    else if (job.step === 'drc03') await handleDrc03(job, cur, progress);
     else if (job.step === 'efiledpdf') await handleReturnPdf(job, cur, progress);
     else if (job.step === 'efiledview') await handleReturnView(job, cur, progress);
     else if (job.step === 'twob') await handleTwob(job, cur, progress);
@@ -2309,9 +2312,169 @@
       'years checked     : ' + years.join(', '),
       'rows read         : ' + allRows.length,
     ]);
-    banner('Refund applications → ' + allRows.length + ' entries saved.' + progress, '#16a34a');
+    banner('Refund applications → ' + allRows.length + ' entries saved. Now DRC-03 filings…' + progress, '#16a34a');
+    await sleep(1000);
+    await proceedToDrc03(job);
+  }
+
+  async function proceedToDrc03(job) {
+    job.step = 'drc03';
+    await setJob(job);
+    location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
+  }
+
+  const MONTH_ABBR = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
+
+  // DRC-03 voluntary payments -> the 3 DRC-03 reports, with full per-head
+  // detail and a saved copy of each filing's PDF. services.gst.gov.in's own
+  // JSON APIs — case/search (caseTypeCd=ADJVP), usr/getEncrypDocIds, and the
+  // downloadhb/download/new PDF endpoint — all same-origin, all confirmed
+  // live (the eh token in the PDF url was found by walking the live
+  // AngularJS $rootScope tree for a scope exposing getEncrypDocIdMap, since
+  // this app disables Angular's DOM debug info — element.scope() doesn't
+  // work here, but the $$childHead/$$nextSibling scope-tree pointers aren't
+  // disabled by that setting). The portal UI limits a search to a 3-month
+  // window, but that's a FRONTEND validation only; case/search itself
+  // accepts the full history in one call, confirmed live back to 2022.
+  //
+  // Per case (filing), the liability-detail lines (one per head x period)
+  // are SUMMED into filing-level totals: igst/cgst/sgst/cess_amount,
+  // taxable_value, interest_amount, late_fee_amount (portal's "fees"),
+  // penalty_amount. cash_amount/credit_amount: a line's ldgrut is "Cash",
+  // "Credit", or "Cash/Credit" for a split payment with NO further
+  // breakdown available in this data — a "Cash/Credit" line's full amount
+  // is attributed to cash_amount (its debit-number field lists the Cash
+  // debit first) so the portal's own total keeps reconciling. This means
+  // the "Voluntary Payment of Credit Ledger" report can UNDERSTATE
+  // credit-ledger DRC-03s that were part of a split payment — a real data
+  // limitation, not a bug.
+  async function handleDrc03(job, cur, progress) {
+    if (!/litserv\/auth\/case\/search/.test(url)) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; }
+    banner('Reading DRC-03 filings…' + progress);
+    let cases = [];
+    try {
+      const r = await fetch('https://services.gst.gov.in/litserv/auth/api/case/search', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caseTypeCd: 'ADJVP', startDate: '01/07/2017', endDate: shownTodayDdMmYyyy() }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' from case/search');
+      cases = await r.json();
+      if (!Array.isArray(cases)) cases = [];
+    } catch (e) {
+      debugPanel(['STEP: DRC-03 Filings  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
+      banner('DRC-03: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
+      try { await GSTKdb.replaceDrc03Filings(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }]); } catch (e2) { /* diagnostic only */ }
+      await sleep(1500);
+      await advance(job);
+      return;
+    }
+
+    const rows = [];
+    let pdfOk = 0, pdfFail = 0;
+    for (const c of cases) {
+      const row = parseDrc03Case(c, cur.clientId);
+      if (!row) continue;
+      // Best-effort PDF capture — one document per filing (the DRC-03 form
+      // itself). A failure here must not drop the filing's own figures.
+      try {
+        const docId = row.__docId;
+        if (docId) {
+          const eh = await fetchEncrypDocEh(docId, row.arn);
+          if (eh) {
+            const pdfR = await fetch('https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(docId) + '&arn=' + encodeURIComponent(row.arn) + '&eh=' + encodeURIComponent(eh), { credentials: 'include' });
+            if (pdfR.ok) {
+              const buf = await pdfR.arrayBuffer();
+              const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
+              const path = 'drc03/' + cur.clientId + '/' + (row.arn || docId) + '.pdf';
+              row.pdf_url = await GSTKdb.uploadPdf(path, dataUrl);
+              pdfOk++;
+            } else pdfFail++;
+          } else pdfFail++;
+        }
+      } catch (e) { pdfFail++; }
+      delete row.__docId;
+      rows.push(row);
+    }
+
+    try { await GSTKdb.replaceDrc03Filings(cur.clientId, rows); } catch (e) { /* non-fatal */ }
+    debugPanel([
+      'STEP: DRC-03 Filings  (' + location.pathname + ')',
+      'cases read        : ' + cases.length,
+      'rows saved        : ' + rows.length,
+      'PDFs captured     : ' + pdfOk + ' ok, ' + pdfFail + ' failed',
+    ]);
+    banner('DRC-03 filings → ' + rows.length + ' entries saved (' + pdfOk + ' PDFs).' + progress, '#16a34a');
     await sleep(1000);
     await advance(job);
+  }
+
+  async function fetchEncrypDocEh(docId, arn) {
+    try {
+      const r = await fetch('https://services.gst.gov.in/litserv/auth/api/usr/getEncrypDocIds', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docIdList: [docId], arn: arn }),
+      });
+      if (!r.ok) return null;
+      const j = await r.json();
+      return (j && j[docId]) || null;
+    } catch (e) { return null; }
+  }
+
+  function arrayBufferToBase64(buf) {
+    let binary = '';
+    const bytes = new Uint8Array(buf);
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+
+  function parseDrc03Case(c, clientId) {
+    let item;
+    try { item = JSON.parse(c.appItem && c.appItem.itemJson); } catch (e) { return null; }
+    const pysum = item && item.vp && item.vp.pysum;
+    if (!pysum) return null;
+    const acts = (pysum.lbltydtls && pysum.lbltydtls.act) || [];
+    let cash = 0, credit = 0, taxable = 0, igst = 0, cgst = 0, sgst = 0, cess = 0, interest = 0, lateFee = 0, penalty = 0;
+    let minFrom = null, maxTo = null;
+    for (const a of acts) {
+      const total = Number(a.total) || 0;
+      const tx = Number(a.tx) || 0;
+      const intr = Number(a.intr) || 0;
+      const fees = Number(a.fees) || 0;
+      const pnlty = Number(a.pnlty) || 0;
+      if (a.ldgrut === 'Credit') credit += total; else cash += total; // 'Cash' or unsplittable 'Cash/Credit'
+      taxable += tx; interest += intr; lateFee += fees; penalty += pnlty;
+      const head = (a.acttyp || '').toUpperCase();
+      if (head === 'IGST') igst += tx;
+      else if (head === 'CGST') cgst += tx;
+      else if (head === 'SGST' || head === 'UTGST') sgst += tx;
+      else if (head === 'CESS') cess += tx;
+      const fm = MONTH_ABBR[((a.tp && a.tp.fromm) || '').toUpperCase()];
+      const fy2 = parseInt((a.tp && a.tp.fromy) || '', 10);
+      const tm = MONTH_ABBR[((a.tp && a.tp.tom) || '').toUpperCase()];
+      const ty = parseInt((a.tp && a.tp.toy) || '', 10);
+      if (fm && fy2) { const d = fy2 + '-' + String(fm).padStart(2, '0') + '-01'; if (!minFrom || d < minFrom) minFrom = d; }
+      if (tm && ty) { const d = ty + '-' + String(tm).padStart(2, '0') + '-01'; if (!maxTo || d > maxTo) maxTo = d; }
+    }
+    const sections = Array.isArray(pysum.sec) ? pysum.sec.filter(Boolean).join(', ') : (pysum.sec || null);
+    const doc = (pysum.dcupdtls || [])[0];
+    return {
+      client_id: clientId, arn: c.arn || null,
+      cause_of_payment: pysum.rsn || pysum.cs || null,
+      filed_date: ddmmyyyyToIso(pysum.paymentdate || c.caseCreationDate || ''),
+      period_from: minFrom, period_to: maxTo,
+      cash_amount: cash, credit_amount: credit,
+      status: c.statusDesc || c.status || null,
+      financial_year: pysum.fy || c.finYear || null,
+      section: sections || null,
+      taxable_value: taxable,
+      igst_amount: igst, cgst_amount: cgst, sgst_amount: sgst, cess_amount: cess,
+      interest_amount: interest, late_fee_amount: lateFee, penalty_amount: penalty,
+      pdf_url: null,
+      __docId: doc ? doc.id : null,
+    };
   }
 
   // Shared parser for the retdtl / cashdetls portal JSON APIs — both return

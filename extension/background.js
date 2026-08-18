@@ -85,6 +85,13 @@ const API = {
     return rows.length ? post('gst_refund_applications', rows) : true;
   },
 
+  // DRC-03 voluntary payments. Also not period-scoped — delete-all-then-
+  // insert per client, fed by the 'drc03' job step.
+  replaceDrc03Filings: async (clientId, rows) => {
+    await del('gst_drc03_filings', `client_id=eq.${clientId}`);
+    return rows.length ? post('gst_drc03_filings', rows) : true;
+  },
+
   // Upload a base64 data-URL PDF to the return-pdfs bucket, return its public URL.
   uploadPdf: async (path, dataUrl) => {
     const b64 = String(dataUrl).split(',')[1] || '';

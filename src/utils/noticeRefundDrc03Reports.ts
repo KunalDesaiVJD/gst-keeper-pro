@@ -123,11 +123,40 @@ export const buildRefundClaimedFromCashLedgerReport = (clientId: string) => buil
 
 // ─────────────────── DRC-03 (3 reports) ────────────────────────────────────
 
+const DRC03_FULL_SELECT = 'arn, cause_of_payment, filed_date, period_from, period_to, financial_year, section, ' +
+  'taxable_value, igst_amount, cgst_amount, sgst_amount, cess_amount, interest_amount, late_fee_amount, penalty_amount, ' +
+  'cash_amount, credit_amount, status, pdf_url';
+
+const DRC03_FULL_HEADERS = [
+  'ARN', 'Cause of Payment', 'Section', 'FY', 'Filed Date', 'Period',
+  'Taxable Value', 'IGST', 'CGST', 'SGST', 'Cess', 'Interest', 'Late Fee', 'Penalty',
+  'Cash Amount', 'Credit Amount', 'Status', 'PDF',
+];
+const DRC03_FULL_WIDTHS = [18, 30, 10, 10, 12, 18, 14, 12, 12, 12, 10, 12, 12, 12, 14, 14, 16, 30];
+
+// Every DRC-03 report row, in the shared column order above. cash/credit
+// amounts follow the extension's documented limitation: a line whose ldgrut
+// was the unsplittable "Cash/Credit" lands entirely in cash_amount, so
+// credit_amount can understate DRC-03s that were part of a split payment.
+const drc03Row = (r: {
+  arn: string | null; cause_of_payment: string | null; section: string | null; financial_year: string | null;
+  filed_date: string | null; period_from: string | null; period_to: string | null;
+  taxable_value: number | null; igst_amount: number | null; cgst_amount: number | null; sgst_amount: number | null;
+  cess_amount: number | null; interest_amount: number | null; late_fee_amount: number | null; penalty_amount: number | null;
+  cash_amount: number | null; credit_amount: number | null; status: string | null; pdf_url: string | null;
+}): (string | number)[] => [
+  r.arn || '—', r.cause_of_payment || '—', r.section || '—', r.financial_year || '—',
+  r.filed_date || '—', `${r.period_from || '—'} to ${r.period_to || '—'}`,
+  num(r.taxable_value), num(r.igst_amount), num(r.cgst_amount), num(r.sgst_amount), num(r.cess_amount),
+  num(r.interest_amount), num(r.late_fee_amount), num(r.penalty_amount),
+  num(r.cash_amount), num(r.credit_amount), r.status || '—', r.pdf_url || '—',
+];
+
 export const buildDrc03FiledOnPortalReport = async (clientId: string): Promise<ReportTable> => {
   const client = await fetchClient(clientId);
   const { data, error } = await supabase
     .from('gst_drc03_filings')
-    .select('arn, cause_of_payment, filed_date, period_from, period_to, cash_amount, credit_amount, status')
+    .select(DRC03_FULL_SELECT)
     .eq('client_id', clientId)
     .order('filed_date', { ascending: false });
   if (error) throw error;
@@ -136,20 +165,22 @@ export const buildDrc03FiledOnPortalReport = async (clientId: string): Promise<R
     throw new Error(`No DRC-03 filings on record for ${client.name}. This report has no automated portal pull yet — enter records directly, or check back once the extension's DRC-03 pull is verified against the real portal.`);
   }
 
-  let totCash = 0, totCredit = 0;
+  let totTaxable = 0, totIgst = 0, totCgst = 0, totSgst = 0, totCess = 0, totIntr = 0, totFee = 0, totPnlty = 0, totCash = 0, totCredit = 0;
   const tableRows: (string | number)[][] = rows.map((r) => {
+    totTaxable += num(r.taxable_value); totIgst += num(r.igst_amount); totCgst += num(r.cgst_amount); totSgst += num(r.sgst_amount);
+    totCess += num(r.cess_amount); totIntr += num(r.interest_amount); totFee += num(r.late_fee_amount); totPnlty += num(r.penalty_amount);
     totCash += num(r.cash_amount); totCredit += num(r.credit_amount);
-    return [r.arn || '—', r.cause_of_payment || '—', r.filed_date || '—', `${r.period_from || '—'} to ${r.period_to || '—'}`, num(r.cash_amount), num(r.credit_amount), r.status || '—'];
+    return drc03Row(r);
   });
-  tableRows.push(['', 'TOTAL', '', '', totCash, totCredit, '']);
+  tableRows.push(['', 'TOTAL', '', '', '', '', totTaxable, totIgst, totCgst, totSgst, totCess, totIntr, totFee, totPnlty, totCash, totCredit, '', '']);
 
   return {
     title: 'DRC-03 Filed On Portal',
     subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   All periods on record, most recent first`,
-    headers: ['ARN', 'Cause of Payment', 'Filed Date', 'Period', 'Cash Amount', 'Credit Amount', 'Status'],
+    headers: DRC03_FULL_HEADERS,
     rows: tableRows,
     fileNameBase: `DRC03_Filed_On_Portal_${fileSafe(client.name)}`,
-    columnWidths: [18, 24, 12, 18, 16, 16, 14],
+    columnWidths: DRC03_FULL_WIDTHS,
   };
 };
 
@@ -158,7 +189,7 @@ const buildDrc03VoluntaryPaymentReport = async (clientId: string, head: 'cash' |
   const column = head === 'cash' ? 'cash_amount' : 'credit_amount';
   const { data, error } = await supabase
     .from('gst_drc03_filings')
-    .select('arn, cause_of_payment, filed_date, period_from, period_to, cash_amount, credit_amount, status')
+    .select(DRC03_FULL_SELECT)
     .eq('client_id', clientId).gt(column, 0)
     .order('filed_date', { ascending: false });
   if (error) throw error;
@@ -167,21 +198,22 @@ const buildDrc03VoluntaryPaymentReport = async (clientId: string, head: 'cash' |
     throw new Error(`No voluntary DRC-03 payments from the ${head} ledger on record for ${client.name}. This report has no automated portal pull yet — enter records directly, or check back once the extension's DRC-03 pull is verified against the real portal.`);
   }
 
-  let tot = 0;
+  let totTaxable = 0, totIgst = 0, totCgst = 0, totSgst = 0, totCess = 0, totIntr = 0, totFee = 0, totPnlty = 0, totCash = 0, totCredit = 0;
   const tableRows: (string | number)[][] = rows.map((r) => {
-    const amt = num(head === 'cash' ? r.cash_amount : r.credit_amount);
-    tot += amt;
-    return [r.arn || '—', r.cause_of_payment || '—', r.filed_date || '—', `${r.period_from || '—'} to ${r.period_to || '—'}`, amt, r.status || '—'];
+    totTaxable += num(r.taxable_value); totIgst += num(r.igst_amount); totCgst += num(r.cgst_amount); totSgst += num(r.sgst_amount);
+    totCess += num(r.cess_amount); totIntr += num(r.interest_amount); totFee += num(r.late_fee_amount); totPnlty += num(r.penalty_amount);
+    totCash += num(r.cash_amount); totCredit += num(r.credit_amount);
+    return drc03Row(r);
   });
-  tableRows.push(['', 'TOTAL', '', '', tot, '']);
+  tableRows.push(['', 'TOTAL', '', '', '', '', totTaxable, totIgst, totCgst, totSgst, totCess, totIntr, totFee, totPnlty, totCash, totCredit, '', '']);
 
   return {
     title,
     subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Voluntary DRC-03 payments discharged from the ${head === 'cash' ? 'Cash' : 'Credit'} ledger`,
-    headers: ['ARN', 'Cause of Payment', 'Filed Date', 'Period', head === 'cash' ? 'Cash Amount' : 'Credit Amount', 'Status'],
+    headers: DRC03_FULL_HEADERS,
     rows: tableRows,
     fileNameBase: `${fileSafe(title)}_${fileSafe(client.name)}`,
-    columnWidths: [18, 24, 12, 18, 16, 14],
+    columnWidths: DRC03_FULL_WIDTHS,
   };
 };
 
