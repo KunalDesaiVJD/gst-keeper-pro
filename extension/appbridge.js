@@ -60,6 +60,47 @@ window.addEventListener('message', (e) => {
     return;
   }
 
+  // The Reports Hub "Pull Notices" / "Pull Refunds" / "Pull DRC-03" buttons
+  // asked to run one of the unverified portal pulls (see content.js). Data
+  // is written straight to Supabase by the background worker/content
+  // script, so unlike the file-based pulls above there's nothing to hand
+  // back except success/failure — the final result (with row counts) comes
+  // later via chrome.storage.onChanged below, same relay shape as the
+  // upload results.
+  if (d.__gstkPullNotices) {
+    const info = d.__gstkPullNotices;
+    if (!info.clientId) return;
+    chrome.runtime.sendMessage({ gstk: true, fn: 'startNoticesPull', args: [info] }, (resp) => {
+      if (!(resp && resp.ok)) {
+        const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
+        window.postMessage({ __gstkPullNoticesResult: { ok: false, error } }, '*');
+      }
+    });
+    return;
+  }
+  if (d.__gstkPullRefunds) {
+    const info = d.__gstkPullRefunds;
+    if (!info.clientId) return;
+    chrome.runtime.sendMessage({ gstk: true, fn: 'startRefundPull', args: [info] }, (resp) => {
+      if (!(resp && resp.ok)) {
+        const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
+        window.postMessage({ __gstkPullRefundsResult: { ok: false, error } }, '*');
+      }
+    });
+    return;
+  }
+  if (d.__gstkPullDrc03) {
+    const info = d.__gstkPullDrc03;
+    if (!info.clientId) return;
+    chrome.runtime.sendMessage({ gstk: true, fn: 'startDrc03Pull', args: [info] }, (resp) => {
+      if (!(resp && resp.ok)) {
+        const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
+        window.postMessage({ __gstkPullDrc03Result: { ok: false, error } }, '*');
+      }
+    });
+    return;
+  }
+
   // The Filing Status login icon asked to log a client in and open a return's
   // filing page. Opens a portal tab; the human does the CAPTCHA + OTP/DSC submit.
   if (d.__gstkOpenFiling) {
@@ -188,6 +229,21 @@ chrome.storage.onChanged.addListener((changes, area) => {
       window.postMessage({ __gstkPushGstr3bResult: v }, '*');
       chrome.storage.local.remove('gstk_gstr3b_push_result');
     }
+  }
+  // Notices / Refund / DRC-03 pulls finished (data already written straight
+  // to Supabase by content.js/background.js) — relay the ok/count/error so
+  // the Reports Hub can refresh and tell staff what happened.
+  if (changes.gstk_notices_result) {
+    const v = changes.gstk_notices_result.newValue;
+    if (v) { window.postMessage({ __gstkPullNoticesResult: v }, '*'); chrome.storage.local.remove('gstk_notices_result'); }
+  }
+  if (changes.gstk_refund_result) {
+    const v = changes.gstk_refund_result.newValue;
+    if (v) { window.postMessage({ __gstkPullRefundsResult: v }, '*'); chrome.storage.local.remove('gstk_refund_result'); }
+  }
+  if (changes.gstk_drc03_result) {
+    const v = changes.gstk_drc03_result.newValue;
+    if (v) { window.postMessage({ __gstkPullDrc03Result: v }, '*'); chrome.storage.local.remove('gstk_drc03_result'); }
   }
 });
 

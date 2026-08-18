@@ -1,19 +1,18 @@
 // 8 reports across 3 categories — Notice & Order, Refund, DRC-03 — reading
 // gst_notices / gst_refund_applications / gst_drc03_filings.
 //
-// IMPORTANT: unlike every other Phase-3 table, NO extension automation pulls
-// into these three tables yet. Notices & Orders, Refund, and DRC-03 are
-// portal pages this codebase has never scraped before, with no existing
-// working handler to mirror the way GSTR-2A could mirror GSTR-2B's proven
-// tile-and-download flow — writing speculative CSS selectors for pages
-// nobody has verified against the real portal risks silently capturing the
-// wrong figures into what a firm relies on for compliance reporting, which
-// is worse than not automating it at all. These reports are real and will
-// work the moment their table has rows — today that means direct entry
-// (e.g. via Supabase), tomorrow a verified extension pull once someone
-// checks the real portal page structure and wires handleNotices /
-// handleRefund / handleDrc03 in content.js the same way handleTwoA was
-// wired for GSTR-2A.
+// An extension pull now exists for all three (content.js handleNotices /
+// handleNoticesAdditional / handleRefund / handleDrc03, triggered from the
+// PortalComplianceCard on Edit Client) — but UNVERIFIED against the real
+// portal. Notices & Orders, Refund and DRC-03 are portal pages this codebase
+// had never scraped before, with no existing proven handler to mirror the
+// way GSTR-2A could mirror GSTR-2B's tile-and-download flow, so the
+// navigation and table-column selectors are a best-effort guess, not a
+// confirmed match. Each step banners loudly and leaves a debugPanel dump if
+// the expected page/table isn't found, rather than silently saving nothing
+// or the wrong columns — if a pull fails, check that panel and correct the
+// selectors in content.js. Until then, these reports work the moment their
+// table has rows by direct entry (e.g. via Supabase) same as before.
 
 import { supabase } from '@/integrations/supabase/client';
 import type { ReportTable } from './allClientsReports';

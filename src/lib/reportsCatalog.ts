@@ -494,7 +494,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
   {
     key: 'view-notices-and-orders',
     title: 'View Notice and Orders',
-    description: 'Every notice/order on record for the client, most recent first. No automated portal pull yet — see the report\'s error for how to populate it.',
+    description: 'Every notice/order on record for the client, most recent first. Populated by "Pull" on Edit Client\'s Notices, Refund & DRC-03 card — unverified against the real portal, or enter records directly.',
     icon: Bell,
     category: 'notice',
     status: 'extends-login',
@@ -504,7 +504,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
   {
     key: 'additional-notices-and-orders',
     title: 'Additional Notices and Orders',
-    description: 'The portal\'s separate "Additional Notices and Orders" list. No automated portal pull yet — see the report\'s error for how to populate it.',
+    description: 'The portal\'s separate "Additional Notices and Orders" list. Populated by the same Notices pull on Edit Client — unverified against the real portal, or enter records directly.',
     icon: BellRing,
     category: 'notice',
     status: 'extends-login',
@@ -514,7 +514,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
   {
     key: 'refund-filed-on-portal',
     title: 'Refund Filed On Portal',
-    description: 'Every refund application on record for the client, most recent first. No automated portal pull yet — see the report\'s error for how to populate it.',
+    description: 'Every refund application on record for the client, most recent first. Populated by "Pull" on Edit Client\'s Notices, Refund & DRC-03 card — unverified against the real portal, or enter records directly.',
     icon: Banknote,
     category: 'refund',
     status: 'extends-login',
@@ -524,7 +524,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
   {
     key: 'refund-claimed-from-itc-ledger',
     title: 'Refund Claimed From ITC Ledger',
-    description: 'Refund applications claimed against the Electronic Credit Ledger. No automated portal pull yet — see the report\'s error for how to populate it.',
+    description: 'Refund applications claimed against the Electronic Credit Ledger. Populated by the Refund pull on Edit Client, when the portal names the ledger — unverified, or enter records directly.',
     icon: Coins,
     category: 'refund',
     status: 'extends-login',
@@ -534,7 +534,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
   {
     key: 'refund-claimed-from-cash-ledger',
     title: 'Refund Claimed From Cash Ledger',
-    description: 'Refund applications claimed against the Electronic Cash Ledger. No automated portal pull yet — see the report\'s error for how to populate it.',
+    description: 'Refund applications claimed against the Electronic Cash Ledger. Populated by the Refund pull on Edit Client, when the portal names the ledger — unverified, or enter records directly.',
     icon: HandCoins,
     category: 'refund',
     status: 'extends-login',
@@ -544,7 +544,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
   {
     key: 'drc03-filed-on-portal',
     title: 'DRC-03 Filed On Portal',
-    description: 'Every DRC-03 voluntary payment on record for the client, most recent first. No automated portal pull yet — see the report\'s error for how to populate it.',
+    description: 'Every DRC-03 voluntary payment on record for the client, most recent first. Populated by "Pull" on Edit Client\'s Notices, Refund & DRC-03 card — unverified against the real portal, or enter records directly.',
     icon: FileWarning,
     category: 'drc03',
     status: 'extends-login',
@@ -554,7 +554,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
   {
     key: 'drc03-voluntary-cash-ledger',
     title: 'Voluntary Payment Of Cash Ledger',
-    description: 'DRC-03 payments discharged from the Cash Ledger. No automated portal pull yet — see the report\'s error for how to populate it.',
+    description: 'DRC-03 payments discharged from the Cash Ledger. Populated by the DRC-03 pull on Edit Client — unverified against the real portal, or enter records directly.',
     icon: Wallet2,
     category: 'drc03',
     status: 'extends-login',
@@ -564,7 +564,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
   {
     key: 'drc03-voluntary-credit-ledger',
     title: 'Voluntary Payment Of Credit Ledger',
-    description: 'DRC-03 payments discharged from the Credit Ledger. No automated portal pull yet — see the report\'s error for how to populate it.',
+    description: 'DRC-03 payments discharged from the Credit Ledger. Populated by the DRC-03 pull on Edit Client — unverified against the real portal, or enter records directly.',
     icon: CreditCard,
     category: 'drc03',
     status: 'extends-login',
