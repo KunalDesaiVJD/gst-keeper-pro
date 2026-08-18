@@ -18,7 +18,7 @@ export async function fetchGstr3b(
   periodMonth: string, // MM/YYYY
 ): Promise<Gstr3bResult> {
   const short = toShort(periodMonth);
-  const [g, itcRes, rcmRes, adjRes, fsiRes, filingRes] = await Promise.all([
+  const [g, itcRes, rcmRes, adjRes, fsiRes, filingRes, clientRes] = await Promise.all([
     supabase.from('gstr1_data').select('raw_json').eq('client_id', clientId).eq('period_month', short).maybeSingle(),
     supabase.from('itc_summaries').select('data').eq('client_id', clientId).eq('period_month', periodMonth).maybeSingle(),
     supabase.from('rcm_data').select('taxable_value, cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18').eq('client_id', clientId).eq('month', short),
@@ -43,6 +43,9 @@ export async function fetchGstr3b(
     supabase.from('filing_status').select('status')
       .eq('client_id', clientId).eq('period_month', periodMonth)
       .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']),
+    // Builder Partial-ITC / No-ITC carpet-area apportionment — see
+    // docs/BUILDER_GST_POSITIONS.md §7 and builderPartialItc.ts.
+    supabase.from('clients').select('builder_itc_type, commercial_area, residential_area').eq('id', clientId).maybeSingle(),
   ]);
 
   const alreadyFiled = ((filingRes.data as { status: string }[]) || []).some((r) => r.status === 'Filed');
@@ -80,5 +83,12 @@ export async function fetchGstr3b(
     cess: Number(a.cess) || 0,
   }));
 
-  return buildGstr3bJson({ gstin, periodMonth, gstr1Raw: (g.data as any)?.raw_json ?? null, itc, rcm, adjustments, alreadyFiled });
+  const clientRow = clientRes.data as { builder_itc_type: string | null; commercial_area: number | null; residential_area: number | null } | null;
+
+  return buildGstr3bJson({
+    gstin, periodMonth, gstr1Raw: (g.data as any)?.raw_json ?? null, itc, rcm, adjustments, alreadyFiled,
+    builderItcType: clientRow?.builder_itc_type ?? null,
+    commercialArea: clientRow?.commercial_area ?? null,
+    residentialArea: clientRow?.residential_area ?? null,
+  });
 }
