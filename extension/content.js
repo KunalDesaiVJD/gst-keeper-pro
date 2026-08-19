@@ -13,6 +13,10 @@
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => [...document.querySelectorAll(s)];
   const url = location.href;
+  // Used by parseDrc03Case(), called from the job dispatcher below — must be
+  // initialized before that point in the script's top-to-bottom execution,
+  // not down near where it's textually used, or it's a TDZ ReferenceError.
+  const MONTH_ABBR = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
 
   async function waitFor(sel, ms = 20000) {
     const t = Date.now();
@@ -2325,14 +2329,18 @@
     // "Filing Year" is the first of the two radio buttons (Filing Year / ARN).
     const radios = $$('input[type=radio]');
     if (radios[0]) { radios[0].click(); radios[0].dispatchEvent(new Event('change', { bubbles: true })); }
-    await sleep(500);
 
     const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
     const isRefundTable = (t) => /ARN/i.test(t.textContent || '') && /GSTIN/i.test(t.textContent || '');
+    const findYearSelect = () => $$('select').find((s) => [...s.options].some((o) => /^\d{4}-\d{2}$/.test(clean(o.textContent))));
 
-    // Read every year option the portal actually offers for this GSTIN,
-    // rather than assuming a fixed range.
-    const yearSelect = $$('select').find((s) => [...s.options].some((o) => /^\d{4}-\d{2}$/.test(clean(o.textContent))));
+    // The Filing Year <select>'s options populate asynchronously after the
+    // radio click (Angular re-fetches the offered years) — a fixed sleep
+    // here used to read the DOM before that landed, finding only the
+    // placeholder "Select" option and silently pulling zero years. Poll
+    // instead of guessing a delay.
+    let yearSelect = null;
+    for (let i = 0; i < 20 && !yearSelect; i++) { await sleep(300); yearSelect = findYearSelect(); }
     const years = yearSelect ? [...yearSelect.options].map((o) => clean(o.textContent)).filter((t) => /^\d{4}-\d{2}$/.test(t)) : [];
 
     const allRows = [];
@@ -2392,8 +2400,6 @@
     await setJob(job);
     location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
   }
-
-  const MONTH_ABBR = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
 
   // DRC-03 voluntary payments -> the 3 DRC-03 reports, with full per-head
   // detail and a saved copy of each filing's PDF. services.gst.gov.in's own

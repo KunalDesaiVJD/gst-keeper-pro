@@ -43,9 +43,25 @@ export const renderReportToPdf = (report: ReportTable) => {
   const isNumericHeader = (h: string) =>
     /CGST|SGST|IGST|TOTAL|PAYABLE|CASH|CESS|VALUE|QTY|COUNT|RATE/i.test(h);
 
+  // report.columnWidths are Excel "wch" (character-count) widths — reused
+  // here as a relative sizing hint so a free-text column (e.g. DRC-03's
+  // "Cause of Payment") gets a real width instead of autoTable's default
+  // 'auto' sizing, which — with 15+ columns on one page — was dividing the
+  // page so thin some columns landed under one character wide, wrapping
+  // every word (including headers) to one character per line. A fixed floor
+  // keeps every column legible; horizontalPageBreak spreads onto extra pages
+  // sideways when a wide report (like an 18-column one) can't fit at that
+  // floor, instead of squeezing to unreadable widths on a single page.
+  const MM_PER_WCH = 2;
+  const MIN_COL_MM = 14;
+  const hasWidthHints = Array.isArray(report.columnWidths) && report.columnWidths.length === report.headers.length;
+
   const columnStyles: Record<number, any> = {};
   report.headers.forEach((h, i) => {
-    columnStyles[i] = { halign: isNumericHeader(h) ? 'right' : 'left' };
+    columnStyles[i] = {
+      halign: isNumericHeader(h) ? 'right' : 'left',
+      ...(hasWidthHints ? { cellWidth: Math.max(report.columnWidths[i] * MM_PER_WCH, MIN_COL_MM) } : {}),
+    };
   });
 
   // Body cells: convert numbers to display strings
@@ -65,6 +81,8 @@ export const renderReportToPdf = (report: ReportTable) => {
     bodyStyles: { fontSize: 8 },
     alternateRowStyles: { fillColor: [245, 247, 250] },
     columnStyles,
+    horizontalPageBreak: true,
+    horizontalPageBreakRepeat: 0,
     margin: { top: 48, left: 8, right: 8, bottom: 14 },
     // TOTAL row is the last one when we add one — bold it.
     didParseCell: (data) => {
