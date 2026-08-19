@@ -1280,6 +1280,7 @@ const ITCSummaryPage: React.FC = () => {
             <Card className="bg-success/5 border-success/20">
               <CardContent className="p-4 text-center">
                 <p className="text-sm text-muted-foreground">RECLAIMED</p>
+                <p className="text-[9px] text-muted-foreground">IGST + CGST + SGST</p>
                 <p className="text-2xl font-bold text-success">₹{totalReclaimed.toLocaleString('en-IN')}</p>
               </CardContent>
             </Card>
@@ -1287,6 +1288,7 @@ const ITCSummaryPage: React.FC = () => {
             <Card className="bg-destructive/5 border-destructive/20">
               <CardContent className="p-4 text-center">
                 <p className="text-sm text-muted-foreground">REVERSAL</p>
+                <p className="text-[9px] text-muted-foreground">IGST + CGST + SGST</p>
                 <p className="text-2xl font-bold text-destructive">₹{totalReversal.toLocaleString('en-IN')}</p>
               </CardContent>
             </Card>
@@ -1294,7 +1296,7 @@ const ITCSummaryPage: React.FC = () => {
             <Card className="bg-success/10 border-success/30">
               <CardContent className="p-4 text-center">
                 <p className="text-sm text-muted-foreground">NET ITC</p>
-                <p className="text-[9px] text-muted-foreground">4(C) = 4A − 4B</p>
+                <p className="text-[9px] text-muted-foreground">4(C) = 4A − 4B, IGST + CGST + SGST</p>
                 <p className="text-2xl font-bold text-success">₹{(net4C.igst + net4C.cgst + net4C.sgst).toLocaleString('en-IN')}</p>
               </CardContent>
             </Card>
