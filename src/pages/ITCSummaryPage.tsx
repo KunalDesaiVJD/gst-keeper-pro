@@ -1003,8 +1003,58 @@ const ITCSummaryPage: React.FC = () => {
         sheetData.push([]);
       };
 
+      // Section 4B for a Builder client under apportionment mirrors the
+      // on-screen table's reclassification (see the "iv) Reclassified.../
+      // Less: reclassified..." rows there) instead of dumping the raw,
+      // pre-reclassification component values — otherwise this export would
+      // show (1)/(2) split a different way than the page a CA is looking at
+      // when they click Download.
+      const addSection4B = (rows: ITCRow[]) => {
+        sheetData.push(['Section 4B - ITC Reversed']);
+        const split = isReversalClient
+          ? computePartialItcSplit({
+              section4A: versionData.section4A,
+              section4B: rows,
+              commercialArea,
+              residentialArea,
+            })
+          : null;
+        for (const row of (rows || [])) {
+          if (split && row.srNo === '(1)' && row.particular.includes('Calculation of Ineligible ITC')) {
+            const v = split.row1Reclassified;
+            sheetData.push([row.srNo, row.particular, v.igst, v.cgst, v.sgst, row.reasons || '']);
+            continue;
+          }
+          if (split && row.particular === 'i) On ITC as per 4A') {
+            const v = split.onITCAsPerA;
+            sheetData.push([row.srNo, row.particular, v.igst, v.cgst, v.sgst, row.reasons || '']);
+            continue;
+          }
+          if (split && row.particular.includes('On Other reversal')) {
+            const v = split.onOtherReversal;
+            sheetData.push([row.srNo, row.particular, v.igst, v.cgst, v.sgst, row.reasons || '']);
+            const r = split.row2Calculated;
+            sheetData.push(['', 'iv) Reclassified from "Others" below (2B RECO / 180-day reversal)', r.igst, r.cgst, r.sgst, '']);
+            continue;
+          }
+          if (split && row.srNo === '(2)' && row.particular === 'Others') {
+            const v = split.row2Reclassified;
+            sheetData.push([row.srNo, row.particular, v.igst, v.cgst, v.sgst, row.reasons || '']);
+            continue;
+          }
+          if (split && row.particular === 'ITC Reversal for the previous months, if any.') {
+            sheetData.push([row.srNo, row.particular, row.igst || 0, row.cgst || 0, row.sgst || 0, row.reasons || '']);
+            const r = split.row2Calculated;
+            sheetData.push(['', 'Less: reclassified to (1) above', -r.igst, -r.cgst, -r.sgst, '']);
+            continue;
+          }
+          sheetData.push([row.srNo || '', row.particular || '', row.igst || 0, row.cgst || 0, row.sgst || 0, row.reasons || '']);
+        }
+        sheetData.push([]);
+      };
+
       addSection('Section 4A - ITC Available', versionData.section4A);
-      addSection('Section 4B - ITC Reversed', versionData.section4B);
+      addSection4B(versionData.section4B);
       addSection('Section 4D - Ineligible ITC', versionData.section4D);
 
       const sheet = XLSX.utils.aoa_to_sheet(sheetData);
@@ -1108,6 +1158,7 @@ const ITCSummaryPage: React.FC = () => {
       totalReclaimed,
       totalReversal,
       isLocked,
+      partialITC: isReversalClient ? partialITCCalculatedValues : null,
     });
     
     toast.success('PDF exported successfully');

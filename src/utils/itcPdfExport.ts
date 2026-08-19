@@ -18,6 +18,14 @@ interface ITCData {
   section4D: ITCRow[];
 }
 
+interface PartialItcSplit {
+  onITCAsPerA: { igst: number; cgst: number; sgst: number };
+  onOtherReversal: { igst: number; cgst: number; sgst: number };
+  row1Reclassified: { igst: number; cgst: number; sgst: number };
+  row2Reclassified: { igst: number; cgst: number; sgst: number };
+  row2Calculated: { igst: number; cgst: number; sgst: number };
+}
+
 interface ITCExportParams {
   clientName: string;
   clientGstin: string;
@@ -30,10 +38,14 @@ interface ITCExportParams {
   totalReclaimed: number;
   totalReversal: number;
   isLocked: boolean;
+  // Builder client under apportionment (No-ITC/Partial-ITC) — same split the
+  // on-screen table reclassifies with. Pass null/omit for a client where no
+  // apportionment applies; section4B is then exported as saved, unmodified.
+  partialITC?: PartialItcSplit | null;
 }
 
 export const exportITCSummaryToPDF = (params: ITCExportParams) => {
-  const { clientName, clientGstin, month, itcData, total5, total4A, total4B, net4C, totalReclaimed, totalReversal, isLocked } = params;
+  const { clientName, clientGstin, month, itcData, total5, total4A, total4B, net4C, totalReclaimed, totalReversal, isLocked, partialITC } = params;
   
   const doc = new jsPDF('l', 'mm', 'a4'); // Landscape
 
@@ -103,9 +115,40 @@ export const exportITCSummaryToPDF = (params: ITCExportParams) => {
   });
   tableData.push(['', 'Total (4A)', formatNum(total4A.igst), formatNum(total4A.cgst), formatNum(total4A.sgst), formatNum(total4A.igst + total4A.cgst + total4A.sgst), '']);
 
-  // Section 4B
+  // Section 4B — a Builder client under apportionment (partialITC set) gets
+  // the same reclassification the on-screen table applies: (1)/(2) show the
+  // reclassified totals, and two reconciling lines make each foot from its
+  // own visible rows, instead of silently disagreeing with Total (4B) below.
   tableData.push(['4 (B)', 'ITC Reversed', '', '', '', '', '']);
   itcData.section4B.forEach(row => {
+    if (partialITC && row.srNo === '(1)' && row.particular.includes('Calculation of Ineligible ITC')) {
+      const v = partialITC.row1Reclassified;
+      tableData.push([row.srNo, row.particular + ' [Auto-calculated]', formatNum(v.igst), formatNum(v.cgst), formatNum(v.sgst), formatNum(v.igst + v.cgst + v.sgst), row.reasons || '']);
+      return;
+    }
+    if (partialITC && row.particular === 'i) On ITC as per 4A') {
+      const v = partialITC.onITCAsPerA;
+      tableData.push([row.srNo, row.particular + ' [Auto-calculated]', formatNum(v.igst), formatNum(v.cgst), formatNum(v.sgst), formatNum(v.igst + v.cgst + v.sgst), row.reasons || '']);
+      return;
+    }
+    if (partialITC && row.particular.includes('On Other reversal')) {
+      const v = partialITC.onOtherReversal;
+      tableData.push([row.srNo, row.particular + ' [Auto-calculated]', formatNum(v.igst), formatNum(v.cgst), formatNum(v.sgst), formatNum(v.igst + v.cgst + v.sgst), row.reasons || '']);
+      const r = partialITC.row2Calculated;
+      tableData.push(['', 'iv) Reclassified from "Others" below (2B RECO / 180-day reversal) [Auto-calculated]', formatNum(r.igst), formatNum(r.cgst), formatNum(r.sgst), formatNum(r.igst + r.cgst + r.sgst), '']);
+      return;
+    }
+    if (partialITC && row.srNo === '(2)' && row.particular === 'Others') {
+      const v = partialITC.row2Reclassified;
+      tableData.push([row.srNo, row.particular + ' [Auto-calculated]', formatNum(v.igst), formatNum(v.cgst), formatNum(v.sgst), formatNum(v.igst + v.cgst + v.sgst), row.reasons || '']);
+      return;
+    }
+    if (partialITC && row.particular === 'ITC Reversal for the previous months, if any.') {
+      tableData.push([row.srNo, row.particular + (row.isAutoLinked ? ' [Auto-linked]' : ''), formatNum(row.igst), formatNum(row.cgst), formatNum(row.sgst), formatNum(calcTotal(row)), row.reasons || '']);
+      const r = partialITC.row2Calculated;
+      tableData.push(['', 'Less: reclassified to (1) above [Auto-calculated]', formatNum(-r.igst), formatNum(-r.cgst), formatNum(-r.sgst), formatNum(-(r.igst + r.cgst + r.sgst)), '']);
+      return;
+    }
     tableData.push([
       row.srNo,
       row.particular + (row.isAutoLinked ? ' [Auto-linked]' : ''),
