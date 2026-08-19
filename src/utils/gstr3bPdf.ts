@@ -56,6 +56,7 @@ export const exportGstr3bToPDF = ({ result, clientName, gstin, monthLabel }: Par
       ['(A) ITC Available (whether in full or part)', fmt2(s.itcAvailable.igst), fmt2(s.itcAvailable.cgst), fmt2(s.itcAvailable.sgst)],
       ...s.itcAvailableRows.map((r) => [`   ${r.srNo} ${r.label}`, fmt2(r.igst), fmt2(r.cgst), fmt2(r.sgst)]),
       ['(B) ITC reversed', fmt2(s.itcReversed.igst), fmt2(s.itcReversed.cgst), fmt2(s.itcReversed.sgst)],
+      ...s.itcReversedRows.map((r) => [`   ${r.srNo} ${r.label}`, fmt2(r.igst), fmt2(r.cgst), fmt2(r.sgst)]),
       ['(C) Net ITC available (A - B)', fmt2(s.itcNet.igst), fmt2(s.itcNet.cgst), fmt2(s.itcNet.sgst)],
       ['(D) Other Details', '', '', ''],
       ...s.itcOtherDetails.map((d) => [`${d.srNo} ${d.label}`, fmt2(d.igst), fmt2(d.cgst), fmt2(d.sgst)]),
