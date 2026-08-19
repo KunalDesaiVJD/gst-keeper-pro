@@ -2534,10 +2534,12 @@
       'windows checked   : ' + buildRefundWindows(job.refundEarliestYear).length + ' (89-day steps from ' + (job.refundEarliestYear ? job.refundEarliestYear + '-04-01' : '2017-07-01') + '), ' + (job.refundWindowsFailed || 0) + ' failed',
       'ARNs visited      : ' + (job.refundSeenArns || []).length,
       'documents captured: ' + (job.refundDocsOk || 0) + ' ok, ' + (job.refundDocsFail || 0) + ' failed/none' + (extra || ''),
+      'window regressions: ' + (job.refundRegressionCount || 0) + ' (should always be 0 — see handleRefundDocs comments if not)',
     ]);
     banner('Refund documents → ' + (job.refundDocsOk || 0) + ' captured across ' + (job.refundArnsWithDocs || 0) + ' application(s).' + (job._progress || ''), extra ? '#dc2626' : '#16a34a');
     delete job.refundWindowIdx; delete job.refundSeenArns; delete job.refundDocsOk; delete job.refundDocsFail;
     delete job.refundArnsWithDocs; delete job.refundWindowsFailed; delete job.refundConsecutiveFailures;
+    delete job.refundMaxWindowIdx; delete job.refundRegressionCount;
     await sleep(1000);
     await chainOrStop(job, 'refunds', proceedToDrc03);
   }
@@ -2568,6 +2570,20 @@
     let docsOk = job.refundDocsOk || 0, docsFail = job.refundDocsFail || 0;
     let arnsWithDocs = job.refundArnsWithDocs || 0, windowsFailed = job.refundWindowsFailed || 0;
     let consecutiveFailures = job.refundConsecutiveFailures || 0;
+    // Self-healing safety net: the window index should only ever move
+    // forward across reloads (it's read back from storage, not derived
+    // from anything the portal's own navigation could disturb) — but if
+    // storage ever somehow returned a stale/older value, clamp forward
+    // rather than silently re-processing earlier windows. Surfaces as a
+    // WARNING line in the debug panel if it ever actually triggers, so a
+    // real regression is provable instead of guessed at from a screenshot.
+    if (winIdx < (job.refundMaxWindowIdx || 0)) {
+      job.refundRegressionCount = (job.refundRegressionCount || 0) + 1;
+      banner('Window index regressed (' + winIdx + ' -> was at ' + job.refundMaxWindowIdx + ') — correcting forward…' + progress, '#f59e0b');
+      winIdx = job.refundMaxWindowIdx;
+      await sleep(1200);
+    }
+    job.refundMaxWindowIdx = Math.max(job.refundMaxWindowIdx || 0, winIdx);
 
     if (consecutiveFailures >= 10) {
       await finishRefundDocs(job, ' — STOPPED EARLY: 10 failures in a row with zero successes (session likely died — or if this recurs on a fresh session too, the PDF-icon detection doesn\'t match this portal\'s real markup)');
@@ -2589,7 +2605,11 @@
     let targetLink = null;
     while (winIdx < windows.length && !targetLink) {
       const [fromStr, toStr] = windows[winIdx];
-      banner('Reading Refund documents — window ' + (winIdx + 1) + '/' + windows.length + ' (' + fromStr + '–' + toStr + ')…' + progress);
+      // Includes total applications processed so far — the SAME window
+      // number repeating across reloads is expected (and not stuck/looping)
+      // whenever that window has more than one application in it; this
+      // count is how to tell the two apart from the banner alone.
+      banner('Reading Refund documents — window ' + (winIdx + 1) + '/' + windows.length + ' (' + fromStr + '–' + toStr + '), ' + seenArns.size + ' application(s) done so far…' + progress);
       const di = findDateInputs();
       const searchBtn = findSearchBtn();
       if (di.length < 2 || !searchBtn) { windowsFailed++; winIdx++; continue; }
