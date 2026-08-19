@@ -2457,15 +2457,6 @@
 
     try { await GSTKdb.replaceRefundApplications(cur.clientId, allRows); } catch (e) { /* non-fatal */ }
 
-    // Best-effort per-application document capture (application PDF, query
-    // memo, sanction/rejection order) — separate from the base scrape above
-    // so a failure here never risks the financial data already saved. Reuses
-    // the page's own "OR ARN" search (rather than clicking anything inside
-    // the results table, which would risk navigating away mid-loop and
-    // losing later rows) to pull up one application at a time, then looks
-    // for any document-shaped link on whatever view that shows — a details
-    // panel, a modal, or an inline row expansion — since the exact markup
-    // hasn't been verified against a live account with refund history yet.
     debugPanel([
       'STEP: Refund Applications  (' + location.pathname + ')',
       'years checked     : ' + yearCounts.join(', '),
@@ -2557,13 +2548,22 @@
 
     const isArnLike = (s) => /^[A-Z]{2}\d{10,}[A-Z0-9]*$/.test(s);
     const TAB_NAMES = ['APPLICATIONS', 'NOTICE/ACKNOWLEDGEMENT', 'REPLIES/UNDERTAKING/REQUEST', 'ORDERS', 'AUDIT HISTORY'];
+    const findUnseenArnLink = (seen) => $$('a').find((a) => isArnLike(clean(a.textContent)) && !seen.has(clean(a.textContent)));
 
     const seenArns = new Set();
-    const byArn = new Map();
-    let docsOk = 0, docsFail = 0, windowsFailed = 0;
+    let arnsWithDocs = 0, docsOk = 0, docsFail = 0, windowsFailed = 0;
+    // Session-death detector: a dead session makes every fetch() below fail
+    // (redirected to an HTML login page instead of a PDF), which otherwise
+    // looks identical to "this application just has no PDF-shaped links" —
+    // the loop would grind through every remaining window/ARN accomplishing
+    // nothing instead of stopping. Reset on any real success.
+    let consecutiveFailures = 0;
+    const SESSION_DEAD_THRESHOLD = 10;
+    let sessionSuspectedDead = false;
 
     let winIdx = 0;
     for (const [fromStr, toStr] of windows) {
+      if (sessionSuspectedDead) break;
       winIdx++;
       banner('Reading Refund documents — window ' + winIdx + '/' + windows.length + ' (' + fromStr + '–' + toStr + ')…' + progress);
       const di = findDateInputs();
@@ -2575,20 +2575,38 @@
       searchBtn.click();
       await sleep(1500);
 
-      for (let page = 0; page < 20; page++) {
-        const arnLinks = $$('a').filter((a) => isArnLike(clean(a.textContent)) && !seenArns.has(clean(a.textContent)));
-        if (arnLinks.length === 0) break;
-
-        for (const a of arnLinks) {
-          const arn = clean(a.textContent);
-          seenArns.add(arn);
-          try {
-            a.click();
-            let onFolder = false;
-            for (let w = 0; w < 20 && !onFolder; w++) { await sleep(400); if (/litserv\/auth\/case\/folder/.test(location.href)) onFolder = true; }
-            if (!onFolder) continue;
+      // A flat "process one ARN, come back, re-scan from the live DOM"
+      // loop — NOT a cached list of ARN links iterated after navigating
+      // away and back. Angular tears down and re-renders the results list
+      // on that round trip, so a link captured before leaving is a
+      // detached DOM node by the time we'd click it: click() on it is a
+      // silent no-op (no navigation happens, no error either), which was
+      // quietly skipping every ARN after the first one on any page with
+      // more than one result, PLUS firing an extra, unintended
+      // history.back() per skipped ARN that could carry the whole loop
+      // further back than intended. Re-querying fresh every iteration
+      // avoids that class of bug entirely, at the cost of only being able
+      // to process one ARN before needing a live DOM lookup.
+      for (let guard = 0; guard < 500 && !sessionSuspectedDead; guard++) {
+        const a = findUnseenArnLink(seenArns);
+        if (!a) {
+          const next = $$('a, button').find((el) => clean(el.textContent) === '»');
+          if (!next) break; // no more unseen ARNs and no next page — this window is done
+          next.click();
+          await sleep(1200);
+          continue;
+        }
+        const arn = clean(a.textContent);
+        seenArns.add(arn);
+        const arnDocs = [];
+        try {
+          a.click();
+          let onFolder = false;
+          for (let w = 0; w < 20 && !onFolder; w++) { await sleep(400); if (/litserv\/auth\/case\/folder/.test(location.href)) onFolder = true; }
+          if (onFolder) {
             await sleep(500);
-
+            // Tabs re-queried per ARN (cheap) rather than reused across
+            // ARNs — a fresh folder page means fresh DOM nodes regardless.
             const tabEls = $$('*').filter((el) => el.children.length === 0 && TAB_NAMES.includes(clean(el.textContent).toUpperCase()));
             for (const tabEl of tabEls) {
               const tabName = clean(tabEl.textContent);
@@ -2599,49 +2617,56 @@
                 const link = icon.closest('a') || icon;
                 const href = link.href || link.getAttribute('href') || '';
                 const label = clean((link.textContent || '')) || clean((link.title || '')) || tabName;
-                if (!/^https?:/i.test(href)) { docsFail++; continue; }
+                if (!/^https?:/i.test(href)) { docsFail++; consecutiveFailures++; continue; }
                 try {
                   const r = await fetch(href, { credentials: 'include' });
-                  if (!r.ok) { docsFail++; continue; }
+                  if (!r.ok) { docsFail++; consecutiveFailures++; continue; }
                   const buf = await r.arrayBuffer();
-                  if (!buf || buf.byteLength < 200) { docsFail++; continue; } // guard against an HTML error page, not a real PDF
+                  if (!buf || buf.byteLength < 200) { docsFail++; consecutiveFailures++; continue; } // guard against an HTML error page, not a real PDF
                   const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
                   const path = 'refund/' + cur.clientId + '/' + arn.replace(/[^A-Za-z0-9]/g, '_') + '/' + tabName.replace(/[^A-Za-z0-9]/g, '_') + '_' + label.replace(/[^A-Za-z0-9]/g, '_') + '.pdf';
                   const url = await GSTKdb.uploadPdf(path, dataUrl);
-                  if (!byArn.has(arn)) byArn.set(arn, []);
-                  byArn.get(arn).push({ tab: tabName, label, url });
+                  arnDocs.push({ tab: tabName, label, url });
                   docsOk++;
-                } catch (e) { docsFail++; }
+                  consecutiveFailures = 0;
+                } catch (e) { docsFail++; consecutiveFailures++; }
+                if (consecutiveFailures >= SESSION_DEAD_THRESHOLD) { sessionSuspectedDead = true; break; }
               }
+              if (sessionSuspectedDead) break;
             }
-          } catch (e) { /* keep going with the next ARN */ }
+          }
+        } catch (e) { /* keep going with the next ARN */ }
 
-          // Back to the results list for the next ARN — Angular route state,
-          // not a plain page, so a browser Back is what should restore it.
-          history.back();
-          let restored = false;
-          for (let w = 0; w < 20 && !restored; w++) { await sleep(400); if (/litserv\/auth\/case\/search/.test(location.href) && findDateInputs().length >= 2) restored = true; }
-          if (!restored) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; } // lost the list — stop rather than loop wrong
+        // Save THIS application's documents now, not batched at the very
+        // end — a session bounce or an early abort below shouldn't cost
+        // everything already captured in this run.
+        if (arnDocs.length) {
+          try { await GSTKdb.patchRefundDocument(cur.clientId, arn, { documents: arnDocs }); arnsWithDocs++; } catch (e) { /* non-fatal */ }
         }
 
-        const next = $$('a, button').find((a) => clean(a.textContent) === '»');
-        if (!next) break;
-        next.click();
-        await sleep(1200);
-      }
-    }
+        if (sessionSuspectedDead) break;
 
-    for (const [arn, documents] of byArn) {
-      try { await GSTKdb.patchRefundDocument(cur.clientId, arn, { documents }); } catch (e) { /* non-fatal */ }
+        // Back to the results list for the next ARN — Angular route state,
+        // not a plain page, so a browser Back is what should restore it.
+        history.back();
+        let restored = false;
+        for (let w = 0; w < 20 && !restored; w++) { await sleep(400); if (/litserv\/auth\/case\/search/.test(location.href) && findDateInputs().length >= 2) restored = true; }
+        if (!restored) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; } // lost the list — stop rather than loop wrong
+      }
     }
 
     debugPanel([
       'STEP: Refund Application Documents  (' + location.pathname + ')',
-      'windows checked   : ' + windows.length + ' (89-day steps back to 01/07/2017), ' + windowsFailed + ' failed',
+      'windows checked   : ' + windows.length + ' (89-day steps from ' + (job.refundEarliestYear ? job.refundEarliestYear + '-04-01' : '2017-07-01') + '), ' + windowsFailed + ' failed',
       'ARNs visited      : ' + seenArns.size,
-      'documents captured: ' + docsOk + ' ok, ' + docsFail + ' failed/none',
+      'documents captured: ' + docsOk + ' ok, ' + docsFail + ' failed/none' + (sessionSuspectedDead ? ' — STOPPED EARLY: ' + SESSION_DEAD_THRESHOLD + ' failures in a row with zero successes (session likely died — or if this recurs on a fresh session too, the PDF-icon detection doesn\'t match this portal\'s real markup)' : ''),
     ]);
-    banner('Refund documents → ' + docsOk + ' captured across ' + byArn.size + ' application(s).' + progress, '#16a34a');
+    banner(
+      sessionSuspectedDead
+        ? 'Refund documents stopped early (session likely died) — ' + docsOk + ' captured across ' + arnsWithDocs + ' application(s) before that.' + progress
+        : 'Refund documents → ' + docsOk + ' captured across ' + arnsWithDocs + ' application(s).' + progress,
+      sessionSuspectedDead ? '#dc2626' : '#16a34a',
+    );
     await sleep(1000);
     await chainOrStop(job, 'refunds', proceedToDrc03);
   }
