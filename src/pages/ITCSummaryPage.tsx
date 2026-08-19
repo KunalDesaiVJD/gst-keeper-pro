@@ -626,30 +626,18 @@ const ITCSummaryPage: React.FC = () => {
         return row;
       });
 
-      // No-ITC builder clients: 4(B)(1) is locked to mirror the WHOLE of
-      // 4(A) — not a figure derived from 2B reconciliation's own eligible/
-      // reversal classification — so it reverses everything regardless of
-      // how any rupee got into 4(A) (RCM, a manually-typed 5.1, whatever).
-      // That guarantees 4(C) = 0 structurally instead of relying on 2B
-      // reconciliation happening to classify every purchase correctly. (2)
-      // "Others" and its sub-rows are locked to 0 for the same reason —
-      // "allowing" vs "disallowing" per 2B reconciliation is a distinction
-      // that only means something for a client who can claim SOME credit;
-      // it never applies to a No-ITC builder.
-      const newTotal4A = isNoItcClient ? computeTotal4A(newData.section4A) : null;
+      // No-ITC builder clients' 4(B)(1)/(2) lock is NOT done here — see
+      // noItcSection4B below. An effect that mutates state is inherently
+      // racy against a Save that fires (or a render that happens) before
+      // rcmTotals/isNoItcClient have settled from their own async loads;
+      // whatever's in itcData at that moment is what gets persisted. The
+      // lock needs to be a synchronous function of current props/state,
+      // recomputed every render — the same reason Partial-ITC's (1)/(2)
+      // (partialITCCalculatedValues below) were never done this way either.
 
       // Update Section 4B row "ITC Reversal for current month as per 2B RECO" with reversal data
       // Match both regular and Partial ITC versions of the text
       newData.section4B = prev.section4B.map(row => {
-        if (isNoItcClient && newTotal4A) {
-          if (row.srNo === '(1)') {
-            return { ...row, igst: newTotal4A.igst, cgst: newTotal4A.cgst, sgst: newTotal4A.sgst, isAutoLinked: true };
-          }
-          if (row.srNo === '(2)' || row.srNo === '(i)' || row.srNo === '(ii)' || row.srNo === '(iii)') {
-            return { ...row, igst: 0, cgst: 0, sgst: 0, isAutoLinked: true };
-          }
-          return row;
-        }
         if (row.particular.includes('ITC Reversal for') && row.particular.includes('current month as per 2B RECO')) {
           return {
             ...row,
@@ -873,10 +861,31 @@ const ITCSummaryPage: React.FC = () => {
 
     setIsSaving(true);
     try {
+      // No-ITC builder clients: force what actually gets PERSISTED to match
+      // the locked figures on screen, rather than trusting itcData.section4B
+      // as-is. The on-screen (1)/(i)/(ii)/(iii) cells already render from
+      // total4A directly (not from itcData.section4B — see the render
+      // above), so without this, a Save could persist a stale raw value
+      // that never matched what the CA was looking at when they clicked it.
+      const dataToSave = isNoItcClient
+        ? {
+            ...itcData,
+            section4B: itcData.section4B.map(row => {
+              if (row.srNo === '(1)') {
+                return { ...row, igst: total4A.igst, cgst: total4A.cgst, sgst: total4A.sgst };
+              }
+              if (row.srNo === '(2)' || row.srNo === '(i)' || row.srNo === '(ii)' || row.srNo === '(iii)') {
+                return { ...row, igst: 0, cgst: 0, sgst: 0 };
+              }
+              return row;
+            }),
+          }
+        : itcData;
+
       const payload = {
         client_id: selectedClient,
         period_month: selectedMonth,
-        data: JSON.parse(JSON.stringify(itcData)) as Json,
+        data: JSON.parse(JSON.stringify(dataToSave)) as Json,
         updated_at: new Date().toISOString(),
       };
 
@@ -903,7 +912,7 @@ const ITCSummaryPage: React.FC = () => {
         const { data: maxV } = await supabase.from('itc_versions').select('version_number').eq('client_id', selectedClient).eq('period_month', selectedMonth).order('version_number', { ascending: false }).limit(1);
         const nextV = (maxV?.[0]?.version_number || 0) + 1;
         await supabase.from('itc_versions').update({ is_current: false }).eq('client_id', selectedClient).eq('period_month', selectedMonth);
-        await supabase.from('itc_versions').insert([{ client_id: selectedClient, period_month: selectedMonth, version_number: nextV, version_data: JSON.parse(JSON.stringify(itcData)), updated_by: user?.id, is_current: true, action_type: 'SAVE' }]);
+        await supabase.from('itc_versions').insert([{ client_id: selectedClient, period_month: selectedMonth, version_number: nextV, version_data: JSON.parse(JSON.stringify(dataToSave)), updated_by: user?.id, is_current: true, action_type: 'SAVE' }]);
         fetchVersions();
       } catch (vErr) { console.error('Error saving ITC version:', vErr); }
 
@@ -1102,13 +1111,18 @@ const ITCSummaryPage: React.FC = () => {
   // Total 4A = rows 1-4 + Total (5)
   const total4A = computeTotal4A(itcData.section4A);
 
-  // Total 4B calculation differs for Partial ITC clients
-  // For Partial ITC: Total 4B = (1) calculated + (2) calculated
+  // Total 4B calculation differs for Partial ITC clients. No-ITC clients
+  // don't compute a Total 4B at all — it's forced to equal total4A exactly
+  // (see noItcSection4B below), which is what actually guarantees Net ITC
+  // (4C) = 0 rather than relying on section4B's raw rows happening to sum
+  // to the right figure.
   const total4B = useMemo(
-    () => computeTotal4B({
-      isPartialITCClient: isReversalClient, section4B: itcData.section4B, partial: partialITCCalculatedValues,
-    }),
-    [itcData.section4B, isReversalClient, partialITCCalculatedValues],
+    () => isNoItcClient
+      ? total4A
+      : computeTotal4B({
+          isPartialITCClient: isReversalClient, section4B: itcData.section4B, partial: partialITCCalculatedValues,
+        }),
+    [itcData.section4B, isReversalClient, partialITCCalculatedValues, isNoItcClient, total4A],
   );
 
   // Net ITC (4C) = 4A - 4B
@@ -1118,14 +1132,19 @@ const ITCSummaryPage: React.FC = () => {
     .filter(r => r.srNo === '5.4' || r.srNo === '5.5')
     .reduce((acc, r) => acc + r.igst + r.cgst + r.sgst, 0);
 
-  // Total Reversal for Partial ITC also needs special handling
+  // Total Reversal for Partial ITC also needs special handling. No-ITC:
+  // same as total4B above, forced to total4A rather than read from
+  // section4B's raw rows.
   const totalReversal = useMemo(() => {
+    if (isNoItcClient) {
+      return total4A.igst + total4A.cgst + total4A.sgst;
+    }
     if (isReversalClient && partialITCCalculatedValues) {
       // Use auto-calculated values (sum is the same whether read before or
       // after reclassification — using the reclassified fields for clarity).
       const row1Vals = partialITCCalculatedValues.row1Reclassified;
       const row2Vals = partialITCCalculatedValues.row2Reclassified;
-      
+
       return (row1Vals.igst + row1Vals.cgst + row1Vals.sgst) +
              (row2Vals.igst + row2Vals.cgst + row2Vals.sgst);
     } else {
@@ -1133,7 +1152,7 @@ const ITCSummaryPage: React.FC = () => {
         .filter(r => !r.isHeader)
         .reduce((acc, r) => acc + r.igst + r.cgst + r.sgst, 0);
     }
-  }, [itcData.section4B, isReversalClient, partialITCCalculatedValues]);
+  }, [itcData.section4B, isReversalClient, partialITCCalculatedValues, isNoItcClient, total4A]);
 
   const formatNumber = (num: number): string => {
     // Handle -0 case by converting to 0
@@ -1496,6 +1515,73 @@ const ITCSummaryPage: React.FC = () => {
                             <td colSpan={6}>{row.particular}</td>
                           </tr>
                         );
+                      }
+
+                      // No-ITC builder clients: (1) is locked to mirror the whole of
+                      // total4A (computed synchronously above, not via an effect —
+                      // see the comment on the auto-link effect for why), and (2)'s
+                      // sub-rows are locked to 0. (2)'s own header row never shows
+                      // value columns regardless (see the isHeader branch above), so
+                      // nothing further is needed there.
+                      if (isNoItcClient) {
+                        if (row.srNo === '(1)') {
+                          return (
+                            <tr key={`4b-${idx}`} className="cell-locked">
+                              <td>{row.srNo}</td>
+                              <td className="flex items-center gap-2">
+                                {row.particular}
+                                <Badge variant="outline" className="text-xs flex items-center gap-1">
+                                  <Lock className="h-3 w-3" />
+                                  Auto-linked
+                                </Badge>
+                              </td>
+                              <td className="text-right tabular-nums">{formatNumber(total4A.igst)}</td>
+                              <td className="text-right tabular-nums">{formatNumber(total4A.cgst)}</td>
+                              <td className="text-right tabular-nums">{formatNumber(total4A.sgst)}</td>
+                              <td className="text-right font-medium tabular-nums">
+                                {formatNumber(total4A.igst + total4A.cgst + total4A.sgst)}
+                              </td>
+                              <td>
+                                <Input
+                                  type="text"
+                                  value={row.reasons || ''}
+                                  onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
+                                  placeholder="Reason..."
+                                  className="h-8 text-sm"
+                                  disabled={isLocked}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        }
+                        if (row.srNo === '(i)' || row.srNo === '(ii)' || row.srNo === '(iii)') {
+                          return (
+                            <tr key={`4b-${idx}`} className="cell-locked">
+                              <td>{row.srNo}</td>
+                              <td className="flex items-center gap-2">
+                                {row.particular}
+                                <Badge variant="outline" className="text-xs flex items-center gap-1">
+                                  <Lock className="h-3 w-3" />
+                                  Auto-linked
+                                </Badge>
+                              </td>
+                              <td className="text-right tabular-nums">0</td>
+                              <td className="text-right tabular-nums">0</td>
+                              <td className="text-right tabular-nums">0</td>
+                              <td className="text-right font-medium tabular-nums">0</td>
+                              <td>
+                                <Input
+                                  type="text"
+                                  value={row.reasons || ''}
+                                  onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
+                                  placeholder="Reason..."
+                                  className="h-8 text-sm"
+                                  disabled={isLocked}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        }
                       }
 
                       // For Partial ITC / No-ITC: Use calculated values for auto-calculated rows
