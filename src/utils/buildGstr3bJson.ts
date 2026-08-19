@@ -298,6 +298,7 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
     row(A, '5.1'), row(A, '5.2'), sub3({ igst: 0, cgst: 0, sgst: 0 }, row(A, '5.3')), row(A, '5.4'), row(A, '5.5'),
     { igst: adj4A5.igst, cgst: adj4A5.cgst, sgst: adj4A5.sgst },
   ));
+  const itcAvail = round3(add3(impg, imps, isrc, isd, oth4a));
 
   // Table 4(B) — Partial-ITC builder clients (docs/BUILDER_GST_POSITIONS.md
   // §7) reverse ITC by carpet-area apportionment, computed by the SAME
@@ -308,12 +309,17 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   // instead) — reading it with the default lookup silently computed 4(B)(2)
   // as 0 for every such client, understating the reversal and overstating
   // 4C Net ITC.
-  // No-ITC clients use the PLAIN default-template lookup below instead, same
-  // as a Full-ITC builder — per the 2026-08-19 revert, 4(B)(1) is a manual
-  // figure staff type in directly rather than an auto-calculated 100%-ratio
-  // apportionment. Running computePartialItcSplit against their saved data
-  // would misread the plain 5-row template's sub-rows the exact way #71
-  // originally found for the 7-row template read as if it were the 5-row one.
+  // No-ITC clients don't run computePartialItcSplit either, but for a
+  // different reason than "plain lookup": per firm decision (2026-08-19),
+  // 4(B)(1) is locked to mirror the WHOLE of itcAvail below, unconditionally
+  // — not derived from 2B reconciliation's eligible/reversal classification
+  // at all (see the isNoITC branch further down). "Allowing" vs
+  // "disallowing" per 2B reconciliation only means something for a client
+  // who can claim SOME credit; it never applies to a No-ITC builder, so this
+  // doesn't read row(B, ...) or run the apportionment split against their
+  // saved data — the same way #71 found reading a 7-row template as if it
+  // were the 5-row one silently zeroed 4(B)(2) instead.
+  const isNoITC = input.builderItcType === 'NO_ITC';
   const isPartialITC = input.builderItcType === 'PARTIAL_ITC';
   const commercialArea = input.commercialArea || 0;
   const residentialArea = input.residentialArea || 0;
@@ -334,11 +340,21 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   // Partial-ITC builder clients: the full split (including the 2B-reco/
   // 180-day reversal) is reclassified into (1) — see row1Reclassified's doc
   // comment in builderPartialItc.ts. A promoter has no "ordinary Others" ITC
-  // bucket. No-ITC and non-builder clients fall through to the plain lookup.
-  const revRul = partialSplit
+  // bucket. No-ITC clients skip both the split AND the plain lookup — (1) is
+  // forced to equal itcAvail exactly, guaranteeing Net ITC (4C) is 0 by
+  // construction rather than by 2B reconciliation happening to classify
+  // every purchase correctly. No manual 4B(1) adjustment folds in here: an
+  // adjustment on top would push 4B(1) past itcAvail and make 4C negative,
+  // breaking the "always zero" guarantee the firm asked for. Non-builder
+  // clients fall through to the plain lookup.
+  const revRul = isNoITC
+    ? round3(itcAvail) // 4B(1) — locked to the whole of 4A, no exceptions
+    : partialSplit
     ? round3(add3(partialSplit.row1Reclassified, { igst: adj4B1.igst, cgst: adj4B1.cgst, sgst: adj4B1.sgst })) // 4B(1) rule 38/42/43 & 17(5)
     : round3(add3(row(B, '(1)'), { igst: adj4B1.igst, cgst: adj4B1.cgst, sgst: adj4B1.sgst })); // 4B(1) rule 38/42/43 & 17(5)
-  const revOth = partialSplit
+  const revOth = isNoITC
+    ? { igst: 0, cgst: 0, sgst: 0 } // 4B(2) others — always 0 for a No-ITC builder
+    : partialSplit
     ? round3(partialSplit.row2Reclassified) // 4B(2) others — always 0 for a builder client
     : round3(add3(row(B, '(i)'), row(B, '(ii)'), row(B, '(iii)'))); // 4B(2) others
 
@@ -355,7 +371,6 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   flags.push('4D itc_inelg: mapped 4D(2) → OTH; RUL defaulted to 0 (confirm with the CA).');
   flags.push('Table 5 (exempt / nil / non-GST INWARD supplies) is not computed by the app → left 0 (fill manually if applicable).');
 
-  const itcAvail = round3(add3(impg, imps, isrc, isd, oth4a));
   // 4(A) ITC Available bifurcation, as shown in ITC Summary and the portal.
   const itcAvailableRows = [
     { srNo: '(1)', label: 'Import of goods', ...round3(impg) },

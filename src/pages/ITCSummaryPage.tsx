@@ -625,16 +625,37 @@ const ITCSummaryPage: React.FC = () => {
         }
         return row;
       });
-      
+
+      // No-ITC builder clients: 4(B)(1) is locked to mirror the WHOLE of
+      // 4(A) — not a figure derived from 2B reconciliation's own eligible/
+      // reversal classification — so it reverses everything regardless of
+      // how any rupee got into 4(A) (RCM, a manually-typed 5.1, whatever).
+      // That guarantees 4(C) = 0 structurally instead of relying on 2B
+      // reconciliation happening to classify every purchase correctly. (2)
+      // "Others" and its sub-rows are locked to 0 for the same reason —
+      // "allowing" vs "disallowing" per 2B reconciliation is a distinction
+      // that only means something for a client who can claim SOME credit;
+      // it never applies to a No-ITC builder.
+      const newTotal4A = isNoItcClient ? computeTotal4A(newData.section4A) : null;
+
       // Update Section 4B row "ITC Reversal for current month as per 2B RECO" with reversal data
       // Match both regular and Partial ITC versions of the text
       newData.section4B = prev.section4B.map(row => {
+        if (isNoItcClient && newTotal4A) {
+          if (row.srNo === '(1)') {
+            return { ...row, igst: newTotal4A.igst, cgst: newTotal4A.cgst, sgst: newTotal4A.sgst, isAutoLinked: true };
+          }
+          if (row.srNo === '(2)' || row.srNo === '(i)' || row.srNo === '(ii)' || row.srNo === '(iii)') {
+            return { ...row, igst: 0, cgst: 0, sgst: 0, isAutoLinked: true };
+          }
+          return row;
+        }
         if (row.particular.includes('ITC Reversal for') && row.particular.includes('current month as per 2B RECO')) {
-          return { 
-            ...row, 
-            igst: reversalFromReco.igst, 
-            cgst: reversalFromReco.cgst, 
-            sgst: reversalFromReco.sgst 
+          return {
+            ...row,
+            igst: reversalFromReco.igst,
+            cgst: reversalFromReco.cgst,
+            sgst: reversalFromReco.sgst
           };
         }
         return row;
@@ -1823,15 +1844,17 @@ const ITCSummaryPage: React.FC = () => {
                 </div>
               )}
 
-              {/* No-ITC builder: 4(B)(1) is a manual entry, same as a
-                  Full-ITC builder — there is no carpet-area mix to show, and
-                  no automatic 100% reversal to explain either. */}
+              {/* No-ITC builder: 4(B)(1) is locked to mirror the whole of
+                  4(A), and 4(B)(2) is locked to 0 — there is no carpet-area
+                  mix to show, and no reliance on 2B reconciliation's own
+                  eligible/reversal split either. */}
               {isNoItcClient && (
                 <div className="mt-6 flex justify-end">
                   <p className="text-sm text-muted-foreground max-w-md text-right">
-                    No-ITC builder client — under this scheme no ITC is eligible, so 4(B)(1)
-                    should reflect the full amount found eligible in 2B reconciliation.
-                    Enter it directly; the system no longer forces this figure.
+                    No-ITC builder client — every rupee in 4(A), regardless of source, is
+                    reversed in full at 4(B)(1). Row 5.1 stays open for you to enter the ITC
+                    found each period; 4(B)(1)/(2) update automatically and Net ITC (4C) is
+                    always nil.
                   </p>
                 </div>
               )}
