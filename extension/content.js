@@ -2513,77 +2513,101 @@
     if (!typeSel) { banner('Could not select "Refunds" on My Applications — skipped.' + progress, '#f59e0b'); await chainOrStop(job, 'refunds', proceedToDrc03); return; }
     await sleep(500);
 
-    // Cover the client's full history, matching DRC-03's own date range.
-    const dateInputs = $$('input').filter((i) => /date/i.test((i.placeholder || '') + (i.id || '') + (i.name || '')));
-    if (dateInputs[0]) setVal(dateInputs[0], '01/07/2017');
-    if (dateInputs[1]) setVal(dateInputs[1], shownTodayDdMmYyyy());
-    await sleep(200);
+    const findDateInputs = () => $$('input').filter((i) => /date/i.test((i.placeholder || '') + (i.id || '') + (i.name || '')));
+    const findSearchBtn = () => $$('button').find((b) => /^search$/i.test(clean(b.textContent)));
+    if (findDateInputs().length < 2 || !findSearchBtn()) {
+      banner('My Applications form fields not found — skipped.' + progress, '#f59e0b');
+      await chainOrStop(job, 'refunds', proceedToDrc03); return;
+    }
 
-    const searchBtn = $$('button').find((b) => /^search$/i.test(clean(b.textContent)));
-    if (!searchBtn) { banner('No Search button on My Applications — skipped.' + progress, '#f59e0b'); await chainOrStop(job, 'refunds', proceedToDrc03); return; }
-    searchBtn.click();
-    await sleep(1500);
+    // This form enforces a 3-month window per search (confirmed live — see
+    // the same note on handleDrc03 below: that page's OWN case/search JSON
+    // API has no such cap, only its UI form does). Same style of limit as
+    // Challan Summary's own ~5.5-month cap, walked here in 89-day steps back
+    // to GST inception — a single full-range search here silently fails
+    // the portal's own validation and returns nothing.
+    const p2 = (n) => String(n).padStart(2, '0');
+    const fmt = (d) => p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + '/' + d.getFullYear();
+    const windows = [];
+    let winStart = new Date(2017, 6, 1);
+    const today = new Date();
+    while (winStart <= today) {
+      const winEnd = new Date(winStart.getTime() + 89 * 24 * 60 * 60 * 1000);
+      windows.push([fmt(winStart), fmt(winEnd > today ? today : winEnd)]);
+      winStart = new Date(winEnd.getTime() + 24 * 60 * 60 * 1000);
+    }
 
     const isArnLike = (s) => /^[A-Z]{2}\d{10,}[A-Z0-9]*$/.test(s);
     const TAB_NAMES = ['APPLICATIONS', 'NOTICE/ACKNOWLEDGEMENT', 'REPLIES/UNDERTAKING/REQUEST', 'ORDERS', 'AUDIT HISTORY'];
 
     const seenArns = new Set();
     const byArn = new Map();
-    let docsOk = 0, docsFail = 0;
+    let docsOk = 0, docsFail = 0, windowsFailed = 0;
 
-    for (let page = 0; page < 20; page++) {
-      const arnLinks = $$('a').filter((a) => isArnLike(clean(a.textContent)) && !seenArns.has(clean(a.textContent)));
-      if (arnLinks.length === 0) break;
+    for (const [fromStr, toStr] of windows) {
+      const di = findDateInputs();
+      const searchBtn = findSearchBtn();
+      if (di.length < 2 || !searchBtn) { windowsFailed++; continue; }
+      setVal(di[0], fromStr);
+      setVal(di[1], toStr);
+      await sleep(200);
+      searchBtn.click();
+      await sleep(1500);
 
-      for (const a of arnLinks) {
-        const arn = clean(a.textContent);
-        seenArns.add(arn);
-        try {
-          a.click();
-          let onFolder = false;
-          for (let w = 0; w < 20 && !onFolder; w++) { await sleep(400); if (/litserv\/auth\/case\/folder/.test(location.href)) onFolder = true; }
-          if (!onFolder) continue;
-          await sleep(500);
+      for (let page = 0; page < 20; page++) {
+        const arnLinks = $$('a').filter((a) => isArnLike(clean(a.textContent)) && !seenArns.has(clean(a.textContent)));
+        if (arnLinks.length === 0) break;
 
-          const tabEls = $$('*').filter((el) => el.children.length === 0 && TAB_NAMES.includes(clean(el.textContent).toUpperCase()));
-          for (const tabEl of tabEls) {
-            const tabName = clean(tabEl.textContent);
-            tabEl.click();
-            await sleep(800);
-            const icons = $$('img, a').filter((el) => /pdf/i.test((el.getAttribute('src') || '') + (el.getAttribute('href') || '') + (el.className || '')));
-            for (const icon of icons) {
-              const link = icon.closest('a') || icon;
-              const href = link.href || link.getAttribute('href') || '';
-              const label = clean((link.textContent || '')) || clean((link.title || '')) || tabName;
-              if (!/^https?:/i.test(href)) { docsFail++; continue; }
-              try {
-                const r = await fetch(href, { credentials: 'include' });
-                if (!r.ok) { docsFail++; continue; }
-                const buf = await r.arrayBuffer();
-                if (!buf || buf.byteLength < 200) { docsFail++; continue; } // guard against an HTML error page, not a real PDF
-                const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
-                const path = 'refund/' + cur.clientId + '/' + arn.replace(/[^A-Za-z0-9]/g, '_') + '/' + tabName.replace(/[^A-Za-z0-9]/g, '_') + '_' + label.replace(/[^A-Za-z0-9]/g, '_') + '.pdf';
-                const url = await GSTKdb.uploadPdf(path, dataUrl);
-                if (!byArn.has(arn)) byArn.set(arn, []);
-                byArn.get(arn).push({ tab: tabName, label, url });
-                docsOk++;
-              } catch (e) { docsFail++; }
+        for (const a of arnLinks) {
+          const arn = clean(a.textContent);
+          seenArns.add(arn);
+          try {
+            a.click();
+            let onFolder = false;
+            for (let w = 0; w < 20 && !onFolder; w++) { await sleep(400); if (/litserv\/auth\/case\/folder/.test(location.href)) onFolder = true; }
+            if (!onFolder) continue;
+            await sleep(500);
+
+            const tabEls = $$('*').filter((el) => el.children.length === 0 && TAB_NAMES.includes(clean(el.textContent).toUpperCase()));
+            for (const tabEl of tabEls) {
+              const tabName = clean(tabEl.textContent);
+              tabEl.click();
+              await sleep(800);
+              const icons = $$('img, a').filter((el) => /pdf/i.test((el.getAttribute('src') || '') + (el.getAttribute('href') || '') + (el.className || '')));
+              for (const icon of icons) {
+                const link = icon.closest('a') || icon;
+                const href = link.href || link.getAttribute('href') || '';
+                const label = clean((link.textContent || '')) || clean((link.title || '')) || tabName;
+                if (!/^https?:/i.test(href)) { docsFail++; continue; }
+                try {
+                  const r = await fetch(href, { credentials: 'include' });
+                  if (!r.ok) { docsFail++; continue; }
+                  const buf = await r.arrayBuffer();
+                  if (!buf || buf.byteLength < 200) { docsFail++; continue; } // guard against an HTML error page, not a real PDF
+                  const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
+                  const path = 'refund/' + cur.clientId + '/' + arn.replace(/[^A-Za-z0-9]/g, '_') + '/' + tabName.replace(/[^A-Za-z0-9]/g, '_') + '_' + label.replace(/[^A-Za-z0-9]/g, '_') + '.pdf';
+                  const url = await GSTKdb.uploadPdf(path, dataUrl);
+                  if (!byArn.has(arn)) byArn.set(arn, []);
+                  byArn.get(arn).push({ tab: tabName, label, url });
+                  docsOk++;
+                } catch (e) { docsFail++; }
+              }
             }
-          }
-        } catch (e) { /* keep going with the next ARN */ }
+          } catch (e) { /* keep going with the next ARN */ }
 
-        // Back to the results list for the next ARN — Angular route state,
-        // not a plain page, so a browser Back is what should restore it.
-        history.back();
-        let restored = false;
-        for (let w = 0; w < 20 && !restored; w++) { await sleep(400); if (/litserv\/auth\/case\/search/.test(location.href) && $$('a').some((x) => isArnLike(clean(x.textContent)))) restored = true; }
-        if (!restored) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; } // lost the list — stop rather than loop wrong
+          // Back to the results list for the next ARN — Angular route state,
+          // not a plain page, so a browser Back is what should restore it.
+          history.back();
+          let restored = false;
+          for (let w = 0; w < 20 && !restored; w++) { await sleep(400); if (/litserv\/auth\/case\/search/.test(location.href) && findDateInputs().length >= 2) restored = true; }
+          if (!restored) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; } // lost the list — stop rather than loop wrong
+        }
+
+        const next = $$('a, button').find((a) => clean(a.textContent) === '»');
+        if (!next) break;
+        next.click();
+        await sleep(1200);
       }
-
-      const next = $$('a, button').find((a) => clean(a.textContent) === '»');
-      if (!next) break;
-      next.click();
-      await sleep(1200);
     }
 
     for (const [arn, documents] of byArn) {
@@ -2592,6 +2616,7 @@
 
     debugPanel([
       'STEP: Refund Application Documents  (' + location.pathname + ')',
+      'windows checked   : ' + windows.length + ' (89-day steps back to 01/07/2017), ' + windowsFailed + ' failed',
       'ARNs visited      : ' + seenArns.size,
       'documents captured: ' + docsOk + ' ok, ' + docsFail + ' failed/none',
     ]);
