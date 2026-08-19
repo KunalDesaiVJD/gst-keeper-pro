@@ -65,6 +65,9 @@ export interface Gstr3bSummary {
   // 4(A) ITC Available bifurcation — the five portal rows (1)–(5).
   itcAvailableRows: { srNo: string; label: string; igst: number; cgst: number; sgst: number }[];
   itcReversed: TaxHead;   // 4B total
+  // 4(B) ITC Reversed bifurcation — the two portal rows (1)-(2), same
+  // pattern as itcAvailableRows/itcOtherDetails below.
+  itcReversedRows: { srNo: string; label: string; igst: number; cgst: number; sgst: number }[];
   itcNet: TaxHead;        // 4C
   itcIneligible: TaxHead; // 4D(2)
   // 4(D) Other Details — the four portal rows (D)(1), (1.1), (1.2), (2),
@@ -358,6 +361,11 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
     { srNo: '(5)', label: 'All other ITC', ...round3(oth4a) },
   ];
   const itcRev = round3(add3(revRul, revOth));
+  // 4(B) ITC Reversed bifurcation, as shown on the portal.
+  const itcReversedRows = [
+    { srNo: '(1)', label: 'As per rules 38,42 & 43 of CGST Rules and section 17(5)', ...round3(revRul) },
+    { srNo: '(2)', label: 'Others', ...round3(revOth) },
+  ];
   const itcNet = round3(sub3(itcAvail, itcRev));
 
   const rcm = {
@@ -430,6 +438,7 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
     itcAvailable: itcAvail,
     itcAvailableRows,
     itcReversed: itcRev,
+    itcReversedRows,
     itcNet,
     itcIneligible: round3(inelgOth),
     itcOtherDetails,
