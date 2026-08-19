@@ -98,6 +98,20 @@ window.addEventListener('message', (e) => {
     return;
   }
 
+  // A Reports Hub "Pull" button on one specific report asked to fetch just
+  // that section (Notices / Refunds / DRC-03 / Taxpayer Profile / Challans /
+  // Liability Ledger / Cash Ledger) instead of the whole reco chain.
+  if (d.__gstkPullSection) {
+    const info = d.__gstkPullSection;
+    if (!info.clientId || !info.mode) return;
+    chrome.runtime.sendMessage({ gstk: true, fn: 'startSectionPull', args: [info] }, (resp) => {
+      const ok = resp && resp.ok;
+      const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
+      window.postMessage({ __gstkPullSectionResult: ok ? { ok: true } : { ok: false, error } }, '*');
+    });
+    return;
+  }
+
   // The GSTR-1 "Upload to GST Portal" button asked to push the stored JSON to
   // the portal. Background fetches the JSON + credentials and opens a portal
   // tab; the final result (accepted / partial / failed + per-invoice errors)

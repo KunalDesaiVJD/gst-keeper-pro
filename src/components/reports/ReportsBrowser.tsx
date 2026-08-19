@@ -8,7 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import {
-  FileSpreadsheet, FileText, Loader2, Search, Star, X, LayoutGrid,
+  FileSpreadsheet, FileText, Loader2, Search, Star, X, LayoutGrid, DownloadCloud,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -36,6 +36,16 @@ export interface ReportsBrowserProps {
   fyLabel: string;
   busy: { key: string; format: 'xlsx' | 'pdf' } | null;
   onDownload: (report: ReportDefinition, format: 'xlsx' | 'pdf') => void;
+  /**
+   * Reports declaring `pull` (see ReportDefinition) get a standalone "Pull"
+   * button right on their row, so staff can fetch just that one section from
+   * the GST portal instead of running the whole ledger/reco chain elsewhere.
+   * `pullingKey` is the report.key currently mid-pull (for the spinner);
+   * `extReady` gates the button on the browser extension being detected.
+   */
+  onPullSection?: (report: ReportDefinition) => void;
+  pullingKey?: string | null;
+  extReady?: boolean;
 }
 
 const loadPinned = (): Set<string> => {
@@ -47,7 +57,7 @@ const loadPinned = (): Set<string> => {
 
 export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
   reports, monthOptions, selectedMonth, onMonthChange, clients, selectedClientId, onClientChange,
-  fyLabel, busy, onDownload,
+  fyLabel, busy, onDownload, onPullSection, pullingKey, extReady,
 }) => {
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<ReportCategory | 'all'>('all');
@@ -157,6 +167,16 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
     const hint = missingInputHint(report);
     const statusMeta = REPORT_STATUS_META[report.status];
     const isPinned = pinned.has(report.key);
+    const pulling = pullingKey === report.key;
+    const pullMissingClient = !selectedClientId;
+    const pullMissingMonth = !!report.pull?.needsMonth && !selectedMonth;
+    const pullDisabled = pullMissingClient || pullMissingMonth || !extReady || pulling;
+    const pullHint = pullMissingClient && pullMissingMonth
+      ? 'Pick a client and a month first'
+      : pullMissingClient ? 'Pick a client first'
+      : pullMissingMonth ? 'Pick a month first'
+      : !extReady ? 'Install/enable the GST Keeper browser extension to pull from the portal'
+      : null;
 
     return (
       <div className="group flex items-start gap-3 px-3 py-3 rounded-lg hover:bg-muted/50 transition-colors">
@@ -192,6 +212,23 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
             </TooltipTrigger>
             <TooltipContent side="top">{isPinned ? 'Unpin' : 'Pin to top'}</TooltipContent>
           </Tooltip>
+          {report.pull && onPullSection && (() => {
+            const pullBtn = (
+              <Button
+                onClick={() => onPullSection(report)}
+                disabled={pullDisabled}
+                variant="outline"
+                size="sm"
+                aria-label={`Pull ${report.title} from the GST portal`}
+              >
+                {pulling ? <Loader2 className="h-3.5 w-3.5 animate-spin sm:mr-1.5" /> : <DownloadCloud className="h-3.5 w-3.5 sm:mr-1.5" />}
+                <span className="hidden sm:inline">Pull</span>
+              </Button>
+            );
+            return pullHint ? (
+              <Tooltip><TooltipTrigger asChild><span>{pullBtn}</span></TooltipTrigger><TooltipContent side="top">{pullHint}</TooltipContent></Tooltip>
+            ) : pullBtn;
+          })()}
           {(() => {
             const excelBtn = (
               <Button

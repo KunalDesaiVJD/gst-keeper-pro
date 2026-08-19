@@ -93,4 +93,14 @@ export interface ReportDefinition {
   icon: LucideIcon;
   needs: 'month' | 'client+month' | 'client' | 'none';
   build: (args: ReportRunArgs) => Promise<ReportTable>;
+  /**
+   * Reports fed by the browser extension's single-section pulls (as opposed
+   * to the whole ledger/reco chain behind GST Receivable Reco's "Pull")
+   * declare which extension job `mode` populates them, so the Reports Hub
+   * can offer a "Pull" action right on the report itself instead of sending
+   * staff to an unrelated page to fetch data for an unrelated report.
+   * `needsMonth` is only true for the two Ledger reports (Liability/Cash)
+   * that are period-scoped; everything else here is client-lifetime data.
+   */
+  pull?: { mode: string; needsMonth?: boolean };
 }

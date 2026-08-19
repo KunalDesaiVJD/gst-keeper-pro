@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FileSpreadsheet } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
@@ -21,12 +21,51 @@ const ReportsPage: React.FC = () => {
   const { selectedClientId, setSelectedClientId } = useClient();
   const [clients, setClients] = useState<ClientLite[]>([]);
   const [busy, setBusy] = useState<{ key: string; format: 'xlsx' | 'pdf' } | null>(null);
+  const [extReady, setExtReady] = useState(false);
+  const [pullingKey, setPullingKey] = useState<string | null>(null);
 
   useEffect(() => {
     supabase.from('clients').select('id, name, gstin').order('name').then(({ data }) => {
       setClients((data || []) as ClientLite[]);
     });
   }, []);
+
+  // Detect the browser extension the same way GST Receivable Reco does — ping
+  // on mount (twice, since the extension's content script and this page can
+  // each load first) and listen for its announcement + the Pull result.
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      const d: any = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkPullSectionResult) {
+        setPullingKey(null);
+        if (d.__gstkPullSectionResult.ok) toast.success('Portal opening in a new tab — type the CAPTCHA there; the report will refresh once the pull finishes.');
+        else toast.error('Could not start the pull: ' + d.__gstkPullSectionResult.error);
+      }
+    };
+    window.addEventListener('message', onMsg);
+    const ping = () => window.postMessage({ __gstkAppReady: true }, '*');
+    ping();
+    const t1 = setTimeout(ping, 400);
+    const t2 = setTimeout(ping, 1200);
+    return () => { window.removeEventListener('message', onMsg); clearTimeout(t1); clearTimeout(t2); };
+  }, []);
+
+  const handlePullSection = useCallback((report: ReportDefinition) => {
+    if (!report.pull) return;
+    if (!selectedClientId) { toast.error('Select a client first'); return; }
+    if (report.pull.needsMonth && !selectedMonth) { toast.error('Select a month first'); return; }
+    if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to pull from the portal.'); return; }
+    setPullingKey(report.key);
+    window.postMessage({
+      __gstkPullSection: {
+        clientId: selectedClientId,
+        mode: report.pull.mode,
+        period_month: report.pull.needsMonth ? selectedMonth : undefined,
+      },
+    }, '*');
+  }, [selectedClientId, selectedMonth, extReady]);
 
   const monthOptions = useMemo(() => {
     const months: { value: string; label: string }[] = [];
@@ -92,6 +131,9 @@ const ReportsPage: React.FC = () => {
         fyLabel={fyLabel}
         busy={busy}
         onDownload={handleDownload}
+        onPullSection={handlePullSection}
+        pullingKey={pullingKey}
+        extReady={extReady}
       />
     </div>
   );

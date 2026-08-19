@@ -290,6 +290,41 @@
         job.step = 'gstr3b_dash';
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      } else if (job.mode === 'liabilityledger') {
+        banner('Logged in — reading the Liability Register…' + progress);
+        job.step = 'liabilityledger';
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns/auth/ledger/taxdetailedledger';
+      } else if (job.mode === 'cashledger') {
+        banner('Logged in — reading the Cash Ledger…' + progress);
+        job.step = 'cashledger';
+        await setJob(job);
+        location.href = 'https://payment.gst.gov.in/payment/auth/ledger/detailedledger';
+      } else if (job.mode === 'notices') {
+        banner('Logged in — reading Notices & Orders…' + progress);
+        job.step = 'notices';
+        await setJob(job);
+        location.href = 'https://services.gst.gov.in/services/auth/notices';
+      } else if (job.mode === 'refunds') {
+        banner('Logged in — reading Refund applications…' + progress);
+        job.step = 'refunds';
+        await setJob(job);
+        location.href = 'https://services.gst.gov.in/services/auth/trackstatus';
+      } else if (job.mode === 'drc03') {
+        banner('Logged in — reading DRC-03 filings…' + progress);
+        job.step = 'drc03';
+        await setJob(job);
+        location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
+      } else if (job.mode === 'taxpayerprofile') {
+        banner('Logged in — reading Taxpayer Profile…' + progress);
+        job.step = 'taxpayerprofile';
+        await setJob(job);
+        location.href = 'https://services.gst.gov.in/services/auth/myprofile';
+      } else if (job.mode === 'challans') {
+        banner('Logged in — reading Challan Summary…' + progress);
+        job.step = 'challans';
+        await setJob(job);
+        location.href = 'https://payment.gst.gov.in/payment/auth/challanhistory';
       } else if (job.mode === 'login') {
         // Simple login from the Clients → Credentials "Login" button: log in and
         // stop on the portal, no return/ledger navigation.
@@ -2103,6 +2138,20 @@
     } catch (e) { /* diagnostic only — nothing else to do if even this fails */ }
   }
 
+  // A standalone Reports Hub "Pull" (job.mode one of the 7 section modes
+  // below) must stop right after its own section instead of continuing the
+  // full ledger->reversal->...->challans chain that GST Receivable Reco's
+  // "Pull" runs. Every handler below calls this instead of calling its
+  // proceedToNext function directly (on every exit path — success, skip, AND
+  // failure — since a standalone DRC-03 pull that hit a portal error still
+  // has no business going on to pull Taxpayer Profile). When job.mode isn't
+  // this step's own mode (the full-chain case, where job.mode is undefined),
+  // it behaves exactly as before: call proceedFn to continue the chain.
+  async function chainOrStop(job, myMode, proceedFn) {
+    if (job.mode === myMode) { await advance(job); return; }
+    await proceedFn(job);
+  }
+
   async function proceedToLiabilityLedger(job) {
     job.step = 'liabilityledger';
     await setJob(job);
@@ -2118,7 +2167,7 @@
     if (!/taxdetailedledger/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/ledger/taxdetailedledger'; return; }
     banner('Reading Electronic Liability Register…' + progress);
     const [mm, yyyy] = String(job.period).split('/').map((n) => parseInt(n, 10));
-    if (!mm || !yyyy) { banner('Bad period for Liability Register — skipped.' + progress, '#f59e0b'); await proceedToCashLedger(job); return; }
+    if (!mm || !yyyy) { banner('Bad period for Liability Register — skipped.' + progress, '#f59e0b'); await chainOrStop(job, 'liabilityledger', proceedToCashLedger); return; }
     const mmyyyy = String(mm).padStart(2, '0') + yyyy;
     let rows = [];
     try {
@@ -2131,7 +2180,7 @@
       banner('Liability Register: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       await writeLedgerFailureRow(GSTKdb.replaceLiabilityLedgerEntries, cur, job, (e && e.message) || 'unknown error');
       await sleep(1500);
-      await proceedToCashLedger(job);
+      await chainOrStop(job, 'liabilityledger', proceedToCashLedger);
       return;
     }
     try { await GSTKdb.replaceLiabilityLedgerEntries(cur.clientId, job.period, rows); } catch (e) { /* non-fatal — still move on to the cash ledger */ }
@@ -2142,7 +2191,7 @@
     ]);
     banner('Liability Register → ' + rows.length + ' entries saved. Now the cash ledger…' + progress, '#16a34a');
     await sleep(1000);
-    await proceedToCashLedger(job);
+    await chainOrStop(job, 'liabilityledger', proceedToCashLedger);
   }
 
   async function proceedToCashLedger(job) {
@@ -2163,7 +2212,7 @@
     }
     banner('Reading Electronic Cash Ledger…' + progress);
     const [mm, yyyy] = String(job.period).split('/').map((n) => parseInt(n, 10));
-    if (!mm || !yyyy) { banner('Bad period for Cash Ledger — skipped.' + progress, '#f59e0b'); await proceedToNotices(job); return; }
+    if (!mm || !yyyy) { banner('Bad period for Cash Ledger — skipped.' + progress, '#f59e0b'); await chainOrStop(job, 'cashledger', proceedToNotices); return; }
     const lastDay = new Date(yyyy, mm, 0).getDate();
     const p2 = (n) => String(n).padStart(2, '0');
     const from = '01/' + p2(mm) + '/' + yyyy;
@@ -2179,7 +2228,7 @@
       banner('Cash Ledger: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       await writeLedgerFailureRow(GSTKdb.replaceCashLedgerEntries, cur, job, (e && e.message) || 'unknown error');
       await sleep(1500);
-      await proceedToNotices(job);
+      await chainOrStop(job, 'cashledger', proceedToNotices);
       return;
     }
     try { await GSTKdb.replaceCashLedgerEntries(cur.clientId, job.period, rows); } catch (e) { /* non-fatal */ }
@@ -2190,7 +2239,7 @@
     ]);
     banner('Cash Ledger → ' + rows.length + ' entries saved. Now Notices & Orders…' + progress, '#16a34a');
     await sleep(1000);
-    await proceedToNotices(job);
+    await chainOrStop(job, 'cashledger', proceedToNotices);
   }
 
   async function proceedToNotices(job) {
@@ -2229,7 +2278,7 @@
       banner('Notices & Orders: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       try { await GSTKdb.replaceNotices(cur.clientId, [{ client_id: cur.clientId, source: 'notices', description: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }]); } catch (e2) { /* diagnostic only */ }
       await sleep(1500);
-      await proceedToRefunds(job);
+      await chainOrStop(job, 'notices', proceedToRefunds);
       return;
     }
     try { await GSTKdb.replaceNotices(cur.clientId, rows); } catch (e) { /* non-fatal */ }
@@ -2239,7 +2288,7 @@
     ]);
     banner('Notices & Orders → ' + rows.length + ' entries saved. Now Refund applications…' + progress, '#16a34a');
     await sleep(1000);
-    await proceedToRefunds(job);
+    await chainOrStop(job, 'notices', proceedToRefunds);
   }
 
   // DD/MM/YYYY for "today" — the notices API wants an explicit upper bound,
@@ -2268,9 +2317,9 @@
   async function handleRefunds(job, cur, progress) {
     if (!/trackstatus/.test(url)) { location.href = 'https://services.gst.gov.in/services/auth/trackstatus'; return; }
     banner('Reading Refund applications…' + progress);
-    if (!(await waitFor('select', 15000))) { banner('Refund tracker did not load — skipped.' + progress, '#f59e0b'); await proceedToDrc03(job); return; }
+    if (!(await waitFor('select', 15000))) { banner('Refund tracker did not load — skipped.' + progress, '#f59e0b'); await chainOrStop(job, 'refunds', proceedToDrc03); return; }
     const modSel = await selectWhereOption('Refunds', { timeout: 8000 });
-    if (!modSel) { banner('Could not select the Refunds module — skipped.' + progress, '#f59e0b'); await proceedToDrc03(job); return; }
+    if (!modSel) { banner('Could not select the Refunds module — skipped.' + progress, '#f59e0b'); await chainOrStop(job, 'refunds', proceedToDrc03); return; }
     await sleep(700);
 
     // "Filing Year" is the first of the two radio buttons (Filing Year / ARN).
@@ -2335,7 +2384,7 @@
     ]);
     banner('Refund applications → ' + allRows.length + ' entries saved. Now DRC-03 filings…' + progress, '#16a34a');
     await sleep(1000);
-    await proceedToDrc03(job);
+    await chainOrStop(job, 'refunds', proceedToDrc03);
   }
 
   async function proceedToDrc03(job) {
@@ -2386,7 +2435,7 @@
       banner('DRC-03: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       try { await GSTKdb.replaceDrc03Filings(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }]); } catch (e2) { /* diagnostic only */ }
       await sleep(1500);
-      await proceedToTaxpayerProfile(job);
+      await chainOrStop(job, 'drc03', proceedToTaxpayerProfile);
       return;
     }
 
@@ -2426,7 +2475,7 @@
     ]);
     banner('DRC-03 filings → ' + rows.length + ' entries saved (' + pdfOk + ' PDFs). Now Taxpayer Profile…' + progress, '#16a34a');
     await sleep(1000);
-    await proceedToTaxpayerProfile(job);
+    await chainOrStop(job, 'drc03', proceedToTaxpayerProfile);
   }
 
   async function proceedToTaxpayerProfile(job) {
@@ -2461,7 +2510,7 @@
       debugPanel(['STEP: Taxpayer Profile  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
       banner('Taxpayer Profile: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       await sleep(1500);
-      await proceedToChallans(job);
+      await chainOrStop(job, 'taxpayerprofile', proceedToChallans);
       return;
     }
 
@@ -2491,7 +2540,7 @@
     ]);
     banner('Taxpayer Profile → saved. Now Challan Summary…' + progress, '#16a34a');
     await sleep(1000);
-    await proceedToChallans(job);
+    await chainOrStop(job, 'taxpayerprofile', proceedToChallans);
   }
 
   async function proceedToChallans(job) {

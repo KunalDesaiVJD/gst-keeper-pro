@@ -220,6 +220,27 @@ const API = {
     return { started: true, client: c.name };
   },
 
+  // From a Reports Hub "Pull" button on one specific report: log the client
+  // in and jump straight to that one section (Notices / Refunds / DRC-03 /
+  // Taxpayer Profile / Challans / Liability Ledger / Cash Ledger), then stop
+  // — instead of running the whole ledger->reversal->...->challans chain that
+  // GST Receivable Reco's "Pull" kicks off. `info.mode` is one of
+  // 'notices' | 'refunds' | 'drc03' | 'taxpayerprofile' | 'challans' |
+  // 'liabilityledger' | 'cashledger' (see reportsCatalog.ts `pull.mode` and
+  // content.js's chainOrStop()). Human does the CAPTCHA.
+  startSectionPull: async (info) => {
+    const c = await API.getClient(info.clientId);
+    if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
+    const job = {
+      mode: info.mode, period: info.period_month || '', idx: 0, step: 'login', startedAt: Date.now(),
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+    };
+    const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
+    job.tabId = tab.id;
+    await chrome.storage.local.set({ gstk_active_job: job });
+    return { started: true, client: c.name, mode: info.mode };
+  },
+
   // From the Clients → Credentials "Login" button: just log the client into the
   // GST portal and stop (mode 'login'). No return/ledger navigation. Human does
   // the CAPTCHA.
