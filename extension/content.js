@@ -1970,7 +1970,13 @@
   async function handleLedger(job, cur, progress) {
     if (!/detailedledger/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/ledger/detailedledger'; return; }
     banner('Reading credit-ledger opening balance…' + progress);
-    if (!(await waitFor('#sumlg_frdt', 20000))) { banner('Ledger form did not load — moving on.' + progress, '#f59e0b'); await advance(job); return; }
+    if (!(await waitFor('#sumlg_frdt', 20000))) {
+      banner('Ledger form did not load — moving on.' + progress, '#f59e0b');
+      job.step = 'reversal';
+      await setJob(job);
+      location.href = 'https://return.gst.gov.in/returns/auth/ledger/revreclaimdetledger';
+      return;
+    }
     const per = await loadLedgerPeriod(job.period);
     if (!per.ok) {
       banner('Credit ledger: could not load ' + per.from + ' – ' + per.to + ' (' + per.why + '). Skipped so a wrong period is not saved.', '#dc2626');
@@ -2262,9 +2268,9 @@
   async function handleRefunds(job, cur, progress) {
     if (!/trackstatus/.test(url)) { location.href = 'https://services.gst.gov.in/services/auth/trackstatus'; return; }
     banner('Reading Refund applications…' + progress);
-    if (!(await waitFor('select', 15000))) { banner('Refund tracker did not load — skipped.' + progress, '#f59e0b'); await advance(job); return; }
+    if (!(await waitFor('select', 15000))) { banner('Refund tracker did not load — skipped.' + progress, '#f59e0b'); await proceedToDrc03(job); return; }
     const modSel = await selectWhereOption('Refunds', { timeout: 8000 });
-    if (!modSel) { banner('Could not select the Refunds module — skipped.' + progress, '#f59e0b'); await advance(job); return; }
+    if (!modSel) { banner('Could not select the Refunds module — skipped.' + progress, '#f59e0b'); await proceedToDrc03(job); return; }
     await sleep(700);
 
     // "Filing Year" is the first of the two radio buttons (Filing Year / ARN).
