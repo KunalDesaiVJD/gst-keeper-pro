@@ -172,7 +172,7 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4'];
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -211,6 +211,7 @@
     else if (job.step === 'liabilityledger') await handleLiabilityLedger(job, cur, progress);
     else if (job.step === 'cashledger') await handleCashLedger(job, cur, progress);
     else if (job.step === 'notices') await handleNotices(job, cur, progress);
+    else if (job.step === 'refunds_warmup') await handleRefundsWarmup(job, cur, progress);
     else if (job.step === 'refunds') await handleRefunds(job, cur, progress);
     else if (job.step === 'drc03') await handleDrc03(job, cur, progress);
     else if (job.step === 'taxpayerprofile') await handleTaxpayerProfile(job, cur, progress);
@@ -310,10 +311,17 @@
         await setJob(job);
         location.href = 'https://services.gst.gov.in/services/auth/notices';
       } else if (job.mode === 'refunds') {
-        banner('Logged in — reading Refund applications…' + progress);
-        job.step = 'refunds';
+        // Confirmed live: jumping straight to Track Application Status right
+        // after login can leave the Filing Year list permanently empty (no
+        // years ever render, no matter how long polled or how many times
+        // the same URL is reloaded) — visiting the Dashboard first, the way
+        // a human browsing normally would before reaching this page, fixes
+        // it. Always warm up this way rather than only on retry, since the
+        // very first attempt already showed the failure with no retry yet.
+        banner('Logged in — opening the dashboard first…' + progress);
+        job.step = 'refunds_warmup';
         await setJob(job);
-        location.href = 'https://services.gst.gov.in/services/auth/trackstatus';
+        location.href = 'https://services.gst.gov.in/services/auth/welcome';
       } else if (job.mode === 'drc03') {
         banner('Logged in — reading DRC-03 filings…' + progress);
         job.step = 'drc03';
@@ -2304,6 +2312,18 @@
   }
 
   async function proceedToRefunds(job) {
+    // Same Dashboard warm-up as the standalone Refund pull's login branch
+    // above — the full ledger/reco chain reaches Track Application Status
+    // by the same direct URL, so it's exposed to the identical empty-year
+    // bug without this stop.
+    job.step = 'refunds_warmup';
+    await setJob(job);
+    location.href = 'https://services.gst.gov.in/services/auth/welcome';
+  }
+
+  async function handleRefundsWarmup(job, cur, progress) {
+    banner('Warming up the dashboard before Refunds…' + progress);
+    await sleep(1500);
     job.step = 'refunds';
     await setJob(job);
     location.href = 'https://services.gst.gov.in/services/auth/trackstatus';
@@ -2349,20 +2369,18 @@
     for (let i = 0; i < 20 && !yearSelect; i++) { await sleep(300); yearSelect = findYearSelect(); }
     const years = yearSelect ? [...yearSelect.options].map((o) => clean(o.textContent)).filter(isYearOption) : [];
 
-    // Confirmed live: right after arriving here via a scripted navigation
-    // (this job's own location.href, as opposed to a human clicking the
-    // portal's own menu), the Filing Year select can sit on the empty
-    // "Select" placeholder with no year options ever appearing, no matter
-    // how long polled — but a completely fresh page load of this same URL
-    // populates it correctly. Something about the portal's own Angular
-    // bootstrap doesn't finish wiring up the year-list fetch on the first
-    // load in this flow. A silent reload (up to 2 retries) mirrors what
-    // manually revisiting the page fixes, before actually giving up.
+    // Confirmed live: reloading THIS SAME trackstatus URL directly does NOT
+    // reliably fix an empty Filing Year list, even repeated — routing back
+    // through the Dashboard warm-up (handleRefundsWarmup / proceedToRefunds
+    // above) first is what a human revisiting the page normally does, and
+    // is what actually populates it. Retry via that warm-up, not a bare
+    // reload of this URL, before giving up.
     if (years.length === 0 && (job.refundRetries || 0) < 2) {
       job.refundRetries = (job.refundRetries || 0) + 1;
+      job.step = 'refunds_warmup';
       await setJob(job);
-      banner('Filing Year list came back empty — retrying (' + job.refundRetries + '/2)…' + progress, '#f59e0b');
-      location.href = 'https://services.gst.gov.in/services/auth/trackstatus';
+      banner('Filing Year list came back empty — retrying via dashboard (' + job.refundRetries + '/2)…' + progress, '#f59e0b');
+      location.href = 'https://services.gst.gov.in/services/auth/welcome';
       return;
     }
     delete job.refundRetries;
