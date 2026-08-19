@@ -68,12 +68,15 @@ export async function fetchGstr3b(
   // + this period's reversal, gross not netted, per the ITC Summary fix this
   // mirrors). Liberal clients leave row 5.1 exactly as saved/typed — same
   // carve-out ITC Summary itself applies, since their invoices don't
-  // necessarily go through Import 2B's classification at all.
+  // necessarily go through Import 2B's classification at all. No-ITC clients
+  // get the same carve-out per the 2026-08-19 revert to the plain, manual-
+  // entry template — staff type the figure directly in ITC Summary now.
   if (itc) {
     const isLiberal = !!clientRes.data?.liberal_2b_reconciliation;
+    const isNoITC = clientRes.data?.builder_itc_type === 'NO_ITC';
     const { eligibleFromImport2B, reversalFromReco, reclaimFromReco, expenseOutFromReco } = autoLink;
     itc.section4A = itc.section4A.map((r: ItcRow) => {
-      if (r.srNo === '5.1' && !isLiberal) {
+      if (r.srNo === '5.1' && !isLiberal && !isNoITC) {
         return { ...r, igst: eligibleFromImport2B.igst + reversalFromReco.igst, cgst: eligibleFromImport2B.cgst + reversalFromReco.cgst, sgst: eligibleFromImport2B.sgst + reversalFromReco.sgst };
       }
       if (r.srNo === '5.4') return { ...r, igst: reclaimFromReco.igst, cgst: reclaimFromReco.cgst, sgst: reclaimFromReco.sgst };

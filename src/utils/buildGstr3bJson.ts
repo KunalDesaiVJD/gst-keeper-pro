@@ -299,21 +299,24 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
     { igst: adj4A5.igst, cgst: adj4A5.cgst, sgst: adj4A5.sgst },
   ));
 
-  // Table 4(B) — Partial-ITC / No-ITC builder clients (docs/BUILDER_GST_
-  // POSITIONS.md §7) reverse ITC by carpet-area apportionment, computed by
-  // the SAME shared function ITC Summary itself uses (builderPartialItc.ts),
-  // not the plain default-template row lookup below. That default lookup
-  // matches sub-rows by literal srNo '(i)'/'(ii)'/'(iii)', but the Partial-
-  // ITC/No-ITC row template leaves those sub-rows' srNo empty (matched by
-  // particular text instead) — reading it with the default lookup silently
-  // computed 4(B)(2) as 0 for every such client, understating the reversal
-  // and overstating 4C Net ITC.
-  const isNoITC = input.builderItcType === 'NO_ITC';
-  const isPartialITC = input.builderItcType === 'PARTIAL_ITC' || isNoITC;
-  // No-ITC reverses 100% regardless of the client's real area mix — force
-  // the ratio to 1 rather than reading commercial_area/residential_area.
-  const commercialArea = isNoITC ? 0 : (input.commercialArea || 0);
-  const residentialArea = isNoITC ? 1 : (input.residentialArea || 0);
+  // Table 4(B) — Partial-ITC builder clients (docs/BUILDER_GST_POSITIONS.md
+  // §7) reverse ITC by carpet-area apportionment, computed by the SAME
+  // shared function ITC Summary itself uses (builderPartialItc.ts), not the
+  // plain default-template row lookup below. That default lookup matches
+  // sub-rows by literal srNo '(i)'/'(ii)'/'(iii)', but the Partial-ITC row
+  // template leaves those sub-rows' srNo empty (matched by particular text
+  // instead) — reading it with the default lookup silently computed 4(B)(2)
+  // as 0 for every such client, understating the reversal and overstating
+  // 4C Net ITC.
+  // No-ITC clients use the PLAIN default-template lookup below instead, same
+  // as a Full-ITC builder — per the 2026-08-19 revert, 4(B)(1) is a manual
+  // figure staff type in directly rather than an auto-calculated 100%-ratio
+  // apportionment. Running computePartialItcSplit against their saved data
+  // would misread the plain 5-row template's sub-rows the exact way #71
+  // originally found for the 7-row template read as if it were the 5-row one.
+  const isPartialITC = input.builderItcType === 'PARTIAL_ITC';
+  const commercialArea = input.commercialArea || 0;
+  const residentialArea = input.residentialArea || 0;
   // Keep Total 4A consistent with `itcAvail` below (which already folds in
   // the manual 4A(5) adjustment) so the apportionment ratio isn't applied
   // against a stale pre-adjustment total.
@@ -324,13 +327,14 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
     ? computePartialItcSplit({ section4A: adjustedA, section4B: B.map((r) => ({ ...r, particular: r.particular || '' })), commercialArea, residentialArea })
     : null;
   if (isPartialITC && !partialSplit) {
-    flags.push('Partial/No-ITC client but no carpet area set on the client record — Table 4(B) fell back to the default (non-apportioned) formula; set commercial/residential area to get the correct reversal.');
+    flags.push('Partial-ITC client but no carpet area set on the client record — Table 4(B) fell back to the default (non-apportioned) formula; set commercial/residential area to get the correct reversal.');
   }
 
   const adj4B1 = sumAdj('4B(1)');
-  // Builder clients: the full split (including the 2B-reco/180-day reversal)
-  // is reclassified into (1) — see row1Reclassified's doc comment in
-  // builderPartialItc.ts. A promoter has no "ordinary Others" ITC bucket.
+  // Partial-ITC builder clients: the full split (including the 2B-reco/
+  // 180-day reversal) is reclassified into (1) — see row1Reclassified's doc
+  // comment in builderPartialItc.ts. A promoter has no "ordinary Others" ITC
+  // bucket. No-ITC and non-builder clients fall through to the plain lookup.
   const revRul = partialSplit
     ? round3(add3(partialSplit.row1Reclassified, { igst: adj4B1.igst, cgst: adj4B1.cgst, sgst: adj4B1.sgst })) // 4B(1) rule 38/42/43 & 17(5)
     : round3(add3(row(B, '(1)'), { igst: adj4B1.igst, cgst: adj4B1.cgst, sgst: adj4B1.sgst })); // 4B(1) rule 38/42/43 & 17(5)

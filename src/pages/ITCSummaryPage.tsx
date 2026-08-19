@@ -203,14 +203,16 @@ const ITCSummaryPage: React.FC = () => {
 
   // Check if client is a Partial ITC Builder client
   const isPartialITCClient = selectedClientData?.builder_itc_type === 'PARTIAL_ITC';
-  // A No-ITC builder client is the 100% case of the same reversal machinery:
-  // every rupee of input tax the 2B reconciliation finds gets reversed in
-  // 4(B)(1), same as a Partial-ITC client's residential share does, just at
-  // a ratio of 1 instead of whatever the project carpet-area mix works out
-  // to. This is what keeps ITC Summary from surfacing a claimable-looking
-  // Net ITC (4C) for a client whose scheme structurally cannot claim any.
+  // No-ITC builder clients use the plain Table 4(B) template, same as a
+  // Full-ITC builder — (1) is a manual figure staff type in directly, not an
+  // auto-calculated 100%-of-Total-4A apportionment. Only Partial-ITC clients
+  // (real carpet-area mix, e.g. NAVRATNA) still need computePartialItcSplit's
+  // ratio math; No-ITC's ratio would always be 1 anyway, so the apportionment
+  // machinery added nothing there except an extra layer to keep in sync with
+  // whatever staff decide to type — see the 2026-08-19 firm decision to
+  // revert No-ITC clients to the plain, manual-entry template.
   const isNoItcClient = selectedClientData?.builder_itc_type === 'NO_ITC';
-  const isReversalClient = isPartialITCClient || isNoItcClient;
+  const isReversalClient = isPartialITCClient;
   // A Liberal-mode client's staff can bypass Import 2B entirely and edit 2B
   // Reconciliation directly (see clients.liberal_2b_reconciliation) — so
   // twob_import_docs, which row 5.1 below is normally auto-linked from, may
@@ -433,11 +435,11 @@ const ITCSummaryPage: React.FC = () => {
   const fetchITCSummary = useCallback(async () => {
     if (!selectedClient || !selectedMonth) return;
 
-    // Get client data to check for Partial ITC / No-ITC type — both use the
-    // same reversal template, just at a different reversal ratio.
+    // Get client data — only Partial-ITC uses the carpet-area apportionment
+    // template; No-ITC uses the plain template like a Full-ITC builder (see
+    // isReversalClient above).
     const clientData = clients.find(c => c.id === selectedClient);
-    const isPartial = clientData?.builder_itc_type === 'PARTIAL_ITC'
-      || clientData?.builder_itc_type === 'NO_ITC';
+    const isPartial = clientData?.builder_itc_type === 'PARTIAL_ITC';
     const commArea = clientData?.commercial_area || 0;
     const resArea = clientData?.residential_area || 0;
 
@@ -605,9 +607,12 @@ const ITCSummaryPage: React.FC = () => {
         // Liberal clients don't necessarily run their invoices through
         // Import 2B's classification at all, so that total may not reflect
         // their real figure — leave the row exactly as loaded/typed and let
-        // staff edit it directly, the way it worked before Import 2B.
+        // staff edit it directly, the way it worked before Import 2B. No-ITC
+        // clients get the same treatment per the 2026-08-19 revert to the
+        // plain, manual-entry template — staff decide the ITC figure rather
+        // than the system forcing it from the live 2B-reco totals.
         if (row.srNo === '5.1') {
-          if (isLiberalClient) {
+          if (isLiberalClient || isNoItcClient) {
             return { ...row, isAutoLinked: false, editable: true };
           }
           return {
@@ -662,7 +667,7 @@ const ITCSummaryPage: React.FC = () => {
       
       return newData;
     });
-  }, [reversalFromReco, reclaimFromReco, expenseOutFromReco, eligibleFromImport2B, rcmTotals, dataLoadVersion, isLiberalClient]);
+  }, [reversalFromReco, reclaimFromReco, expenseOutFromReco, eligibleFromImport2B, rcmTotals, dataLoadVersion, isLiberalClient, isNoItcClient]);
 
   // Calculate Partial ITC formula values (used in rendering)
   // FORMULAS as per Excel:
@@ -1818,13 +1823,15 @@ const ITCSummaryPage: React.FC = () => {
                 </div>
               )}
 
-              {/* No-ITC builder: the reversal is 100% by definition of the scheme,
-                  not by carpet-area apportionment, so there is no area mix to show. */}
+              {/* No-ITC builder: 4(B)(1) is a manual entry, same as a
+                  Full-ITC builder — there is no carpet-area mix to show, and
+                  no automatic 100% reversal to explain either. */}
               {isNoItcClient && (
                 <div className="mt-6 flex justify-end">
                   <p className="text-sm text-muted-foreground max-w-md text-right">
-                    No-ITC builder client — every rupee of ITC found in 2B reconciliation is
-                    reversed in full at 4(B)(1), so Net ITC (4C) is always nil.
+                    No-ITC builder client — under this scheme no ITC is eligible, so 4(B)(1)
+                    should reflect the full amount found eligible in 2B reconciliation.
+                    Enter it directly; the system no longer forces this figure.
                   </p>
                 </div>
               )}

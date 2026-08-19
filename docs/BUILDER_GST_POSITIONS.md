@@ -167,18 +167,27 @@ The split is derived from the project master and offered on the ITC Summary
 page; adopting it is a deliberate action, because the areas drive a real
 reversal.
 
-**No-ITC clients (`builder_itc_type = 'NO_ITC'`, 14/08/2026).** Treated as the
-100% case of the same mechanism rather than a separate code path: 4A still
-shows the true ITC 2B reconciliation found (useful for audit trail), and
-4(B)(1) reverses all of it — the carpet-area ratio is forced to 1 rather than
-read from `commercial_area`/`residential_area`, since a No-ITC builder's real
-area mix is irrelevant to a reversal that is always total. Net ITC (4C) lands
-at nil either way. Before this date the `NO_ITC` flag existed on the client
-record and in the client-setup form but was never actually read anywhere
-downstream — 2B Reconciliation classified a No-ITC client's purchase invoices
-exactly like any other client's, and that classified total flowed straight
-into ITC Summary row 5.1 and Net ITC as a real, claimable-looking figure with
-nothing to suppress it. Fixed live on Elenza Callista Buildcon.
+**No-ITC clients (`builder_itc_type = 'NO_ITC'`).** *As of 19/08/2026*, No-ITC
+uses the **plain** Table 4(B) template — the same one a Full-ITC builder gets
+— not the carpet-area apportionment machinery below. 4(B)(1) is a manual
+figure staff type in directly; row 5.1 ("ITC for the Month") is likewise left
+editable rather than forced from the live Import 2B / 2B-reco total, the same
+carve-out Liberal-mode clients already had. Neither `buildGstr3bJson.ts` nor
+ITC Summary itself runs `computePartialItcSplit` for a No-ITC client anymore.
+
+*Between 14/08/2026 and 19/08/2026*, No-ITC was instead treated as the 100%
+case of the Partial-ITC apportionment mechanism: 4A showed the true ITC 2B
+reconciliation found (for audit trail), and 4(B)(1) auto-reversed all of it —
+carpet-area ratio forced to 1 rather than read from `commercial_area`/
+`residential_area`. That version's own reconciliation gap (4(B)(1)'s total
+didn't foot from the i)/ii)/iii) sub-rows shown under it, and neither did
+4(B)(2)'s) is what led to the revert — see PRs #76/#77 for the display fix
+that was layered on before the decision to drop the apportionment entirely for
+this client type. Before 14/08/2026, `NO_ITC` existed on the client record and
+setup form but was never read downstream at all — 2B Reconciliation classified
+a No-ITC client's invoices like any other client's, flowing straight into row
+5.1 and Net ITC as a real, claimable-looking figure with nothing to suppress
+it (fixed live on Elenza Callista Buildcon).
 
 ## 8. Retrospective re-rating
 
