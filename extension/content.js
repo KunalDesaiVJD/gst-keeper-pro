@@ -2349,6 +2349,24 @@
     for (let i = 0; i < 20 && !yearSelect; i++) { await sleep(300); yearSelect = findYearSelect(); }
     const years = yearSelect ? [...yearSelect.options].map((o) => clean(o.textContent)).filter(isYearOption) : [];
 
+    // Confirmed live: right after arriving here via a scripted navigation
+    // (this job's own location.href, as opposed to a human clicking the
+    // portal's own menu), the Filing Year select can sit on the empty
+    // "Select" placeholder with no year options ever appearing, no matter
+    // how long polled — but a completely fresh page load of this same URL
+    // populates it correctly. Something about the portal's own Angular
+    // bootstrap doesn't finish wiring up the year-list fetch on the first
+    // load in this flow. A silent reload (up to 2 retries) mirrors what
+    // manually revisiting the page fixes, before actually giving up.
+    if (years.length === 0 && (job.refundRetries || 0) < 2) {
+      job.refundRetries = (job.refundRetries || 0) + 1;
+      await setJob(job);
+      banner('Filing Year list came back empty — retrying (' + job.refundRetries + '/2)…' + progress, '#f59e0b');
+      location.href = 'https://services.gst.gov.in/services/auth/trackstatus';
+      return;
+    }
+    delete job.refundRetries;
+
     const allRows = [];
     for (const year of years) {
       const sel = await selectWhereOption(year, { timeout: 5000 });
