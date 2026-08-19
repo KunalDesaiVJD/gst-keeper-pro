@@ -58,19 +58,31 @@ export const buildAdditionalNoticesAndOrdersReport = (clientId: string) => build
 
 // ─────────────────── REFUND (3 reports) ────────────────────────────────────
 
-const REFUND_SELECT = 'arn, refund_type, filed_date, claimed_amount, sanctioned_amount, status, ' +
-  'application_pdf_url, query_memo_pdf_url, order_pdf_url';
-const REFUND_HEADERS = ['ARN', 'Refund Type', 'Filed Date', 'Claimed Amount', 'Sanctioned Amount', 'Status', 'Application', 'Query Memo', 'Order'];
-const REFUND_WIDTHS = [18, 20, 12, 16, 18, 14, 14, 14, 14];
+const REFUND_SELECT = 'arn, refund_type, filed_date, claimed_amount, sanctioned_amount, status, documents';
+const REFUND_HEADERS = ['ARN', 'Refund Type', 'Filed Date', 'Claimed Amount', 'Sanctioned Amount', 'Status', 'Documents'];
+const REFUND_WIDTHS = [18, 20, 12, 16, 18, 14, 12];
 
+interface RefundDocument { tab: string; label: string; url: string; }
+
+// One representative link (the first captured document) so the on-screen
+// preview's generic isUrl() cell renderer picks it up as a clickable "View"
+// automatically — the full {tab, label, url} breakdown per application
+// lives in the `documents` jsonb column itself for anything that needs all
+// of them, not just this report's flat table.
 const refundRow = (r: {
   arn: string | null; refund_type: string | null; filed_date: string | null;
   claimed_amount: number | null; sanctioned_amount: number | null; status: string | null;
-  application_pdf_url: string | null; query_memo_pdf_url: string | null; order_pdf_url: string | null;
-}): (string | number)[] => [
-  r.arn || '—', r.refund_type || '—', r.filed_date || '—', num(r.claimed_amount), num(r.sanctioned_amount), r.status || '—',
-  r.application_pdf_url || '—', r.query_memo_pdf_url || '—', r.order_pdf_url || '—',
-];
+  documents: RefundDocument[] | null;
+}): (string | number)[] => {
+  const docs = Array.isArray(r.documents) ? r.documents : [];
+  // Cell must be a bare URL (or '—') — the on-screen preview's isUrl() check
+  // only tests the string's start, so appending "(+2 more)" text here would
+  // still render as a clickable link but with that suffix baked into the
+  // broken href. The count lives in the ARN's own documents array for
+  // anything that needs the rest, not squeezed into this one flat cell.
+  const docsCell = docs.length === 0 ? '—' : docs[0].url;
+  return [r.arn || '—', r.refund_type || '—', r.filed_date || '—', num(r.claimed_amount), num(r.sanctioned_amount), r.status || '—', docsCell];
+};
 
 export const buildRefundFiledOnPortalReport = async (clientId: string): Promise<ReportTable> => {
   const client = await fetchClient(clientId);
@@ -90,7 +102,7 @@ export const buildRefundFiledOnPortalReport = async (clientId: string): Promise<
     totClaimed += num(r.claimed_amount); totSanctioned += num(r.sanctioned_amount);
     return refundRow(r);
   });
-  tableRows.push(['', 'TOTAL', '', totClaimed, totSanctioned, '', '', '', '']);
+  tableRows.push(['', 'TOTAL', '', totClaimed, totSanctioned, '', '']);
 
   return {
     title: 'Refund Filed On Portal',
@@ -120,7 +132,7 @@ const buildRefundByLedgerReport = async (clientId: string, ledger: 'ITC' | 'Cash
     totClaimed += num(r.claimed_amount); totSanctioned += num(r.sanctioned_amount);
     return refundRow(r);
   });
-  tableRows.push(['', 'TOTAL', '', totClaimed, totSanctioned, '', '', '', '']);
+  tableRows.push(['', 'TOTAL', '', totClaimed, totSanctioned, '', '']);
 
   return {
     title,

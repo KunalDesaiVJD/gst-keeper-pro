@@ -172,7 +172,7 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4'];
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -213,6 +213,7 @@
     else if (job.step === 'notices') await handleNotices(job, cur, progress);
     else if (job.step === 'refunds_warmup') await handleRefundsWarmup(job, cur, progress);
     else if (job.step === 'refunds') await handleRefunds(job, cur, progress);
+    else if (job.step === 'refund_docs') await handleRefundDocs(job, cur, progress);
     else if (job.step === 'drc03') await handleDrc03(job, cur, progress);
     else if (job.step === 'taxpayerprofile') await handleTaxpayerProfile(job, cur, progress);
     else if (job.step === 'challans') await handleChallans(job, cur, progress);
@@ -2460,89 +2461,138 @@
     // for any document-shaped link on whatever view that shows — a details
     // panel, a modal, or an inline row expansion — since the exact markup
     // hasn't been verified against a live account with refund history yet.
-    let docsOk = 0, docsFail = 0;
-    for (const row of allRows) {
-      try {
-        const captured = await captureRefundDocuments(cur.clientId, row.arn);
-        if (captured && (captured.application_pdf_url || captured.query_memo_pdf_url || captured.order_pdf_url)) {
-          await GSTKdb.patchRefundDocument(cur.clientId, row.arn, captured);
-          docsOk++;
-        }
-      } catch (e) { docsFail++; }
-    }
-
     debugPanel([
       'STEP: Refund Applications  (' + location.pathname + ')',
       'years checked     : ' + yearCounts.join(', '),
-      'documents captured: ' + docsOk + ' ok, ' + docsFail + ' failed/none',
       'rows read         : ' + allRows.length,
     ]);
-    banner('Refund applications → ' + allRows.length + ' entries saved. Now DRC-03 filings…' + progress, '#16a34a');
+    banner('Refund applications → ' + allRows.length + ' entries saved. Now Refund documents…' + progress, '#16a34a');
     await sleep(1000);
-    await chainOrStop(job, 'refunds', proceedToDrc03);
+    // Document capture is a distinct navigation (My Applications, not Track
+    // Application Status) — always run it, then let ITS OWN chainOrStop
+    // decide whether to stop here (standalone Refund pull) or continue to
+    // DRC-03 (full reco chain), the same 'refunds' mode check as before.
+    await proceedToRefundDocs(job);
   }
 
-  // Best-effort capture of one refund application's documents (the filed
-  // application, a query memo if the officer raised one, and the sanction/
-  // rejection order), via the page's own "OR ARN" search rather than
-  // clicking into the results table — clicking a row's own link/icon risks
-  // navigating away from the results list mid-scrape and losing whatever
-  // years/rows hadn't been read yet. NOT verified against a live account
-  // with real refund history — the document-link discovery below matches by
-  // keyword against visible text/href rather than a specific selector,
-  // since the actual detail-view markup hasn't been seen. If this comes
-  // back empty on a real run, the exact markup needs a look before it can
-  // be tightened to something more precise.
-  async function captureRefundDocuments(clientId, arn) {
-    if (!arn) return null;
-    const radios = $$('input[type=radio]');
-    if (radios[1]) { radios[1].click(); radios[1].dispatchEvent(new Event('change', { bubbles: true })); }
-    await sleep(400);
-    const arnInput = $$('input[type=text]').find((i) => /arn/i.test(i.placeholder || '') || /arn/i.test(i.id || '') || /arn/i.test(i.name || ''));
-    if (!arnInput) return null;
-    setVal(arnInput, arn);
-    await sleep(200);
-    const searchBtn = $$('button').find((b) => /^search$/i.test((b.textContent || '').trim()));
-    if (!searchBtn) return null;
+  async function proceedToRefundDocs(job) {
+    job.step = 'refund_docs';
+    await setJob(job);
+    location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
+  }
 
-    const before = document.body.textContent.length;
-    searchBtn.click();
-    let changed = false;
-    for (let i = 0; i < 15 && !changed; i++) { await sleep(400); if (document.body.textContent.length !== before) changed = true; }
-    if (!changed) await sleep(500);
+  // Best-effort document harvest for every refund application already saved
+  // by handleRefunds above — via "My Applications" (Application Type =
+  // Refunds), clicking into each ARN's Case Details folder and walking
+  // every sidebar tab (Applications, Notice/Acknowledgement, Replies/
+  // Undertaking/Request, Orders, Audit History), capturing whatever PDF
+  // icon links each tab shows. Confirmed live (screenshots) that this page
+  // is reached at services.gst.gov.in/litserv/auth/case/search — the SAME
+  // URL DRC-03's own automation lands on (proceedToDrc03 below), just
+  // filtered to a different Application Type — and that an ARN's folder
+  // page carries no ARN in its own URL (Angular keeps it in route state
+  // from the click), so a specific ARN can only be reached by clicking its
+  // link from the results list, not a direct deep link. Separate from
+  // handleRefunds' base scrape entirely, so a failure here can never risk
+  // the financial data already saved. NOT verified against a live account —
+  // this is a first pass built from screenshots, not a confirmed working
+  // flow; the debug panel below reports exactly what it found so a failed
+  // run is diagnosable instead of silent.
+  async function handleRefundDocs(job, cur, progress) {
+    if (!/litserv\/auth\/case\/search/.test(url)) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; }
+    banner('Reading Refund application documents…' + progress);
+    if (!(await waitFor('select, input', 15000))) { banner('My Applications did not load — skipped.' + progress, '#f59e0b'); await chainOrStop(job, 'refunds', proceedToDrc03); return; }
 
     const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
-    const links = $$('a[href]').filter((a) => {
-      const href = a.getAttribute('href') || '';
-      const text = clean(a.textContent) + ' ' + (a.title || '') + ' ' + (a.getAttribute('aria-label') || '');
-      return /\.pdf(\?|$)/i.test(href) || /\b(view|download|print)\b/i.test(text);
-    });
-    const categorize = (a) => {
-      const text = (clean(a.textContent) + ' ' + (a.title || '') + ' ' + (a.getAttribute('aria-label') || '') + ' ' + (a.getAttribute('href') || '')).toLowerCase();
-      if (/query|memo|deficien/.test(text)) return 'query_memo_pdf_url';
-      if (/sanction|reject|rfd.?0?6|order/.test(text)) return 'order_pdf_url';
-      if (/application|rfd.?0?1|acknowledg/.test(text)) return 'application_pdf_url';
-      return null;
-    };
+    const typeSel = await selectWhereOption('Refund', { startsWith: true, timeout: 8000 });
+    if (!typeSel) { banner('Could not select "Refunds" on My Applications — skipped.' + progress, '#f59e0b'); await chainOrStop(job, 'refunds', proceedToDrc03); return; }
+    await sleep(500);
 
-    const result = {};
-    for (const a of links) {
-      const href = a.href;
-      if (!href || !/^https?:/i.test(href)) continue;
-      let key = categorize(a);
-      if (!key && links.length === 1) key = 'application_pdf_url'; // one unlabeled link — best guess
-      if (!key || result[key]) continue;
-      try {
-        const r = await fetch(href, { credentials: 'include' });
-        if (!r.ok) continue;
-        const buf = await r.arrayBuffer();
-        if (!buf || buf.byteLength < 200) continue; // guard against an HTML error page, not a real PDF
-        const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
-        const path = 'refund/' + clientId + '/' + arn.replace(/[^A-Za-z0-9]/g, '_') + '_' + key.replace('_pdf_url', '') + '.pdf';
-        result[key] = await GSTKdb.uploadPdf(path, dataUrl);
-      } catch (e) { /* skip this one document, keep any others already found */ }
+    // Cover the client's full history, matching DRC-03's own date range.
+    const dateInputs = $$('input').filter((i) => /date/i.test((i.placeholder || '') + (i.id || '') + (i.name || '')));
+    if (dateInputs[0]) setVal(dateInputs[0], '01/07/2017');
+    if (dateInputs[1]) setVal(dateInputs[1], shownTodayDdMmYyyy());
+    await sleep(200);
+
+    const searchBtn = $$('button').find((b) => /^search$/i.test(clean(b.textContent)));
+    if (!searchBtn) { banner('No Search button on My Applications — skipped.' + progress, '#f59e0b'); await chainOrStop(job, 'refunds', proceedToDrc03); return; }
+    searchBtn.click();
+    await sleep(1500);
+
+    const isArnLike = (s) => /^[A-Z]{2}\d{10,}[A-Z0-9]*$/.test(s);
+    const TAB_NAMES = ['APPLICATIONS', 'NOTICE/ACKNOWLEDGEMENT', 'REPLIES/UNDERTAKING/REQUEST', 'ORDERS', 'AUDIT HISTORY'];
+
+    const seenArns = new Set();
+    const byArn = new Map();
+    let docsOk = 0, docsFail = 0;
+
+    for (let page = 0; page < 20; page++) {
+      const arnLinks = $$('a').filter((a) => isArnLike(clean(a.textContent)) && !seenArns.has(clean(a.textContent)));
+      if (arnLinks.length === 0) break;
+
+      for (const a of arnLinks) {
+        const arn = clean(a.textContent);
+        seenArns.add(arn);
+        try {
+          a.click();
+          let onFolder = false;
+          for (let w = 0; w < 20 && !onFolder; w++) { await sleep(400); if (/litserv\/auth\/case\/folder/.test(location.href)) onFolder = true; }
+          if (!onFolder) continue;
+          await sleep(500);
+
+          const tabEls = $$('*').filter((el) => el.children.length === 0 && TAB_NAMES.includes(clean(el.textContent).toUpperCase()));
+          for (const tabEl of tabEls) {
+            const tabName = clean(tabEl.textContent);
+            tabEl.click();
+            await sleep(800);
+            const icons = $$('img, a').filter((el) => /pdf/i.test((el.getAttribute('src') || '') + (el.getAttribute('href') || '') + (el.className || '')));
+            for (const icon of icons) {
+              const link = icon.closest('a') || icon;
+              const href = link.href || link.getAttribute('href') || '';
+              const label = clean((link.textContent || '')) || clean((link.title || '')) || tabName;
+              if (!/^https?:/i.test(href)) { docsFail++; continue; }
+              try {
+                const r = await fetch(href, { credentials: 'include' });
+                if (!r.ok) { docsFail++; continue; }
+                const buf = await r.arrayBuffer();
+                if (!buf || buf.byteLength < 200) { docsFail++; continue; } // guard against an HTML error page, not a real PDF
+                const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
+                const path = 'refund/' + cur.clientId + '/' + arn.replace(/[^A-Za-z0-9]/g, '_') + '/' + tabName.replace(/[^A-Za-z0-9]/g, '_') + '_' + label.replace(/[^A-Za-z0-9]/g, '_') + '.pdf';
+                const url = await GSTKdb.uploadPdf(path, dataUrl);
+                if (!byArn.has(arn)) byArn.set(arn, []);
+                byArn.get(arn).push({ tab: tabName, label, url });
+                docsOk++;
+              } catch (e) { docsFail++; }
+            }
+          }
+        } catch (e) { /* keep going with the next ARN */ }
+
+        // Back to the results list for the next ARN — Angular route state,
+        // not a plain page, so a browser Back is what should restore it.
+        history.back();
+        let restored = false;
+        for (let w = 0; w < 20 && !restored; w++) { await sleep(400); if (/litserv\/auth\/case\/search/.test(location.href) && $$('a').some((x) => isArnLike(clean(x.textContent)))) restored = true; }
+        if (!restored) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; } // lost the list — stop rather than loop wrong
+      }
+
+      const next = $$('a, button').find((a) => clean(a.textContent) === '»');
+      if (!next) break;
+      next.click();
+      await sleep(1200);
     }
-    return Object.keys(result).length ? result : null;
+
+    for (const [arn, documents] of byArn) {
+      try { await GSTKdb.patchRefundDocument(cur.clientId, arn, { documents }); } catch (e) { /* non-fatal */ }
+    }
+
+    debugPanel([
+      'STEP: Refund Application Documents  (' + location.pathname + ')',
+      'ARNs visited      : ' + seenArns.size,
+      'documents captured: ' + docsOk + ' ok, ' + docsFail + ' failed/none',
+    ]);
+    banner('Refund documents → ' + docsOk + ' captured across ' + byArn.size + ' application(s).' + progress, '#16a34a');
+    await sleep(1000);
+    await chainOrStop(job, 'refunds', proceedToDrc03);
   }
 
   async function proceedToDrc03(job) {
