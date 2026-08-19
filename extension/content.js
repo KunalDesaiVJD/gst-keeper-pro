@@ -2473,6 +2473,17 @@
     ]);
     banner('Refund applications → ' + allRows.length + ' entries saved. Now Refund documents…' + progress, '#16a34a');
     await sleep(1000);
+    // The Filing Year dropdown just scraped above only ever lists years the
+    // portal actually offers for THIS GSTIN — its earliest entry is exactly
+    // this client's real registration-era floor (e.g. 2023-24 for a client
+    // registered in 2023), not GST's 2017 inception for everyone. Pass it
+    // through the job so the document harvest below doesn't walk 89-day
+    // windows across years this client couldn't possibly have data in.
+    const earliestYear = years.reduce((min, y) => {
+      const yr = parseInt(y.slice(0, 4), 10);
+      return Number.isFinite(yr) && (min == null || yr < min) ? yr : min;
+    }, null);
+    if (earliestYear) job.refundEarliestYear = earliestYear;
     // Document capture is a distinct navigation (My Applications, not Track
     // Application Status) — always run it, then let ITS OWN chainOrStop
     // decide whether to stop here (standalone Refund pull) or continue to
@@ -2523,13 +2534,20 @@
     // This form enforces a 3-month window per search (confirmed live — see
     // the same note on handleDrc03 below: that page's OWN case/search JSON
     // API has no such cap, only its UI form does). Same style of limit as
-    // Challan Summary's own ~5.5-month cap, walked here in 89-day steps back
-    // to GST inception — a single full-range search here silently fails
-    // the portal's own validation and returns nothing.
+    // Challan Summary's own ~5.5-month cap, walked here in 89-day steps —
+    // a single full-range search here silently fails the portal's own
+    // validation and returns nothing. Start from this client's earliest
+    // Filing Year (handleRefunds stashed it on the job) rather than GST's
+    // 2017 inception for every client — walking a decade of guaranteed-
+    // empty windows for a client that only registered in 2023 is real
+    // wasted time, not caution.
     const p2 = (n) => String(n).padStart(2, '0');
     const fmt = (d) => p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + '/' + d.getFullYear();
     const windows = [];
-    let winStart = new Date(2017, 6, 1);
+    // Month 3 (April) when using a Filing-Year floor — FYs run Apr-Mar, so
+    // April 1 of the earliest FY covers it fully; month 6 (July) only when
+    // falling back to GST's actual 01/07/2017 inception date.
+    let winStart = job.refundEarliestYear ? new Date(job.refundEarliestYear, 3, 1) : new Date(2017, 6, 1);
     const today = new Date();
     while (winStart <= today) {
       const winEnd = new Date(winStart.getTime() + 89 * 24 * 60 * 60 * 1000);
@@ -2544,7 +2562,10 @@
     const byArn = new Map();
     let docsOk = 0, docsFail = 0, windowsFailed = 0;
 
+    let winIdx = 0;
     for (const [fromStr, toStr] of windows) {
+      winIdx++;
+      banner('Reading Refund documents — window ' + winIdx + '/' + windows.length + ' (' + fromStr + '–' + toStr + ')…' + progress);
       const di = findDateInputs();
       const searchBtn = findSearchBtn();
       if (di.length < 2 || !searchBtn) { windowsFailed++; continue; }
