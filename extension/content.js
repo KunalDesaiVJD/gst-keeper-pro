@@ -2332,7 +2332,13 @@
 
     const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
     const isRefundTable = (t) => /ARN/i.test(t.textContent || '') && /GSTIN/i.test(t.textContent || '');
-    const findYearSelect = () => $$('select').find((s) => [...s.options].some((o) => /^\d{4}-\d{2}$/.test(clean(o.textContent))));
+    // Accepts both "2024-25" and "2024-2025" — confirmed live the option
+    // text is 4-digit-dash-4-digit ("2024-2025"), not the 2-digit form used
+    // by GSTR-1/3B period pickers elsewhere on the portal; the old regex
+    // required exactly 2 trailing digits so it matched zero options here,
+    // even though the <select> had real year options a manual click showed.
+    const isYearOption = (t) => /^\d{4}-\d{2,4}$/.test(t);
+    const findYearSelect = () => $$('select').find((s) => [...s.options].some((o) => isYearOption(clean(o.textContent))));
 
     // The Filing Year <select>'s options populate asynchronously after the
     // radio click (Angular re-fetches the offered years) — a fixed sleep
@@ -2341,7 +2347,7 @@
     // instead of guessing a delay.
     let yearSelect = null;
     for (let i = 0; i < 20 && !yearSelect; i++) { await sleep(300); yearSelect = findYearSelect(); }
-    const years = yearSelect ? [...yearSelect.options].map((o) => clean(o.textContent)).filter((t) => /^\d{4}-\d{2}$/.test(t)) : [];
+    const years = yearSelect ? [...yearSelect.options].map((o) => clean(o.textContent)).filter(isYearOption) : [];
 
     const allRows = [];
     for (const year of years) {
