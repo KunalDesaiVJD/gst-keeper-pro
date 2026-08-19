@@ -13,6 +13,10 @@
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => [...document.querySelectorAll(s)];
   const url = location.href;
+  // Used by parseDrc03Case(), called from the job dispatcher below — must be
+  // initialized before that point in the script's top-to-bottom execution,
+  // not down near where it's textually used, or it's a TDZ ReferenceError.
+  const MONTH_ABBR = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
 
   async function waitFor(sel, ms = 20000) {
     const t = Date.now();
@@ -168,7 +172,7 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4'];
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -207,7 +211,9 @@
     else if (job.step === 'liabilityledger') await handleLiabilityLedger(job, cur, progress);
     else if (job.step === 'cashledger') await handleCashLedger(job, cur, progress);
     else if (job.step === 'notices') await handleNotices(job, cur, progress);
+    else if (job.step === 'refunds_warmup') await handleRefundsWarmup(job, cur, progress);
     else if (job.step === 'refunds') await handleRefunds(job, cur, progress);
+    else if (job.step === 'refund_docs') await handleRefundDocs(job, cur, progress);
     else if (job.step === 'drc03') await handleDrc03(job, cur, progress);
     else if (job.step === 'taxpayerprofile') await handleTaxpayerProfile(job, cur, progress);
     else if (job.step === 'challans') await handleChallans(job, cur, progress);
@@ -306,10 +312,17 @@
         await setJob(job);
         location.href = 'https://services.gst.gov.in/services/auth/notices';
       } else if (job.mode === 'refunds') {
-        banner('Logged in — reading Refund applications…' + progress);
-        job.step = 'refunds';
+        // Confirmed live: jumping straight to Track Application Status right
+        // after login can leave the Filing Year list permanently empty (no
+        // years ever render, no matter how long polled or how many times
+        // the same URL is reloaded) — visiting the Dashboard first, the way
+        // a human browsing normally would before reaching this page, fixes
+        // it. Always warm up this way rather than only on retry, since the
+        // very first attempt already showed the failure with no retry yet.
+        banner('Logged in — opening the dashboard first…' + progress);
+        job.step = 'refunds_warmup';
         await setJob(job);
-        location.href = 'https://services.gst.gov.in/services/auth/trackstatus';
+        location.href = 'https://services.gst.gov.in/services/auth/dashboard';
       } else if (job.mode === 'drc03') {
         banner('Logged in — reading DRC-03 filings…' + progress);
         job.step = 'drc03';
@@ -2300,6 +2313,23 @@
   }
 
   async function proceedToRefunds(job) {
+    // Same Dashboard warm-up as the standalone Refund pull's login branch
+    // above — the full ledger/reco chain reaches Track Application Status
+    // by the same direct URL, so it's exposed to the identical empty-year
+    // bug without this stop.
+    job.step = 'refunds_warmup';
+    await setJob(job);
+    location.href = 'https://services.gst.gov.in/services/auth/dashboard';
+  }
+
+  async function handleRefundsWarmup(job, cur, progress) {
+    if (!/\/services\/auth\/dashboard/.test(url)) { location.href = 'https://services.gst.gov.in/services/auth/dashboard'; return; }
+    banner('Warming up the dashboard before Refunds…' + progress);
+    // Wait for the Dashboard to actually finish rendering (its "Ledger
+    // Balance" panel), not just a blind sleep — the whole point is landing
+    // here the same way a human genuinely would before moving on.
+    await waitFor('button', 10000);
+    await sleep(800);
     job.step = 'refunds';
     await setJob(job);
     location.href = 'https://services.gst.gov.in/services/auth/trackstatus';
@@ -2325,26 +2355,73 @@
     // "Filing Year" is the first of the two radio buttons (Filing Year / ARN).
     const radios = $$('input[type=radio]');
     if (radios[0]) { radios[0].click(); radios[0].dispatchEvent(new Event('change', { bubbles: true })); }
-    await sleep(500);
 
     const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
     const isRefundTable = (t) => /ARN/i.test(t.textContent || '') && /GSTIN/i.test(t.textContent || '');
+    // Accepts both "2024-25" and "2024-2025" — confirmed live the option
+    // text is 4-digit-dash-4-digit ("2024-2025"), not the 2-digit form used
+    // by GSTR-1/3B period pickers elsewhere on the portal; the old regex
+    // required exactly 2 trailing digits so it matched zero options here,
+    // even though the <select> had real year options a manual click showed.
+    const isYearOption = (t) => /^\d{4}-\d{2,4}$/.test(t);
+    const findYearSelect = () => $$('select').find((s) => [...s.options].some((o) => isYearOption(clean(o.textContent))));
 
-    // Read every year option the portal actually offers for this GSTIN,
-    // rather than assuming a fixed range.
-    const yearSelect = $$('select').find((s) => [...s.options].some((o) => /^\d{4}-\d{2}$/.test(clean(o.textContent))));
-    const years = yearSelect ? [...yearSelect.options].map((o) => clean(o.textContent)).filter((t) => /^\d{4}-\d{2}$/.test(t)) : [];
+    // The Filing Year <select>'s options populate asynchronously after the
+    // radio click (Angular re-fetches the offered years) — a fixed sleep
+    // here used to read the DOM before that landed, finding only the
+    // placeholder "Select" option and silently pulling zero years. Poll
+    // instead of guessing a delay.
+    let yearSelect = null;
+    for (let i = 0; i < 20 && !yearSelect; i++) { await sleep(300); yearSelect = findYearSelect(); }
+    const years = yearSelect ? [...yearSelect.options].map((o) => clean(o.textContent)).filter(isYearOption) : [];
+
+    // Confirmed live: reloading THIS SAME trackstatus URL directly does NOT
+    // reliably fix an empty Filing Year list, even repeated — routing back
+    // through the Dashboard warm-up (handleRefundsWarmup / proceedToRefunds
+    // above) first is what a human revisiting the page normally does, and
+    // is what actually populates it. Retry via that warm-up, not a bare
+    // reload of this URL, before giving up.
+    if (years.length === 0 && (job.refundRetries || 0) < 2) {
+      job.refundRetries = (job.refundRetries || 0) + 1;
+      job.step = 'refunds_warmup';
+      await setJob(job);
+      banner('Filing Year list came back empty — retrying via dashboard (' + job.refundRetries + '/2)…' + progress, '#f59e0b');
+      location.href = 'https://services.gst.gov.in/services/auth/dashboard';
+      return;
+    }
+    delete job.refundRetries;
 
     const allRows = [];
+    const yearCounts = [];
     for (const year of years) {
-      const sel = await selectWhereOption(year, { timeout: 5000 });
-      if (!sel) continue;
+      // selectWhereOption already retries internally against transient DOM
+      // churn, but reselecting the SAME <select> repeatedly in this loop (one
+      // heavy Angular re-render per prior year's search) is a harsher case
+      // than its normal callers — give a year one extra attempt before
+      // silently skipping it, and record which years actually failed instead
+      // of leaving no trace at all.
+      let sel = await selectWhereOption(year, { timeout: 5000 });
+      if (!sel) sel = await selectWhereOption(year, { timeout: 5000 });
+      if (!sel) { yearCounts.push(year + ':select-failed'); continue; }
       await sleep(300);
       const searchBtn = $$('button').find((b) => /^search$/i.test(clean(b.textContent)));
-      if (!searchBtn) continue;
+      if (!searchBtn) { yearCounts.push(year + ':no-search-btn'); continue; }
+      const beforeSearch = (($$('table').find(isRefundTable) || {}).textContent) || '';
       searchBtn.click();
-      await sleep(1500);
+      // A fixed sleep here used to read the table before a slower (busier,
+      // usually more recent) year's search had actually resolved — silently
+      // re-scraping the PREVIOUS year's stale table (or an empty pre-search
+      // one) and reporting zero rows for what was really just "not done
+      // loading yet". Poll for the table to actually change instead.
+      let settled = false;
+      for (let w = 0; w < 20 && !settled; w++) {
+        await sleep(400);
+        const t = $$('table').find(isRefundTable);
+        if (t && t.textContent !== beforeSearch) settled = true;
+      }
+      if (!settled) await sleep(500);
 
+      let yearRows = 0;
       for (let page = 0; page < 20; page++) {
         const table = $$('table').find(isRefundTable);
         if (!table) break;
@@ -2365,6 +2442,7 @@
             sanctioned_amount: null,
             status: tds[7] || null,
           });
+          yearRows++;
         }
         const next = $$('a, button').find((a) => clean(a.textContent) === '»');
         if (!next) break;
@@ -2374,17 +2452,243 @@
         const tableAfter = $$('table').find(isRefundTable);
         if (!tableAfter || tableAfter.textContent === before) break; // no change -> no more pages
       }
+      yearCounts.push(year + ':' + yearRows);
     }
 
     try { await GSTKdb.replaceRefundApplications(cur.clientId, allRows); } catch (e) { /* non-fatal */ }
+
     debugPanel([
       'STEP: Refund Applications  (' + location.pathname + ')',
-      'years checked     : ' + years.join(', '),
+      'years checked     : ' + yearCounts.join(', '),
       'rows read         : ' + allRows.length,
     ]);
-    banner('Refund applications → ' + allRows.length + ' entries saved. Now DRC-03 filings…' + progress, '#16a34a');
+    banner('Refund applications → ' + allRows.length + ' entries saved. Now Refund documents…' + progress, '#16a34a');
+    await sleep(1000);
+    // The Filing Year dropdown just scraped above only ever lists years the
+    // portal actually offers for THIS GSTIN — its earliest entry is exactly
+    // this client's real registration-era floor (e.g. 2023-24 for a client
+    // registered in 2023), not GST's 2017 inception for everyone. Pass it
+    // through the job so the document harvest below doesn't walk 89-day
+    // windows across years this client couldn't possibly have data in.
+    const earliestYear = years.reduce((min, y) => {
+      const yr = parseInt(y.slice(0, 4), 10);
+      return Number.isFinite(yr) && (min == null || yr < min) ? yr : min;
+    }, null);
+    if (earliestYear) job.refundEarliestYear = earliestYear;
+    // Document capture is a distinct navigation (My Applications, not Track
+    // Application Status) — always run it, then let ITS OWN chainOrStop
+    // decide whether to stop here (standalone Refund pull) or continue to
+    // DRC-03 (full reco chain), the same 'refunds' mode check as before.
+    await proceedToRefundDocs(job);
+  }
+
+  async function proceedToRefundDocs(job) {
+    job.step = 'refund_docs';
+    await setJob(job);
+    location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
+  }
+
+  // Best-effort document harvest for every refund application already saved
+  // by handleRefunds above — via "My Applications" (Application Type =
+  // Refunds), clicking into each ARN's Case Details folder and walking
+  // every sidebar tab (Applications, Notice/Acknowledgement, Replies/
+  // Undertaking/Request, Orders, Audit History), capturing whatever PDF
+  // icon links each tab shows. Confirmed live (screenshots) that this page
+  // is reached at services.gst.gov.in/litserv/auth/case/search — the SAME
+  // URL DRC-03's own automation lands on (proceedToDrc03 below), just
+  // filtered to a different Application Type — and that an ARN's folder
+  // page carries no ARN in its own URL (Angular keeps it in route state
+  // from the click), so a specific ARN can only be reached by clicking its
+  // link from the results list, not a direct deep link. Separate from
+  // handleRefunds' base scrape entirely, so a failure here can never risk
+  // the financial data already saved. NOT verified against a live account —
+  // this is a first pass built from screenshots, not a confirmed working
+  // flow; the debug panel below reports exactly what it found so a failed
+  // run is diagnosable instead of silent.
+  function buildRefundWindows(earliestYear) {
+    // This form enforces a 3-month window per search (confirmed live — see
+    // the same note on handleDrc03 below: that page's OWN case/search JSON
+    // API has no such cap, only its UI form does). Same style of limit as
+    // Challan Summary's own ~5.5-month cap, walked here in 89-day steps —
+    // a single full-range search here silently fails the portal's own
+    // validation and returns nothing. Starts from this client's earliest
+    // Filing Year (handleRefunds stashed it on the job) rather than GST's
+    // 2017 inception for every client — month 3 (April) since FYs run
+    // Apr-Mar, vs month 6 (July, GST's actual inception) for the fallback.
+    const p2 = (n) => String(n).padStart(2, '0');
+    const fmt = (d) => p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + '/' + d.getFullYear();
+    const windows = [];
+    let winStart = earliestYear ? new Date(earliestYear, 3, 1) : new Date(2017, 6, 1);
+    const today = new Date();
+    while (winStart <= today) {
+      const winEnd = new Date(winStart.getTime() + 89 * 24 * 60 * 60 * 1000);
+      windows.push([fmt(winStart), fmt(winEnd > today ? today : winEnd)]);
+      winStart = new Date(winEnd.getTime() + 24 * 60 * 60 * 1000);
+    }
+    return windows;
+  }
+
+  async function finishRefundDocs(job, extra) {
+    debugPanel([
+      'STEP: Refund Application Documents  (' + location.pathname + ')',
+      'windows checked   : ' + buildRefundWindows(job.refundEarliestYear).length + ' (89-day steps from ' + (job.refundEarliestYear ? job.refundEarliestYear + '-04-01' : '2017-07-01') + '), ' + (job.refundWindowsFailed || 0) + ' failed',
+      'ARNs visited      : ' + (job.refundSeenArns || []).length,
+      'documents captured: ' + (job.refundDocsOk || 0) + ' ok, ' + (job.refundDocsFail || 0) + ' failed/none' + (extra || ''),
+      'window regressions: ' + (job.refundRegressionCount || 0) + ' (should always be 0 — see handleRefundDocs comments if not)',
+    ]);
+    banner('Refund documents → ' + (job.refundDocsOk || 0) + ' captured across ' + (job.refundArnsWithDocs || 0) + ' application(s).' + (job._progress || ''), extra ? '#dc2626' : '#16a34a');
+    delete job.refundWindowIdx; delete job.refundSeenArns; delete job.refundDocsOk; delete job.refundDocsFail;
+    delete job.refundArnsWithDocs; delete job.refundWindowsFailed; delete job.refundConsecutiveFailures;
+    delete job.refundMaxWindowIdx; delete job.refundRegressionCount;
     await sleep(1000);
     await chainOrStop(job, 'refunds', proceedToDrc03);
+  }
+
+  // Processes exactly ONE refund application per invocation, then hard-
+  // navigates back to My Applications and returns — relying on the job
+  // dispatcher's normal per-page-load re-entry to pick up the next one,
+  // rather than looping internally with history.back() to return to the
+  // results list. That was tried first and confirmed unreliable live: this
+  // app pushes more than one history entry per ARN visited (the folder
+  // navigation itself, plus apparently at least one per sidebar tab click),
+  // so a single history.back() didn't reliably land back on the CURRENT
+  // window's results — it could land several entries further back, on an
+  // EARLIER window's still-cached results, which is exactly the "fetched
+  // 2024, then looped back to re-searching 2023" symptom. A full page
+  // reload + re-search of the SAME window (tracked via job.refundWindowIdx,
+  // not the browser's own history stack) is slower per application but
+  // deterministic regardless of how many history entries anything pushes.
+  async function handleRefundDocs(job, cur, progress) {
+    if (!/litserv\/auth\/case\/search/.test(url)) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; }
+    job._progress = progress;
+    if (!(await waitFor('select, input', 15000))) { banner('My Applications did not load — skipped.' + progress, '#f59e0b'); await finishRefundDocs(job); return; }
+
+    const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    const windows = buildRefundWindows(job.refundEarliestYear);
+    const seenArns = new Set(job.refundSeenArns || []);
+    let winIdx = job.refundWindowIdx || 0;
+    let docsOk = job.refundDocsOk || 0, docsFail = job.refundDocsFail || 0;
+    let arnsWithDocs = job.refundArnsWithDocs || 0, windowsFailed = job.refundWindowsFailed || 0;
+    let consecutiveFailures = job.refundConsecutiveFailures || 0;
+    // Self-healing safety net: the window index should only ever move
+    // forward across reloads (it's read back from storage, not derived
+    // from anything the portal's own navigation could disturb) — but if
+    // storage ever somehow returned a stale/older value, clamp forward
+    // rather than silently re-processing earlier windows. Surfaces as a
+    // WARNING line in the debug panel if it ever actually triggers, so a
+    // real regression is provable instead of guessed at from a screenshot.
+    if (winIdx < (job.refundMaxWindowIdx || 0)) {
+      job.refundRegressionCount = (job.refundRegressionCount || 0) + 1;
+      banner('Window index regressed (' + winIdx + ' -> was at ' + job.refundMaxWindowIdx + ') — correcting forward…' + progress, '#f59e0b');
+      winIdx = job.refundMaxWindowIdx;
+      await sleep(1200);
+    }
+    job.refundMaxWindowIdx = Math.max(job.refundMaxWindowIdx || 0, winIdx);
+
+    if (consecutiveFailures >= 10) {
+      await finishRefundDocs(job, ' — STOPPED EARLY: 10 failures in a row with zero successes (session likely died — or if this recurs on a fresh session too, the PDF-icon detection doesn\'t match this portal\'s real markup)');
+      return;
+    }
+
+    const typeSel = await selectWhereOption('Refund', { startsWith: true, timeout: 8000 });
+    if (!typeSel) { banner('Could not select "Refunds" on My Applications — skipped.' + progress, '#f59e0b'); await finishRefundDocs(job); return; }
+    await sleep(500);
+
+    const findDateInputs = () => $$('input').filter((i) => /date/i.test((i.placeholder || '') + (i.id || '') + (i.name || '')));
+    const findSearchBtn = () => $$('button').find((b) => /^search$/i.test(clean(b.textContent)));
+    const isArnLike = (s) => /^[A-Z]{2}\d{10,}[A-Z0-9]*$/.test(s);
+    const findUnseenArnLink = () => $$('a').find((a) => isArnLike(clean(a.textContent)) && !seenArns.has(clean(a.textContent)));
+
+    // Advance through windows and pagination — all still within THIS one
+    // page load, no navigation involved yet — until an unseen ARN turns up
+    // or every window is exhausted.
+    let targetLink = null;
+    while (winIdx < windows.length && !targetLink) {
+      const [fromStr, toStr] = windows[winIdx];
+      // Includes total applications processed so far — the SAME window
+      // number repeating across reloads is expected (and not stuck/looping)
+      // whenever that window has more than one application in it; this
+      // count is how to tell the two apart from the banner alone.
+      banner('Reading Refund documents — window ' + (winIdx + 1) + '/' + windows.length + ' (' + fromStr + '–' + toStr + '), ' + seenArns.size + ' application(s) done so far…' + progress);
+      const di = findDateInputs();
+      const searchBtn = findSearchBtn();
+      if (di.length < 2 || !searchBtn) { windowsFailed++; winIdx++; continue; }
+      setVal(di[0], fromStr);
+      setVal(di[1], toStr);
+      await sleep(200);
+      searchBtn.click();
+      await sleep(1500);
+
+      targetLink = findUnseenArnLink();
+      for (let p = 0; p < 20 && !targetLink; p++) {
+        const next = $$('a, button').find((el) => clean(el.textContent) === '»');
+        if (!next) break;
+        next.click();
+        await sleep(1200);
+        targetLink = findUnseenArnLink();
+      }
+      if (!targetLink) winIdx++;
+    }
+
+    if (!targetLink) {
+      job.refundWindowIdx = winIdx; job.refundSeenArns = [...seenArns];
+      job.refundDocsOk = docsOk; job.refundDocsFail = docsFail;
+      job.refundArnsWithDocs = arnsWithDocs; job.refundWindowsFailed = windowsFailed;
+      await finishRefundDocs(job);
+      return;
+    }
+
+    const arn = clean(targetLink.textContent);
+    seenArns.add(arn);
+    const arnDocs = [];
+    try {
+      targetLink.click();
+      let onFolder = false;
+      for (let w = 0; w < 20 && !onFolder; w++) { await sleep(400); if (/litserv\/auth\/case\/folder/.test(location.href)) onFolder = true; }
+      if (onFolder) {
+        await sleep(500);
+        const TAB_NAMES = ['APPLICATIONS', 'NOTICE/ACKNOWLEDGEMENT', 'REPLIES/UNDERTAKING/REQUEST', 'ORDERS', 'AUDIT HISTORY'];
+        const tabEls = $$('*').filter((el) => el.children.length === 0 && TAB_NAMES.includes(clean(el.textContent).toUpperCase()));
+        for (const tabEl of tabEls) {
+          const tabName = clean(tabEl.textContent);
+          tabEl.click();
+          await sleep(800);
+          const icons = $$('img, a').filter((el) => /pdf/i.test((el.getAttribute('src') || '') + (el.getAttribute('href') || '') + (el.className || '')));
+          for (const icon of icons) {
+            const link = icon.closest('a') || icon;
+            const href = link.href || link.getAttribute('href') || '';
+            const label = clean((link.textContent || '')) || clean((link.title || '')) || tabName;
+            if (!/^https?:/i.test(href)) { docsFail++; consecutiveFailures++; continue; }
+            try {
+              const r = await fetch(href, { credentials: 'include' });
+              if (!r.ok) { docsFail++; consecutiveFailures++; continue; }
+              const buf = await r.arrayBuffer();
+              if (!buf || buf.byteLength < 200) { docsFail++; consecutiveFailures++; continue; } // guard against an HTML error page, not a real PDF
+              const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
+              const path = 'refund/' + cur.clientId + '/' + arn.replace(/[^A-Za-z0-9]/g, '_') + '/' + tabName.replace(/[^A-Za-z0-9]/g, '_') + '_' + label.replace(/[^A-Za-z0-9]/g, '_') + '.pdf';
+              const url = await GSTKdb.uploadPdf(path, dataUrl);
+              arnDocs.push({ tab: tabName, label, url });
+              docsOk++;
+              consecutiveFailures = 0;
+            } catch (e) { docsFail++; consecutiveFailures++; }
+            if (consecutiveFailures >= 10) break;
+          }
+          if (consecutiveFailures >= 10) break;
+        }
+      }
+    } catch (e) { /* keep going with the next ARN */ }
+
+    if (arnDocs.length) {
+      try { await GSTKdb.patchRefundDocument(cur.clientId, arn, { documents: arnDocs }); arnsWithDocs++; } catch (e) { /* non-fatal */ }
+    }
+
+    job.refundWindowIdx = winIdx; // same window next time — more unseen ARNs may still be in it
+    job.refundSeenArns = [...seenArns];
+    job.refundDocsOk = docsOk; job.refundDocsFail = docsFail;
+    job.refundArnsWithDocs = arnsWithDocs; job.refundWindowsFailed = windowsFailed;
+    job.refundConsecutiveFailures = consecutiveFailures;
+    await setJob(job);
+    location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
   }
 
   async function proceedToDrc03(job) {
@@ -2392,8 +2696,6 @@
     await setJob(job);
     location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
   }
-
-  const MONTH_ABBR = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
 
   // DRC-03 voluntary payments -> the 3 DRC-03 reports, with full per-head
   // detail and a saved copy of each filing's PDF. services.gst.gov.in's own

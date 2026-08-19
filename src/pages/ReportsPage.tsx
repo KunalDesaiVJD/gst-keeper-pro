@@ -12,6 +12,14 @@ import { renderReportToPdf } from '@/utils/closingBalanceReportsPdf';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { REPORTS_CATALOG } from '@/lib/reportsCatalog';
 import { ReportsBrowser } from '@/components/reports/ReportsBrowser';
+import { ReportPreviewDialog } from '@/components/reports/ReportPreviewDialog';
+import type { ReportTable } from '@/utils/allClientsReports';
+
+// Piloting the on-screen preview (see ReportPreviewDialog) on the three
+// categories that were actively broken/complained about — Notices, Refund,
+// DRC-03 — before rolling the pattern out to the rest of the catalog.
+const PREVIEWABLE_CATEGORIES = new Set(['notice', 'refund', 'drc03']);
+const isPreviewable = (report: ReportDefinition) => PREVIEWABLE_CATEGORIES.has(report.category);
 
 interface ClientLite { id: string; name: string; gstin: string; }
 
@@ -23,6 +31,12 @@ const ReportsPage: React.FC = () => {
   const [busy, setBusy] = useState<{ key: string; format: 'xlsx' | 'pdf' } | null>(null);
   const [extReady, setExtReady] = useState(false);
   const [pullingKey, setPullingKey] = useState<string | null>(null);
+  const [previewReport, setPreviewReport] = useState<ReportDefinition | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewTable, setPreviewTable] = useState<ReportTable | null>(null);
+  const [previewExportBusy, setPreviewExportBusy] = useState<'xlsx' | 'pdf' | null>(null);
 
   useEffect(() => {
     supabase.from('clients').select('id, name, gstin').order('name').then(({ data }) => {
@@ -111,6 +125,45 @@ const ReportsPage: React.FC = () => {
     }
   };
 
+  const handlePreview = useCallback(async (report: ReportDefinition) => {
+    if ((report.needs === 'month' || report.needs === 'client+month') && !selectedMonth) {
+      toast.error('Pick a month first.');
+      return;
+    }
+    if ((report.needs === 'client+month' || report.needs === 'client') && !selectedClientId) {
+      toast.error('Pick a client first.');
+      return;
+    }
+    setPreviewReport(report);
+    setPreviewOpen(true);
+    setPreviewLoading(true);
+    setPreviewError(null);
+    setPreviewTable(null);
+    try {
+      const table = await report.build({ month: selectedMonth, clientId: selectedClientId });
+      setPreviewTable(table);
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [selectedMonth, selectedClientId]);
+
+  const handleExportFromPreview = async (format: 'xlsx' | 'pdf') => {
+    if (!previewTable) return;
+    setPreviewExportBusy(format);
+    try {
+      if (format === 'xlsx') renderReportToExcel(previewTable);
+      else renderReportToPdf(previewTable);
+      toast.success(`${previewTable.title} downloaded.`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      toast.error(`Failed: ${message}`);
+    } finally {
+      setPreviewExportBusy(null);
+    }
+  };
+
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
   return (
@@ -134,6 +187,18 @@ const ReportsPage: React.FC = () => {
         onPullSection={handlePullSection}
         pullingKey={pullingKey}
         extReady={extReady}
+        isPreviewable={isPreviewable}
+        onPreview={handlePreview}
+      />
+      <ReportPreviewDialog
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        title={previewReport?.title || ''}
+        loading={previewLoading}
+        error={previewError}
+        table={previewTable}
+        onExport={handleExportFromPreview}
+        exportBusy={previewExportBusy}
       />
     </div>
   );

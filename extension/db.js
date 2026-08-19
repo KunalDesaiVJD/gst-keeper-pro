@@ -28,6 +28,7 @@
     replaceCashLedgerEntries: (clientId, period, rows) => call('replaceCashLedgerEntries', clientId, period, rows),
     replaceNotices: (clientId, rows) => call('replaceNotices', clientId, rows),
     replaceRefundApplications: (clientId, rows) => call('replaceRefundApplications', clientId, rows),
+    patchRefundDocument: (clientId, arn, patchObj) => call('patchRefundDocument', clientId, arn, patchObj),
     replaceDrc03Filings: (clientId, rows) => call('replaceDrc03Filings', clientId, rows),
     upsertTaxpayerProfile: (clientId, patchObj) => call('upsertTaxpayerProfile', clientId, patchObj),
     replaceChallans: (clientId, rows) => call('replaceChallans', clientId, rows),

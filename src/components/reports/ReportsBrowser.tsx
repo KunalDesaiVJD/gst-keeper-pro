@@ -8,7 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import {
-  FileSpreadsheet, FileText, Loader2, Search, Star, X, LayoutGrid, DownloadCloud,
+  FileSpreadsheet, FileText, Loader2, Search, Star, X, LayoutGrid, DownloadCloud, Eye,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -46,6 +46,14 @@ export interface ReportsBrowserProps {
   onPullSection?: (report: ReportDefinition) => void;
   pullingKey?: string | null;
   extReady?: boolean;
+  /**
+   * Reports this predicate accepts get a "Preview" button that opens the
+   * on-screen ReportPreviewDialog instead of forcing an immediate Excel/PDF
+   * download. Piloting on a subset (Notices/Refund/DRC-03) rather than all
+   * 62 at once, so the pattern can be validated before wider rollout.
+   */
+  isPreviewable?: (report: ReportDefinition) => boolean;
+  onPreview?: (report: ReportDefinition) => void;
 }
 
 const loadPinned = (): Set<string> => {
@@ -57,7 +65,7 @@ const loadPinned = (): Set<string> => {
 
 export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
   reports, monthOptions, selectedMonth, onMonthChange, clients, selectedClientId, onClientChange,
-  fyLabel, busy, onDownload, onPullSection, pullingKey, extReady,
+  fyLabel, busy, onDownload, onPullSection, pullingKey, extReady, isPreviewable, onPreview,
 }) => {
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<ReportCategory | 'all'>('all');
@@ -228,6 +236,23 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
             return pullHint ? (
               <Tooltip><TooltipTrigger asChild><span>{pullBtn}</span></TooltipTrigger><TooltipContent side="top">{pullHint}</TooltipContent></Tooltip>
             ) : pullBtn;
+          })()}
+          {isPreviewable && onPreview && isPreviewable(report) && (() => {
+            const previewBtn = (
+              <Button
+                onClick={() => onPreview(report)}
+                disabled={disabled}
+                variant="outline"
+                size="sm"
+                aria-label={`Preview ${report.title} on screen`}
+              >
+                <Eye className="h-3.5 w-3.5 sm:mr-1.5" />
+                <span className="hidden sm:inline">Preview</span>
+              </Button>
+            );
+            return disabled && hint ? (
+              <Tooltip><TooltipTrigger asChild><span>{previewBtn}</span></TooltipTrigger><TooltipContent side="top">{hint}</TooltipContent></Tooltip>
+            ) : previewBtn;
           })()}
           {(() => {
             const excelBtn = (
