@@ -129,6 +129,12 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
 
   const needsMonth = (r: ReportDefinition) => r.needs === 'month' || r.needs === 'client+month';
   const needsClient = (r: ReportDefinition) => r.needs === 'client+month' || r.needs === 'client';
+  // The Month control is genuinely irrelevant to some reports (DRC-03,
+  // Notices, Refunds, Taxpayer Profile, Challans — client-lifetime data
+  // pulled fresh regardless of period). Showing it prominently next to a
+  // filtered list of only those reports implies a period selection matters
+  // when it doesn't, so hide it rather than let a value sit there unused.
+  const anyVisibleNeedsMonth = useMemo(() => filteredReports.some(needsMonth), [filteredReports]);
   const isReportDisabled = (r: ReportDefinition) =>
     (needsMonth(r) && !selectedMonth) || (needsClient(r) && !selectedClientId);
   const missingInputHint = (r: ReportDefinition): string | null => {
@@ -315,12 +321,14 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
                   placeholder="Category"
                 />
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium whitespace-nowrap text-muted-foreground">Month</span>
-                <div className="w-36">
-                  <SearchableMonthSelect options={monthOptions} value={selectedMonth} onValueChange={onMonthChange} placeholder="Select" />
+              {anyVisibleNeedsMonth && (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium whitespace-nowrap text-muted-foreground">Month</span>
+                  <div className="w-36">
+                    <SearchableMonthSelect options={monthOptions} value={selectedMonth} onValueChange={onMonthChange} placeholder="Select" />
+                  </div>
                 </div>
-              </div>
+              )}
               <div className="flex items-center gap-2">
                 <span className="text-sm font-medium whitespace-nowrap text-muted-foreground">Client</span>
                 <div className="w-52">
@@ -335,8 +343,11 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
                 </div>
               </div>
             </div>
-            {fyLabel && (
+            {fyLabel && anyVisibleNeedsMonth && (
               <p className="text-xs text-muted-foreground">Per-client reports that span a year use {fyLabel}.</p>
+            )}
+            {!anyVisibleNeedsMonth && filteredReports.length > 0 && (
+              <p className="text-xs text-muted-foreground">These reports cover the client's full history on record — no period to pick.</p>
             )}
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-xs font-medium text-muted-foreground mr-1">Status:</span>
