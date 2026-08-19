@@ -2368,15 +2368,36 @@
     delete job.refundRetries;
 
     const allRows = [];
+    const yearCounts = [];
     for (const year of years) {
-      const sel = await selectWhereOption(year, { timeout: 5000 });
-      if (!sel) continue;
+      // selectWhereOption already retries internally against transient DOM
+      // churn, but reselecting the SAME <select> repeatedly in this loop (one
+      // heavy Angular re-render per prior year's search) is a harsher case
+      // than its normal callers — give a year one extra attempt before
+      // silently skipping it, and record which years actually failed instead
+      // of leaving no trace at all.
+      let sel = await selectWhereOption(year, { timeout: 5000 });
+      if (!sel) sel = await selectWhereOption(year, { timeout: 5000 });
+      if (!sel) { yearCounts.push(year + ':select-failed'); continue; }
       await sleep(300);
       const searchBtn = $$('button').find((b) => /^search$/i.test(clean(b.textContent)));
-      if (!searchBtn) continue;
+      if (!searchBtn) { yearCounts.push(year + ':no-search-btn'); continue; }
+      const beforeSearch = (($$('table').find(isRefundTable) || {}).textContent) || '';
       searchBtn.click();
-      await sleep(1500);
+      // A fixed sleep here used to read the table before a slower (busier,
+      // usually more recent) year's search had actually resolved — silently
+      // re-scraping the PREVIOUS year's stale table (or an empty pre-search
+      // one) and reporting zero rows for what was really just "not done
+      // loading yet". Poll for the table to actually change instead.
+      let settled = false;
+      for (let w = 0; w < 20 && !settled; w++) {
+        await sleep(400);
+        const t = $$('table').find(isRefundTable);
+        if (t && t.textContent !== beforeSearch) settled = true;
+      }
+      if (!settled) await sleep(500);
 
+      let yearRows = 0;
       for (let page = 0; page < 20; page++) {
         const table = $$('table').find(isRefundTable);
         if (!table) break;
@@ -2397,6 +2418,7 @@
             sanctioned_amount: null,
             status: tds[7] || null,
           });
+          yearRows++;
         }
         const next = $$('a, button').find((a) => clean(a.textContent) === '»');
         if (!next) break;
@@ -2406,17 +2428,103 @@
         const tableAfter = $$('table').find(isRefundTable);
         if (!tableAfter || tableAfter.textContent === before) break; // no change -> no more pages
       }
+      yearCounts.push(year + ':' + yearRows);
     }
 
     try { await GSTKdb.replaceRefundApplications(cur.clientId, allRows); } catch (e) { /* non-fatal */ }
+
+    // Best-effort per-application document capture (application PDF, query
+    // memo, sanction/rejection order) — separate from the base scrape above
+    // so a failure here never risks the financial data already saved. Reuses
+    // the page's own "OR ARN" search (rather than clicking anything inside
+    // the results table, which would risk navigating away mid-loop and
+    // losing later rows) to pull up one application at a time, then looks
+    // for any document-shaped link on whatever view that shows — a details
+    // panel, a modal, or an inline row expansion — since the exact markup
+    // hasn't been verified against a live account with refund history yet.
+    let docsOk = 0, docsFail = 0;
+    for (const row of allRows) {
+      try {
+        const captured = await captureRefundDocuments(cur.clientId, row.arn);
+        if (captured && (captured.application_pdf_url || captured.query_memo_pdf_url || captured.order_pdf_url)) {
+          await GSTKdb.patchRefundDocument(cur.clientId, row.arn, captured);
+          docsOk++;
+        }
+      } catch (e) { docsFail++; }
+    }
+
     debugPanel([
       'STEP: Refund Applications  (' + location.pathname + ')',
-      'years checked     : ' + years.join(', '),
+      'years checked     : ' + yearCounts.join(', '),
+      'documents captured: ' + docsOk + ' ok, ' + docsFail + ' failed/none',
       'rows read         : ' + allRows.length,
     ]);
     banner('Refund applications → ' + allRows.length + ' entries saved. Now DRC-03 filings…' + progress, '#16a34a');
     await sleep(1000);
     await chainOrStop(job, 'refunds', proceedToDrc03);
+  }
+
+  // Best-effort capture of one refund application's documents (the filed
+  // application, a query memo if the officer raised one, and the sanction/
+  // rejection order), via the page's own "OR ARN" search rather than
+  // clicking into the results table — clicking a row's own link/icon risks
+  // navigating away from the results list mid-scrape and losing whatever
+  // years/rows hadn't been read yet. NOT verified against a live account
+  // with real refund history — the document-link discovery below matches by
+  // keyword against visible text/href rather than a specific selector,
+  // since the actual detail-view markup hasn't been seen. If this comes
+  // back empty on a real run, the exact markup needs a look before it can
+  // be tightened to something more precise.
+  async function captureRefundDocuments(clientId, arn) {
+    if (!arn) return null;
+    const radios = $$('input[type=radio]');
+    if (radios[1]) { radios[1].click(); radios[1].dispatchEvent(new Event('change', { bubbles: true })); }
+    await sleep(400);
+    const arnInput = $$('input[type=text]').find((i) => /arn/i.test(i.placeholder || '') || /arn/i.test(i.id || '') || /arn/i.test(i.name || ''));
+    if (!arnInput) return null;
+    setVal(arnInput, arn);
+    await sleep(200);
+    const searchBtn = $$('button').find((b) => /^search$/i.test((b.textContent || '').trim()));
+    if (!searchBtn) return null;
+
+    const before = document.body.textContent.length;
+    searchBtn.click();
+    let changed = false;
+    for (let i = 0; i < 15 && !changed; i++) { await sleep(400); if (document.body.textContent.length !== before) changed = true; }
+    if (!changed) await sleep(500);
+
+    const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    const links = $$('a[href]').filter((a) => {
+      const href = a.getAttribute('href') || '';
+      const text = clean(a.textContent) + ' ' + (a.title || '') + ' ' + (a.getAttribute('aria-label') || '');
+      return /\.pdf(\?|$)/i.test(href) || /\b(view|download|print)\b/i.test(text);
+    });
+    const categorize = (a) => {
+      const text = (clean(a.textContent) + ' ' + (a.title || '') + ' ' + (a.getAttribute('aria-label') || '') + ' ' + (a.getAttribute('href') || '')).toLowerCase();
+      if (/query|memo|deficien/.test(text)) return 'query_memo_pdf_url';
+      if (/sanction|reject|rfd.?0?6|order/.test(text)) return 'order_pdf_url';
+      if (/application|rfd.?0?1|acknowledg/.test(text)) return 'application_pdf_url';
+      return null;
+    };
+
+    const result = {};
+    for (const a of links) {
+      const href = a.href;
+      if (!href || !/^https?:/i.test(href)) continue;
+      let key = categorize(a);
+      if (!key && links.length === 1) key = 'application_pdf_url'; // one unlabeled link — best guess
+      if (!key || result[key]) continue;
+      try {
+        const r = await fetch(href, { credentials: 'include' });
+        if (!r.ok) continue;
+        const buf = await r.arrayBuffer();
+        if (!buf || buf.byteLength < 200) continue; // guard against an HTML error page, not a real PDF
+        const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
+        const path = 'refund/' + clientId + '/' + arn.replace(/[^A-Za-z0-9]/g, '_') + '_' + key.replace('_pdf_url', '') + '.pdf';
+        result[key] = await GSTKdb.uploadPdf(path, dataUrl);
+      } catch (e) { /* skip this one document, keep any others already found */ }
+    }
+    return Object.keys(result).length ? result : null;
   }
 
   async function proceedToDrc03(job) {

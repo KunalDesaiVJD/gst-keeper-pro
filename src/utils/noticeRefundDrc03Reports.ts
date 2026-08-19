@@ -58,33 +58,47 @@ export const buildAdditionalNoticesAndOrdersReport = (clientId: string) => build
 
 // ─────────────────── REFUND (3 reports) ────────────────────────────────────
 
+const REFUND_SELECT = 'arn, refund_type, filed_date, claimed_amount, sanctioned_amount, status, ' +
+  'application_pdf_url, query_memo_pdf_url, order_pdf_url';
+const REFUND_HEADERS = ['ARN', 'Refund Type', 'Filed Date', 'Claimed Amount', 'Sanctioned Amount', 'Status', 'Application', 'Query Memo', 'Order'];
+const REFUND_WIDTHS = [18, 20, 12, 16, 18, 14, 14, 14, 14];
+
+const refundRow = (r: {
+  arn: string | null; refund_type: string | null; filed_date: string | null;
+  claimed_amount: number | null; sanctioned_amount: number | null; status: string | null;
+  application_pdf_url: string | null; query_memo_pdf_url: string | null; order_pdf_url: string | null;
+}): (string | number)[] => [
+  r.arn || '—', r.refund_type || '—', r.filed_date || '—', num(r.claimed_amount), num(r.sanctioned_amount), r.status || '—',
+  r.application_pdf_url || '—', r.query_memo_pdf_url || '—', r.order_pdf_url || '—',
+];
+
 export const buildRefundFiledOnPortalReport = async (clientId: string): Promise<ReportTable> => {
   const client = await fetchClient(clientId);
   const { data, error } = await supabase
     .from('gst_refund_applications')
-    .select('arn, refund_type, filed_date, claimed_amount, sanctioned_amount, status')
+    .select(REFUND_SELECT)
     .eq('client_id', clientId)
     .order('filed_date', { ascending: false });
   if (error) throw error;
   const rows = data || [];
   if (rows.length === 0) {
-    throw new Error(`No refund applications on record for ${client.name}. This report has no automated portal pull yet — enter records directly, or check back once the extension's Refund pull is verified against the real portal.`);
+    throw new Error(`No refund applications on record for ${client.name}. Use Pull to fetch it from the portal.`);
   }
 
   let totClaimed = 0, totSanctioned = 0;
   const tableRows: (string | number)[][] = rows.map((r) => {
     totClaimed += num(r.claimed_amount); totSanctioned += num(r.sanctioned_amount);
-    return [r.arn || '—', r.refund_type || '—', r.filed_date || '—', num(r.claimed_amount), num(r.sanctioned_amount), r.status || '—'];
+    return refundRow(r);
   });
-  tableRows.push(['', 'TOTAL', '', totClaimed, totSanctioned, '']);
+  tableRows.push(['', 'TOTAL', '', totClaimed, totSanctioned, '', '', '', '']);
 
   return {
     title: 'Refund Filed On Portal',
     subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   All periods on record, most recent first`,
-    headers: ['ARN', 'Refund Type', 'Filed Date', 'Claimed Amount', 'Sanctioned Amount', 'Status'],
+    headers: REFUND_HEADERS,
     rows: tableRows,
     fileNameBase: `Refund_Filed_On_Portal_${fileSafe(client.name)}`,
-    columnWidths: [18, 20, 12, 16, 18, 14],
+    columnWidths: REFUND_WIDTHS,
   };
 };
 
@@ -92,29 +106,29 @@ const buildRefundByLedgerReport = async (clientId: string, ledger: 'ITC' | 'Cash
   const client = await fetchClient(clientId);
   const { data, error } = await supabase
     .from('gst_refund_applications')
-    .select('arn, refund_type, filed_date, claimed_amount, sanctioned_amount, status')
+    .select(REFUND_SELECT)
     .eq('client_id', clientId).eq('source_ledger', ledger)
     .order('filed_date', { ascending: false });
   if (error) throw error;
   const rows = data || [];
   if (rows.length === 0) {
-    throw new Error(`No ${ledger}-ledger refund applications on record for ${client.name}. This report has no automated portal pull yet — enter records directly, or check back once the extension's Refund pull is verified against the real portal.`);
+    throw new Error(`No ${ledger}-ledger refund applications on record for ${client.name}. Use Pull (on "Refund Filed On Portal") to fetch it from the portal.`);
   }
 
   let totClaimed = 0, totSanctioned = 0;
   const tableRows: (string | number)[][] = rows.map((r) => {
     totClaimed += num(r.claimed_amount); totSanctioned += num(r.sanctioned_amount);
-    return [r.arn || '—', r.refund_type || '—', r.filed_date || '—', num(r.claimed_amount), num(r.sanctioned_amount), r.status || '—'];
+    return refundRow(r);
   });
-  tableRows.push(['', 'TOTAL', '', totClaimed, totSanctioned, '']);
+  tableRows.push(['', 'TOTAL', '', totClaimed, totSanctioned, '', '', '', '']);
 
   return {
     title,
     subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Refunds claimed from the ${ledger} ledger, most recent first`,
-    headers: ['ARN', 'Refund Type', 'Filed Date', 'Claimed Amount', 'Sanctioned Amount', 'Status'],
+    headers: REFUND_HEADERS,
     rows: tableRows,
     fileNameBase: `${fileSafe(title)}_${fileSafe(client.name)}`,
-    columnWidths: [18, 20, 12, 16, 18, 14],
+    columnWidths: REFUND_WIDTHS,
   };
 };
 

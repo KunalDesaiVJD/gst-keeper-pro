@@ -85,6 +85,16 @@ const API = {
     return rows.length ? post('gst_refund_applications', rows) : true;
   },
 
+  // Best-effort document capture (application/query-memo/order PDFs) writes
+  // here separately from the base scrape above, keyed by client+ARN rather
+  // than needing the row's own id back from the insert (which the app skips
+  // via Prefer: return=minimal). A missing target row or a not-yet-migrated
+  // document column both fail this PATCH harmlessly — the caller in
+  // content.js already treats it as non-fatal — without touching the
+  // financial data replaceRefundApplications already saved.
+  patchRefundDocument: async (clientId, arn, patchObj) =>
+    patch(`gst_refund_applications?client_id=eq.${clientId}&arn=eq.${enc(arn)}`, patchObj),
+
   // DRC-03 voluntary payments. Also not period-scoped — delete-all-then-
   // insert per client, fed by the 'drc03' job step.
   replaceDrc03Filings: async (clientId, rows) => {
