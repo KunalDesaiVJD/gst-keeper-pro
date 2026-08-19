@@ -2505,170 +2505,170 @@
   // this is a first pass built from screenshots, not a confirmed working
   // flow; the debug panel below reports exactly what it found so a failed
   // run is diagnosable instead of silent.
-  async function handleRefundDocs(job, cur, progress) {
-    if (!/litserv\/auth\/case\/search/.test(url)) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; }
-    banner('Reading Refund application documents…' + progress);
-    if (!(await waitFor('select, input', 15000))) { banner('My Applications did not load — skipped.' + progress, '#f59e0b'); await chainOrStop(job, 'refunds', proceedToDrc03); return; }
-
-    const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
-    const typeSel = await selectWhereOption('Refund', { startsWith: true, timeout: 8000 });
-    if (!typeSel) { banner('Could not select "Refunds" on My Applications — skipped.' + progress, '#f59e0b'); await chainOrStop(job, 'refunds', proceedToDrc03); return; }
-    await sleep(500);
-
-    const findDateInputs = () => $$('input').filter((i) => /date/i.test((i.placeholder || '') + (i.id || '') + (i.name || '')));
-    const findSearchBtn = () => $$('button').find((b) => /^search$/i.test(clean(b.textContent)));
-    if (findDateInputs().length < 2 || !findSearchBtn()) {
-      banner('My Applications form fields not found — skipped.' + progress, '#f59e0b');
-      await chainOrStop(job, 'refunds', proceedToDrc03); return;
-    }
-
+  function buildRefundWindows(earliestYear) {
     // This form enforces a 3-month window per search (confirmed live — see
     // the same note on handleDrc03 below: that page's OWN case/search JSON
     // API has no such cap, only its UI form does). Same style of limit as
     // Challan Summary's own ~5.5-month cap, walked here in 89-day steps —
     // a single full-range search here silently fails the portal's own
-    // validation and returns nothing. Start from this client's earliest
+    // validation and returns nothing. Starts from this client's earliest
     // Filing Year (handleRefunds stashed it on the job) rather than GST's
-    // 2017 inception for every client — walking a decade of guaranteed-
-    // empty windows for a client that only registered in 2023 is real
-    // wasted time, not caution.
+    // 2017 inception for every client — month 3 (April) since FYs run
+    // Apr-Mar, vs month 6 (July, GST's actual inception) for the fallback.
     const p2 = (n) => String(n).padStart(2, '0');
     const fmt = (d) => p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + '/' + d.getFullYear();
     const windows = [];
-    // Month 3 (April) when using a Filing-Year floor — FYs run Apr-Mar, so
-    // April 1 of the earliest FY covers it fully; month 6 (July) only when
-    // falling back to GST's actual 01/07/2017 inception date.
-    let winStart = job.refundEarliestYear ? new Date(job.refundEarliestYear, 3, 1) : new Date(2017, 6, 1);
+    let winStart = earliestYear ? new Date(earliestYear, 3, 1) : new Date(2017, 6, 1);
     const today = new Date();
     while (winStart <= today) {
       const winEnd = new Date(winStart.getTime() + 89 * 24 * 60 * 60 * 1000);
       windows.push([fmt(winStart), fmt(winEnd > today ? today : winEnd)]);
       winStart = new Date(winEnd.getTime() + 24 * 60 * 60 * 1000);
     }
+    return windows;
+  }
 
+  async function finishRefundDocs(job, extra) {
+    debugPanel([
+      'STEP: Refund Application Documents  (' + location.pathname + ')',
+      'windows checked   : ' + buildRefundWindows(job.refundEarliestYear).length + ' (89-day steps from ' + (job.refundEarliestYear ? job.refundEarliestYear + '-04-01' : '2017-07-01') + '), ' + (job.refundWindowsFailed || 0) + ' failed',
+      'ARNs visited      : ' + (job.refundSeenArns || []).length,
+      'documents captured: ' + (job.refundDocsOk || 0) + ' ok, ' + (job.refundDocsFail || 0) + ' failed/none' + (extra || ''),
+    ]);
+    banner('Refund documents → ' + (job.refundDocsOk || 0) + ' captured across ' + (job.refundArnsWithDocs || 0) + ' application(s).' + (job._progress || ''), extra ? '#dc2626' : '#16a34a');
+    delete job.refundWindowIdx; delete job.refundSeenArns; delete job.refundDocsOk; delete job.refundDocsFail;
+    delete job.refundArnsWithDocs; delete job.refundWindowsFailed; delete job.refundConsecutiveFailures;
+    await sleep(1000);
+    await chainOrStop(job, 'refunds', proceedToDrc03);
+  }
+
+  // Processes exactly ONE refund application per invocation, then hard-
+  // navigates back to My Applications and returns — relying on the job
+  // dispatcher's normal per-page-load re-entry to pick up the next one,
+  // rather than looping internally with history.back() to return to the
+  // results list. That was tried first and confirmed unreliable live: this
+  // app pushes more than one history entry per ARN visited (the folder
+  // navigation itself, plus apparently at least one per sidebar tab click),
+  // so a single history.back() didn't reliably land back on the CURRENT
+  // window's results — it could land several entries further back, on an
+  // EARLIER window's still-cached results, which is exactly the "fetched
+  // 2024, then looped back to re-searching 2023" symptom. A full page
+  // reload + re-search of the SAME window (tracked via job.refundWindowIdx,
+  // not the browser's own history stack) is slower per application but
+  // deterministic regardless of how many history entries anything pushes.
+  async function handleRefundDocs(job, cur, progress) {
+    if (!/litserv\/auth\/case\/search/.test(url)) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; }
+    job._progress = progress;
+    if (!(await waitFor('select, input', 15000))) { banner('My Applications did not load — skipped.' + progress, '#f59e0b'); await finishRefundDocs(job); return; }
+
+    const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    const windows = buildRefundWindows(job.refundEarliestYear);
+    const seenArns = new Set(job.refundSeenArns || []);
+    let winIdx = job.refundWindowIdx || 0;
+    let docsOk = job.refundDocsOk || 0, docsFail = job.refundDocsFail || 0;
+    let arnsWithDocs = job.refundArnsWithDocs || 0, windowsFailed = job.refundWindowsFailed || 0;
+    let consecutiveFailures = job.refundConsecutiveFailures || 0;
+
+    if (consecutiveFailures >= 10) {
+      await finishRefundDocs(job, ' — STOPPED EARLY: 10 failures in a row with zero successes (session likely died — or if this recurs on a fresh session too, the PDF-icon detection doesn\'t match this portal\'s real markup)');
+      return;
+    }
+
+    const typeSel = await selectWhereOption('Refund', { startsWith: true, timeout: 8000 });
+    if (!typeSel) { banner('Could not select "Refunds" on My Applications — skipped.' + progress, '#f59e0b'); await finishRefundDocs(job); return; }
+    await sleep(500);
+
+    const findDateInputs = () => $$('input').filter((i) => /date/i.test((i.placeholder || '') + (i.id || '') + (i.name || '')));
+    const findSearchBtn = () => $$('button').find((b) => /^search$/i.test(clean(b.textContent)));
     const isArnLike = (s) => /^[A-Z]{2}\d{10,}[A-Z0-9]*$/.test(s);
-    const TAB_NAMES = ['APPLICATIONS', 'NOTICE/ACKNOWLEDGEMENT', 'REPLIES/UNDERTAKING/REQUEST', 'ORDERS', 'AUDIT HISTORY'];
-    const findUnseenArnLink = (seen) => $$('a').find((a) => isArnLike(clean(a.textContent)) && !seen.has(clean(a.textContent)));
+    const findUnseenArnLink = () => $$('a').find((a) => isArnLike(clean(a.textContent)) && !seenArns.has(clean(a.textContent)));
 
-    const seenArns = new Set();
-    let arnsWithDocs = 0, docsOk = 0, docsFail = 0, windowsFailed = 0;
-    // Session-death detector: a dead session makes every fetch() below fail
-    // (redirected to an HTML login page instead of a PDF), which otherwise
-    // looks identical to "this application just has no PDF-shaped links" —
-    // the loop would grind through every remaining window/ARN accomplishing
-    // nothing instead of stopping. Reset on any real success.
-    let consecutiveFailures = 0;
-    const SESSION_DEAD_THRESHOLD = 10;
-    let sessionSuspectedDead = false;
-
-    let winIdx = 0;
-    for (const [fromStr, toStr] of windows) {
-      if (sessionSuspectedDead) break;
-      winIdx++;
-      banner('Reading Refund documents — window ' + winIdx + '/' + windows.length + ' (' + fromStr + '–' + toStr + ')…' + progress);
+    // Advance through windows and pagination — all still within THIS one
+    // page load, no navigation involved yet — until an unseen ARN turns up
+    // or every window is exhausted.
+    let targetLink = null;
+    while (winIdx < windows.length && !targetLink) {
+      const [fromStr, toStr] = windows[winIdx];
+      banner('Reading Refund documents — window ' + (winIdx + 1) + '/' + windows.length + ' (' + fromStr + '–' + toStr + ')…' + progress);
       const di = findDateInputs();
       const searchBtn = findSearchBtn();
-      if (di.length < 2 || !searchBtn) { windowsFailed++; continue; }
+      if (di.length < 2 || !searchBtn) { windowsFailed++; winIdx++; continue; }
       setVal(di[0], fromStr);
       setVal(di[1], toStr);
       await sleep(200);
       searchBtn.click();
       await sleep(1500);
 
-      // A flat "process one ARN, come back, re-scan from the live DOM"
-      // loop — NOT a cached list of ARN links iterated after navigating
-      // away and back. Angular tears down and re-renders the results list
-      // on that round trip, so a link captured before leaving is a
-      // detached DOM node by the time we'd click it: click() on it is a
-      // silent no-op (no navigation happens, no error either), which was
-      // quietly skipping every ARN after the first one on any page with
-      // more than one result, PLUS firing an extra, unintended
-      // history.back() per skipped ARN that could carry the whole loop
-      // further back than intended. Re-querying fresh every iteration
-      // avoids that class of bug entirely, at the cost of only being able
-      // to process one ARN before needing a live DOM lookup.
-      for (let guard = 0; guard < 500 && !sessionSuspectedDead; guard++) {
-        const a = findUnseenArnLink(seenArns);
-        if (!a) {
-          const next = $$('a, button').find((el) => clean(el.textContent) === '»');
-          if (!next) break; // no more unseen ARNs and no next page — this window is done
-          next.click();
-          await sleep(1200);
-          continue;
-        }
-        const arn = clean(a.textContent);
-        seenArns.add(arn);
-        const arnDocs = [];
-        try {
-          a.click();
-          let onFolder = false;
-          for (let w = 0; w < 20 && !onFolder; w++) { await sleep(400); if (/litserv\/auth\/case\/folder/.test(location.href)) onFolder = true; }
-          if (onFolder) {
-            await sleep(500);
-            // Tabs re-queried per ARN (cheap) rather than reused across
-            // ARNs — a fresh folder page means fresh DOM nodes regardless.
-            const tabEls = $$('*').filter((el) => el.children.length === 0 && TAB_NAMES.includes(clean(el.textContent).toUpperCase()));
-            for (const tabEl of tabEls) {
-              const tabName = clean(tabEl.textContent);
-              tabEl.click();
-              await sleep(800);
-              const icons = $$('img, a').filter((el) => /pdf/i.test((el.getAttribute('src') || '') + (el.getAttribute('href') || '') + (el.className || '')));
-              for (const icon of icons) {
-                const link = icon.closest('a') || icon;
-                const href = link.href || link.getAttribute('href') || '';
-                const label = clean((link.textContent || '')) || clean((link.title || '')) || tabName;
-                if (!/^https?:/i.test(href)) { docsFail++; consecutiveFailures++; continue; }
-                try {
-                  const r = await fetch(href, { credentials: 'include' });
-                  if (!r.ok) { docsFail++; consecutiveFailures++; continue; }
-                  const buf = await r.arrayBuffer();
-                  if (!buf || buf.byteLength < 200) { docsFail++; consecutiveFailures++; continue; } // guard against an HTML error page, not a real PDF
-                  const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
-                  const path = 'refund/' + cur.clientId + '/' + arn.replace(/[^A-Za-z0-9]/g, '_') + '/' + tabName.replace(/[^A-Za-z0-9]/g, '_') + '_' + label.replace(/[^A-Za-z0-9]/g, '_') + '.pdf';
-                  const url = await GSTKdb.uploadPdf(path, dataUrl);
-                  arnDocs.push({ tab: tabName, label, url });
-                  docsOk++;
-                  consecutiveFailures = 0;
-                } catch (e) { docsFail++; consecutiveFailures++; }
-                if (consecutiveFailures >= SESSION_DEAD_THRESHOLD) { sessionSuspectedDead = true; break; }
-              }
-              if (sessionSuspectedDead) break;
-            }
-          }
-        } catch (e) { /* keep going with the next ARN */ }
-
-        // Save THIS application's documents now, not batched at the very
-        // end — a session bounce or an early abort below shouldn't cost
-        // everything already captured in this run.
-        if (arnDocs.length) {
-          try { await GSTKdb.patchRefundDocument(cur.clientId, arn, { documents: arnDocs }); arnsWithDocs++; } catch (e) { /* non-fatal */ }
-        }
-
-        if (sessionSuspectedDead) break;
-
-        // Back to the results list for the next ARN — Angular route state,
-        // not a plain page, so a browser Back is what should restore it.
-        history.back();
-        let restored = false;
-        for (let w = 0; w < 20 && !restored; w++) { await sleep(400); if (/litserv\/auth\/case\/search/.test(location.href) && findDateInputs().length >= 2) restored = true; }
-        if (!restored) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; } // lost the list — stop rather than loop wrong
+      targetLink = findUnseenArnLink();
+      for (let p = 0; p < 20 && !targetLink; p++) {
+        const next = $$('a, button').find((el) => clean(el.textContent) === '»');
+        if (!next) break;
+        next.click();
+        await sleep(1200);
+        targetLink = findUnseenArnLink();
       }
+      if (!targetLink) winIdx++;
     }
 
-    debugPanel([
-      'STEP: Refund Application Documents  (' + location.pathname + ')',
-      'windows checked   : ' + windows.length + ' (89-day steps from ' + (job.refundEarliestYear ? job.refundEarliestYear + '-04-01' : '2017-07-01') + '), ' + windowsFailed + ' failed',
-      'ARNs visited      : ' + seenArns.size,
-      'documents captured: ' + docsOk + ' ok, ' + docsFail + ' failed/none' + (sessionSuspectedDead ? ' — STOPPED EARLY: ' + SESSION_DEAD_THRESHOLD + ' failures in a row with zero successes (session likely died — or if this recurs on a fresh session too, the PDF-icon detection doesn\'t match this portal\'s real markup)' : ''),
-    ]);
-    banner(
-      sessionSuspectedDead
-        ? 'Refund documents stopped early (session likely died) — ' + docsOk + ' captured across ' + arnsWithDocs + ' application(s) before that.' + progress
-        : 'Refund documents → ' + docsOk + ' captured across ' + arnsWithDocs + ' application(s).' + progress,
-      sessionSuspectedDead ? '#dc2626' : '#16a34a',
-    );
-    await sleep(1000);
-    await chainOrStop(job, 'refunds', proceedToDrc03);
+    if (!targetLink) {
+      job.refundWindowIdx = winIdx; job.refundSeenArns = [...seenArns];
+      job.refundDocsOk = docsOk; job.refundDocsFail = docsFail;
+      job.refundArnsWithDocs = arnsWithDocs; job.refundWindowsFailed = windowsFailed;
+      await finishRefundDocs(job);
+      return;
+    }
+
+    const arn = clean(targetLink.textContent);
+    seenArns.add(arn);
+    const arnDocs = [];
+    try {
+      targetLink.click();
+      let onFolder = false;
+      for (let w = 0; w < 20 && !onFolder; w++) { await sleep(400); if (/litserv\/auth\/case\/folder/.test(location.href)) onFolder = true; }
+      if (onFolder) {
+        await sleep(500);
+        const TAB_NAMES = ['APPLICATIONS', 'NOTICE/ACKNOWLEDGEMENT', 'REPLIES/UNDERTAKING/REQUEST', 'ORDERS', 'AUDIT HISTORY'];
+        const tabEls = $$('*').filter((el) => el.children.length === 0 && TAB_NAMES.includes(clean(el.textContent).toUpperCase()));
+        for (const tabEl of tabEls) {
+          const tabName = clean(tabEl.textContent);
+          tabEl.click();
+          await sleep(800);
+          const icons = $$('img, a').filter((el) => /pdf/i.test((el.getAttribute('src') || '') + (el.getAttribute('href') || '') + (el.className || '')));
+          for (const icon of icons) {
+            const link = icon.closest('a') || icon;
+            const href = link.href || link.getAttribute('href') || '';
+            const label = clean((link.textContent || '')) || clean((link.title || '')) || tabName;
+            if (!/^https?:/i.test(href)) { docsFail++; consecutiveFailures++; continue; }
+            try {
+              const r = await fetch(href, { credentials: 'include' });
+              if (!r.ok) { docsFail++; consecutiveFailures++; continue; }
+              const buf = await r.arrayBuffer();
+              if (!buf || buf.byteLength < 200) { docsFail++; consecutiveFailures++; continue; } // guard against an HTML error page, not a real PDF
+              const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
+              const path = 'refund/' + cur.clientId + '/' + arn.replace(/[^A-Za-z0-9]/g, '_') + '/' + tabName.replace(/[^A-Za-z0-9]/g, '_') + '_' + label.replace(/[^A-Za-z0-9]/g, '_') + '.pdf';
+              const url = await GSTKdb.uploadPdf(path, dataUrl);
+              arnDocs.push({ tab: tabName, label, url });
+              docsOk++;
+              consecutiveFailures = 0;
+            } catch (e) { docsFail++; consecutiveFailures++; }
+            if (consecutiveFailures >= 10) break;
+          }
+          if (consecutiveFailures >= 10) break;
+        }
+      }
+    } catch (e) { /* keep going with the next ARN */ }
+
+    if (arnDocs.length) {
+      try { await GSTKdb.patchRefundDocument(cur.clientId, arn, { documents: arnDocs }); arnsWithDocs++; } catch (e) { /* non-fatal */ }
+    }
+
+    job.refundWindowIdx = winIdx; // same window next time — more unseen ARNs may still be in it
+    job.refundSeenArns = [...seenArns];
+    job.refundDocsOk = docsOk; job.refundDocsFail = docsFail;
+    job.refundArnsWithDocs = arnsWithDocs; job.refundWindowsFailed = windowsFailed;
+    job.refundConsecutiveFailures = consecutiveFailures;
+    await setJob(job);
+    location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
   }
 
   async function proceedToDrc03(job) {
