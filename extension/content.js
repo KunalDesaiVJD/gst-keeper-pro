@@ -322,7 +322,7 @@
         banner('Logged in — opening the dashboard first…' + progress);
         job.step = 'refunds_warmup';
         await setJob(job);
-        location.href = 'https://services.gst.gov.in/services/auth/welcome';
+        location.href = 'https://services.gst.gov.in/services/auth/dashboard';
       } else if (job.mode === 'drc03') {
         banner('Logged in — reading DRC-03 filings…' + progress);
         job.step = 'drc03';
@@ -2319,12 +2319,17 @@
     // bug without this stop.
     job.step = 'refunds_warmup';
     await setJob(job);
-    location.href = 'https://services.gst.gov.in/services/auth/welcome';
+    location.href = 'https://services.gst.gov.in/services/auth/dashboard';
   }
 
   async function handleRefundsWarmup(job, cur, progress) {
+    if (!/\/services\/auth\/dashboard/.test(url)) { location.href = 'https://services.gst.gov.in/services/auth/dashboard'; return; }
     banner('Warming up the dashboard before Refunds…' + progress);
-    await sleep(1500);
+    // Wait for the Dashboard to actually finish rendering (its "Ledger
+    // Balance" panel), not just a blind sleep — the whole point is landing
+    // here the same way a human genuinely would before moving on.
+    await waitFor('button', 10000);
+    await sleep(800);
     job.step = 'refunds';
     await setJob(job);
     location.href = 'https://services.gst.gov.in/services/auth/trackstatus';
@@ -2381,7 +2386,7 @@
       job.step = 'refunds_warmup';
       await setJob(job);
       banner('Filing Year list came back empty — retrying via dashboard (' + job.refundRetries + '/2)…' + progress, '#f59e0b');
-      location.href = 'https://services.gst.gov.in/services/auth/welcome';
+      location.href = 'https://services.gst.gov.in/services/auth/dashboard';
       return;
     }
     delete job.refundRetries;
