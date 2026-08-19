@@ -169,11 +169,20 @@ reversal.
 
 **No-ITC clients (`builder_itc_type = 'NO_ITC'`).** *As of 19/08/2026*, No-ITC
 uses the **plain** Table 4(B) template — the same one a Full-ITC builder gets
-— not the carpet-area apportionment machinery below. 4(B)(1) is a manual
-figure staff type in directly; row 5.1 ("ITC for the Month") is likewise left
-editable rather than forced from the live Import 2B / 2B-reco total, the same
-carve-out Liberal-mode clients already had. Neither `buildGstr3bJson.ts` nor
-ITC Summary itself runs `computePartialItcSplit` for a No-ITC client anymore.
+— not the carpet-area apportionment machinery below. Row 5.1 ("ITC for the
+Month") is manual/editable, the same carve-out Liberal-mode clients already
+had, so staff enter the ITC found each period directly. **4(B)(1) is then
+locked to mirror the whole of Total 4A** — not derived from 2B
+reconciliation's own eligible/reversal split, deliberately: "allowing" vs
+"disallowing" per 2B reconciliation only means something for a client who can
+claim *some* credit, and never applies to a No-ITC builder. 4(B)(2) "Others"
+and its (i)/(ii)/(iii) sub-rows are locked to 0 for the same reason — nothing
+should ever land there for a No-ITC client. This guarantees Net ITC (4C) = 0
+by construction (4A − 4A), not by relying on 2B reconciliation happening to
+classify every purchase correctly. Neither `buildGstr3bJson.ts` nor ITC
+Summary itself runs `computePartialItcSplit` for a No-ITC client anymore —
+`buildGstr3bJson.ts` bypasses reading `section4B` for them entirely and
+computes 4(B)(1)/(2) straight from `itcAvail`.
 
 *Between 14/08/2026 and 19/08/2026*, No-ITC was instead treated as the 100%
 case of the Partial-ITC apportionment mechanism: 4A showed the true ITC 2B
