@@ -15,11 +15,11 @@ import { ReportsBrowser } from '@/components/reports/ReportsBrowser';
 import { ReportPreviewDialog } from '@/components/reports/ReportPreviewDialog';
 import type { ReportTable } from '@/utils/allClientsReports';
 
-// Piloting the on-screen preview (see ReportPreviewDialog) on the three
-// categories that were actively broken/complained about — Notices, Refund,
-// DRC-03 — before rolling the pattern out to the rest of the catalog.
-const PREVIEWABLE_CATEGORIES = new Set(['notice', 'refund', 'drc03']);
-const isPreviewable = (report: ReportDefinition) => PREVIEWABLE_CATEGORIES.has(report.category);
+// Piloted on Notices/Refund/DRC-03 first (the categories that were actively
+// broken); ReportPreviewDialog works off any report's build() call, which
+// every report already has, so the pilot's done — every report previews
+// on screen now instead of forcing an Excel/PDF download to see the data.
+const isPreviewable = (_report: ReportDefinition) => true;
 
 interface ClientLite { id: string; name: string; gstin: string; }
 

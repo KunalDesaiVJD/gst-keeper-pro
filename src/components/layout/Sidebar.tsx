@@ -146,6 +146,12 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     icon: <FolderDown className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
+  {
+    label: 'Documents',
+    path: '/documents',
+    icon: <Files className="h-5 w-5" />,
+    roles: ['superadmin', 'gst_manager', 'employee'],
+  },
 ];
 
 // Collapsible groups in the expanded rail. Order within `paths` is the order
