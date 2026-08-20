@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { Files, Search, Loader2, ExternalLink, Download, FileX2 } from 'lucide-react';
+import { Files, Search, Loader2, ExternalLink, Download, FileX2, DownloadCloud } from 'lucide-react';
 import { useClient } from '@/contexts/ClientContext';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchClientDocuments, type ClientDocument, type DocumentSource } from '@/lib/clientDocuments';
@@ -36,12 +36,45 @@ const DocumentsPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<DocumentSource | 'all'>('all');
   const [downloadingAll, setDownloadingAll] = useState(false);
+  const [extReady, setExtReady] = useState(false);
+  const [fetchingDocs, setFetchingDocs] = useState(false);
 
   useEffect(() => {
     supabase.from('clients').select('id, name, gstin').order('name').then(({ data }) => {
       setClients((data || []) as ClientLite[]);
     });
   }, []);
+
+  // Same extension ping/pong as ReportsPage, plus the fetch trigger for
+  // Refund's document harvest — decoupled from the regular Refund pull
+  // (see extension/content.js) because it's slow (a full page reload per
+  // application) and was making every Refund pull feel like it never
+  // finished. This is where you ask for it explicitly instead.
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      const d: any = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkPullSectionResult) {
+        setFetchingDocs(false);
+        if (d.__gstkPullSectionResult.ok) toast.success('Portal opening in a new tab — type the CAPTCHA there. This can take a few minutes (a page reload per application); refresh this list once the tab says done.');
+        else toast.error('Could not start the fetch: ' + d.__gstkPullSectionResult.error);
+      }
+    };
+    window.addEventListener('message', onMsg);
+    const ping = () => window.postMessage({ __gstkAppReady: true }, '*');
+    ping();
+    const t1 = setTimeout(ping, 400);
+    const t2 = setTimeout(ping, 1200);
+    return () => { window.removeEventListener('message', onMsg); clearTimeout(t1); clearTimeout(t2); };
+  }, []);
+
+  const handleFetchRefundDocs = () => {
+    if (!selectedClientId) { toast.error('Select a client first'); return; }
+    if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to fetch from the portal.'); return; }
+    setFetchingDocs(true);
+    window.postMessage({ __gstkPullSection: { clientId: selectedClientId, mode: 'refund_docs' } }, '*');
+  };
 
   useEffect(() => {
     if (!selectedClientId) { setDocs([]); return; }
@@ -147,11 +180,18 @@ const DocumentsPage: React.FC = () => {
               />
             </div>
             <div className="flex-1" />
+            <Button variant="outline" size="sm" onClick={handleFetchRefundDocs} disabled={!selectedClientId || fetchingDocs}>
+              {fetchingDocs ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <DownloadCloud className="h-3.5 w-3.5 mr-1.5" />}
+              Fetch Refund Documents
+            </Button>
             <Button variant="outline" size="sm" onClick={handleDownloadAll} disabled={!selectedClientId || filtered.length === 0 || downloadingAll}>
               {downloadingAll ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Download className="h-3.5 w-3.5 mr-1.5" />}
               Download All ({filtered.length})
             </Button>
           </div>
+          {!extReady && selectedClientId && (
+            <p className="text-xs text-muted-foreground">Install/enable the GST Keeper browser extension to fetch new documents from the portal.</p>
+          )}
 
           {!selectedClientId && (
             <div className="text-center py-16 text-sm text-muted-foreground">Pick a client to see their documents.</div>
@@ -167,7 +207,7 @@ const DocumentsPage: React.FC = () => {
             <div className="flex flex-col items-center gap-2 py-16 text-center text-muted-foreground">
               <FileX2 className="h-8 w-8" />
               <p className="text-sm">No documents captured yet for this client.</p>
-              <p className="text-xs">Run a Pull on DRC-03, Refund, or a Filing Status return, and they'll show up here.</p>
+              <p className="text-xs">Run a Pull on DRC-03 or a Filing Status return, or click "Fetch Refund Documents" above, and they'll show up here.</p>
             </div>
           )}
 

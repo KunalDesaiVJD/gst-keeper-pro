@@ -312,7 +312,14 @@
         job.step = 'notices';
         await setJob(job);
         location.href = 'https://services.gst.gov.in/services/auth/notices';
-      } else if (job.mode === 'refunds') {
+      } else if (job.mode === 'refunds' || job.mode === 'refund_docs') {
+        // Two distinct, separately-triggerable pulls now: 'refunds' is just
+        // the fast application list (Track Application Status); 'refund_docs'
+        // is the slow, page-reload-per-application document harvest (My
+        // Applications). They used to always chain together, which made
+        // every Refund pull take as long as the document harvest even when
+        // all that was wanted was an updated list — see handleRefunds'
+        // ending and proceedAfterRegCheck above.
         banner('Logged in — checking registration date…' + progress);
         job.step = 'refunds_reg_check';
         await setJob(job);
@@ -2333,6 +2340,17 @@
   // in gst_taxpayer_profile once pulled) is the real signal. Checks the DB
   // first — no portal visit needed if a prior Taxpayer Profile pull already
   // has it — and only visits My Profile if it's genuinely unknown.
+  // The document harvest (job.mode 'refund_docs') is a separate, explicit
+  // action now — see the mode split in handleLogin and the note on
+  // handleRefunds' own chaining below. It doesn't need Track Application
+  // Status's Dashboard-warm-up dance (that bug is specific to that page's
+  // Filing Year dropdown, not My Applications), so it skips straight to
+  // proceedToRefundDocs instead of proceedToRefundsWarmup.
+  async function proceedAfterRegCheck(job) {
+    if (job.mode === 'refund_docs') { await proceedToRefundDocs(job); return; }
+    await proceedToRefundsWarmup(job);
+  }
+
   async function handleRefundsRegCheck(job, cur, progress) {
     if (job.clientRegYear === undefined) {
       try {
@@ -2342,7 +2360,7 @@
       } catch (e) { job.clientRegYear = null; }
       await setJob(job);
     }
-    if (job.clientRegYear) { await proceedToRefundsWarmup(job); return; }
+    if (job.clientRegYear) { await proceedAfterRegCheck(job); return; }
 
     if (!/\/services\/auth\/myprofile/.test(url)) { location.href = 'https://services.gst.gov.in/services/auth/myprofile'; return; }
     banner('Checking registration date before Refunds…' + progress);
@@ -2360,7 +2378,7 @@
         }
       }
     } catch (e) { /* non-fatal — falls through with clientRegYear still null; window builder falls back to 2017 */ }
-    await proceedToRefundsWarmup(job);
+    await proceedAfterRegCheck(job);
   }
 
   async function handleRefundsWarmup(job, cur, progress) {
@@ -2505,22 +2523,17 @@
     ]);
     banner('Refund applications → ' + allRows.length + ' entries saved. Now Refund documents…' + progress, '#16a34a');
     await sleep(1000);
-    // The Filing Year dropdown just scraped above only ever lists years the
-    // portal actually offers for THIS GSTIN — its earliest entry is exactly
-    // this client's real registration-era floor (e.g. 2023-24 for a client
-    // registered in 2023), not GST's 2017 inception for everyone. Pass it
-    // through the job so the document harvest below doesn't walk 89-day
-    // windows across years this client couldn't possibly have data in.
-    const earliestYear = years.reduce((min, y) => {
-      const yr = parseInt(y.slice(0, 4), 10);
-      return Number.isFinite(yr) && (min == null || yr < min) ? yr : min;
-    }, null);
-    if (earliestYear) job.refundEarliestYear = earliestYear;
-    // Document capture is a distinct navigation (My Applications, not Track
-    // Application Status) — always run it, then let ITS OWN chainOrStop
-    // decide whether to stop here (standalone Refund pull) or continue to
-    // DRC-03 (full reco chain), the same 'refunds' mode check as before.
-    await proceedToRefundDocs(job);
+    // Document capture (My Applications — ARN-by-ARN, a full page reload
+    // per application) used to always run right after this, chained
+    // automatically. That made every Refund pull take as long as the
+    // slowest, least-verified part of the whole feature even when all
+    // that was wanted was an updated application list — confirmed by the
+    // user as "going and going and going" with no way to just get the fast
+    // part. It's a separate, explicitly-triggered pull now (job.mode
+    // 'refund_docs', wired from the Documents page) — this just proceeds
+    // straight to DRC-03 (full chain) or stops (standalone pull), the same
+    // as every other section pull.
+    await chainOrStop(job, 'refunds', proceedToDrc03);
   }
 
   async function proceedToRefundDocs(job) {
@@ -2546,13 +2559,14 @@
   // this is a first pass built from screenshots, not a confirmed working
   // flow; the debug panel below reports exactly what it found so a failed
   // run is diagnosable instead of silent.
-  // Preference order: the client's real registration date (handleRefundsRegCheck,
-  // a direct DB/profile fact) beats the Filing Year dropdown-derived guess
-  // (handleRefunds — confirmed live to be an unreliable signal, since that
+  // The client's real registration date (handleRefundsRegCheck, a direct
+  // DB/profile fact) — the Filing Year dropdown-derived guess this used to
+  // also fall back to was confirmed live to be an unreliable signal (that
   // dropdown appears to offer a fairly generic year range rather than one
-  // scoped to the individual taxpayer), which beats no signal at all.
+  // scoped to the individual taxpayer), so it's gone rather than kept as a
+  // silent second guess; unresolved falls straight to 2017 in buildRefundWindows.
   function resolveRefundEarliestYear(job) {
-    return job.clientRegYear || job.refundEarliestYear || null;
+    return job.clientRegYear || null;
   }
 
   function buildRefundWindows(earliestYear) {
@@ -2581,7 +2595,7 @@
   async function finishRefundDocs(job, extra) {
     debugPanel([
       'STEP: Refund Application Documents  (' + location.pathname + ')',
-      'windows checked   : ' + buildRefundWindows(resolveRefundEarliestYear(job)).length + ' (89-day steps from ' + (resolveRefundEarliestYear(job) ? resolveRefundEarliestYear(job) + '-04-01' : '2017-07-01') + (job.clientRegYear ? ', from registration date' : job.refundEarliestYear ? ', from Filing Year dropdown (fallback)' : '') + '), ' + (job.refundWindowsFailed || 0) + ' failed',
+      'windows checked   : ' + buildRefundWindows(resolveRefundEarliestYear(job)).length + ' (89-day steps from ' + (resolveRefundEarliestYear(job) ? resolveRefundEarliestYear(job) + '-04-01 — from registration date' : '2017-07-01 — registration date unknown') + '), ' + (job.refundWindowsFailed || 0) + ' failed',
       'ARNs visited      : ' + (job.refundSeenArns || []).length,
       'documents captured: ' + (job.refundDocsOk || 0) + ' ok, ' + (job.refundDocsFail || 0) + ' failed/none' + (extra || ''),
       'window regressions: ' + (job.refundRegressionCount || 0) + ' (should always be 0 — see handleRefundDocs comments if not)',
