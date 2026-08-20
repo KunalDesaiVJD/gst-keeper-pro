@@ -14,6 +14,7 @@ import { REPORTS_CATALOG } from '@/lib/reportsCatalog';
 import { ReportsBrowser } from '@/components/reports/ReportsBrowser';
 import { ReportPreviewDialog } from '@/components/reports/ReportPreviewDialog';
 import type { ReportTable } from '@/utils/allClientsReports';
+import { buildForPeriods } from '@/lib/reportPeriodMerge';
 
 // Piloted on Notices/Refund/DRC-03 first (the categories that were actively
 // broken); ReportPreviewDialog works off any report's build() call, which
@@ -25,12 +26,18 @@ interface ClientLite { id: string; name: string; gstin: string; }
 
 const ReportsPage: React.FC = () => {
   const { isStaffRole } = useAuth();
-  const { selectedMonth, setSelectedMonth } = useMonth();
+  const { selectedMonth } = useMonth();
   const { selectedClientId, setSelectedClientId } = useClient();
   const [clients, setClients] = useState<ClientLite[]>([]);
   const [busy, setBusy] = useState<{ key: string; format: 'xlsx' | 'pdf' } | null>(null);
   const [extReady, setExtReady] = useState(false);
   const [pullingKey, setPullingKey] = useState<string | null>(null);
+  // Multi-select periods, local to Reports — the global Month context stays
+  // a single value for every other page, so this seeds from it once but
+  // doesn't write back. View/Excel/PDF combine every selected period into
+  // one table (see reportPeriodMerge.ts); Pull queues them one at a time
+  // since the extension's job storage only holds one active job.
+  const [selectedPeriods, setSelectedPeriods] = useState<string[]>(selectedMonth ? [selectedMonth] : []);
   const [previewReport, setPreviewReport] = useState<ReportDefinition | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -66,20 +73,32 @@ const ReportsPage: React.FC = () => {
     return () => { window.removeEventListener('message', onMsg); clearTimeout(t1); clearTimeout(t2); };
   }, []);
 
+  // Pull stays single-period even with multiple periods selected — the
+  // extension's job state (chrome.storage) holds exactly one active job, and
+  // there's no "this period's pull actually finished" signal back to this
+  // page to safely chain the next one on (__gstkPullSectionResult only means
+  // "the portal tab opened", not "the pull completed" — CAPTCHA/login/scrape
+  // all still happen after that, asynchronously, in the new tab). Queuing
+  // periods against that would just clobber each other's job state. Pulls
+  // the first selected period and says so when more than one is selected.
   const handlePullSection = useCallback((report: ReportDefinition) => {
     if (!report.pull) return;
     if (!selectedClientId) { toast.error('Select a client first'); return; }
-    if (report.pull.needsMonth && !selectedMonth) { toast.error('Select a month first'); return; }
+    const period = selectedPeriods[0];
+    if (report.pull.needsMonth && !period) { toast.error('Select a period first'); return; }
     if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to pull from the portal.'); return; }
+    if (report.pull.needsMonth && selectedPeriods.length > 1) {
+      toast.info(`Pulling ${period} only — run Pull again for each other selected period.`);
+    }
     setPullingKey(report.key);
     window.postMessage({
       __gstkPullSection: {
         clientId: selectedClientId,
         mode: report.pull.mode,
-        period_month: report.pull.needsMonth ? selectedMonth : undefined,
+        period_month: report.pull.needsMonth ? period : undefined,
       },
     }, '*');
-  }, [selectedClientId, selectedMonth, extReady]);
+  }, [selectedClientId, selectedPeriods, extReady]);
 
   const monthOptions = useMemo(() => {
     const months: { value: string; label: string }[] = [];
@@ -100,11 +119,17 @@ const ReportsPage: React.FC = () => {
     });
   }, []);
 
-  const fyLabel = useMemo(() => (selectedMonth ? fyMonthsForKey(selectedMonth).fyLabel : ''), [selectedMonth]);
+  // Shown next to the picker so "one FY = 12 periods selected" reads as
+  // deliberate rather than an accident when Suspended/Credit Ledger-style
+  // reports still narrate "the financial year of the selected month".
+  const fyLabel = useMemo(
+    () => (selectedPeriods[0] ? fyMonthsForKey(selectedPeriods[0]).fyLabel : ''),
+    [selectedPeriods],
+  );
 
   const handleDownload = async (report: ReportDefinition, format: 'xlsx' | 'pdf') => {
-    if ((report.needs === 'month' || report.needs === 'client+month') && !selectedMonth) {
-      toast.error('Pick a month first.');
+    if ((report.needs === 'month' || report.needs === 'client+month') && selectedPeriods.length === 0) {
+      toast.error('Pick at least one period first.');
       return;
     }
     if ((report.needs === 'client+month' || report.needs === 'client') && !selectedClientId) {
@@ -113,7 +138,7 @@ const ReportsPage: React.FC = () => {
     }
     setBusy({ key: report.key, format });
     try {
-      const table = await report.build({ month: selectedMonth, clientId: selectedClientId });
+      const table = await buildForPeriods(report, selectedPeriods, selectedClientId);
       if (format === 'xlsx') renderReportToExcel(table);
       else renderReportToPdf(table);
       toast.success(`${report.title} downloaded.`);
@@ -126,8 +151,8 @@ const ReportsPage: React.FC = () => {
   };
 
   const handlePreview = useCallback(async (report: ReportDefinition) => {
-    if ((report.needs === 'month' || report.needs === 'client+month') && !selectedMonth) {
-      toast.error('Pick a month first.');
+    if ((report.needs === 'month' || report.needs === 'client+month') && selectedPeriods.length === 0) {
+      toast.error('Pick at least one period first.');
       return;
     }
     if ((report.needs === 'client+month' || report.needs === 'client') && !selectedClientId) {
@@ -140,14 +165,14 @@ const ReportsPage: React.FC = () => {
     setPreviewError(null);
     setPreviewTable(null);
     try {
-      const table = await report.build({ month: selectedMonth, clientId: selectedClientId });
+      const table = await buildForPeriods(report, selectedPeriods, selectedClientId);
       setPreviewTable(table);
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setPreviewLoading(false);
     }
-  }, [selectedMonth, selectedClientId]);
+  }, [selectedPeriods, selectedClientId]);
 
   const handleExportFromPreview = async (format: 'xlsx' | 'pdf') => {
     if (!previewTable) return;
@@ -176,8 +201,8 @@ const ReportsPage: React.FC = () => {
       <ReportsBrowser
         reports={REPORTS_CATALOG}
         monthOptions={monthOptions}
-        selectedMonth={selectedMonth}
-        onMonthChange={setSelectedMonth}
+        selectedPeriods={selectedPeriods}
+        onPeriodsChange={setSelectedPeriods}
         clients={clients}
         selectedClientId={selectedClientId}
         onClientChange={setSelectedClientId}

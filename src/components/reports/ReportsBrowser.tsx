@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
+import { MultiSelectPopover } from '@/components/ui/multi-select-popover';
 import {
   FileSpreadsheet, FileText, Loader2, Search, Star, X, LayoutGrid, DownloadCloud, Eye,
 } from 'lucide-react';
@@ -19,6 +19,7 @@ import {
   type ReportDefinition,
   type ReportStatus,
 } from '@/lib/reportRegistry';
+import { fyMonthsForKey } from '@/utils/allClientsReports';
 
 const PIN_STORAGE_KEY = 'gstk_pinned_reports_v1';
 const STATUS_ORDER: ReportStatus[] = ['ready', 'ready-approx', 'extends-login', 'new-login', 'ai-assisted'];
@@ -28,8 +29,15 @@ interface ClientLite { id: string; name: string; gstin: string; }
 export interface ReportsBrowserProps {
   reports: ReportDefinition[];
   monthOptions: { value: string; label: string }[];
-  selectedMonth: string;
-  onMonthChange: (value: string) => void;
+  /**
+   * Multi-select periods, not a single month — Phase 2 of the reports
+   * roadmap. Reports that need a period get every selected one combined
+   * into a single table (see reportPeriodMerge.ts) rather than forcing one
+   * export per month, which is what made date-range-style requests feel
+   * slow in the first place.
+   */
+  selectedPeriods: string[];
+  onPeriodsChange: (value: string[]) => void;
   clients: ClientLite[];
   selectedClientId: string;
   onClientChange: (value: string) => void;
@@ -64,7 +72,7 @@ const loadPinned = (): Set<string> => {
 };
 
 export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
-  reports, monthOptions, selectedMonth, onMonthChange, clients, selectedClientId, onClientChange,
+  reports, monthOptions, selectedPeriods, onPeriodsChange, clients, selectedClientId, onClientChange,
   fyLabel, busy, onDownload, onPullSection, pullingKey, extReady, isPreviewable, onPreview,
 }) => {
   const [search, setSearch] = useState('');
@@ -72,6 +80,25 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
   const [activeStatuses, setActiveStatuses] = useState<Set<ReportStatus>>(new Set());
   const [pinned, setPinned] = useState<Set<string>>(() => loadPinned());
   const searchRef = useRef<HTMLInputElement>(null);
+
+  // "This FY"/"Last FY" one-click select — the whole point of a multi-select
+  // period picker is that a full year shouldn't need 12 individual clicks.
+  // Filtered against monthOptions since that list has its own bounds
+  // (April 2024 through ~2 months out) and a raw FY calendar could include
+  // months the picker doesn't actually offer.
+  const availableMonths = useMemo(() => new Set(monthOptions.map((m) => m.value)), [monthOptions]);
+  const thisFyStartYear = useMemo(() => {
+    const now = new Date();
+    return now.getMonth() + 1 >= 4 ? now.getFullYear() : now.getFullYear() - 1;
+  }, []);
+  const thisFyMonths = useMemo(
+    () => fyMonthsForKey(`04/${thisFyStartYear}`).months.filter((m) => availableMonths.has(m)),
+    [availableMonths, thisFyStartYear],
+  );
+  const lastFyMonths = useMemo(
+    () => fyMonthsForKey(`04/${thisFyStartYear - 1}`).months.filter((m) => availableMonths.has(m)),
+    [availableMonths, thisFyStartYear],
+  );
 
   // "/" focuses search from anywhere on the page, unless already typing
   // somewhere else — the same convenience power users expect from Linear,
@@ -154,12 +181,12 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
   // when it doesn't, so hide it rather than let a value sit there unused.
   const anyVisibleNeedsMonth = useMemo(() => filteredReports.some(needsMonth), [filteredReports]);
   const isReportDisabled = (r: ReportDefinition) =>
-    (needsMonth(r) && !selectedMonth) || (needsClient(r) && !selectedClientId);
+    (needsMonth(r) && selectedPeriods.length === 0) || (needsClient(r) && !selectedClientId);
   const missingInputHint = (r: ReportDefinition): string | null => {
-    const missingMonth = needsMonth(r) && !selectedMonth;
+    const missingMonth = needsMonth(r) && selectedPeriods.length === 0;
     const missingClient = needsClient(r) && !selectedClientId;
-    if (missingMonth && missingClient) return 'Pick a month and a client first';
-    if (missingMonth) return 'Pick a month first';
+    if (missingMonth && missingClient) return 'Pick a period and a client first';
+    if (missingMonth) return 'Pick at least one period first';
     if (missingClient) return 'Pick a client first';
     return null;
   };
@@ -177,12 +204,12 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
     const isPinned = pinned.has(report.key);
     const pulling = pullingKey === report.key;
     const pullMissingClient = !selectedClientId;
-    const pullMissingMonth = !!report.pull?.needsMonth && !selectedMonth;
+    const pullMissingMonth = !!report.pull?.needsMonth && selectedPeriods.length === 0;
     const pullDisabled = pullMissingClient || pullMissingMonth || !extReady || pulling;
     const pullHint = pullMissingClient && pullMissingMonth
-      ? 'Pick a client and a month first'
+      ? 'Pick a client and a period first'
       : pullMissingClient ? 'Pick a client first'
-      : pullMissingMonth ? 'Pick a month first'
+      : pullMissingMonth ? 'Pick a period first'
       : !extReady ? 'Install/enable the GST Keeper browser extension to pull from the portal'
       : null;
 
@@ -384,11 +411,35 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
                 />
               </div>
               {anyVisibleNeedsMonth && (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium whitespace-nowrap text-muted-foreground">Month</span>
-                  <div className="w-36">
-                    <SearchableMonthSelect options={monthOptions} value={selectedMonth} onValueChange={onMonthChange} placeholder="Select" />
-                  </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm font-medium whitespace-nowrap text-muted-foreground">Periods</span>
+                  <MultiSelectPopover
+                    options={monthOptions}
+                    selectedValues={selectedPeriods}
+                    onSelectionChange={onPeriodsChange}
+                    placeholder="Select period(s)"
+                    className="w-44"
+                    contentClassName="w-56"
+                    searchable
+                    showSelectAll={false}
+                    searchPlaceholder="Search months…"
+                  />
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => onPeriodsChange(thisFyMonths)}>
+                        This FY
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">Select every month in the current financial year</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => onPeriodsChange(lastFyMonths)}>
+                        Last FY
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">Select every month in the previous financial year</TooltipContent>
+                  </Tooltip>
                 </div>
               )}
               <div className="flex items-center gap-2">
