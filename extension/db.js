@@ -31,6 +31,7 @@
     patchRefundDocument: (clientId, arn, patchObj) => call('patchRefundDocument', clientId, arn, patchObj),
     replaceDrc03Filings: (clientId, rows) => call('replaceDrc03Filings', clientId, rows),
     upsertTaxpayerProfile: (clientId, patchObj) => call('upsertTaxpayerProfile', clientId, patchObj),
+    getTaxpayerRegistrationDate: (clientId) => call('getTaxpayerRegistrationDate', clientId),
     replaceChallans: (clientId, rows) => call('replaceChallans', clientId, rows),
     uploadPdf: (path, dataUrl) => call('uploadPdf', path, dataUrl),
     markFiled: (row) => call('markFiled', row),

@@ -172,7 +172,7 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4'];
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -211,6 +211,7 @@
     else if (job.step === 'liabilityledger') await handleLiabilityLedger(job, cur, progress);
     else if (job.step === 'cashledger') await handleCashLedger(job, cur, progress);
     else if (job.step === 'notices') await handleNotices(job, cur, progress);
+    else if (job.step === 'refunds_reg_check') await handleRefundsRegCheck(job, cur, progress);
     else if (job.step === 'refunds_warmup') await handleRefundsWarmup(job, cur, progress);
     else if (job.step === 'refunds') await handleRefunds(job, cur, progress);
     else if (job.step === 'refund_docs') await handleRefundDocs(job, cur, progress);
@@ -312,17 +313,10 @@
         await setJob(job);
         location.href = 'https://services.gst.gov.in/services/auth/notices';
       } else if (job.mode === 'refunds') {
-        // Confirmed live: jumping straight to Track Application Status right
-        // after login can leave the Filing Year list permanently empty (no
-        // years ever render, no matter how long polled or how many times
-        // the same URL is reloaded) — visiting the Dashboard first, the way
-        // a human browsing normally would before reaching this page, fixes
-        // it. Always warm up this way rather than only on retry, since the
-        // very first attempt already showed the failure with no retry yet.
-        banner('Logged in — opening the dashboard first…' + progress);
-        job.step = 'refunds_warmup';
+        banner('Logged in — checking registration date…' + progress);
+        job.step = 'refunds_reg_check';
         await setJob(job);
-        location.href = 'https://services.gst.gov.in/services/auth/dashboard';
+        location.href = 'https://services.gst.gov.in/services/auth/myprofile';
       } else if (job.mode === 'drc03') {
         banner('Logged in — reading DRC-03 filings…' + progress);
         job.step = 'drc03';
@@ -2313,13 +2307,60 @@
   }
 
   async function proceedToRefunds(job) {
-    // Same Dashboard warm-up as the standalone Refund pull's login branch
-    // above — the full ledger/reco chain reaches Track Application Status
-    // by the same direct URL, so it's exposed to the identical empty-year
-    // bug without this stop.
+    job.step = 'refunds_reg_check';
+    await setJob(job);
+    location.href = 'https://services.gst.gov.in/services/auth/myprofile';
+  }
+
+  async function proceedToRefundsWarmup(job) {
+    // Same Dashboard warm-up the standalone Refund pull's login branch
+    // routes through — the full ledger/reco chain reaches Track Application
+    // Status by the same direct URL, so it's exposed to the identical
+    // empty-year bug without this stop.
     job.step = 'refunds_warmup';
     await setJob(job);
     location.href = 'https://services.gst.gov.in/services/auth/dashboard';
+  }
+
+  // Confirmed by the user: the document-harvest window walk was defaulting
+  // to GST's 2017 inception for a client that actually registered in 2023,
+  // wasting ~30 guaranteed-empty search cycles. The previous fix derived a
+  // floor from the Filing Year dropdown Track Application Status offers —
+  // wrong assumption: that dropdown appears to list a fairly generic year
+  // range, not one scoped to the individual taxpayer, so it was an
+  // unreliable signal even when the scrape itself succeeded. The client's
+  // ACTUAL registration date (My Profile's own rgdt field, already stored
+  // in gst_taxpayer_profile once pulled) is the real signal. Checks the DB
+  // first — no portal visit needed if a prior Taxpayer Profile pull already
+  // has it — and only visits My Profile if it's genuinely unknown.
+  async function handleRefundsRegCheck(job, cur, progress) {
+    if (job.clientRegYear === undefined) {
+      try {
+        const regDate = await GSTKdb.getTaxpayerRegistrationDate(cur.clientId);
+        const y = regDate ? parseInt(String(regDate).slice(0, 4), 10) : NaN;
+        job.clientRegYear = Number.isFinite(y) ? y : null;
+      } catch (e) { job.clientRegYear = null; }
+      await setJob(job);
+    }
+    if (job.clientRegYear) { await proceedToRefundsWarmup(job); return; }
+
+    if (!/\/services\/auth\/myprofile/.test(url)) { location.href = 'https://services.gst.gov.in/services/auth/myprofile'; return; }
+    banner('Checking registration date before Refunds…' + progress);
+    try {
+      const r = await fetch('https://services.gst.gov.in/services/auth/profile/detail', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      if (r.ok) {
+        const j = await r.json();
+        const regDate = ddmmyyyyToIso(j.rgdt || '');
+        if (regDate) {
+          try { await GSTKdb.upsertTaxpayerProfile(cur.clientId, { registration_date: regDate, updated_at: new Date().toISOString() }); } catch (e) { /* non-fatal */ }
+          const y = parseInt(regDate.slice(0, 4), 10);
+          if (Number.isFinite(y)) job.clientRegYear = y;
+        }
+      }
+    } catch (e) { /* non-fatal — falls through with clientRegYear still null; window builder falls back to 2017 */ }
+    await proceedToRefundsWarmup(job);
   }
 
   async function handleRefundsWarmup(job, cur, progress) {
@@ -2505,6 +2546,15 @@
   // this is a first pass built from screenshots, not a confirmed working
   // flow; the debug panel below reports exactly what it found so a failed
   // run is diagnosable instead of silent.
+  // Preference order: the client's real registration date (handleRefundsRegCheck,
+  // a direct DB/profile fact) beats the Filing Year dropdown-derived guess
+  // (handleRefunds — confirmed live to be an unreliable signal, since that
+  // dropdown appears to offer a fairly generic year range rather than one
+  // scoped to the individual taxpayer), which beats no signal at all.
+  function resolveRefundEarliestYear(job) {
+    return job.clientRegYear || job.refundEarliestYear || null;
+  }
+
   function buildRefundWindows(earliestYear) {
     // This form enforces a 3-month window per search (confirmed live — see
     // the same note on handleDrc03 below: that page's OWN case/search JSON
@@ -2512,9 +2562,9 @@
     // Challan Summary's own ~5.5-month cap, walked here in 89-day steps —
     // a single full-range search here silently fails the portal's own
     // validation and returns nothing. Starts from this client's earliest
-    // Filing Year (handleRefunds stashed it on the job) rather than GST's
-    // 2017 inception for every client — month 3 (April) since FYs run
-    // Apr-Mar, vs month 6 (July, GST's actual inception) for the fallback.
+    // known year (see resolveRefundEarliestYear) rather than GST's 2017
+    // inception for every client — month 3 (April) since FYs run Apr-Mar,
+    // vs month 6 (July, GST's actual inception) for the fallback.
     const p2 = (n) => String(n).padStart(2, '0');
     const fmt = (d) => p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + '/' + d.getFullYear();
     const windows = [];
@@ -2531,7 +2581,7 @@
   async function finishRefundDocs(job, extra) {
     debugPanel([
       'STEP: Refund Application Documents  (' + location.pathname + ')',
-      'windows checked   : ' + buildRefundWindows(job.refundEarliestYear).length + ' (89-day steps from ' + (job.refundEarliestYear ? job.refundEarliestYear + '-04-01' : '2017-07-01') + '), ' + (job.refundWindowsFailed || 0) + ' failed',
+      'windows checked   : ' + buildRefundWindows(resolveRefundEarliestYear(job)).length + ' (89-day steps from ' + (resolveRefundEarliestYear(job) ? resolveRefundEarliestYear(job) + '-04-01' : '2017-07-01') + (job.clientRegYear ? ', from registration date' : job.refundEarliestYear ? ', from Filing Year dropdown (fallback)' : '') + '), ' + (job.refundWindowsFailed || 0) + ' failed',
       'ARNs visited      : ' + (job.refundSeenArns || []).length,
       'documents captured: ' + (job.refundDocsOk || 0) + ' ok, ' + (job.refundDocsFail || 0) + ' failed/none' + (extra || ''),
       'window regressions: ' + (job.refundRegressionCount || 0) + ' (should always be 0 — see handleRefundDocs comments if not)',
@@ -2564,7 +2614,7 @@
     if (!(await waitFor('select, input', 15000))) { banner('My Applications did not load — skipped.' + progress, '#f59e0b'); await finishRefundDocs(job); return; }
 
     const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
-    const windows = buildRefundWindows(job.refundEarliestYear);
+    const windows = buildRefundWindows(resolveRefundEarliestYear(job));
     const seenArns = new Set(job.refundSeenArns || []);
     let winIdx = job.refundWindowIdx || 0;
     let docsOk = job.refundDocsOk || 0, docsFail = job.refundDocsFail || 0;

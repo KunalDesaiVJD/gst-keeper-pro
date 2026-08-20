@@ -112,6 +112,16 @@ const API = {
     return post('gst_taxpayer_profile', [{ client_id: clientId, ...patchObj }]);
   },
 
+  // Quick DB-only check (no portal visit) for a client's known registration
+  // date, so a Refund/DRC-03 pull can bound its portal date-window walks to
+  // this client's real history instead of guessing or defaulting to GST's
+  // 2017 inception for everyone. Returns null if Taxpayer Profile has never
+  // been pulled for this client yet.
+  getTaxpayerRegistrationDate: async (clientId) => {
+    const rows = await sel(`gst_taxpayer_profile?client_id=eq.${clientId}&select=registration_date&limit=1`);
+    return (rows[0] && rows[0].registration_date) || null;
+  },
+
   // Challans. Also not period-scoped — delete-all-then-insert per client,
   // fed by the 'challans' job step.
   replaceChallans: async (clientId, rows) => {
