@@ -2429,9 +2429,12 @@
     // radio click (Angular re-fetches the offered years) — a fixed sleep
     // here used to read the DOM before that landed, finding only the
     // placeholder "Select" option and silently pulling zero years. Poll
-    // instead of guessing a delay.
+    // instead of guessing a delay. Confirmed live: the options DO arrive
+    // eventually (a manual click later on the same stuck page showed real
+    // years) — the previous 6s budget just wasn't long enough on a slower
+    // run; 30s gives real headroom before actually giving up.
     let yearSelect = null;
-    for (let i = 0; i < 20 && !yearSelect; i++) { await sleep(300); yearSelect = findYearSelect(); }
+    for (let i = 0; i < 100 && !yearSelect; i++) { await sleep(300); yearSelect = findYearSelect(); }
     const years = yearSelect ? [...yearSelect.options].map((o) => clean(o.textContent)).filter(isYearOption) : [];
 
     // Confirmed live: reloading THIS SAME trackstatus URL directly does NOT
