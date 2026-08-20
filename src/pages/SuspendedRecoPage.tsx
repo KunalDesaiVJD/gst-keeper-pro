@@ -616,7 +616,12 @@ const SuspendedRecoPage: React.FC = () => {
   const diffCgst = applyTolerance(normalizeZero(openingCgst + portalCgst - booksCgst));
   const diffSgst = applyTolerance(normalizeZero(openingSgst + portalSgst - booksSgst));
   const diffIgst = applyTolerance(normalizeZero(openingIgst + portalIgst - booksIgst));
-  const diffTotal = applyTolerance(normalizeZero(openingTotal + portalTotal - booksTotal));
+  // Derived from the three column diffs above (each already put through the
+  // same ₹10 tolerance) rather than re-tolerancing the raw opening+portal-books
+  // total on its own — otherwise three individually-forgiven sub-₹10 gaps could
+  // stack into a combined raw gap over ₹10 and show a "difference" here even
+  // though every column reads 0.
+  const diffTotal = normalizeZero(diffCgst + diffSgst + diffIgst);
 
   const formatNumber = (num: number): string => {
     if (num === 0 || Object.is(num, -0)) return '0';
