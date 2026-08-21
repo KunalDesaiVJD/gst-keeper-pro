@@ -34,6 +34,8 @@
     getTaxpayerRegistrationDate: (clientId) => call('getTaxpayerRegistrationDate', clientId),
     replaceChallans: (clientId, rows) => call('replaceChallans', clientId, rows),
     upsertFiledReturn: (clientId, period, returnType, patchObj) => call('upsertFiledReturn', clientId, period, returnType, patchObj),
+    replaceCreditReversalReclaimEntries: (clientId, financialYear, rows) => call('replaceCreditReversalReclaimEntries', clientId, financialYear, rows),
+    replaceRcmLiabilityItcEntries: (clientId, financialYear, rows) => call('replaceRcmLiabilityItcEntries', clientId, financialYear, rows),
     fetchCrossOriginAsBase64: (url) => call('fetchCrossOriginAsBase64', url),
     uploadPdf: (path, dataUrl) => call('uploadPdf', path, dataUrl),
     markFiled: (row) => call('markFiled', row),

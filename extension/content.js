@@ -172,7 +172,7 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4'];
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || job.step === 'gstr1_json_pull' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || job.step === 'gstr1_json_pull' || job.step === 'revrclm_pull' || job.step === 'rcmliab_pull' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -202,6 +202,12 @@
         try { await GSTKdb.replaceCreditLedgerTxns(cur.clientId, job.period, [{ client_id: cur.clientId, period_month: job.period, is_debit: false, description: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Credit Ledger' }]); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'gstr1_json_pull') {
         try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading the filed GSTR-1 JSON' }); } catch (e2) { /* diagnostic only */ }
+      } else if (job.step === 'revrclm_pull') {
+        const fy = (fyRangeForPull(job.period) || {}).fy || job.period;
+        try { await GSTKdb.replaceCreditReversalReclaimEntries(cur.clientId, fy, [{ client_id: cur.clientId, financial_year: fy, description: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading the Credit Reversal and Re-claimed Statement' }]); } catch (e2) { /* diagnostic only */ }
+      } else if (job.step === 'rcmliab_pull') {
+        const fy = (fyRangeForPull(job.period) || {}).fy || job.period;
+        try { await GSTKdb.replaceRcmLiabilityItcEntries(cur.clientId, fy, [{ client_id: cur.clientId, financial_year: fy, description: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading the RCM Liability/ITC Statement' }]); } catch (e2) { /* diagnostic only */ }
       }
       // 'taxpayerprofile' has no diagnostic row: it's a single-row upsert
       // per client, so a failed pull just leaves any prior good data as-is
@@ -235,6 +241,8 @@
     else if (job.step === 'gstr2a_pull') await handleGstr2aPull(job, cur, progress);
     else if (job.step === 'creditledgertxn') await handleCreditLedgerTxnOnly(job, cur, progress);
     else if (job.step === 'gstr1_json_pull') await handleGstr1JsonPull(job, cur, progress);
+    else if (job.step === 'revrclm_pull') await handleRevRclmPull(job, cur, progress);
+    else if (job.step === 'rcmliab_pull') await handleRcmLiabPull(job, cur, progress);
     else if (job.step === 'gstr2b_pull_dash') await handleGstr2bPullDash(job, cur, progress);
     else if (job.step === 'gstr2b_pull') await handleGstr2bPull(job, cur, progress);
     else if (job.step === 'efiledpdf') await handleReturnPdf(job, cur, progress);
@@ -371,6 +379,16 @@
       } else if (job.mode === 'gstr1_json_pull') {
         banner('Logged in — requesting the filed GSTR-1 JSON…' + progress);
         job.step = 'gstr1_json_pull';
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      } else if (job.mode === 'revrclm_pull') {
+        banner('Logged in — reading the Credit Reversal and Re-claimed Statement…' + progress);
+        job.step = 'revrclm_pull';
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      } else if (job.mode === 'rcmliab_pull') {
+        banner('Logged in — reading the RCM Liability/ITC Statement…' + progress);
+        job.step = 'rcmliab_pull';
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
       } else if (job.mode === 'creditledgertxn') {
@@ -3307,6 +3325,153 @@
       'counterparties     : ' + ctinList.length + ' (' + failed + ' failed)',
     ]);
     banner('GSTR-2A ' + job.period + ' → saved ✓ (' + ctinList.length + ' counterparties).' + progress, '#16a34a');
+    await sleep(800);
+    await advance(job);
+  }
+
+  // Shared by the two statement pulls below: given the job's period, the
+  // financial-year key ('2026-2027') and the DD/MM/YYYY date-range bounds to
+  // fetch (Apr 1 of the FY through today, or FY-end if the FY has already
+  // closed) — both portal APIs accept an arbitrary range in one call, so
+  // there's no need to loop month-by-month the way Liability/Cash Ledger do.
+  function fyRangeForPull(period) {
+    const [mm, yyyy] = String(period || '').split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) return null;
+    const startYear = mm >= 4 ? yyyy : yyyy - 1;
+    const fy = startYear + '-' + (startYear + 1);
+    const p2 = (n) => String(n).padStart(2, '0');
+    const fyEnd = new Date(startYear + 1, 2, 31);
+    const today = new Date();
+    const tdateObj = today < fyEnd ? today : fyEnd;
+    return {
+      fy,
+      fdate: '01/04/' + startYear,
+      tdate: p2(tdateObj.getDate()) + '/' + p2(tdateObj.getMonth() + 1) + '/' + tdateObj.getFullYear(),
+    };
+  }
+
+  // rtnprd from these two APIs is 'YYYYMM' (e.g. '202603') — this app's own
+  // convention is 'MM/YYYY'.
+  const rtnPrdToPeriod = (rtnprd) => {
+    const s = String(rtnprd || '');
+    return s.length === 6 ? (s.slice(4) + '/' + s.slice(0, 4)) : null;
+  };
+  const numOr0 = (v) => (typeof v === 'number' && isFinite(v) ? v : 0);
+
+  // Electronic Credit Reversal and Re-claimed Statement — a REAL Dashboard
+  // Quick Link (Services > Ledger > "Electronic Credit Reversal and
+  // Re-claimed Statement"), confirmed live 2026-08-22:
+  // internalapi/getRevRclmDetls?fdate=&tdate= returns every GSTR-3B filing's
+  // Table 4A(5)/4B(2)/4D(1) ITC movement plus a running closing balance, for
+  // the WHOLE requested date range in one call. Replaces this app's earlier
+  // reconciliation-derived estimate — see gst_credit_reversal_reclaim_entries.
+  async function handleRevRclmPull(job, cur, progress) {
+    if (!/return\.gst\.gov\.in/.test(location.hostname)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
+    const range = fyRangeForPull(job.period);
+    if (!range) { banner('Bad period for Credit Reversal and Re-claimed Statement.', '#dc2626'); await clearJob(); return; }
+    banner('Reading Electronic Credit Reversal and Re-claimed Statement for FY ' + range.fy + '…' + progress);
+
+    let data = null;
+    try {
+      const r = await fetch('https://return.gst.gov.in/returns/auth/internalapi/getRevRclmDetls?fdate=' + range.fdate + '&tdate=' + range.tdate, { credentials: 'include' });
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' from getRevRclmDetls');
+      data = await r.json();
+    } catch (e) {
+      banner('Credit Reversal and Re-claimed Statement: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
+      try { await GSTKdb.replaceCreditReversalReclaimEntries(cur.clientId, range.fy, [{ client_id: cur.clientId, financial_year: range.fy, description: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }]); } catch (e2) { /* diagnostic only */ }
+      await sleep(1200);
+      await advance(job);
+      return;
+    }
+
+    const rows = [];
+    if (data && data.opnbal) {
+      const ob = data.opnbal;
+      rows.push({
+        client_id: cur.clientId, financial_year: range.fy, is_opening_balance: true,
+        closing_balance_igst: numOr0(ob.igst), closing_balance_cgst: numOr0(ob.cgst),
+        closing_balance_sgst: numOr0(ob.sgst), closing_balance_cess: numOr0(ob.cess),
+      });
+    }
+    (data && Array.isArray(data.tr) ? data.tr : []).forEach((t) => {
+      const a5 = t.itc4a5 || {}, b2 = t.itc4b2 || {}, d1 = t.itc4d1 || {}, cb = t.clsbal || {};
+      rows.push({
+        client_id: cur.clientId, financial_year: range.fy, is_opening_balance: false,
+        return_period: rtnPrdToPeriod(t.rtnprd),
+        transaction_date: t.trandt || null, reference_no: t.refno || null, description: t.desc || null,
+        itc_claimed_igst: numOr0(a5.igst), itc_claimed_cgst: numOr0(a5.cgst), itc_claimed_sgst: numOr0(a5.sgst), itc_claimed_cess: numOr0(a5.cess),
+        itc_reversed_igst: numOr0(b2.igst), itc_reversed_cgst: numOr0(b2.cgst), itc_reversed_sgst: numOr0(b2.sgst), itc_reversed_cess: numOr0(b2.cess),
+        itc_reclaimed_igst: numOr0(d1.igst), itc_reclaimed_cgst: numOr0(d1.cgst), itc_reclaimed_sgst: numOr0(d1.sgst), itc_reclaimed_cess: numOr0(d1.cess),
+        closing_balance_igst: numOr0(cb.igst), closing_balance_cgst: numOr0(cb.cgst), closing_balance_sgst: numOr0(cb.sgst), closing_balance_cess: numOr0(cb.cess),
+      });
+    });
+
+    try { await GSTKdb.replaceCreditReversalReclaimEntries(cur.clientId, range.fy, rows); } catch (e) { /* non-fatal */ }
+    debugPanel([
+      'STEP: Electronic Credit Reversal and Re-claimed Statement  (' + location.pathname + ')',
+      'FY                : ' + range.fy + '  (' + range.fdate + ' – ' + range.tdate + ')',
+      'rows read         : ' + rows.length,
+    ]);
+    banner('Credit Reversal and Re-claimed Statement (FY ' + range.fy + ') → ' + rows.length + ' rows saved.' + progress, '#16a34a');
+    await sleep(800);
+    await advance(job);
+  }
+
+  // RCM Liability/ITC Statement — same story, another REAL Dashboard Quick
+  // Link, confirmed live 2026-08-22: internalapi/getRcmDetls returns every
+  // GSTR-3B filing's Table 3.1(d) RCM liability paid vs Table 4A(2)/4A(3) RCM
+  // ITC claimed, plus a running closing balance. Table 4A(2) (import of
+  // services) legally carries only IGST/Cess — RCM on imports is always
+  // IGST under the IGST Act — and the portal's own response reflects that:
+  // itc4a2 has no cgst/sgst keys at all, not zeros.
+  async function handleRcmLiabPull(job, cur, progress) {
+    if (!/return\.gst\.gov\.in/.test(location.hostname)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
+    const range = fyRangeForPull(job.period);
+    if (!range) { banner('Bad period for RCM Liability/ITC Statement.', '#dc2626'); await clearJob(); return; }
+    banner('Reading RCM Liability/ITC Statement for FY ' + range.fy + '…' + progress);
+
+    let data = null;
+    try {
+      const r = await fetch('https://return.gst.gov.in/returns/auth/internalapi/getRcmDetls?fdate=' + range.fdate + '&tdate=' + range.tdate, { credentials: 'include' });
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' from getRcmDetls');
+      data = await r.json();
+    } catch (e) {
+      banner('RCM Liability/ITC Statement: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
+      try { await GSTKdb.replaceRcmLiabilityItcEntries(cur.clientId, range.fy, [{ client_id: cur.clientId, financial_year: range.fy, description: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }]); } catch (e2) { /* diagnostic only */ }
+      await sleep(1200);
+      await advance(job);
+      return;
+    }
+
+    const rows = [];
+    if (data && data.opnbal) {
+      const ob = data.opnbal;
+      rows.push({
+        client_id: cur.clientId, financial_year: range.fy, is_opening_balance: true,
+        closing_balance_igst: numOr0(ob.igst), closing_balance_cgst: numOr0(ob.cgst),
+        closing_balance_sgst: numOr0(ob.sgst), closing_balance_cess: numOr0(ob.cess),
+      });
+    }
+    (data && Array.isArray(data.tr) ? data.tr : []).forEach((t) => {
+      const l31d = t.inwardsup_3_1d || {}, a2 = t.itc4a2 || {}, a3 = t.itc4a3 || {}, cb = t.clsbal || {};
+      rows.push({
+        client_id: cur.clientId, financial_year: range.fy, is_opening_balance: false,
+        return_period: rtnPrdToPeriod(t.rtnprd),
+        transaction_date: t.trandt || null, reference_no: t.refno || null, description: t.desc || null,
+        liability_3_1d_igst: numOr0(l31d.igst), liability_3_1d_cgst: numOr0(l31d.cgst), liability_3_1d_sgst: numOr0(l31d.sgst), liability_3_1d_cess: numOr0(l31d.cess),
+        itc_4a2_igst: numOr0(a2.igst), itc_4a2_cess: numOr0(a2.cess),
+        itc_4a3_igst: numOr0(a3.igst), itc_4a3_cgst: numOr0(a3.cgst), itc_4a3_sgst: numOr0(a3.sgst), itc_4a3_cess: numOr0(a3.cess),
+        closing_balance_igst: numOr0(cb.igst), closing_balance_cgst: numOr0(cb.cgst), closing_balance_sgst: numOr0(cb.sgst), closing_balance_cess: numOr0(cb.cess),
+      });
+    });
+
+    try { await GSTKdb.replaceRcmLiabilityItcEntries(cur.clientId, range.fy, rows); } catch (e) { /* non-fatal */ }
+    debugPanel([
+      'STEP: RCM Liability/ITC Statement  (' + location.pathname + ')',
+      'FY                : ' + range.fy + '  (' + range.fdate + ' – ' + range.tdate + ')',
+      'rows read         : ' + rows.length,
+    ]);
+    banner('RCM Liability/ITC Statement (FY ' + range.fy + ') → ' + rows.length + ' rows saved.' + progress, '#16a34a');
     await sleep(800);
     await advance(job);
   }

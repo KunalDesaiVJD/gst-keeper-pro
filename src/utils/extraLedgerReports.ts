@@ -5,7 +5,7 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import type { ReportTable } from './allClientsReports';
-import { fyMonthsForKey, formatMonthLabel, mmYyyyToShort } from './allClientsReports';
+import { fyMonthsForKey, formatMonthLabel } from './allClientsReports';
 import type { Gstr3bSummary, TypedAmt } from './filedReturnReports';
 
 interface ClientLite { id: string; name: string; gstin: string; }
@@ -21,89 +21,145 @@ const fetchClient = async (clientId: string): Promise<ClientLite> => {
   return (data || { id: clientId, name: 'Unknown', gstin: '' }) as ClientLite;
 };
 
-// ────── LEDGERS 1: Credit Reversal and Reclaim Statement (one client) ────
+// ────── LEDGERS 1: Electronic Credit Reversal and Re-claimed Statement ───
+// Rebuilt against the REAL portal statement (Dashboard Quick Link, Services >
+// Ledger > "Electronic Credit Reversal and Re-claimed Statement") instead of
+// computing it from this app's own suspended-ITC reconciliation — confirmed
+// live 2026-08-22 to be a genuine, separate portal feature with its own API
+// (see supabase/migrations/20260822120000_rcm_credit_reversal_statements.sql).
+// A Pull (mode 'revrclm_pull') fetches the client's WHOLE financial year in
+// one job, so this reads every row already stored for that FY rather than
+// looping month by month.
+
+const fyKeyOf = (anyMonthInFy: string): string => {
+  const { months } = fyMonthsForKey(anyMonthInFy);
+  const [, startYear] = months[0].split('/').map(Number);
+  return `${startYear}-${startYear + 1}`;
+};
+
+interface CreditReversalReclaimEntry {
+  is_opening_balance: boolean;
+  return_period: string | null;
+  transaction_date: string | null;
+  reference_no: string | null;
+  description: string | null;
+  itc_claimed_igst: number | null; itc_claimed_cgst: number | null; itc_claimed_sgst: number | null; itc_claimed_cess: number | null;
+  itc_reversed_igst: number | null; itc_reversed_cgst: number | null; itc_reversed_sgst: number | null; itc_reversed_cess: number | null;
+  itc_reclaimed_igst: number | null; itc_reclaimed_cgst: number | null; itc_reclaimed_sgst: number | null; itc_reclaimed_cess: number | null;
+  closing_balance_igst: number | null; closing_balance_cgst: number | null; closing_balance_sgst: number | null; closing_balance_cess: number | null;
+}
+
+const CREDIT_REVERSAL_HEADERS = [
+  'S.No.', 'Date', 'Reference No.', 'Return Period', 'Description',
+  'ITC Claimed IGST', 'ITC Claimed CGST', 'ITC Claimed SGST', 'ITC Claimed Cess',
+  'ITC Reversed IGST', 'ITC Reversed CGST', 'ITC Reversed SGST', 'ITC Reversed Cess',
+  'ITC Reclaimed IGST', 'ITC Reclaimed CGST', 'ITC Reclaimed SGST', 'ITC Reclaimed Cess',
+  'Closing IGST', 'Closing CGST', 'Closing SGST', 'Closing Cess', 'Balance',
+];
 
 export const buildCreditReversalReclaimStatement = async (clientId: string, anyMonthInFy: string): Promise<ReportTable> => {
-  const { fyLabel, months } = fyMonthsForKey(anyMonthInFy);
-  const [clientRes, originRes, reclaimRes] = await Promise.all([
-    supabase.from('clients').select('id, name, gstin').eq('id', clientId).maybeSingle(),
-    supabase.from('bills_not_in_2b').select('period_month, input_cgst, input_sgst, input_igst, reclaim_month').eq('client_id', clientId).in('period_month', months),
-    supabase.from('bills_not_in_2b').select('reclaim_month, input_cgst, input_sgst, input_igst, reclaim_subtype').eq('client_id', clientId).in('reclaim_month', months),
-  ]);
-  const client: ClientLite = (clientRes.data || { id: clientId, name: 'Unknown', gstin: '' }) as any;
-  const sumTax = (r: { input_cgst?: number | null; input_sgst?: number | null; input_igst?: number | null }) =>
-    num(r.input_cgst) + num(r.input_sgst) + num(r.input_igst);
+  const { fyLabel } = fyMonthsForKey(anyMonthInFy);
+  const fy = fyKeyOf(anyMonthInFy);
+  const client = await fetchClient(clientId);
+  const { data } = await supabase
+    .from('gst_credit_reversal_reclaim_entries' as any)
+    .select('*')
+    .eq('client_id', clientId)
+    .eq('financial_year', fy)
+    .order('is_opening_balance', { ascending: false })
+    .order('transaction_date', { ascending: true });
+  const entries = (data || []) as unknown as CreditReversalReclaimEntry[];
 
-  const reversedByMonth = new Map<string, number>();
-  const closingByMonth = new Map<string, number>();
-  (originRes.data || []).forEach((r) => {
-    reversedByMonth.set(r.period_month, (reversedByMonth.get(r.period_month) || 0) + sumTax(r));
-    if (!r.reclaim_month) closingByMonth.set(r.period_month, (closingByMonth.get(r.period_month) || 0) + sumTax(r));
+  const rows: (string | number)[][] = entries.map((e, idx) => {
+    const bal = num(e.closing_balance_igst) + num(e.closing_balance_cgst) + num(e.closing_balance_sgst) + num(e.closing_balance_cess);
+    if (e.is_opening_balance) {
+      return [idx + 1, '-', '-', '-', 'Opening Balance', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-',
+        num(e.closing_balance_igst), num(e.closing_balance_cgst), num(e.closing_balance_sgst), num(e.closing_balance_cess), bal];
+    }
+    return [
+      idx + 1, e.transaction_date || '—', e.reference_no || '—', e.return_period || '—', e.description || '—',
+      num(e.itc_claimed_igst), num(e.itc_claimed_cgst), num(e.itc_claimed_sgst), num(e.itc_claimed_cess),
+      num(e.itc_reversed_igst), num(e.itc_reversed_cgst), num(e.itc_reversed_sgst), num(e.itc_reversed_cess),
+      num(e.itc_reclaimed_igst), num(e.itc_reclaimed_cgst), num(e.itc_reclaimed_sgst), num(e.itc_reclaimed_cess),
+      num(e.closing_balance_igst), num(e.closing_balance_cgst), num(e.closing_balance_sgst), num(e.closing_balance_cess), bal,
+    ];
   });
-  const reclaimedByMonth = new Map<string, number>();
-  const expensedByMonth = new Map<string, number>();
-  (reclaimRes.data || []).forEach((r) => {
-    const amt = sumTax(r);
-    const m = r.reclaim_month as string;
-    reclaimedByMonth.set(m, (reclaimedByMonth.get(m) || 0) + amt);
-    if (r.reclaim_subtype === 'EXPENSE_OUT') expensedByMonth.set(m, (expensedByMonth.get(m) || 0) + amt);
-  });
-
-  let totRev = 0, totRec = 0, totExp = 0, totClose = 0;
-  const rows: (string | number)[][] = months.map((m, idx) => {
-    const rev = reversedByMonth.get(m) || 0, rec = reclaimedByMonth.get(m) || 0, exp = expensedByMonth.get(m) || 0, close = closingByMonth.get(m) || 0;
-    totRev += rev; totRec += rec; totExp += exp; totClose += close;
-    return [idx + 1, formatMonthLabel(m), rev, rec, exp, close];
-  });
-  rows.push(['', 'TOTAL', totRev, totRec, totExp, totClose]);
 
   return {
-    title: 'Credit Reversal and Reclaim Statement',
-    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   ${fyLabel}   |   "Reversed" and "Closing Balance" are keyed by the month the bill originated (reversal always happens in that same month); "Reclaimed" and "Expensed Out" are keyed by the month the reclaim/write-off actually happened, which can be a later month.`,
-    headers: ['Sr No.', 'Month', 'Reversed This Month', 'Reclaimed This Month', 'Expensed Out This Month', 'Closing Balance (Still Suspended)'],
+    title: 'Electronic Credit Reversal and Re-claimed Statement',
+    subtitle: entries.length === 0
+      ? `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   ${fyLabel}   |   NOT PULLED — this is a real GST portal statement (Table 4A(5)/4B(2)/4D(1) ITC movement, not a value this app computes); use this report's Pull button to fetch the whole financial year.`
+      : `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   ${fyLabel}   |   As shown on the portal's own "Electronic Credit Reversal and Re-claimed Statement" — pulled directly from the portal, not computed from this app's reconciliation.`,
+    headers: CREDIT_REVERSAL_HEADERS,
     rows,
-    fileNameBase: `Credit_Reversal_Reclaim_Statement_${fileSafe(client.name)}_${fyLabel.replace(/\s+/g, '_')}`,
-    columnWidths: [6, 18, 18, 18, 20, 22],
+    fileNameBase: `Credit_Reversal_Reclaimed_Statement_${fileSafe(client.name)}_${fy}`,
+    columnWidths: [6, 12, 16, 12, 22, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12],
   };
 };
 
-// ────── LEDGERS 2: RCM Liability/ITC (one client, FY ledger) ─────────────
+// ────── LEDGERS 2: RCM Liability/ITC Statement (one client, FY) ──────────
+// Same story: rebuilt against the REAL portal statement (Dashboard Quick
+// Link "RCM Liability/ITC Statement") instead of deriving it from RCM
+// Summary's own books-based rcm_data. A Pull (mode 'rcmliab_pull') fetches
+// the client's whole financial year in one job.
+
+interface RcmLiabilityItcEntry {
+  is_opening_balance: boolean;
+  return_period: string | null;
+  transaction_date: string | null;
+  reference_no: string | null;
+  description: string | null;
+  liability_3_1d_igst: number | null; liability_3_1d_cgst: number | null; liability_3_1d_sgst: number | null; liability_3_1d_cess: number | null;
+  itc_4a2_igst: number | null; itc_4a2_cess: number | null;
+  itc_4a3_igst: number | null; itc_4a3_cgst: number | null; itc_4a3_sgst: number | null; itc_4a3_cess: number | null;
+  closing_balance_igst: number | null; closing_balance_cgst: number | null; closing_balance_sgst: number | null; closing_balance_cess: number | null;
+}
+
+const RCM_LIABILITY_ITC_HEADERS = [
+  'S.No.', 'Date', 'Reference No.', 'Return Period', 'Description',
+  'Liability Paid IGST', 'Liability Paid CGST', 'Liability Paid SGST', 'Liability Paid Cess',
+  'ITC 4A(2) IGST', 'ITC 4A(2) Cess',
+  'ITC 4A(3) IGST', 'ITC 4A(3) CGST', 'ITC 4A(3) SGST', 'ITC 4A(3) Cess',
+  'Closing IGST', 'Closing CGST', 'Closing SGST', 'Closing Cess', 'Balance',
+];
 
 export const buildRcmLedgerPerClient = async (clientId: string, anyMonthInFy: string): Promise<ReportTable> => {
-  const { fyLabel, months } = fyMonthsForKey(anyMonthInFy);
-  const shortMonths = months.map(mmYyyyToShort);
-  const [clientRes, rcmRes] = await Promise.all([
-    supabase.from('clients').select('id, name, gstin').eq('id', clientId).maybeSingle(),
-    supabase.from('rcm_data').select('month, taxable_value, cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18').eq('client_id', clientId).in('month', shortMonths),
-  ]);
-  const client: ClientLite = (clientRes.data || { id: clientId, name: 'Unknown', gstin: '' }) as any;
+  const { fyLabel } = fyMonthsForKey(anyMonthInFy);
+  const fy = fyKeyOf(anyMonthInFy);
+  const client = await fetchClient(clientId);
+  const { data } = await supabase
+    .from('gst_rcm_liability_itc_entries' as any)
+    .select('*')
+    .eq('client_id', clientId)
+    .eq('financial_year', fy)
+    .order('is_opening_balance', { ascending: false })
+    .order('transaction_date', { ascending: true });
+  const entries = (data || []) as unknown as RcmLiabilityItcEntry[];
 
-  interface Bucket { txval: number; igst: number; cgst: number; sgst: number; }
-  const byMonth = new Map<string, Bucket>();
-  (rcmRes.data || []).forEach((r) => {
-    const cur = byMonth.get(r.month) || { txval: 0, igst: 0, cgst: 0, sgst: 0 };
-    cur.txval += num(r.taxable_value);
-    cur.igst += num(r.igst_5) + num(r.igst_18);
-    cur.cgst += num(r.cgst_2_5) + num(r.cgst_9);
-    cur.sgst += num(r.sgst_2_5) + num(r.sgst_9);
-    byMonth.set(r.month, cur);
+  const rows: (string | number)[][] = entries.map((e, idx) => {
+    const bal = num(e.closing_balance_igst) + num(e.closing_balance_cgst) + num(e.closing_balance_sgst) + num(e.closing_balance_cess);
+    if (e.is_opening_balance) {
+      return [idx + 1, '-', '-', '-', 'Opening Balance', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-',
+        num(e.closing_balance_igst), num(e.closing_balance_cgst), num(e.closing_balance_sgst), num(e.closing_balance_cess), bal];
+    }
+    return [
+      idx + 1, e.transaction_date || '—', e.reference_no || '—', e.return_period || '—', e.description || '—',
+      num(e.liability_3_1d_igst), num(e.liability_3_1d_cgst), num(e.liability_3_1d_sgst), num(e.liability_3_1d_cess),
+      num(e.itc_4a2_igst), num(e.itc_4a2_cess),
+      num(e.itc_4a3_igst), num(e.itc_4a3_cgst), num(e.itc_4a3_sgst), num(e.itc_4a3_cess),
+      num(e.closing_balance_igst), num(e.closing_balance_cgst), num(e.closing_balance_sgst), num(e.closing_balance_cess), bal,
+    ];
   });
-
-  let totTx = 0, totI = 0, totC = 0, totS = 0;
-  const rows: (string | number)[][] = months.map((m, idx) => {
-    const v = byMonth.get(mmYyyyToShort(m)) || { txval: 0, igst: 0, cgst: 0, sgst: 0 };
-    totTx += v.txval; totI += v.igst; totC += v.cgst; totS += v.sgst;
-    return [idx + 1, formatMonthLabel(m), v.txval, v.igst, v.cgst, v.sgst, v.igst + v.cgst + v.sgst];
-  });
-  rows.push(['', 'TOTAL', totTx, totI, totC, totS, totI + totC + totS]);
 
   return {
-    title: 'RCM Liability/ITC Ledger',
-    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   ${fyLabel}   |   From RCM Summary. In this app's GSTR-3B draft, Table 4A(3) RCM ITC is always computed from this same total, so RCM liability and RCM ITC claimed are identical per month here — see "Reverse Charge Liability Declared and ITC Claimed Thereon" (Tax Liability & ITC) for periods where a manual adjustment creates a difference.`,
-    headers: ['Sr No.', 'Month', 'Taxable Value', 'IGST', 'CGST', 'SGST', 'Total RCM Tax'],
+    title: 'RCM Liability/ITC Statement',
+    subtitle: entries.length === 0
+      ? `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   ${fyLabel}   |   NOT PULLED — this is a real GST portal statement (Table 3.1(d) RCM liability paid vs Table 4A(2)/4A(3) RCM ITC claimed, not a value this app computes); use this report's Pull button to fetch the whole financial year.`
+      : `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   ${fyLabel}   |   As shown on the portal's own "RCM Liability/ITC Statement". Positive Balance = RCM liability paid but ITC not yet claimed; negative = ITC claimed in excess of liability paid.`,
+    headers: RCM_LIABILITY_ITC_HEADERS,
     rows,
-    fileNameBase: `RCM_Liability_ITC_Ledger_${fileSafe(client.name)}_${fyLabel.replace(/\s+/g, '_')}`,
-    columnWidths: [6, 18, 16, 14, 14, 14, 16],
+    fileNameBase: `RCM_Liability_ITC_Statement_${fileSafe(client.name)}_${fy}`,
+    columnWidths: [6, 12, 16, 12, 22, 12, 12, 12, 12, 12, 10, 12, 12, 12, 12, 12, 12, 12, 12, 12],
   };
 };
 
@@ -152,8 +208,8 @@ const findItc = (arr: TypedAmt[] | undefined, ty: string): TypedAmt =>
 export const buildRcmTaxPaidVsItcClaimedAllClients = async (month: string): Promise<ReportTable> => {
   const { data: clientsData } = await supabase.from('clients').select('id, name, gstin').order('name');
   const clients: ClientLite[] = (clientsData || []) as any;
-  const { data: filedRows } = await supabase.from('gst_filed_returns').select('client_id, summary').eq('period_month', month).eq('return_type', 'GSTR3B');
-  const byClient = new Map((filedRows || []).map((r) => [r.client_id, r.summary as Gstr3bSummary]));
+  const { data: filedRows } = await supabase.from('gst_filed_returns' as any).select('client_id, summary').eq('period_month', month).eq('return_type', 'GSTR3B');
+  const byClient = new Map((filedRows || []).map((r: any) => [r.client_id, r.summary as Gstr3bSummary]));
 
   let totLiab = 0, totItc = 0, pulled = 0;
   const rows: (string | number)[][] = clients.map((client, idx) => {
@@ -184,8 +240,8 @@ export const buildRcmTaxPaidVsItcClaimedAllClients = async (month: string): Prom
 export const buildItcClaimedVsUtilizedAllClients = async (month: string): Promise<ReportTable> => {
   const { data: clientsData } = await supabase.from('clients').select('id, name, gstin').order('name');
   const clients: ClientLite[] = (clientsData || []) as any;
-  const { data: filedRows } = await supabase.from('gst_filed_returns').select('client_id, summary').eq('period_month', month).eq('return_type', 'GSTR3B');
-  const byClient = new Map((filedRows || []).map((r) => [r.client_id, r.summary as Gstr3bSummary]));
+  const { data: filedRows } = await supabase.from('gst_filed_returns' as any).select('client_id, summary').eq('period_month', month).eq('return_type', 'GSTR3B');
+  const byClient = new Map((filedRows || []).map((r: any) => [r.client_id, r.summary as Gstr3bSummary]));
 
   let totClaimed = 0, totUtilized = 0, pulled = 0;
   const rows: (string | number)[][] = clients.map((client, idx) => {

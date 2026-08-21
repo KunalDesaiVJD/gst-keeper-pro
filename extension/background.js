@@ -140,6 +140,21 @@ const API = {
     return post('gst_filed_returns', [{ client_id: clientId, period_month: period, return_type: returnType, ...patchObj }]);
   },
 
+  // Electronic Credit Reversal and Re-claimed Statement, and RCM Liability/ITC
+  // Statement — both real Dashboard Quick Links, confirmed live 2026-08-22
+  // against return.gst.gov.in's own internalapi (see the
+  // rcm_credit_reversal_statements migration for the full endpoint shapes).
+  // A pull fetches a client's WHOLE financial year in one call, so replace is
+  // scoped to client+financial_year rather than client+period_month.
+  replaceCreditReversalReclaimEntries: async (clientId, financialYear, rows) => {
+    await del('gst_credit_reversal_reclaim_entries', `client_id=eq.${clientId}&financial_year=eq.${enc(financialYear)}`);
+    return rows.length ? post('gst_credit_reversal_reclaim_entries', rows) : true;
+  },
+  replaceRcmLiabilityItcEntries: async (clientId, financialYear, rows) => {
+    await del('gst_rcm_liability_itc_entries', `client_id=eq.${clientId}&financial_year=eq.${enc(financialYear)}`);
+    return rows.length ? post('gst_rcm_liability_itc_entries', rows) : true;
+  },
+
   // Cross-origin fetch relay. content.js's own fetch() is same-origin only
   // (it runs in the page's security context, subject to the page's CORS
   // policy — the SAME reason every Supabase call in this file already goes
