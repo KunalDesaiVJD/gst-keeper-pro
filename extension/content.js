@@ -172,7 +172,7 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4'];
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -198,6 +198,8 @@
         try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2A', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading GSTR-2A' }); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull') {
         try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2B', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading GSTR-2B' }); } catch (e2) { /* diagnostic only */ }
+      } else if (job.step === 'creditledgertxn') {
+        try { await GSTKdb.replaceCreditLedgerTxns(cur.clientId, job.period, [{ client_id: cur.clientId, period_month: job.period, is_debit: false, description: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Credit Ledger' }]); } catch (e2) { /* diagnostic only */ }
       }
       // 'taxpayerprofile' has no diagnostic row: it's a single-row upsert
       // per client, so a failed pull just leaves any prior good data as-is
@@ -229,6 +231,7 @@
     else if (job.step === 'gstr3b_pull') await handleGstr3bPull(job, cur, progress);
     else if (job.step === 'gstr1_pull') await handleGstr1Pull(job, cur, progress);
     else if (job.step === 'gstr2a_pull') await handleGstr2aPull(job, cur, progress);
+    else if (job.step === 'creditledgertxn') await handleCreditLedgerTxnOnly(job, cur, progress);
     else if (job.step === 'gstr2b_pull_dash') await handleGstr2bPullDash(job, cur, progress);
     else if (job.step === 'gstr2b_pull') await handleGstr2bPull(job, cur, progress);
     else if (job.step === 'efiledpdf') await handleReturnPdf(job, cur, progress);
@@ -362,6 +365,11 @@
         job.step = 'gstr1_pull';
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      } else if (job.mode === 'creditledgertxn') {
+        banner('Logged in — reading Credit Ledger (transaction detail)…' + progress);
+        job.step = 'creditledgertxn';
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns/auth/ledger/detailedledger';
       } else if (job.mode === 'gstr2a_pull') {
         banner('Logged in — reading GSTR-2A (B2B)…' + progress);
         job.step = 'gstr2a_pull';
@@ -2287,6 +2295,42 @@
     banner('Cash Ledger → ' + rows.length + ' entries saved. Now Notices & Orders…' + progress, '#16a34a');
     await sleep(1000);
     await chainOrStop(job, 'cashledger', proceedToNotices);
+  }
+
+  // Standalone Credit Ledger (Transaction Detail) pull — same detailedledger
+  // page and readLedgerRows() scrape handleLedger already uses for GST
+  // Receivable Reco, but stops after saving instead of chaining into the
+  // reversal/reco chain. Carved out so the Reports Hub can offer a one-click
+  // Pull on this report directly, the way Liability/Cash Ledger already do,
+  // instead of only being reachable via GST Receivable Reco's full pull.
+  async function handleCreditLedgerTxnOnly(job, cur, progress) {
+    if (!/return\.gst\.gov\.in/.test(location.hostname) || !/detailedledger/.test(url)) {
+      location.href = 'https://return.gst.gov.in/returns/auth/ledger/detailedledger';
+      return;
+    }
+    banner('Reading Credit Ledger (transaction detail)…' + progress);
+    if (!(await waitFor('#sumlg_frdt', 20000))) { banner('Ledger form did not load — skipped.' + progress, '#dc2626'); await advance(job); return; }
+    const per = await loadLedgerPeriod(job.period);
+    if (!per.ok) {
+      banner('Credit Ledger: could not load ' + per.from + ' – ' + per.to + ' (' + per.why + ') — skipped.' + progress, '#dc2626');
+      await advance(job);
+      return;
+    }
+    const ledgerRows = readLedgerRows();
+    try {
+      await GSTKdb.replaceCreditLedgerTxns(cur.clientId, job.period, ledgerRows.map((r) => ({
+        client_id: cur.clientId, period_month: job.period,
+        is_debit: r.isDebit, description: r.text, igst: r.igst, cgst: r.cgst, sgst: r.sgst,
+      })));
+    } catch (e) { /* non-fatal */ }
+    debugPanel([
+      'STEP: Credit Ledger (Transaction Detail)  (' + location.pathname + ')',
+      'period            : ' + per.from + ' – ' + per.to,
+      'rows read         : ' + ledgerRows.length,
+    ]);
+    banner('Credit Ledger (Transaction Detail) → ' + ledgerRows.length + ' entries saved.' + progress, '#16a34a');
+    await sleep(800);
+    await advance(job);
   }
 
   async function proceedToNotices(job) {
