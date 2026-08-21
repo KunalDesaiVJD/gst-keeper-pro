@@ -1,26 +1,24 @@
-// 3 of the roadmap's 4 PAN-Based reports, reclassified from "extends portal
-// login" to "ready (approx.)": a GSTIN's PAN is embedded in the GSTIN itself
+// The 4 PAN-Based reports: a GSTIN's PAN is embedded in the GSTIN itself
 // (characters 3-12 of the standard 15-char format — state code, then PAN,
 // then entity number, 'Z', checksum), so grouping every client under the
-// same firm-PAN needs no portal call and no new schema. What DOES still need
-// the portal (out of scope here — see reportsPage.tsx's registry comments
-// for the explicit decision) is the 4th PAN report, "Ledger Report" — that
-// needs actual filed/portal ledger figures at PAN level, which this app
-// doesn't have automated yet.
-//
-// All reports below roll up this app's own computed GSTR-1/GSTR-3B draft
-// (same "approximate" caveat as the single-GSTIN GSTR-3B-vs-GSTR-1 reports)
-// across every GSTIN sharing a PAN with the picked client.
+// same firm-PAN needs no portal call and no new schema. The rollup ITSELF
+// makes no new portal call, but the per-GSTIN figures it rolls up are now
+// the as-filed portal data (gst_filed_returns) instead of this app's
+// computed draft or the Excel-imported 2A/2B — any GSTIN not yet pulled for
+// the period shows NOT PULLED rather than a silent zero.
 
 import { supabase } from '@/integrations/supabase/client';
 import type { ReportTable } from './allClientsReports';
-import { mmYyyyToShort, formatMonthLabel } from './allClientsReports';
-import { buildGstr1Summary } from './buildGstr1Summary';
-import { fetchGstr3b } from './fetchGstr3b';
+import { formatMonthLabel } from './allClientsReports';
+import {
+  fetchFiledReturn, flattenGstr2aDocs, flattenGstr2bDocs,
+  type Gstr3bSummary, type Gstr1Summary, type Gstr2aSummary, type Gstr2bSummary, type TypedAmt,
+} from './filedReturnReports';
 
 interface ClientLite { id: string; name: string; gstin: string; }
 
 const fileSafe = (s: string) => s.replace(/\s+/g, '_');
+const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 
 export const derivePan = (gstin: string): string => (gstin || '').toUpperCase().trim().slice(2, 12);
 
@@ -34,23 +32,37 @@ export const fetchPanGroup = async (clientId: string): Promise<{ pan: string; gr
   return { pan, group };
 };
 
+const findItc = (arr: TypedAmt[] | undefined, ty: string) => (Array.isArray(arr) ? arr.find((x) => x.ty === ty) : undefined) || {};
+const itcAvailGross = (s: Gstr3bSummary) => ['IMPG', 'IMPS', 'ISRC', 'ISD', 'OTH']
+  .map((ty) => findItc(s.itc_elg?.itc_avl, ty))
+  .reduce((a, r) => a + num(r.iamt) + num(r.camt) + num(r.samt), 0);
+const totalLiability = (s: Gstr3bSummary) => {
+  const o = s.sup_details?.osup_det, r = s.sup_details?.isup_rev;
+  return num(o?.iamt) + num(o?.camt) + num(o?.samt) + num(r?.iamt) + num(r?.camt) + num(r?.samt);
+};
+
 // ────── REPORT 1: Output Liability as per GSTR 1 and GSTR 3B (PAN) ───────
 
 export const buildPanOutputLiabilityReport = async (clientId: string, month: string): Promise<ReportTable> => {
   const { pan, group } = await fetchPanGroup(clientId);
-  const shortMonth = mmYyyyToShort(month);
 
-  let totG1 = 0, totG3b = 0;
+  let totG1 = 0, totG3b = 0, pulled = 0;
   const rows: (string | number)[][] = [];
   for (const c of group) {
-    const [gstr1Res, g3b] = await Promise.all([
-      supabase.from('gstr1_data').select('raw_json').eq('client_id', c.id).eq('period_month', shortMonth).maybeSingle(),
-      fetchGstr3b(c.id, c.gstin || '', month).catch(() => null),
+    const [g1row, g3row] = await Promise.all([
+      fetchFiledReturn(c.id, month, 'GSTR1'),
+      fetchFiledReturn(c.id, month, 'GSTR3B'),
     ]);
-    const g1Summary = gstr1Res.data ? buildGstr1Summary(gstr1Res.data.raw_json).totals : null;
-    const g1Tax = g1Summary ? g1Summary.igst + g1Summary.cgst + g1Summary.sgst : 0;
-    const s = g3b?.summary;
-    const g3bTax = s ? s.totalLiability.igst + s.totalLiability.cgst + s.totalLiability.sgst : 0;
+    if (!g1row?.summary || !g3row?.summary || Object.keys(g1row.summary).length === 0 || Object.keys(g3row.summary).length === 0) {
+      rows.push([c.name, c.gstin || '—', 'NOT PULLED', '', '']);
+      continue;
+    }
+    pulled++;
+    const g1 = g1row.summary as Gstr1Summary;
+    const g3 = g3row.summary as Gstr3bSummary;
+    const ttlLiab = (g1.sec_sum || []).find((sec) => sec.sec_nm === 'TTL_LIAB');
+    const g1Tax = num(ttlLiab?.ttl_igst) + num(ttlLiab?.ttl_cgst) + num(ttlLiab?.ttl_sgst);
+    const g3bTax = totalLiability(g3);
     totG1 += g1Tax; totG3b += g3bTax;
     rows.push([c.name, c.gstin || '—', g1Tax, g3bTax, g3bTax - g1Tax]);
   }
@@ -58,7 +70,7 @@ export const buildPanOutputLiabilityReport = async (clientId: string, month: str
 
   return {
     title: 'Output Liability as per GSTR 1 and GSTR 3B (PAN-Based)',
-    subtitle: `PAN: ${pan}   |   ${group.length} GSTIN(s)   |   Period: ${formatMonthLabel(month)}   |   Approximate — this app's own computed GSTR-1/GSTR-3B draft, not the as-filed portal figures.`,
+    subtitle: `PAN: ${pan}   |   ${group.length} GSTIN(s), ${pulled} pulled for this period   |   Period: ${formatMonthLabel(month)}   |   Both sides as filed on the portal for each entity — GSTINs not yet pulled show NOT PULLED.`,
     headers: ['Entity (GSTIN)', 'GSTIN', 'GSTR-1 Output Tax', 'GSTR-3B Output Liability', 'Variance'],
     rows,
     fileNameBase: `PAN_Output_Liability_${pan}_${month.replace('/', '-')}`,
@@ -70,19 +82,24 @@ export const buildPanOutputLiabilityReport = async (clientId: string, month: str
 
 export const buildPanLiabilityVsItcClaimedReport = async (clientId: string, month: string): Promise<ReportTable> => {
   const { pan, group } = await fetchPanGroup(clientId);
-  const shortMonth = mmYyyyToShort(month);
 
-  let totLiab = 0, totItc = 0;
+  let totLiab = 0, totItc = 0, pulled = 0;
   const rows: (string | number)[][] = [];
   for (const c of group) {
-    const [gstr1Res, g3b] = await Promise.all([
-      supabase.from('gstr1_data').select('raw_json').eq('client_id', c.id).eq('period_month', shortMonth).maybeSingle(),
-      fetchGstr3b(c.id, c.gstin || '', month).catch(() => null),
+    const [g1row, g3row] = await Promise.all([
+      fetchFiledReturn(c.id, month, 'GSTR1'),
+      fetchFiledReturn(c.id, month, 'GSTR3B'),
     ]);
-    const g1Summary = gstr1Res.data ? buildGstr1Summary(gstr1Res.data.raw_json).totals : null;
-    const liab = g1Summary ? g1Summary.igst + g1Summary.cgst + g1Summary.sgst : 0;
-    const s = g3b?.summary;
-    const itc = s ? s.itcAvailable.igst + s.itcAvailable.cgst + s.itcAvailable.sgst : 0;
+    if (!g1row?.summary || !g3row?.summary || Object.keys(g1row.summary).length === 0 || Object.keys(g3row.summary).length === 0) {
+      rows.push([c.name, c.gstin || '—', 'NOT PULLED', '', '']);
+      continue;
+    }
+    pulled++;
+    const g1 = g1row.summary as Gstr1Summary;
+    const g3 = g3row.summary as Gstr3bSummary;
+    const ttlLiab = (g1.sec_sum || []).find((sec) => sec.sec_nm === 'TTL_LIAB');
+    const liab = num(ttlLiab?.ttl_igst) + num(ttlLiab?.ttl_cgst) + num(ttlLiab?.ttl_sgst);
+    const itc = itcAvailGross(g3);
     totLiab += liab; totItc += itc;
     rows.push([c.name, c.gstin || '—', liab, itc, liab - itc]);
   }
@@ -90,7 +107,7 @@ export const buildPanLiabilityVsItcClaimedReport = async (clientId: string, mont
 
   return {
     title: 'Liability as per GSTR 1 and ITC Claimed as per GSTR 3B (PAN-Based)',
-    subtitle: `PAN: ${pan}   |   ${group.length} GSTIN(s)   |   Period: ${formatMonthLabel(month)}   |   Approximate — this app's own computed GSTR-1/GSTR-3B draft, not the as-filed portal figures.`,
+    subtitle: `PAN: ${pan}   |   ${group.length} GSTIN(s), ${pulled} pulled for this period   |   Period: ${formatMonthLabel(month)}   |   Both sides as filed on the portal for each entity — GSTINs not yet pulled show NOT PULLED.`,
     headers: ['Entity (GSTIN)', 'GSTIN', 'GSTR-1 Output Liability', 'GSTR-3B ITC Claimed (Table 4A)', 'Liability − ITC'],
     rows,
     fileNameBase: `PAN_Liability_vs_ITC_Claimed_${pan}_${month.replace('/', '-')}`,
@@ -99,35 +116,40 @@ export const buildPanLiabilityVsItcClaimedReport = async (clientId: string, mont
 };
 
 // ────── REPORT 3: GSTR 2A/2B Multiple Company Report (PAN) ───────────────
-// Rolls up the already-imported gstr2a_import_docs / twob_import_docs across
-// every GSTIN sharing a PAN — no new portal call beyond the per-GSTIN 2A/2B
-// pulls each entity already needs (Import 2B's own pull + GSTR-2A Import
-// card). "Approximate" because it inherits the GSTR-2A rate-derivation
-// caveat, not because this rollup itself is uncertain.
+// Rolls up the portal-pulled document-level GSTR-2A/2B (gst_filed_returns —
+// see filedReturnReports.ts) across every GSTIN sharing a PAN, NOT the
+// Excel-imported gstr2a_import_docs/twob_import_docs 2B Reconciliation uses.
 
 export const buildPanMultipleCompany2A2BReport = async (clientId: string, month: string): Promise<ReportTable> => {
   const { pan, group } = await fetchPanGroup(clientId);
-  const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 
   let tot2a = 0, tot2b = 0;
   const rows: (string | number)[][] = [];
   for (const c of group) {
-    const [gstr2aRes, gstr2bRes] = await Promise.all([
-      supabase.from('gstr2a_import_docs').select('taxable_value, input_igst, input_cgst, input_sgst').eq('client_id', c.id).eq('period_month', month),
-      supabase.from('twob_import_docs').select('taxable_value, input_igst, input_cgst, input_sgst').eq('client_id', c.id).eq('period_month', month),
+    const [g2aRow, g2bRow] = await Promise.all([
+      fetchFiledReturn(c.id, month, 'GSTR2A'),
+      fetchFiledReturn(c.id, month, 'GSTR2B'),
     ]);
-    const sum = (docs: { taxable_value: number | null; input_igst: number | null; input_cgst: number | null; input_sgst: number | null }[] | null) =>
-      (docs || []).reduce((a, d) => a + num(d.taxable_value) + num(d.input_igst) + num(d.input_cgst) + num(d.input_sgst), 0);
-    const g2a = sum(gstr2aRes.data);
-    const g2b = sum(gstr2bRes.data);
-    tot2a += g2a; tot2b += g2b;
-    rows.push([c.name, c.gstin || '—', (gstr2aRes.data || []).length, g2a, (gstr2bRes.data || []).length, g2b, g2b - g2a]);
+    const g2aDocs = g2aRow?.summary && Object.keys(g2aRow.summary).length > 0 ? flattenGstr2aDocs(g2aRow.summary as Gstr2aSummary) : null;
+    const g2bDocs = g2bRow?.summary && Object.keys(g2bRow.summary).length > 0 ? flattenGstr2bDocs(g2bRow.summary as Gstr2bSummary) : null;
+    const sum = (docs: { txval: number; igst: number; cgst: number; sgst: number }[]) =>
+      docs.reduce((a, d) => a + d.txval + d.igst + d.cgst + d.sgst, 0);
+    const g2a = g2aDocs ? sum(g2aDocs) : null;
+    const g2b = g2bDocs ? sum(g2bDocs) : null;
+    if (g2a != null) tot2a += g2a;
+    if (g2b != null) tot2b += g2b;
+    rows.push([
+      c.name, c.gstin || '—',
+      g2aDocs ? g2aDocs.length : 'NOT PULLED', g2a ?? '',
+      g2bDocs ? g2bDocs.length : 'NOT PULLED', g2b ?? '',
+      (g2a != null && g2b != null) ? g2b - g2a : '',
+    ]);
   }
   rows.push(['TOTAL — PAN ' + pan, '', '', tot2a, '', tot2b, tot2b - tot2a]);
 
   return {
     title: 'GSTR 2A/2B Multiple Company Report',
-    subtitle: `PAN: ${pan}   |   ${group.length} GSTIN(s)   |   Period: ${formatMonthLabel(month)}   |   Approximate — GSTR-2A totals inherit the rate-derivation caveat from the GSTR-2A Rate Wise Report; zero for a GSTIN means it hasn't been imported for this period yet.`,
+    subtitle: `PAN: ${pan}   |   ${group.length} GSTIN(s)   |   Period: ${formatMonthLabel(month)}   |   Both sides pulled directly from the portal (B2B documents only) for each entity — not the Excel-imported 2A/2B. NOT PULLED means that GSTIN hasn't been pulled for this period yet.`,
     headers: ['Entity (GSTIN)', 'GSTIN', '2A Doc Count', '2A Total (Value + Tax)', '2B Doc Count', '2B Total (Value + Tax)', '2B − 2A'],
     rows,
     fileNameBase: `PAN_Multiple_Company_2A2B_${pan}_${month.replace('/', '-')}`,
@@ -137,21 +159,26 @@ export const buildPanMultipleCompany2A2BReport = async (clientId: string, month:
 
 // ────── REPORT 4: Net Output Liability Report (PAN) ───────────────────────
 // Distinct from "Output Liability as per GSTR 1 and GSTR 3B" above: that
-// report compares two independent computations of the same GROSS liability;
-// this one rolls up the NET indicative payable (after ITC set-off) per
-// GSTIN under a PAN — the actual cash-flow exposure across the group.
+// report compares two independent as-filed figures for the same GROSS
+// liability; this one rolls up the return's own as-filed total payable
+// (aggregate, after ITC set-off) per GSTIN under a PAN.
 
 export const buildPanNetOutputLiabilityReport = async (clientId: string, month: string): Promise<ReportTable> => {
   const { pan, group } = await fetchPanGroup(clientId);
 
-  let totLiab = 0, totItcNet = 0, totPayable = 0;
+  let totLiab = 0, totItcNet = 0, totPayable = 0, pulled = 0;
   const rows: (string | number)[][] = [];
   for (const c of group) {
-    const g3b = await fetchGstr3b(c.id, c.gstin || '', month).catch(() => null);
-    const s = g3b?.summary;
-    const liab = s ? s.totalLiability.igst + s.totalLiability.cgst + s.totalLiability.sgst : 0;
-    const itcNet = s ? s.itcNet.igst + s.itcNet.cgst + s.itcNet.sgst : 0;
-    const payable = s ? s.indicativeNetPayable.igst + s.indicativeNetPayable.cgst + s.indicativeNetPayable.sgst : 0;
+    const g3row = await fetchFiledReturn(c.id, month, 'GSTR3B');
+    if (!g3row?.summary || Object.keys(g3row.summary).length === 0) {
+      rows.push([c.name, c.gstin || '—', 'NOT PULLED', '', '']);
+      continue;
+    }
+    pulled++;
+    const s = g3row.summary as Gstr3bSummary;
+    const liab = totalLiability(s);
+    const itcNet = num(s.itc_elg?.itc_net?.iamt) + num(s.itc_elg?.itc_net?.camt) + num(s.itc_elg?.itc_net?.samt);
+    const payable = num(s.tt_val?.tt_pay);
     totLiab += liab; totItcNet += itcNet; totPayable += payable;
     rows.push([c.name, c.gstin || '—', liab, itcNet, payable]);
   }
@@ -159,8 +186,8 @@ export const buildPanNetOutputLiabilityReport = async (clientId: string, month: 
 
   return {
     title: 'Net Output Liability Report (PAN-Based)',
-    subtitle: `PAN: ${pan}   |   ${group.length} GSTIN(s)   |   Period: ${formatMonthLabel(month)}   |   Approximate — this app's own computed GSTR-3B draft, not the as-filed portal figures.`,
-    headers: ['Entity (GSTIN)', 'GSTIN', 'Total Liability', 'Net ITC Available', 'Indicative Net Payable'],
+    subtitle: `PAN: ${pan}   |   ${group.length} GSTIN(s), ${pulled} pulled for this period   |   Period: ${formatMonthLabel(month)}   |   As filed on the portal's GSTR-3B for each entity — "Indicative Net Payable" is the return's own as-filed total payable (aggregate).`,
+    headers: ['Entity (GSTIN)', 'GSTIN', 'Total Liability', 'Net ITC Available', 'Total Payable (as filed)'],
     rows,
     fileNameBase: `PAN_Net_Output_Liability_${pan}_${month.replace('/', '-')}`,
     columnWidths: [30, 18, 18, 18, 20],

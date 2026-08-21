@@ -9,7 +9,7 @@
 // the actual replacement, not a copy of that pattern.
 import { supabase } from '@/integrations/supabase/client';
 
-export type DocumentSource = 'Filed Return' | 'DRC-03' | 'Refund Application' | 'Registration Certificate';
+export type DocumentSource = 'Filed Return' | 'DRC-03' | 'Refund Application' | 'Registration Certificate' | 'Notice/Order';
 
 export interface ClientDocument {
   id: string;
@@ -23,7 +23,7 @@ export interface ClientDocument {
 interface RefundDoc { tab: string; label: string; url: string; }
 
 export const fetchClientDocuments = async (clientId: string): Promise<ClientDocument[]> => {
-  const [filed, drc03, refunds, profile] = await Promise.all([
+  const [filed, drc03, refunds, profile, notices] = await Promise.all([
     supabase.from('filing_status')
       .select('id, return_type, period_month, filed_date, return_pdf_url')
       .eq('client_id', clientId).not('return_pdf_url', 'is', null),
@@ -36,6 +36,9 @@ export const fetchClientDocuments = async (clientId: string): Promise<ClientDocu
     supabase.from('gst_taxpayer_profile')
       .select('id, registration_certificate_url, pulled_at')
       .eq('client_id', clientId).not('registration_certificate_url', 'is', null).maybeSingle(),
+    supabase.from('gst_notices')
+      .select('id, reference_number, notice_type, issue_date, pdf_url')
+      .eq('client_id', clientId).not('pdf_url', 'is', null),
   ]);
 
   const docs: ClientDocument[] = [];
@@ -71,6 +74,16 @@ export const fetchClientDocuments = async (clientId: string): Promise<ClientDocu
         date: r.filed_date, url: d.url,
       });
     }
+  }
+
+  for (const r of notices.data || []) {
+    if (!r.pdf_url) continue;
+    docs.push({
+      id: `notice-${r.id}`, source: 'Notice/Order',
+      title: r.reference_number || 'Notice/Order',
+      detail: r.notice_type || '—',
+      date: r.issue_date, url: r.pdf_url,
+    });
   }
 
   if (profile.data?.registration_certificate_url) {

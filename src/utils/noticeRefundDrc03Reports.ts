@@ -1,19 +1,9 @@
 // 8 reports across 3 categories — Notice & Order, Refund, DRC-03 — reading
-// gst_notices / gst_refund_applications / gst_drc03_filings.
-//
-// IMPORTANT: unlike every other Phase-3 table, NO extension automation pulls
-// into these three tables yet. Notices & Orders, Refund, and DRC-03 are
-// portal pages this codebase has never scraped before, with no existing
-// working handler to mirror the way GSTR-2A could mirror GSTR-2B's proven
-// tile-and-download flow — writing speculative CSS selectors for pages
-// nobody has verified against the real portal risks silently capturing the
-// wrong figures into what a firm relies on for compliance reporting, which
-// is worse than not automating it at all. These reports are real and will
-// work the moment their table has rows — today that means direct entry
-// (e.g. via Supabase), tomorrow a verified extension pull once someone
-// checks the real portal page structure and wires handleNotices /
-// handleRefund / handleDrc03 in content.js the same way handleTwoA was
-// wired for GSTR-2A.
+// gst_notices / gst_refund_applications / gst_drc03_filings. All three now
+// have working, portal-confirmed extension pulls (handleNotices / handleRefunds
+// / handleDrc03 in content.js) including per-row PDF capture where the portal
+// exposes one — Notices via GET /document/{docId}/{applnId} (no token, same
+// pattern as the Registration Certificate), DRC-03 via the docId+eh flow.
 
 import { supabase } from '@/integrations/supabase/client';
 import type { ReportTable } from './allClientsReports';
@@ -34,22 +24,22 @@ const buildNoticesReport = async (clientId: string, source: 'notices' | 'additio
   const client = await fetchClient(clientId);
   const { data, error } = await supabase
     .from('gst_notices')
-    .select('reference_number, notice_type, description, issue_date, due_date, status')
+    .select('reference_number, notice_type, description, issue_date, due_date, status, pdf_url')
     .eq('client_id', clientId).eq('source', source)
     .order('issue_date', { ascending: false });
   if (error) throw error;
   const rows = data || [];
   if (rows.length === 0) {
-    throw new Error(`No ${title.toLowerCase()} on record for ${client.name}. This report has no automated portal pull yet — enter records directly, or check back once the extension's Notices pull is verified against the real portal.`);
+    throw new Error(`No ${title.toLowerCase()} on record for ${client.name}. Use "Pull" on this report to fetch it directly from the GST portal.`);
   }
 
   return {
     title,
     subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   All periods on record, most recent first`,
-    headers: ['Reference No.', 'Type', 'Description', 'Issue Date', 'Due Date', 'Status'],
-    rows: rows.map((r) => [r.reference_number || '—', r.notice_type || '—', r.description || '—', r.issue_date || '—', r.due_date || '—', r.status || '—']),
+    headers: ['Reference No.', 'Type', 'Description', 'Issue Date', 'Due Date', 'Status', 'PDF'],
+    rows: rows.map((r) => [r.reference_number || '—', r.notice_type || '—', r.description || '—', r.issue_date || '—', r.due_date || '—', r.status || '—', r.pdf_url || '—']),
     fileNameBase: `${fileSafe(title)}_${fileSafe(client.name)}`,
-    columnWidths: [16, 16, 40, 12, 12, 14],
+    columnWidths: [16, 16, 40, 12, 12, 14, 12],
   };
 };
 

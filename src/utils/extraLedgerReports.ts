@@ -6,7 +6,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { ReportTable } from './allClientsReports';
 import { fyMonthsForKey, formatMonthLabel, mmYyyyToShort } from './allClientsReports';
-import { fetchGstr3b } from './fetchGstr3b';
+import type { Gstr3bSummary, TypedAmt } from './filedReturnReports';
 
 interface ClientLite { id: string; name: string; gstin: string; }
 
@@ -146,18 +146,24 @@ export const buildFilingStatusReport = async (month: string): Promise<ReportTabl
 
 // ────── EXTRA 2: Tax Paid under RCM vs ITC Claimed (all clients) ─────────
 
+const findItc = (arr: TypedAmt[] | undefined, ty: string): TypedAmt =>
+  (Array.isArray(arr) ? arr.find((x) => x.ty === ty) : undefined) || {};
+
 export const buildRcmTaxPaidVsItcClaimedAllClients = async (month: string): Promise<ReportTable> => {
   const { data: clientsData } = await supabase.from('clients').select('id, name, gstin').order('name');
   const clients: ClientLite[] = (clientsData || []) as any;
+  const { data: filedRows } = await supabase.from('gst_filed_returns').select('client_id, summary').eq('period_month', month).eq('return_type', 'GSTR3B');
+  const byClient = new Map((filedRows || []).map((r) => [r.client_id, r.summary as Gstr3bSummary]));
 
-  const results = await Promise.all(clients.map((c) => fetchGstr3b(c.id, c.gstin || '', month).catch(() => null)));
-
-  let totLiab = 0, totItc = 0;
+  let totLiab = 0, totItc = 0, pulled = 0;
   const rows: (string | number)[][] = clients.map((client, idx) => {
-    const s = results[idx]?.summary;
-    const liab = s ? s.rcmLiability.igst + s.rcmLiability.cgst + s.rcmLiability.sgst : 0;
-    const itcRow = s?.itcAvailableRows.find((r) => r.srNo === '(3)');
-    const itc = itcRow ? itcRow.igst + itcRow.cgst + itcRow.sgst : 0;
+    const s = byClient.get(client.id);
+    if (!s || Object.keys(s).length === 0) return [idx + 1, client.name, client.gstin || '—', 'NOT PULLED', '', ''];
+    pulled++;
+    const rcm = s.sup_details?.isup_rev || {};
+    const liab = num(rcm.iamt) + num(rcm.camt) + num(rcm.samt);
+    const itcRow = findItc(s.itc_elg?.itc_avl, 'ISRC');
+    const itc = num(itcRow.iamt) + num(itcRow.camt) + num(itcRow.samt);
     totLiab += liab; totItc += itc;
     return [idx + 1, client.name, client.gstin || '—', liab, itc, liab - itc];
   });
@@ -165,7 +171,7 @@ export const buildRcmTaxPaidVsItcClaimedAllClients = async (month: string): Prom
 
   return {
     title: 'Tax Paid under RCM vs ITC Claimed',
-    subtitle: `Month: ${formatMonthLabel(month)}   |   RCM liability (Table 3.1d) vs RCM ITC claimed (Table 4A(3)) per client, from this app's computed draft GSTR-3B`,
+    subtitle: `Month: ${formatMonthLabel(month)}   |   RCM liability (Table 3.1d) vs RCM ITC claimed (Table 4A(3)) per client, as filed on the portal's GSTR-3B (${pulled}/${clients.length} clients pulled for this period — the rest show NOT PULLED; use GSTR-3B (Filed on Portal)'s Pull button per client).`,
     headers: ['Sr No.', 'Client Name', 'GSTIN', 'RCM Tax Paid', 'ITC Claimed', 'Variance'],
     rows,
     fileNameBase: `RCM_Tax_Paid_vs_ITC_Claimed_${month.replace('/', '-')}`,
@@ -178,16 +184,18 @@ export const buildRcmTaxPaidVsItcClaimedAllClients = async (month: string): Prom
 export const buildItcClaimedVsUtilizedAllClients = async (month: string): Promise<ReportTable> => {
   const { data: clientsData } = await supabase.from('clients').select('id, name, gstin').order('name');
   const clients: ClientLite[] = (clientsData || []) as any;
+  const { data: filedRows } = await supabase.from('gst_filed_returns').select('client_id, summary').eq('period_month', month).eq('return_type', 'GSTR3B');
+  const byClient = new Map((filedRows || []).map((r) => [r.client_id, r.summary as Gstr3bSummary]));
 
-  const results = await Promise.all(clients.map((c) => fetchGstr3b(c.id, c.gstin || '', month).catch(() => null)));
-
-  let totClaimed = 0, totUtilized = 0;
+  let totClaimed = 0, totUtilized = 0, pulled = 0;
   const rows: (string | number)[][] = clients.map((client, idx) => {
-    const s = results[idx]?.summary;
-    const claimed = s ? s.itcAvailable.igst + s.itcAvailable.cgst + s.itcAvailable.sgst : 0;
-    const liability = s ? s.totalLiability.igst + s.totalLiability.cgst + s.totalLiability.sgst : 0;
-    const netAvail = s ? Math.max(0, s.itcNet.igst + s.itcNet.cgst + s.itcNet.sgst) : 0;
-    const utilized = Math.min(netAvail, liability);
+    const s = byClient.get(client.id);
+    if (!s || Object.keys(s).length === 0) return [idx + 1, client.name, client.gstin || '—', 'NOT PULLED', '', ''];
+    pulled++;
+    const claimed = ['IMPG', 'IMPS', 'ISRC', 'ISD', 'OTH']
+      .map((ty) => findItc(s.itc_elg?.itc_avl, ty))
+      .reduce((a, r) => a + num(r.iamt) + num(r.camt) + num(r.samt), 0);
+    const utilized = num(s.tt_val?.tt_itc_pd);
     totClaimed += claimed; totUtilized += utilized;
     return [idx + 1, client.name, client.gstin || '—', claimed, utilized, claimed - utilized];
   });
@@ -195,7 +203,7 @@ export const buildItcClaimedVsUtilizedAllClients = async (month: string): Promis
 
   return {
     title: 'ITC Claimed vs ITC Utilized',
-    subtitle: `Month: ${formatMonthLabel(month)}   |   "Claimed" is Table 4(A) ITC Available (gross); "Utilized" is Net ITC actually set off against this month's liability, capped at the liability itself — the balance carries forward on the portal's electronic credit ledger, which this app doesn't track period-to-period yet.`,
+    subtitle: `Month: ${formatMonthLabel(month)}   |   "Claimed" is Table 4(A) ITC Available (gross); "Utilized" is the return's own as-filed ITC utilised (tt_itc_pd) — both as filed on the portal's GSTR-3B (${pulled}/${clients.length} clients pulled for this period).`,
     headers: ['Sr No.', 'Client Name', 'GSTIN', 'ITC Claimed', 'ITC Utilized', 'Balance / Carried Forward'],
     rows,
     fileNameBase: `ITC_Claimed_vs_Utilized_${month.replace('/', '-')}`,

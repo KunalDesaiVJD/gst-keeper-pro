@@ -172,7 +172,7 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4'];
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -190,6 +190,14 @@
         try { await GSTKdb.replaceDrc03Filings(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading DRC-03 filings' }]); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'challans') {
         try { await GSTKdb.replaceChallans(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Challan Summary' }]); } catch (e2) { /* diagnostic only */ }
+      } else if (job.step === 'gstr3b_pull') {
+        try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR3B', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading GSTR-3B' }); } catch (e2) { /* diagnostic only */ }
+      } else if (job.step === 'gstr1_pull') {
+        try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading GSTR-1' }); } catch (e2) { /* diagnostic only */ }
+      } else if (job.step === 'gstr2a_pull') {
+        try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2A', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading GSTR-2A' }); } catch (e2) { /* diagnostic only */ }
+      } else if (job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull') {
+        try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2B', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading GSTR-2B' }); } catch (e2) { /* diagnostic only */ }
       }
       // 'taxpayerprofile' has no diagnostic row: it's a single-row upsert
       // per client, so a failed pull just leaves any prior good data as-is
@@ -218,6 +226,11 @@
     else if (job.step === 'drc03') await handleDrc03(job, cur, progress);
     else if (job.step === 'taxpayerprofile') await handleTaxpayerProfile(job, cur, progress);
     else if (job.step === 'challans') await handleChallans(job, cur, progress);
+    else if (job.step === 'gstr3b_pull') await handleGstr3bPull(job, cur, progress);
+    else if (job.step === 'gstr1_pull') await handleGstr1Pull(job, cur, progress);
+    else if (job.step === 'gstr2a_pull') await handleGstr2aPull(job, cur, progress);
+    else if (job.step === 'gstr2b_pull_dash') await handleGstr2bPullDash(job, cur, progress);
+    else if (job.step === 'gstr2b_pull') await handleGstr2bPull(job, cur, progress);
     else if (job.step === 'efiledpdf') await handleReturnPdf(job, cur, progress);
     else if (job.step === 'efiledview') await handleReturnView(job, cur, progress);
     else if (job.step === 'twob') await handleTwob(job, cur, progress);
@@ -339,6 +352,26 @@
         job.step = 'challans';
         await setJob(job);
         location.href = 'https://payment.gst.gov.in/payment/auth/challanhistory';
+      } else if (job.mode === 'gstr3b_pull') {
+        banner('Logged in — reading filed GSTR-3B…' + progress);
+        job.step = 'gstr3b_pull';
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      } else if (job.mode === 'gstr1_pull') {
+        banner('Logged in — reading filed GSTR-1…' + progress);
+        job.step = 'gstr1_pull';
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      } else if (job.mode === 'gstr2a_pull') {
+        banner('Logged in — reading GSTR-2A (B2B)…' + progress);
+        job.step = 'gstr2a_pull';
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      } else if (job.mode === 'gstr2b_pull') {
+        banner('Logged in — opening the returns dashboard for GSTR-2B…' + progress);
+        job.step = 'gstr2b_pull_dash';
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
       } else if (job.mode === 'login') {
         // Simple login from the Clients → Credentials "Login" button: log in and
         // stop on the portal, no return/ledger navigation.
@@ -2271,7 +2304,7 @@
   async function handleNotices(job, cur, progress) {
     if (!/\/services\/auth\/notices/.test(url)) { location.href = 'https://services.gst.gov.in/services/auth/notices'; return; }
     banner('Reading Notices & Orders…' + progress);
-    let rows = [];
+    let list = [];
     try {
       const r = await fetch('https://services.gst.gov.in/services/auth/api/get/notices', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
@@ -2279,14 +2312,7 @@
       });
       if (!r.ok) throw new Error('HTTP ' + r.status + ' from get/notices');
       const j = await r.json();
-      const list = Array.isArray(j) ? j : Object.keys(j || {}).filter((k) => /^\d+$/.test(k)).map((k) => j[k]);
-      rows = list.map((n) => ({
-        client_id: cur.clientId, source: 'notices',
-        reference_number: n.noticeOrderId || null, notice_type: n.type || null,
-        description: n.descr || null, issue_date: ddmmyyyyToIso(n.dtOfIssue || ''),
-        due_date: /^\d{2}\/\d{2}\/\d{4}$/.test(n.dueDate || '') ? ddmmyyyyToIso(n.dueDate) : null,
-        status: n.status || null,
-      }));
+      list = Array.isArray(j) ? j : Object.keys(j || {}).filter((k) => /^\d+$/.test(k)).map((k) => j[k]);
     } catch (e) {
       debugPanel(['STEP: View Notices and Orders  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
       banner('Notices & Orders: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
@@ -2295,12 +2321,46 @@
       await chainOrStop(job, 'notices', proceedToRefunds);
       return;
     }
+
+    // Per-row PDF capture. Confirmed live (2026-08-21): the list response
+    // above already carries docId + applnId per notice, and GET
+    // /document/{docId}/{applnId} serves the PDF directly — no encrypted
+    // token needed (same simple pattern as the Registration Certificate,
+    // unlike DRC-03's docId+eh flow). Not every row has a docId (e.g.
+    // "Letter Of Undertaking" entries don't), so this is best-effort per row
+    // and a failure here must not drop that row's own reference/description.
+    let pdfOk = 0, pdfFail = 0;
+    const rows = [];
+    for (const n of list) {
+      const row = {
+        client_id: cur.clientId, source: 'notices',
+        reference_number: n.noticeOrderId || null, notice_type: n.type || null,
+        description: n.descr || null, issue_date: ddmmyyyyToIso(n.dtOfIssue || ''),
+        due_date: /^\d{2}\/\d{2}\/\d{4}$/.test(n.dueDate || '') ? ddmmyyyyToIso(n.dueDate) : null,
+        status: n.status || null,
+      };
+      if (n.docId && n.applnId) {
+        try {
+          const pdfR = await fetch('https://services.gst.gov.in/document/' + n.docId + '/' + n.applnId, { credentials: 'include' });
+          if (pdfR.ok) {
+            const buf = await pdfR.arrayBuffer();
+            const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
+            const path = 'notices/' + cur.clientId + '/' + (row.reference_number || n.docId) + '.pdf';
+            row.pdf_url = await GSTKdb.uploadPdf(path, dataUrl);
+            pdfOk++;
+          } else pdfFail++;
+        } catch (e) { pdfFail++; }
+      }
+      rows.push(row);
+    }
+
     try { await GSTKdb.replaceNotices(cur.clientId, rows); } catch (e) { /* non-fatal */ }
     debugPanel([
       'STEP: View Notices and Orders  (' + location.pathname + ')',
       'rows read         : ' + rows.length,
+      'PDFs captured     : ' + pdfOk + ' ok, ' + pdfFail + ' failed/not applicable',
     ]);
-    banner('Notices & Orders → ' + rows.length + ' entries saved. Now Refund applications…' + progress, '#16a34a');
+    banner('Notices & Orders → ' + rows.length + ' entries saved (' + pdfOk + ' PDFs). Now Refund applications…' + progress, '#16a34a');
     await sleep(1000);
     await chainOrStop(job, 'notices', proceedToRefunds);
   }
@@ -2726,18 +2786,27 @@
             const href = link.href || link.getAttribute('href') || '';
             const label = clean((link.textContent || '')) || clean((link.title || '')) || tabName;
 
-            // This page is the same litserv family as DRC-03's case/search,
-            // which needs a docId + eh security token, NOT a plain href, to
-            // fetch its PDF (see fetchEncrypDocEh below). These icons are
-            // very likely the same, given a plain href was confirmed live
-            // to capture nothing. Still unverified against this page's real
-            // markup (only inferred from DRC-03's own proven pattern) — the
-            // attribute-scan below is a best-effort guess at where a docId
-            // might live (data-*, id, onclick/ng-click as literal strings),
-            // not a confirmed selector.
+            // Confirmed live (2026-08-21) against a real case folder (a
+            // Letter of Undertaking case, same litserv/auth/case family as
+            // Refund and DRC-03): the PDF icon's wrapping <a> carries a
+            // plain, literal href of exactly this shape — GET
+            // /document/{docId}/ (docId only, empty second segment), no eh
+            // token at all. `link.href` (the DOM property, not the raw
+            // attribute) already resolves this to an absolute URL, so the
+            // `fetchUrl = href` branch below was already correct for this —
+            // meaning Refund's document capture very likely already works as
+            // originally shipped. The extra relative-'/document/...' branch
+            // is a defensive addition for the case `icon.closest('a')` isn't
+            // itself an anchor with a resolvable .href, not proof that path
+            // was actually broken. DRC-03's own case rows are a different UI
+            // (a results table, not a folder-tab icon) and may genuinely
+            // need the eh token (see fetchEncrypDocEh) — that path stays as
+            // the last-resort fallback, unverified either way.
             let fetchUrl = null;
             if (/^https?:/i.test(href)) {
               fetchUrl = href;
+            } else if (/^\/document\//.test(href)) {
+              fetchUrl = 'https://services.gst.gov.in' + href;
             } else {
               const docId = extractDocId(icon) || extractDocId(link) || extractDocId(icon.parentElement);
               if (docId) {
@@ -2998,6 +3067,282 @@
     ]);
     banner('Challan Summary → ' + rows.length + ' entries saved.' + progress, '#16a34a');
     await sleep(1000);
+    await advance(job);
+  }
+
+  // GSTR-3B (filed) — as-filed figures pulled directly from the portal's own
+  // JSON API instead of the app's computed/manual draft. Confirmed live
+  // (2026-08-21, real filed July 2026-27 return): return.gst.gov.in's
+  // api/gstr3b/summary?rtn_prd=MMYYYY returns every table (3.1, 3.1.1, 3.2, 4,
+  // 5, 5.1, 6.1) as clean numeric JSON, and api/formdetails?rtn_prd=MMYYYY&
+  // rtn_typ=GSTR3B gives the ARN/filed date/status — both same-origin GETs,
+  // no dashboard tile clicks or Excel download needed. Confirmed working from
+  // the GSTR-3B page itself (reached via View e-Filed Returns); calling it
+  // straight from the Returns Dashboard is inferred (session cookies are
+  // origin-scoped and rtn_prd is explicit in the query, so no reason it
+  // shouldn't), not separately re-confirmed — if it ever 403s/returns empty
+  // from here, fall back to searching View e-Filed Returns and clicking
+  // through to the gstr3b page first, the way handleReturnPdf already does.
+  // Single period per pull (job.period), not a full-history walk like
+  // Challans/DRC-03 — this is what the Reports Hub / Documents "Pull" button
+  // asks for.
+  async function handleGstr3bPull(job, cur, progress) {
+    if (!/return\.gst\.gov\.in/.test(location.hostname)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
+    const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) { banner('Bad GSTR-3B period.', '#dc2626'); await clearJob(); return; }
+    const rtnPrd = String(mm).padStart(2, '0') + yyyy;
+    banner('Reading filed GSTR-3B for ' + job.period + '…' + progress);
+
+    let summary = null, form = null;
+    try {
+      const [sr, fr] = await Promise.all([
+        fetch('https://return.gst.gov.in/returns/auth/api/gstr3b/summary?rtn_prd=' + rtnPrd, { credentials: 'include' }),
+        fetch('https://return.gst.gov.in/returns/auth/api/formdetails?rtn_prd=' + rtnPrd + '&rtn_typ=GSTR3B', { credentials: 'include' }),
+      ]);
+      if (sr.ok) { const sj = await sr.json(); if (sj && sj.status === 1) summary = sj.data; }
+      if (fr.ok) { const fj = await fr.json(); if (fj && fj.status === 1) form = fj.data; }
+    } catch (e) {
+      banner('GSTR-3B: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
+      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR3B', { status: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }); } catch (e2) { /* diagnostic only */ }
+      await sleep(1200);
+      await advance(job);
+      return;
+    }
+
+    if (!summary && !form) {
+      banner('GSTR-3B not found on the portal for ' + job.period + ' — has it been filed?' + progress, '#f59e0b');
+      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR3B', { status: 'NOT FILED / NOT FOUND' }); } catch (e2) { /* diagnostic only */ }
+      await sleep(1200);
+      await advance(job);
+      return;
+    }
+
+    const patchObj = {
+      arn: (form && form.arn) || null,
+      filed_date: form && form.fil_dt ? ddmmyyyyToIso(form.fil_dt.replace(/-/g, '/')) : null,
+      status: form && form.status === 'FIL' ? 'Filed' : ((form && form.status) || null),
+      summary: summary || {},
+      updated_at: new Date().toISOString(),
+    };
+    try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR3B', patchObj); } catch (e) { /* non-fatal */ }
+    debugPanel([
+      'STEP: GSTR-3B (filed)  (' + location.pathname + ')',
+      'ARN               : ' + (patchObj.arn || '(none)'),
+      'status            : ' + (patchObj.status || '(unknown)'),
+    ]);
+    banner('GSTR-3B ' + job.period + ' → saved ✓.' + progress, '#16a34a');
+    await sleep(800);
+    await advance(job);
+  }
+
+  // GSTR-1 (filed) — same idea as GSTR-3B above. api/gstr1/summary?
+  // rtn_prd=MMYYYY returns the full section-wise breakdown (B2B, B2CL, B2CS,
+  // EXP, CDNR, HSN, NIL, DOC_ISSUE, TTL_LIAB…) with tax values per section,
+  // confirmed live matching GSTR-3B's own outward-supply figures exactly.
+  // formdetails?rtn_typ=GSTR1 for the ARN/filed date is INFERRED from the
+  // GSTR-3B pattern, not separately confirmed live — a failure there is
+  // caught and treated as non-fatal (the summary figures still save) rather
+  // than dropping the whole pull.
+  async function handleGstr1Pull(job, cur, progress) {
+    if (!/return\.gst\.gov\.in/.test(location.hostname)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
+    const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) { banner('Bad GSTR-1 period.', '#dc2626'); await clearJob(); return; }
+    const rtnPrd = String(mm).padStart(2, '0') + yyyy;
+    banner('Reading filed GSTR-1 for ' + job.period + '…' + progress);
+
+    let summary = null, form = null;
+    try {
+      const sr = await fetch('https://return.gst.gov.in/returns/auth/api/gstr1/summary?rtn_prd=' + rtnPrd, { credentials: 'include' });
+      if (sr.ok) { const sj = await sr.json(); if (sj && sj.status === 1) summary = sj.data; }
+    } catch (e) {
+      banner('GSTR-1: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
+      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', { status: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }); } catch (e2) { /* diagnostic only */ }
+      await sleep(1200);
+      await advance(job);
+      return;
+    }
+    // Best-effort ARN/filed-date — non-fatal if this endpoint differs from
+    // the GSTR-3B one (unverified, see comment above).
+    try {
+      const fr = await fetch('https://return.gst.gov.in/returns/auth/api/formdetails?rtn_prd=' + rtnPrd + '&rtn_typ=GSTR1', { credentials: 'include' });
+      if (fr.ok) { const fj = await fr.json(); if (fj && fj.status === 1) form = fj.data; }
+    } catch (e) { /* non-fatal, see comment above */ }
+
+    if (!summary) {
+      banner('GSTR-1 not found on the portal for ' + job.period + ' — has it been filed?' + progress, '#f59e0b');
+      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', { status: 'NOT FILED / NOT FOUND' }); } catch (e2) { /* diagnostic only */ }
+      await sleep(1200);
+      await advance(job);
+      return;
+    }
+
+    const patchObj = {
+      arn: (form && form.arn) || null,
+      filed_date: form && form.fil_dt ? ddmmyyyyToIso(form.fil_dt.replace(/-/g, '/')) : null,
+      status: form && form.status === 'FIL' ? 'Filed' : ((form && form.status) || 'Filed'),
+      summary: summary || {},
+      updated_at: new Date().toISOString(),
+    };
+    try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', patchObj); } catch (e) { /* non-fatal */ }
+    debugPanel([
+      'STEP: GSTR-1 (filed)  (' + location.pathname + ')',
+      'ARN               : ' + (patchObj.arn || '(none — formdetails rtn_typ=GSTR1 unverified)'),
+      'status            : ' + (patchObj.status || '(unknown)'),
+    ]);
+    banner('GSTR-1 ' + job.period + ' → saved ✓.' + progress, '#16a34a');
+    await sleep(800);
+    await advance(job);
+  }
+
+  // GSTR-2A (B2B only) — same return.gst.gov.in origin as GSTR-3B/1, no tile
+  // click needed. Confirmed live: api/gstr2a/ctin?rtn_prd=MMYYYY&section_name=B2B
+  // returns the counterparty list (stin/cname/filing status), then
+  // api/gstr2a/b2b?rtn_prd=MMYYYY&ctin=<gstin> per counterparty returns its
+  // invoices with item-level tax split + IRN. This is a real N+1 fetch loop
+  // (one call per counterparty) run synchronously in-page — no navigation
+  // between them, so no job-state chaining needed, but a real client with
+  // many suppliers means many sequential GETs; the small sleep between them
+  // is deliberate, not a bug. Only the B2B section is covered — CDNR/ISD/TDS/
+  // TCS use the same ctin+section_name pattern per the page's own tabs but
+  // were not separately confirmed live.
+  async function handleGstr2aPull(job, cur, progress) {
+    if (!/return\.gst\.gov\.in/.test(location.hostname)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
+    const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) { banner('Bad GSTR-2A period.', '#dc2626'); await clearJob(); return; }
+    const rtnPrd = String(mm).padStart(2, '0') + yyyy;
+    banner('Reading GSTR-2A (B2B) for ' + job.period + '…' + progress);
+
+    let ctinList = [];
+    try {
+      const cr = await fetch('https://return.gst.gov.in/returns/auth/api/gstr2a/ctin?rtn_prd=' + rtnPrd + '&section_name=B2B', { credentials: 'include' });
+      if (cr.ok) { const cj = await cr.json(); if (Array.isArray(cj.cpty)) ctinList = cj.cpty; }
+    } catch (e) {
+      banner('GSTR-2A: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
+      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2A', { status: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }); } catch (e2) { /* diagnostic only */ }
+      await sleep(1200);
+      await advance(job);
+      return;
+    }
+
+    if (ctinList.length === 0) {
+      banner('No GSTR-2A B2B counterparties for ' + job.period + '.' + progress, '#f59e0b');
+      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2A', { status: 'NO DATA / NOT FOUND', summary: { b2b: [] } }); } catch (e2) { /* diagnostic only */ }
+      await sleep(1200);
+      await advance(job);
+      return;
+    }
+
+    const nameByCtin = new Map(ctinList.map((c) => [c.stin, c.cname]));
+    const docs = [];
+    let failed = 0;
+    for (const c of ctinList) {
+      try {
+        const r = await fetch('https://return.gst.gov.in/returns/auth/api/gstr2a/b2b?rtn_prd=' + rtnPrd + '&ctin=' + encodeURIComponent(c.stin), { credentials: 'include' });
+        if (r.ok) {
+          const j = await r.json();
+          if (Array.isArray(j.b2b)) {
+            for (const d of j.b2b) docs.push({ ctin: d.ctin, trdnm: nameByCtin.get(d.ctin) || null, supfildt: d.fldtr1 || null, inv: d.inv });
+          } else failed++;
+        } else failed++;
+      } catch (e) { failed++; }
+      await sleep(150); // deliberate throttle — a real client can have dozens of suppliers
+    }
+
+    const patchObj = { status: 'Pulled', summary: { b2b: docs }, updated_at: new Date().toISOString() };
+    try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2A', patchObj); } catch (e) { /* non-fatal */ }
+    debugPanel([
+      'STEP: GSTR-2A (B2B)  (' + location.pathname + ')',
+      'counterparties     : ' + ctinList.length + ' (' + failed + ' failed)',
+    ]);
+    banner('GSTR-2A ' + job.period + ' → saved ✓ (' + ctinList.length + ' counterparties).' + progress, '#16a34a');
+    await sleep(800);
+    await advance(job);
+  }
+
+  // GSTR-2B — full document-level pull. gstr2b.gst.gov.in is a SEPARATE
+  // domain from return.gst.gov.in; a cold direct location.href to it 403s
+  // (confirmed live — same "Access Denied" pattern as every other authenticated
+  // deep-link in this app) — the SSO hand-off only happens via the returns
+  // dashboard tile's own click, so this reuses handleTwob's cascading FY/
+  // quarter/month select + Search + tile-find, clicking the tile's View
+  // (not Download — that triggers the slow Excel-generation flow this
+  // replaces) to land on gstr2b/auth/gstr2b/summary with a valid session.
+  // getdata?rtnprd=MMYYYY there returns the FULL document-level 2B — every
+  // counterparty invoice with item-level tax split, ITC eligibility (Y/N)
+  // and IMS status — confirmed live against a real invoice (Google India,
+  // July 2026-27). This is everything the Import 2B tab currently needs a
+  // manual Excel import for, in one JSON call.
+  async function handleGstr2bPullDash(job, cur, progress) {
+    if (!/returns\/auth\/dashboard/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
+    if (!(await waitFor('select', 20000))) { banner('Returns dashboard did not load.', '#dc2626'); await clearJob(); return; }
+    const MONTHS_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) { banner('Bad GSTR-2B period.', '#dc2626'); await clearJob(); return; }
+    const fyStart = mm >= 4 ? yyyy : yyyy - 1;
+    const fyShort = fyStart + '-' + String((fyStart + 1) % 100).padStart(2, '0');
+    const monthName = MONTHS_FULL[mm - 1];
+    const q = mm >= 4 ? Math.ceil((mm - 3) / 3) : 4;
+
+    banner('Selecting ' + monthName + ' ' + yyyy + ' on the dashboard…' + progress);
+    if (!(await selectWhereOption(fyShort))) { banner('Could not set the financial year on the dashboard.', '#dc2626'); await clearJob(); return; }
+    await sleep(700);
+    await selectWhereOption('Quarter ' + q, { startsWith: true, timeout: 8000 });
+    await sleep(700);
+    if (!(await selectWhereOption(monthName, { timeout: 12000 }))) { banner('Could not set the month on the dashboard.', '#dc2626'); await clearJob(); return; }
+    await sleep(300);
+    const search = $('button.srchbtn') || $$('button').find((b) => /^search$/i.test((b.textContent || '').trim()));
+    if (!search) { banner('Could not find the dashboard Search button.', '#dc2626'); await clearJob(); return; }
+    search.click();
+
+    let viewBtn = null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 15000 && !viewBtn) {
+      await sleep(400);
+      viewBtn = findTileButton(/gstr[\s-]*2b/i, /^view$/i, [/gstr[\s-]*1\b/i, /gstr[\s-]*2a/i, /gstr[\s-]*3b/i]);
+    }
+    if (!viewBtn) { banner('Could not find the GSTR-2B tile / View after Search — is GSTR-2B generated for ' + monthName + ' ' + yyyy + '?', '#dc2626'); await clearJob(); return; }
+    job.step = 'gstr2b_pull';
+    await setJob(job);
+    banner('Opening the GSTR-2B summary page…' + progress);
+    viewBtn.click();
+  }
+
+  async function handleGstr2bPull(job, cur, progress) {
+    if (!/gstr2b\.gst\.gov\.in/.test(location.hostname)) { banner('Did not reach the GSTR-2B summary page (at ' + location.hostname + location.pathname + ').', '#f59e0b'); await clearJob(); return; }
+    const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) { banner('Bad GSTR-2B period.', '#dc2626'); await clearJob(); return; }
+    const rtnPrd = String(mm).padStart(2, '0') + yyyy;
+    banner('Reading GSTR-2B for ' + job.period + '…' + progress);
+
+    let data = null;
+    try {
+      const r = await fetch('https://gstr2b.gst.gov.in/gstr2b/auth/api/gstr2b/getdata?rtnprd=' + rtnPrd, { credentials: 'include' });
+      if (r.ok) { const j = await r.json(); if (j && j.data) data = j.data; }
+    } catch (e) {
+      banner('GSTR-2B: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
+      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2B', { status: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }); } catch (e2) { /* diagnostic only */ }
+      await sleep(1200);
+      await advance(job);
+      return;
+    }
+
+    if (!data) {
+      banner('GSTR-2B not generated on the portal for ' + job.period + '.' + progress, '#f59e0b');
+      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2B', { status: 'NOT GENERATED / NOT FOUND' }); } catch (e2) { /* diagnostic only */ }
+      await sleep(1200);
+      await advance(job);
+      return;
+    }
+
+    const patchObj = { status: 'Generated', summary: data, updated_at: new Date().toISOString() };
+    try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2B', patchObj); } catch (e) { /* non-fatal */ }
+    const docCount = (data.docdata && data.docdata.b2b && data.docdata.b2b.length) || 0;
+    debugPanel([
+      'STEP: GSTR-2B  (' + location.pathname + ')',
+      'B2B counterparties: ' + docCount,
+    ]);
+    banner('GSTR-2B ' + job.period + ' → saved ✓ (' + docCount + ' B2B counterparties).' + progress, '#16a34a');
+    await sleep(800);
     await advance(job);
   }
 

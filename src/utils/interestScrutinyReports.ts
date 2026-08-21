@@ -1,14 +1,19 @@
 // Phase 4: interest, late fee (s.47/Rule 88B) and Rule 42 ITC-reversal
-// scrutiny reports. All 5 read this app's own DRAFT GSTR-3B (fetchGstr3b) —
-// not the as-filed portal return — so every report here is "ready (approx.)"
-// for the same reason the GSTR-3B family reports are. See
+// scrutiny reports. All 5 now read gst_filed_returns — the as-filed GSTR-3B
+// pulled directly from the portal — instead of this app's own computed
+// draft. The one figure that stays an estimate: the portal's summary API
+// gives total liability and net ITC per head, but not which ITC head
+// actually funded which liability head at filing time, so the cash-portion
+// split for interest still uses the same Rule 88A cross-utilization
+// estimate as GSTR-3B Offset Summary — only the LIABILITY and ITC feeding it
+// are now real, as-filed figures rather than a computed draft. See
 // docs/INTEREST_LATE_FEE_POSITIONS.md for what each calculation elects,
 // simplifies, or is missing data for.
 
 import { supabase } from '@/integrations/supabase/client';
 import type { ReportTable } from './allClientsReports';
 import { formatMonthLabel, fyMonthsForKey } from './allClientsReports';
-import { fetchGstr3b } from './fetchGstr3b';
+import { fetchFiledReturn, type Gstr3bSummary, type TypedAmt } from './filedReturnReports';
 import { computeItcOffset } from './gstr3bReports';
 import {
   dueDayForReturn,
@@ -29,6 +34,25 @@ interface ClientLite {
 }
 
 const fileSafe = (s: string) => s.replace(/\s+/g, '_');
+const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const findItc = (arr: TypedAmt[] | undefined, ty: string) => (Array.isArray(arr) ? arr.find((x) => x.ty === ty) : undefined) || {};
+const itcAvailGrossOf = (s: Gstr3bSummary) => {
+  const heads = ['IMPG', 'IMPS', 'ISRC', 'ISD', 'OTH'].map((ty) => findItc(s.itc_elg?.itc_avl, ty));
+  return {
+    igst: heads.reduce((a, h) => a + num(h.iamt), 0),
+    cgst: heads.reduce((a, h) => a + num(h.camt), 0),
+    sgst: heads.reduce((a, h) => a + num(h.samt), 0),
+  };
+};
+const totalLiabilityOf = (s: Gstr3bSummary) => {
+  const o = s.sup_details?.osup_det, r = s.sup_details?.isup_rev;
+  return { igst: num(o?.iamt) + num(r?.iamt), cgst: num(o?.camt) + num(r?.camt), sgst: num(o?.samt) + num(r?.samt) };
+};
+const itcNetOf = (s: Gstr3bSummary) => ({ igst: num(s.itc_elg?.itc_net?.iamt), cgst: num(s.itc_elg?.itc_net?.camt), sgst: num(s.itc_elg?.itc_net?.samt) });
+const itcReversedOf = (s: Gstr3bSummary) => {
+  const heads = s.itc_elg?.itc_rev || [];
+  return { igst: heads.reduce((a, h) => a + num(h.iamt), 0), cgst: heads.reduce((a, h) => a + num(h.camt), 0), sgst: heads.reduce((a, h) => a + num(h.samt), 0) };
+};
 
 const fetchClientWithDueDays = async (clientId: string): Promise<ClientLite> => {
   const { data } = await supabase
@@ -88,8 +112,8 @@ interface InterestCalcResult {
  * this period (e.g. a quarterly client on a non-quarter-end month) — there is
  * nothing to calculate, not a zero result. */
 const computeInterestForClient = async (client: ClientLite, month: string): Promise<InterestCalcResult | null> => {
-  const [gstr3bResult, filingRes, turnover] = await Promise.all([
-    fetchGstr3b(client.id, client.gstin || '', month).catch(() => null),
+  const [gstr3bRow, filingRes, turnover] = await Promise.all([
+    fetchFiledReturn(client.id, month, 'GSTR3B'),
     supabase
       .from('filing_status')
       .select('return_type, status, target_date, filed_date')
@@ -98,20 +122,22 @@ const computeInterestForClient = async (client: ClientLite, month: string): Prom
       .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']),
     fetchTurnover(client.id, month),
   ]);
-  if (!gstr3bResult) return null;
+  if (!gstr3bRow || !gstr3bRow.summary || Object.keys(gstr3bRow.summary).length === 0) return null;
   const filingRow = ((filingRes.data || [])[0] || null) as
     | { return_type: string; status: string; target_date: number | null; filed_date: string | null }
     | null;
   if (!filingRow) return null;
 
-  const s = gstr3bResult.summary;
+  const s = gstr3bRow.summary as Gstr3bSummary;
   const dueDay = filingRow.target_date ?? dueDayForReturn(filingRow.return_type, client.target_date_group1, client.target_date_group2);
   const dueDate = computeDueDate(month, dueDay);
   const filedDate = filingRow.status === 'Filed' ? filingRow.filed_date : null;
   const { daysLate, stillAccruing } = computeDaysLate(dueDate, filedDate);
-  const { cashPayable } = computeItcOffset(s.totalLiability, s.itcNet);
+  const totalLiability = totalLiabilityOf(s);
+  const itcNet = itcNetOf(s);
+  const { cashPayable } = computeItcOffset(totalLiability, itcNet);
   const interest = computeInterest(cashPayable, daysLate);
-  const isNil = s.totalLiability.igst + s.totalLiability.cgst + s.totalLiability.sgst === 0;
+  const isNil = totalLiability.igst + totalLiability.cgst + totalLiability.sgst === 0;
   const lateFee = computeLateFee(isNil, daysLate, turnover?.aggregate_turnover ?? null);
 
   return { client, returnType: filingRow.return_type, status: filingRow.status || 'Data Pending', dueDate, filedDate, daysLate, stillAccruing, interest, isNil, lateFee };
@@ -184,7 +210,7 @@ export const buildInterestLateFeeAllClientsReport = async (month: string): Promi
 
   return {
     title: 'Interest and Late Fee Report — All Clients',
-    subtitle: `Month: ${formatMonthLabel(month)}   |   This app's own computed indicative interest (Rule 88B(1), net of ITC, 18% p.a.) and late fee (s.47) for every client with a GSTR-3B/GSTR-3B (Q) filing record this period — not the portal's as-filed figures. See docs/INTEREST_LATE_FEE_POSITIONS.md.`,
+    subtitle: `Month: ${formatMonthLabel(month)}   |   Computed indicative interest (Rule 88B(1), net of ITC, 18% p.a.) and late fee (s.47), based on the as-filed GSTR-3B liability/ITC pulled from the portal, for every client with a GSTR-3B/GSTR-3B (Q) filing record this period. See docs/INTEREST_LATE_FEE_POSITIONS.md.`,
     headers: ['Client Name', 'GSTIN', 'Return Type', 'Status', 'Days Late', 'Interest', 'Late Fee', 'Total'],
     rows,
     fileNameBase: `Interest_Late_Fee_All_Clients_${month.replace('/', '-')}`,
@@ -236,15 +262,17 @@ interface Rule42CalcResult {
 }
 
 const computeRule42ForClient = async (client: ClientLite, month: string): Promise<Rule42CalcResult | null> => {
-  const [gstr3bResult, turnover] = await Promise.all([
-    fetchGstr3b(client.id, client.gstin || '', month).catch(() => null),
+  const [gstr3bRow, turnover] = await Promise.all([
+    fetchFiledReturn(client.id, month, 'GSTR3B'),
     fetchTurnover(client.id, month),
   ]);
-  if (!gstr3bResult) return null;
+  if (!gstr3bRow || !gstr3bRow.summary || Object.keys(gstr3bRow.summary).length === 0) return null;
 
-  const s = gstr3bResult.summary;
-  const itcAvailableTotal = s.itcAvailable.igst + s.itcAvailable.cgst + s.itcAvailable.sgst;
-  const itcReversedDeclared = s.itcReversed.igst + s.itcReversed.cgst + s.itcReversed.sgst;
+  const s = gstr3bRow.summary as Gstr3bSummary;
+  const itcAvail = itcAvailGrossOf(s);
+  const itcRev = itcReversedOf(s);
+  const itcAvailableTotal = itcAvail.igst + itcAvail.cgst + itcAvail.sgst;
+  const itcReversedDeclared = itcRev.igst + itcRev.cgst + itcRev.sgst;
   const t1 = turnover?.itc_directly_attributable_exempt || 0;
   const rule42 = computeRule42Reversal({
     itcAvailable: itcAvailableTotal,
@@ -281,7 +309,7 @@ export const buildRule42ShortReversalReport = async (clientId: string, month: st
   if (!result) {
     return {
       title: 'Short Reversal of ITC — Section 17(2) & Rule 42',
-      subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}   |   No GSTR-3B draft data for this period — nothing to calculate.`,
+      subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}   |   No filed GSTR-3B pulled from the portal for this period — use GSTR-3B (Filed on Portal)'s Pull button first.`,
       headers: ['Item', 'Value'],
       rows: [],
       fileNameBase,
@@ -299,7 +327,7 @@ export const buildRule42ShortReversalReport = async (clientId: string, month: st
     ['Ratio (Exempt ÷ Aggregate)', result.ratio != null ? `${(result.ratio * 100).toFixed(2)}%` : 'Turnover not entered — cannot compute'],
     ['', ''],
     ['Rule 42 Computed Reversal (D1)', result.computedReversal],
-    ["ITC Reversed as per this period's GSTR-3B draft (Table 4B, declared)", result.itcReversedDeclared],
+    ["ITC Reversed as per this period's as-filed GSTR-3B (Table 4B, declared)", result.itcReversedDeclared],
     ['Short Reversal (Computed − Declared, floored at 0)', result.shortfall],
   ];
 

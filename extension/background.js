@@ -129,6 +129,17 @@ const API = {
     return rows.length ? post('gst_challans', rows) : true;
   },
 
+  // Filed GSTR-3B / GSTR-1 / GSTR-2B — as-filed figures pulled directly from
+  // the portal's own JSON APIs (see content.js handleGstr3bPull/handleGstr1Pull/
+  // handleGstr2bPull), one row per client+period+return_type. A true upsert
+  // (not delete-then-insert): a failed re-pull leaves the last good summary
+  // untouched instead of blanking it, same reasoning as upsertTaxpayerProfile.
+  upsertFiledReturn: async (clientId, period, returnType, patchObj) => {
+    const ex = await sel(`gst_filed_returns?client_id=eq.${clientId}&period_month=eq.${enc(period)}&return_type=eq.${enc(returnType)}&select=id&limit=1`);
+    if (ex[0]) return patch(`gst_filed_returns?id=eq.${ex[0].id}`, patchObj);
+    return post('gst_filed_returns', [{ client_id: clientId, period_month: period, return_type: returnType, ...patchObj }]);
+  },
+
   // Upload a base64 data-URL PDF to the return-pdfs bucket, return its public URL.
   uploadPdf: async (path, dataUrl) => {
     const b64 = String(dataUrl).split(',')[1] || '';

@@ -8,8 +8,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { ReportTable } from './allClientsReports';
 import { fyMonthsForKey, formatMonthLabel } from './allClientsReports';
-import { fetchGstr3b } from './fetchGstr3b';
-import { computeItcOffset } from './gstr3bReports';
+import type { Gstr3bSummary } from './filedReturnReports';
 
 interface ClientLite { id: string; name: string; gstin: string; }
 
@@ -26,29 +25,31 @@ const fetchClient = async (clientId: string): Promise<ClientLite> => {
 export const buildCreditAndLiabilityStatementReport = async (clientId: string, anyMonthInFy: string): Promise<ReportTable> => {
   const client = await fetchClient(clientId);
   const { fyLabel, months } = fyMonthsForKey(anyMonthInFy);
-  const results = await Promise.all(months.map((m) => fetchGstr3b(clientId, client.gstin || '', m).catch(() => null)));
+  const { data: filedRows } = await supabase.from('gst_filed_returns').select('period_month, summary').eq('client_id', clientId).eq('return_type', 'GSTR3B').in('period_month', months);
+  const byMonth = new Map((filedRows || []).map((r) => [r.period_month, r.summary as Gstr3bSummary]));
 
-  let totLiab = 0, totItc = 0, totCash = 0, totCarried = 0;
-  const rows: (string | number)[][] = months.map((m, idx) => {
-    const s = results[idx]?.summary;
-    if (!s) return [formatMonthLabel(m), 0, 0, 0, 0];
-    const liab = s.totalLiability.igst + s.totalLiability.cgst + s.totalLiability.sgst;
-    const { cashPayable, itcCarriedForward } = computeItcOffset(s.totalLiability, s.itcNet);
-    const cash = cashPayable.igst + cashPayable.cgst + cashPayable.sgst;
-    const setOff = liab - cash;
-    const carried = itcCarriedForward.igst + itcCarriedForward.cgst + itcCarriedForward.sgst;
-    totLiab += liab; totItc += setOff; totCash += cash; totCarried += carried;
-    return [formatMonthLabel(m), liab, setOff, cash, carried];
+  let totLiab = 0, totItc = 0, totCash = 0, pulled = 0;
+  const rows: (string | number)[][] = months.map((m) => {
+    const s = byMonth.get(m);
+    if (!s || Object.keys(s).length === 0) return [formatMonthLabel(m), 'NOT PULLED', '', ''];
+    pulled++;
+    const sup = s.sup_details || {};
+    const liab = num(sup.osup_det?.iamt) + num(sup.osup_det?.camt) + num(sup.osup_det?.samt)
+      + num(sup.isup_rev?.iamt) + num(sup.isup_rev?.camt) + num(sup.isup_rev?.samt);
+    const itc = num(s.tt_val?.tt_itc_pd);
+    const cash = num(s.tt_val?.tt_csh_pd);
+    totLiab += liab; totItc += itc; totCash += cash;
+    return [formatMonthLabel(m), liab, itc, cash];
   });
-  rows.push(['TOTAL — ' + fyLabel, totLiab, totItc, totCash, '']);
+  rows.push(['TOTAL — ' + fyLabel, totLiab, totItc, totCash]);
 
   return {
     title: 'Credit And Liability Statement',
-    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   ${fyLabel}   |   Approximate — this app's own computed draft GSTR-3B per month, with ITC set-off following the standard Rule 88A order (see GSTR 3B Offset Summary). Not the as-filed portal ledger movements.`,
-    headers: ['Month', 'Total Liability', 'ITC Set Off', 'Paid in Cash', 'ITC Carried Forward'],
+    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   ${fyLabel}   |   As filed on the portal's GSTR-3B for each month (${pulled}/${months.length} months pulled — the rest show NOT PULLED). "ITC Set Off" and "Paid in Cash" are the return's own as-filed aggregate figures — the portal doesn't expose which ITC head funded which liability head, so a per-head Rule 88A allocation isn't shown (see GSTR 3B Offset Summary for the same caveat).`,
+    headers: ['Month', 'Total Liability', 'ITC Set Off (as filed)', 'Paid in Cash (as filed)'],
     rows,
     fileNameBase: `Credit_Liability_Statement_${fileSafe(client.name)}_${fyLabel.replace(/\s+/g, '_')}`,
-    columnWidths: [14, 16, 14, 14, 18],
+    columnWidths: [14, 16, 18, 18],
   };
 };
 

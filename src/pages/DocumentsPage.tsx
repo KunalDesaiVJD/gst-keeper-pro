@@ -25,6 +25,7 @@ const SOURCE_BADGE: Record<DocumentSource, 'info' | 'warning' | 'success' | 'sec
   'DRC-03': 'warning',
   'Refund Application': 'info',
   'Registration Certificate': 'secondary',
+  'Notice/Order': 'warning',
 };
 
 const DocumentsPage: React.FC = () => {
