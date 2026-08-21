@@ -2725,9 +2725,29 @@
             const link = icon.closest('a') || icon;
             const href = link.href || link.getAttribute('href') || '';
             const label = clean((link.textContent || '')) || clean((link.title || '')) || tabName;
-            if (!/^https?:/i.test(href)) { docsFail++; consecutiveFailures++; continue; }
+
+            // This page is the same litserv family as DRC-03's case/search,
+            // which needs a docId + eh security token, NOT a plain href, to
+            // fetch its PDF (see fetchEncrypDocEh below). These icons are
+            // very likely the same, given a plain href was confirmed live
+            // to capture nothing. Still unverified against this page's real
+            // markup (only inferred from DRC-03's own proven pattern) — the
+            // attribute-scan below is a best-effort guess at where a docId
+            // might live (data-*, id, onclick/ng-click as literal strings),
+            // not a confirmed selector.
+            let fetchUrl = null;
+            if (/^https?:/i.test(href)) {
+              fetchUrl = href;
+            } else {
+              const docId = extractDocId(icon) || extractDocId(link) || extractDocId(icon.parentElement);
+              if (docId) {
+                const eh = await fetchEncrypDocEh(docId, arn);
+                if (eh) fetchUrl = 'https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(docId) + '&arn=' + encodeURIComponent(arn) + '&eh=' + encodeURIComponent(eh);
+              }
+            }
+            if (!fetchUrl) { docsFail++; consecutiveFailures++; continue; }
             try {
-              const r = await fetch(href, { credentials: 'include' });
+              const r = await fetch(fetchUrl, { credentials: 'include' });
               if (!r.ok) { docsFail++; consecutiveFailures++; continue; }
               const buf = await r.arrayBuffer();
               if (!buf || buf.byteLength < 200) { docsFail++; consecutiveFailures++; continue; } // guard against an HTML error page, not a real PDF
@@ -2979,6 +2999,21 @@
     banner('Challan Summary → ' + rows.length + ' entries saved.' + progress, '#16a34a');
     await sleep(1000);
     await advance(job);
+  }
+
+  // Best-effort scan for a docId hiding in an element's attributes — common
+  // data-attribute names first, then falling back to pulling a quoted
+  // token out of an onclick/ng-click handler's literal attribute text
+  // (AngularJS directives like ng-click="dl('abc123')" stay in the DOM as
+  // plain strings even though this app disables Angular's DOM debug info).
+  function extractDocId(el) {
+    if (!el) return null;
+    const direct = el.getAttribute('data-doc-id') || el.getAttribute('data-docid')
+      || el.getAttribute('data-id') || el.getAttribute('docid') || el.id;
+    if (direct) return direct;
+    const scripty = (el.getAttribute('onclick') || '') + ' ' + (el.getAttribute('ng-click') || '');
+    const m = scripty.match(/['"]([\w-]{6,})['"]/);
+    return m ? m[1] : null;
   }
 
   async function fetchEncrypDocEh(docId, arn) {
