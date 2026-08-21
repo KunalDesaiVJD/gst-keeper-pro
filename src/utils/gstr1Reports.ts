@@ -1,7 +1,13 @@
-// The 6 GSTR-1 family reports on the Reports Hub — all built from
-// gstr1_data.raw_json, the same data GSTR1DataPage.tsx already reads and
-// writes. No portal automation involved: everything here is the firm's own
-// imported/generated GSTR-1 JSON for one client and one exact return period.
+// The 6 GSTR-1 family reports on the Reports Hub. Each now PREFERS the real
+// filed GSTR-1 JSON — gst_filed_returns.full_json, pulled directly from the
+// portal's own "Offline Download for GSTR-1" feature (content.js
+// handleGstr1JsonPull) — over this app's own pre-filing books draft
+// (gstr1_data.raw_json, still the fallback when the filed JSON hasn't been
+// pulled yet, since a return not yet filed genuinely has no portal JSON to
+// pull). Confirmed live (2026-08-21): the portal's own download is the SAME
+// invoice-level JSON schema gstr1_data.raw_json already uses, so every
+// parser below works unchanged against either source — only WHICH one wins
+// changed, and each report says which one it's showing.
 //
 // Reuses the app's existing GSTR-1 JSON parsers rather than re-deriving
 // section logic:
@@ -33,23 +39,36 @@ const fileSafe = (s: string) => s.replace(/\s+/g, '_');
 const noteSign = (ntTyp: unknown): 1 | -1 =>
   String(ntTyp ?? 'C').toUpperCase().startsWith('D') ? 1 : -1;
 
+type Gstr1Source = 'filed' | 'draft';
+
+// One line, appended to every report's subtitle, so it's never ambiguous
+// which JSON a figure came from.
+const sourceNote = (source: Gstr1Source) => source === 'filed'
+  ? 'As filed on the portal (real invoices, pulled via GSTR-1 (Filed on Portal)\'s Pull button)'
+  : 'This app\'s pre-filing books draft — pull the filed GSTR-1 JSON (GSTR-1 (Filed on Portal) → Pull) to see the real return instead';
+
 const fetchGstr1Row = async (clientId: string, month: string) => {
   const shortMonth = mmYyyyToShort(month);
-  const [clientRes, gstr1Res] = await Promise.all([
+  const [clientRes, filedRes, draftRes] = await Promise.all([
     supabase.from('clients').select('id, name, gstin').eq('id', clientId).maybeSingle(),
-    supabase.from('gstr1_data').select('*').eq('client_id', clientId).eq('period_month', shortMonth).maybeSingle(),
+    supabase.from('gst_filed_returns').select('full_json').eq('client_id', clientId).eq('period_month', month).eq('return_type', 'GSTR1').maybeSingle(),
+    supabase.from('gstr1_data').select('raw_json').eq('client_id', clientId).eq('period_month', shortMonth).maybeSingle(),
   ]);
   const client: ClientLite = (clientRes.data || { id: clientId, name: 'Unknown', gstin: '' }) as any;
-  if (!gstr1Res.data) {
-    throw new Error(`No GSTR-1 data imported for ${client.name} in ${formatMonthLabel(month)}. Import it first from GSTR-1 Data.`);
+  const filedJson = filedRes.data?.full_json;
+  if (filedJson && typeof filedJson === 'object' && Object.keys(filedJson).length > 0) {
+    return { client, gstr1: { raw_json: filedJson }, source: 'filed' as Gstr1Source, shortMonth };
   }
-  return { client, gstr1: gstr1Res.data as any, shortMonth };
+  if (draftRes.data) {
+    return { client, gstr1: { raw_json: draftRes.data.raw_json }, source: 'draft' as Gstr1Source, shortMonth };
+  }
+  throw new Error(`No filed GSTR-1 JSON pulled and no books draft imported for ${client.name} in ${formatMonthLabel(month)}. Use Pull to fetch the filed return from the portal, or import a draft from GSTR-1 Data.`);
 };
 
 // ─────────────────── REPORT 1: Rate Wise ─────────────────────────────────
 
 export const buildGstr1RateWiseReport = async (clientId: string, month: string): Promise<ReportTable> => {
-  const { client, gstr1 } = await fetchGstr1Row(clientId, month);
+  const { client, gstr1, source } = await fetchGstr1Row(clientId, month);
   const { rowsBySection } = hydrateManualEntriesFromJson(gstr1.raw_json);
 
   interface Bucket { txval: number; igst: number; cgst: number; sgst: number; cess: number; }
@@ -92,7 +111,7 @@ export const buildGstr1RateWiseReport = async (clientId: string, month: string):
 
   return {
     title: 'GSTR-1 Rate Wise Report',
-    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}`,
+    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}   |   ${sourceNote(source)}`,
     headers: ['Rate', 'Taxable Value', 'IGST', 'CGST', 'SGST', 'Cess', 'Total Tax'],
     rows,
     fileNameBase: `GSTR1_Rate_Wise_${fileSafe(client.name)}_${month.replace('/', '-')}`,
@@ -103,7 +122,7 @@ export const buildGstr1RateWiseReport = async (clientId: string, month: string):
 // ─────────────────── REPORT 2: Summary ────────────────────────────────────
 
 export const buildGstr1SummaryReport = async (clientId: string, month: string): Promise<ReportTable> => {
-  const { client, gstr1 } = await fetchGstr1Row(clientId, month);
+  const { client, gstr1, source } = await fetchGstr1Row(clientId, month);
   const summary = buildGstr1Summary(gstr1.raw_json);
 
   const rows: (string | number)[][] = summary.sections.map((s) => [
@@ -117,7 +136,7 @@ export const buildGstr1SummaryReport = async (clientId: string, month: string): 
 
   return {
     title: 'GSTR-1 Summary Report',
-    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}`,
+    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}   |   ${sourceNote(source)}`,
     headers: ['Table', 'Description', 'Doc Type', 'Count', 'Value', 'IGST', 'CGST', 'SGST', 'Cess', 'Total Tax'],
     rows,
     fileNameBase: `GSTR1_Summary_${fileSafe(client.name)}_${month.replace('/', '-')}`,
@@ -128,7 +147,7 @@ export const buildGstr1SummaryReport = async (clientId: string, month: string): 
 // ─────────────────── REPORT 3: HSN Summary ────────────────────────────────
 
 export const buildGstr1HsnSummaryReport = async (clientId: string, month: string): Promise<ReportTable> => {
-  const { client, gstr1 } = await fetchGstr1Row(clientId, month);
+  const { client, gstr1, source } = await fetchGstr1Row(clientId, month);
   const j = gstr1.raw_json || {};
   // Same dual-shape handling as buildGstr1Summary.ts: older imports carry
   // hsn.data, newer ones split hsn.hsn_b2b / hsn.hsn_b2c.
@@ -145,7 +164,7 @@ export const buildGstr1HsnSummaryReport = async (clientId: string, month: string
 
   return {
     title: 'GSTR-1 HSN Summary Report',
-    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}`,
+    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}   |   ${sourceNote(source)}`,
     headers: ['HSN/SAC', 'Description', 'UQC', 'Qty', 'Rate', 'Taxable Value', 'IGST', 'CGST', 'SGST', 'Cess', 'Total Tax'],
     rows,
     fileNameBase: `GSTR1_HSN_Summary_${fileSafe(client.name)}_${month.replace('/', '-')}`,
@@ -156,7 +175,7 @@ export const buildGstr1HsnSummaryReport = async (clientId: string, month: string
 // ─────────────────── REPORT 4: Customer Wise ──────────────────────────────
 
 export const buildGstr1CustomerWiseReport = async (clientId: string, month: string): Promise<ReportTable> => {
-  const { client, gstr1 } = await fetchGstr1Row(clientId, month);
+  const { client, gstr1, source } = await fetchGstr1Row(clientId, month);
   const { rowsBySection } = hydrateManualEntriesFromJson(gstr1.raw_json);
 
   interface Agg { count: number; txval: number; igst: number; cgst: number; sgst: number; cess: number; docKeys: Set<string>; }
@@ -190,7 +209,7 @@ export const buildGstr1CustomerWiseReport = async (clientId: string, month: stri
 
   return {
     title: 'GSTR-1 Customer Wise Report',
-    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}   |   Registered (B2B) customers only — the GSTR-1 JSON doesn't carry counterparty trade names`,
+    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}   |   Registered (B2B) customers only — the GSTR-1 JSON doesn't carry counterparty trade names   |   ${sourceNote(source)}`,
     headers: ['Sr No.', 'Customer GSTIN', 'Document Count', 'Taxable Value', 'IGST', 'CGST', 'SGST', 'Cess', 'Total Tax'],
     rows,
     fileNameBase: `GSTR1_Customer_Wise_${fileSafe(client.name)}_${month.replace('/', '-')}`,
@@ -257,7 +276,7 @@ const fyStartYearOfIso = (isoDate: string): number | null => {
 };
 
 export const buildGstr1PyInCyReport = async (clientId: string, month: string): Promise<ReportTable> => {
-  const { client, gstr1 } = await fetchGstr1Row(clientId, month);
+  const { client, gstr1, source } = await fetchGstr1Row(clientId, month);
   const { rowsBySection } = hydrateManualEntriesFromJson(gstr1.raw_json);
 
   const [mm, yyyy] = month.split('/').map(Number);
@@ -286,7 +305,7 @@ export const buildGstr1PyInCyReport = async (clientId: string, month: string): P
 
   return {
     title: 'GSTR-1 — P.Y. Invoice Showing in C.Y.',
-    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Return Period: ${formatMonthLabel(month)} (FY ${periodFy}-${String(periodFy + 1).slice(-2)})`,
+    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Return Period: ${formatMonthLabel(month)} (FY ${periodFy}-${String(periodFy + 1).slice(-2)})   |   ${sourceNote(source)}`,
     headers: ['Sr No.', 'Section', 'GSTIN / POS', 'Doc No.', 'Doc Date', 'Taxable Value', 'Total Tax'],
     rows,
     fileNameBase: `GSTR1_PY_in_CY_${fileSafe(client.name)}_${month.replace('/', '-')}`,
