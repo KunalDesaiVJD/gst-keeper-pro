@@ -65,6 +65,22 @@ export const fetchFiledReturn = async (clientId: string, period: string, returnT
   return (data as FiledReturnRow) || null;
 };
 
+// The filed-return PDF (captured via the Filing Status page's own "Portal"
+// pull — handleReturnPdf/handleReturnView in content.js, a separate flow
+// from the JSON pulls above) lives on filing_status, not gst_filed_returns.
+// Joined in here so the PDF shows inline in the same report a reviewer is
+// already looking at, instead of a separate documents page.
+const fetchFiledPdfUrl = async (clientId: string, period: string, returnTypes: string[]): Promise<string | null> => {
+  const { data } = await supabase
+    .from('filing_status')
+    .select('return_pdf_url')
+    .eq('client_id', clientId).eq('period_month', period)
+    .in('return_type', returnTypes)
+    .not('return_pdf_url', 'is', null)
+    .limit(1).maybeSingle();
+  return data?.return_pdf_url || null;
+};
+
 export const notPulledMsg = (client: ClientLite, period: string, label: string) =>
   `No filed ${label} on record for ${client.name} in ${formatMonthLabel(period)}. Use "Pull" on this report to fetch it directly from the GST portal.`;
 
@@ -107,6 +123,8 @@ export const buildFiledGstr3bReport = async (clientId: string, period: string): 
   rows.push(['Total cash paid', num(tt.tt_csh_pd), '', '', '', '']);
   rows.push(['Total ITC utilised', num(tt.tt_itc_pd), '', '', '', '']);
   rows.push(['Total payable', num(tt.tt_pay), '', '', '', '']);
+  const pdfUrl = await fetchFiledPdfUrl(clientId, period, ['GSTR-3B', 'GSTR-3B (Q)']);
+  rows.push(['', 'Filed Return PDF', pdfUrl || 'Not captured yet — pull it from Filing Status', '', '', '']);
 
   return {
     title: 'GSTR-3B (Filed on Portal)',
@@ -161,6 +179,8 @@ export const buildFiledGstr1Report = async (clientId: string, period: string): P
   if (rows.length === 0) {
     throw new Error(`GSTR-1 summary was pulled for ${client.name} in ${formatMonthLabel(period)} but had no recognisable sections — the portal's JSON shape may have changed.`);
   }
+  const pdfUrl = await fetchFiledPdfUrl(clientId, period, ['GSTR-1', 'GSTR-1 (IFF)']);
+  rows.push(['Filed Return PDF', '', pdfUrl || 'Not captured yet — pull it from Filing Status', '', '', '', '']);
 
   return {
     title: 'GSTR-1 (Filed on Portal)',
