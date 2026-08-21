@@ -1,25 +1,36 @@
 // On-screen preview for a report — fetches once (via ReportsPage) and lets
 // staff look at the data, search/filter it, and open a per-row source PDF,
-// before deciding whether they even need an Excel/PDF file at all. Reference:
-// the firm's old "Power GST" software rendered reports the same "grid on
-// screen with an Export button" way, but as a plain unstyled grid with no
-// search, no status coloring, and raw PDF URLs as cell text — this goes
-// further: sortable/searchable, status badges, sticky header, right-aligned
-// formatted numbers, and PDF links rendered as buttons instead of URLs.
-import React, { useMemo, useState } from 'react';
+// before deciding whether they even need an Excel/PDF file at all.
+//
+// This is a router, not a renderer: the actual body is one of ten bespoke
+// view components under ./views/*, one per report data-shape archetype
+// (ledger register, as-filed return summary, variance comparison, document
+// line items, evidence/event list, profile card, all-clients snapshot,
+// annual trend, exceptions list, working paper) — each report declares which
+// one fits it via ReportDefinition.viewKind. This shell only owns what every
+// report needs regardless of shape: the Dialog frame, loading/error states,
+// and the Excel/PDF export actions.
+import React from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { FileSpreadsheet, FileText, Loader2, Search, ExternalLink, AlertCircle } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { FileSpreadsheet, FileText, Loader2, AlertCircle } from 'lucide-react';
 import type { ReportTable } from '@/utils/allClientsReports';
+import type { ReportDefinition } from '@/lib/reportRegistry';
+import { LedgerRegisterView } from './views/LedgerRegisterView';
+import { FiledReturnSummaryView } from './views/FiledReturnSummaryView';
+import { VarianceComparisonView } from './views/VarianceComparisonView';
+import { DocumentLineItemsView } from './views/DocumentLineItemsView';
+import { EvidenceEventListView } from './views/EvidenceEventListView';
+import { ProfileCardView } from './views/ProfileCardView';
+import { AllClientsSnapshotView } from './views/AllClientsSnapshotView';
+import { AnnualTrendView } from './views/AnnualTrendView';
+import { ExceptionsListView } from './views/ExceptionsListView';
+import { WorkingPaperView } from './views/WorkingPaperView';
 
 export interface ReportPreviewDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  title: string;
+  report: ReportDefinition | null;
   loading: boolean;
   error: string | null;
   table: ReportTable | null;
@@ -27,50 +38,44 @@ export interface ReportPreviewDialogProps {
   exportBusy: 'xlsx' | 'pdf' | null;
 }
 
-const isNumericHeader = (h: string) =>
-  /CGST|SGST|IGST|TOTAL|PAYABLE|CASH|CREDIT|CESS|VALUE|QTY|COUNT|RATE|AMOUNT|FEE|INTEREST|PENALTY|CLAIMED|SANCTIONED/i.test(h);
-
-const isUrl = (v: unknown): v is string => typeof v === 'string' && /^https?:\/\//.test(v);
-
-const STATUS_COLUMN_RE = /^status$/i;
-const STATUS_VARIANT = (v: string): 'success' | 'warning' | 'destructive' | 'secondary' => {
-  const s = v.toUpperCase();
-  if (/ACKNOWLEDG|APPROV|SANCTION|FILED|ACCEPT|PROCESSED/.test(s)) return 'success';
-  if (/PENDING|PROCESSING|SUBMIT/.test(s)) return 'warning';
-  if (/FAIL|REJECT|DENIED|CANCEL/.test(s)) return 'destructive';
-  return 'secondary';
-};
-
-const formatCell = (v: string | number): string => {
-  if (typeof v !== 'number') return String(v ?? '');
-  if (v === 0) return '0';
-  const rounded = Math.round(v * 100) / 100;
-  return rounded.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+const renderView = (report: ReportDefinition, table: ReportTable): React.ReactNode => {
+  switch (report.viewKind) {
+    case 'ledger-register':
+      return <LedgerRegisterView table={table} report={report} />;
+    case 'filed-return-summary':
+      return <FiledReturnSummaryView table={table} report={report} />;
+    case 'variance-comparison':
+      return <VarianceComparisonView table={table} report={report} />;
+    case 'document-line-items':
+      return <DocumentLineItemsView table={table} report={report} />;
+    case 'evidence-event-list':
+      return <EvidenceEventListView table={table} report={report} />;
+    case 'profile-card':
+      return <ProfileCardView table={table} report={report} />;
+    case 'all-clients-snapshot':
+      return <AllClientsSnapshotView table={table} report={report} />;
+    case 'annual-trend':
+      return <AnnualTrendView table={table} report={report} />;
+    case 'exceptions-list':
+      return <ExceptionsListView table={table} report={report} />;
+    case 'working-paper':
+      return <WorkingPaperView table={table} report={report} />;
+  }
 };
 
 export const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
-  open, onOpenChange, title, loading, error, table, onExport, exportBusy,
+  open, onOpenChange, report, loading, error, table, onExport, exportBusy,
 }) => {
-  const [search, setSearch] = useState('');
-
-  const statusColIdx = table?.headers.findIndex((h) => STATUS_COLUMN_RE.test(h)) ?? -1;
-  const isTotalRow = (row: (string | number)[]) => row.some((c) => String(c).toUpperCase() === 'TOTAL');
-
-  const filteredRows = useMemo(() => {
-    if (!table) return [];
-    const q = search.trim().toLowerCase();
-    if (!q) return table.rows;
-    return table.rows.filter((row) => isTotalRow(row) || row.some((c) => String(c).toLowerCase().includes(q)));
-  }, [table, search]);
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[96vw] w-full h-[90vh] flex flex-col p-0 gap-0 sm:max-w-[96vw]">
         <DialogHeader className="px-5 pt-5 pb-3 border-b shrink-0">
           <div className="flex items-start justify-between gap-4 pr-8">
             <div className="min-w-0">
-              <DialogTitle className="text-lg">{title}</DialogTitle>
-              <DialogDescription className="mt-1">{table?.subtitle || 'Fetching from the database…'}</DialogDescription>
+              <DialogTitle className="text-lg">{report?.title || ''}</DialogTitle>
+              <DialogDescription className="mt-1">
+                {report?.description || 'Fetching from the database…'}
+              </DialogDescription>
             </div>
           </div>
         </DialogHeader>
@@ -89,21 +94,9 @@ export const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
           </div>
         )}
 
-        {!loading && !error && table && (
+        {!loading && !error && table && report && (
           <>
-            <div className="flex items-center gap-3 px-5 py-3 border-b shrink-0">
-              <div className="relative flex-1 max-w-sm">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <Input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search this report…"
-                  className="pl-8 h-8 text-sm"
-                />
-              </div>
-              <span className="text-xs text-muted-foreground shrink-0">
-                {search ? `${filteredRows.length} of ${table.rows.length}` : `${table.rows.length}`} row{table.rows.length === 1 ? '' : 's'}
-              </span>
+            <div className="flex items-center gap-3 px-5 py-2.5 border-b shrink-0">
               <div className="flex-1" />
               <Button variant="outline" size="sm" onClick={() => onExport('xlsx')} disabled={exportBusy !== null}>
                 {exportBusy === 'xlsx' ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <FileSpreadsheet className="h-3.5 w-3.5 mr-1.5" />}
@@ -115,64 +108,8 @@ export const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
               </Button>
             </div>
 
-            <div className="flex-1 overflow-auto">
-              <Table>
-                <TableHeader className="sticky top-0 z-10 bg-background">
-                  <TableRow>
-                    {table.headers.map((h, i) => (
-                      <TableHead
-                        key={i}
-                        className={cn('px-3 py-2 text-xs font-semibold whitespace-nowrap bg-muted/60', isNumericHeader(h) && 'text-right')}
-                      >
-                        {h}
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredRows.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={table.headers.length} className="text-center text-sm text-muted-foreground py-10">
-                        No rows match "{search}".
-                      </TableCell>
-                    </TableRow>
-                  )}
-                  {filteredRows.map((row, ri) => {
-                    const total = isTotalRow(row);
-                    return (
-                      <TableRow key={ri} className={cn(total && 'bg-primary/5 font-semibold hover:bg-primary/10')}>
-                        {row.map((cell, ci) => {
-                          const header = table.headers[ci] || '';
-                          if (isUrl(cell)) {
-                            return (
-                              <TableCell key={ci} className="px-3 py-2 text-xs whitespace-nowrap">
-                                <a href={cell} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
-                                  <ExternalLink className="h-3 w-3" /> View
-                                </a>
-                              </TableCell>
-                            );
-                          }
-                          if (ci === statusColIdx && cell !== '' && !total) {
-                            return (
-                              <TableCell key={ci} className="px-3 py-2 text-xs whitespace-nowrap">
-                                <Badge variant={STATUS_VARIANT(String(cell))} className="text-[10px] py-0">{String(cell)}</Badge>
-                              </TableCell>
-                            );
-                          }
-                          return (
-                            <TableCell
-                              key={ci}
-                              className={cn('px-3 py-2 text-xs', isNumericHeader(header) ? 'text-right whitespace-nowrap tabular-nums' : 'max-w-[280px]')}
-                            >
-                              {formatCell(cell)}
-                            </TableCell>
-                          );
-                        })}
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+            <div className="flex-1 overflow-auto p-4">
+              {renderView(report, table)}
             </div>
           </>
         )}

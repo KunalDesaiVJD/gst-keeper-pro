@@ -72,6 +72,33 @@ export interface ReportRunArgs {
 }
 
 /**
+ * Which bespoke view component (src/components/reports/views/*) renders this
+ * report's preview body — chosen per report by its actual data shape, not a
+ * one-size-fits-all grid:
+ *  - ledger-register: transactional ledgers with Debit/Credit + running Balance
+ *  - filed-return-summary: one client+period's as-filed return, section by section
+ *  - variance-comparison: two (or more) sources side by side with a delta column
+ *  - document-line-items: rate/supplier/HSN-wise document-level breakdowns
+ *  - evidence-event-list: chronological portal events each with its own PDF
+ *  - profile-card: reference-data reports that read like a profile, not a grid
+ *  - all-clients-snapshot: one row per client roster reports
+ *  - annual-trend: one client's figure across all twelve months of an FY
+ *  - exceptions-list: pre-filtered "only the flagged clients" reports
+ *  - working-paper: a step-by-step legal computation read top to bottom
+ */
+export type ReportViewKind =
+  | 'ledger-register'
+  | 'filed-return-summary'
+  | 'variance-comparison'
+  | 'document-line-items'
+  | 'evidence-event-list'
+  | 'profile-card'
+  | 'all-clients-snapshot'
+  | 'annual-trend'
+  | 'exceptions-list'
+  | 'working-paper';
+
+/**
  * One entry per report. `needs` mirrors the filter shapes the app has
  * pickers for: an all-clients snapshot for one month, one client plus the
  * selected month, one client with no period at all (e.g. the Notice/Refund/
@@ -92,6 +119,8 @@ export interface ReportDefinition {
   status: ReportStatus;
   icon: LucideIcon;
   needs: 'month' | 'client+month' | 'client' | 'none';
+  /** Which bespoke view component renders this report's preview body — see ReportViewKind. */
+  viewKind: ReportViewKind;
   build: (args: ReportRunArgs) => Promise<ReportTable>;
   /**
    * Reports fed by the browser extension's single-section pulls (as opposed

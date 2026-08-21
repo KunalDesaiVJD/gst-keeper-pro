@@ -218,7 +218,7 @@ const ReportsPage: React.FC = () => {
       <ReportPreviewDialog
         open={previewOpen}
         onOpenChange={setPreviewOpen}
-        title={previewReport?.title || ''}
+        report={previewReport}
         loading={previewLoading}
         error={previewError}
         table={previewTable}
