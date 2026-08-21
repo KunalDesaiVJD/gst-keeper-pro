@@ -34,6 +34,7 @@
     getTaxpayerRegistrationDate: (clientId) => call('getTaxpayerRegistrationDate', clientId),
     replaceChallans: (clientId, rows) => call('replaceChallans', clientId, rows),
     upsertFiledReturn: (clientId, period, returnType, patchObj) => call('upsertFiledReturn', clientId, period, returnType, patchObj),
+    fetchCrossOriginAsBase64: (url) => call('fetchCrossOriginAsBase64', url),
     uploadPdf: (path, dataUrl) => call('uploadPdf', path, dataUrl),
     markFiled: (row) => call('markFiled', row),
     logEvent: (clientId, level, message) => { console.log('[GSTKeeper]', level, clientId, message); },

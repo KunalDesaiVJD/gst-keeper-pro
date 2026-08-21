@@ -172,7 +172,7 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4'];
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || job.step === 'gstr1_json_pull' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
@@ -200,6 +200,8 @@
         try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2B', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading GSTR-2B' }); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'creditledgertxn') {
         try { await GSTKdb.replaceCreditLedgerTxns(cur.clientId, job.period, [{ client_id: cur.clientId, period_month: job.period, is_debit: false, description: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Credit Ledger' }]); } catch (e2) { /* diagnostic only */ }
+      } else if (job.step === 'gstr1_json_pull') {
+        try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading the filed GSTR-1 JSON' }); } catch (e2) { /* diagnostic only */ }
       }
       // 'taxpayerprofile' has no diagnostic row: it's a single-row upsert
       // per client, so a failed pull just leaves any prior good data as-is
@@ -232,6 +234,7 @@
     else if (job.step === 'gstr1_pull') await handleGstr1Pull(job, cur, progress);
     else if (job.step === 'gstr2a_pull') await handleGstr2aPull(job, cur, progress);
     else if (job.step === 'creditledgertxn') await handleCreditLedgerTxnOnly(job, cur, progress);
+    else if (job.step === 'gstr1_json_pull') await handleGstr1JsonPull(job, cur, progress);
     else if (job.step === 'gstr2b_pull_dash') await handleGstr2bPullDash(job, cur, progress);
     else if (job.step === 'gstr2b_pull') await handleGstr2bPull(job, cur, progress);
     else if (job.step === 'efiledpdf') await handleReturnPdf(job, cur, progress);
@@ -363,6 +366,11 @@
       } else if (job.mode === 'gstr1_pull') {
         banner('Logged in — reading filed GSTR-1…' + progress);
         job.step = 'gstr1_pull';
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      } else if (job.mode === 'gstr1_json_pull') {
+        banner('Logged in — requesting the filed GSTR-1 JSON…' + progress);
+        job.step = 'gstr1_json_pull';
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
       } else if (job.mode === 'creditledgertxn') {
@@ -3388,6 +3396,135 @@
     banner('GSTR-2B ' + job.period + ' → saved ✓ (' + docCount + ' B2B counterparties).' + progress, '#16a34a');
     await sleep(800);
     await advance(job);
+  }
+
+  // GSTR-1 filed JSON — the SAME invoice-level JSON schema this app already
+  // uses for its own pre-filing draft (gstr1_data.raw_json), but pulled
+  // straight from the portal's "Offline Download for GSTR-1" feature
+  // instead. Confirmed live (2026-08-21): GET api/offline/download/generate?
+  // flag=0&rtn_prd=MMYYYY&rtn_typ=GSTR1 (no page navigation/button-click
+  // needed — the API takes rtn_prd directly) returns {status:1,
+  // data:{url}} once ready, pointing to a ZIP on files.gst.gov.in containing
+  // exactly one .json file. Generation is async and can take up to 20
+  // minutes for a period never generated before (confirmed via the portal's
+  // own banner text) — this polls a bounded number of times within one page
+  // load and saves a PENDING status (not a failure) if it's still cooking,
+  // rather than blocking indefinitely; re-running Pull later picks up the
+  // now-cached file (confirmed: a previously-generated period returns
+  // status:1 near-instantly on a later call).
+  async function handleGstr1JsonPull(job, cur, progress) {
+    if (!/return\.gst\.gov\.in/.test(location.hostname)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
+    const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) { banner('Bad GSTR-1 JSON period.', '#dc2626'); await clearJob(); return; }
+    const rtnPrd = String(mm).padStart(2, '0') + yyyy;
+    banner('Requesting the filed GSTR-1 JSON for ' + job.period + '…' + progress);
+
+    let downloadUrl = null;
+    const MAX_ATTEMPTS = 6; // ~90s of polling in this page load
+    try {
+      for (let attempt = 0; attempt < MAX_ATTEMPTS && !downloadUrl; attempt++) {
+        const r = await fetch('https://return.gst.gov.in/returns/auth/api/offline/download/generate?flag=0&rtn_prd=' + rtnPrd + '&rtn_typ=GSTR1', { credentials: 'include' });
+        if (!r.ok) throw new Error('HTTP ' + r.status + ' from offline/download/generate');
+        const j = await r.json();
+        if (j && j.status === 1 && j.data && j.data.url) { downloadUrl = j.data.url; break; }
+        if (attempt < MAX_ATTEMPTS - 1) { banner('GSTR-1 JSON still generating on the portal (attempt ' + (attempt + 1) + '/' + MAX_ATTEMPTS + ')…' + progress); await sleep(15000); }
+      }
+    } catch (e) {
+      banner('GSTR-1 JSON: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
+      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', { status: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }); } catch (e2) { /* diagnostic only */ }
+      await sleep(1200);
+      await advance(job);
+      return;
+    }
+
+    if (!downloadUrl) {
+      banner('GSTR-1 JSON is still generating on the portal (can take up to 20 min) — run Pull again shortly.' + progress, '#f59e0b');
+      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', { status: 'PENDING: filed JSON still generating on the portal — retry Pull in ~20 minutes' }); } catch (e2) { /* diagnostic only */ }
+      await sleep(1500);
+      await advance(job);
+      return;
+    }
+
+    let fullJson = null;
+    try {
+      const { base64 } = await GSTKdb.fetchCrossOriginAsBase64(downloadUrl);
+      fullJson = await extractJsonFromZip(base64ToArrayBuffer(base64));
+    } catch (e) {
+      banner('GSTR-1 JSON: downloaded but could not unzip/parse it (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
+      await sleep(1500);
+      await advance(job);
+      return;
+    }
+
+    try {
+      await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', { full_json: fullJson, full_json_pulled_at: new Date().toISOString() });
+    } catch (e) { /* non-fatal */ }
+    const invCount = Array.isArray(fullJson && fullJson.b2b) ? fullJson.b2b.reduce((a, s) => a + (Array.isArray(s.inv) ? s.inv.length : 0), 0) : null;
+    debugPanel([
+      'STEP: GSTR-1 filed JSON  (' + location.pathname + ')',
+      'B2B invoices found : ' + (invCount == null ? '(shape not recognized — saved raw for inspection)' : invCount),
+    ]);
+    banner('GSTR-1 filed JSON → saved ✓.' + progress, '#16a34a');
+    await sleep(800);
+    await advance(job);
+  }
+
+  // Minimal ZIP reader — extracts and parses the first entry whose name ends
+  // in .json, using only built-in browser APIs (DecompressionStream for the
+  // 'deflate' method almost all zips use) — no external library, since a
+  // content script has no bundler to pull one in. The GST portal's own
+  // "Offline Download" ZIPs contain exactly one JSON file, so this doesn't
+  // need to handle multi-entry archives or nested folders.
+  async function extractJsonFromZip(arrayBuffer) {
+    const view = new DataView(arrayBuffer);
+    const bytes = new Uint8Array(arrayBuffer);
+    let eocdOffset = -1;
+    const maxScan = Math.min(bytes.length, 65557); // EOCD record + max comment length
+    for (let i = bytes.length - 22; i >= bytes.length - maxScan && i >= 0; i--) {
+      if (view.getUint32(i, true) === 0x06054b50) { eocdOffset = i; break; }
+    }
+    if (eocdOffset < 0) throw new Error('not a valid ZIP (no End Of Central Directory record found)');
+    const cdOffset = view.getUint32(eocdOffset + 16, true);
+    const cdEntryCount = view.getUint16(eocdOffset + 10, true);
+
+    let ptr = cdOffset;
+    for (let i = 0; i < cdEntryCount; i++) {
+      if (view.getUint32(ptr, true) !== 0x02014b50) break;
+      const compressionMethod = view.getUint16(ptr + 10, true);
+      const compressedSize = view.getUint32(ptr + 20, true);
+      const fileNameLen = view.getUint16(ptr + 28, true);
+      const extraLen = view.getUint16(ptr + 30, true);
+      const commentLen = view.getUint16(ptr + 32, true);
+      const localHeaderOffset = view.getUint32(ptr + 42, true);
+      const fileName = new TextDecoder().decode(bytes.subarray(ptr + 46, ptr + 46 + fileNameLen));
+      if (/\.json$/i.test(fileName)) {
+        const lh = localHeaderOffset;
+        if (view.getUint32(lh, true) !== 0x04034b50) throw new Error('bad local file header for ' + fileName);
+        const lNameLen = view.getUint16(lh + 26, true);
+        const lExtraLen = view.getUint16(lh + 28, true);
+        const dataStart = lh + 30 + lNameLen + lExtraLen;
+        const compressedBytes = bytes.subarray(dataStart, dataStart + compressedSize);
+        let jsonText;
+        if (compressionMethod === 0) {
+          jsonText = new TextDecoder().decode(compressedBytes);
+        } else if (compressionMethod === 8) {
+          const decompressedStream = new Blob([compressedBytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+          jsonText = await new Response(decompressedStream).text();
+        } else {
+          throw new Error('unsupported ZIP compression method ' + compressionMethod + ' for ' + fileName);
+        }
+        return JSON.parse(jsonText);
+      }
+      ptr += 46 + fileNameLen + extraLen + commentLen;
+    }
+    throw new Error('no .json entry found inside the ZIP');
+  }
+
+  function base64ToArrayBuffer(base64) {
+    const bin = atob(base64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out.buffer;
   }
 
   // Best-effort scan for a docId hiding in an element's attributes — common

@@ -140,6 +140,21 @@ const API = {
     return post('gst_filed_returns', [{ client_id: clientId, period_month: period, return_type: returnType, ...patchObj }]);
   },
 
+  // Cross-origin fetch relay. content.js's own fetch() is same-origin only
+  // (it runs in the page's security context, subject to the page's CORS
+  // policy — the SAME reason every Supabase call in this file already goes
+  // through the background worker, see the file's own header comment). The
+  // GSTR-1 offline-download ZIP is served from files.gst.gov.in, a
+  // DIFFERENT origin from whatever *.gst.gov.in page triggered the
+  // generation, so content.js can't fetch it directly — this relay can,
+  // since host_permissions covers *.gst.gov.in for the background worker.
+  fetchCrossOriginAsBase64: async (url) => {
+    const r = await fetch(url, { credentials: 'include' });
+    if (!r.ok) throw new Error('fetchCrossOriginAsBase64 -> HTTP ' + r.status);
+    const buf = await r.arrayBuffer();
+    return { base64: abToBase64(buf), contentType: r.headers.get('content-type') || 'application/octet-stream' };
+  },
+
   // Upload a base64 data-URL PDF to the return-pdfs bucket, return its public URL.
   uploadPdf: async (path, dataUrl) => {
     const b64 = String(dataUrl).split(',')[1] || '';
