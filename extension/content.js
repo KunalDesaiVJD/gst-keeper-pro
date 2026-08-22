@@ -2407,7 +2407,7 @@
         reference_number: n.noticeOrderId || null, notice_type: n.type || null,
         description: n.descr || null, issue_date: ddmmyyyyToIso(n.dtOfIssue || ''),
         due_date: /^\d{2}\/\d{2}\/\d{4}$/.test(n.dueDate || '') ? ddmmyyyyToIso(n.dueDate) : null,
-        status: n.status || null,
+        status: n.status || null, pdf_url: null,
       };
       if (n.docId && n.applnId) {
         try {
@@ -2424,13 +2424,19 @@
       rows.push(row);
     }
 
-    try { await GSTKdb.replaceNotices(cur.clientId, rows); } catch (e) { /* non-fatal */ }
-    debugPanel([
-      'STEP: View Notices and Orders  (' + location.pathname + ')',
-      'rows read         : ' + rows.length,
-      'PDFs captured     : ' + pdfOk + ' ok, ' + pdfFail + ' failed/not applicable',
-    ]);
-    banner('Notices & Orders → ' + rows.length + ' entries saved (' + pdfOk + ' PDFs). Now Refund applications…' + progress, '#16a34a');
+    try {
+      await GSTKdb.replaceNotices(cur.clientId, rows);
+      debugPanel([
+        'STEP: View Notices and Orders  (' + location.pathname + ')',
+        'rows read         : ' + rows.length,
+        'PDFs captured     : ' + pdfOk + ' ok, ' + pdfFail + ' failed/not applicable',
+      ]);
+      banner('Notices & Orders → ' + rows.length + ' entries saved (' + pdfOk + ' PDFs). Now Refund applications…' + progress, '#16a34a');
+    } catch (e) {
+      debugPanel(['STEP: View Notices and Orders  (' + location.pathname + ')', 'DB write failed: ' + ((e && e.message) || 'unknown error')]);
+      banner('Notices & Orders: read ' + rows.length + ' rows but the save failed (' + ((e && e.message) || 'unknown error') + ') — skipped.' + progress, '#dc2626');
+      try { await GSTKdb.replaceNotices(cur.clientId, [{ client_id: cur.clientId, source: 'notices', description: 'PULL FAILED: DB write error — ' + ((e && e.message) || 'unknown error') }]); } catch (e2) { /* diagnostic only */ }
+    }
     await sleep(1000);
     await chainOrStop(job, 'notices', proceedToRefunds);
   }
