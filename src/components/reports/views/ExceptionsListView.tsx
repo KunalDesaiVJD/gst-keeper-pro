@@ -267,13 +267,8 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
                     if (isUrlCell(cell)) {
                       return (
                         <TableCell key={ci} className="whitespace-nowrap px-3 py-1.5 text-xs">
-                          <Button
-                            variant="link"
-                            size="sm"
-                            className="h-auto p-0 text-xs"
-                            onClick={() => window.open(cell, '_blank', 'noopener,noreferrer')}
-                          >
-                            View
+                          <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild>
+                            <a href={cell as string} target="_blank" rel="noopener noreferrer">View</a>
                           </Button>
                         </TableCell>
                       );

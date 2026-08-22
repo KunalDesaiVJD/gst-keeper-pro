@@ -334,14 +334,13 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
                       return (
                         <TableCell key={ci} className="px-3 py-1.5 text-center">
                           {isUrl(cell) ? (
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              className="h-7 w-7"
-                              onClick={() => window.open(cell, '_blank', 'noopener,noreferrer')}
-                              title="Open document"
-                            >
-                              <FileText className="h-3.5 w-3.5" />
+                            <Button variant="outline" size="icon" className="h-7 w-7" title="Open document" asChild>
+                              {/* A real <a> click is normal browser navigation, not a
+                                  script-triggered popup — window.open() here got silently
+                                  blocked by popup-blocker policies on some machines. */}
+                              <a href={cell as string} target="_blank" rel="noopener noreferrer">
+                                <FileText className="h-3.5 w-3.5" />
+                              </a>
                             </Button>
                           ) : (
                             <Button
@@ -362,13 +361,8 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
                     if (isUrl(cell)) {
                       return (
                         <TableCell key={ci} className="whitespace-nowrap px-3 py-1.5 text-xs">
-                          <Button
-                            variant="link"
-                            size="sm"
-                            className="h-auto p-0 text-xs"
-                            onClick={() => window.open(cell, '_blank', 'noopener,noreferrer')}
-                          >
-                            View
+                          <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild>
+                            <a href={cell as string} target="_blank" rel="noopener noreferrer">View</a>
                           </Button>
                         </TableCell>
                       );
