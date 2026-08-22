@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileSpreadsheet } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
@@ -44,12 +44,27 @@ const ReportsPage: React.FC = () => {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewTable, setPreviewTable] = useState<ReportTable | null>(null);
   const [previewExportBusy, setPreviewExportBusy] = useState<'xlsx' | 'pdf' | null>(null);
+  // Silent background refresh after Pull — see handlePullSection. Keyed to
+  // the report it was started for, so switching to a different report's
+  // preview (or closing the dialog) doesn't keep overwriting it with stale
+  // polls from the one you pulled.
+  const pollRef = useRef<{ key: string; timer: ReturnType<typeof setInterval> } | null>(null);
+  const stopPreviewPoll = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current.timer); pollRef.current = null; }
+  }, []);
 
   useEffect(() => {
     supabase.from('clients').select('id, name, gstin').order('name').then(({ data }) => {
       setClients((data || []) as ClientLite[]);
     });
   }, []);
+
+  // Stop polling once the dialog is closed, or once it's showing a different
+  // report than the one the poll was started for.
+  useEffect(() => {
+    if (!previewOpen || previewReport?.key !== pollRef.current?.key) stopPreviewPoll();
+  }, [previewOpen, previewReport, stopPreviewPoll]);
+  useEffect(() => () => stopPreviewPoll(), [stopPreviewPoll]);
 
   // Detect the browser extension the same way GST Receivable Reco does — ping
   // on mount (twice, since the extension's content script and this page can
@@ -61,7 +76,7 @@ const ReportsPage: React.FC = () => {
       if (d.__gstkExtensionReady) setExtReady(true);
       if (d.__gstkPullSectionResult) {
         setPullingKey(null);
-        if (d.__gstkPullSectionResult.ok) toast.success('Portal opening in a new tab — type the CAPTCHA there; the report will refresh once the pull finishes.');
+        if (d.__gstkPullSectionResult.ok) toast.success('Portal opening in a new tab — type the CAPTCHA there. Once it finishes, come back and reopen this report\'s Preview (it checks for new data automatically for a few minutes if the preview is already open).');
         else toast.error('Could not start the pull: ' + d.__gstkPullSectionResult.error);
       }
     };
@@ -98,7 +113,29 @@ const ReportsPage: React.FC = () => {
         period_month: report.pull.needsMonth ? period : undefined,
       },
     }, '*');
-  }, [selectedClientId, selectedPeriods, extReady]);
+
+    // If this report's preview is already open, silently re-check for new
+    // data every 10s for up to ~6 minutes — covers login+CAPTCHA+scrape time
+    // in the portal tab without the user needing to manually reopen Preview
+    // afterward. Errors (still empty, not-there-yet) are swallowed — this is
+    // a background retry, not a user-facing fetch.
+    if (previewOpen && previewReport?.key === report.key) {
+      stopPreviewPoll();
+      let attempts = 0;
+      const timer = setInterval(async () => {
+        attempts += 1;
+        if (attempts > 36) { stopPreviewPoll(); return; }
+        try {
+          const table = await buildForPeriods(report, selectedPeriods, selectedClientId);
+          setPreviewTable(table);
+          setPreviewError(null);
+        } catch {
+          // Not saved yet (or still genuinely empty) — try again next tick.
+        }
+      }, 10000);
+      pollRef.current = { key: report.key, timer };
+    }
+  }, [selectedClientId, selectedPeriods, extReady, previewOpen, previewReport, stopPreviewPoll]);
 
   const monthOptions = useMemo(() => {
     const months: { value: string; label: string }[] = [];

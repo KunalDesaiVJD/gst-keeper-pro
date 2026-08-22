@@ -56,16 +56,52 @@ export const renderReportToPdf = (report: ReportTable) => {
   const MIN_COL_MM = 14;
   const hasWidthHints = Array.isArray(report.columnWidths) && report.columnWidths.length === report.headers.length;
 
-  const columnStyles: Record<number, any> = {};
-  report.headers.forEach((h, i) => {
-    columnStyles[i] = {
-      halign: isNumericHeader(h) ? 'right' : 'left',
-      ...(hasWidthHints ? { cellWidth: Math.max(report.columnWidths[i] * MM_PER_WCH, MIN_COL_MM) } : {}),
-    };
+  // A "PDF" column (Notices/DRC-03) holds a raw Supabase Storage URL —
+  // 100+ characters that autoTable wraps one character per line in a
+  // narrow column, blowing up row heights. Show a short "View PDF" label
+  // instead and make it an actual clickable link (via didDrawCell below),
+  // and give the freed-up width back to the other columns so the table
+  // still fills the page instead of leaving a blank strip on the right.
+  const pdfColIndex = report.headers.findIndex((h) => h.trim().toUpperCase() === 'PDF');
+  const PDF_COL_MM = 22;
+  const pdfUrls: (string | null)[] = report.rows.map((r) => {
+    if (pdfColIndex === -1) return null;
+    const v = r[pdfColIndex];
+    return typeof v === 'string' && /^https?:\/\//.test(v) ? v : null;
   });
 
-  // Body cells: convert numbers to display strings
-  const body = report.rows.map(r => r.map(c => formatNumberForPdf(c)));
+  const margin = { top: 48, left: 8, right: 8, bottom: 14 };
+  // A few mm of slack below the true usable width — autoTable's own cell
+  // padding/border math can tip a table that exactly matches the page edge
+  // into an unwanted horizontal page break, stranding the last column alone
+  // on a second page.
+  const availableWidth = pageWidth - margin.left - margin.right - 4;
+
+  const columnStyles: Record<number, any> = {};
+  if (hasWidthHints) {
+    const rawWidths = report.headers.map((_, i) => Math.max(report.columnWidths[i] * MM_PER_WCH, MIN_COL_MM));
+    if (pdfColIndex !== -1) {
+      const otherSum = rawWidths.reduce((s, w, i) => (i === pdfColIndex ? s : s + w), 0);
+      const scale = otherSum > 0 ? (availableWidth - PDF_COL_MM) / otherSum : 1;
+      rawWidths.forEach((w, i) => { rawWidths[i] = i === pdfColIndex ? PDF_COL_MM : w * scale; });
+    }
+    report.headers.forEach((h, i) => {
+      columnStyles[i] = {
+        halign: i === pdfColIndex ? 'center' : (isNumericHeader(h) ? 'right' : 'left'),
+        cellWidth: rawWidths[i],
+      };
+    });
+  } else {
+    report.headers.forEach((h, i) => {
+      columnStyles[i] = { halign: isNumericHeader(h) ? 'right' : 'left' };
+    });
+  }
+
+  // Body cells: convert numbers to display strings; the PDF column gets the
+  // short link label instead of the raw URL.
+  const body = report.rows.map((r, ri) => r.map((c, ci) => (
+    ci === pdfColIndex ? (pdfUrls[ri] ? 'View PDF' : '—') : formatNumberForPdf(c)
+  )));
 
   autoTable(doc, {
     startY: 48,
@@ -83,14 +119,25 @@ export const renderReportToPdf = (report: ReportTable) => {
     columnStyles,
     horizontalPageBreak: true,
     horizontalPageBreakRepeat: 0,
-    margin: { top: 48, left: 8, right: 8, bottom: 14 },
-    // TOTAL row is the last one when we add one — bold it.
+    margin,
+    // TOTAL row is the last one when we add one — bold it. The PDF column's
+    // "View PDF" label is styled like a link; didDrawCell below turns it
+    // into an actual clickable link once autoTable has positioned the cell.
     didParseCell: (data) => {
       const isLast = data.row.index === report.rows.length - 1;
       const looksLikeTotalRow = String(report.rows[data.row.index]?.[1]).toUpperCase() === 'TOTAL';
       if (isLast && looksLikeTotalRow && data.section === 'body') {
         data.cell.styles.fontStyle = 'bold';
         data.cell.styles.fillColor = [220, 230, 240];
+      }
+      if (data.section === 'body' && data.column.index === pdfColIndex && pdfUrls[data.row.index]) {
+        data.cell.styles.textColor = [37, 99, 235]; // blue-600
+      }
+    },
+    didDrawCell: (data) => {
+      if (data.section === 'body' && data.column.index === pdfColIndex) {
+        const url = pdfUrls[data.row.index];
+        if (url) doc.link(data.cell.x, data.cell.y, data.cell.width, data.cell.height, { url });
       }
     },
   });
