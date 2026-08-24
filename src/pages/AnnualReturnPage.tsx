@@ -20,6 +20,11 @@ import Gstr9OutputPortalCard from '@/components/annualReturn/Gstr9OutputPortalCa
 import PortalCaptureCard from '@/components/annualReturn/PortalCaptureCard';
 import PortalTaxPaymentCard from '@/components/annualReturn/PortalTaxPaymentCard';
 import ReconciliationCard from '@/components/annualReturn/ReconciliationCard';
+import PLInputSummaryCard from '@/components/annualReturn/PLInputSummaryCard';
+import AnnualCrossCheckCard from '@/components/annualReturn/AnnualCrossCheckCard';
+import Gstr9InputView from '@/components/annualReturn/Gstr9InputView';
+import Gstr9OutputDiffView from '@/components/annualReturn/Gstr9OutputDiffView';
+import Gstr9cTable12bView from '@/components/annualReturn/Gstr9cTable12bView';
 import { fyOptions } from '@/lib/annualReturnPeriods';
 import { fetchReconciliationLines, isFullyReconciled } from '@/lib/annualReturnReconciliation';
 
@@ -191,7 +196,9 @@ const AnnualReturnPage: React.FC = () => {
             <TabsTrigger value="books">Books Input</TabsTrigger>
             <TabsTrigger value="duties">Duties &amp; Taxes</TabsTrigger>
             <TabsTrigger value="rcm">RCM</TabsTrigger>
+            <TabsTrigger value="gstr9input">GSTR 9-Input</TabsTrigger>
             <TabsTrigger value="gstr9output">GSTR 9-Output</TabsTrigger>
+            <TabsTrigger value="gstr9c">GSTR 9C</TabsTrigger>
             <TabsTrigger value="portal">Portal Capture</TabsTrigger>
             <TabsTrigger value="reconciliation">Reconciliation</TabsTrigger>
           </TabsList>
@@ -262,6 +269,7 @@ const AnnualReturnPage: React.FC = () => {
             </p>
             <PLOutputCard clientId={selectedClientId} financialYear={financialYear} />
             <PLInputCard clientId={selectedClientId} financialYear={financialYear} />
+            <PLInputSummaryCard clientId={selectedClientId} financialYear={financialYear} />
           </TabsContent>
 
           <TabsContent value="duties" className="space-y-4">
@@ -269,6 +277,7 @@ const AnnualReturnPage: React.FC = () => {
               Month-wise entry, separate from Books Input by design — the two are meant to cross-check each other's
               annual totals, not derive from one another.
             </p>
+            <AnnualCrossCheckCard clientId={selectedClientId} financialYear={financialYear} />
             <DutiesTaxesOutputCard clientId={selectedClientId} financialYear={financialYear} />
             <DutiesTaxesInputCard clientId={selectedClientId} financialYear={financialYear} />
           </TabsContent>
@@ -277,9 +286,18 @@ const AnnualReturnPage: React.FC = () => {
             <RcmAnnualReturnCard clientId={selectedClientId} financialYear={financialYear} />
           </TabsContent>
 
+          <TabsContent value="gstr9input" className="space-y-4">
+            <Gstr9InputView clientId={selectedClientId} financialYear={financialYear} />
+          </TabsContent>
+
           <TabsContent value="gstr9output" className="space-y-4">
             <Gstr9OutputLinesCard clientId={selectedClientId} financialYear={financialYear} />
             <Gstr9OutputPortalCard clientId={selectedClientId} financialYear={financialYear} />
+            <Gstr9OutputDiffView clientId={selectedClientId} financialYear={financialYear} />
+          </TabsContent>
+
+          <TabsContent value="gstr9c" className="space-y-4">
+            <Gstr9cTable12bView clientId={selectedClientId} financialYear={financialYear} />
           </TabsContent>
 
           <TabsContent value="portal" className="space-y-4">
