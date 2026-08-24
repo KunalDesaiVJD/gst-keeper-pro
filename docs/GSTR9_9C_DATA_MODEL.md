@@ -117,15 +117,16 @@ So the actual operating principle is narrower than v1 claimed:
 - §4 is the acceptance test. "100% coverage" means every row in that table
   reads "done," verified against the real sheet, not against this plan.
 
-## 7. Gap found during R4
+## 7. Gap found during R4 — closed in R6
 
-Building GSTR 9-Input's view (28 Aug 2026) surfaced a row §3/§4 missed:
-**Table 7's rule-wise ITC reversals** (Rule 37/37A/38/39/42/43, and s.17(5)
-ineligible ITC) have no table anywhere in this schema. `pl_input_lines` and
+Building GSTR 9-Input's view surfaced a row §3/§4 missed: **Table 7's
+rule-wise ITC reversals** (Rule 37/37A/38/39/42/43, and s.17(5) ineligible
+ITC) had no table anywhere in this schema. `pl_input_lines` and
 `duties_taxes_input_monthly` cover Table 7's other inputs (the suspended-ITC
-reversal columns), but the ineligible-ITC figure itself — a real, nonzero
-number in the reference filing (s.17(5) = 157 CGST/SGST) — is currently shown
-as "not captured" rather than defaulted to zero. This needs a small root
-table (`itc_reversal_lines`: client × FY × rule × tax head) before GSTR-9
-Table 7 and GSTR 9C Table 14 can be built for real — flagged here rather than
-silently left as a zero when R6 gets to it.
+reversal columns, which map to Table 7's H1 "Other Reversal" row, not the
+rule-wise rows), but the ineligible-ITC figure itself had nowhere to live.
+
+**Resolved in R6**: `itc_reversal_lines` (client × FY × rule × tax head), with
+its own entry card, feeding both GSTR 9-Input's Table 7J and the GSTR-9
+assembly's Table 7. GSTR 9C Table 14's ineligible-ITC line still needs
+wiring to this table — not yet done, tracked as the next small gap.
