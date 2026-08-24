@@ -1339,15 +1339,23 @@ const ITCSummaryPage: React.FC = () => {
             <Card className="bg-info/5 border-info/20">
               <CardContent className="p-4">
                 <h4 className="text-sm font-semibold text-muted-foreground mb-1">Total ITC Excl RCM</h4>
-                <p className="text-[9px] text-muted-foreground mb-1">Total(5) − (5.4 + 5.5 + 4A{'{3}'})</p>
+                <p className="text-[9px] text-muted-foreground mb-1">Total (4A) − 4A(3) RCM ITC</p>
                 <div className="text-xs">
                   {(() => {
-                    const r54 = itcData.section4A.find(r => r.srNo === '5.4') || { igst: 0, cgst: 0, sgst: 0 };
-                    const r55 = itcData.section4A.find(r => r.srNo === '5.5') || { igst: 0, cgst: 0, sgst: 0 };
+                    // Total(5) (5.1+5.2-5.3+5.4+5.5) never includes RCM ITC --
+                    // row (3) is a separate top-level 4A line, not one of the
+                    // 5.x sub-rows -- so subtracting it from Total(5) wasn't
+                    // "excluding" RCM, it was subtracting a figure that was
+                    // never there, and reliably went negative for any client
+                    // whose RCM ITC exceeded their non-RCM 5.1-5.5 total (a
+                    // routine case, not an edge case). "Excl RCM" means
+                    // Total 4A minus the RCM row, full stop -- no reason to
+                    // also strip out 5.4/5.5, which are ordinary non-RCM
+                    // reclaim components of ITC Available, not RCM-related.
                     const r3 = itcData.section4A.find(r => r.srNo === '(3)') || { igst: 0, cgst: 0, sgst: 0 };
-                    const exclIgst = total5.igst - (r54.igst + r55.igst + r3.igst);
-                    const exclCgst = total5.cgst - (r54.cgst + r55.cgst + r3.cgst);
-                    const exclSgst = total5.sgst - (r54.sgst + r55.sgst + r3.sgst);
+                    const exclIgst = total4A.igst - r3.igst;
+                    const exclCgst = total4A.cgst - r3.cgst;
+                    const exclSgst = total4A.sgst - r3.sgst;
                     return (
                       <>
                         <div className="flex items-baseline justify-between py-0.5"><span className="text-muted-foreground">IGST</span><span className="font-semibold tabular-nums">{exclIgst.toLocaleString('en-IN')}</span></div>
