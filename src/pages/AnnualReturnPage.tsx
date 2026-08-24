@@ -339,10 +339,9 @@ const AnnualReturnPage: React.FC = () => {
 
           <TabsContent value="reconciliation" className="space-y-4">
             <p className="text-xs text-muted-foreground -mt-1">
-              Every unexplained difference needs a reason before FY {financialYear} can be locked — no override.
-              Still reading the earlier flat tables (<code className="text-[11px] bg-muted px-1 py-0.5 rounded">books_turnover_lines</code>/
-              <code className="text-[11px] bg-muted px-1 py-0.5 rounded">books_purchase_lines</code>) — R7 rewires this
-              against the new sheet-faithful tables above.
+              Eleven lines, computed live from every sheet above — PL vs Duties &amp; Taxes, RCM Part A vs B, GSTR
+              9-Output books vs portal, Table 6/8D/9, and both Annexures. Every unexplained difference needs a
+              reason before FY {financialYear} can be locked — no override.
             </p>
             <ReconciliationCard clientId={selectedClientId} financialYear={financialYear} isNoItcBuilder={isNoItcBuilder} />
           </TabsContent>
