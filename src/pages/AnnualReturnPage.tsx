@@ -3,12 +3,15 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Loader2, ScrollText, ShieldCheck, Lock, Unlock, Info } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
+import BooksTurnoverCard from '@/components/annualReturn/BooksTurnoverCard';
+import BooksPurchaseCard from '@/components/annualReturn/BooksPurchaseCard';
 
 interface Client {
   id: string;
@@ -176,65 +179,81 @@ const AnnualReturnPage: React.FC = () => {
           Select a client to see their annual return status.
         </CardContent></Card>
       ) : (
-        <>
-          {isNoItcBuilder && (
-            <Card className="border-info/30 bg-info/5">
-              <CardContent className="p-4 flex items-start gap-3 text-sm">
-                <Info className="h-4 w-4 text-info shrink-0 mt-0.5" />
+        <Tabs defaultValue="status">
+          <TabsList>
+            <TabsTrigger value="status">Status</TabsTrigger>
+            <TabsTrigger value="books">Books Input</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="status" className="space-y-4">
+            {isNoItcBuilder && (
+              <Card className="border-info/30 bg-info/5">
+                <CardContent className="p-4 flex items-start gap-3 text-sm">
+                  <Info className="h-4 w-4 text-info shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-medium text-foreground">No-ITC scheme client.</span>{' '}
+                    <span className="text-muted-foreground">
+                      This client is a builder on <code className="text-xs bg-muted px-1 py-0.5 rounded">NO_ITC</code>.
+                      When the reconciliation engine ships, zero ITC here won&apos;t be treated as an unexplained gap —
+                      it&apos;s expected for this client, not a mismatch to justify.
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between gap-3 flex-wrap">
                 <div>
-                  <span className="font-medium text-foreground">No-ITC scheme client.</span>{' '}
-                  <span className="text-muted-foreground">
-                    This client is a builder on <code className="text-xs bg-muted px-1 py-0.5 rounded">NO_ITC</code>.
-                    When the reconciliation engine ships, zero ITC here won&apos;t be treated as an unexplained gap —
-                    it&apos;s expected for this client, not a mismatch to justify.
-                  </span>
+                  <CardTitle className="text-lg">FY {financialYear}</CardTitle>
+                  <CardDescription>
+                    {period?.updated_at ? `Last updated ${new Date(period.updated_at).toLocaleString('en-IN')}` : 'No activity recorded yet'}
+                  </CardDescription>
                 </div>
+                {loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                ) : (
+                  <Badge variant={STATUS_BADGE_VARIANT[status]}>{STATUS_LABEL[status]}</Badge>
+                )}
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant={status === 'in_progress' ? 'default' : 'outline'}
+                    disabled={saving || status === 'locked'}
+                    onClick={() => updateStatus('in_progress')}
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5 mr-1.5" /> Mark in progress
+                  </Button>
+                  {status === 'locked' ? (
+                    <Button size="sm" variant="outline" disabled={saving} onClick={() => updateStatus('in_progress')}>
+                      <Unlock className="h-3.5 w-3.5 mr-1.5" /> Unlock
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="outline" disabled={saving} onClick={() => updateStatus('locked')}>
+                      <Lock className="h-3.5 w-3.5 mr-1.5" /> Lock this year
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Portal capture, the reconciliation engine and the GSTR-9/9C tables themselves aren&apos;t built yet.
+                  Locking here doesn&apos;t yet check for unexplained gaps (that rule ships with the reconciliation
+                  engine); for now it's a plain status marker.
+                </p>
               </CardContent>
             </Card>
-          )}
+          </TabsContent>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between gap-3 flex-wrap">
-              <div>
-                <CardTitle className="text-lg">FY {financialYear}</CardTitle>
-                <CardDescription>
-                  {period?.updated_at ? `Last updated ${new Date(period.updated_at).toLocaleString('en-IN')}` : 'No activity recorded yet'}
-                </CardDescription>
-              </div>
-              {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-              ) : (
-                <Badge variant={STATUS_BADGE_VARIANT[status]}>{STATUS_LABEL[status]}</Badge>
-              )}
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant={status === 'in_progress' ? 'default' : 'outline'}
-                  disabled={saving || status === 'locked'}
-                  onClick={() => updateStatus('in_progress')}
-                >
-                  <ShieldCheck className="h-3.5 w-3.5 mr-1.5" /> Mark in progress
-                </Button>
-                {status === 'locked' ? (
-                  <Button size="sm" variant="outline" disabled={saving} onClick={() => updateStatus('in_progress')}>
-                    <Unlock className="h-3.5 w-3.5 mr-1.5" /> Unlock
-                  </Button>
-                ) : (
-                  <Button size="sm" variant="outline" disabled={saving} onClick={() => updateStatus('locked')}>
-                    <Lock className="h-3.5 w-3.5 mr-1.5" /> Lock this year
-                  </Button>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                This is the foundation step only — books entry, portal capture, the reconciliation engine and the
-                GSTR-9/9C tables themselves aren&apos;t built yet. Locking here doesn&apos;t yet check for unexplained
-                gaps (that rule ships with the reconciliation engine); for now it's a plain status marker.
-              </p>
-            </CardContent>
-          </Card>
-        </>
+          <TabsContent value="books" className="space-y-4">
+            <p className="text-xs text-muted-foreground -mt-1">
+              This is the source of truth for FY {financialYear} — enter books figures here rather than relying on
+              GSTR-1/3B data, which isn&apos;t fully automated yet.
+            </p>
+            <BooksTurnoverCard clientId={selectedClientId} financialYear={financialYear} />
+            <BooksPurchaseCard clientId={selectedClientId} financialYear={financialYear} />
+          </TabsContent>
+        </Tabs>
       )}
     </div>
   );
