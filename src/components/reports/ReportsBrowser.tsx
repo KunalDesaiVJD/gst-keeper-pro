@@ -91,9 +91,22 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
     const now = new Date();
     return now.getMonth() + 1 >= 4 ? now.getFullYear() : now.getFullYear() - 1;
   }, []);
+  // Cap at the previous month (from the system clock) — returns for the
+  // current month aren't filed yet, so "This FY" shouldn't offer it or any
+  // later month even though monthOptions extends a couple months further
+  // out for manual selection.
+  const prevMonthKey = useMemo(() => {
+    const now = new Date();
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return prev.getFullYear() * 12 + prev.getMonth();
+  }, []);
   const thisFyMonths = useMemo(
-    () => fyMonthsForKey(`04/${thisFyStartYear}`).months.filter((m) => availableMonths.has(m)),
-    [availableMonths, thisFyStartYear],
+    () => fyMonthsForKey(`04/${thisFyStartYear}`).months.filter((m) => {
+      if (!availableMonths.has(m)) return false;
+      const [mm, yyyy] = m.split('/').map(Number);
+      return yyyy * 12 + (mm - 1) <= prevMonthKey;
+    }),
+    [availableMonths, thisFyStartYear, prevMonthKey],
   );
   const lastFyMonths = useMemo(
     () => fyMonthsForKey(`04/${thisFyStartYear - 1}`).months.filter((m) => availableMonths.has(m)),
