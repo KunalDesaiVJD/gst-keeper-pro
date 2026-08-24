@@ -12,11 +12,14 @@ import { supabase } from '@/integrations/supabase/client';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
 import { Bell, CalendarClock, History, Building2, FolderOpen, AlertTriangle, Flag, Loader2 } from 'lucide-react';
 
 interface NoticeRow {
   client_id: string;
   notice_type: string | null;
+  description: string | null;
   staff_status: string | null;
   priority: boolean;
   issue_date: string | null;
@@ -24,6 +27,14 @@ interface NoticeRow {
   reply_date: string | null;
   pulled_at: string;
 }
+
+// "Registration" isn't its own notice_type in this schema — it shows up as a
+// Registration Certificate/Rejection/SCN description under the "Order" or
+// "Notice" type instead (see noticeRefundDrc03Reports.ts's Notices builder).
+// So this filter matches on description text, the same way the underlying
+// data actually distinguishes a registration-related notice from any other.
+type TypeOfNoticesFilter = 'all' | 'registration' | 'other';
+const isRegistrationRelated = (r: NoticeRow) => /registration/i.test(r.description || '');
 
 interface CategoryRow {
   type: string;
@@ -39,6 +50,7 @@ const NoticesDashboardPage: React.FC = () => {
   const { isStaffRole } = useAuth();
   const [rows, setRows] = useState<NoticeRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [typeFilter, setTypeFilter] = useState<TypeOfNoticesFilter>('all');
 
   useEffect(() => {
     let cancelled = false;
@@ -46,7 +58,7 @@ const NoticesDashboardPage: React.FC = () => {
       setLoading(true);
       const { data } = await supabase
         .from('gst_notices')
-        .select('client_id, notice_type, staff_status, priority, issue_date, due_date, reply_date, pulled_at')
+        .select('client_id, notice_type, description, staff_status, priority, issue_date, due_date, reply_date, pulled_at')
         .eq('source', 'notices');
       if (!cancelled) {
         setRows((data || []) as NoticeRow[]);
@@ -58,19 +70,25 @@ const NoticesDashboardPage: React.FC = () => {
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
+  const filteredRows = rows.filter((r) => {
+    if (typeFilter === 'registration') return isRegistrationRelated(r);
+    if (typeFilter === 'other') return !isRegistrationRelated(r);
+    return true;
+  });
+
   const now = Date.now();
   const DAY_MS = 24 * 60 * 60 * 1000;
   const daysAgo = (v: string | null) => (v ? (now - new Date(v).getTime()) / DAY_MS : Infinity);
   const daysUntil = (v: string | null) => (v ? (new Date(v).getTime() - now) / DAY_MS : -Infinity);
 
-  const totalNotices = rows.length;
-  const last15Days = rows.filter((r) => daysAgo(r.issue_date) <= 15).length;
-  const last24Hours = rows.filter((r) => daysAgo(r.pulled_at) <= 1).length;
-  const totalGstin = new Set(rows.map((r) => r.client_id)).size;
-  const openNotices = rows.filter((r) => !isClosed(r.staff_status)).length;
-  const dueSoon = rows.filter((r) => r.due_date && daysUntil(r.due_date) >= 0 && daysUntil(r.due_date) <= 7).length;
-  const overdue = rows.filter((r) => r.due_date && daysUntil(r.due_date) < 0).length;
-  const priorityCount = rows.filter((r) => r.priority).length;
+  const totalNotices = filteredRows.length;
+  const last15Days = filteredRows.filter((r) => daysAgo(r.issue_date) <= 15).length;
+  const last24Hours = filteredRows.filter((r) => daysAgo(r.pulled_at) <= 1).length;
+  const totalGstin = new Set(filteredRows.map((r) => r.client_id)).size;
+  const openNotices = filteredRows.filter((r) => !isClosed(r.staff_status)).length;
+  const dueSoon = filteredRows.filter((r) => r.due_date && daysUntil(r.due_date) >= 0 && daysUntil(r.due_date) <= 7).length;
+  const overdue = filteredRows.filter((r) => r.due_date && daysUntil(r.due_date) < 0).length;
+  const priorityCount = filteredRows.filter((r) => r.priority).length;
 
   const kpiCards = [
     { label: 'Total Notices', value: totalNotices, icon: <Bell className="h-8 w-8 text-primary" />, bgColor: 'bg-primary/5' },
@@ -84,7 +102,7 @@ const NoticesDashboardPage: React.FC = () => {
   ];
 
   const categoryMap = new Map<string, CategoryRow>();
-  rows.forEach((r) => {
+  filteredRows.forEach((r) => {
     const type = r.notice_type || 'Uncategorised';
     const entry = categoryMap.get(type) || { type, total: 0, open: 0, closed: 0, replied: 0 };
     entry.total += 1;
@@ -105,6 +123,20 @@ const NoticesDashboardPage: React.FC = () => {
         subtitle="Every client's notices, orders, LUT applications and voluntary payments in one place."
         icon={<Bell className="h-6 w-6" />}
       />
+
+      <div className="flex items-center gap-2">
+        <Label htmlFor="type-of-notices" className="text-sm text-muted-foreground">Type Of Notices</Label>
+        <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as TypeOfNoticesFilter)}>
+          <SelectTrigger id="type-of-notices" className="h-9 w-[220px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All</SelectItem>
+            <SelectItem value="registration">Registration</SelectItem>
+            <SelectItem value="other">Other than Registration</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {kpiCards.map((card) => (
