@@ -10,8 +10,12 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
-import BooksTurnoverCard from '@/components/annualReturn/BooksTurnoverCard';
-import BooksPurchaseCard from '@/components/annualReturn/BooksPurchaseCard';
+import PLOutputCard from '@/components/annualReturn/PLOutputCard';
+import PLInputCard from '@/components/annualReturn/PLInputCard';
+import DutiesTaxesOutputCard from '@/components/annualReturn/DutiesTaxesOutputCard';
+import DutiesTaxesInputCard from '@/components/annualReturn/DutiesTaxesInputCard';
+import RcmAnnualReturnCard from '@/components/annualReturn/RcmAnnualReturnCard';
+import Gstr9OutputLinesCard from '@/components/annualReturn/Gstr9OutputLinesCard';
 import PortalCaptureCard from '@/components/annualReturn/PortalCaptureCard';
 import ReconciliationCard from '@/components/annualReturn/ReconciliationCard';
 import { fyOptions } from '@/lib/annualReturnPeriods';
@@ -145,7 +149,7 @@ const AnnualReturnPage: React.FC = () => {
     <div className="space-y-4">
       <PageHeader
         title="Annual Return (GSTR-9 / 9C)"
-        subtitle="Preparation status for the client's annual return — books input, portal capture and reconciliation are live; the 9/9C tables land here as each remaining phase ships."
+        subtitle="Preparation status for the client's annual return — every sheet gets its own tab here, matching the firm's working papers exactly. The GSTR-9/9C tables themselves land as later phases ship."
         icon={<ScrollText className="h-5 w-5" />}
       />
 
@@ -183,6 +187,9 @@ const AnnualReturnPage: React.FC = () => {
           <TabsList>
             <TabsTrigger value="status">Status</TabsTrigger>
             <TabsTrigger value="books">Books Input</TabsTrigger>
+            <TabsTrigger value="duties">Duties &amp; Taxes</TabsTrigger>
+            <TabsTrigger value="rcm">RCM</TabsTrigger>
+            <TabsTrigger value="gstr9output">GSTR 9-Output</TabsTrigger>
             <TabsTrigger value="portal">Portal Capture</TabsTrigger>
             <TabsTrigger value="reconciliation">Reconciliation</TabsTrigger>
           </TabsList>
@@ -248,11 +255,28 @@ const AnnualReturnPage: React.FC = () => {
 
           <TabsContent value="books" className="space-y-4">
             <p className="text-xs text-muted-foreground -mt-1">
-              This is the source of truth for FY {financialYear} — enter books figures here rather than relying on
-              GSTR-1/3B data, which isn&apos;t fully automated yet.
+              PL-Output and PL-Input — annual, by ledger head, exactly as the firm's working papers have them. No month
+              here; monthly entry lives on the Duties &amp; Taxes tab, entered separately by design.
             </p>
-            <BooksTurnoverCard clientId={selectedClientId} financialYear={financialYear} />
-            <BooksPurchaseCard clientId={selectedClientId} financialYear={financialYear} />
+            <PLOutputCard clientId={selectedClientId} financialYear={financialYear} />
+            <PLInputCard clientId={selectedClientId} financialYear={financialYear} />
+          </TabsContent>
+
+          <TabsContent value="duties" className="space-y-4">
+            <p className="text-xs text-muted-foreground -mt-1">
+              Month-wise entry, separate from Books Input by design — the two are meant to cross-check each other's
+              annual totals, not derive from one another.
+            </p>
+            <DutiesTaxesOutputCard clientId={selectedClientId} financialYear={financialYear} />
+            <DutiesTaxesInputCard clientId={selectedClientId} financialYear={financialYear} />
+          </TabsContent>
+
+          <TabsContent value="rcm" className="space-y-4">
+            <RcmAnnualReturnCard clientId={selectedClientId} financialYear={financialYear} />
+          </TabsContent>
+
+          <TabsContent value="gstr9output" className="space-y-4">
+            <Gstr9OutputLinesCard clientId={selectedClientId} financialYear={financialYear} />
           </TabsContent>
 
           <TabsContent value="portal" className="space-y-4">
@@ -265,6 +289,9 @@ const AnnualReturnPage: React.FC = () => {
           <TabsContent value="reconciliation" className="space-y-4">
             <p className="text-xs text-muted-foreground -mt-1">
               Every unexplained difference needs a reason before FY {financialYear} can be locked — no override.
+              Still reading the earlier flat tables (<code className="text-[11px] bg-muted px-1 py-0.5 rounded">books_turnover_lines</code>/
+              <code className="text-[11px] bg-muted px-1 py-0.5 rounded">books_purchase_lines</code>) — R7 rewires this
+              against the new sheet-faithful tables above.
             </p>
             <ReconciliationCard clientId={selectedClientId} financialYear={financialYear} isNoItcBuilder={isNoItcBuilder} />
           </TabsContent>
