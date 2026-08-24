@@ -9,6 +9,42 @@ import { supabase } from '@/integrations/supabase/client';
 import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
 import { mockPasswords } from '@/data/mockData';
 
+// Standalone so a "Download Template" button can exist outside this dialog
+// too (the Notices Dashboard's "Company" panel does) without needing to
+// mount the whole import flow just to get the file.
+export const downloadClientImportTemplate = () => {
+  const workbook = XLSX.utils.book_new();
+
+  const templateData = [
+    ['Bulk Client Import Template'],
+    ['Instructions: Fill in the details below. GSTIN must be exactly 15 characters. Registration Type must be: Regular, Composition, Tax Deductor, or ISD.'],
+    ['Selected Returns: For Regular - GSTR-1,GSTR-3B,ITC-04 | For Composition - CMP-08 | For Tax Deductor - GSTR-7 | For ISD - GSTR-6'],
+    [],
+    ['GSTIN*', 'Client Name*', 'Registration Type*', 'Registration Date (DD/MM/YYYY)', 'Mobile (10 digits)', 'Email', 'Assigned Accountant', 'Target Date (GSTR-1, GSTR-7)', 'Target Date (GSTR-3B, ITC-04)', 'Selected Returns (comma-separated)'],
+    ['24AAQCS2345D1Z5', 'Sample Company Pvt Ltd', 'Regular', '15/01/2024', '9876543210', 'sample@example.com', 'John Doe', '11', '20', 'GSTR-1,GSTR-3B'],
+    ['24BBRCS9876E2Z6', 'Another Business', 'Composition', '01/02/2024', '9123456789', 'another@example.com', 'Jane Smith', '', '15', 'CMP-08'],
+  ];
+
+  const sheet = XLSX.utils.aoa_to_sheet(templateData);
+
+  sheet['!cols'] = [
+    { wch: 18 }, // GSTIN
+    { wch: 30 }, // Name
+    { wch: 15 }, // Reg Type
+    { wch: 22 }, // Reg Date
+    { wch: 15 }, // Mobile
+    { wch: 25 }, // Email
+    { wch: 20 }, // Accountant
+    { wch: 26 }, // Target Date (GSTR-1, GSTR-7)
+    { wch: 26 }, // Target Date (GSTR-3B, ITC-04)
+    { wch: 30 }, // Returns
+  ];
+
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Clients');
+  XLSX.writeFile(workbook, 'Bulk_Client_Import_Template.xlsx');
+  toast.success('Template downloaded successfully');
+};
+
 interface ValidationResult {
   row: number;
   data: any;
@@ -18,49 +54,20 @@ interface ValidationResult {
 
 interface BulkAddClientsDialogProps {
   onSuccess?: () => void;
+  /** Override the default "Bulk Add Clients" trigger label — e.g. the
+   * Notices Dashboard's "Company" panel reuses this exact dialog under an
+   * "Import Company" label to match Notice Alert's button naming. */
+  triggerLabel?: string;
 }
 
-const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }) => {
+const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess, triggerLabel }) => {
   const [open, setOpen] = useState(false);
   const [validationResults, setValidationResults] = useState<ValidationResult[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const downloadTemplate = () => {
-    const workbook = XLSX.utils.book_new();
-    
-    // Template data with headers and example
-    const templateData = [
-      ['Bulk Client Import Template'],
-      ['Instructions: Fill in the details below. GSTIN must be exactly 15 characters. Registration Type must be: Regular, Composition, Tax Deductor, or ISD.'],
-      ['Selected Returns: For Regular - GSTR-1,GSTR-3B,ITC-04 | For Composition - CMP-08 | For Tax Deductor - GSTR-7 | For ISD - GSTR-6'],
-      [],
-      ['GSTIN*', 'Client Name*', 'Registration Type*', 'Registration Date (DD/MM/YYYY)', 'Mobile (10 digits)', 'Email', 'Assigned Accountant', 'Target Date (GSTR-1, GSTR-7)', 'Target Date (GSTR-3B, ITC-04)', 'Selected Returns (comma-separated)'],
-      ['24AAQCS2345D1Z5', 'Sample Company Pvt Ltd', 'Regular', '15/01/2024', '9876543210', 'sample@example.com', 'John Doe', '11', '20', 'GSTR-1,GSTR-3B'],
-      ['24BBRCS9876E2Z6', 'Another Business', 'Composition', '01/02/2024', '9123456789', 'another@example.com', 'Jane Smith', '', '15', 'CMP-08'],
-    ];
-
-    const sheet = XLSX.utils.aoa_to_sheet(templateData);
-    
-    // Set column widths
-    sheet['!cols'] = [
-      { wch: 18 }, // GSTIN
-      { wch: 30 }, // Name
-      { wch: 15 }, // Reg Type
-      { wch: 22 }, // Reg Date
-      { wch: 15 }, // Mobile
-      { wch: 25 }, // Email
-      { wch: 20 }, // Accountant
-      { wch: 26 }, // Target Date (GSTR-1, GSTR-7)
-      { wch: 26 }, // Target Date (GSTR-3B, ITC-04)
-      { wch: 30 }, // Returns
-    ];
-
-    XLSX.utils.book_append_sheet(workbook, sheet, 'Clients');
-    XLSX.writeFile(workbook, 'Bulk_Client_Import_Template.xlsx');
-    toast.success('Template downloaded successfully');
-  };
+  const downloadTemplate = downloadClientImportTemplate;
 
   const validateGSTIN = (gstin: string): boolean => {
     const gstinRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
@@ -333,7 +340,7 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess }
       <DialogTrigger asChild>
         <Button variant="outline" className="flex items-center gap-2">
           <Upload className="h-4 w-4" />
-          Bulk Add Clients
+          {triggerLabel || 'Bulk Add Clients'}
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">

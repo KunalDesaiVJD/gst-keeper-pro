@@ -6,7 +6,7 @@
 // what gst_notices actually holds (Notices/Orders, LUT, DRC-03 voluntary
 // payment), not the wider Appeal/Audit/Refund taxonomy that tool tracks.
 import React, { useEffect, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -14,7 +14,14 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { Bell, CalendarClock, History, Building2, FolderOpen, AlertTriangle, Flag, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
+import BulkAddClientsDialog, { downloadClientImportTemplate } from '@/components/clients/BulkAddClientsDialog';
+import {
+  Bell, CalendarClock, History, Building2, FolderOpen, AlertTriangle, Flag, Loader2,
+  UserPlus, Upload, Download, RefreshCw, Pencil, ChevronLeft, ChevronRight,
+} from 'lucide-react';
 
 interface NoticeRow {
   client_id: string;
@@ -46,11 +53,40 @@ interface CategoryRow {
 
 const isClosed = (s: string | null) => (s || '').trim().toLowerCase() === 'closed';
 
+interface MiniClient {
+  id: string;
+  name: string;
+  gstin: string | null;
+}
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
 const NoticesDashboardPage: React.FC = () => {
-  const { isStaffRole } = useAuth();
+  const { isStaffRole, canAddEditClients } = useAuth();
+  const navigate = useNavigate();
   const [rows, setRows] = useState<NoticeRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<TypeOfNoticesFilter>('all');
+  // Clicking a category row drills the whole dashboard (KPI tiles included)
+  // down to just that category — click the same row again to clear it.
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+
+  // Company panel — mirrors Notice Alert's mini client list + onboarding shortcuts.
+  const [miniClients, setMiniClients] = useState<MiniClient[]>([]);
+  const canManageClients = canAddEditClients();
+
+  // Extension handshake for "Sync All", same ping/pong pattern ReportsPage uses
+  // for its per-client "Pull" buttons.
+  const [extReady, setExtReady] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  // Calendar widget — month currently shown, defaults to the current month.
+  const todayDate = new Date();
+  const [calMonth, setCalMonth] = useState(todayDate.getMonth());
+  const [calYear, setCalYear] = useState(todayDate.getFullYear());
 
   useEffect(() => {
     let cancelled = false;
@@ -68,6 +104,50 @@ const NoticesDashboardPage: React.FC = () => {
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('clients')
+        .select('id, name, gstin')
+        .order('created_at', { ascending: false })
+        .limit(5);
+      if (!cancelled) setMiniClients((data || []) as MiniClient[]);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      const d: any = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkPullSectionAllClientsResult) {
+        setSyncing(false);
+        if (d.__gstkPullSectionAllClientsResult.ok) {
+          toast.success(`Sync started for ${d.__gstkPullSectionAllClientsResult.count} client(s). Complete the CAPTCHA for each as it comes up.`);
+        } else {
+          toast.error(d.__gstkPullSectionAllClientsResult.error || 'Sync All failed to start.');
+        }
+      }
+    };
+    window.addEventListener('message', onMsg);
+    const ping = () => window.postMessage({ __gstkAppReady: true }, '*');
+    ping();
+    const t1 = setTimeout(ping, 400);
+    const t2 = setTimeout(ping, 1200);
+    return () => { window.removeEventListener('message', onMsg); clearTimeout(t1); clearTimeout(t2); };
+  }, []);
+
+  const handleSyncAll = () => {
+    if (!extReady) {
+      toast.error('GST Keeper browser extension not detected. Install/enable it to use Sync All.');
+      return;
+    }
+    setSyncing(true);
+    window.postMessage({ __gstkPullSectionAllClients: { mode: 'notices' } }, '*');
+  };
+
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
   const filteredRows = rows.filter((r) => {
@@ -75,20 +155,23 @@ const NoticesDashboardPage: React.FC = () => {
     if (typeFilter === 'other') return !isRegistrationRelated(r);
     return true;
   });
+  const displayRows = categoryFilter
+    ? filteredRows.filter((r) => (r.notice_type || 'Uncategorised') === categoryFilter)
+    : filteredRows;
 
   const now = Date.now();
   const DAY_MS = 24 * 60 * 60 * 1000;
   const daysAgo = (v: string | null) => (v ? (now - new Date(v).getTime()) / DAY_MS : Infinity);
   const daysUntil = (v: string | null) => (v ? (new Date(v).getTime() - now) / DAY_MS : -Infinity);
 
-  const totalNotices = filteredRows.length;
-  const last15Days = filteredRows.filter((r) => daysAgo(r.issue_date) <= 15).length;
-  const last24Hours = filteredRows.filter((r) => daysAgo(r.pulled_at) <= 1).length;
-  const totalGstin = new Set(filteredRows.map((r) => r.client_id)).size;
-  const openNotices = filteredRows.filter((r) => !isClosed(r.staff_status)).length;
-  const dueSoon = filteredRows.filter((r) => r.due_date && daysUntil(r.due_date) >= 0 && daysUntil(r.due_date) <= 7).length;
-  const overdue = filteredRows.filter((r) => r.due_date && daysUntil(r.due_date) < 0).length;
-  const priorityCount = filteredRows.filter((r) => r.priority).length;
+  const totalNotices = displayRows.length;
+  const last15Days = displayRows.filter((r) => daysAgo(r.issue_date) <= 15).length;
+  const last24Hours = displayRows.filter((r) => daysAgo(r.pulled_at) <= 1).length;
+  const totalGstin = new Set(displayRows.map((r) => r.client_id)).size;
+  const openNotices = displayRows.filter((r) => !isClosed(r.staff_status)).length;
+  const dueSoon = displayRows.filter((r) => r.due_date && daysUntil(r.due_date) >= 0 && daysUntil(r.due_date) <= 7).length;
+  const overdue = displayRows.filter((r) => r.due_date && daysUntil(r.due_date) < 0).length;
+  const priorityCount = displayRows.filter((r) => r.priority).length;
 
   const kpiCards = [
     { label: 'Total Notices', value: totalNotices, icon: <Bell className="h-8 w-8 text-primary" />, bgColor: 'bg-primary/5' },
@@ -116,6 +199,35 @@ const NoticesDashboardPage: React.FC = () => {
     { total: 0, open: 0, closed: 0, replied: 0 },
   );
 
+  // Calendar widget: which days in the shown month have an issue date, a due
+  // date, or both, across every notice (not filtered — the calendar is a
+  // firm-wide date map, matching Notice Alert's always-unfiltered widget).
+  const dayMarkers = new Map<number, { issue: boolean; due: boolean }>();
+  rows.forEach((r) => {
+    [{ v: r.issue_date, key: 'issue' as const }, { v: r.due_date, key: 'due' as const }].forEach(({ v, key }) => {
+      if (!v) return;
+      const d = new Date(v);
+      if (d.getFullYear() !== calYear || d.getMonth() !== calMonth) return;
+      const entry = dayMarkers.get(d.getDate()) || { issue: false, due: false };
+      entry[key] = true;
+      dayMarkers.set(d.getDate(), entry);
+    });
+  });
+  const firstOfMonth = new Date(calYear, calMonth, 1);
+  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  const leadingBlanks = firstOfMonth.getDay();
+  const calendarCells: (number | null)[] = [
+    ...Array.from({ length: leadingBlanks }, () => null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  ];
+  const isCurrentMonth = calYear === todayDate.getFullYear() && calMonth === todayDate.getMonth();
+  const goPrevMonth = () => {
+    if (calMonth === 0) { setCalMonth(11); setCalYear((y) => y - 1); } else { setCalMonth((m) => m - 1); }
+  };
+  const goNextMonth = () => {
+    if (calMonth === 11) { setCalMonth(0); setCalYear((y) => y + 1); } else { setCalMonth((m) => m + 1); }
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
@@ -138,6 +250,119 @@ const NoticesDashboardPage: React.FC = () => {
         </Select>
       </div>
 
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Company</CardTitle>
+            <CardDescription>Onboard clients and pull the latest notices for everyone at once.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {canManageClients && (
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => navigate('/add-client')}>
+                  <UserPlus className="mr-1.5 h-4 w-4" /> Add Company
+                </Button>
+                <BulkAddClientsDialog triggerLabel="Import Company" onSuccess={() => window.location.reload()} />
+                <Button size="sm" variant="outline" onClick={downloadClientImportTemplate}>
+                  <Download className="mr-1.5 h-4 w-4" /> Download Template
+                </Button>
+                <Button size="sm" variant="outline" onClick={handleSyncAll} disabled={syncing}>
+                  {syncing ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
+                  Sync All
+                </Button>
+              </div>
+            )}
+            {!extReady && (
+              <p className="text-xs text-muted-foreground">
+                {canManageClients ? 'Extension not detected — install/enable the GST Keeper extension to use Sync All.' : ''}
+              </p>
+            )}
+            <div className="overflow-hidden rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs font-semibold">Trade Name</TableHead>
+                    <TableHead className="text-xs font-semibold">GSTIN</TableHead>
+                    {canManageClients && <TableHead className="w-10 text-xs font-semibold" />}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {miniClients.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={canManageClients ? 3 : 2} className="py-6 text-center text-xs text-muted-foreground">
+                        No companies yet.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    miniClients.map((c) => (
+                      <TableRow key={c.id}>
+                        <TableCell className="text-xs">{c.name}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{c.gstin || '—'}</TableCell>
+                        {canManageClients && (
+                          <TableCell className="text-right">
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => navigate(`/edit-client/${c.id}`)}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+            <div className="text-right">
+              <Link to="/clients" className="text-xs font-medium text-primary hover:underline">View All</Link>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">{MONTH_NAMES[calMonth]} {calYear}</CardTitle>
+              <div className="flex gap-1">
+                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={goPrevMonth}><ChevronLeft className="h-4 w-4" /></Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={goNextMonth}><ChevronRight className="h-4 w-4" /></Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-medium text-muted-foreground">
+              {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => <div key={i}>{d}</div>)}
+            </div>
+            <div className="mt-1 grid grid-cols-7 gap-1">
+              {calendarCells.map((day, i) => {
+                if (day === null) return <div key={i} />;
+                const marker = dayMarkers.get(day);
+                const isToday = isCurrentMonth && day === todayDate.getDate();
+                const bg = marker?.issue && marker?.due ? 'bg-warning/20 text-warning-foreground'
+                  : marker?.due ? 'bg-destructive/15 text-destructive'
+                  : marker?.issue ? 'bg-info/15 text-info'
+                  : '';
+                return (
+                  <div
+                    key={i}
+                    className={cn(
+                      'flex h-7 items-center justify-center rounded text-xs',
+                      bg,
+                      isToday && 'ring-1 ring-primary font-semibold',
+                    )}
+                  >
+                    {day}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-3 space-y-1 text-[11px] text-muted-foreground">
+              <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-info/40" /> Issue date</div>
+              <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-destructive/40" /> Due date</div>
+              <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-warning/40" /> Both</div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {kpiCards.map((card) => (
           <Card key={card.label} className="border">
@@ -158,8 +383,22 @@ const NoticesDashboardPage: React.FC = () => {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Notice Summary by Type</CardTitle>
-          <CardDescription>Total, Open, Closed and Replied counts across every client on record.</CardDescription>
+          <CardTitle className="text-base">Notice Summary</CardTitle>
+          <CardDescription>
+            Total, Open, Closed and Replied counts across every client on record — click a row to drill the tiles above into just that category
+            {categoryFilter && (
+              <>
+                {' '}·{' '}
+                <button
+                  type="button"
+                  className="font-medium text-primary underline-offset-2 hover:underline"
+                  onClick={() => setCategoryFilter(null)}
+                >
+                  clear "{categoryFilter}" filter
+                </button>
+              </>
+            )}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -173,7 +412,7 @@ const NoticesDashboardPage: React.FC = () => {
               <Table>
                 <TableHeader className="sticky top-0 z-10 bg-background">
                   <TableRow>
-                    <TableHead className="bg-muted/60 text-xs font-semibold">Type</TableHead>
+                    <TableHead className="bg-muted/60 text-xs font-semibold">Remarks</TableHead>
                     <TableHead className="bg-muted/60 text-right text-xs font-semibold">Total</TableHead>
                     <TableHead className="bg-muted/60 text-right text-xs font-semibold">Open</TableHead>
                     <TableHead className="bg-muted/60 text-right text-xs font-semibold">Closed</TableHead>
@@ -182,8 +421,12 @@ const NoticesDashboardPage: React.FC = () => {
                 </TableHeader>
                 <TableBody>
                   {categoryRows.map((r) => (
-                    <TableRow key={r.type}>
-                      <TableCell className="text-xs">{r.type}</TableCell>
+                    <TableRow
+                      key={r.type}
+                      className={cn('cursor-pointer', categoryFilter === r.type && 'bg-primary/10 hover:bg-primary/15')}
+                      onClick={() => setCategoryFilter((prev) => (prev === r.type ? null : r.type))}
+                    >
+                      <TableCell className="text-xs font-medium text-primary">{r.type}</TableCell>
                       <TableCell className="text-right text-xs tabular-nums">{r.total}</TableCell>
                       <TableCell className="text-right text-xs tabular-nums">{r.open || '—'}</TableCell>
                       <TableCell className="text-right text-xs tabular-nums">{r.closed || '—'}</TableCell>

@@ -112,6 +112,19 @@ window.addEventListener('message', (e) => {
     return;
   }
 
+  // The Notices Dashboard's "Sync All" button — same section-pull as above,
+  // but for every client with saved credentials instead of one.
+  if (d.__gstkPullSectionAllClients) {
+    const info = d.__gstkPullSectionAllClients;
+    if (!info.mode) return;
+    chrome.runtime.sendMessage({ gstk: true, fn: 'startAllClientsSectionPull', args: [info] }, (resp) => {
+      const ok = resp && resp.ok;
+      const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
+      window.postMessage({ __gstkPullSectionAllClientsResult: ok ? { ok: true, count: resp.data.count } : { ok: false, error } }, '*');
+    });
+    return;
+  }
+
   // The GSTR-1 "Upload to GST Portal" button asked to push the stored JSON to
   // the portal. Background fetches the JSON + credentials and opens a portal
   // tab; the final result (accepted / partial / failed + per-invoice errors)

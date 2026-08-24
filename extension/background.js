@@ -302,6 +302,30 @@ const API = {
     return { started: true, client: c.name, mode: info.mode };
   },
 
+  // Same as startSectionPull but queues EVERY client with saved credentials
+  // instead of one — the Notices Dashboard's "Sync All". content.js's queue
+  // processor (job.idx/job.clients, see the top of the file) already handles
+  // an arbitrary-length clients array generically — this is the only new
+  // piece, reusing that machinery rather than adding a second one. Each
+  // client still needs its own CAPTCHA typed in the portal tab before the
+  // next one starts, same as the extension popup's own "All clients" option.
+  startAllClientsSectionPull: async (info) => {
+    const all = await API.getClients();
+    const withCreds = all.filter((c) => c.gst_user_id);
+    if (!withCreds.length) throw new Error('No clients have saved GST portal credentials.');
+    const job = {
+      mode: info.mode, period: info.period_month || '', idx: 0, step: 'login', startedAt: Date.now(),
+      clients: withCreds.map((c) => ({
+        clientId: c.id,
+        creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },
+      })),
+    };
+    const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
+    job.tabId = tab.id;
+    await chrome.storage.local.set({ gstk_active_job: job });
+    return { started: true, count: withCreds.length, mode: info.mode };
+  },
+
   // From the Clients → Credentials "Login" button: just log the client into the
   // GST portal and stop (mode 'login'). No return/ledger navigation. Human does
   // the CAPTCHA.
