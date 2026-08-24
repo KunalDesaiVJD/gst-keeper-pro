@@ -31,6 +31,17 @@ export async function fetchPlOutputTotals(clientId: string, financialYear: strin
   return totals;
 }
 
+/** PL-Output Part B, totalled per bifurcation — GSTR-9 Table 5A/5B/5F. */
+export async function fetchPlOutputPartBByBifurcation(clientId: string, financialYear: string) {
+  const { data, error } = await supabase.from('pl_output_lines').select('bifurcation, taxable_value, igst, cgst, sgst').eq('client_id', clientId).eq('financial_year', financialYear).eq('part', 'B');
+  if (error) throw error;
+  const totals: Record<'export_wo_tax' | 'sez_wo_tax' | 'non_gst', TaxSum> = { export_wo_tax: zero(), sez_wo_tax: zero(), non_gst: zero() };
+  (data || []).forEach((r: { bifurcation: 'export_wo_tax' | 'sez_wo_tax' | 'non_gst' | null; taxable_value: number; igst: number; cgst: number; sgst: number }) => {
+    if (r.bifurcation && totals[r.bifurcation]) totals[r.bifurcation] = add(totals[r.bifurcation], { taxable: r.taxable_value, igst: r.igst, cgst: r.cgst, sgst: r.sgst });
+  });
+  return totals;
+}
+
 export interface DutiesTaxesInputAnnual {
   purchase: TaxSum; debitNote: TaxSum; suspendedReversed: TaxSum; suspendedReversed180d: TaxSum;
   suspendedReclaim: TaxSum; suspendedReclaim180d: TaxSum; asPer3b: TaxSum; netPurchase: TaxSum;
@@ -139,6 +150,44 @@ export async function fetchTaxPaymentTotals(clientId: string, financialYear: str
     }
   });
   return totals;
+}
+
+/** ITC as per GSTR-2B, summed across the FY from Portal Capture — Table 8A. */
+export async function fetchPortal2bAnnual(clientId: string, financialYear: string): Promise<TaxSum> {
+  const months = monthsForFY(financialYear);
+  const { data, error } = await supabase.from('gst_filed_returns').select('summary').eq('client_id', clientId).eq('return_type', 'GSTR-2B').in('period_month', months);
+  if (error) throw error;
+  let total = zero();
+  (data || []).forEach((r: { summary: Record<string, number> | null }) => {
+    const s = r.summary || {};
+    total = add(total, { igst: s.itc2b_igst, cgst: s.itc2b_cgst, sgst: s.itc2b_sgst });
+  });
+  return total;
+}
+
+/** GSTR-1 turnover, summed across the FY, bucketed by portal category (b2c/b2b/sez_with/...) — Table 4/5. */
+export async function fetchPortalCategoryTotals(clientId: string, financialYear: string) {
+  const { data, error } = await supabase.from('portal_gstr1_category_figures').select('category, taxable_value, igst, cgst, sgst').eq('client_id', clientId).eq('financial_year', financialYear);
+  if (error) throw error;
+  const totals: Record<string, TaxSum> = { b2c: zero(), b2b: zero(), sez_with: zero(), sez_without: zero(), zero_rated: zero(), deemed_export: zero(), credit_note: zero() };
+  (data || []).forEach((r: { category: string; taxable_value: number; igst: number; cgst: number; sgst: number }) => {
+    if (totals[r.category]) totals[r.category] = { taxable: r.taxable_value, igst: r.igst, cgst: r.cgst, sgst: r.sgst };
+  });
+  return totals;
+}
+
+/** ITC reversal lines (Table 7), summed by rule and combined — closes the gap R4 flagged. */
+export async function fetchItcReversalTotals(clientId: string, financialYear: string) {
+  const { data, error } = await supabase.from('itc_reversal_lines').select('rule, igst, cgst, sgst').eq('client_id', clientId).eq('financial_year', financialYear);
+  if (error) throw error;
+  let total = zero();
+  const byRule: Record<string, TaxSum> = {};
+  (data || []).forEach((r: { rule: string; igst: number; cgst: number; sgst: number }) => {
+    const v = { taxable: 0, igst: r.igst, cgst: r.cgst, sgst: r.sgst };
+    byRule[r.rule] = v;
+    total = add(total, v);
+  });
+  return { total, byRule };
 }
 
 /** Next-year carry-forward items for a (client, FY), split by direction. */

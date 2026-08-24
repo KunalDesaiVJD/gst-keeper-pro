@@ -29,6 +29,9 @@ import Annexure1Card from '@/components/annualReturn/Annexure1Card';
 import Annexure2Card from '@/components/annualReturn/Annexure2Card';
 import Annexure3Card from '@/components/annualReturn/Annexure3Card';
 import Annexure4Card from '@/components/annualReturn/Annexure4Card';
+import ItcReversalCard from '@/components/annualReturn/ItcReversalCard';
+import Gstr9FormView from '@/components/annualReturn/Gstr9FormView';
+import NoticeFormatView from '@/components/annualReturn/NoticeFormatView';
 import { fyOptions } from '@/lib/annualReturnPeriods';
 import { fetchReconciliationLines, isFullyReconciled } from '@/lib/annualReturnReconciliation';
 
@@ -204,6 +207,8 @@ const AnnualReturnPage: React.FC = () => {
             <TabsTrigger value="gstr9output">GSTR 9-Output</TabsTrigger>
             <TabsTrigger value="gstr9c">GSTR 9C</TabsTrigger>
             <TabsTrigger value="annexure">Annexure</TabsTrigger>
+            <TabsTrigger value="gstr9form">GSTR-9</TabsTrigger>
+            <TabsTrigger value="notice">Notice Format</TabsTrigger>
             <TabsTrigger value="portal">Portal Capture</TabsTrigger>
             <TabsTrigger value="reconciliation">Reconciliation</TabsTrigger>
           </TabsList>
@@ -293,6 +298,7 @@ const AnnualReturnPage: React.FC = () => {
 
           <TabsContent value="gstr9input" className="space-y-4">
             <Gstr9InputView clientId={selectedClientId} financialYear={financialYear} />
+            <ItcReversalCard clientId={selectedClientId} financialYear={financialYear} />
           </TabsContent>
 
           <TabsContent value="gstr9output" className="space-y-4">
@@ -310,6 +316,17 @@ const AnnualReturnPage: React.FC = () => {
             <Annexure2Card clientId={selectedClientId} financialYear={financialYear} />
             <Annexure3Card clientId={selectedClientId} financialYear={financialYear} />
             <Annexure4Card clientId={selectedClientId} financialYear={financialYear} />
+          </TabsContent>
+
+          <TabsContent value="gstr9form" className="space-y-4">
+            <p className="text-xs text-muted-foreground -mt-1">
+              The full official form, Tables 4–13 — assembled, nothing entered here.
+            </p>
+            <Gstr9FormView clientId={selectedClientId} financialYear={financialYear} />
+          </TabsContent>
+
+          <TabsContent value="notice" className="space-y-4">
+            <NoticeFormatView clientId={selectedClientId} financialYear={financialYear} />
           </TabsContent>
 
           <TabsContent value="portal" className="space-y-4">

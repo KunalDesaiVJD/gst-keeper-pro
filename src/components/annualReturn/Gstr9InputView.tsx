@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Info } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
-  fetchPlInputTotals, fetchDutiesTaxesInputAnnual, fetchRcmTotals, fetchPortalItcClaimedAnnual, taxTotal,
+  fetchPlInputTotals, fetchDutiesTaxesInputAnnual, fetchRcmTotals, fetchPortalItcClaimedAnnual, fetchItcReversalTotals, taxTotal,
 } from '@/lib/annualReturnAggregates';
 
 const TOLERANCE = 10;
@@ -24,10 +24,9 @@ const Row: React.FC<{ label: string; value: number; tag?: string; tagVariant?: '
 
 /**
  * GSTR 9-INPUT — ITC bucketed by type, cross-tied to what's actually
- * claimed via the portal. Table 7's rule-wise reversals (37/38/39/42/43,
- * s.17(5) ineligible ITC) aren't captured anywhere in the schema yet — that
- * row is shown honestly as "not captured" rather than defaulted to zero as
- * if it were confirmed nil.
+ * claimed via the portal. Table 7's rule-wise reversals (37/37A/38/39/42/43,
+ * s.17(5) ineligible ITC) are now real, via itc_reversal_lines (R6) — no
+ * longer shown as "not captured."
  */
 export const Gstr9InputView: React.FC<Props> = ({ clientId, financialYear }) => {
   const [loading, setLoading] = useState(true);
@@ -36,7 +35,8 @@ export const Gstr9InputView: React.FC<Props> = ({ clientId, financialYear }) => 
   const [capitalGoods, setCapitalGoods] = useState(0);
   const [rcm, setRcm] = useState(0);
   const [reclaim, setReclaim] = useState(0);
-  const [reversal, setReversal] = useState(0);
+  const [otherReversal, setOtherReversal] = useState(0);
+  const [ruleReversal, setRuleReversal] = useState(0);
   const [asPer3b, setAsPer3b] = useState(0);
   const [asPerBook, setAsPerBook] = useState(0);
 
@@ -49,14 +49,16 @@ export const Gstr9InputView: React.FC<Props> = ({ clientId, financialYear }) => 
       fetchDutiesTaxesInputAnnual(clientId, financialYear),
       fetchRcmTotals(clientId, financialYear),
       fetchPortalItcClaimedAnnual(clientId, financialYear),
-    ]).then(([pl, dt, rcmTotals, portalItc]) => {
+      fetchItcReversalTotals(clientId, financialYear),
+    ]).then(([pl, dt, rcmTotals, portalItc, itcReversal]) => {
       if (cancelled) return;
       setInput(taxTotal(pl.purchase));
       setInputServices(taxTotal(pl.expense));
       setCapitalGoods(taxTotal(pl.capital_goods));
       setRcm(taxTotal(rcmTotals.partB));
       setReclaim(taxTotal(dt.reclaimTotal));
-      setReversal(taxTotal(dt.reversalTotal));
+      setOtherReversal(taxTotal(dt.reversalTotal));
+      setRuleReversal(taxTotal(itcReversal.total));
       setAsPer3b(taxTotal(portalItc));
       setAsPerBook(taxTotal(pl.purchase) + taxTotal(pl.expense) + taxTotal(pl.capital_goods));
     }).catch((err) => toast.error('Could not compute GSTR 9-Input: ' + (err instanceof Error ? err.message : 'Unknown error')))
@@ -68,7 +70,8 @@ export const Gstr9InputView: React.FC<Props> = ({ clientId, financialYear }) => 
 
   const total6O = input + inputServices + capitalGoods + rcm + reclaim;
   const diffVs3b = total6O - asPer3b;
-  const total7J = total6O - reversal; // s.17(5) not yet captured — see note below
+  const reversal = otherReversal + ruleReversal;
+  const total7J = total6O - reversal;
 
   return (
     <Card>
@@ -89,13 +92,9 @@ export const Gstr9InputView: React.FC<Props> = ({ clientId, financialYear }) => 
         </div>
         <div>
           <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Reversals</div>
-          <Row label="ITC Reversal (Duties &amp; Taxes suspended)" value={reversal} />
-          <div className="flex items-start gap-2 rounded-md border px-3 py-2 text-xs text-muted-foreground my-2 bg-warning/5 border-warning/20">
-            <Info className="h-3.5 w-3.5 shrink-0 mt-0.5 text-warning" />
-            As per section 17(5) — not captured anywhere in the schema yet. Table 7's rule-wise reversals
-            (37/38/39/42/43, 17(5)) need their own entry, not built in this phase — shown as excluded here, not
-            assumed nil.
-          </div>
+          <Row label="Other Reversal (H1 — Duties &amp; Taxes suspended)" value={otherReversal} />
+          <Row label="Rule-wise (37/37A/38/39/42/43) + s.17(5)" value={ruleReversal} tag="Table 7 tab" tagVariant="outline" />
+          <Row label="Total ITC Reversed" value={reversal} />
           <Row label="Total (matches Table 7J)" value={total7J} strong />
         </div>
         <Row label="As per books (PL-Input total)" value={asPerBook} tag="Books" tagVariant="outline" />
