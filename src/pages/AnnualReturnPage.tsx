@@ -16,7 +16,9 @@ import DutiesTaxesOutputCard from '@/components/annualReturn/DutiesTaxesOutputCa
 import DutiesTaxesInputCard from '@/components/annualReturn/DutiesTaxesInputCard';
 import RcmAnnualReturnCard from '@/components/annualReturn/RcmAnnualReturnCard';
 import Gstr9OutputLinesCard from '@/components/annualReturn/Gstr9OutputLinesCard';
+import Gstr9OutputPortalCard from '@/components/annualReturn/Gstr9OutputPortalCard';
 import PortalCaptureCard from '@/components/annualReturn/PortalCaptureCard';
+import PortalTaxPaymentCard from '@/components/annualReturn/PortalTaxPaymentCard';
 import ReconciliationCard from '@/components/annualReturn/ReconciliationCard';
 import { fyOptions } from '@/lib/annualReturnPeriods';
 import { fetchReconciliationLines, isFullyReconciled } from '@/lib/annualReturnReconciliation';
@@ -277,6 +279,7 @@ const AnnualReturnPage: React.FC = () => {
 
           <TabsContent value="gstr9output" className="space-y-4">
             <Gstr9OutputLinesCard clientId={selectedClientId} financialYear={financialYear} />
+            <Gstr9OutputPortalCard clientId={selectedClientId} financialYear={financialYear} />
           </TabsContent>
 
           <TabsContent value="portal" className="space-y-4">
@@ -284,6 +287,7 @@ const AnnualReturnPage: React.FC = () => {
               Recent months aren&apos;t auto-pulled reliably yet — enter them from the filed return until that's wired up.
             </p>
             <PortalCaptureCard clientId={selectedClientId} financialYear={financialYear} />
+            <PortalTaxPaymentCard clientId={selectedClientId} financialYear={financialYear} />
           </TabsContent>
 
           <TabsContent value="reconciliation" className="space-y-4">

@@ -3,8 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, Plus, Save, Trash2, Info } from 'lucide-react';
+import { Loader2, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { monthsForFY } from '@/lib/annualReturnPeriods';
@@ -37,16 +38,18 @@ const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 
 
 interface Props { clientId: string; financialYear: string; }
 
+interface PartATotals { taxable: number; igst: number; cgst: number; sgst: number; monthsPresent: number; }
+
 /**
  * RCM — Part B (books), a dedicated entry for this module (firm decision,
  * 27 Aug 2026: kept independent of the existing rcm_data table used for 3B
  * prep, even though it duplicates that effort). Part A (portal) is computed
- * from GSTR-3B RCM figures once Portal Capture is rebuilt (R3) — not
- * entered here.
+ * from the RCM figures captured on Portal Capture (R3) — read-only here.
  */
 export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }) => {
   const months = monthsForFY(financialYear);
   const [lines, setLines] = useState<Line[]>([]);
+  const [partA, setPartA] = useState<PartATotals>({ taxable: 0, igst: 0, cgst: 0, sgst: 0, monthsPresent: 0 });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -54,10 +57,22 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
   const load = async () => {
     if (!clientId || !financialYear) { setLines([]); setLoading(false); return; }
     setLoading(true);
-    const { data, error } = await supabase.from('rcm_annual_return_lines').select('id, month, category, taxable_value, igst, cgst, sgst')
-      .eq('client_id', clientId).eq('financial_year', financialYear).order('month', { ascending: true });
-    if (error) toast.error('Could not load RCM Part B: ' + error.message);
-    setLines((data || []) as Line[]);
+    const [linesRes, portalRes] = await Promise.all([
+      supabase.from('rcm_annual_return_lines').select('id, month, category, taxable_value, igst, cgst, sgst')
+        .eq('client_id', clientId).eq('financial_year', financialYear).order('month', { ascending: true }),
+      supabase.from('gst_filed_returns').select('summary').eq('client_id', clientId).eq('return_type', 'RCM').in('period_month', months),
+    ]);
+    if (linesRes.error) toast.error('Could not load RCM Part B: ' + linesRes.error.message);
+    setLines((linesRes.data || []) as Line[]);
+    if (portalRes.error) {
+      toast.error('Could not load RCM Part A: ' + portalRes.error.message);
+    } else {
+      const totals = (portalRes.data || []).reduce((acc, r: { summary: Record<string, number> | null }) => {
+        const s = r.summary || {};
+        return { taxable: acc.taxable + (Number(s.rcm_taxable) || 0), igst: acc.igst + (Number(s.rcm_igst) || 0), cgst: acc.cgst + (Number(s.rcm_cgst) || 0), sgst: acc.sgst + (Number(s.rcm_sgst) || 0), monthsPresent: acc.monthsPresent + 1 };
+      }, { taxable: 0, igst: 0, cgst: 0, sgst: 0, monthsPresent: 0 });
+      setPartA(totals);
+    }
     setLoading(false);
   };
 
@@ -101,24 +116,38 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
   const totalCgst = lines.reduce((a, r) => a + Number(r.cgst), 0);
   const totalSgst = lines.reduce((a, r) => a + Number(r.sgst), 0);
 
+  const partADiff = (totalIgst + totalCgst + totalSgst) - (partA.igst + partA.cgst + partA.sgst);
+  const partAMatched = Math.abs(partADiff) <= 10;
+
   if (loading) return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-start justify-between gap-2 flex-wrap">
-          <div>
-            <CardTitle className="text-lg">RCM — Part B (Books)</CardTitle>
-            <CardDescription>Category and month-wise, built up from books — matched against Part A (portal) once Portal Capture is rebuilt.</CardDescription>
+    <div className="space-y-4">
+      <Card className="mb-0">
+        <CardHeader>
+          <CardTitle className="text-lg">RCM — Part A (as per GST portal)</CardTitle>
+          <CardDescription>Read-only — computed from the RCM figures captured on Portal Capture ({partA.monthsPresent} of {months.length} months present).</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+          <span className="text-muted-foreground">Taxable: <span className="font-medium text-foreground tabular-nums">{fmt(partA.taxable)}</span></span>
+          <span className="text-muted-foreground">IGST: <span className="font-medium text-foreground tabular-nums">{fmt(partA.igst)}</span></span>
+          <span className="text-muted-foreground">CGST: <span className="font-medium text-foreground tabular-nums">{fmt(partA.cgst)}</span></span>
+          <span className="text-muted-foreground">SGST: <span className="font-medium text-foreground tabular-nums">{fmt(partA.sgst)}</span></span>
+          {lines.length > 0 && <Badge variant={partAMatched ? 'success' : 'destructive'}>Diff vs Part B: {fmt(partADiff)}</Badge>}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-start justify-between gap-2 flex-wrap">
+            <div>
+              <CardTitle className="text-lg">RCM — Part B (Books)</CardTitle>
+              <CardDescription>Category and month-wise, built up from books — matched against Part A above.</CardDescription>
+            </div>
+            {!draft && <Button variant="outline" size="sm" onClick={startAdd}><Plus className="h-3.5 w-3.5 mr-1.5" /> Add line</Button>}
           </div>
-          {!draft && <Button variant="outline" size="sm" onClick={startAdd}><Plus className="h-3.5 w-3.5 mr-1.5" /> Add line</Button>}
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="flex items-start gap-2 rounded-md border px-3 py-2 text-xs text-muted-foreground mb-4 bg-info/5 border-info/20">
-          <Info className="h-3.5 w-3.5 shrink-0 mt-0.5 text-info" />
-          Part A (as per GST portal) isn&apos;t captured yet — it lands in R3 alongside the rest of Portal Capture. This card is Part B only.
-        </div>
+        </CardHeader>
+        <CardContent>
         <Table>
           <TableHeader>
             <TableRow>
@@ -191,8 +220,9 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
             </TableFooter>
           )}
         </Table>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </div>
   );
 };
 
