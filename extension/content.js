@@ -2392,6 +2392,28 @@
       return;
     }
 
+    // The portal's own "View Notices and Orders" page merges get/notices
+    // above with a SECOND, differently-shaped API — litserv's case/task/get
+    // (confirmed live 2026-08-22 via the page's own viewnoticeorderctrl.js:
+    // both calls share one payload and the responses get combined client-side
+    // before rendering). get/notices alone never carries LUT-application or
+    // DRC-03 voluntary-payment acknowledgement rows — those live only here,
+    // keyed by caseTypeName ("LETTER OF UNDERTAKING", "VOLUNTARY PAYMENT",
+    // etc.) with a refId in the same ZD.../ZA... format as noticeOrderId.
+    // Best-effort: a failure here must not lose the get/notices rows already
+    // read above, so it's swallowed to an empty list rather than aborting.
+    let taskList = [];
+    try {
+      const tr = await fetch('https://services.gst.gov.in/litserv/auth/api/case/task/get', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gstIn: cur.creds.gstin || '', type: '', fmdt: '01/01/2017', todt: shownTodayDdMmYyyy(), onLoad: true }),
+      });
+      if (tr.ok) {
+        const tj = await tr.json();
+        taskList = Array.isArray(tj) ? tj : Object.keys(tj || {}).filter((k) => /^\d+$/.test(k)).map((k) => tj[k]);
+      }
+    } catch (e) { /* non-fatal — get/notices rows above still get saved */ }
+
     // Per-row PDF capture. Confirmed live (2026-08-21): the list response
     // above already carries docId + applnId per notice, and GET
     // /document/{docId}/{applnId} serves the PDF directly — no encrypted
@@ -2424,11 +2446,90 @@
       rows.push(row);
     }
 
+    // Fold in the case/task/get rows (LUT applications, DRC-03 voluntary
+    // payment acknowledgements, etc.) fetched above — skip any refId that
+    // get/notices already returned, so a row the portal happens to carry in
+    // both responses doesn't get saved twice.
+    //
+    // Each one also gets its own best-effort PDF capture. Unlike get/notices
+    // rows (which carry docId+applnId directly), a task row's own PDF (its
+    // "GST RFD-11A" deemed-approval order, in the LUT case) needs three
+    // chained calls, confirmed live 2026-08-24 against a real LUT case:
+    //   1. POST case/folder {caseId, gstid, caseTypeCd: t.caseTpeCd} — the
+    //      case's list of folder tabs (Applications/Notices/Replies/Orders/
+    //      Additional Document), each with its own caseFolderId.
+    //   2. Find the folder where caseFolderTypeCd === 'ORDRS', then POST
+    //      case/folder/items {caseFolderId: <that folder's id>} — an array
+    //      of order items; each item's `itemJson` is itself a JSON STRING
+    //      (needs a second JSON.parse) whose docupdtl[0].id is the real docId
+    //      and .crn is the ARN to pair it with.
+    //   3. The same fetchEncrypDocEh(docId, arn) + downloadhb/download/new
+    //      flow already used by Refund/DRC-03 above turns that into the PDF.
+    // A case type without an ORDRS folder, or any step failing, just leaves
+    // pdf_url null — same "best-effort" contract as the get/notices loop.
+    const seenRefs = new Set(rows.map((r) => r.reference_number).filter(Boolean));
+    const titleCase = (s) => (s || '').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+    const epochMsToIsoDate = (ms) => {
+      if (!ms) return null;
+      const d = new Date(ms);
+      return isNaN(d.getTime()) ? null : d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    };
+    let taskRows = 0;
+    for (const t of taskList) {
+      const refId = t.refId || null;
+      if (refId && seenRefs.has(refId)) continue;
+      if (refId) seenRefs.add(refId);
+      const row = {
+        client_id: cur.clientId, source: 'notices',
+        reference_number: refId, notice_type: titleCase(t.caseTypeName),
+        description: t.taskDesc || null, issue_date: epochMsToIsoDate(t.assignmentDt),
+        due_date: null, status: null, pdf_url: null,
+      };
+      if (t.caseId && t.arn) {
+        try {
+          const fr = await fetch('https://services.gst.gov.in/litserv/auth/api/case/folder', {
+            method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ caseId: t.caseId, gstid: cur.creds.gstin || '', caseTypeCd: t.caseTpeCd || '' }),
+          });
+          const folders = fr.ok ? await fr.json() : [];
+          const ordersFolder = Array.isArray(folders) ? folders.find((f) => f.caseFolderTypeCd === 'ORDRS') : null;
+          if (ordersFolder) {
+            const ir = await fetch('https://services.gst.gov.in/litserv/auth/api/case/folder/items', {
+              method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ caseFolderId: ordersFolder.caseFolderId }),
+            });
+            const items = ir.ok ? await ir.json() : [];
+            const item = Array.isArray(items) ? (items.find((it) => it.refId === refId) || items[0]) : null;
+            const parsed = item && item.itemJson ? JSON.parse(item.itemJson) : null;
+            const docId = parsed && parsed.docupdtl && parsed.docupdtl[0] ? parsed.docupdtl[0].id : null;
+            const docArn = (parsed && parsed.crn) || t.arn;
+            if (docId) {
+              const eh = await fetchEncrypDocEh(docId, docArn);
+              if (eh) {
+                const pdfR = await fetch('https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(docId) + '&arn=' + encodeURIComponent(docArn) + '&eh=' + encodeURIComponent(eh), { credentials: 'include' });
+                if (pdfR.ok) {
+                  const buf = await pdfR.arrayBuffer();
+                  if (buf && buf.byteLength > 200) {
+                    const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
+                    const path = 'notices/' + cur.clientId + '/' + (refId || docId) + '.pdf';
+                    row.pdf_url = await GSTKdb.uploadPdf(path, dataUrl);
+                    pdfOk++;
+                  } else pdfFail++;
+                } else pdfFail++;
+              } else pdfFail++;
+            } else pdfFail++;
+          }
+        } catch (e) { pdfFail++; }
+      }
+      rows.push(row);
+      taskRows++;
+    }
+
     try {
       await GSTKdb.replaceNotices(cur.clientId, rows);
       debugPanel([
         'STEP: View Notices and Orders  (' + location.pathname + ')',
-        'rows read         : ' + rows.length,
+        'rows read         : ' + rows.length + ' (' + (rows.length - taskRows) + ' notices, ' + taskRows + ' LUT/case-task)',
         'PDFs captured     : ' + pdfOk + ' ok, ' + pdfFail + ' failed/not applicable',
       ]);
       banner('Notices & Orders → ' + rows.length + ' entries saved (' + pdfOk + ' PDFs). Now Refund applications…' + progress, '#16a34a');
