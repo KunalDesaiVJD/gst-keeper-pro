@@ -27,6 +27,7 @@ import Gstr3bAdjustmentsPage from "@/pages/Gstr3bAdjustmentsPage";
 import AnnualReturnPage from "@/pages/AnnualReturnPage";
 import ReportsPage from "@/pages/ReportsPage";
 import NoticesDashboardPage from "@/pages/NoticesDashboardPage";
+import AllClientsNoticesPage from "@/pages/AllClientsNoticesPage";
 import BuilderWorkspacePage from "@/pages/BuilderWorkspacePage";
 import BuilderSettingsPage from "@/pages/BuilderSettingsPage";
 import BuilderProjectsPage from "@/pages/BuilderProjectsPage";
@@ -94,6 +95,7 @@ const App = () => (
                   <Route path="/builder-reports" element={<BuilderReportsPage />} />
                   <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/notices-dashboard" element={<NoticesDashboardPage />} />
+                  <Route path="/notices-all" element={<AllClientsNoticesPage />} />
                   <Route path="/manage-employees" element={<ManageEmployeesPage />} />
                   <Route path="/user-control" element={<UserControlPage />} />
                   <Route path="/settings" element={<SettingsPage />} />

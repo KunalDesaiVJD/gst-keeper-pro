@@ -21,6 +21,7 @@ import BulkAddClientsDialog, { downloadClientImportTemplate } from '@/components
 import {
   Bell, CalendarClock, History, Building2, FolderOpen, AlertTriangle, Flag, Loader2,
   UserPlus, Upload, Download, RefreshCw, Pencil, ChevronLeft, ChevronRight,
+  LayoutDashboard, Send, FileBarChart2,
 } from 'lucide-react';
 
 interface NoticeRow {
@@ -62,6 +63,19 @@ interface MiniClient {
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+// Mirrors Notice Alert's own top nav (Dashboard/Notice/Submission/Report) —
+// Dashboard is this page; Notice is the unfiltered all-clients list;
+// Submission is the same list filtered to rows with a Submission ARN/date
+// logged (their "View My Submissions" page, confirmed live); Report is the
+// existing Reports Hub, which already carries every per-client Notice/
+// Refund/DRC-03 report.
+const NAV_ITEMS = [
+  { label: 'Dashboard', icon: LayoutDashboard, to: '/notices-dashboard', active: true },
+  { label: 'Notice', icon: Bell, to: '/notices-all', active: false },
+  { label: 'Submission', icon: Send, to: '/notices-all?filter=submitted', active: false },
+  { label: 'Report', icon: FileBarChart2, to: '/reports', active: false },
 ];
 
 const NoticesDashboardPage: React.FC = () => {
@@ -173,15 +187,28 @@ const NoticesDashboardPage: React.FC = () => {
   const overdue = displayRows.filter((r) => r.due_date && daysUntil(r.due_date) < 0).length;
   const priorityCount = displayRows.filter((r) => r.priority).length;
 
+  // Every tile except Total GSTIN drills into the firm-wide notice list,
+  // carrying the current Type Of Notices / category selections along so the
+  // drilled-down list stays consistent with what's on screen — matching
+  // Notice Alert's own tile-click behavior (confirmed live: each tile
+  // navigates to "Notices and Orders" pre-filtered).
+  const drillParams = (extra: Record<string, string>) => {
+    const p = new URLSearchParams(extra);
+    if (typeFilter !== 'all') p.set('type', typeFilter);
+    if (categoryFilter) p.set('category', categoryFilter);
+    const qs = p.toString();
+    return qs ? `/notices-all?${qs}` : '/notices-all';
+  };
+
   const kpiCards = [
-    { label: 'Total Notices', value: totalNotices, icon: <Bell className="h-8 w-8 text-primary" />, bgColor: 'bg-primary/5' },
-    { label: 'Last 15 Days', value: last15Days, icon: <CalendarClock className="h-8 w-8 text-info" />, bgColor: 'bg-info/5' },
-    { label: 'Last 24 Hours', value: last24Hours, icon: <History className="h-8 w-8 text-info" />, bgColor: 'bg-info/5' },
-    { label: 'Total GSTIN', value: totalGstin, icon: <Building2 className="h-8 w-8 text-secondary-foreground" />, bgColor: 'bg-secondary/40' },
-    { label: 'Open Notices', value: openNotices, icon: <FolderOpen className="h-8 w-8 text-warning" />, bgColor: 'bg-warning/5' },
-    { label: '7 Days Due', value: dueSoon, icon: <CalendarClock className="h-8 w-8 text-warning" />, bgColor: 'bg-warning/5' },
-    { label: 'Over Due', value: overdue, icon: <AlertTriangle className="h-8 w-8 text-destructive" />, bgColor: 'bg-destructive/5' },
-    { label: 'Priority', value: priorityCount, icon: <Flag className="h-8 w-8 text-destructive" />, bgColor: 'bg-destructive/5' },
+    { label: 'Total Notices', value: totalNotices, icon: <Bell className="h-8 w-8 text-primary" />, bgColor: 'bg-primary/5', to: drillParams({}) },
+    { label: 'Last 15 Days', value: last15Days, icon: <CalendarClock className="h-8 w-8 text-info" />, bgColor: 'bg-info/5', to: drillParams({ filter: 'last15' }) },
+    { label: 'Last 24 Hours', value: last24Hours, icon: <History className="h-8 w-8 text-info" />, bgColor: 'bg-info/5', to: drillParams({ filter: 'last24h' }) },
+    { label: 'Total GSTIN', value: totalGstin, icon: <Building2 className="h-8 w-8 text-secondary-foreground" />, bgColor: 'bg-secondary/40', to: null },
+    { label: 'Open Notices', value: openNotices, icon: <FolderOpen className="h-8 w-8 text-warning" />, bgColor: 'bg-warning/5', to: drillParams({ status: 'Open' }) },
+    { label: '7 Days Due', value: dueSoon, icon: <CalendarClock className="h-8 w-8 text-warning" />, bgColor: 'bg-warning/5', to: drillParams({ filter: 'due7' }) },
+    { label: 'Over Due', value: overdue, icon: <AlertTriangle className="h-8 w-8 text-destructive" />, bgColor: 'bg-destructive/5', to: drillParams({ filter: 'overdue' }) },
+    { label: 'Priority', value: priorityCount, icon: <Flag className="h-8 w-8 text-destructive" />, bgColor: 'bg-destructive/5', to: drillParams({ filter: 'priority' }) },
   ];
 
   const categoryMap = new Map<string, CategoryRow>();
@@ -229,17 +256,34 @@ const NoticesDashboardPage: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <PageHeader
-        title="Notices Dashboard"
-        subtitle="Every client's notices, orders, LUT applications and voluntary payments in one place."
-        icon={<Bell className="h-6 w-6" />}
-      />
+    <div className="space-y-2.5 animate-fade-in">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <PageHeader
+          title="Notices Dashboard"
+          icon={<Bell className="h-5 w-5" />}
+          embedded
+        />
+        <nav className="flex items-center gap-1 rounded-md border bg-muted/30 p-1">
+          {NAV_ITEMS.map((item) => (
+            <Link
+              key={item.label}
+              to={item.to}
+              className={cn(
+                'flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium transition-colors',
+                item.active ? 'border border-primary/40 bg-background text-primary' : 'text-muted-foreground hover:bg-background hover:text-foreground',
+              )}
+            >
+              <item.icon className="h-3.5 w-3.5" />
+              {item.label}
+            </Link>
+          ))}
+        </nav>
+      </div>
 
       <div className="flex items-center gap-2">
-        <Label htmlFor="type-of-notices" className="text-sm text-muted-foreground">Type Of Notices</Label>
+        <Label htmlFor="type-of-notices" className="text-xs text-muted-foreground">Type Of Notices</Label>
         <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as TypeOfNoticesFilter)}>
-          <SelectTrigger id="type-of-notices" className="h-9 w-[220px]">
+          <SelectTrigger id="type-of-notices" className="h-8 w-[200px] text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -250,40 +294,133 @@ const NoticesDashboardPage: React.FC = () => {
         </Select>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Company</CardTitle>
-            <CardDescription>Onboard clients and pull the latest notices for everyone at once.</CardDescription>
+      {/* Row 1: KPI tiles (left) + Notice Summary (right) — same order as Notice Alert's dashboard */}
+      <div className="grid grid-cols-1 items-stretch gap-2.5 xl:grid-cols-3">
+        <div className="grid grid-cols-2 gap-2.5 content-start sm:grid-cols-4 xl:col-span-2">
+          {kpiCards.map((card) => {
+            const body = (
+              <CardContent className="p-3">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">{card.label}</p>
+                    <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">
+                      {loading ? <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /> : card.value}
+                    </p>
+                  </div>
+                  <div className={`rounded-full p-1.5 ${card.bgColor}`}>{card.icon}</div>
+                </div>
+              </CardContent>
+            );
+            return card.to ? (
+              <Link key={card.label} to={card.to}>
+                <Card className="border transition-colors hover:border-primary/40 hover:bg-muted/30">{body}</Card>
+              </Link>
+            ) : (
+              <Card key={card.label} className="border">{body}</Card>
+            );
+          })}
+        </div>
+
+        <Card className="flex min-h-0 flex-col xl:row-span-1">
+          <CardHeader className="shrink-0 pb-2 pt-3">
+            <CardTitle className="text-sm">Notice Summary</CardTitle>
+            <CardDescription className="text-[11px]">
+              Click a row to drill the tiles into just that category
+              {categoryFilter && (
+                <>
+                  {' '}·{' '}
+                  <button
+                    type="button"
+                    className="font-medium text-primary underline-offset-2 hover:underline"
+                    onClick={() => setCategoryFilter(null)}
+                  >
+                    clear "{categoryFilter}"
+                  </button>
+                </>
+              )}
+            </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="min-h-0 flex-1 overflow-hidden pb-3">
+            {loading ? (
+              <div className="flex items-center justify-center py-10 text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin" />
+              </div>
+            ) : categoryRows.length === 0 ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">No notices on record yet.</p>
+            ) : (
+              <div className="h-full overflow-auto rounded-md border">
+                <Table>
+                  <TableHeader className="sticky top-0 z-10 bg-background">
+                    <TableRow>
+                      <TableHead className="bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">Remarks</TableHead>
+                      <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Total</TableHead>
+                      <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Open</TableHead>
+                      <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Closed</TableHead>
+                      <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Replied</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {categoryRows.map((r) => (
+                      <TableRow
+                        key={r.type}
+                        className={cn('cursor-pointer', categoryFilter === r.type && 'bg-primary/10 hover:bg-primary/15')}
+                        onClick={() => setCategoryFilter((prev) => (prev === r.type ? null : r.type))}
+                      >
+                        <TableCell className="px-2 py-1 text-[11px] font-medium text-primary">{r.type}</TableCell>
+                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.total}</TableCell>
+                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.open || '—'}</TableCell>
+                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.closed || '—'}</TableCell>
+                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.replied || '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                    <TableRow className="bg-primary/5 font-semibold hover:bg-primary/10">
+                      <TableCell className="px-2 py-1 text-[11px]">Total</TableCell>
+                      <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.total}</TableCell>
+                      <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.open}</TableCell>
+                      <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.closed}</TableCell>
+                      <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.replied}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Row 2: Company (left) + Calendar (right) */}
+      <div className="grid grid-cols-1 items-stretch gap-2.5 xl:grid-cols-3">
+        <Card className="flex min-h-0 flex-col xl:col-span-2">
+          <CardHeader className="shrink-0 pb-2 pt-3">
+            <CardTitle className="text-sm">Company</CardTitle>
+            <CardDescription className="text-[11px]">Onboard clients and pull the latest notices for everyone at once.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex min-h-0 flex-1 flex-col gap-2 pb-3">
             {canManageClients && (
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={() => navigate('/add-client')}>
-                  <UserPlus className="mr-1.5 h-4 w-4" /> Add Company
+              <div className="flex flex-wrap gap-1.5">
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => navigate('/add-client')}>
+                  <UserPlus className="mr-1.5 h-3.5 w-3.5" /> Add Company
                 </Button>
                 <BulkAddClientsDialog triggerLabel="Import Company" onSuccess={() => window.location.reload()} />
-                <Button size="sm" variant="outline" onClick={downloadClientImportTemplate}>
-                  <Download className="mr-1.5 h-4 w-4" /> Download Template
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={downloadClientImportTemplate}>
+                  <Download className="mr-1.5 h-3.5 w-3.5" /> Download Template
                 </Button>
-                <Button size="sm" variant="outline" onClick={handleSyncAll} disabled={syncing}>
-                  {syncing ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleSyncAll} disabled={syncing}>
+                  {syncing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
                   Sync All
                 </Button>
               </div>
             )}
-            {!extReady && (
-              <p className="text-xs text-muted-foreground">
-                {canManageClients ? 'Extension not detected — install/enable the GST Keeper extension to use Sync All.' : ''}
-              </p>
+            {!extReady && canManageClients && (
+              <p className="text-[11px] text-muted-foreground">Extension not detected — install/enable the GST Keeper extension to use Sync All.</p>
             )}
-            <div className="overflow-hidden rounded-md border">
+            <div className="min-h-0 flex-1 overflow-auto rounded-md border">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-xs font-semibold">Trade Name</TableHead>
-                    <TableHead className="text-xs font-semibold">GSTIN</TableHead>
-                    {canManageClients && <TableHead className="w-10 text-xs font-semibold" />}
+                    <TableHead className="px-2 py-1.5 text-[11px] font-semibold">Trade Name</TableHead>
+                    <TableHead className="px-2 py-1.5 text-[11px] font-semibold">GSTIN</TableHead>
+                    {canManageClients && <TableHead className="w-10 px-2 py-1.5 text-[11px] font-semibold" />}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -296,12 +433,12 @@ const NoticesDashboardPage: React.FC = () => {
                   ) : (
                     miniClients.map((c) => (
                       <TableRow key={c.id}>
-                        <TableCell className="text-xs">{c.name}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground">{c.gstin || '—'}</TableCell>
+                        <TableCell className="px-2 py-1 text-xs">{c.name}</TableCell>
+                        <TableCell className="px-2 py-1 text-xs text-muted-foreground">{c.gstin || '—'}</TableCell>
                         {canManageClients && (
-                          <TableCell className="text-right">
-                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => navigate(`/edit-client/${c.id}`)}>
-                              <Pencil className="h-3.5 w-3.5" />
+                          <TableCell className="px-2 py-1 text-right">
+                            <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => navigate(`/edit-client/${c.id}`)}>
+                              <Pencil className="h-3 w-3" />
                             </Button>
                           </TableCell>
                         )}
@@ -311,23 +448,23 @@ const NoticesDashboardPage: React.FC = () => {
                 </TableBody>
               </Table>
             </div>
-            <div className="text-right">
-              <Link to="/clients" className="text-xs font-medium text-primary hover:underline">View All</Link>
+            <div className="shrink-0 text-right">
+              <Link to="/clients" className="text-[11px] font-medium text-primary hover:underline">View All</Link>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
+        <Card className="flex min-h-0 flex-col">
+          <CardHeader className="shrink-0 pb-2 pt-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-base">{MONTH_NAMES[calMonth]} {calYear}</CardTitle>
+              <CardTitle className="text-sm">{MONTH_NAMES[calMonth]} {calYear}</CardTitle>
               <div className="flex gap-1">
-                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={goPrevMonth}><ChevronLeft className="h-4 w-4" /></Button>
-                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={goNextMonth}><ChevronRight className="h-4 w-4" /></Button>
+                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={goPrevMonth}><ChevronLeft className="h-3.5 w-3.5" /></Button>
+                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={goNextMonth}><ChevronRight className="h-3.5 w-3.5" /></Button>
               </div>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="min-h-0 flex-1 overflow-auto pb-3">
             <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-medium text-muted-foreground">
               {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => <div key={i}>{d}</div>)}
             </div>
@@ -344,7 +481,7 @@ const NoticesDashboardPage: React.FC = () => {
                   <div
                     key={i}
                     className={cn(
-                      'flex h-7 items-center justify-center rounded text-xs',
+                      'flex h-6 items-center justify-center rounded text-[11px]',
                       bg,
                       isToday && 'ring-1 ring-primary font-semibold',
                     )}
@@ -354,98 +491,14 @@ const NoticesDashboardPage: React.FC = () => {
                 );
               })}
             </div>
-            <div className="mt-3 space-y-1 text-[11px] text-muted-foreground">
-              <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-info/40" /> Issue date</div>
-              <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-destructive/40" /> Due date</div>
-              <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-warning/40" /> Both</div>
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+              <div className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-info/40" /> Issue date</div>
+              <div className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-destructive/40" /> Due date</div>
+              <div className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-warning/40" /> Both</div>
             </div>
           </CardContent>
         </Card>
       </div>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {kpiCards.map((card) => (
-          <Card key={card.label} className="border">
-            <CardContent className="p-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">{card.label}</p>
-                  <p className="mt-1 text-3xl font-bold tabular-nums text-foreground">
-                    {loading ? <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /> : card.value}
-                  </p>
-                </div>
-                <div className={`rounded-full p-2 ${card.bgColor}`}>{card.icon}</div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Notice Summary</CardTitle>
-          <CardDescription>
-            Total, Open, Closed and Replied counts across every client on record — click a row to drill the tiles above into just that category
-            {categoryFilter && (
-              <>
-                {' '}·{' '}
-                <button
-                  type="button"
-                  className="font-medium text-primary underline-offset-2 hover:underline"
-                  onClick={() => setCategoryFilter(null)}
-                >
-                  clear "{categoryFilter}" filter
-                </button>
-              </>
-            )}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="flex items-center justify-center py-10 text-muted-foreground">
-              <Loader2 className="h-5 w-5 animate-spin" />
-            </div>
-          ) : categoryRows.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">No notices on record yet.</p>
-          ) : (
-            <div className="max-h-[50vh] overflow-auto rounded-md border">
-              <Table>
-                <TableHeader className="sticky top-0 z-10 bg-background">
-                  <TableRow>
-                    <TableHead className="bg-muted/60 text-xs font-semibold">Remarks</TableHead>
-                    <TableHead className="bg-muted/60 text-right text-xs font-semibold">Total</TableHead>
-                    <TableHead className="bg-muted/60 text-right text-xs font-semibold">Open</TableHead>
-                    <TableHead className="bg-muted/60 text-right text-xs font-semibold">Closed</TableHead>
-                    <TableHead className="bg-muted/60 text-right text-xs font-semibold">Replied</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {categoryRows.map((r) => (
-                    <TableRow
-                      key={r.type}
-                      className={cn('cursor-pointer', categoryFilter === r.type && 'bg-primary/10 hover:bg-primary/15')}
-                      onClick={() => setCategoryFilter((prev) => (prev === r.type ? null : r.type))}
-                    >
-                      <TableCell className="text-xs font-medium text-primary">{r.type}</TableCell>
-                      <TableCell className="text-right text-xs tabular-nums">{r.total}</TableCell>
-                      <TableCell className="text-right text-xs tabular-nums">{r.open || '—'}</TableCell>
-                      <TableCell className="text-right text-xs tabular-nums">{r.closed || '—'}</TableCell>
-                      <TableCell className="text-right text-xs tabular-nums">{r.replied || '—'}</TableCell>
-                    </TableRow>
-                  ))}
-                  <TableRow className="bg-primary/5 font-semibold hover:bg-primary/10">
-                    <TableCell className="text-xs">Total</TableCell>
-                    <TableCell className="text-right text-xs tabular-nums">{grandTotal.total}</TableCell>
-                    <TableCell className="text-right text-xs tabular-nums">{grandTotal.open}</TableCell>
-                    <TableCell className="text-right text-xs tabular-nums">{grandTotal.closed}</TableCell>
-                    <TableCell className="text-right text-xs tabular-nums">{grandTotal.replied}</TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 };

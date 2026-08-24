@@ -25,7 +25,10 @@ import { cn } from '@/lib/utils';
 
 interface NoticeWorkflowListViewProps {
   table: ReportTable;
-  report: ReportDefinition;
+  // Only title/icon are read here, so the firm-wide Notices Dashboard drill-
+  // down can reuse this view with a lightweight stub instead of a full
+  // catalog ReportDefinition.
+  report: Pick<ReportDefinition, 'title' | 'icon'>;
 }
 
 // ─────────────────── Cell/header heuristics (same conventions as EvidenceEventListView) ──
