@@ -7,20 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Loader2, Save, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-
-const MONTHS = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
-
-// FY "2025-26" -> ["Apr-25", "May-25", ..., "Mar-26"], matching the
-// "Mon-YY" convention rcm_data/gstr1_data already use.
-const monthsForFY = (fy: string): string[] => {
-  const [startStr] = fy.split('-');
-  const startYear = Number(startStr);
-  const endYear = startYear + 1;
-  return MONTHS.map((m, i) => {
-    const year = i < 9 ? startYear : endYear;
-    return `${m}-${String(year).slice(-2)}`;
-  });
-};
+import { monthsForFY } from '@/lib/annualReturnPeriods';
 
 interface MonthFigures {
   turnover: string;

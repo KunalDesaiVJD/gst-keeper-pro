@@ -13,6 +13,9 @@ import { toast } from 'sonner';
 import BooksTurnoverCard from '@/components/annualReturn/BooksTurnoverCard';
 import BooksPurchaseCard from '@/components/annualReturn/BooksPurchaseCard';
 import PortalCaptureCard from '@/components/annualReturn/PortalCaptureCard';
+import ReconciliationCard from '@/components/annualReturn/ReconciliationCard';
+import { fyOptions } from '@/lib/annualReturnPeriods';
+import { fetchReconciliationLines, isFullyReconciled } from '@/lib/annualReturnReconciliation';
 
 interface Client {
   id: string;
@@ -32,19 +35,6 @@ interface AnnualReturnPeriod {
   locked_at: string | null;
   updated_at: string;
 }
-
-// Current FY (Apr–Mar) plus the previous 2 and next 1 — same window every
-// other financial-year picker in the app uses.
-const fyOptions = (): string[] => {
-  const now = new Date();
-  const startYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
-  const years: string[] = [];
-  for (let i = -2; i <= 1; i++) {
-    const y = startYear + i;
-    years.push(`${y}-${String(y + 1).slice(-2)}`);
-  }
-  return years;
-};
 
 const STATUS_LABEL: Record<PeriodStatus, string> = {
   not_started: 'Not started',
@@ -118,6 +108,15 @@ const AnnualReturnPage: React.FC = () => {
     if (!selectedClientId) return;
     setSaving(true);
     try {
+      if (status === 'locked') {
+        const lines = await fetchReconciliationLines(selectedClientId, financialYear, isNoItcBuilder);
+        if (!isFullyReconciled(lines)) {
+          const openLabels = lines.filter((l) => l.reasonRequired && !l.reason.trim()).map((l) => l.label);
+          toast.error(`Can't lock — reason needed for: ${openLabels.join(', ')}. See the Reconciliation tab.`);
+          setSaving(false);
+          return;
+        }
+      }
       const payload: Record<string, unknown> = {
         client_id: selectedClientId,
         financial_year: financialYear,
@@ -146,7 +145,7 @@ const AnnualReturnPage: React.FC = () => {
     <div className="space-y-4">
       <PageHeader
         title="Annual Return (GSTR-9 / 9C)"
-        subtitle="Preparation status for the client's annual return — books input, portal capture, reconciliation and the 9/9C tables land here as each phase ships."
+        subtitle="Preparation status for the client's annual return — books input, portal capture and reconciliation are live; the 9/9C tables land here as each remaining phase ships."
         icon={<ScrollText className="h-5 w-5" />}
       />
 
@@ -185,6 +184,7 @@ const AnnualReturnPage: React.FC = () => {
             <TabsTrigger value="status">Status</TabsTrigger>
             <TabsTrigger value="books">Books Input</TabsTrigger>
             <TabsTrigger value="portal">Portal Capture</TabsTrigger>
+            <TabsTrigger value="reconciliation">Reconciliation</TabsTrigger>
           </TabsList>
 
           <TabsContent value="status" className="space-y-4">
@@ -196,7 +196,7 @@ const AnnualReturnPage: React.FC = () => {
                     <span className="font-medium text-foreground">No-ITC scheme client.</span>{' '}
                     <span className="text-muted-foreground">
                       This client is a builder on <code className="text-xs bg-muted px-1 py-0.5 rounded">NO_ITC</code>.
-                      When the reconciliation engine ships, zero ITC here won&apos;t be treated as an unexplained gap —
+                      The reconciliation engine won&apos;t treat zero ITC here as an unexplained gap —
                       it&apos;s expected for this client, not a mismatch to justify.
                     </span>
                   </div>
@@ -239,9 +239,8 @@ const AnnualReturnPage: React.FC = () => {
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Portal capture, the reconciliation engine and the GSTR-9/9C tables themselves aren&apos;t built yet.
-                  Locking here doesn&apos;t yet check for unexplained gaps (that rule ships with the reconciliation
-                  engine); for now it's a plain status marker.
+                  Locking checks the Reconciliation tab first — every unexplained difference needs a reason on file.
+                  The GSTR-9/9C tables themselves aren&apos;t built yet.
                 </p>
               </CardContent>
             </Card>
@@ -261,6 +260,13 @@ const AnnualReturnPage: React.FC = () => {
               Recent months aren&apos;t auto-pulled reliably yet — enter them from the filed return until that's wired up.
             </p>
             <PortalCaptureCard clientId={selectedClientId} financialYear={financialYear} />
+          </TabsContent>
+
+          <TabsContent value="reconciliation" className="space-y-4">
+            <p className="text-xs text-muted-foreground -mt-1">
+              Every unexplained difference needs a reason before FY {financialYear} can be locked — no override.
+            </p>
+            <ReconciliationCard clientId={selectedClientId} financialYear={financialYear} isNoItcBuilder={isNoItcBuilder} />
           </TabsContent>
         </Tabs>
       )}
