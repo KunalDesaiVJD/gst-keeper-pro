@@ -12,6 +12,7 @@ import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
 import BooksTurnoverCard from '@/components/annualReturn/BooksTurnoverCard';
 import BooksPurchaseCard from '@/components/annualReturn/BooksPurchaseCard';
+import PortalCaptureCard from '@/components/annualReturn/PortalCaptureCard';
 
 interface Client {
   id: string;
@@ -183,6 +184,7 @@ const AnnualReturnPage: React.FC = () => {
           <TabsList>
             <TabsTrigger value="status">Status</TabsTrigger>
             <TabsTrigger value="books">Books Input</TabsTrigger>
+            <TabsTrigger value="portal">Portal Capture</TabsTrigger>
           </TabsList>
 
           <TabsContent value="status" className="space-y-4">
@@ -252,6 +254,13 @@ const AnnualReturnPage: React.FC = () => {
             </p>
             <BooksTurnoverCard clientId={selectedClientId} financialYear={financialYear} />
             <BooksPurchaseCard clientId={selectedClientId} financialYear={financialYear} />
+          </TabsContent>
+
+          <TabsContent value="portal" className="space-y-4">
+            <p className="text-xs text-muted-foreground -mt-1">
+              Recent months aren&apos;t auto-pulled reliably yet — enter them from the filed return until that's wired up.
+            </p>
+            <PortalCaptureCard clientId={selectedClientId} financialYear={financialYear} />
           </TabsContent>
         </Tabs>
       )}
