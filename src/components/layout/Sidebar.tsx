@@ -20,7 +20,8 @@ import {
   FileCheck2,
   Building,
   FileSignature,
-  Bell
+  Bell,
+  ScrollText
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
@@ -116,6 +117,15 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     path: '/gstr3b-adjustments',
     icon: <FileSignature className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager'],
+  },
+  // Deliberately its own top-level item, not folded into the "GST Working"
+  // group or any other tab — the annual return draws on all of them (2B
+  // reconciliation, ITC, RCM, GSTR-1/3B), so it stays a neutral destination.
+  {
+    label: 'Annual Return (9/9C)',
+    path: '/annual-return',
+    icon: <ScrollText className="h-5 w-5" />,
+    roles: ['superadmin', 'gst_manager', 'employee'],
   },
   {
     label: 'GST Update Sheet',
