@@ -28,6 +28,8 @@ import AnnualReturnPage from "@/pages/AnnualReturnPage";
 import ReportsPage from "@/pages/ReportsPage";
 import NoticesDashboardPage from "@/pages/NoticesDashboardPage";
 import AllClientsNoticesPage from "@/pages/AllClientsNoticesPage";
+import AllClientsRefundsPage from "@/pages/AllClientsRefundsPage";
+import AllClientsDrc03Page from "@/pages/AllClientsDrc03Page";
 import BuilderWorkspacePage from "@/pages/BuilderWorkspacePage";
 import BuilderSettingsPage from "@/pages/BuilderSettingsPage";
 import BuilderProjectsPage from "@/pages/BuilderProjectsPage";
@@ -96,6 +98,8 @@ const App = () => (
                   <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/notices-dashboard" element={<NoticesDashboardPage />} />
                   <Route path="/notices-all" element={<AllClientsNoticesPage />} />
+                  <Route path="/refunds-all" element={<AllClientsRefundsPage />} />
+                  <Route path="/drc03-all" element={<AllClientsDrc03Page />} />
                   <Route path="/manage-employees" element={<ManageEmployeesPage />} />
                   <Route path="/user-control" element={<UserControlPage />} />
                   <Route path="/settings" element={<SettingsPage />} />

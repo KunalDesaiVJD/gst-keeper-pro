@@ -2,9 +2,16 @@
 // Notice and Orders" report: one query across every client's gst_notices
 // rows, summarized as KPI tiles + a category breakdown table (Total/Open/
 // Closed/Replied per notice type), matching the portfolio-wide dashboard
-// pattern the user pointed to (Notice Alert's GST Dashboard) — scoped to
-// what gst_notices actually holds (Notices/Orders, LUT, DRC-03 voluntary
-// payment), not the wider Appeal/Audit/Refund taxonomy that tool tracks.
+// pattern the user pointed to (Notice Alert's GST Dashboard). The KPI tiles
+// stay scoped to what gst_notices holds (Notices/Orders, LUT, DRC-03
+// voluntary payment) — but the Notice Summary table below also folds in
+// Refund and DRC-03 rows from their own tables (gst_refund_applications,
+// gst_drc03_filings), since we already capture that data even though the
+// tiles don't count it. The remaining Notice Alert categories (Appeal,
+// ASMT 10, Audit, Enforcement, Recovery, Non filers, TRAN 1, Anti evasion,
+// Demand, Ewaybill, AAR, Registration) have no portal capture in this app
+// yet — each needs its own reverse-engineering pass against the live GST
+// portal, scoped separately per the user's 2026-08-24 decision.
 import React, { useEffect, useState } from 'react';
 import { Navigate, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -50,9 +57,21 @@ interface CategoryRow {
   open: number;
   closed: number;
   replied: number;
+  // Refund/DRC-03 rows come from separate tables entirely (not gst_notices),
+  // so clicking them can't reuse the in-page categoryFilter mechanism —
+  // they link straight to their own firm-wide drill-down page instead.
+  to?: string;
 }
 
 const isClosed = (s: string | null) => (s || '').trim().toLowerCase() === 'closed';
+
+// Refund status strings observed from the real portal pull (see
+// noticeRefundDrc03Reports.ts) — "filed"/"deficiency memo" are still
+// pending action, everything else (disbursed/withdrawn/recredit) is final.
+const isRefundClosed = (s: string | null) => /disburs|withdraw|reject|recredit/i.test(s || '');
+// DRC-03 status strings observed: "Acknowledged" (final) vs "Pending for
+// Action by Tax Officer" (still open).
+const isDrc03Closed = (s: string | null) => /acknowledg/i.test(s || '');
 
 interface MiniClient {
   id: string;
@@ -102,6 +121,12 @@ const NoticesDashboardPage: React.FC = () => {
   const [calMonth, setCalMonth] = useState(todayDate.getMonth());
   const [calYear, setCalYear] = useState(todayDate.getFullYear());
 
+  // Refund/DRC-03 rows the Notice Summary table folds in — separate tables,
+  // status-only select since only the category-row counts are needed here
+  // (the drill-down page re-fetches full detail itself).
+  const [refundStatuses, setRefundStatuses] = useState<(string | null)[]>([]);
+  const [drc03Statuses, setDrc03Statuses] = useState<(string | null)[]>([]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -113,6 +138,21 @@ const NoticesDashboardPage: React.FC = () => {
       if (!cancelled) {
         setRows((data || []) as NoticeRow[]);
         setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [refundRes, drc03Res] = await Promise.all([
+        supabase.from('gst_refund_applications').select('status'),
+        supabase.from('gst_drc03_filings').select('status'),
+      ]);
+      if (!cancelled) {
+        setRefundStatuses((refundRes.data || []).map((r) => r.status));
+        setDrc03Statuses((drc03Res.data || []).map((r) => r.status));
       }
     })();
     return () => { cancelled = true; };
@@ -220,6 +260,19 @@ const NoticesDashboardPage: React.FC = () => {
     if (r.reply_date) entry.replied += 1;
     categoryMap.set(type, entry);
   });
+  // Refund/DRC-03 aren't gst_notices rows — they're folded into the same
+  // Notice Summary table Notice Alert shows them in, but as their own rows
+  // with their own drill-down page (see AllClientsRefundsPage/Drc03Page)
+  // since categoryFilter's local-filter mechanism only works over `rows`.
+  if (refundStatuses.length > 0) {
+    const closed = refundStatuses.filter((s) => isRefundClosed(s)).length;
+    categoryMap.set('Refund', { type: 'Refund', total: refundStatuses.length, open: refundStatuses.length - closed, closed, replied: 0, to: '/refunds-all' });
+  }
+  if (drc03Statuses.length > 0) {
+    const closed = drc03Statuses.filter((s) => isDrc03Closed(s)).length;
+    categoryMap.set('DRC 03', { type: 'DRC 03', total: drc03Statuses.length, open: drc03Statuses.length - closed, closed, replied: 0, to: '/drc03-all' });
+  }
+
   const categoryRows = Array.from(categoryMap.values()).sort((a, b) => b.total - a.total);
   const grandTotal = categoryRows.reduce(
     (acc, r) => ({ total: acc.total + r.total, open: acc.open + r.open, closed: acc.closed + r.closed, replied: acc.replied + r.replied }),
@@ -321,7 +374,7 @@ const NoticesDashboardPage: React.FC = () => {
           })}
         </div>
 
-        <Card className="flex min-h-0 flex-col xl:row-span-1">
+        <Card className="flex flex-col xl:row-span-1">
           <CardHeader className="shrink-0 pb-2 pt-3">
             <CardTitle className="text-sm">Notice Summary</CardTitle>
             <CardDescription className="text-[11px]">
@@ -340,7 +393,7 @@ const NoticesDashboardPage: React.FC = () => {
               )}
             </CardDescription>
           </CardHeader>
-          <CardContent className="min-h-0 flex-1 overflow-hidden pb-3">
+          <CardContent className="pb-3">
             {loading ? (
               <div className="flex items-center justify-center py-10 text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin" />
@@ -348,7 +401,10 @@ const NoticesDashboardPage: React.FC = () => {
             ) : categoryRows.length === 0 ? (
               <p className="py-10 text-center text-sm text-muted-foreground">No notices on record yet.</p>
             ) : (
-              <div className="h-full overflow-auto rounded-md border">
+              // Fixed cap (not "match the KPI tiles' height") so the row count —
+              // now 6+ with Refund/DRC-03 folded in — can't grow the whole page
+              // past one screen; it scrolls internally past this instead.
+              <div className="max-h-[180px] overflow-auto rounded-md border">
                 <Table>
                   <TableHeader className="sticky top-0 z-10 bg-background">
                     <TableRow>
@@ -364,10 +420,10 @@ const NoticesDashboardPage: React.FC = () => {
                       <TableRow
                         key={r.type}
                         className={cn('cursor-pointer', categoryFilter === r.type && 'bg-primary/10 hover:bg-primary/15')}
-                        onClick={() => setCategoryFilter((prev) => (prev === r.type ? null : r.type))}
+                        onClick={() => (r.to ? navigate(r.to) : setCategoryFilter((prev) => (prev === r.type ? null : r.type)))}
                       >
                         <TableCell className="px-2 py-1 text-[11px] font-medium text-primary">{r.type}</TableCell>
-                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.total}</TableCell>
+                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums text-primary underline-offset-2 hover:underline">{r.total}</TableCell>
                         <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.open || '—'}</TableCell>
                         <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.closed || '—'}</TableCell>
                         <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.replied || '—'}</TableCell>

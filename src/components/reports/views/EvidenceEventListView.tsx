@@ -19,7 +19,9 @@ import { cn } from '@/lib/utils';
 
 interface EvidenceEventListViewProps {
   table: ReportTable;
-  report: ReportDefinition;
+  // Only title/icon are read here, so firm-wide drill-down pages can reuse
+  // this view with a lightweight stub instead of a full catalog ReportDefinition.
+  report: Pick<ReportDefinition, 'title' | 'icon'>;
 }
 
 // ─────────────────── Cell/header heuristics (per the shared contract) ──────
