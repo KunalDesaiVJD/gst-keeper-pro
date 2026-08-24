@@ -165,7 +165,16 @@
   if (!job.clients) job.clients = [{ clientId: job.clientId, creds: job.creds }];
   if (job.idx == null) job.idx = 0;
   const cur = job.clients[job.idx];
-  const progress = job.clients.length > 1 ? ' (client ' + (job.idx + 1) + '/' + job.clients.length + ')' : '';
+  // Same shape for periods: a section-pull job may carry a queue of periods
+  // for the current client (see advance() below), one at a time, without
+  // logging out between them — the tab is already authenticated.
+  if (!job.periods) job.periods = job.period ? [job.period] : [''];
+  if (job.periodIdx == null) job.periodIdx = 0;
+  job.period = job.periods[job.periodIdx];
+  const progressParts = [];
+  if (job.clients.length > 1) progressParts.push('client ' + (job.idx + 1) + '/' + job.clients.length);
+  if (job.periods.length > 1) progressParts.push('period ' + (job.periodIdx + 1) + '/' + job.periods.length);
+  const progress = progressParts.length ? ' (' + progressParts.join(', ') + ')' : '';
 
   // Loop guard: if the session died mid-sync (Access Denied / bounced to login)
   // while we expected to be logged in, DON'T keep navigating. Re-login a couple of
@@ -264,10 +273,23 @@
     else banner('Error: ' + (e && e.message), '#dc2626');
   }
 
-  // Move to the next client in the queue (log out first), or finish.
+  // Move to the next period for the SAME client first (no logout — the tab
+  // is already authenticated, so this just re-runs the same job.step against
+  // the dashboard for the next period). Only once every period is done does
+  // this fall through to the next client (log out first), or finish.
   async function advance(job) {
+    if (job.periodIdx + 1 < job.periods.length) {
+      job.periodIdx++;
+      job.period = job.periods[job.periodIdx];
+      await setJob(job);
+      banner('Period done — moving to ' + job.period + '…', '#2563eb');
+      location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      return;
+    }
     job.idx++;
     if (job.idx < job.clients.length) {
+      job.periodIdx = 0;
+      job.period = job.periods[0];
       job.step = 'logout';
       await setJob(job);
       banner('Client done — switching to the next…', '#2563eb');

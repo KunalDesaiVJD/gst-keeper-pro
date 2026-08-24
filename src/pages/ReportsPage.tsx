@@ -35,8 +35,9 @@ const ReportsPage: React.FC = () => {
   // Multi-select periods, local to Reports — the global Month context stays
   // a single value for every other page, so this seeds from it once but
   // doesn't write back. View/Excel/PDF combine every selected period into
-  // one table (see reportPeriodMerge.ts); Pull queues them one at a time
-  // since the extension's job storage only holds one active job.
+  // one table (see reportPeriodMerge.ts); Pull sends every selected period
+  // to the extension as one job, which walks them in turn (see
+  // handlePullSection below).
   const [selectedPeriods, setSelectedPeriods] = useState<string[]>(selectedMonth ? [selectedMonth] : []);
   const [previewReport, setPreviewReport] = useState<ReportDefinition | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -88,29 +89,28 @@ const ReportsPage: React.FC = () => {
     return () => { window.removeEventListener('message', onMsg); clearTimeout(t1); clearTimeout(t2); };
   }, []);
 
-  // Pull stays single-period even with multiple periods selected — the
-  // extension's job state (chrome.storage) holds exactly one active job, and
-  // there's no "this period's pull actually finished" signal back to this
-  // page to safely chain the next one on (__gstkPullSectionResult only means
-  // "the portal tab opened", not "the pull completed" — CAPTCHA/login/scrape
-  // all still happen after that, asynchronously, in the new tab). Queuing
-  // periods against that would just clobber each other's job state. Pulls
-  // the first selected period and says so when more than one is selected.
+  // Pull queues every selected period for the one client in a single
+  // extension job (chrome.storage holds one active job, but that job now
+  // carries a `periods` queue — see startSectionPull/advance() in the
+  // extension) — the tab logs in once, then walks each period in turn
+  // without logging out in between. __gstkPullSectionResult only means "the
+  // portal tab opened", not "the pull completed" — CAPTCHA/login/scrape for
+  // every queued period still happens asynchronously in that tab afterward.
   const handlePullSection = useCallback((report: ReportDefinition) => {
     if (!report.pull) return;
     if (!selectedClientId) { toast.error('Select a client first'); return; }
-    const period = selectedPeriods[0];
-    if (report.pull.needsMonth && !period) { toast.error('Select a period first'); return; }
+    if (report.pull.needsMonth && selectedPeriods.length === 0) { toast.error('Select a period first'); return; }
     if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to pull from the portal.'); return; }
     if (report.pull.needsMonth && selectedPeriods.length > 1) {
-      toast.info(`Pulling ${period} only — run Pull again for each other selected period.`);
+      toast.info(`Pulling all ${selectedPeriods.length} selected periods in one portal tab — type the CAPTCHA once at login.`);
     }
     setPullingKey(report.key);
     window.postMessage({
       __gstkPullSection: {
         clientId: selectedClientId,
         mode: report.pull.mode,
-        period_month: report.pull.needsMonth ? period : undefined,
+        period_month: report.pull.needsMonth ? selectedPeriods[0] : undefined,
+        period_months: report.pull.needsMonth ? selectedPeriods : undefined,
       },
     }, '*');
 

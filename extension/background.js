@@ -292,14 +292,21 @@ const API = {
   startSectionPull: async (info) => {
     const c = await API.getClient(info.clientId);
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
+    // Reports Hub can select several periods at once ("This FY" etc) — queue
+    // all of them for this one client so a single Pull click covers every
+    // selected period instead of just the first (content.js's advance()
+    // walks the queue one period at a time, no re-login needed in between).
+    const periods = Array.isArray(info.period_months) && info.period_months.length
+      ? info.period_months
+      : [info.period_month || ''];
     const job = {
-      mode: info.mode, period: info.period_month || '', idx: 0, step: 'login', startedAt: Date.now(),
+      mode: info.mode, period: periods[0], periods, periodIdx: 0, idx: 0, step: 'login', startedAt: Date.now(),
       clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
     await chrome.storage.local.set({ gstk_active_job: job });
-    return { started: true, client: c.name, mode: info.mode };
+    return { started: true, client: c.name, mode: info.mode, periods: periods.length };
   },
 
   // Same as startSectionPull but queues EVERY client with saved credentials
