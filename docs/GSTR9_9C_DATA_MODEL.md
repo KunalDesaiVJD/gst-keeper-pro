@@ -116,3 +116,16 @@ So the actual operating principle is narrower than v1 claimed:
   computed," settled by the firm once, not re-litigated per table.
 - §4 is the acceptance test. "100% coverage" means every row in that table
   reads "done," verified against the real sheet, not against this plan.
+
+## 7. Gap found during R4
+
+Building GSTR 9-Input's view (28 Aug 2026) surfaced a row §3/§4 missed:
+**Table 7's rule-wise ITC reversals** (Rule 37/37A/38/39/42/43, and s.17(5)
+ineligible ITC) have no table anywhere in this schema. `pl_input_lines` and
+`duties_taxes_input_monthly` cover Table 7's other inputs (the suspended-ITC
+reversal columns), but the ineligible-ITC figure itself — a real, nonzero
+number in the reference filing (s.17(5) = 157 CGST/SGST) — is currently shown
+as "not captured" rather than defaulted to zero. This needs a small root
+table (`itc_reversal_lines`: client × FY × rule × tax head) before GSTR-9
+Table 7 and GSTR 9C Table 14 can be built for real — flagged here rather than
+silently left as a zero when R6 gets to it.
