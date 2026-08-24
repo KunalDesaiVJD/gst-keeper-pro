@@ -149,6 +149,11 @@ export interface ReportTable {
   rows: (string | number)[][];
   fileNameBase: string;
   columnWidths: number[]; // for Excel sheet sizing
+  // Parallel to `rows` (same index, same order) — the underlying DB row id
+  // for reports whose preview view needs to write back to a specific row
+  // (e.g. Notices' inline status/edit actions). Left undefined for every
+  // report that doesn't need per-row identity; Excel/PDF export ignore it.
+  rowIds?: (string | null)[];
 }
 
 // ─────────────────── REPORT 1: Suspended — All Clients ───────────────────

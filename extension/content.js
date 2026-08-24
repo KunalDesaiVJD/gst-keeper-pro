@@ -2429,7 +2429,7 @@
         reference_number: n.noticeOrderId || null, notice_type: n.type || null,
         description: n.descr || null, issue_date: ddmmyyyyToIso(n.dtOfIssue || ''),
         due_date: /^\d{2}\/\d{2}\/\d{4}$/.test(n.dueDate || '') ? ddmmyyyyToIso(n.dueDate) : null,
-        status: n.status || null, pdf_url: null,
+        status: n.status || null, issued_by: n.issuedBy || null, case_id: null, pdf_url: null,
       };
       if (n.docId && n.applnId) {
         try {
@@ -2483,7 +2483,7 @@
         client_id: cur.clientId, source: 'notices',
         reference_number: refId, notice_type: titleCase(t.caseTypeName),
         description: t.taskDesc || null, issue_date: epochMsToIsoDate(t.assignmentDt),
-        due_date: null, status: null, pdf_url: null,
+        due_date: null, status: null, issued_by: null, case_id: t.arn || null, pdf_url: null,
       };
       if (t.caseId && t.arn) {
         try {

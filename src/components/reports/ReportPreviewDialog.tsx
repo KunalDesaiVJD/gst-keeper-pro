@@ -21,6 +21,7 @@ import { FiledReturnSummaryView } from './views/FiledReturnSummaryView';
 import { VarianceComparisonView } from './views/VarianceComparisonView';
 import { DocumentLineItemsView } from './views/DocumentLineItemsView';
 import { EvidenceEventListView } from './views/EvidenceEventListView';
+import { NoticeWorkflowListView } from './views/NoticeWorkflowListView';
 import { ProfileCardView } from './views/ProfileCardView';
 import { AllClientsSnapshotView } from './views/AllClientsSnapshotView';
 import { AnnualTrendView } from './views/AnnualTrendView';
@@ -50,6 +51,8 @@ const renderView = (report: ReportDefinition, table: ReportTable): React.ReactNo
       return <DocumentLineItemsView table={table} report={report} />;
     case 'evidence-event-list':
       return <EvidenceEventListView table={table} report={report} />;
+    case 'notice-workflow-list':
+      return <NoticeWorkflowListView table={table} report={report} />;
     case 'profile-card':
       return <ProfileCardView table={table} report={report} />;
     case 'all-clients-snapshot':

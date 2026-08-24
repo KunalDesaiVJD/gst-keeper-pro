@@ -25,6 +25,7 @@ import GSTR1DataPage from "@/pages/GSTR1DataPage";
 import Gstr3bPage from "@/pages/Gstr3bPage";
 import Gstr3bAdjustmentsPage from "@/pages/Gstr3bAdjustmentsPage";
 import ReportsPage from "@/pages/ReportsPage";
+import NoticesDashboardPage from "@/pages/NoticesDashboardPage";
 import BuilderWorkspacePage from "@/pages/BuilderWorkspacePage";
 import BuilderSettingsPage from "@/pages/BuilderSettingsPage";
 import BuilderProjectsPage from "@/pages/BuilderProjectsPage";
@@ -90,6 +91,7 @@ const App = () => (
                   <Route path="/builder-dastavej" element={<BuilderDastavejPage />} />
                   <Route path="/builder-reports" element={<BuilderReportsPage />} />
                   <Route path="/reports" element={<ReportsPage />} />
+                  <Route path="/notices-dashboard" element={<NoticesDashboardPage />} />
                   <Route path="/manage-employees" element={<ManageEmployeesPage />} />
                   <Route path="/user-control" element={<UserControlPage />} />
                   <Route path="/settings" element={<SettingsPage />} />

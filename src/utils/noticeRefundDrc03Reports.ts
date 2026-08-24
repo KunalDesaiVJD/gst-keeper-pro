@@ -20,12 +20,16 @@ const fetchClient = async (clientId: string): Promise<ClientLite> => {
 
 // ─────────────────── NOTICE & ORDER (2 reports) ───────────────────────────
 
-const buildNoticesReport = async (clientId: string, source: 'notices' | 'additional_notices', title: string): Promise<ReportTable> => {
+// "Additional Notices and Orders" stays a plain read-only mirror — the
+// portal itself merged this source into "View Notice and Orders" (see the
+// report's own description), so it correctly always reads back empty.
+export const buildAdditionalNoticesAndOrdersReport = async (clientId: string): Promise<ReportTable> => {
+  const title = 'Additional Notices and Orders';
   const client = await fetchClient(clientId);
   const { data, error } = await supabase
     .from('gst_notices')
     .select('reference_number, notice_type, description, issue_date, due_date, status, pdf_url')
-    .eq('client_id', clientId).eq('source', source)
+    .eq('client_id', clientId).eq('source', 'additional_notices')
     .order('issue_date', { ascending: false });
   if (error) throw error;
   const rows = data || [];
@@ -43,8 +47,52 @@ const buildNoticesReport = async (clientId: string, source: 'notices' | 'additio
   };
 };
 
-export const buildViewNoticesAndOrdersReport = (clientId: string) => buildNoticesReport(clientId, 'notices', 'View Notice and Orders');
-export const buildAdditionalNoticesAndOrdersReport = (clientId: string) => buildNoticesReport(clientId, 'additional_notices', 'Additional Notices and Orders');
+// "View Notice and Orders" is the active case-tracking one: on top of what
+// the portal returns, staff log replies filed, orders received, and
+// applications submitted, and set a manual Open/Closed status + priority
+// flag — none of which the portal exposes for these rows. `status` from the
+// portal itself is always null (confirmed against the real get/notices API),
+// so the report's Status column now reads staff_status instead.
+export const buildViewNoticesAndOrdersReport = async (clientId: string): Promise<ReportTable> => {
+  const title = 'View Notice and Orders';
+  const client = await fetchClient(clientId);
+  const { data, error } = await supabase
+    .from('gst_notices')
+    .select(
+      'id, reference_number, case_id, notice_type, description, issue_date, due_date, extended_due_date, ' +
+      'staff_status, priority, reply_ref_number, reply_date, order_number, order_date, submission_arn, submission_date, ' +
+      'amount_of_demand, remarks, issued_by, financial_year, assign_to, pdf_url',
+    )
+    .eq('client_id', clientId).eq('source', 'notices')
+    .order('issue_date', { ascending: false });
+  if (error) throw error;
+  const rows = data || [];
+  if (rows.length === 0) {
+    throw new Error(`No ${title.toLowerCase()} on record for ${client.name}. Use "Pull" on this report to fetch it directly from the GST portal.`);
+  }
+
+  return {
+    title,
+    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   All periods on record, most recent first`,
+    headers: [
+      'Reference No.', 'Case ID', 'Type', 'Description', 'Issue Date', 'Due Date', 'Extended Due Date', 'Status', 'Priority',
+      'Reply Ref No.', 'Reply Date', 'Order No.', 'Order Date', 'Submission ARN', 'Submission Date',
+      'Amount of Demand', 'Remarks', 'Issued By', 'Financial Year', 'Assign To', 'PDF',
+    ],
+    rows: rows.map((r) => [
+      r.reference_number || '—', r.case_id || '—', r.notice_type || '—', r.description || '—',
+      r.issue_date || '—', r.due_date || '—', r.extended_due_date || '—',
+      r.staff_status || '—', r.priority ? 'High' : '—',
+      r.reply_ref_number || '—', r.reply_date || '—', r.order_number || '—', r.order_date || '—',
+      r.submission_arn || '—', r.submission_date || '—',
+      r.amount_of_demand != null ? num(r.amount_of_demand) : '—', r.remarks || '—', r.issued_by || '—', r.financial_year || '—', r.assign_to || '—',
+      r.pdf_url || '—',
+    ]),
+    rowIds: rows.map((r) => r.id),
+    fileNameBase: `${fileSafe(title)}_${fileSafe(client.name)}`,
+    columnWidths: [16, 16, 16, 40, 12, 12, 14, 10, 8, 14, 12, 14, 12, 16, 14, 14, 24, 12, 12, 14, 12],
+  };
+};
 
 // ─────────────────── REFUND (3 reports) ────────────────────────────────────
 

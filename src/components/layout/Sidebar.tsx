@@ -19,7 +19,8 @@ import {
   Files,
   FileCheck2,
   Building,
-  FileSignature
+  FileSignature,
+  Bell
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
@@ -144,6 +145,12 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     label: 'Reports',
     path: '/reports',
     icon: <FolderDown className="h-5 w-5" />,
+    roles: ['superadmin', 'gst_manager', 'employee'],
+  },
+  {
+    label: 'Notices Dashboard',
+    path: '/notices-dashboard',
+    icon: <Bell className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
 ];

@@ -80,6 +80,9 @@ export interface ReportRunArgs {
  *  - variance-comparison: two (or more) sources side by side with a delta column
  *  - document-line-items: rate/supplier/HSN-wise document-level breakdowns
  *  - evidence-event-list: chronological portal events each with its own PDF
+ *  - notice-workflow-list: View Notice and Orders specifically — the same
+ *    event-list shape, plus staff-editable case-tracking (status/priority/
+ *    reply/order/submission) writing back to the underlying row
  *  - profile-card: reference-data reports that read like a profile, not a grid
  *  - all-clients-snapshot: one row per client roster reports
  *  - annual-trend: one client's figure across all twelve months of an FY
@@ -92,6 +95,7 @@ export type ReportViewKind =
   | 'variance-comparison'
   | 'document-line-items'
   | 'evidence-event-list'
+  | 'notice-workflow-list'
   | 'profile-card'
   | 'all-clients-snapshot'
   | 'annual-trend'

@@ -49,6 +49,23 @@ const STATUS_VARIANT = (v: string): 'success' | 'warning' | 'destructive' | 'sec
   return 'secondary';
 };
 
+// "Type" column (Order/Notice/Letter Of Undertaking/Voluntary Payment/...) —
+// a colored pill instead of plain text, so the event kind is scannable at a
+// glance without reading every cell (matches Notice Alert's colored-status
+// convention, applied here to Type since this app's own Status column is
+// usually empty — the portal doesn't expose a status for most of these).
+const TYPE_HEADER_RE = /^type$/i;
+
+const TYPE_VARIANT = (v: string): 'default' | 'warning' | 'info' | 'success' | 'destructive' | 'secondary' => {
+  const s = v.toUpperCase();
+  if (/ORDER/.test(s)) return 'default';
+  if (/NOTICE/.test(s)) return 'warning';
+  if (/UNDERTAKING|LUT/.test(s)) return 'info';
+  if (/VOLUNTARY|PAYMENT|ACKNOWLEDG/.test(s)) return 'success';
+  if (/REJECT|CANCEL|DEFAULT/.test(s)) return 'destructive';
+  return 'secondary';
+};
+
 // Evidence column: the report's own PDF/Documents column. Detected by header
 // name — every report in this archetype that carries a document names its
 // column exactly this way (see noticeRefundDrc03Reports.ts / extraPortalReports.ts).
@@ -110,6 +127,7 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
   const headers = table.headers;
   const evidenceColIdx = useMemo(() => headers.findIndex((h) => EVIDENCE_HEADER_RE.test(h)), [headers]);
   const statusColIdx = useMemo(() => headers.findIndex((h) => STATUS_HEADER_RE.test(h.trim())), [headers]);
+  const typeColIdx = useMemo(() => headers.findIndex((h) => TYPE_HEADER_RE.test(h.trim())), [headers]);
   const dateColIdx = useMemo(() => findDateColIdx(headers), [headers]);
 
   const { dataRows, totalRows } = useMemo(() => {
@@ -329,12 +347,21 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
                   {row.map((cell, ci) => {
                     const header = headers[ci] || '';
 
-                    // Evidence column: first-class icon button, muted+disabled when not captured.
+                    // Evidence column: first-class icon button. Present vs. absent gets
+                    // distinct colors (not just opacity) — a red, document-colored icon
+                    // reads as "there's a real PDF here, click it" at a glance, the way
+                    // a red Adobe-PDF icon does elsewhere; absent stays neutral/muted.
                     if (ci === evidenceColIdx) {
                       return (
                         <TableCell key={ci} className="px-3 py-1.5 text-center">
                           {isUrl(cell) ? (
-                            <Button variant="outline" size="icon" className="h-7 w-7" title="Open document" asChild>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-7 w-7 border-red-200 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-400 dark:hover:bg-red-950/50"
+                              title="Open document"
+                              asChild
+                            >
                               {/* A real <a> click is normal browser navigation, not a
                                   script-triggered popup — window.open() here got silently
                                   blocked by popup-blocker policies on some machines. */}
@@ -353,6 +380,17 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
                               <FileText className="h-3.5 w-3.5" />
                             </Button>
                           )}
+                        </TableCell>
+                      );
+                    }
+
+                    // Type column: a colored pill instead of plain text.
+                    if (ci === typeColIdx && String(cell ?? '').trim() && !isSentinel(cell)) {
+                      return (
+                        <TableCell key={ci} className="whitespace-nowrap px-3 py-1.5 text-xs">
+                          <Badge variant={TYPE_VARIANT(String(cell))} className="py-0 text-[10px]">
+                            {String(cell)}
+                          </Badge>
                         </TableCell>
                       );
                     }

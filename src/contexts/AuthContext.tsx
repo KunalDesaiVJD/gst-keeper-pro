@@ -27,6 +27,7 @@ interface UserPermissions {
   approve_fsi_consent: boolean;
   view_builder_reports: boolean;
   edit_gstr1_import_mode: boolean;
+  edit_notice_status: boolean;
 }
 
 const DEFAULT_PERMISSIONS: UserPermissions = {
@@ -50,6 +51,7 @@ const DEFAULT_PERMISSIONS: UserPermissions = {
   approve_fsi_consent: false,
   view_builder_reports: false,
   edit_gstr1_import_mode: false,
+  edit_notice_status: false,
 };
 
 interface AppUser {
@@ -92,6 +94,7 @@ interface AuthContextType {
   canApproveFsiConsent: () => boolean;
   canViewBuilderReports: () => boolean;
   canEditGstr1ImportMode: () => boolean;
+  canEditNoticeStatus: () => boolean;
   hasPermission: (permission: keyof UserPermissions) => boolean;
 }
 
@@ -507,6 +510,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return hasPermission('edit_filing_status');
   }, [user, hasPermission]);
 
+  const canEditNoticeStatus = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission('edit_notice_status');
+  }, [user, hasPermission]);
+
   const canExportData = useCallback((): boolean => {
     if (!user) return false;
     if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
@@ -643,6 +652,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canApproveFsiConsent,
         canViewBuilderReports,
         canEditGstr1ImportMode,
+        canEditNoticeStatus,
         hasPermission,
       }}
     >

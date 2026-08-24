@@ -108,6 +108,11 @@ const AVAILABLE_PERMISSIONS = [
     label: 'GSTR-1 Import Mode',
     description: 'Change how a client\'s GSTR-1 is prepared: JSON, Manual, or JSON + Manual (edit an imported return)',
   },
+  {
+    key: 'edit_notice_status',
+    label: 'Edit Notice Status',
+    description: 'Set a notice\'s Open/Closed status and priority flag, and log reply/order/submission details on the View Notice and Orders report',
+  },
   // Note: approve_fsi_consent is intentionally absent. Signing off a client's
   // written instruction to skip RCM on TDR/FSI is restricted to GST Manager and
   // Superadmin by role, and cannot be granted to an employee here.
