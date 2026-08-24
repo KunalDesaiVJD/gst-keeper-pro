@@ -173,15 +173,28 @@ const NoticesDashboardPage: React.FC = () => {
   const overdue = displayRows.filter((r) => r.due_date && daysUntil(r.due_date) < 0).length;
   const priorityCount = displayRows.filter((r) => r.priority).length;
 
+  // Every tile except Total GSTIN drills into the firm-wide notice list,
+  // carrying the current Type Of Notices / category selections along so the
+  // drilled-down list stays consistent with what's on screen — matching
+  // Notice Alert's own tile-click behavior (confirmed live: each tile
+  // navigates to "Notices and Orders" pre-filtered).
+  const drillParams = (extra: Record<string, string>) => {
+    const p = new URLSearchParams(extra);
+    if (typeFilter !== 'all') p.set('type', typeFilter);
+    if (categoryFilter) p.set('category', categoryFilter);
+    const qs = p.toString();
+    return qs ? `/notices-all?${qs}` : '/notices-all';
+  };
+
   const kpiCards = [
-    { label: 'Total Notices', value: totalNotices, icon: <Bell className="h-8 w-8 text-primary" />, bgColor: 'bg-primary/5' },
-    { label: 'Last 15 Days', value: last15Days, icon: <CalendarClock className="h-8 w-8 text-info" />, bgColor: 'bg-info/5' },
-    { label: 'Last 24 Hours', value: last24Hours, icon: <History className="h-8 w-8 text-info" />, bgColor: 'bg-info/5' },
-    { label: 'Total GSTIN', value: totalGstin, icon: <Building2 className="h-8 w-8 text-secondary-foreground" />, bgColor: 'bg-secondary/40' },
-    { label: 'Open Notices', value: openNotices, icon: <FolderOpen className="h-8 w-8 text-warning" />, bgColor: 'bg-warning/5' },
-    { label: '7 Days Due', value: dueSoon, icon: <CalendarClock className="h-8 w-8 text-warning" />, bgColor: 'bg-warning/5' },
-    { label: 'Over Due', value: overdue, icon: <AlertTriangle className="h-8 w-8 text-destructive" />, bgColor: 'bg-destructive/5' },
-    { label: 'Priority', value: priorityCount, icon: <Flag className="h-8 w-8 text-destructive" />, bgColor: 'bg-destructive/5' },
+    { label: 'Total Notices', value: totalNotices, icon: <Bell className="h-8 w-8 text-primary" />, bgColor: 'bg-primary/5', to: drillParams({}) },
+    { label: 'Last 15 Days', value: last15Days, icon: <CalendarClock className="h-8 w-8 text-info" />, bgColor: 'bg-info/5', to: drillParams({ filter: 'last15' }) },
+    { label: 'Last 24 Hours', value: last24Hours, icon: <History className="h-8 w-8 text-info" />, bgColor: 'bg-info/5', to: drillParams({ filter: 'last24h' }) },
+    { label: 'Total GSTIN', value: totalGstin, icon: <Building2 className="h-8 w-8 text-secondary-foreground" />, bgColor: 'bg-secondary/40', to: null },
+    { label: 'Open Notices', value: openNotices, icon: <FolderOpen className="h-8 w-8 text-warning" />, bgColor: 'bg-warning/5', to: drillParams({ status: 'Open' }) },
+    { label: '7 Days Due', value: dueSoon, icon: <CalendarClock className="h-8 w-8 text-warning" />, bgColor: 'bg-warning/5', to: drillParams({ filter: 'due7' }) },
+    { label: 'Over Due', value: overdue, icon: <AlertTriangle className="h-8 w-8 text-destructive" />, bgColor: 'bg-destructive/5', to: drillParams({ filter: 'overdue' }) },
+    { label: 'Priority', value: priorityCount, icon: <Flag className="h-8 w-8 text-destructive" />, bgColor: 'bg-destructive/5', to: drillParams({ filter: 'priority' }) },
   ];
 
   const categoryMap = new Map<string, CategoryRow>();
@@ -364,8 +377,8 @@ const NoticesDashboardPage: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {kpiCards.map((card) => (
-          <Card key={card.label} className="border">
+        {kpiCards.map((card) => {
+          const body = (
             <CardContent className="p-4">
               <div className="flex items-start justify-between">
                 <div>
@@ -377,8 +390,15 @@ const NoticesDashboardPage: React.FC = () => {
                 <div className={`rounded-full p-2 ${card.bgColor}`}>{card.icon}</div>
               </div>
             </CardContent>
-          </Card>
-        ))}
+          );
+          return card.to ? (
+            <Link key={card.label} to={card.to}>
+              <Card className="border transition-colors hover:border-primary/40 hover:bg-muted/30">{body}</Card>
+            </Link>
+          ) : (
+            <Card key={card.label} className="border">{body}</Card>
+          );
+        })}
       </div>
 
       <Card>
