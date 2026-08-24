@@ -111,3 +111,45 @@ export async function fetchPortalItcClaimedAnnual(clientId: string, financialYea
   });
   return total;
 }
+
+/** GSTR-1 turnover, summed across the FY from Portal Capture — the "as per auto-calculated GSTR-9" figure Annexure 1 checks against. */
+export async function fetchPortalTurnoverAnnual(clientId: string, financialYear: string): Promise<TaxSum> {
+  const months = monthsForFY(financialYear);
+  const { data, error } = await supabase.from('gst_filed_returns').select('summary').eq('client_id', clientId).eq('return_type', 'GSTR-1').in('period_month', months);
+  if (error) throw error;
+  let total = zero();
+  (data || []).forEach((r: { summary: Record<string, number> | null }) => {
+    const s = r.summary || {};
+    total = add(total, { taxable: s.turnover_taxable, igst: s.turnover_igst, cgst: s.turnover_cgst, sgst: s.turnover_sgst });
+  });
+  return total;
+}
+
+export interface TaxHeadPayment { payable: number; paidCash: number; paidItc: number; }
+/** Payable vs. paid, per tax head, for the FY — Annexure 1's "Paid & Payable" section and GSTR-9 Table 9. */
+export async function fetchTaxPaymentTotals(clientId: string, financialYear: string): Promise<Record<'igst' | 'cgst' | 'sgst', TaxHeadPayment>> {
+  const { data, error } = await supabase.from('portal_tax_payment_entries').select('tax_head, payable, paid_cash, paid_itc').eq('client_id', clientId).eq('financial_year', financialYear);
+  if (error) throw error;
+  const totals: Record<'igst' | 'cgst' | 'sgst', TaxHeadPayment> = {
+    igst: { payable: 0, paidCash: 0, paidItc: 0 }, cgst: { payable: 0, paidCash: 0, paidItc: 0 }, sgst: { payable: 0, paidCash: 0, paidItc: 0 },
+  };
+  (data || []).forEach((r: { tax_head: string; payable: number; paid_cash: number; paid_itc: number }) => {
+    if (r.tax_head === 'igst' || r.tax_head === 'cgst' || r.tax_head === 'sgst') {
+      totals[r.tax_head] = { payable: Number(r.payable), paidCash: Number(r.paid_cash), paidItc: Number(r.paid_itc) };
+    }
+  });
+  return totals;
+}
+
+/** Next-year carry-forward items for a (client, FY), split by direction. */
+export async function fetchCarryForwardTotals(clientId: string, financialYear: string) {
+  const { data, error } = await supabase.from('annual_return_carry_forward').select('direction, taxable_value, igst, cgst, sgst').eq('client_id', clientId).eq('financial_year', financialYear);
+  if (error) throw error;
+  const totals: Record<string, TaxSum> = {
+    claimed_in_next_fy: zero(), claimed_from_prev_fy: zero(), turnover_declared_next_fy: zero(), turnover_reduced_next_fy: zero(),
+  };
+  (data || []).forEach((r: { direction: string; taxable_value: number; igst: number; cgst: number; sgst: number }) => {
+    if (totals[r.direction]) totals[r.direction] = add(totals[r.direction], { taxable: r.taxable_value, igst: r.igst, cgst: r.cgst, sgst: r.sgst });
+  });
+  return totals;
+}

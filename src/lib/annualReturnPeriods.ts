@@ -16,6 +16,12 @@ export const monthsForFY = (fy: string): string[] => {
   });
 };
 
+/** FY "2025-26" -> "2024-25" */
+export const previousFY = (fy: string): string => {
+  const startYear = Number(fy.split('-')[0]) - 1;
+  return `${startYear}-${String(startYear + 1).slice(-2)}`;
+};
+
 /** Current FY (Apr–Mar) plus the previous 2 and next 1. */
 export const fyOptions = (): string[] => {
   const now = new Date();

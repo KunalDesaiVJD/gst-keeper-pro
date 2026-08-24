@@ -25,6 +25,10 @@ import AnnualCrossCheckCard from '@/components/annualReturn/AnnualCrossCheckCard
 import Gstr9InputView from '@/components/annualReturn/Gstr9InputView';
 import Gstr9OutputDiffView from '@/components/annualReturn/Gstr9OutputDiffView';
 import Gstr9cTable12bView from '@/components/annualReturn/Gstr9cTable12bView';
+import Annexure1Card from '@/components/annualReturn/Annexure1Card';
+import Annexure2Card from '@/components/annualReturn/Annexure2Card';
+import Annexure3Card from '@/components/annualReturn/Annexure3Card';
+import Annexure4Card from '@/components/annualReturn/Annexure4Card';
 import { fyOptions } from '@/lib/annualReturnPeriods';
 import { fetchReconciliationLines, isFullyReconciled } from '@/lib/annualReturnReconciliation';
 
@@ -199,6 +203,7 @@ const AnnualReturnPage: React.FC = () => {
             <TabsTrigger value="gstr9input">GSTR 9-Input</TabsTrigger>
             <TabsTrigger value="gstr9output">GSTR 9-Output</TabsTrigger>
             <TabsTrigger value="gstr9c">GSTR 9C</TabsTrigger>
+            <TabsTrigger value="annexure">Annexure</TabsTrigger>
             <TabsTrigger value="portal">Portal Capture</TabsTrigger>
             <TabsTrigger value="reconciliation">Reconciliation</TabsTrigger>
           </TabsList>
@@ -298,6 +303,13 @@ const AnnualReturnPage: React.FC = () => {
 
           <TabsContent value="gstr9c" className="space-y-4">
             <Gstr9cTable12bView clientId={selectedClientId} financialYear={financialYear} />
+          </TabsContent>
+
+          <TabsContent value="annexure" className="space-y-4">
+            <Annexure1Card clientId={selectedClientId} financialYear={financialYear} />
+            <Annexure2Card clientId={selectedClientId} financialYear={financialYear} />
+            <Annexure3Card clientId={selectedClientId} financialYear={financialYear} />
+            <Annexure4Card clientId={selectedClientId} financialYear={financialYear} />
           </TabsContent>
 
           <TabsContent value="portal" className="space-y-4">
