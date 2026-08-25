@@ -433,6 +433,16 @@
         // stop on the portal, no return/ledger navigation.
         banner('Logged in ✓ — ' + cur.creds.name + '. You are on the GST portal; this tab is yours now.', '#16a34a');
         await clearJob();
+      } else if (job.mode === 'noticeopen') {
+        // From a Notices Dashboard row's "Portal" icon: log in and land on
+        // Notices & Orders, then stop — the specific notice's own view/reply
+        // flow varies by notice type (see background.js's startNoticeOpen),
+        // so we get the human to the right list logged in as the right
+        // client and let them take it from there (search by ref no.).
+        const ref = job.referenceNumber ? ' — search for "' + job.referenceNumber + '" in the list.' : '';
+        banner('Logged in ✓ — ' + cur.creds.name + '. Opening Notices & Orders' + ref, '#16a34a');
+        await clearJob();
+        location.href = 'https://services.gst.gov.in/services/auth/notices';
       } else {
         banner('Logged in — reading ledgers…' + progress);
         job.step = 'ledger';

@@ -180,6 +180,7 @@ const AllClientsNoticesPage: React.FC = () => {
       r.pdf_url || '—',
     ]),
     rowIds: filtered.map((r) => r.id),
+    clientIds: filtered.map((r) => r.client_id),
     fileNameBase: 'Notices_All_Clients',
     columnWidths: [16, 24, 16, 16, 16, 40, 12, 12, 14, 10, 8, 14, 12, 14, 12, 16, 14, 14, 24, 12, 12, 14, 12],
   };

@@ -349,6 +349,31 @@ const API = {
     return { started: true, client: c.name };
   },
 
+  // From a Notices Dashboard row's "Portal" icon: log the client in and land
+  // directly on the Notices & Orders list — saves "find the right client,
+  // log in, navigate to Notices & Orders" before staff can search for the
+  // specific reference number themselves. This does NOT open the specific
+  // notice's own case/reply page: that varies by notice type (plain
+  // document fetch, litserv case/folder, or a dedicated spikeweb module
+  // depending on the notice — confirmed live 2026-08-25) and the actual
+  // reply-submission flow couldn't be reverse-engineered because the GST
+  // portal's own reply modal wasn't rendering for anyone at the time, not
+  // just automation. This is the safe subset of that task: get the human to
+  // the right list, logged in as the right client, instead of doing nothing.
+  startNoticeOpen: async (info) => {
+    const c = await API.getClient(info.clientId);
+    if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
+    const job = {
+      mode: 'noticeopen', idx: 0, step: 'login', startedAt: Date.now(),
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+      referenceNumber: info.referenceNumber || '',
+    };
+    const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
+    job.tabId = tab.id;
+    await chrome.storage.local.set({ gstk_active_job: job });
+    return { started: true, client: c.name };
+  },
+
   // From the GSTR-1 "Upload to GST Portal" button. Fetches the stored GSTR-1
   // JSON + client credentials, then opens a portal tab. The content script
   // logs in, navigates to the return dashboard, uploads the JSON, waits for

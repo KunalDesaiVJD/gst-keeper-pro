@@ -125,6 +125,20 @@ window.addEventListener('message', (e) => {
     return;
   }
 
+  // A Notices Dashboard row's "Portal" icon asked to log the client in and
+  // land on Notices & Orders (see background.js's startNoticeOpen for why
+  // this stops there instead of opening the specific notice).
+  if (d.__gstkOpenNotice) {
+    const info = d.__gstkOpenNotice;
+    if (!info.clientId) return;
+    chrome.runtime.sendMessage({ gstk: true, fn: 'startNoticeOpen', args: [info] }, (resp) => {
+      const ok = resp && resp.ok;
+      const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
+      window.postMessage({ __gstkOpenNoticeResult: ok ? { ok: true } : { ok: false, error } }, '*');
+    });
+    return;
+  }
+
   // The GSTR-1 "Upload to GST Portal" button asked to push the stored JSON to
   // the portal. Background fetches the JSON + credentials and opens a portal
   // tab; the final result (accepted / partial / failed + per-invoice errors)

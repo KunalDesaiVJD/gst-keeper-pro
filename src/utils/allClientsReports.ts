@@ -154,6 +154,12 @@ export interface ReportTable {
   // (e.g. Notices' inline status/edit actions). Left undefined for every
   // report that doesn't need per-row identity; Excel/PDF export ignore it.
   rowIds?: (string | null)[];
+  // Parallel to `rows` — the client each row belongs to, for a firm-wide
+  // (all-clients) table whose preview view needs to open the GST portal
+  // logged in as that specific row's client (e.g. Notices' "Portal" icon).
+  // Left undefined for single-client reports, where every row shares one
+  // client already known to the page rendering the report.
+  clientIds?: (string | null)[];
 }
 
 // ─────────────────── REPORT 1: Suspended — All Clients ───────────────────

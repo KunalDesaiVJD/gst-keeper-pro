@@ -20,7 +20,7 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@
 import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { FileText, Search, DownloadCloud, Inbox, Pencil, Flag, Loader2, FileSpreadsheet } from 'lucide-react';
+import { FileText, Search, DownloadCloud, Inbox, Pencil, Flag, Loader2, FileSpreadsheet, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { renderReportToExcel } from '@/utils/allClientsReports';
 
@@ -181,12 +181,46 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
   const [bulkPriorityOpen, setBulkPriorityOpen] = useState(false);
   const [bulkPriority, setBulkPriority] = useState<string>('');
   const [bulkSaving, setBulkSaving] = useState(false);
+  // Extension handshake for the per-row "Portal" icon (log in as that row's
+  // client and land on Notices & Orders) — same ping/pong pattern used
+  // elsewhere in the app.
+  const [extReady, setExtReady] = useState(false);
+  const [openingIdx, setOpeningIdx] = useState<number | null>(null);
   const Icon = report.icon || FileText;
 
   useEffect(() => { setRows(table.rows); }, [table]);
 
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      const d: any = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkOpenNoticeResult) {
+        setOpeningIdx(null);
+        if (!d.__gstkOpenNoticeResult.ok) toast.error(d.__gstkOpenNoticeResult.error || 'Failed to open the portal.');
+      }
+    };
+    window.addEventListener('message', onMsg);
+    const ping = () => window.postMessage({ __gstkAppReady: true }, '*');
+    ping();
+    const t1 = setTimeout(ping, 400);
+    const t2 = setTimeout(ping, 1200);
+    return () => { window.removeEventListener('message', onMsg); clearTimeout(t1); clearTimeout(t2); };
+  }, []);
+
   const headers = table.headers;
   const rowIds = table.rowIds;
+  const clientIds = table.clientIds;
+  const referenceColIdx = useMemo(() => headers.findIndex((h) => /^reference no\.?$/i.test(h.trim())), [headers]);
+
+  const openInPortal = (idx: number) => {
+    const clientId = clientIds?.[idx];
+    if (!clientId) return;
+    if (!extReady) { toast.error('GST Keeper browser extension not detected.'); return; }
+    const referenceNumber = referenceColIdx !== -1 ? cellToText(rows[idx]?.[referenceColIdx]) : '';
+    setOpeningIdx(idx);
+    window.postMessage({ __gstkOpenNotice: { clientId, referenceNumber } }, '*');
+  };
   const evidenceColIdx = useMemo(() => headers.findIndex((h) => EVIDENCE_HEADER_RE.test(h)), [headers]);
   const statusColIdx = useMemo(() => headers.findIndex((h) => STATUS_HEADER_RE.test(h.trim())), [headers]);
   const typeColIdx = useMemo(() => headers.findIndex((h) => TYPE_HEADER_RE.test(h.trim())), [headers]);
@@ -797,16 +831,30 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
                   })}
                   {canEdit && (
                     <TableCell className="px-3 py-1.5 text-center">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7"
-                        title="Log reply / order / submission"
-                        disabled={!rowIds?.[idx]}
-                        onClick={() => openEditDialog(idx)}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
+                      <div className="flex items-center justify-center gap-0.5">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          title="Log reply / order / submission"
+                          disabled={!rowIds?.[idx]}
+                          onClick={() => openEditDialog(idx)}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        {clientIds && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            title="Open this client on the GST portal, logged in"
+                            disabled={!clientIds[idx] || openingIdx === idx}
+                            onClick={() => openInPortal(idx)}
+                          >
+                            {openingIdx === idx ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   )}
                 </TableRow>
