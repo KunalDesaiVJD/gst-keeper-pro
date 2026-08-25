@@ -58,9 +58,12 @@ interface BulkAddClientsDialogProps {
    * Notices Dashboard's "Company" panel reuses this exact dialog under an
    * "Import Company" label to match Notice Alert's button naming. */
   triggerLabel?: string;
+  /** Override the trigger button's className — same reuse case as
+   * triggerLabel, so the button can match its sibling toolbar buttons. */
+  triggerClassName?: string;
 }
 
-const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess, triggerLabel }) => {
+const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess, triggerLabel, triggerClassName }) => {
   const [open, setOpen] = useState(false);
   const [validationResults, setValidationResults] = useState<ValidationResult[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -338,7 +341,7 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess, 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" className="flex items-center gap-2">
+        <Button variant="outline" className={`flex items-center gap-2 ${triggerClassName || ''}`}>
           <Upload className="h-4 w-4" />
           {triggerLabel || 'Bulk Add Clients'}
         </Button>

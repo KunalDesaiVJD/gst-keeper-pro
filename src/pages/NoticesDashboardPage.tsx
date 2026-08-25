@@ -417,15 +417,19 @@ const NoticesDashboardPage: React.FC = () => {
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-2 pb-3">
             {canManageClients && (
-              <div className="flex flex-wrap gap-1.5">
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => navigate('/add-client')}>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Button size="sm" variant="outline" className="h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={() => navigate('/add-client')}>
                   <UserPlus className="mr-1.5 h-3.5 w-3.5" /> Add Company
                 </Button>
-                <BulkAddClientsDialog triggerLabel="Import Company" onSuccess={() => window.location.reload()} />
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={downloadClientImportTemplate}>
+                <BulkAddClientsDialog
+                  triggerLabel="Import Company"
+                  triggerClassName="h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary"
+                  onSuccess={() => window.location.reload()}
+                />
+                <Button size="sm" variant="outline" className="h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={downloadClientImportTemplate}>
                   <Download className="mr-1.5 h-3.5 w-3.5" /> Download Template
                 </Button>
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleSyncAll} disabled={syncing}>
+                <Button size="sm" variant="outline" className="ml-auto h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={handleSyncAll} disabled={syncing}>
                   {syncing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
                   Sync All
                 </Button>
@@ -438,30 +442,36 @@ const NoticesDashboardPage: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-auto px-2 py-1.5 text-[11px] font-semibold">Trade Name</TableHead>
-                    <TableHead className="w-[150px] px-2 py-1.5 text-[11px] font-semibold">GSTIN</TableHead>
-                    {canManageClients && <TableHead className="w-10 px-2 py-1.5 text-[11px] font-semibold" />}
+                    <TableHead className="w-8 bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">#</TableHead>
+                    <TableHead className="w-[150px] bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">GSTIN</TableHead>
+                    <TableHead className="w-auto bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">Trade Name</TableHead>
+                    <TableHead className="w-10 bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">{canManageClients && 'Action'}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {miniClients.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={canManageClients ? 3 : 2} className="py-6 text-center text-xs text-muted-foreground">
+                      <TableCell colSpan={4} className="py-6 text-center text-xs text-muted-foreground">
                         No companies yet.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    miniClients.map((c) => (
+                    miniClients.map((c, idx) => (
                       <TableRow key={c.id}>
+                        <TableCell className="px-2 py-1 text-xs text-muted-foreground">{idx + 1}</TableCell>
+                        <TableCell className="w-[150px] px-2 py-1 text-xs">
+                          {c.gstin ? (
+                            <Link to={`/edit-client/${c.id}`} className="text-primary hover:underline">{c.gstin}</Link>
+                          ) : '—'}
+                        </TableCell>
                         <TableCell className="max-w-0 truncate px-2 py-1 text-xs" title={c.name}>{c.name}</TableCell>
-                        <TableCell className="w-[150px] truncate px-2 py-1 text-xs text-muted-foreground">{c.gstin || '—'}</TableCell>
-                        {canManageClients && (
-                          <TableCell className="px-2 py-1 text-right">
+                        <TableCell className="px-2 py-1 text-right">
+                          {canManageClients && (
                             <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => navigate(`/edit-client/${c.id}`)}>
                               <Pencil className="h-3 w-3" />
                             </Button>
-                          </TableCell>
-                        )}
+                          )}
+                        </TableCell>
                       </TableRow>
                     ))
                   )}
