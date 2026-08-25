@@ -35,3 +35,13 @@ export const UNCAPTURED_NOTICE_CATEGORIES = [
   'Appeal', 'ASMT 10', 'Audit', 'DRC 01', 'Enforcement', 'Order Rectification',
   'Others', 'Penalty', 'Recovery', 'Ewaybill', 'AAR', 'TRAN 1', 'Anti evasion', 'Other',
 ];
+
+// Fixed display order matching Notice Alert's own Notice Summary row order
+// (confirmed live 2026-08-25). Categories not listed here (e.g. this app's
+// own Registration/Non filers/Demand Notice/Notice/Order buckets) sort after
+// these, by descending total — same as before this ordering existed.
+export const NOTICE_CATEGORY_DISPLAY_ORDER = [
+  'Appeal', 'ASMT 10', 'Audit', 'DRC 01', 'DRC 03', 'Enforcement', 'LUT',
+  'Order Rectification', 'Others', 'Penalty', 'Recovery', 'Refund', 'TDRC 03',
+  'Ewaybill', 'AAR',
+];

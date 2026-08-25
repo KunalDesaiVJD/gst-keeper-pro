@@ -25,7 +25,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import BulkAddClientsDialog, { downloadClientImportTemplate } from '@/components/clients/BulkAddClientsDialog';
-import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription, UNCAPTURED_NOTICE_CATEGORIES } from '@/utils/noticeCategoryClassifier';
+import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription, UNCAPTURED_NOTICE_CATEGORIES, NOTICE_CATEGORY_DISPLAY_ORDER } from '@/utils/noticeCategoryClassifier';
 import {
   Bell, CalendarClock, History, Building2, FolderOpen, AlertTriangle, Flag, Loader2,
   UserPlus, Upload, Download, RefreshCw, Pencil, ChevronLeft, ChevronRight,
@@ -277,16 +277,24 @@ const NoticesDashboardPage: React.FC = () => {
     categoryMap.set('DRC 03', { type: 'DRC 03', total: drc03Statuses.length, open: drc03Statuses.length - closed, closed, replied: 0, to: '/drc03-all' });
   }
 
-  const realCategoryRows = Array.from(categoryMap.values()).sort((a, b) => b.total - a.total);
-  // Zero-value placeholder rows for the Notice Alert categories with no
-  // portal capture in this app — matches their own dashes-not-links
-  // convention (confirmed live: a zero-count row there isn't hyperlinked
-  // either), so the row list is visually complete without fabricating
-  // pages for data we don't have.
-  const placeholderRows: CategoryRow[] = UNCAPTURED_NOTICE_CATEGORIES
-    .filter((type) => !categoryMap.has(type))
-    .map((type) => ({ type, total: 0, open: 0, closed: 0, replied: 0, placeholder: true }));
-  const categoryRows = [...realCategoryRows, ...placeholderRows];
+  // Row order matches Notice Alert's own Notice Summary table exactly
+  // (confirmed live 2026-08-25): every canonical category gets its fixed slot
+  // whether we have real data for it or not (zero-value placeholder rows,
+  // matching Notice Alert's own dashes-not-links convention), then any
+  // category this app tracks but Notice Alert's fixed list doesn't cover
+  // (Registration/Non filers/Demand Notice/raw notice_type buckets) is
+  // appended after, by descending total.
+  const FULL_DISPLAY_ORDER = [
+    ...NOTICE_CATEGORY_DISPLAY_ORDER,
+    ...UNCAPTURED_NOTICE_CATEGORIES.filter((t) => !NOTICE_CATEGORY_DISPLAY_ORDER.includes(t)),
+  ];
+  const canonicalRows: CategoryRow[] = FULL_DISPLAY_ORDER.map((type) => {
+    const real = categoryMap.get(type);
+    if (real) { categoryMap.delete(type); return real; }
+    return { type, total: 0, open: 0, closed: 0, replied: 0, placeholder: true };
+  });
+  const extraRealRows = Array.from(categoryMap.values()).sort((a, b) => b.total - a.total);
+  const categoryRows = [...canonicalRows, ...extraRealRows];
   const grandTotal = categoryRows.reduce(
     (acc, r) => ({ total: acc.total + r.total, open: acc.open + r.open, closed: acc.closed + r.closed, replied: acc.replied + r.replied }),
     { total: 0, open: 0, closed: 0, replied: 0 },
@@ -387,7 +395,7 @@ const NoticesDashboardPage: React.FC = () => {
           })}
         </div>
 
-        <Card className="flex flex-col xl:row-span-1">
+        <Card className="flex min-h-0 flex-col xl:row-span-1">
           <CardHeader className="shrink-0 pb-2 pt-3">
             <CardTitle className="text-sm">Notice Summary</CardTitle>
             <CardDescription className="text-[11px]">
@@ -406,7 +414,7 @@ const NoticesDashboardPage: React.FC = () => {
               )}
             </CardDescription>
           </CardHeader>
-          <CardContent className="pb-3">
+          <CardContent className="flex min-h-0 flex-1 flex-col pb-3">
             {loading ? (
               <div className="flex items-center justify-center py-10 text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin" />
@@ -414,10 +422,11 @@ const NoticesDashboardPage: React.FC = () => {
             ) : categoryRows.length === 0 ? (
               <p className="py-10 text-center text-sm text-muted-foreground">No notices on record yet.</p>
             ) : (
-              // Fixed cap (not "match the KPI tiles' height") so the row count —
-              // now 6+ with Refund/DRC-03 folded in — can't grow the whole page
-              // past one screen; it scrolls internally past this instead.
-              <div className="max-h-[180px] overflow-auto rounded-md border">
+              // Stretches to match the KPI tile grid's height (its Card sibling
+              // in the same items-stretch row), same proportions as Notice
+              // Alert's own tall Notice Summary card — scrolls internally only
+              // if the row count still exceeds that height.
+              <div className="min-h-[260px] flex-1 overflow-auto rounded-md border">
                 <Table>
                   <TableHeader className="sticky top-0 z-10 bg-background">
                     <TableRow>
@@ -492,8 +501,8 @@ const NoticesDashboardPage: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="px-2 py-1.5 text-[11px] font-semibold">Trade Name</TableHead>
-                    <TableHead className="px-2 py-1.5 text-[11px] font-semibold">GSTIN</TableHead>
+                    <TableHead className="w-auto px-2 py-1.5 text-[11px] font-semibold">Trade Name</TableHead>
+                    <TableHead className="w-[150px] px-2 py-1.5 text-[11px] font-semibold">GSTIN</TableHead>
                     {canManageClients && <TableHead className="w-10 px-2 py-1.5 text-[11px] font-semibold" />}
                   </TableRow>
                 </TableHeader>
@@ -507,8 +516,8 @@ const NoticesDashboardPage: React.FC = () => {
                   ) : (
                     miniClients.map((c) => (
                       <TableRow key={c.id}>
-                        <TableCell className="px-2 py-1 text-xs">{c.name}</TableCell>
-                        <TableCell className="px-2 py-1 text-xs text-muted-foreground">{c.gstin || '—'}</TableCell>
+                        <TableCell className="max-w-0 truncate px-2 py-1 text-xs" title={c.name}>{c.name}</TableCell>
+                        <TableCell className="w-[150px] truncate px-2 py-1 text-xs text-muted-foreground">{c.gstin || '—'}</TableCell>
                         {canManageClients && (
                           <TableCell className="px-2 py-1 text-right">
                             <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => navigate(`/edit-client/${c.id}`)}>
