@@ -18,10 +18,12 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { FileText, Search, DownloadCloud, Inbox, Pencil, Flag, Loader2 } from 'lucide-react';
+import { FileText, Search, DownloadCloud, Inbox, Pencil, Flag, Loader2, FileSpreadsheet } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { renderReportToExcel } from '@/utils/allClientsReports';
 
 interface NoticeWorkflowListViewProps {
   table: ReportTable;
@@ -60,9 +62,16 @@ const REMARKS_HEADER_RE = /^remarks$/i;
 const FINANCIAL_YEAR_HEADER_RE = /^financial year$/i;
 const ASSIGN_TO_HEADER_RE = /^assign to$/i;
 const EVIDENCE_HEADER_RE = /PDF|DOCUMENT/i;
+const DUE_DATE_HEADER_RE = /^due date$/i;
 const DATE_HEADER_PRIORITY = [/^issue date$/i, /^date\/time$/i, /^date$/i];
 
 const STATUS_OPEN_CLOSED = ['Open', 'Closed'];
+
+// Matches Notice Alert's own "Filter" dropdown on this exact page (confirmed
+// live 2026-08-25): date-range presets over Issue Date / Due Date, on top of
+// the Status dropdown.
+type DateFilter = 'all' | 'last24h' | 'last15days' | 'due7' | 'overdue';
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const STATUS_VARIANT = (v: string): 'success' | 'warning' | 'destructive' | 'secondary' => {
   const s = v.toUpperCase();
@@ -153,11 +162,19 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
   const [rows, setRows] = useState(table.rows);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
   const [savingIdx, setSavingIdx] = useState<number | null>(null);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<EditForm>(EMPTY_FORM);
   const [savingEdit, setSavingEdit] = useState(false);
+  // Checkbox selection + bulk "Update Status" — matches Notice Alert's own
+  // toolbar (confirmed live), on top of the existing per-row inline editor.
+  const [selectedIdx, setSelectedIdx] = useState<Set<number>>(new Set());
+  const [bulkStatusOpen, setBulkStatusOpen] = useState(false);
+  const [bulkStatus, setBulkStatus] = useState<string>('');
+  const [bulkSaving, setBulkSaving] = useState(false);
   const Icon = report.icon || FileText;
 
   useEffect(() => { setRows(table.rows); }, [table]);
@@ -180,6 +197,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
   const financialYearColIdx = useMemo(() => headers.findIndex((h) => FINANCIAL_YEAR_HEADER_RE.test(h.trim())), [headers]);
   const assignToColIdx = useMemo(() => headers.findIndex((h) => ASSIGN_TO_HEADER_RE.test(h.trim())), [headers]);
   const dateColIdx = useMemo(() => findDateColIdx(headers), [headers]);
+  const dueDateColIdx = useMemo(() => headers.findIndex((h) => DUE_DATE_HEADER_RE.test(h.trim())), [headers]);
 
   // Every row carries its original index (into `rows`/`rowIds`) through the
   // filter/sort pipeline below, so an edit always writes back to the right
@@ -202,8 +220,24 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
       const v = String(row[statusColIdx] ?? '').trim();
       if (v && !isSentinel(v)) set.add(v);
     });
+    // "Replied" isn't a staff_status value (reply_date is a separate field)
+    // but Notice Alert lists it as its own Status filter option, so it's
+    // synthetic here — matched against reply_date being set, not this column.
+    if (replyDateColIdx !== -1 && dataRows.some(({ row }) => !isSentinel(row[replyDateColIdx]) && cellToText(row[replyDateColIdx]))) {
+      set.add('Replied');
+    }
     return Array.from(set).sort();
-  }, [dataRows, statusColIdx]);
+  }, [dataRows, statusColIdx, replyDateColIdx]);
+
+  const typeOptions = useMemo(() => {
+    if (typeColIdx === -1) return [] as string[];
+    const set = new Set<string>();
+    dataRows.forEach(({ row }) => {
+      const v = String(row[typeColIdx] ?? '').trim();
+      if (v && !isSentinel(v)) set.add(v);
+    });
+    return Array.from(set).sort();
+  }, [dataRows, typeColIdx]);
 
   const withEvidenceCount = useMemo(() => {
     if (evidenceColIdx === -1) return 0;
@@ -226,8 +260,25 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
   const visibleRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     let list = dataRows;
-    if (statusColIdx !== -1 && statusFilter !== 'all') {
+    if (statusFilter === 'Replied') {
+      list = list.filter(({ row }) => replyDateColIdx !== -1 && !isSentinel(row[replyDateColIdx]) && cellToText(row[replyDateColIdx]));
+    } else if (statusColIdx !== -1 && statusFilter !== 'all') {
       list = list.filter(({ row }) => String(row[statusColIdx] ?? '').trim() === statusFilter);
+    }
+    if (typeColIdx !== -1 && typeFilter !== 'all') {
+      list = list.filter(({ row }) => String(row[typeColIdx] ?? '').trim() === typeFilter);
+    }
+    if (dateFilter !== 'all') {
+      const now = Date.now();
+      if (dateFilter === 'last24h' && dateColIdx !== -1) {
+        list = list.filter(({ row }) => { const d = parseDateLoose(row[dateColIdx]); return !Number.isNaN(d) && now - d <= DAY_MS; });
+      } else if (dateFilter === 'last15days' && dateColIdx !== -1) {
+        list = list.filter(({ row }) => { const d = parseDateLoose(row[dateColIdx]); return !Number.isNaN(d) && now - d <= 15 * DAY_MS; });
+      } else if (dateFilter === 'due7' && dueDateColIdx !== -1) {
+        list = list.filter(({ row }) => { const d = parseDateLoose(row[dueDateColIdx]); return !Number.isNaN(d) && d - now >= 0 && d - now <= 7 * DAY_MS; });
+      } else if (dateFilter === 'overdue' && dueDateColIdx !== -1) {
+        list = list.filter(({ row }) => { const d = parseDateLoose(row[dueDateColIdx]); return !Number.isNaN(d) && d - now < 0; });
+      }
     }
     if (q) {
       list = list.filter(({ row }) => row.some((c) => String(c ?? '').toLowerCase().includes(q)));
@@ -245,7 +296,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
       });
     }
     return list;
-  }, [dataRows, search, statusFilter, statusColIdx, dateColIdx]);
+  }, [dataRows, search, statusFilter, statusColIdx, typeFilter, typeColIdx, dateFilter, dateColIdx, dueDateColIdx, replyDateColIdx]);
 
   const handleDownloadAll = () => {
     if (evidenceColIdx === -1) return;
@@ -280,6 +331,38 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     if (error) { toast.error('Failed to update status: ' + error.message); return; }
     patchRow(idx, statusColIdx, newStatus);
     toast.success('Status updated');
+  };
+
+  const toggleSelect = (idx: number) => {
+    setSelectedIdx((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
+    });
+  };
+
+  const toggleSelectAllVisible = (checked: boolean) => {
+    setSelectedIdx(checked ? new Set(visibleRows.map(({ idx }) => idx)) : new Set());
+  };
+
+  const applyBulkStatus = async () => {
+    if (!bulkStatus || statusColIdx === -1 || selectedIdx.size === 0) return;
+    const ids = Array.from(selectedIdx).map((idx) => rowIds?.[idx]).filter((id): id is string => !!id);
+    if (ids.length === 0) { setBulkStatusOpen(false); return; }
+    setBulkSaving(true);
+    const { error } = await supabase.from('gst_notices').update({ staff_status: bulkStatus }).in('id', ids);
+    setBulkSaving(false);
+    if (error) { toast.error('Failed to update status: ' + error.message); return; }
+    setRows((prev) => prev.map((r, i) => {
+      if (!selectedIdx.has(i)) return r;
+      const next = [...r];
+      next[statusColIdx] = bulkStatus;
+      return next;
+    }));
+    toast.success(`Updated ${ids.length} record${ids.length === 1 ? '' : 's'}`);
+    setBulkStatusOpen(false);
+    setBulkStatus('');
+    setSelectedIdx(new Set());
   };
 
   const openEditDialog = (idx: number) => {
@@ -423,9 +506,23 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
             />
           </div>
 
+          {typeColIdx !== -1 && typeOptions.length > 0 && (
+            <Select value={typeFilter} onValueChange={setTypeFilter}>
+              <SelectTrigger className="h-8 w-[130px] text-xs">
+                <SelectValue placeholder="Type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All types</SelectItem>
+                {typeOptions.map((s) => (
+                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+
           {statusColIdx !== -1 && statusOptions.length > 0 && (
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="h-8 w-[160px] text-xs">
+              <SelectTrigger className="h-8 w-[150px] text-xs">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
@@ -437,8 +534,21 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
             </Select>
           )}
 
+          <Select value={dateFilter} onValueChange={(v) => setDateFilter(v as DateFilter)}>
+            <SelectTrigger className="h-8 w-[160px] text-xs">
+              <SelectValue placeholder="Filter" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">No date filter</SelectItem>
+              <SelectItem value="last24h">Last 24 Hours</SelectItem>
+              <SelectItem value="last15days">Last 15 Days</SelectItem>
+              <SelectItem value="due7">Notice Due in 7 Days</SelectItem>
+              <SelectItem value="overdue">Over Due Notices</SelectItem>
+            </SelectContent>
+          </Select>
+
           <span className="text-xs text-muted-foreground">
-            {search || statusFilter !== 'all' ? `${visibleRows.length} of ${dataRows.length}` : `${dataRows.length}`} shown
+            {search || statusFilter !== 'all' || typeFilter !== 'all' || dateFilter !== 'all' ? `${visibleRows.length} of ${dataRows.length}` : `${dataRows.length}`} shown
           </span>
 
           <div className="flex-1" />
@@ -447,12 +557,26 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
             <span className="text-xs text-muted-foreground animate-in fade-in">{downloadNotice}</span>
           )}
 
+          {canEdit && selectedIdx.size > 0 && (
+            <>
+              <span className="text-xs text-muted-foreground">{selectedIdx.size} selected</span>
+              <Button variant="outline" size="sm" className="h-8" onClick={() => setBulkStatusOpen(true)}>
+                Update Status
+              </Button>
+            </>
+          )}
+
           {evidenceColIdx !== -1 && (
             <Button variant="outline" size="sm" onClick={handleDownloadAll} className="h-8">
               <DownloadCloud className="mr-1.5 h-3.5 w-3.5" />
               Download all visible PDFs
             </Button>
           )}
+
+          <Button variant="outline" size="sm" className="h-8" onClick={() => renderReportToExcel(table)}>
+            <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" />
+            Export to Excel
+          </Button>
         </div>
 
         {/* Table */}
@@ -460,6 +584,15 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
+                {canEdit && (
+                  <TableHead className="w-10 bg-muted/60 px-3 py-2">
+                    <Checkbox
+                      checked={visibleRows.length > 0 && visibleRows.every(({ idx }) => selectedIdx.has(idx))}
+                      onCheckedChange={(checked) => toggleSelectAllVisible(checked === true)}
+                      aria-label="Select all visible rows"
+                    />
+                  </TableHead>
+                )}
                 {headers.map((h, i) => (
                   <TableHead
                     key={i}
@@ -482,7 +615,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
             <TableBody>
               {visibleRows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={headers.length + (canEdit ? 1 : 0)} className="py-10 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={headers.length + (canEdit ? 2 : 0)} className="py-10 text-center text-sm text-muted-foreground">
                     No rows match the current filters.
                   </TableCell>
                 </TableRow>
@@ -490,6 +623,11 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
 
               {visibleRows.map(({ row, idx }) => (
                 <TableRow key={idx}>
+                  {canEdit && (
+                    <TableCell className="px-3 py-1.5">
+                      <Checkbox checked={selectedIdx.has(idx)} onCheckedChange={() => toggleSelect(idx)} aria-label="Select row" />
+                    </TableCell>
+                  )}
                   {row.map((cell, ci) => {
                     // Evidence column: red vs. neutral PDF icon (see EvidenceEventListView).
                     if (ci === evidenceColIdx) {
@@ -628,6 +766,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
 
               {totalRows.map(({ row, idx }) => (
                 <TableRow key={`total-${idx}`} className="bg-primary/5 font-semibold hover:bg-primary/10">
+                  {canEdit && <TableCell />}
                   {row.map((cell, ci) => (
                     <TableCell key={ci} className="px-3 py-1.5 text-xs">
                       {formatCell(cell)}
@@ -640,6 +779,32 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
           </Table>
         </div>
       </CardContent>
+
+      <Dialog open={bulkStatusOpen} onOpenChange={(open) => { setBulkStatusOpen(open); if (!open) setBulkStatus(''); }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Update Status</DialogTitle>
+            <DialogDescription>Applies to the {selectedIdx.size} selected record{selectedIdx.size === 1 ? '' : 's'}.</DialogDescription>
+          </DialogHeader>
+          <Select value={bulkStatus} onValueChange={setBulkStatus}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select…" />
+            </SelectTrigger>
+            <SelectContent>
+              {STATUS_OPEN_CLOSED.map((s) => (
+                <SelectItem key={s} value={s}>{s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <DialogFooter>
+            <Button variant="outline" disabled={bulkSaving} onClick={() => setBulkStatusOpen(false)}>Cancel</Button>
+            <Button onClick={applyBulkStatus} disabled={bulkSaving || !bulkStatus}>
+              {bulkSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {bulkSaving ? 'Saving…' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={editingIdx !== null} onOpenChange={(open) => { if (!open) setEditingIdx(null); }}>
         <DialogContent>

@@ -12,10 +12,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { NoticeWorkflowListView } from '@/components/reports/views/NoticeWorkflowListView';
 import type { ReportTable } from '@/utils/allClientsReports';
 import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
-import { Bell, ArrowLeft, Loader2 } from 'lucide-react';
+import { Bell, ArrowLeft, Loader2, ChevronRight } from 'lucide-react';
 
 interface NoticeRecord {
   id: string;
@@ -59,7 +61,7 @@ const FILTER_LABELS: Record<string, string> = {
 
 const AllClientsNoticesPage: React.FC = () => {
   const { isStaffRole } = useAuth();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const [records, setRecords] = useState<NoticeRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -90,6 +92,12 @@ const AllClientsNoticesPage: React.FC = () => {
   }, []);
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
+
+  const setTypeOfNoticesParam = (v: string) => {
+    const next = new URLSearchParams(params);
+    if (v === 'all') next.delete('type'); else next.set('type', v);
+    setParams(next, { replace: true });
+  };
 
   const now = Date.now();
   const DAY_MS = 24 * 60 * 60 * 1000;
@@ -140,11 +148,31 @@ const AllClientsNoticesPage: React.FC = () => {
 
   return (
     <div className="space-y-4 animate-fade-in">
+      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+        <Link to="/notices-dashboard" className="hover:text-foreground hover:underline">Notices Dashboard</Link>
+        <ChevronRight className="h-3 w-3" />
+        <span>Notices and Orders</span>
+      </div>
+
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
           <Link to="/notices-dashboard"><ArrowLeft className="h-4 w-4" /></Link>
         </Button>
         <PageHeader title="Notices — All Clients" subtitle="Every client's notices and orders, filtered from the dashboard tile you clicked." icon={<Bell className="h-6 w-6" />} />
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Label htmlFor="type-of-notices" className="text-xs text-muted-foreground">Types Of Notices</Label>
+        <Select value={typeParam || 'all'} onValueChange={setTypeOfNoticesParam}>
+          <SelectTrigger id="type-of-notices" className="h-8 w-[200px] text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All</SelectItem>
+            <SelectItem value="registration">Registration</SelectItem>
+            <SelectItem value="other">Other than Registration</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {loading ? (
