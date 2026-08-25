@@ -15,9 +15,29 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { NoticeWorkflowListView } from '@/components/reports/views/NoticeWorkflowListView';
+import { EvidenceEventListView } from '@/components/reports/views/EvidenceEventListView';
+import { AddNoticeDialog } from '@/components/notices/AddNoticeDialog';
 import type { ReportTable } from '@/utils/allClientsReports';
 import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
-import { Bell, ArrowLeft, Loader2, ChevronRight } from 'lucide-react';
+import { Bell, ArrowLeft, Loader2, ChevronRight, Layers } from 'lucide-react';
+
+interface RefundRecord {
+  arn: string | null;
+  refund_type: string | null;
+  filed_date: string | null;
+  status: string | null;
+  documents: { tab: string; label: string; url: string }[] | null;
+  clients: { name: string | null; gstin: string | null } | null;
+}
+
+interface Drc03Record {
+  arn: string | null;
+  cause_of_payment: string | null;
+  filed_date: string | null;
+  status: string | null;
+  pdf_url: string | null;
+  clients: { name: string | null; gstin: string | null } | null;
+}
 
 interface NoticeRecord {
   id: string;
@@ -30,7 +50,7 @@ interface NoticeRecord {
   due_date: string | null;
   extended_due_date: string | null;
   staff_status: string | null;
-  priority: boolean;
+  priority: string | null;
   reply_ref_number: string | null;
   reply_date: string | null;
   order_number: string | null;
@@ -60,21 +80,34 @@ const FILTER_LABELS: Record<string, string> = {
 };
 
 const AllClientsNoticesPage: React.FC = () => {
-  const { isStaffRole } = useAuth();
+  const { isStaffRole, canEditNoticeStatus } = useAuth();
   const [params, setParams] = useSearchParams();
   const [records, setRecords] = useState<NoticeRecord[]>([]);
+  const [refunds, setRefunds] = useState<RefundRecord[]>([]);
+  const [drc03s, setDrc03s] = useState<Drc03Record[]>([]);
   const [loading, setLoading] = useState(true);
 
   const filter = params.get('filter') || '';
   const status = params.get('status') || '';
   const typeParam = params.get('type') || '';
   const category = params.get('category') || '';
+  // "Notices & Orders" (editable, gst_notices only) vs "Merged Notices"
+  // (Notice Alert's own second tab — every source combined into one
+  // chronological, read-only list; confirmed live it's not a flat re-listing
+  // of every portal document, just every SOURCE combined without a Section
+  // filter, which is exactly what gst_notices + refunds + DRC-03 already are
+  // for us since we don't expand case-folders into extra rows).
+  const activeTab = params.get('tab') === 'merged' ? 'merged' : 'notices';
+  const setActiveTab = (tab: 'notices' | 'merged') => {
+    const next = new URLSearchParams(params);
+    if (tab === 'notices') next.delete('tab'); else next.set('tab', tab);
+    setParams(next, { replace: true });
+  };
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      const { data } = await supabase
+  const fetchAll = async () => {
+    setLoading(true);
+    const [noticesRes, refundsRes, drc03Res] = await Promise.all([
+      supabase
         .from('gst_notices')
         .select(
           'id, client_id, reference_number, case_id, notice_type, description, issue_date, due_date, extended_due_date, ' +
@@ -82,13 +115,18 @@ const AllClientsNoticesPage: React.FC = () => {
           'amount_of_demand, remarks, issued_by, financial_year, assign_to, pdf_url, pulled_at, clients(name, gstin)',
         )
         .eq('source', 'notices')
-        .order('issue_date', { ascending: false });
-      if (!cancelled) {
-        setRecords((data || []) as unknown as NoticeRecord[]);
-        setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
+        .order('issue_date', { ascending: false }),
+      supabase.from('gst_refund_applications').select('arn, refund_type, filed_date, status, documents, clients(name, gstin)'),
+      supabase.from('gst_drc03_filings').select('arn, cause_of_payment, filed_date, status, pdf_url, clients(name, gstin)'),
+    ]);
+    setRecords((noticesRes.data || []) as unknown as NoticeRecord[]);
+    setRefunds((refundsRes.data || []) as unknown as RefundRecord[]);
+    setDrc03s((drc03Res.data || []) as unknown as Drc03Record[]);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchAll();
   }, []);
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
@@ -135,7 +173,7 @@ const AllClientsNoticesPage: React.FC = () => {
       r.clients?.gstin || '—', r.clients?.name || '—',
       r.reference_number || '—', r.case_id || '—', r.notice_type || '—', r.description || '—',
       r.issue_date || '—', r.due_date || '—', r.extended_due_date || '—',
-      r.staff_status || '—', r.priority ? 'High' : '—',
+      r.staff_status || '—', r.priority || '—',
       r.reply_ref_number || '—', r.reply_date || '—', r.order_number || '—', r.order_date || '—',
       r.submission_arn || '—', r.submission_date || '—',
       r.amount_of_demand != null ? num(r.amount_of_demand) : '—', r.remarks || '—', r.issued_by || '—', r.financial_year || '—', r.assign_to || '—',
@@ -144,6 +182,40 @@ const AllClientsNoticesPage: React.FC = () => {
     rowIds: filtered.map((r) => r.id),
     fileNameBase: 'Notices_All_Clients',
     columnWidths: [16, 24, 16, 16, 16, 40, 12, 12, 14, 10, 8, 14, 12, 14, 12, 16, 14, 14, 24, 12, 12, 14, 12],
+  };
+
+  const mergedRows = useMemo(() => {
+    type MergedRow = { gstin: string; trade: string; section: string; ref: string; type: string; date: string; due: string; desc: string; status: string; pdf: string | null };
+    const noticeRows: MergedRow[] = records
+      .filter((r) => (typeParam === 'registration' ? isRegistrationRelated(r) : typeParam === 'other' ? !isRegistrationRelated(r) : true))
+      .map((r) => ({
+        gstin: r.clients?.gstin || '—', trade: r.clients?.name || '—', section: 'Notices & Orders',
+        ref: r.reference_number || '—', type: r.notice_type || '—', date: r.issue_date || '', due: r.due_date || '—',
+        desc: r.description || '—', status: r.staff_status || '—', pdf: r.pdf_url,
+      }));
+    const refundRows: MergedRow[] = typeParam === 'registration' ? [] : refunds.map((r) => {
+      const docs = Array.isArray(r.documents) ? r.documents : [];
+      return {
+        gstin: r.clients?.gstin || '—', trade: r.clients?.name || '—', section: 'Refunds',
+        ref: r.arn || '—', type: 'GST RFD-01', date: r.filed_date || '', due: '—',
+        desc: r.refund_type || '—', status: r.status || '—', pdf: docs[0]?.url || null,
+      };
+    });
+    const drc03Rows: MergedRow[] = typeParam === 'registration' ? [] : drc03s.map((r) => ({
+      gstin: r.clients?.gstin || '—', trade: r.clients?.name || '—', section: 'DRC-03',
+      ref: r.arn || '—', type: 'DRC-03', date: r.filed_date || '', due: '—',
+      desc: r.cause_of_payment || '—', status: r.status || '—', pdf: r.pdf_url,
+    }));
+    return [...noticeRows, ...refundRows, ...drc03Rows].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }, [records, refunds, drc03s, typeParam]);
+
+  const mergedTable: ReportTable = {
+    title: 'Merged Notices — All Clients',
+    subtitle: `${mergedRows.length} record${mergedRows.length === 1 ? '' : 's'} — every source (Notices & Orders, Refunds, DRC-03) combined, most recent first`,
+    headers: ['GSTIN', 'Trade Name', 'Section', 'Ref ID', 'Type', 'Issued Date', 'Due Date', 'Description', 'Status', 'PDF'],
+    rows: mergedRows.map((r) => [r.gstin, r.trade, r.section, r.ref, r.type, r.date || '—', r.due, r.desc, r.status, r.pdf || '—']),
+    fileNameBase: 'Merged_Notices_All_Clients',
+    columnWidths: [16, 24, 16, 18, 16, 12, 12, 40, 12, 30],
   };
 
   return (
@@ -175,10 +247,34 @@ const AllClientsNoticesPage: React.FC = () => {
         </Select>
       </div>
 
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex w-fit rounded-md border bg-muted/30 p-1">
+          <Button
+            size="sm"
+            variant={activeTab === 'notices' ? 'default' : 'ghost'}
+            className="h-8"
+            onClick={() => setActiveTab('notices')}
+          >
+            Notices & Orders
+          </Button>
+          <Button
+            size="sm"
+            variant={activeTab === 'merged' ? 'default' : 'ghost'}
+            className="h-8"
+            onClick={() => setActiveTab('merged')}
+          >
+            Merged Notices
+          </Button>
+        </div>
+        {canEditNoticeStatus() && <AddNoticeDialog onSuccess={fetchAll} />}
+      </div>
+
       {loading ? (
         <div className="flex items-center justify-center py-20 text-muted-foreground">
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
+      ) : activeTab === 'merged' ? (
+        <EvidenceEventListView table={mergedTable} report={{ title: mergedTable.title, icon: Layers }} />
       ) : (
         <NoticeWorkflowListView table={table} report={{ title: table.title, icon: Bell }} />
       )}

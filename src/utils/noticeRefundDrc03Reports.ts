@@ -82,7 +82,7 @@ export const buildViewNoticesAndOrdersReport = async (clientId: string): Promise
     rows: rows.map((r) => [
       r.reference_number || '—', r.case_id || '—', r.notice_type || '—', r.description || '—',
       r.issue_date || '—', r.due_date || '—', r.extended_due_date || '—',
-      r.staff_status || '—', r.priority ? 'High' : '—',
+      r.staff_status || '—', r.priority || '—',
       r.reply_ref_number || '—', r.reply_date || '—', r.order_number || '—', r.order_date || '—',
       r.submission_arn || '—', r.submission_date || '—',
       r.amount_of_demand != null ? num(r.amount_of_demand) : '—', r.remarks || '—', r.issued_by || '—', r.financial_year || '—', r.assign_to || '—',

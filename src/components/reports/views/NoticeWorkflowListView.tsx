@@ -16,7 +16,6 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
@@ -130,8 +129,12 @@ const formatCell = (v: string | number): string => {
 // view already shows, so the dialog's own field order matches the grid.
 // Case ID and Issued By aren't here: both are auto-captured from the portal
 // itself (see content.js's handleNotices), not staff-entered.
+// Low/Medium/High — matches Notice Alert's own 3-tier Priority Status
+// (confirmed live 2026-08-25), replacing the old plain boolean.
+const PRIORITY_TIERS = ['Low', 'Medium', 'High'];
+
 interface EditForm {
-  priority: boolean;
+  priority: string;
   replyRefNumber: string;
   replyDate: string;
   orderNumber: string;
@@ -146,7 +149,7 @@ interface EditForm {
 }
 
 const EMPTY_FORM: EditForm = {
-  priority: false, replyRefNumber: '', replyDate: '', orderNumber: '', orderDate: '', submissionArn: '', submissionDate: '',
+  priority: '', replyRefNumber: '', replyDate: '', orderNumber: '', orderDate: '', submissionArn: '', submissionDate: '',
   extendedDueDate: '', amountOfDemand: '', remarks: '', financialYear: '', assignTo: '',
 };
 
@@ -163,6 +166,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
   const [savingIdx, setSavingIdx] = useState<number | null>(null);
@@ -174,6 +178,8 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
   const [selectedIdx, setSelectedIdx] = useState<Set<number>>(new Set());
   const [bulkStatusOpen, setBulkStatusOpen] = useState(false);
   const [bulkStatus, setBulkStatus] = useState<string>('');
+  const [bulkPriorityOpen, setBulkPriorityOpen] = useState(false);
+  const [bulkPriority, setBulkPriority] = useState<string>('');
   const [bulkSaving, setBulkSaving] = useState(false);
   const Icon = report.icon || FileText;
 
@@ -268,6 +274,9 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     if (typeColIdx !== -1 && typeFilter !== 'all') {
       list = list.filter(({ row }) => String(row[typeColIdx] ?? '').trim() === typeFilter);
     }
+    if (priorityColIdx !== -1 && priorityFilter !== 'all') {
+      list = list.filter(({ row }) => String(row[priorityColIdx] ?? '').trim() === priorityFilter);
+    }
     if (dateFilter !== 'all') {
       const now = Date.now();
       if (dateFilter === 'last24h' && dateColIdx !== -1) {
@@ -296,7 +305,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
       });
     }
     return list;
-  }, [dataRows, search, statusFilter, statusColIdx, typeFilter, typeColIdx, dateFilter, dateColIdx, dueDateColIdx, replyDateColIdx]);
+  }, [dataRows, search, statusFilter, statusColIdx, typeFilter, typeColIdx, priorityFilter, priorityColIdx, dateFilter, dateColIdx, dueDateColIdx, replyDateColIdx]);
 
   const handleDownloadAll = () => {
     if (evidenceColIdx === -1) return;
@@ -365,10 +374,30 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     setSelectedIdx(new Set());
   };
 
+  const applyBulkPriority = async () => {
+    if (!bulkPriority || priorityColIdx === -1 || selectedIdx.size === 0) return;
+    const ids = Array.from(selectedIdx).map((idx) => rowIds?.[idx]).filter((id): id is string => !!id);
+    if (ids.length === 0) { setBulkPriorityOpen(false); return; }
+    setBulkSaving(true);
+    const { error } = await supabase.from('gst_notices').update({ priority: bulkPriority }).in('id', ids);
+    setBulkSaving(false);
+    if (error) { toast.error('Failed to update priority: ' + error.message); return; }
+    setRows((prev) => prev.map((r, i) => {
+      if (!selectedIdx.has(i)) return r;
+      const next = [...r];
+      next[priorityColIdx] = bulkPriority;
+      return next;
+    }));
+    toast.success(`Updated ${ids.length} record${ids.length === 1 ? '' : 's'}`);
+    setBulkPriorityOpen(false);
+    setBulkPriority('');
+    setSelectedIdx(new Set());
+  };
+
   const openEditDialog = (idx: number) => {
     const row = rows[idx];
     setEditForm({
-      priority: priorityColIdx !== -1 ? cellToText(row[priorityColIdx]).toLowerCase() === 'high' : false,
+      priority: priorityColIdx !== -1 ? cellToText(row[priorityColIdx]) : '',
       replyRefNumber: replyRefColIdx !== -1 ? cellToText(row[replyRefColIdx]) : '',
       replyDate: replyDateColIdx !== -1 ? cellToText(row[replyDateColIdx]) : '',
       orderNumber: orderNoColIdx !== -1 ? cellToText(row[orderNoColIdx]) : '',
@@ -392,7 +421,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     if (amount !== null && !Number.isFinite(amount)) { toast.error('Amount of Demand must be a number.'); return; }
     setSavingEdit(true);
     const { error } = await supabase.from('gst_notices').update({
-      priority: editForm.priority,
+      priority: editForm.priority || null,
       reply_ref_number: editForm.replyRefNumber || null,
       reply_date: editForm.replyDate || null,
       order_number: editForm.orderNumber || null,
@@ -412,7 +441,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     setRows((prev) => prev.map((r, i) => {
       if (i !== idx) return r;
       const next = [...r];
-      if (priorityColIdx !== -1) next[priorityColIdx] = editForm.priority ? 'High' : '—';
+      if (priorityColIdx !== -1) next[priorityColIdx] = editForm.priority || '—';
       if (replyRefColIdx !== -1) next[replyRefColIdx] = editForm.replyRefNumber || '—';
       if (replyDateColIdx !== -1) next[replyDateColIdx] = editForm.replyDate || '—';
       if (orderNoColIdx !== -1) next[orderNoColIdx] = editForm.orderNumber || '—';
@@ -534,6 +563,20 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
             </Select>
           )}
 
+          {priorityColIdx !== -1 && (
+            <Select value={priorityFilter} onValueChange={setPriorityFilter}>
+              <SelectTrigger className="h-8 w-[150px] text-xs">
+                <SelectValue placeholder="Priority Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All priorities</SelectItem>
+                {PRIORITY_TIERS.map((t) => (
+                  <SelectItem key={t} value={t}>{t}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+
           <Select value={dateFilter} onValueChange={(v) => setDateFilter(v as DateFilter)}>
             <SelectTrigger className="h-8 w-[160px] text-xs">
               <SelectValue placeholder="Filter" />
@@ -548,7 +591,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
           </Select>
 
           <span className="text-xs text-muted-foreground">
-            {search || statusFilter !== 'all' || typeFilter !== 'all' || dateFilter !== 'all' ? `${visibleRows.length} of ${dataRows.length}` : `${dataRows.length}`} shown
+            {search || statusFilter !== 'all' || typeFilter !== 'all' || priorityFilter !== 'all' || dateFilter !== 'all' ? `${visibleRows.length} of ${dataRows.length}` : `${dataRows.length}`} shown
           </span>
 
           <div className="flex-1" />
@@ -563,6 +606,11 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
               <Button variant="outline" size="sm" className="h-8" onClick={() => setBulkStatusOpen(true)}>
                 Update Status
               </Button>
+              {priorityColIdx !== -1 && (
+                <Button variant="outline" size="sm" className="h-8" onClick={() => setBulkPriorityOpen(true)}>
+                  Priority
+                </Button>
+              )}
             </>
           )}
 
@@ -665,16 +713,16 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
                       );
                     }
 
-                    // Priority column: a flag, filled when High.
+                    // Priority column: a flag, colored by tier (Low/Medium/High).
                     if (ci === priorityColIdx) {
-                      const isHigh = String(cell ?? '').trim().toUpperCase() === 'HIGH';
+                      const tier = String(cell ?? '').trim();
+                      const flagCls = tier === 'High' ? 'fill-destructive text-destructive'
+                        : tier === 'Medium' ? 'fill-warning text-warning'
+                        : tier === 'Low' ? 'fill-info text-info'
+                        : 'text-muted-foreground/30';
                       return (
-                        <TableCell key={ci} className="px-3 py-1.5 text-center">
-                          {isHigh ? (
-                            <Flag className="mx-auto h-3.5 w-3.5 fill-destructive text-destructive" />
-                          ) : (
-                            <Flag className="mx-auto h-3.5 w-3.5 text-muted-foreground/30" />
-                          )}
+                        <TableCell key={ci} className="px-3 py-1.5 text-center" title={tier || undefined}>
+                          <Flag className={cn('mx-auto h-3.5 w-3.5', flagCls)} />
                         </TableCell>
                       );
                     }
@@ -806,6 +854,32 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
         </DialogContent>
       </Dialog>
 
+      <Dialog open={bulkPriorityOpen} onOpenChange={(open) => { setBulkPriorityOpen(open); if (!open) setBulkPriority(''); }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Priority Update</DialogTitle>
+            <DialogDescription>Applies to the {selectedIdx.size} selected record{selectedIdx.size === 1 ? '' : 's'}.</DialogDescription>
+          </DialogHeader>
+          <Select value={bulkPriority} onValueChange={setBulkPriority}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select…" />
+            </SelectTrigger>
+            <SelectContent>
+              {PRIORITY_TIERS.map((t) => (
+                <SelectItem key={t} value={t}>{t}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <DialogFooter>
+            <Button variant="outline" disabled={bulkSaving} onClick={() => setBulkPriorityOpen(false)}>Cancel</Button>
+            <Button onClick={applyBulkPriority} disabled={bulkSaving || !bulkPriority}>
+              {bulkSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {bulkSaving ? 'Saving…' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={editingIdx !== null} onOpenChange={(open) => { if (!open) setEditingIdx(null); }}>
         <DialogContent>
           <DialogHeader>
@@ -817,11 +891,17 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
           <div className="max-h-[65vh] space-y-4 overflow-y-auto pt-2 pr-1">
             <div className="flex items-center justify-between rounded-md border px-3 py-2">
               <Label htmlFor="notice-priority" className="text-sm font-normal">Priority</Label>
-              <Switch
-                id="notice-priority"
-                checked={editForm.priority}
-                onCheckedChange={(checked) => setEditForm((f) => ({ ...f, priority: checked }))}
-              />
+              <Select value={editForm.priority || 'none'} onValueChange={(v) => setEditForm((f) => ({ ...f, priority: v === 'none' ? '' : v }))}>
+                <SelectTrigger id="notice-priority" className="h-8 w-[130px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {PRIORITY_TIERS.map((t) => (
+                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">

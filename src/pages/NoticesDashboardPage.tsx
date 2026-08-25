@@ -37,7 +37,7 @@ interface NoticeRow {
   notice_type: string | null;
   description: string | null;
   staff_status: string | null;
-  priority: boolean;
+  priority: string | null;
   issue_date: string | null;
   due_date: string | null;
   reply_date: string | null;
