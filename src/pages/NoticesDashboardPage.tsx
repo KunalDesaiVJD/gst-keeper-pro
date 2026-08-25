@@ -368,9 +368,14 @@ const NoticesDashboardPage: React.FC = () => {
         </Select>
       </div>
 
-      {/* Row 1: KPI tiles (left) + Notice Summary (right) — same order as Notice Alert's dashboard */}
-      <div className="grid grid-cols-1 items-stretch gap-2.5 xl:grid-cols-3">
-        <div className="grid grid-cols-2 gap-2.5 content-start sm:grid-cols-4 xl:col-span-2">
+      {/*
+        Layout matches Notice Alert exactly: left column stacks KPI tiles on
+        top of Company + Calendar (side by side); Notice Summary is a single
+        tall card on the right spanning the full height of both left rows —
+        not just sitting beside the KPI tiles for one row.
+      */}
+      <div className="grid grid-cols-1 items-stretch gap-2.5 xl:grid-cols-3 xl:grid-rows-2">
+        <div className="grid grid-cols-2 gap-2.5 content-start sm:grid-cols-4 xl:col-span-2 xl:row-start-1">
           {kpiCards.map((card) => {
             const body = (
               <CardContent className="p-3">
@@ -395,7 +400,7 @@ const NoticesDashboardPage: React.FC = () => {
           })}
         </div>
 
-        <Card className="flex min-h-0 flex-col xl:row-span-1">
+        <Card className="flex min-h-0 flex-col xl:col-start-3 xl:row-start-1 xl:row-span-2">
           <CardHeader className="shrink-0 pb-2 pt-3">
             <CardTitle className="text-sm">Notice Summary</CardTitle>
             <CardDescription className="text-[11px]">
@@ -469,11 +474,10 @@ const NoticesDashboardPage: React.FC = () => {
             )}
           </CardContent>
         </Card>
-      </div>
 
-      {/* Row 2: Company (left) + Calendar (right) */}
-      <div className="grid grid-cols-1 items-stretch gap-2.5 xl:grid-cols-3">
-        <Card className="flex min-h-0 flex-col xl:col-span-2">
+        {/* Company (left) + Calendar (right), sharing the second grid row with Notice Summary's height */}
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3 xl:col-span-2 xl:row-start-2">
+        <Card className="flex min-h-0 flex-col sm:col-span-2">
           <CardHeader className="shrink-0 pb-2 pt-3">
             <CardTitle className="text-sm">Company</CardTitle>
             <CardDescription className="text-[11px]">Onboard clients and pull the latest notices for everyone at once.</CardDescription>
@@ -581,6 +585,7 @@ const NoticesDashboardPage: React.FC = () => {
             </div>
           </CardContent>
         </Card>
+        </div>
       </div>
     </div>
   );
