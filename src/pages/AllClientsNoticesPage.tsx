@@ -14,6 +14,7 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { NoticeWorkflowListView } from '@/components/reports/views/NoticeWorkflowListView';
 import type { ReportTable } from '@/utils/allClientsReports';
+import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
 import { Bell, ArrowLeft, Loader2 } from 'lucide-react';
 
 interface NoticeRecord {
@@ -44,7 +45,7 @@ interface NoticeRecord {
   clients: { name: string | null; gstin: string | null } | null;
 }
 
-const isRegistrationRelated = (r: NoticeRecord) => /registration/i.test(r.description || '');
+const isRegistrationRelated = (r: NoticeRecord) => isRegistrationDescription(r.description);
 const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 
 const FILTER_LABELS: Record<string, string> = {
@@ -99,7 +100,7 @@ const AllClientsNoticesPage: React.FC = () => {
     let list = records;
     if (typeParam === 'registration') list = list.filter(isRegistrationRelated);
     if (typeParam === 'other') list = list.filter((r) => !isRegistrationRelated(r));
-    if (category) list = list.filter((r) => (r.notice_type || 'Uncategorised') === category);
+    if (category) list = list.filter((r) => classifyNoticeCategory(r) === category);
     if (status) list = list.filter((r) => (r.staff_status || '').trim().toLowerCase() === status.toLowerCase());
     if (filter === 'last15') list = list.filter((r) => daysAgo(r.issue_date) <= 15);
     if (filter === 'last24h') list = list.filter((r) => daysAgo(r.pulled_at) <= 1);

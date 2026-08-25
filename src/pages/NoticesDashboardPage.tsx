@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import BulkAddClientsDialog, { downloadClientImportTemplate } from '@/components/clients/BulkAddClientsDialog';
+import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription, UNCAPTURED_NOTICE_CATEGORIES } from '@/utils/noticeCategoryClassifier';
 import {
   Bell, CalendarClock, History, Building2, FolderOpen, AlertTriangle, Flag, Loader2,
   UserPlus, Upload, Download, RefreshCw, Pencil, ChevronLeft, ChevronRight,
@@ -49,7 +50,7 @@ interface NoticeRow {
 // So this filter matches on description text, the same way the underlying
 // data actually distinguishes a registration-related notice from any other.
 type TypeOfNoticesFilter = 'all' | 'registration' | 'other';
-const isRegistrationRelated = (r: NoticeRow) => /registration/i.test(r.description || '');
+const isRegistrationRelated = (r: NoticeRow) => isRegistrationDescription(r.description);
 
 interface CategoryRow {
   type: string;
@@ -61,6 +62,9 @@ interface CategoryRow {
   // so clicking them can't reuse the in-page categoryFilter mechanism —
   // they link straight to their own firm-wide drill-down page instead.
   to?: string;
+  // Zero-value row for a category this app has no portal capture for yet —
+  // rendered plain/non-clickable, matching Notice Alert's own convention.
+  placeholder?: boolean;
 }
 
 const isClosed = (s: string | null) => (s || '').trim().toLowerCase() === 'closed';
@@ -210,7 +214,7 @@ const NoticesDashboardPage: React.FC = () => {
     return true;
   });
   const displayRows = categoryFilter
-    ? filteredRows.filter((r) => (r.notice_type || 'Uncategorised') === categoryFilter)
+    ? filteredRows.filter((r) => classifyNoticeCategory(r) === categoryFilter)
     : filteredRows;
 
   const now = Date.now();
@@ -253,7 +257,7 @@ const NoticesDashboardPage: React.FC = () => {
 
   const categoryMap = new Map<string, CategoryRow>();
   filteredRows.forEach((r) => {
-    const type = r.notice_type || 'Uncategorised';
+    const type = classifyNoticeCategory(r);
     const entry = categoryMap.get(type) || { type, total: 0, open: 0, closed: 0, replied: 0 };
     entry.total += 1;
     if (isClosed(r.staff_status)) entry.closed += 1; else entry.open += 1;
@@ -273,7 +277,16 @@ const NoticesDashboardPage: React.FC = () => {
     categoryMap.set('DRC 03', { type: 'DRC 03', total: drc03Statuses.length, open: drc03Statuses.length - closed, closed, replied: 0, to: '/drc03-all' });
   }
 
-  const categoryRows = Array.from(categoryMap.values()).sort((a, b) => b.total - a.total);
+  const realCategoryRows = Array.from(categoryMap.values()).sort((a, b) => b.total - a.total);
+  // Zero-value placeholder rows for the Notice Alert categories with no
+  // portal capture in this app — matches their own dashes-not-links
+  // convention (confirmed live: a zero-count row there isn't hyperlinked
+  // either), so the row list is visually complete without fabricating
+  // pages for data we don't have.
+  const placeholderRows: CategoryRow[] = UNCAPTURED_NOTICE_CATEGORIES
+    .filter((type) => !categoryMap.has(type))
+    .map((type) => ({ type, total: 0, open: 0, closed: 0, replied: 0, placeholder: true }));
+  const categoryRows = [...realCategoryRows, ...placeholderRows];
   const grandTotal = categoryRows.reduce(
     (acc, r) => ({ total: acc.total + r.total, open: acc.open + r.open, closed: acc.closed + r.closed, replied: acc.replied + r.replied }),
     { total: 0, open: 0, closed: 0, replied: 0 },
@@ -419,11 +432,16 @@ const NoticesDashboardPage: React.FC = () => {
                     {categoryRows.map((r) => (
                       <TableRow
                         key={r.type}
-                        className={cn('cursor-pointer', categoryFilter === r.type && 'bg-primary/10 hover:bg-primary/15')}
-                        onClick={() => (r.to ? navigate(r.to) : setCategoryFilter((prev) => (prev === r.type ? null : r.type)))}
+                        className={cn(
+                          !r.placeholder && 'cursor-pointer',
+                          categoryFilter === r.type && 'bg-primary/10 hover:bg-primary/15',
+                        )}
+                        onClick={r.placeholder ? undefined : () => (r.to ? navigate(r.to) : setCategoryFilter((prev) => (prev === r.type ? null : r.type)))}
                       >
-                        <TableCell className="px-2 py-1 text-[11px] font-medium text-primary">{r.type}</TableCell>
-                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums text-primary underline-offset-2 hover:underline">{r.total}</TableCell>
+                        <TableCell className={cn('px-2 py-1 text-[11px] font-medium', r.placeholder ? 'text-muted-foreground' : 'text-primary')}>{r.type}</TableCell>
+                        <TableCell className={cn('px-2 py-1 text-right text-[11px] tabular-nums', !r.placeholder && 'text-primary underline-offset-2 hover:underline')}>
+                          {r.placeholder ? '—' : r.total}
+                        </TableCell>
                         <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.open || '—'}</TableCell>
                         <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.closed || '—'}</TableCell>
                         <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.replied || '—'}</TableCell>
