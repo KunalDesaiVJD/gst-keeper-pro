@@ -369,13 +369,21 @@ const NoticesDashboardPage: React.FC = () => {
       </div>
 
       {/*
-        Layout matches Notice Alert exactly: left column stacks KPI tiles on
-        top of Company + Calendar (side by side); Notice Summary is a single
-        tall card on the right spanning the full height of both left rows —
-        not just sitting beside the KPI tiles for one row.
+        Layout matches Notice Alert: left column stacks KPI tiles on top of
+        Company + Calendar (side by side); Notice Summary is a single tall
+        card on the right next to both. It gets an explicit fixed height
+        (not items-stretch) — with an auto-height flex/grid row, align-items:
+        stretch sizes the ROW to the tallest item's own natural content
+        height first (here, the Notice Summary table's full un-scrolled row
+        count, ~850px), then stretches every OTHER column up to match that —
+        the opposite of what's wanted, and it still leaves dead space below
+        the now-taller Company/Calendar column. A fixed height plus
+        overflow-auto (matching Notice Alert's own scrollbar, visible in
+        their screenshot too) sidesteps that entirely.
       */}
-      <div className="grid grid-cols-1 items-stretch gap-2.5 xl:grid-cols-3 xl:grid-rows-2">
-        <div className="grid grid-cols-2 gap-2.5 content-start sm:grid-cols-4 xl:col-span-2 xl:row-start-1">
+      <div className="flex flex-col gap-2.5 xl:flex-row xl:items-start">
+        <div className="flex flex-1 flex-col gap-2.5 min-w-0">
+        <div className="grid grid-cols-2 gap-2.5 content-start sm:grid-cols-4">
           {kpiCards.map((card) => {
             const body = (
               <CardContent className="p-3">
@@ -400,83 +408,8 @@ const NoticesDashboardPage: React.FC = () => {
           })}
         </div>
 
-        <Card className="flex min-h-0 flex-col xl:col-start-3 xl:row-start-1 xl:row-span-2">
-          <CardHeader className="shrink-0 pb-2 pt-3">
-            <CardTitle className="text-sm">Notice Summary</CardTitle>
-            <CardDescription className="text-[11px]">
-              Click a row to drill the tiles into just that category
-              {categoryFilter && (
-                <>
-                  {' '}·{' '}
-                  <button
-                    type="button"
-                    className="font-medium text-primary underline-offset-2 hover:underline"
-                    onClick={() => setCategoryFilter(null)}
-                  >
-                    clear "{categoryFilter}"
-                  </button>
-                </>
-              )}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex min-h-0 flex-1 flex-col pb-3">
-            {loading ? (
-              <div className="flex items-center justify-center py-10 text-muted-foreground">
-                <Loader2 className="h-5 w-5 animate-spin" />
-              </div>
-            ) : categoryRows.length === 0 ? (
-              <p className="py-10 text-center text-sm text-muted-foreground">No notices on record yet.</p>
-            ) : (
-              // Stretches to match the KPI tile grid's height (its Card sibling
-              // in the same items-stretch row), same proportions as Notice
-              // Alert's own tall Notice Summary card — scrolls internally only
-              // if the row count still exceeds that height.
-              <div className="min-h-[260px] flex-1 overflow-auto rounded-md border">
-                <Table>
-                  <TableHeader className="sticky top-0 z-10 bg-background">
-                    <TableRow>
-                      <TableHead className="bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">Remarks</TableHead>
-                      <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Total</TableHead>
-                      <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Open</TableHead>
-                      <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Closed</TableHead>
-                      <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Replied</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {categoryRows.map((r) => (
-                      <TableRow
-                        key={r.type}
-                        className={cn(
-                          !r.placeholder && 'cursor-pointer',
-                          categoryFilter === r.type && 'bg-primary/10 hover:bg-primary/15',
-                        )}
-                        onClick={r.placeholder ? undefined : () => (r.to ? navigate(r.to) : setCategoryFilter((prev) => (prev === r.type ? null : r.type)))}
-                      >
-                        <TableCell className={cn('px-2 py-1 text-[11px] font-medium', r.placeholder ? 'text-muted-foreground' : 'text-primary')}>{r.type}</TableCell>
-                        <TableCell className={cn('px-2 py-1 text-right text-[11px] tabular-nums', !r.placeholder && 'text-primary underline-offset-2 hover:underline')}>
-                          {r.placeholder ? '—' : r.total}
-                        </TableCell>
-                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.open || '—'}</TableCell>
-                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.closed || '—'}</TableCell>
-                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.replied || '—'}</TableCell>
-                      </TableRow>
-                    ))}
-                    <TableRow className="bg-primary/5 font-semibold hover:bg-primary/10">
-                      <TableCell className="px-2 py-1 text-[11px]">Total</TableCell>
-                      <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.total}</TableCell>
-                      <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.open}</TableCell>
-                      <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.closed}</TableCell>
-                      <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.replied}</TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Company (left) + Calendar (right), sharing the second grid row with Notice Summary's height */}
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3 xl:col-span-2 xl:row-start-2">
+        {/* Company (left) + Calendar (right) */}
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
         <Card className="flex min-h-0 flex-col sm:col-span-2">
           <CardHeader className="shrink-0 pb-2 pt-3">
             <CardTitle className="text-sm">Company</CardTitle>
@@ -586,6 +519,80 @@ const NoticesDashboardPage: React.FC = () => {
           </CardContent>
         </Card>
         </div>
+        </div>
+
+        <Card className="flex min-h-0 flex-col xl:h-[620px] xl:w-[380px] xl:shrink-0">
+          <CardHeader className="shrink-0 pb-2 pt-3">
+            <CardTitle className="text-sm">Notice Summary</CardTitle>
+            <CardDescription className="text-[11px]">
+              Click a row to drill the tiles into just that category
+              {categoryFilter && (
+                <>
+                  {' '}·{' '}
+                  <button
+                    type="button"
+                    className="font-medium text-primary underline-offset-2 hover:underline"
+                    onClick={() => setCategoryFilter(null)}
+                  >
+                    clear "{categoryFilter}"
+                  </button>
+                </>
+              )}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex min-h-0 flex-1 flex-col pb-3">
+            {loading ? (
+              <div className="flex items-center justify-center py-10 text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin" />
+              </div>
+            ) : categoryRows.length === 0 ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">No notices on record yet.</p>
+            ) : (
+              // The Card above has a fixed height, so this just fills it and
+              // scrolls — same as Notice Alert's own scrollbar.
+              <div className="min-h-0 flex-1 overflow-auto rounded-md border">
+                <Table>
+                  <TableHeader className="sticky top-0 z-10 bg-background">
+                    <TableRow>
+                      <TableHead className="bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">Remarks</TableHead>
+                      <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Total</TableHead>
+                      <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Open</TableHead>
+                      <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Closed</TableHead>
+                      <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Replied</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {categoryRows.map((r) => (
+                      <TableRow
+                        key={r.type}
+                        className={cn(
+                          !r.placeholder && 'cursor-pointer',
+                          categoryFilter === r.type && 'bg-primary/10 hover:bg-primary/15',
+                        )}
+                        onClick={r.placeholder ? undefined : () => (r.to ? navigate(r.to) : setCategoryFilter((prev) => (prev === r.type ? null : r.type)))}
+                      >
+                        <TableCell className={cn('px-2 py-1 text-[11px] font-medium', r.placeholder ? 'text-muted-foreground' : 'text-primary')}>{r.type}</TableCell>
+                        <TableCell className={cn('px-2 py-1 text-right text-[11px] tabular-nums', !r.placeholder && 'text-primary underline-offset-2 hover:underline')}>
+                          {r.placeholder ? '—' : r.total}
+                        </TableCell>
+                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.open || '—'}</TableCell>
+                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.closed || '—'}</TableCell>
+                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.replied || '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                    <TableRow className="bg-primary/5 font-semibold hover:bg-primary/10">
+                      <TableCell className="px-2 py-1 text-[11px]">Total</TableCell>
+                      <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.total}</TableCell>
+                      <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.open}</TableCell>
+                      <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.closed}</TableCell>
+                      <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.replied}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
