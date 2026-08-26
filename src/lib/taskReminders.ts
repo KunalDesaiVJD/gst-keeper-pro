@@ -13,6 +13,7 @@ export interface TaskReminderRow {
   deadline: string | null;
   allocated_to: string;
   received_from: string;
+  ticket_status: string;
   is_done: boolean;
   sort_order: number;
   created_at: string;
@@ -20,7 +21,7 @@ export interface TaskReminderRow {
 }
 
 export type TaskReminderPatch = Partial<
-  Pick<TaskReminderRow, 'task' | 'client' | 'reminder_frequency' | 'deadline' | 'allocated_to' | 'received_from' | 'is_done'>
+  Pick<TaskReminderRow, 'task' | 'client' | 'reminder_frequency' | 'deadline' | 'allocated_to' | 'received_from' | 'ticket_status' | 'is_done'>
 >;
 
 export const listTaskReminders = async (userId: string): Promise<TaskReminderRow[]> => {

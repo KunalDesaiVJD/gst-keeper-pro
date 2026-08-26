@@ -141,6 +141,7 @@ export const TaskReminderDialog: React.FC<TaskReminderDialogProps> = ({ open, on
                   <TableHead className="min-w-[150px]">Deadline for Submission</TableHead>
                   <TableHead className="min-w-[150px]">Task Allocated To</TableHead>
                   <TableHead className="min-w-[150px]">Task Received From</TableHead>
+                  <TableHead className="min-w-[150px]">Ticket Status</TableHead>
                   <TableHead className="w-10" />
                 </TableRow>
               </TableHeader>
@@ -209,6 +210,14 @@ export const TaskReminderDialog: React.FC<TaskReminderDialogProps> = ({ open, on
                       />
                     </TableCell>
                     <TableCell className="p-1">
+                      <Input
+                        className="border-0 shadow-none focus-visible:ring-1 h-8"
+                        defaultValue={row.ticket_status}
+                        onBlur={(e) => e.target.value !== row.ticket_status && patchRow(row.id, { ticket_status: e.target.value })}
+                        placeholder="Ticket status…"
+                      />
+                    </TableCell>
+                    <TableCell className="p-1">
                       <Button
                         variant="ghost"
                         size="icon"
@@ -222,7 +231,7 @@ export const TaskReminderDialog: React.FC<TaskReminderDialogProps> = ({ open, on
                 ))}
                 {!sortedRows.length && (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={9} className="text-center text-muted-foreground py-10">
                       No tasks yet — click "Add Task" to start your list.
                     </TableCell>
                   </TableRow>

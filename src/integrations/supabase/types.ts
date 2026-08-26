@@ -6320,6 +6320,7 @@ export type Database = {
           reminder_frequency: string
           sort_order: number
           task: string
+          ticket_status: string
           updated_at: string
           user_id: string
         }
@@ -6334,6 +6335,7 @@ export type Database = {
           reminder_frequency?: string
           sort_order?: number
           task?: string
+          ticket_status?: string
           updated_at?: string
           user_id: string
         }
@@ -6348,6 +6350,7 @@ export type Database = {
           reminder_frequency?: string
           sort_order?: number
           task?: string
+          ticket_status?: string
           updated_at?: string
           user_id?: string
         }
