@@ -332,6 +332,23 @@ const CompanyProfilePage: React.FC = () => {
                 </div>
               </CardContent>
             </Card>
+
+            {/*
+              Business Owners / HSN-SAC / Return Periodicity / Business
+              Activities — matches Notice Alert's own layout, but shown as
+              empty placeholder panels: confirmed live (2026-08-26) on an
+              ACTIVE client with 35 real notices and full filing history that
+              these 4 boxes render permanently empty on their end too (Return
+              Periodicity even shows a raw "Undefined-NaN Undefined-NaN"
+              rendering bug) — there's no real data source behind them to
+              port, only the panel shells themselves.
+            */}
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+              <Card><CardHeader className="pb-2 pt-3"><CardTitle className="text-sm">Business Owners</CardTitle></CardHeader><CardContent className="pb-4" /></Card>
+              <Card><CardHeader className="pb-2 pt-3"><CardTitle className="text-sm">HSN / SAC</CardTitle></CardHeader><CardContent className="pb-4" /></Card>
+              <Card><CardHeader className="pb-2 pt-3"><CardTitle className="text-sm">Return Periodicity</CardTitle></CardHeader><CardContent className="pb-4" /></Card>
+              <Card><CardHeader className="pb-2 pt-3"><CardTitle className="text-sm">Business Activities</CardTitle></CardHeader><CardContent className="pb-4" /></Card>
+            </div>
           </div>
         </div>
       )}
