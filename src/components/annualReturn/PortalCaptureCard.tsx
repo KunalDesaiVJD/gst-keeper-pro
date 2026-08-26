@@ -29,12 +29,13 @@ const emptyMonth = (month: string): MonthRow => {
 const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 const num = (v: string) => (v === '' ? 0 : Number(v));
 
-const FIELD_GROUPS: { title: string; keys: NumericKey[] }[] = [
-  { title: 'GSTR-1 turnover', keys: ['turnover_taxable', 'turnover_igst', 'turnover_cgst', 'turnover_sgst'] },
-  { title: 'GSTR-3B outward tax', keys: ['outward_igst', 'outward_cgst', 'outward_sgst'] },
-  { title: 'GSTR-3B ITC claimed', keys: ['itc_igst', 'itc_cgst', 'itc_sgst'] },
-  { title: 'GSTR-2B ITC available', keys: ['itc2b_igst', 'itc2b_cgst', 'itc2b_sgst'] },
-  { title: 'RCM (Part A — as per portal)', keys: ['rcm_taxable', 'rcm_igst', 'rcm_cgst', 'rcm_sgst'] },
+type ReturnType = 'GSTR-1' | 'GSTR-3B' | 'GSTR-2B' | 'RCM';
+const FIELD_GROUPS: { title: string; returnType: ReturnType; keys: NumericKey[] }[] = [
+  { title: 'GSTR-1 turnover', returnType: 'GSTR-1', keys: ['turnover_taxable', 'turnover_igst', 'turnover_cgst', 'turnover_sgst'] },
+  { title: 'GSTR-3B outward tax', returnType: 'GSTR-3B', keys: ['outward_igst', 'outward_cgst', 'outward_sgst'] },
+  { title: 'GSTR-3B ITC claimed', returnType: 'GSTR-3B', keys: ['itc_igst', 'itc_cgst', 'itc_sgst'] },
+  { title: 'GSTR-2B ITC available', returnType: 'GSTR-2B', keys: ['itc2b_igst', 'itc2b_cgst', 'itc2b_sgst'] },
+  { title: 'RCM (Part A — as per portal)', returnType: 'RCM', keys: ['rcm_taxable', 'rcm_igst', 'rcm_cgst', 'rcm_sgst'] },
 ];
 const FIELD_LABEL: Record<string, string> = { turnover_taxable: 'Taxable', turnover_igst: 'IGST', turnover_cgst: 'CGST', turnover_sgst: 'SGST', outward_igst: 'IGST', outward_cgst: 'CGST', outward_sgst: 'SGST', itc_igst: 'IGST', itc_cgst: 'CGST', itc_sgst: 'SGST', itc2b_igst: 'IGST', itc2b_cgst: 'CGST', itc2b_sgst: 'SGST', rcm_taxable: 'Taxable', rcm_igst: 'IGST', rcm_cgst: 'CGST', rcm_sgst: 'SGST' };
 
@@ -53,6 +54,7 @@ export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) 
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<MonthRow | null>(null);
   const [saving, setSaving] = useState(false);
+  const [touchedGroups, setTouchedGroups] = useState<Set<ReturnType>>(new Set());
 
   const load = async () => {
     if (!clientId || !financialYear) { setData({}); setLoading(false); return; }
@@ -103,14 +105,17 @@ export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) 
     setSaving(true);
     try {
       const now = new Date().toISOString();
-      const upserts = [
-        { client_id: clientId, period_month: editing.month, return_type: 'GSTR-1', summary: { turnover_taxable: editing.turnover_taxable, turnover_igst: editing.turnover_igst, turnover_cgst: editing.turnover_cgst, turnover_sgst: editing.turnover_sgst }, updated_at: now },
-        { client_id: clientId, period_month: editing.month, return_type: 'GSTR-3B', summary: { outward_igst: editing.outward_igst, outward_cgst: editing.outward_cgst, outward_sgst: editing.outward_sgst, itc_igst: editing.itc_igst, itc_cgst: editing.itc_cgst, itc_sgst: editing.itc_sgst }, updated_at: now },
-        { client_id: clientId, period_month: editing.month, return_type: 'GSTR-2B', summary: { itc2b_igst: editing.itc2b_igst, itc2b_cgst: editing.itc2b_cgst, itc2b_sgst: editing.itc2b_sgst }, updated_at: now },
-        { client_id: clientId, period_month: editing.month, return_type: 'RCM', summary: { rcm_taxable: editing.rcm_taxable, rcm_igst: editing.rcm_igst, rcm_cgst: editing.rcm_cgst, rcm_sgst: editing.rcm_sgst }, updated_at: now },
+      const candidates: { return_type: ReturnType; touched: boolean; summary: Record<string, number> }[] = [
+        { return_type: 'GSTR-1', touched: touchedGroups.has('GSTR-1') || editing.hasGstr1, summary: { turnover_taxable: editing.turnover_taxable, turnover_igst: editing.turnover_igst, turnover_cgst: editing.turnover_cgst, turnover_sgst: editing.turnover_sgst } },
+        { return_type: 'GSTR-3B', touched: touchedGroups.has('GSTR-3B') || editing.hasGstr3b, summary: { outward_igst: editing.outward_igst, outward_cgst: editing.outward_cgst, outward_sgst: editing.outward_sgst, itc_igst: editing.itc_igst, itc_cgst: editing.itc_cgst, itc_sgst: editing.itc_sgst } },
+        { return_type: 'GSTR-2B', touched: touchedGroups.has('GSTR-2B') || editing.hasGstr2b, summary: { itc2b_igst: editing.itc2b_igst, itc2b_cgst: editing.itc2b_cgst, itc2b_sgst: editing.itc2b_sgst } },
+        { return_type: 'RCM', touched: touchedGroups.has('RCM') || editing.hasRcm, summary: { rcm_taxable: editing.rcm_taxable, rcm_igst: editing.rcm_igst, rcm_cgst: editing.rcm_cgst, rcm_sgst: editing.rcm_sgst } },
       ];
-      const { error } = await supabase.from('gst_filed_returns').upsert(upserts, { onConflict: 'client_id,period_month,return_type' });
-      if (error) throw error;
+      const upserts = candidates.filter((c) => c.touched).map((c) => ({ client_id: clientId, period_month: editing.month, return_type: c.return_type, summary: c.summary, updated_at: now }));
+      if (upserts.length > 0) {
+        const { error } = await supabase.from('gst_filed_returns').upsert(upserts, { onConflict: 'client_id,period_month,return_type' });
+        if (error) throw error;
+      }
       toast.success(`${editing.month} portal figures saved.`);
       setEditing(null);
       await load();
@@ -121,7 +126,7 @@ export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) 
     }
   };
 
-  const confirmedCount = months.filter((m) => data[m]?.hasGstr1 && data[m]?.hasGstr3b && data[m]?.hasGstr2b).length;
+  const confirmedCount = months.filter((m) => data[m]?.hasGstr1 && data[m]?.hasGstr3b && data[m]?.hasGstr2b && data[m]?.hasRcm).length;
   const table6A = months.reduce((sum, m) => sum + (data[m]?.hasGstr3b ? data[m].itc_igst + data[m].itc_cgst + data[m].itc_sgst : 0), 0);
   const table8A = months.reduce((sum, m) => sum + (data[m]?.hasGstr2b ? data[m].itc2b_igst + data[m].itc2b_cgst + data[m].itc2b_sgst : 0), 0);
   const allConfirmed = confirmedCount === months.length;
@@ -169,7 +174,7 @@ export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) 
             <TableBody>
               {months.map((m) => {
                 const r = data[m] || emptyMonth(m);
-                const confirmed = r.hasGstr1 && r.hasGstr3b && r.hasGstr2b;
+                const confirmed = r.hasGstr1 && r.hasGstr3b && r.hasGstr2b && r.hasRcm;
                 return (
                   <TableRow key={m}>
                     <TableCell className="font-medium">{m}</TableCell>
@@ -179,7 +184,7 @@ export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) 
                     <TableCell className="text-right tabular-nums">{fmt(r.itc2b_igst + r.itc2b_cgst + r.itc2b_sgst)}</TableCell>
                     <TableCell className="text-right tabular-nums">{fmt(r.rcm_igst + r.rcm_cgst + r.rcm_sgst)}</TableCell>
                     <TableCell><Badge variant={confirmed ? 'success' : 'outline'} className={confirmed ? '' : 'border-dashed text-muted-foreground'}>{confirmed ? 'Confirmed' : 'Needs entry'}</Badge></TableCell>
-                    <TableCell><Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setEditing(r)} aria-label={`Edit ${m}`}><Pencil className="h-3.5 w-3.5" /></Button></TableCell>
+                    <TableCell><Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setEditing(r); setTouchedGroups(new Set()); }} aria-label={`Edit ${m}`}><Pencil className="h-3.5 w-3.5" /></Button></TableCell>
                   </TableRow>
                 );
               })}
@@ -199,7 +204,7 @@ export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) 
                   {group.keys.map((key) => (
                     <div key={key} className="flex items-center justify-between gap-3">
                       <span className="text-sm text-muted-foreground">{FIELD_LABEL[key]}</span>
-                      <Input type="number" className="w-40 text-right" value={String(editing[key])} onChange={(e) => setEditing({ ...editing, [key]: num(e.target.value) })} />
+                      <Input type="number" className="w-40 text-right" value={String(editing[key])} onChange={(e) => { setEditing({ ...editing, [key]: num(e.target.value) }); setTouchedGroups((prev) => new Set(prev).add(group.returnType)); }} />
                     </div>
                   ))}
                 </div>

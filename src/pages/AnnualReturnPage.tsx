@@ -85,6 +85,7 @@ const AnnualReturnPage: React.FC = () => {
   const [period, setPeriod] = useState<AnnualReturnPeriod | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [dutiesVersion, setDutiesVersion] = useState(0);
 
   const isStaff = isStaffRole();
   const selectedClient = clients.find((c) => c.id === selectedClientId) || null;
@@ -287,9 +288,9 @@ const AnnualReturnPage: React.FC = () => {
               Month-wise entry, separate from Books Input by design — the two are meant to cross-check each other's
               annual totals, not derive from one another.
             </p>
-            <AnnualCrossCheckCard clientId={selectedClientId} financialYear={financialYear} />
-            <DutiesTaxesOutputCard clientId={selectedClientId} financialYear={financialYear} />
-            <DutiesTaxesInputCard clientId={selectedClientId} financialYear={financialYear} />
+            <AnnualCrossCheckCard clientId={selectedClientId} financialYear={financialYear} refreshKey={dutiesVersion} />
+            <DutiesTaxesOutputCard clientId={selectedClientId} financialYear={financialYear} onSaved={() => setDutiesVersion((v) => v + 1)} />
+            <DutiesTaxesInputCard clientId={selectedClientId} financialYear={financialYear} onSaved={() => setDutiesVersion((v) => v + 1)} />
           </TabsContent>
 
           <TabsContent value="rcm" className="space-y-4">

@@ -32,15 +32,17 @@ export const ReconciliationCard: React.FC<Props> = ({ clientId, financialYear, i
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = async (preserveDrafts = false) => {
     if (!clientId || !financialYear) { setLines([]); setLoading(false); return; }
     setLoading(true);
     try {
       const result = await fetchReconciliationLines(clientId, financialYear, isNoItcBuilder);
       setLines(result);
-      const d: Record<string, string> = {};
-      result.forEach((l) => { d[l.key] = l.reason; });
-      setDrafts(d);
+      if (!preserveDrafts) {
+        const d: Record<string, string> = {};
+        result.forEach((l) => { d[l.key] = l.reason; });
+        setDrafts(d);
+      }
     } catch (err) {
       toast.error('Could not compute reconciliation: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {
@@ -61,7 +63,8 @@ export const ReconciliationCard: React.FC<Props> = ({ clientId, financialYear, i
       );
       if (error) throw error;
       toast.success('Reason saved.');
-      await load();
+      setDrafts((d) => ({ ...d, [line.key]: reason }));
+      await load(true);
     } catch (err) {
       toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {

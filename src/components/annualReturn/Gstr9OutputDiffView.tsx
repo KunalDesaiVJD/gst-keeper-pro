@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Inbox } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -29,9 +29,10 @@ export const Gstr9OutputDiffView: React.FC<Props> = ({ clientId, financialYear }
   const [books, setBooks] = useState<Record<string, CatVal>>({});
   const [portal, setPortal] = useState<Record<string, CatVal>>({});
   const [loading, setLoading] = useState(true);
+  const [hasData, setHasData] = useState(false);
 
   useEffect(() => {
-    if (!clientId || !financialYear) { setLoading(false); return; }
+    if (!clientId || !financialYear) { setHasData(false); setLoading(false); return; }
     let cancelled = false;
     setLoading(true);
     Promise.all([
@@ -46,12 +47,24 @@ export const Gstr9OutputDiffView: React.FC<Props> = ({ clientId, financialYear }
       (booksRes.data || []).forEach((r: { category: string; taxable_value: number; igst: number; cgst: number; sgst: number }) => { b[r.category] = { taxable: r.taxable_value, igst: r.igst, cgst: r.cgst, sgst: r.sgst }; });
       (portalRes.data || []).forEach((r: { category: string; taxable_value: number; igst: number; cgst: number; sgst: number }) => { p[r.category] = { taxable: r.taxable_value, igst: r.igst, cgst: r.cgst, sgst: r.sgst }; });
       setBooks(b); setPortal(p);
+      setHasData((booksRes.data?.length ?? 0) > 0);
     }).catch((err) => toast.error('Could not load GSTR 9-Output diff: ' + (err instanceof Error ? err.message : 'Unknown error')))
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [clientId, financialYear]);
 
   if (loading) return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
+
+  if (!hasData) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
+          <Inbox className="h-8 w-8" />
+          <p className="text-sm">No data entered yet for this client/year.</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   const totalBooks = CATEGORIES.reduce((a, c) => a + total(books[c] || zero()), 0);
   const totalPortal = CATEGORIES.reduce((a, c) => a + total(portal[c] || zero()), 0);

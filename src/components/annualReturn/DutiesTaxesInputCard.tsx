@@ -61,7 +61,7 @@ const FIELD_GROUPS: { title: string; keys: NumericKey[] }[] = [
 ];
 const TAX_LABEL: Record<string, string> = { igst: 'IGST', cgst: 'CGST', sgst: 'SGST' };
 
-interface Props { clientId: string; financialYear: string; }
+interface Props { clientId: string; financialYear: string; onSaved?: () => void; }
 
 /**
  * DUTIES & TAXES-INPUT — month-wise, entered separately from PL-Input.
@@ -69,7 +69,7 @@ interface Props { clientId: string; financialYear: string; }
  * specific original transaction (firm decision, 27 Aug 2026 — matches the
  * sheet). Includes the sheet's "Last Year Effect" pseudo-month row.
  */
-export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
+export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear, onSaved }) => {
   const months = [LAST_YEAR_EFFECT, ...monthsForFY(financialYear)];
   const [data, setData] = useState<Record<string, FullMonthRow>>({});
   const [loading, setLoading] = useState(true);
@@ -109,6 +109,7 @@ export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear 
       toast.success(`${editing.month} saved.`);
       setEditing(null);
       await load();
+      onSaved?.();
     } catch (err) {
       toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {

@@ -18,6 +18,9 @@ const CATEGORY_LABEL: Record<string, string> = {
 interface Row { category: string; taxable_value: string; igst: string; cgst: string; sgst: string; source: 'auto' | 'manual'; }
 const num = (v: string) => (v === '' ? 0 : Number(v));
 const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+// Paise-level rounding so summed-from-many-invoices rollup figures don't
+// register as "differs" against a manual entry due to float noise alone.
+const paise = (v: number) => Math.round(v * 100);
 
 interface Props { clientId: string; financialYear: string; }
 
@@ -63,14 +66,32 @@ export const Gstr9OutputPortalCard: React.FC<Props> = ({ clientId, financialYear
         return;
       }
       const now = new Date().toISOString();
-      const upserts = CATEGORIES.map((c) => ({
+      const skipped: string[] = [];
+      const upserts = CATEGORIES.filter((c) => {
+        const current = rows[c];
+        const computed = result.categories![c];
+        const differsFromManual = current?.source === 'manual' && (
+          paise(num(current.taxable_value)) !== paise(computed.taxable) ||
+          paise(num(current.igst)) !== paise(computed.igst) ||
+          paise(num(current.cgst)) !== paise(computed.cgst) ||
+          paise(num(current.sgst)) !== paise(computed.sgst)
+        );
+        if (differsFromManual) skipped.push(CATEGORY_LABEL[c]);
+        return !differsFromManual;
+      }).map((c) => ({
         client_id: clientId, financial_year: financialYear, category: c,
         taxable_value: result.categories![c].taxable, igst: result.categories![c].igst, cgst: result.categories![c].cgst, sgst: result.categories![c].sgst,
         source: 'auto', updated_at: now,
       }));
-      const { error } = await supabase.from('portal_gstr1_category_figures').upsert(upserts, { onConflict: 'client_id,financial_year,category' });
-      if (error) throw error;
-      toast.success('Recomputed from GSTR-1 — all 12 months were present.');
+      if (upserts.length > 0) {
+        const { error } = await supabase.from('portal_gstr1_category_figures').upsert(upserts, { onConflict: 'client_id,financial_year,category' });
+        if (error) throw error;
+      }
+      if (skipped.length > 0) {
+        toast.success(`Recomputed ${upserts.length} categories from GSTR-1. ${skipped.length} manual ${skipped.length === 1 ? 'entry' : 'entries'} left unchanged (${skipped.join(', ')}).`);
+      } else {
+        toast.success('Recomputed from GSTR-1 — all 12 months were present.');
+      }
       await load();
     } catch (err) {
       toast.error('Recompute failed: ' + (err instanceof Error ? err.message : 'Unknown error'));

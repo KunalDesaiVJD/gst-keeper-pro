@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchTaxPaymentTotals, fetchPortal2bAnnual, fetchPortalItcClaimedAnnual, taxTotal } from '@/lib/annualReturnAggregates';
@@ -15,14 +16,17 @@ interface Props { clientId: string; financialYear: string; }
  * used. Pre-audit reference only, no data of its own.
  */
 export const NoticeFormatView: React.FC<Props> = ({ clientId, financialYear }) => {
-  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState<'idle' | 'loading' | 'error' | 'ready'>('idle');
   const [outward, setOutward] = useState<{ igst: number; cgst: number; sgst: number; net: { igst: number; cgst: number; sgst: number } } | null>(null);
   const [inward, setInward] = useState<{ t8A: number; used: number } | null>(null);
+  const [retryTick, setRetryTick] = useState(0);
 
   useEffect(() => {
-    if (!clientId || !financialYear) { setLoading(false); return; }
+    if (!clientId || !financialYear) { setStatus('idle'); setOutward(null); setInward(null); return; }
     let cancelled = false;
-    setLoading(true);
+    setStatus('loading');
+    setOutward(null);
+    setInward(null);
     Promise.all([
       fetchTaxPaymentTotals(clientId, financialYear),
       fetchPortal2bAnnual(clientId, financialYear),
@@ -38,12 +42,24 @@ export const NoticeFormatView: React.FC<Props> = ({ clientId, financialYear }) =
         },
       });
       setInward({ t8A: taxTotal(t8a), used: taxTotal(used) });
-    }).catch((err) => toast.error('Could not compute Notice Format: ' + (err instanceof Error ? err.message : 'Unknown error')))
-      .finally(() => { if (!cancelled) setLoading(false); });
+      setStatus('ready');
+    }).catch((err) => {
+      toast.error('Could not compute Notice Format: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      if (!cancelled) setStatus('error');
+    });
     return () => { cancelled = true; };
-  }, [clientId, financialYear]);
+  }, [clientId, financialYear, retryTick]);
 
-  if (loading || !outward || !inward) return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
+  if (status === 'idle') return <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">Select a client and financial year to view this.</CardContent></Card>;
+  if (status === 'loading') return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
+  if (status === 'error' || !outward || !inward) return (
+    <Card>
+      <CardContent className="flex flex-col items-center gap-3 py-10 text-center">
+        <span className="text-sm text-muted-foreground">Could not load this client's Notice Format summary.</span>
+        <Button size="sm" variant="outline" onClick={() => setRetryTick((t) => t + 1)}>Retry</Button>
+      </CardContent>
+    </Card>
+  );
 
   const netExcessUsed = inward.t8A - inward.used;
 

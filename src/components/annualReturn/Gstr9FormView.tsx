@@ -51,14 +51,16 @@ const GROUPS = [
  * noted rather than approximated silently.
  */
 export const Gstr9FormView: React.FC<Props> = ({ clientId, financialYear }) => {
-  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState<'idle' | 'loading' | 'error' | 'ready'>('idle');
   const [group, setGroup] = useState<typeof GROUPS[number]['id']>('outward');
   const [c, setC] = useState<Computed | null>(null);
+  const [retryTick, setRetryTick] = useState(0);
 
   useEffect(() => {
-    if (!clientId || !financialYear) { setLoading(false); return; }
+    if (!clientId || !financialYear) { setStatus('idle'); setC(null); return; }
     let cancelled = false;
-    setLoading(true);
+    setStatus('loading');
+    setC(null);
     Promise.all([
       fetchPlInputTotals(clientId, financialYear),
       fetchPlOutputPartBByBifurcation(clientId, financialYear),
@@ -115,12 +117,24 @@ export const Gstr9FormView: React.FC<Props> = ({ clientId, financialYear }) => {
         t10: taxTotal(cf.turnover_declared_next_fy), t11: taxTotal(cf.turnover_reduced_next_fy),
         t12: taxTotal(cf.claimed_in_next_fy) * -1, t13: taxTotal(cf.claimed_in_next_fy),
       });
-    }).catch((err) => toast.error('Could not assemble GSTR-9: ' + (err instanceof Error ? err.message : 'Unknown error')))
-      .finally(() => { if (!cancelled) setLoading(false); });
+      setStatus('ready');
+    }).catch((err) => {
+      toast.error('Could not assemble GSTR-9: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      if (!cancelled) setStatus('error');
+    });
     return () => { cancelled = true; };
-  }, [clientId, financialYear]);
+  }, [clientId, financialYear, retryTick]);
 
-  if (loading || !c) return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
+  if (status === 'idle') return <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">Select a client and financial year to view this.</CardContent></Card>;
+  if (status === 'loading') return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
+  if (status === 'error' || !c) return (
+    <Card>
+      <CardContent className="flex flex-col items-center gap-3 py-10 text-center">
+        <span className="text-sm text-muted-foreground">Could not load this client's GSTR-9 summary.</span>
+        <Button size="sm" variant="outline" onClick={() => setRetryTick((t) => t + 1)}>Retry</Button>
+      </CardContent>
+    </Card>
+  );
 
   return (
     <div className="space-y-4">

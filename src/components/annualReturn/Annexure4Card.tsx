@@ -8,6 +8,7 @@ import { Loader2, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { previousFY } from '@/lib/annualReturnPeriods';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 
 const DIRECTIONS = ['claimed_in_next_fy', 'claimed_from_prev_fy', 'turnover_declared_next_fy', 'turnover_reduced_next_fy'] as const;
 const DIRECTION_LABEL: Record<string, string> = {
@@ -31,6 +32,7 @@ interface Props { clientId: string; financialYear: string; }
  * table both years read, one entering, one displaying.
  */
 export const Annexure4Card: React.FC<Props> = ({ clientId, financialYear }) => {
+  const confirm = useConfirm();
   const [lines, setLines] = useState<Line[]>([]);
   const [priorLines, setPriorLines] = useState<Line[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,6 +81,7 @@ export const Annexure4Card: React.FC<Props> = ({ clientId, financialYear }) => {
   };
 
   const deleteRow = async (row: Line) => {
+    if (!(await confirm({ title: 'Delete this carry-forward line?', description: "This can't be undone.", destructive: true, confirmText: 'Delete' }))) return;
     const { error } = await supabase.from('annual_return_carry_forward').delete().eq('id', row.id);
     if (error) { toast.error('Delete failed: ' + error.message); return; }
     toast.success('Line removed.');

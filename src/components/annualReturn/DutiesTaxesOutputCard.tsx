@@ -34,7 +34,7 @@ const num = (v: string) => (v === '' ? 0 : Number(v));
 const netSales = (r: MonthRow) => (r.sales_igst + r.sales_cgst + r.sales_sgst) - (r.credit_note_igst + r.credit_note_cgst + r.credit_note_sgst);
 const as3b = (r: MonthRow) => r.as_per_3b_igst + r.as_per_3b_cgst + r.as_per_3b_sgst;
 
-interface Props { clientId: string; financialYear: string; }
+interface Props { clientId: string; financialYear: string; onSaved?: () => void; }
 
 const FIELD_LABELS: { key: keyof MonthRow; label: string }[] = [
   { key: 'sales_igst', label: 'Sales — IGST' }, { key: 'sales_cgst', label: 'Sales — CGST' }, { key: 'sales_sgst', label: 'Sales — SGST' },
@@ -47,7 +47,7 @@ const FIELD_LABELS: { key: keyof MonthRow; label: string }[] = [
  * (firm decision, 27 Aug 2026) and cross-checked against it rather than
  * derived from it.
  */
-export const DutiesTaxesOutputCard: React.FC<Props> = ({ clientId, financialYear }) => {
+export const DutiesTaxesOutputCard: React.FC<Props> = ({ clientId, financialYear, onSaved }) => {
   const months = monthsForFY(financialYear);
   const [data, setData] = useState<Record<string, MonthRow>>({});
   const [loading, setLoading] = useState(true);
@@ -90,6 +90,7 @@ export const DutiesTaxesOutputCard: React.FC<Props> = ({ clientId, financialYear
       toast.success(`${editing.month} saved.`);
       setEditing(null);
       await load();
+      onSaved?.();
     } catch (err) {
       toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {

@@ -1,25 +1,32 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchPlOutputTotals, fetchPlInputTotals, fetchDutiesTaxesOutputAnnual, fetchDutiesTaxesInputAnnual, taxTotal } from '@/lib/annualReturnAggregates';
 
 const TOLERANCE = 10;
 const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
-interface Props { clientId: string; financialYear: string; }
+interface Props { clientId: string; financialYear: string; refreshKey?: number; }
 
 /**
  * Books Input and Duties & Taxes are entered separately by design (firm
  * decision, 27 Aug 2026) — this is where they're cross-checked against
  * each other's annual totals, rather than one being derived from the
  * other.
+ *
+ * refreshKey is bumped by the sibling Duties & Taxes cards after a save
+ * (lifted in AnnualReturnPage) so this card can't go on showing a stale
+ * verdict after a month gets corrected next door — a manual Refresh
+ * button is kept too, as a fallback that doesn't depend on the signal.
  */
-export const AnnualCrossCheckCard: React.FC<Props> = ({ clientId, financialYear }) => {
+export const AnnualCrossCheckCard: React.FC<Props> = ({ clientId, financialYear, refreshKey }) => {
   const [loading, setLoading] = useState(true);
   const [outputDiff, setOutputDiff] = useState<{ pl: number; dt: number } | null>(null);
   const [inputDiff, setInputDiff] = useState<{ pl: number; dt: number } | null>(null);
+  const [manualNonce, setManualNonce] = useState(0);
 
   useEffect(() => {
     if (!clientId || !financialYear) { setLoading(false); return; }
@@ -37,7 +44,7 @@ export const AnnualCrossCheckCard: React.FC<Props> = ({ clientId, financialYear 
     }).catch((err) => toast.error('Could not compute cross-check: ' + (err instanceof Error ? err.message : 'Unknown error')))
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [clientId, financialYear]);
+  }, [clientId, financialYear, refreshKey, manualNonce]);
 
   if (loading) return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
 
@@ -48,9 +55,14 @@ export const AnnualCrossCheckCard: React.FC<Props> = ({ clientId, financialYear 
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">Annual cross-check</CardTitle>
-        <CardDescription>Same figures, entered twice on purpose — this is where they're expected to agree.</CardDescription>
+      <CardHeader className="flex flex-row items-center justify-between gap-3">
+        <div>
+          <CardTitle className="text-lg">Annual cross-check</CardTitle>
+          <CardDescription>Same figures, entered twice on purpose — this is where they're expected to agree.</CardDescription>
+        </div>
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setManualNonce((n) => n + 1)} aria-label="Refresh cross-check">
+          <RefreshCw className="h-3.5 w-3.5" />
+        </Button>
       </CardHeader>
       <CardContent className="space-y-3">
         {rows.map(({ label, d }) => {

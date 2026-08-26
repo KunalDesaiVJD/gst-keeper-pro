@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -70,6 +70,7 @@ export const PLInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const draftInitialRef = useRef<Draft | null>(null);
 
   const load = async () => {
     if (!clientId || !financialYear) { setLines([]); setLoading(false); return; }
@@ -89,11 +90,30 @@ export const PLInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
 
   useEffect(() => { load(); }, [clientId, financialYear]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const startAdd = (section: Section) => setDraft(emptyDraft(section));
-  const startEdit = (row: Line) => setDraft({
-    id: row.id, section: row.section, ledger_head: row.ledger_head, expense_head: row.expense_head || '',
-    rate: row.rate || '', taxable_value: String(row.taxable_value), igst: String(row.igst), cgst: String(row.cgst), sgst: String(row.sgst),
-  });
+  // Confirms discarding the currently open draft if it has actually been
+  // edited from what it started as; returns false (and leaves the draft
+  // untouched) if the user backs out.
+  const confirmDiscardDraft = () => {
+    if (!draft) return true;
+    const dirty = JSON.stringify(draft) !== JSON.stringify(draftInitialRef.current);
+    return !dirty || window.confirm('Discard unsaved changes to this line?');
+  };
+
+  const startAdd = (section: Section) => {
+    if (!confirmDiscardDraft()) return;
+    const next = emptyDraft(section);
+    draftInitialRef.current = next;
+    setDraft(next);
+  };
+  const startEdit = (row: Line) => {
+    if (!confirmDiscardDraft()) return;
+    const next: Draft = {
+      id: row.id, section: row.section, ledger_head: row.ledger_head, expense_head: row.expense_head || '',
+      rate: row.rate || '', taxable_value: String(row.taxable_value), igst: String(row.igst), cgst: String(row.cgst), sgst: String(row.sgst),
+    };
+    draftInitialRef.current = next;
+    setDraft(next);
+  };
 
   const onLedgerHeadBlur = () => {
     if (!draft || draft.section !== 'expense' || draft.expense_head || !draft.ledger_head.trim()) return;
@@ -127,6 +147,7 @@ export const PLInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
       }
 
       toast.success('PL-Input line saved.');
+      draftInitialRef.current = null;
       setDraft(null);
       await load();
     } catch (err) {
@@ -137,6 +158,7 @@ export const PLInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
   };
 
   const deleteRow = async (row: Line) => {
+    if (!confirmDiscardDraft()) return;
     const { error } = await supabase.from('pl_input_lines').delete().eq('id', row.id);
     if (error) { toast.error('Delete failed: ' + error.message); return; }
     toast.success('Line removed.');
@@ -211,7 +233,7 @@ export const PLInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
               <TableCell>
                 <div className="flex gap-1 justify-end">
                   <Button size="sm" onClick={saveDraft} disabled={saving}>{saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}</Button>
-                  <Button variant="ghost" size="sm" onClick={() => setDraft(null)} disabled={saving}>Cancel</Button>
+                  <Button variant="ghost" size="sm" onClick={() => { draftInitialRef.current = null; setDraft(null); }} disabled={saving}>Cancel</Button>
                 </div>
               </TableCell>
             </TableRow>
