@@ -353,7 +353,7 @@ const CompanyListPage: React.FC = () => {
                       <TableRow key={c.id}>
                         <TableCell className="px-2 py-1"><Checkbox checked={selected.has(c.id)} onCheckedChange={() => toggleSelect(c.id)} /></TableCell>
                         <TableCell className="px-2 py-1 text-xs">
-                          <Link to={`/edit-client/${c.id}`} className="text-primary hover:underline">{c.gstin}</Link>
+                          <Link to={`/notices-company/${c.id}`} className="text-primary hover:underline">{c.gstin}</Link>
                         </TableCell>
                         <TableCell className="max-w-[240px] truncate px-2 py-1 text-xs" title={c.name}>{c.name}</TableCell>
                         <TableCell className="px-2 py-1 text-xs text-muted-foreground">{c.gst_user_id || '—'}</TableCell>

@@ -96,6 +96,9 @@ const AllClientsNoticesPage: React.FC = () => {
   // that day). YYYY-MM-DD, compared against the date-only prefix of each
   // ISO timestamp so time-of-day never breaks the match.
   const dateParam = params.get('date') || '';
+  // From a Company Profile page's "View All" links — scopes the firm-wide
+  // list down to just that one client's notices.
+  const clientParam = params.get('client') || '';
   // "Notices & Orders" (editable, gst_notices only) vs "Merged Notices"
   // (Notice Alert's own second tab — every source combined into one
   // chronological, read-only list; confirmed live it's not a flat re-listing
@@ -160,8 +163,9 @@ const AllClientsNoticesPage: React.FC = () => {
     if (filter === 'priority') list = list.filter((r) => r.priority);
     if (filter === 'submitted') list = list.filter((r) => !!r.submission_date || !!r.submission_arn);
     if (dateParam) list = list.filter((r) => (r.issue_date || '').slice(0, 10) === dateParam || (r.due_date || '').slice(0, 10) === dateParam);
+    if (clientParam) list = list.filter((r) => r.client_id === clientParam);
     return list;
-  }, [records, typeParam, category, status, filter, dateParam]);
+  }, [records, typeParam, category, status, filter, dateParam, clientParam]);
 
   const table: ReportTable = {
     title: 'Notices — All Clients',

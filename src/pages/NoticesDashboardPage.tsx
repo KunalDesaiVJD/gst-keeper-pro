@@ -492,7 +492,7 @@ const NoticesDashboardPage: React.FC = () => {
                         <TableCell className="px-2 py-1 text-xs text-muted-foreground">{idx + 1}</TableCell>
                         <TableCell className="w-[150px] px-2 py-1 text-xs">
                           {c.gstin ? (
-                            <Link to={`/edit-client/${c.id}`} className="text-primary hover:underline">{c.gstin}</Link>
+                            <Link to={`/notices-company/${c.id}`} className="text-primary hover:underline">{c.gstin}</Link>
                           ) : '—'}
                         </TableCell>
                         <TableCell className="max-w-0 truncate px-2 py-1 text-xs" title={c.name}>{c.name}</TableCell>
@@ -673,7 +673,7 @@ const NoticesDashboardPage: React.FC = () => {
                   filteredSearchCompanyClients.map((c) => (
                     <TableRow key={c.id}>
                       <TableCell className="text-xs">
-                        <Link to={`/edit-client/${c.id}`} className="text-primary hover:underline" onClick={() => setSearchCompanyOpen(false)}>{c.gstin}</Link>
+                        <Link to={`/notices-company/${c.id}`} className="text-primary hover:underline" onClick={() => setSearchCompanyOpen(false)}>{c.gstin}</Link>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">{c.name}</TableCell>
                     </TableRow>
