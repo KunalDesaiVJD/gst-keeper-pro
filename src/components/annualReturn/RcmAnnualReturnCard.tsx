@@ -39,7 +39,7 @@ const emptyRow = (month: string): Row => ({ id: `new-${crypto.randomUUID()}`, is
 const num = (v: string) => (v === '' ? 0 : Number(v));
 const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
-interface Props { clientId: string; financialYear: string; }
+interface Props { clientId: string; financialYear: string; onSaved?: () => void; }
 
 interface PartATotals { taxable: number; igst: number; cgst: number; sgst: number; monthsPresent: number; }
 
@@ -49,11 +49,12 @@ interface PartATotals { taxable: number; igst: number; cgst: number; sgst: numbe
  * prep, even though it duplicates that effort). Part A (portal) is computed
  * from the RCM figures captured on Portal Capture (R3) — read-only here.
  */
-export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }) => {
+export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear, onSaved }) => {
   const months = monthsForFY(financialYear);
   const [rows, setRows] = useState<Row[]>([]);
   const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [partA, setPartA] = useState<PartATotals>({ taxable: 0, igst: 0, cgst: 0, sgst: 0, monthsPresent: 0 });
+  const [historicalCategories, setHistoricalCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -61,14 +62,20 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
   const load = async () => {
     if (!clientId || !financialYear) { setRows([]); setLoading(false); return; }
     setLoading(true);
-    const [linesRes, portalRes] = await Promise.all([
+    const [linesRes, portalRes, categoryRes] = await Promise.all([
       supabase.from('rcm_annual_return_lines').select('id, month, category, taxable_value, igst, cgst, sgst')
         .eq('client_id', clientId).eq('financial_year', financialYear).order('month', { ascending: true }),
       supabase.from('gst_filed_returns').select('summary').eq('client_id', clientId).eq('return_type', 'RCM').in('period_month', months),
+      supabase.from('rcm_annual_return_lines').select('category').eq('client_id', clientId),
     ]);
     if (linesRes.error) toast.error('Could not load RCM Part B: ' + linesRes.error.message);
     setRows(((linesRes.data || []) as Line[]).map(rowFromLine));
     setDirty(new Set());
+    if (!categoryRes.error) {
+      const seen = new Set<string>();
+      (categoryRes.data || []).forEach((r: { category: string }) => { if (r.category) seen.add(r.category); });
+      setHistoricalCategories(Array.from(seen));
+    }
     if (portalRes.error) {
       toast.error('Could not load RCM Part A: ' + portalRes.error.message);
     } else {
@@ -162,6 +169,7 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
       }
       toast.success(`${dirtyRows.length} RCM line${dirtyRows.length > 1 ? 's' : ''} saved.`);
       await load();
+      onSaved?.();
     } catch (err) {
       toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {
@@ -203,7 +211,11 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
           <span className="text-muted-foreground">IGST: <span className="font-medium text-foreground tabular-nums">{fmt(partA.igst)}</span></span>
           <span className="text-muted-foreground">CGST: <span className="font-medium text-foreground tabular-nums">{fmt(partA.cgst)}</span></span>
           <span className="text-muted-foreground">SGST: <span className="font-medium text-foreground tabular-nums">{fmt(partA.sgst)}</span></span>
-          {rows.length > 0 && <Badge variant={partAMatched ? 'success' : 'destructive'}>Diff vs Part B: {fmt(partADiff)}</Badge>}
+          {rows.length > 0 ? (
+            <Badge variant={partAMatched ? 'success' : 'destructive'}>Diff vs Part B: {fmt(partADiff)}</Badge>
+          ) : partA.monthsPresent > 0 ? (
+            <Badge variant="outline">Part B not started</Badge>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -225,12 +237,12 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
           </div>
         </CardHeader>
         <CardContent>
-        <datalist id="rcm-category-suggestions">{SUGGESTED_CATEGORIES.map((c) => <option key={c} value={c} />)}</datalist>
+        <datalist id="rcm-category-suggestions">{Array.from(new Set([...SUGGESTED_CATEGORIES, ...historicalCategories])).map((c) => <option key={c} value={c} />)}</datalist>
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead className="w-20">Month</TableHead>
-              <TableHead>Category</TableHead>
+              <TableHead>Category <span className="text-destructive">*</span></TableHead>
               <TableHead className="text-right">Taxable</TableHead>
               <TableHead className="text-right">IGST</TableHead>
               <TableHead className="text-right">CGST</TableHead>
@@ -246,17 +258,17 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
               <TableRow key={row.id}>
                 <TableCell>
                   <Select value={row.month} onValueChange={(v) => updateRow(row.id, 'month', v)}>
-                    <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-20" aria-label="Month"><SelectValue /></SelectTrigger>
                     <SelectContent>{months.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
                   </Select>
                 </TableCell>
                 <TableCell>
-                  <Input list="rcm-category-suggestions" value={row.category} onChange={(e) => updateRow(row.id, 'category', e.target.value)} placeholder="e.g. Transportation Exp" />
+                  <Input list="rcm-category-suggestions" value={row.category} onChange={(e) => updateRow(row.id, 'category', e.target.value)} placeholder="e.g. Transportation Exp" aria-label="Category" className={row.category.trim() ? undefined : 'border-destructive'} />
                 </TableCell>
-                <TableCell><Input type="number" value={row.taxable_value} onChange={(e) => updateRow(row.id, 'taxable_value', e.target.value)} placeholder="0" className="text-right" /></TableCell>
-                <TableCell><Input type="number" value={row.igst} onChange={(e) => updateRow(row.id, 'igst', e.target.value)} placeholder="0" className="text-right" /></TableCell>
-                <TableCell><Input type="number" value={row.cgst} onChange={(e) => updateRow(row.id, 'cgst', e.target.value)} placeholder="0" className="text-right" /></TableCell>
-                <TableCell><Input type="number" value={row.sgst} onChange={(e) => updateRow(row.id, 'sgst', e.target.value)} placeholder="0" className="text-right" /></TableCell>
+                <TableCell><Input type="number" value={row.taxable_value} onChange={(e) => updateRow(row.id, 'taxable_value', e.target.value)} placeholder="0" className="text-right" aria-label="Taxable" /></TableCell>
+                <TableCell><Input type="number" value={row.igst} onChange={(e) => updateRow(row.id, 'igst', e.target.value)} placeholder="0" className="text-right" aria-label="IGST" /></TableCell>
+                <TableCell><Input type="number" value={row.cgst} onChange={(e) => updateRow(row.id, 'cgst', e.target.value)} placeholder="0" className="text-right" aria-label="CGST" /></TableCell>
+                <TableCell><Input type="number" value={row.sgst} onChange={(e) => updateRow(row.id, 'sgst', e.target.value)} placeholder="0" className="text-right" aria-label="SGST" /></TableCell>
                 <TableCell>
                   <div className="flex gap-1 justify-end">
                     <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => deleteRow(row)} aria-label={`Delete ${row.category}`}><Trash2 className="h-3.5 w-3.5" /></Button>

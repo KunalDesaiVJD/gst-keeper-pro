@@ -23,6 +23,7 @@ const SECTION_LABEL: Record<Section, string> = { purchase: '(A) Purchase', expen
 // Expense lines need per-line classification (matches how GSTR 9C's table
 // is actually built: rows A/O pull the section totals directly).
 const SECTION_DEFAULT_HEAD: Record<Section, string | null> = { purchase: 'Purchases', expense: null, capital_goods: 'Capital Goods' };
+const GST_RATE_SUGGESTIONS = ['0%', '0.1%', '0.25%', '1%', '1.5%', '3%', '5%', '7.5%', '12%', '18%', '28%', 'Exempt/Nil'];
 
 interface Line {
   id: string;
@@ -64,6 +65,7 @@ const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 
 interface Props {
   clientId: string;
   financialYear: string;
+  onSaved?: () => void;
 }
 
 /**
@@ -74,7 +76,7 @@ interface Props {
  * computed from Duties & Taxes-Input and RCM respectively, not entered here
  * — see the Duties & Taxes and RCM tabs.
  */
-export const PLInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
+export const PLInputCard: React.FC<Props> = ({ clientId, financialYear, onSaved }) => {
   const [rows, setRows] = useState<EditableRow[]>([]);
   const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [mappings, setMappings] = useState<Record<string, string>>({});
@@ -178,7 +180,10 @@ export const PLInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
   const onLedgerHeadBlur = (row: EditableRow) => {
     if (row.section !== 'expense' || row.expense_head || !row.ledger_head.trim()) return;
     const suggestion = mappings[row.ledger_head.trim()];
-    if (suggestion) updateRow(row.key, { expense_head: suggestion });
+    if (suggestion) {
+      updateRow(row.key, { expense_head: suggestion });
+      toast.info(`9C Head auto-filled from a previous entry — verify.`);
+    }
   };
 
   const saveAll = async () => {
@@ -233,6 +238,7 @@ export const PLInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
       toast.success(`${dirtyRows.length} PL-Input line${dirtyRows.length > 1 ? 's' : ''} saved.`);
       setDirty(new Set());
       await load();
+      onSaved?.();
     } catch (err) {
       toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {
@@ -282,16 +288,16 @@ export const PLInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
           )}
           {rowsForSection.map((row) => (
             <TableRow key={row.key}>
-              <TableCell><Input value={row.ledger_head} onChange={(e) => updateRow(row.key, { ledger_head: e.target.value })} onBlur={() => onLedgerHeadBlur(row)} placeholder="Ledger head" /></TableCell>
-              <TableCell><Input value={row.rate} onChange={(e) => updateRow(row.key, { rate: e.target.value })} placeholder="18%" className="w-20" /></TableCell>
-              <TableCell><Input type="number" value={row.taxable_value} onChange={(e) => updateRow(row.key, { taxable_value: e.target.value })} placeholder="0" className="text-right" /></TableCell>
-              <TableCell><Input type="number" value={row.igst} onChange={(e) => updateRow(row.key, { igst: e.target.value })} placeholder="0" className="text-right" /></TableCell>
-              <TableCell><Input type="number" value={row.cgst} onChange={(e) => updateRow(row.key, { cgst: e.target.value })} placeholder="0" className="text-right" /></TableCell>
-              <TableCell><Input type="number" value={row.sgst} onChange={(e) => updateRow(row.key, { sgst: e.target.value })} placeholder="0" className="text-right" /></TableCell>
+              <TableCell><Input value={row.ledger_head} onChange={(e) => updateRow(row.key, { ledger_head: e.target.value })} onBlur={() => onLedgerHeadBlur(row)} placeholder="Ledger head" aria-label="Ledger head" /></TableCell>
+              <TableCell><Input list="pl-input-rate-suggestions" value={row.rate} onChange={(e) => updateRow(row.key, { rate: e.target.value })} placeholder="18%" className="w-20" aria-label="Rate" /></TableCell>
+              <TableCell><Input type="number" value={row.taxable_value} onChange={(e) => updateRow(row.key, { taxable_value: e.target.value })} placeholder="0" className="text-right" aria-label="Taxable value" /></TableCell>
+              <TableCell><Input type="number" value={row.igst} onChange={(e) => updateRow(row.key, { igst: e.target.value })} placeholder="0" className="text-right" aria-label="IGST" /></TableCell>
+              <TableCell><Input type="number" value={row.cgst} onChange={(e) => updateRow(row.key, { cgst: e.target.value })} placeholder="0" className="text-right" aria-label="CGST" /></TableCell>
+              <TableCell><Input type="number" value={row.sgst} onChange={(e) => updateRow(row.key, { sgst: e.target.value })} placeholder="0" className="text-right" aria-label="SGST" /></TableCell>
               {section === 'expense' && (
                 <TableCell>
                   <Select value={row.expense_head || undefined} onValueChange={(v) => updateRow(row.key, { expense_head: v })}>
-                    <SelectTrigger className="w-40"><SelectValue placeholder="Select head" /></SelectTrigger>
+                    <SelectTrigger className="w-40" aria-label="9C Head"><SelectValue placeholder="Select head" /></SelectTrigger>
                     <SelectContent>{EXPENSE_HEADS.map((h) => <SelectItem key={h} value={h}>{h}</SelectItem>)}</SelectContent>
                   </Select>
                 </TableCell>
@@ -323,8 +329,6 @@ export const PLInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
     );
   };
 
-  if (loading) return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
-
   return (
     <>
     <Card>
@@ -334,13 +338,24 @@ export const PLInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
             <CardTitle className="text-lg">PL-INPUT</CardTitle>
             <CardDescription>Books purchases/ITC, annual, by ledger head — three sections, exactly as the sheet has them.</CardDescription>
           </div>
-          <Button size="sm" onClick={saveAll} disabled={saving || dirty.size === 0}>
-            {saving ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
-            Save changes{dirty.size > 0 ? ` (${dirty.size})` : ''}
-          </Button>
+          {!loading && (
+            <Button size="sm" onClick={saveAll} disabled={saving || dirty.size === 0}>
+              {saving ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+              Save changes{dirty.size > 0 ? ` (${dirty.size})` : ''}
+            </Button>
+          )}
         </div>
       </CardHeader>
+      {loading ? (
+        <CardContent className="flex justify-center py-10">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span className="text-sm">Loading...</span>
+          </div>
+        </CardContent>
+      ) : (
       <CardContent className="space-y-6">
+        <datalist id="pl-input-rate-suggestions">{GST_RATE_SUGGESTIONS.map((r) => <option key={r} value={r} />)}</datalist>
         {sections.map((s) => (
           <div key={s}>
             <div className="flex items-center justify-between mb-2">
@@ -361,6 +376,7 @@ export const PLInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
           <span className="text-muted-foreground"> tax</span>
         </div>
       </CardContent>
+      )}
     </Card>
     {pasteSection && (
       <PasteFromExcelDialog

@@ -91,6 +91,7 @@ export const PortalTaxPaymentCard: React.FC<Props> = ({ clientId, financialYear 
         </Button>
       </CardHeader>
       <CardContent className="p-0">
+        <form onSubmit={(e) => { e.preventDefault(); saveAll(); }}>
         <Table>
           <TableHeader>
             <TableRow>
@@ -105,13 +106,14 @@ export const PortalTaxPaymentCard: React.FC<Props> = ({ clientId, financialYear 
                 <TableRow key={h}>
                   <TableCell className="font-medium">{TAX_HEAD_LABEL[h]}</TableCell>
                   {FIELDS.map((f) => (
-                    <TableCell key={f}><Input type="number" className="text-right h-8 w-28" value={r[f]} disabled={saving} onChange={(e) => update(h, f, e.target.value)} /></TableCell>
+                    <TableCell key={f}><Input type="number" className="text-right h-8 w-28" value={r[f]} disabled={saving} onChange={(e) => update(h, f, e.target.value)} aria-label={`${TAX_HEAD_LABEL[h]}, ${FIELD_LABEL[f]}`} /></TableCell>
                   ))}
                 </TableRow>
               );
             })}
           </TableBody>
         </Table>
+        </form>
       </CardContent>
     </Card>
   );

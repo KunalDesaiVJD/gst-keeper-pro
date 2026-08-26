@@ -14,7 +14,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   zero_rated: 'Zero rated', deemed_export: 'Deemed export', credit_note: 'Credit note',
 };
 
-interface Row { category: string; taxable_value: string; igst: string; cgst: string; sgst: string; }
+interface Row { category: string; taxable_value: string; igst: string; cgst: string; sgst: string; updated_at: string | null; }
 const num = (v: string) => (v === '' ? 0 : Number(v));
 const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
@@ -42,12 +42,12 @@ export const Gstr9OutputLinesCard: React.FC<Props> = ({ clientId, financialYear 
   const load = async () => {
     if (!clientId || !financialYear) { setRows({}); setLoading(false); return; }
     setLoading(true);
-    const { data, error } = await supabase.from('gstr9_output_lines').select('category, taxable_value, igst, cgst, sgst').eq('client_id', clientId).eq('financial_year', financialYear);
+    const { data, error } = await supabase.from('gstr9_output_lines').select('category, taxable_value, igst, cgst, sgst, updated_at').eq('client_id', clientId).eq('financial_year', financialYear);
     if (error) { toast.error('Could not load GSTR 9-Output: ' + error.message); setLoading(false); return; }
     const next: Record<string, Row> = {};
-    CATEGORIES.forEach((c) => { next[c] = { category: c, taxable_value: '0', igst: '0', cgst: '0', sgst: '0' }; });
-    (data || []).forEach((r: { category: string; taxable_value: number; igst: number; cgst: number; sgst: number }) => {
-      next[r.category] = { category: r.category, taxable_value: String(r.taxable_value), igst: String(r.igst), cgst: String(r.cgst), sgst: String(r.sgst) };
+    CATEGORIES.forEach((c) => { next[c] = { category: c, taxable_value: '0', igst: '0', cgst: '0', sgst: '0', updated_at: null }; });
+    (data || []).forEach((r: { category: string; taxable_value: number; igst: number; cgst: number; sgst: number; updated_at: string | null }) => {
+      next[r.category] = { category: r.category, taxable_value: String(r.taxable_value), igst: String(r.igst), cgst: String(r.cgst), sgst: String(r.sgst), updated_at: r.updated_at };
     });
     setRows(next);
     setDirty({});
@@ -168,10 +168,13 @@ export const Gstr9OutputLinesCard: React.FC<Props> = ({ clientId, financialYear 
           </TableHeader>
           <TableBody>
             {CATEGORIES.map((c) => {
-              const r = rows[c] || { category: c, taxable_value: '0', igst: '0', cgst: '0', sgst: '0' };
+              const r = rows[c] || { category: c, taxable_value: '0', igst: '0', cgst: '0', sgst: '0', updated_at: null };
               return (
                 <TableRow key={c}>
-                  <TableCell className="font-medium">{CATEGORY_LABEL[c]}</TableCell>
+                  <TableCell className="font-medium">
+                    {CATEGORY_LABEL[c]}
+                    {r.updated_at && <div className="text-[11px] font-normal text-muted-foreground">Updated {new Date(r.updated_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</div>}
+                  </TableCell>
                   <TableCell><Input type="number" className="text-right h-8" value={r.taxable_value} disabled={saving} onChange={(e) => update(c, 'taxable_value', e.target.value)} /></TableCell>
                   <TableCell><Input type="number" className="text-right h-8" value={r.igst} disabled={saving} onChange={(e) => update(c, 'igst', e.target.value)} /></TableCell>
                   <TableCell><Input type="number" className="text-right h-8" value={r.cgst} disabled={saving} onChange={(e) => update(c, 'cgst', e.target.value)} /></TableCell>

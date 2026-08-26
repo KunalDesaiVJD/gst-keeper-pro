@@ -2,27 +2,70 @@ import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2 } from 'lucide-react';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Loader2, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   fetchPlInputTotals, fetchPlOutputPartBByBifurcation, fetchDutiesTaxesInputAnnual, fetchRcmTotals,
   fetchPortalItcClaimedAnnual, fetchPortal2bAnnual, fetchPortalCategoryTotals, fetchItcReversalTotals,
   fetchTaxPaymentTotals, fetchCarryForwardTotals, taxTotal,
 } from '@/lib/annualReturnAggregates';
+import { supabase } from '@/integrations/supabase/client';
+import { exportGstr9FormToPDF, type Gstr9PdfSection } from '@/utils/gstr9FormPdfExport';
 
 const TOLERANCE = 10;
-const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+
+// Accounting-style negatives — parentheses, not a leading minus, so a
+// credit note or an ITC-reversed-in-next-FY figure doesn't get lost in a
+// column of tax amounts.
+const fmt = (v: number): string => {
+  const abs = Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  return v < 0 ? `(${abs})` : abs;
+};
 
 interface Props { clientId: string; financialYear: string; }
 
-const Row: React.FC<{ label: string; value: number; tag?: string; tagVariant?: 'success' | 'warning' | 'secondary' | 'outline' | 'destructive'; strong?: boolean }> = ({ label, value, tag, tagVariant = 'secondary', strong }) => (
-  <div className="flex items-center justify-between gap-3 py-2 border-b last:border-b-0">
-    <div className="flex items-center gap-2">
-      <span className={strong ? 'text-sm font-semibold' : 'text-sm text-muted-foreground'}>{label}</span>
-      {tag && <Badge variant={tagVariant} className="text-[10px]">{tag}</Badge>}
-    </div>
-    <span className={`tabular-nums ${strong ? 'text-base font-semibold' : 'text-sm'}`}>{fmt(value)}</span>
-  </div>
+type BadgeVariant = 'success' | 'warning' | 'secondary' | 'outline' | 'destructive';
+
+interface Gstr9RowSpec {
+  tableNo: string;
+  description: string;
+  value: number;
+  tag?: string;
+  tagVariant?: BadgeVariant;
+  strong?: boolean;
+}
+
+interface Gstr9CardSpec {
+  title: string;
+  description?: string;
+  rows: Gstr9RowSpec[];
+}
+
+const Gstr9Row: React.FC<Gstr9RowSpec> = ({ tableNo, description, value, tag, tagVariant = 'secondary', strong }) => (
+  <TableRow>
+    <TableCell className={strong ? 'text-sm font-semibold' : 'text-sm text-muted-foreground'}>{description}</TableCell>
+    <TableCell className="text-sm text-muted-foreground">{tableNo}</TableCell>
+    <TableCell className={`text-right tabular-nums ${strong ? 'text-base font-semibold' : 'text-sm'}`}>{fmt(value)}</TableCell>
+    <TableCell>{tag && <Badge variant={tagVariant} className="text-[10px]">{tag}</Badge>}</TableCell>
+  </TableRow>
+);
+
+const Gstr9Table: React.FC<{ rows: Gstr9RowSpec[] }> = ({ rows }) => (
+  <Table>
+    <TableHeader>
+      <TableRow>
+        <TableHead>Description</TableHead>
+        <TableHead>Table No.</TableHead>
+        <TableHead className="text-right">Value</TableHead>
+        <TableHead>Status</TableHead>
+      </TableRow>
+    </TableHeader>
+    <TableBody>
+      {rows.map((r, i) => <Gstr9Row key={i} {...r} />)}
+    </TableBody>
+  </Table>
 );
 
 interface Computed {
@@ -43,6 +86,104 @@ const GROUPS = [
   { id: 'taxpaid', label: 'Table 9 · Tax paid' },
   { id: 'nextyear', label: 'Table 10–13 · Next year' },
 ] as const;
+
+// Builds the on-screen table sections and the PDF export from the same data
+// — one source of truth for which figure carries which table number, tag
+// and description.
+const buildGroups = (c: Computed): Record<typeof GROUPS[number]['id'], Gstr9CardSpec[]> => ({
+  outward: [
+    {
+      title: 'Table 4 — Supplies on which tax is payable',
+      description: "4A–4N, from GSTR 9-Output's auto-populated column and RCM Part A.",
+      rows: [
+        { tableNo: '4A', description: 'B2C', value: c.t4A },
+        { tableNo: '4B', description: 'B2B', value: c.t4B },
+        { tableNo: '4D', description: 'SEZ with payment', value: c.t4D },
+        { tableNo: '4E', description: 'Deemed exports', value: c.t4E },
+        { tableNo: '4G', description: 'RCM inward (Part A)', value: c.t4G, tag: 'Portal', tagVariant: 'outline' },
+        { tableNo: '4H', description: 'Sub-total', value: c.t4H },
+        { tableNo: '4I', description: 'Credit notes (−)', value: c.t4I },
+        { tableNo: '4N', description: 'Supplies & advances on which tax payable', value: c.t4N, strong: true },
+      ],
+    },
+    {
+      title: 'Table 5 — Supplies on which tax is not payable',
+      rows: [
+        { tableNo: '5A', description: 'Export without payment of tax', value: c.t5A },
+        { tableNo: '5B', description: 'SEZ without payment', value: c.t5B },
+        { tableNo: '5F', description: 'Non-GST supply', value: c.t5F },
+        { tableNo: '5G / 5M', description: 'Sub-total', value: c.t5M },
+        { tableNo: '5N', description: 'Total turnover (4N + 5M − 4G)', value: c.totalTurnover, strong: true },
+      ],
+    },
+  ],
+  itc: [
+    {
+      title: 'Table 6 — ITC availed',
+      rows: [
+        { tableNo: '6A', description: 'Total ITC via GSTR-3B', value: c.t6A, tag: 'Portal', tagVariant: 'outline' },
+        { tableNo: '6B', description: 'Inputs', value: c.t6B },
+        { tableNo: '6C/6D', description: 'RCM', value: c.t6C_D },
+        { tableNo: '—', description: 'Input Services + Capital Goods', value: c.t6H },
+        {
+          tableNo: '6O', description: 'Total ITC availed', value: c.t6O, strong: true,
+          tag: Math.abs(c.t6O - c.t6A) <= TOLERANCE ? 'Matches 6A' : `Diff vs 6A: ${fmt(c.t6O - c.t6A)}`,
+          tagVariant: Math.abs(c.t6O - c.t6A) <= TOLERANCE ? 'success' : 'warning',
+        },
+      ],
+    },
+    {
+      title: 'Table 7 — ITC Reversed & Ineligible',
+      rows: [
+        { tableNo: '—', description: 'Rule-wise (37/37A/38/39/42/43) + s.17(5)', value: c.t7Rulewise },
+        { tableNo: 'H1', description: 'Other reversal', value: c.t7H1 },
+        { tableNo: '7I', description: 'Total ITC reversed', value: c.t7I },
+        { tableNo: '7J', description: 'Net ITC available for utilisation', value: c.t7J, strong: true },
+      ],
+    },
+  ],
+  reco8: [
+    {
+      title: 'Table 8 — ITC as per GSTR-2B',
+      rows: [
+        { tableNo: '8A', description: 'ITC as per GSTR-2B', value: c.t8A, tag: 'Portal', tagVariant: 'outline' },
+        { tableNo: '8B', description: 'ITC per 6B', value: c.t8B, tag: 'Computed', tagVariant: 'outline' },
+        { tableNo: '8C', description: 'Claimed in next FY', value: c.t8C },
+        {
+          tableNo: '8D', description: 'Difference [A−(B+C)]', value: c.t8D, strong: true,
+          tag: Math.abs(c.t8D) <= TOLERANCE ? 'Matched — lockable' : 'Needs a reason',
+          tagVariant: Math.abs(c.t8D) <= TOLERANCE ? 'success' : 'destructive',
+        },
+      ],
+    },
+  ],
+  taxpaid: [
+    {
+      title: 'Table 9 — Tax paid',
+      rows: ([['IGST', c.payIgst], ['CGST', c.payCgst], ['SGST', c.paySgst]] as [string, { payable: number; paid: number }][]).map(
+        ([label, v]) => ({
+          tableNo: '9',
+          description: `${label} — payable / paid`,
+          value: v.payable,
+          tag: `Paid ${fmt(v.paid)}`,
+          tagVariant: (Math.abs(v.payable - v.paid) <= TOLERANCE ? 'success' : 'destructive') as BadgeVariant,
+        }),
+      ),
+    },
+  ],
+  nextyear: [
+    {
+      title: 'Tables 10–13 — Next-year amendments',
+      description: "From Annexure 4's carry-forward entries.",
+      rows: [
+        { tableNo: '10', description: 'Supplies declared through amendments (+)', value: c.t10 },
+        { tableNo: '11', description: 'Supplies reduced through amendments (−)', value: c.t11 },
+        { tableNo: '12', description: 'ITC of the FY reversed in next FY', value: c.t12 },
+        { tableNo: '13', description: 'ITC of the FY availed in next FY', value: c.t13 },
+      ],
+    },
+  ],
+});
 
 /**
  * The terminal assembly — GSTR-9 Tables 4 through 13, built from every
@@ -126,7 +267,14 @@ export const Gstr9FormView: React.FC<Props> = ({ clientId, financialYear }) => {
   }, [clientId, financialYear, retryTick]);
 
   if (status === 'idle') return <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">Select a client and financial year to view this.</CardContent></Card>;
-  if (status === 'loading') return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
+  if (status === 'loading') return (
+    <Card>
+      <CardContent role="status" aria-live="polite" className="flex justify-center py-10">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <span className="sr-only">Loading...</span>
+      </CardContent>
+    </Card>
+  );
   if (status === 'error' || !c) return (
     <Card>
       <CardContent className="flex flex-col items-center gap-3 py-10 text-center">
@@ -136,100 +284,54 @@ export const Gstr9FormView: React.FC<Props> = ({ clientId, financialYear }) => {
     </Card>
   );
 
+  const groups = buildGroups(c);
+
+  const handleExportPdf = async () => {
+    const { data: client } = await supabase.from('clients').select('name, gstin').eq('id', clientId).maybeSingle();
+    const sections: Gstr9PdfSection[] = GROUPS.flatMap((g) => groups[g.id]).map((card) => ({
+      title: card.title,
+      rows: card.rows.map((r) => ({ tableNo: r.tableNo, description: r.description, value: r.value, status: r.tag })),
+    }));
+    exportGstr9FormToPDF({
+      clientName: client?.name || 'Unknown',
+      clientGstin: client?.gstin || '',
+      financialYear,
+      sections,
+    });
+  };
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
-        {GROUPS.map((g) => (
-          <Button key={g.id} size="sm" variant={group === g.id ? 'default' : 'outline'} onClick={() => setGroup(g.id)}>{g.label}</Button>
-        ))}
+      <div className="flex justify-end">
+        <Button size="sm" variant="outline" onClick={handleExportPdf} className="gap-2">
+          <FileText className="h-4 w-4" />
+          Export PDF
+        </Button>
       </div>
 
-      {group === 'outward' && (
-        <Card>
-          <CardHeader><CardTitle className="text-lg">Table 4 — Supplies on which tax is payable</CardTitle><CardDescription>4A–4N, from GSTR 9-Output's auto-populated column and RCM Part A.</CardDescription></CardHeader>
-          <CardContent className="max-w-lg">
-            <Row label="4A — B2C" value={c.t4A} />
-            <Row label="4B — B2B" value={c.t4B} />
-            <Row label="4D — SEZ with payment" value={c.t4D} />
-            <Row label="4E — Deemed exports" value={c.t4E} />
-            <Row label="4G — RCM inward (Part A)" value={c.t4G} tag="Portal" tagVariant="outline" />
-            <Row label="4H — Sub-total" value={c.t4H} />
-            <Row label="4I — Credit notes (−)" value={c.t4I} />
-            <Row label="4N — Supplies &amp; advances on which tax payable" value={c.t4N} strong />
-          </CardContent>
-        </Card>
-      )}
-      {group === 'outward' && (
-        <Card>
-          <CardHeader><CardTitle className="text-lg">Table 5 — Supplies on which tax is not payable</CardTitle></CardHeader>
-          <CardContent className="max-w-lg">
-            <Row label="5A — Export without payment of tax" value={c.t5A} />
-            <Row label="5B — SEZ without payment" value={c.t5B} />
-            <Row label="5F — Non-GST supply" value={c.t5F} />
-            <Row label="5G / 5M — Sub-total" value={c.t5M} />
-            <Row label="5N — Total turnover (4N + 5M − 4G)" value={c.totalTurnover} strong />
-          </CardContent>
-        </Card>
-      )}
+      <Tabs value={group} onValueChange={(v) => setGroup(v as typeof GROUPS[number]['id'])}>
+        <TabsList className="h-auto flex-wrap">
+          {GROUPS.map((g) => (
+            <TabsTrigger key={g.id} value={g.id}>{g.label}</TabsTrigger>
+          ))}
+        </TabsList>
 
-      {group === 'itc' && (
-        <Card>
-          <CardHeader><CardTitle className="text-lg">Table 6 — ITC availed</CardTitle></CardHeader>
-          <CardContent className="max-w-lg">
-            <Row label="6A — Total ITC via GSTR-3B" value={c.t6A} tag="Portal" tagVariant="outline" />
-            <Row label="6B — Inputs" value={c.t6B} />
-            <Row label="6C/6D — RCM" value={c.t6C_D} />
-            <Row label="Input Services + Capital Goods" value={c.t6H} />
-            <Row label="6O — Total ITC availed" value={c.t6O} strong tag={Math.abs(c.t6O - c.t6A) <= TOLERANCE ? 'Matches 6A' : `Diff vs 6A: ${fmt(c.t6O - c.t6A)}`} tagVariant={Math.abs(c.t6O - c.t6A) <= TOLERANCE ? 'success' : 'warning'} />
-          </CardContent>
-        </Card>
-      )}
-      {group === 'itc' && (
-        <Card>
-          <CardHeader><CardTitle className="text-lg">Table 7 — ITC Reversed &amp; Ineligible</CardTitle></CardHeader>
-          <CardContent className="max-w-lg">
-            <Row label="Rule-wise (37/37A/38/39/42/43) + s.17(5)" value={c.t7Rulewise} />
-            <Row label="H1 — Other reversal" value={c.t7H1} />
-            <Row label="7I — Total ITC reversed" value={c.t7I} />
-            <Row label="7J — Net ITC available for utilisation" value={c.t7J} strong />
-          </CardContent>
-        </Card>
-      )}
-
-      {group === 'reco8' && (
-        <Card>
-          <CardHeader><CardTitle className="text-lg">Table 8 — ITC as per GSTR-2B</CardTitle></CardHeader>
-          <CardContent className="max-w-lg">
-            <Row label="8A — ITC as per GSTR-2B" value={c.t8A} tag="Portal" tagVariant="outline" />
-            <Row label="8B — ITC per 6B" value={c.t8B} tag="Computed" tagVariant="outline" />
-            <Row label="8C — Claimed in next FY" value={c.t8C} />
-            <Row label="8D — Difference [A−(B+C)]" value={c.t8D} strong tag={Math.abs(c.t8D) <= TOLERANCE ? 'Matched — lockable' : 'Needs a reason'} tagVariant={Math.abs(c.t8D) <= TOLERANCE ? 'success' : 'destructive'} />
-          </CardContent>
-        </Card>
-      )}
-
-      {group === 'taxpaid' && (
-        <Card>
-          <CardHeader><CardTitle className="text-lg">Table 9 — Tax paid</CardTitle></CardHeader>
-          <CardContent className="max-w-lg">
-            {([['IGST', c.payIgst], ['CGST', c.payCgst], ['SGST', c.paySgst]] as [string, { payable: number; paid: number }][]).map(([label, v]) => (
-              <Row key={label} label={`${label} — payable / paid`} value={v.payable} tag={`Paid ${fmt(v.paid)}`} tagVariant={Math.abs(v.payable - v.paid) <= TOLERANCE ? 'success' : 'destructive'} />
+        {GROUPS.map((g) => (
+          <TabsContent key={g.id} value={g.id} className="space-y-4">
+            {groups[g.id].map((card, i) => (
+              <Card key={i}>
+                <CardHeader>
+                  <CardTitle className="text-lg">{card.title}</CardTitle>
+                  {card.description && <CardDescription>{card.description}</CardDescription>}
+                </CardHeader>
+                <CardContent className="p-0">
+                  <Gstr9Table rows={card.rows} />
+                </CardContent>
+              </Card>
             ))}
-          </CardContent>
-        </Card>
-      )}
-
-      {group === 'nextyear' && (
-        <Card>
-          <CardHeader><CardTitle className="text-lg">Tables 10–13 — Next-year amendments</CardTitle><CardDescription>From Annexure 4's carry-forward entries.</CardDescription></CardHeader>
-          <CardContent className="max-w-lg">
-            <Row label="10 — Supplies declared through amendments (+)" value={c.t10} />
-            <Row label="11 — Supplies reduced through amendments (−)" value={c.t11} />
-            <Row label="12 — ITC of the FY reversed in next FY" value={c.t12} />
-            <Row label="13 — ITC of the FY availed in next FY" value={c.t13} />
-          </CardContent>
-        </Card>
-      )}
+          </TabsContent>
+        ))}
+      </Tabs>
     </div>
   );
 };

@@ -2,9 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { Loader2 } from 'lucide-react';
+import { Loader2, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchTaxPaymentTotals, fetchPortal2bAnnual, fetchPortalItcClaimedAnnual, taxTotal } from '@/lib/annualReturnAggregates';
+import { supabase } from '@/integrations/supabase/client';
+import { exportNoticeFormatToPDF } from '@/utils/noticeFormatPdfExport';
 
 const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
@@ -51,7 +53,14 @@ export const NoticeFormatView: React.FC<Props> = ({ clientId, financialYear }) =
   }, [clientId, financialYear, retryTick]);
 
   if (status === 'idle') return <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">Select a client and financial year to view this.</CardContent></Card>;
-  if (status === 'loading') return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
+  if (status === 'loading') return (
+    <Card>
+      <CardContent role="status" aria-live="polite" className="flex justify-center py-10">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <span className="sr-only">Loading...</span>
+      </CardContent>
+    </Card>
+  );
   if (status === 'error' || !outward || !inward) return (
     <Card>
       <CardContent className="flex flex-col items-center gap-3 py-10 text-center">
@@ -63,8 +72,26 @@ export const NoticeFormatView: React.FC<Props> = ({ clientId, financialYear }) =
 
   const netExcessUsed = inward.t8A - inward.used;
 
+  const handleExportPdf = async () => {
+    const { data: client } = await supabase.from('clients').select('name, gstin').eq('id', clientId).maybeSingle();
+    exportNoticeFormatToPDF({
+      clientName: client?.name || 'Unknown',
+      clientGstin: client?.gstin || '',
+      financialYear,
+      outward,
+      inward: { t8A: inward.t8A, used: inward.used, netExcessUsed },
+    });
+  };
+
   return (
     <div className="space-y-4">
+      <div className="flex justify-end">
+        <Button size="sm" variant="outline" onClick={handleExportPdf} className="gap-2">
+          <FileText className="h-4 w-4" />
+          Export PDF
+        </Button>
+      </div>
+
       <Card>
         <CardHeader><CardTitle className="text-lg">Outward</CardTitle><CardDescription>Net tax payable, referenced to GSTR-9 Table 9.</CardDescription></CardHeader>
         <CardContent className="p-0">

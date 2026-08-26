@@ -87,7 +87,13 @@ export const ReconciliationCard: React.FC<Props> = ({ clientId, financialYear, i
   const openCount = lines.filter((l) => l.reasonRequired && !l.reason.trim()).length;
 
   if (loading) {
-    return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
+    return (
+      <Card>
+        <CardContent className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+          <Loader2 className="h-5 w-5 animate-spin" /> Loading...
+        </CardContent>
+      </Card>
+    );
   }
 
   return (
@@ -120,14 +126,20 @@ export const ReconciliationCard: React.FC<Props> = ({ clientId, financialYear, i
             <TableHeader>
               <TableRow>
                 <TableHead>Particulars</TableHead>
-                <TableHead className="text-right">First figure</TableHead>
-                <TableHead className="text-right">Second figure</TableHead>
+                <TableHead className="text-right">Books</TableHead>
+                <TableHead className="text-right">Portal</TableHead>
                 <TableHead className="text-right">Difference</TableHead>
                 <TableHead>Reason</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {lines.map((l) => (
+              {lines.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
+                    No reconciliation lines available for this client/year.
+                  </TableCell>
+                </TableRow>
+              ) : lines.map((l) => (
                 <TableRow key={l.key}>
                   <TableCell className="font-medium align-top">
                     {l.label}
@@ -149,7 +161,8 @@ export const ReconciliationCard: React.FC<Props> = ({ clientId, financialYear, i
                         onChange={(e) => setDrafts((d) => ({ ...d, [l.key]: e.target.value }))}
                         placeholder="Why does this differ?"
                         aria-label={`Reason for ${l.label}`}
-                        className="min-h-[36px] h-9 text-sm"
+                        rows={3}
+                        className="text-sm"
                       />
                     )}
                   </TableCell>

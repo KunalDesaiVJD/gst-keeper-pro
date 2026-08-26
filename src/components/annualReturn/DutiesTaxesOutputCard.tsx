@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, ChevronDown, ChevronRight, Save, ClipboardPaste } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronRight, Save, ClipboardPaste, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { monthsForFY } from '@/lib/annualReturnPeriods';
@@ -206,7 +206,20 @@ export const DutiesTaxesOutputCard: React.FC<Props> = ({ clientId, financialYear
     return { imported, skipped, warnings };
   };
 
-  if (loading) return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
+  if (loading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">DUTIES &amp; TAXES-OUTPUT</CardTitle>
+          <CardDescription>Month-wise sales vs. as-filed GSTR-3B — separate entry from PL-Output, cross-checked against it. Click a month to expand and edit. Several months can be open at once.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex items-center justify-center gap-2 py-10">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <span className="text-sm text-muted-foreground">Loading...</span>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -257,7 +270,14 @@ export const DutiesTaxesOutputCard: React.FC<Props> = ({ clientId, financialYear
                     <TableCell className="font-medium">{m}</TableCell>
                     <TableCell className="text-right tabular-nums">{fmt(net)}</TableCell>
                     <TableCell className="text-right tabular-nums">{fmt(asFiled)}</TableCell>
-                    <TableCell className={`text-right tabular-nums font-semibold ${r.hasEntry ? (matched ? 'text-success' : 'text-destructive') : 'text-muted-foreground'}`}>{r.hasEntry ? fmt(diff) : '—'}</TableCell>
+                    <TableCell className={`text-right tabular-nums font-semibold ${r.hasEntry ? (matched ? 'text-success' : 'text-destructive') : 'text-muted-foreground'}`}>
+                      {r.hasEntry ? (
+                        <span className="inline-flex items-center justify-end gap-1">
+                          {matched ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+                          {fmt(diff)}
+                        </span>
+                      ) : '—'}
+                    </TableCell>
                   </TableRow>
                   {isOpen && (
                     <TableRow>
@@ -270,7 +290,7 @@ export const DutiesTaxesOutputCard: React.FC<Props> = ({ clientId, financialYear
                                 <div key={key} className="flex items-center justify-between gap-3">
                                   <span className="text-sm text-muted-foreground">{FIELD_LABEL[key]}</span>
                                   <Input
-                                    type="number" className="w-32 text-right h-8" disabled={saving}
+                                    type="number" min={group.title === 'Other adjustments (Cr side)' ? undefined : 0} className="w-32 text-right h-8" disabled={saving}
                                     value={String(r[key])}
                                     onChange={(e) => updateField(m, key, e.target.value)}
                                     aria-label={`${m} ${group.title} ${FIELD_LABEL[key]}`}

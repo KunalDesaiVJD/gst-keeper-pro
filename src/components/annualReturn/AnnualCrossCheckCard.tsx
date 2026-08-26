@@ -46,7 +46,20 @@ export const AnnualCrossCheckCard: React.FC<Props> = ({ clientId, financialYear,
     return () => { cancelled = true; };
   }, [clientId, financialYear, refreshKey, manualNonce]);
 
-  if (loading) return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
+  if (loading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Annual cross-check</CardTitle>
+          <CardDescription>Same figures, entered twice on purpose — this is where they're expected to agree.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex items-center justify-center gap-2 py-10">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <span className="text-sm text-muted-foreground">Loading...</span>
+        </CardContent>
+      </Card>
+    );
+  }
 
   const rows = [
     { label: 'Outward tax — PL-Output (Part A) vs Duties & Taxes-Output (Net Sales)', d: outputDiff },
@@ -65,7 +78,9 @@ export const AnnualCrossCheckCard: React.FC<Props> = ({ clientId, financialYear,
         </Button>
       </CardHeader>
       <CardContent className="space-y-3">
-        {rows.map(({ label, d }) => {
+        {(!clientId || !financialYear) ? (
+          <p className="text-sm text-muted-foreground">Select a client and financial year to see the cross-check.</p>
+        ) : rows.map(({ label, d }) => {
           if (!d) return null;
           const diff = d.pl - d.dt;
           const matched = Math.abs(diff) <= TOLERANCE;
@@ -76,7 +91,7 @@ export const AnnualCrossCheckCard: React.FC<Props> = ({ clientId, financialYear,
                 <span className="tabular-nums">{fmt(d.pl)}</span>
                 <span className="text-muted-foreground">vs</span>
                 <span className="tabular-nums">{fmt(d.dt)}</span>
-                <Badge variant={matched ? 'success' : 'destructive'}>{fmt(diff)}</Badge>
+                <Badge variant={matched ? 'success' : 'destructive'}>{matched ? 'Matched' : `Diff: ${fmt(diff)}`}</Badge>
               </div>
             </div>
           );

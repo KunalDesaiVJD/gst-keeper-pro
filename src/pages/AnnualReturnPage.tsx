@@ -87,6 +87,7 @@ const AnnualReturnPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [dutiesVersion, setDutiesVersion] = useState(0);
   const [reconOpenCount, setReconOpenCount] = useState(0);
+  const [activeTab, setActiveTab] = useState('status');
 
   const isStaff = isStaffRole();
   const selectedClient = clients.find((c) => c.id === selectedClientId) || null;
@@ -147,7 +148,9 @@ const AnnualReturnPage: React.FC = () => {
         const lines = await fetchReconciliationLines(selectedClientId, financialYear, isNoItcBuilder);
         if (!isFullyReconciled(lines)) {
           const openLabels = lines.filter((l) => l.reasonRequired && !l.reason.trim()).map((l) => l.label);
-          toast.error(`Can't lock — reason needed for: ${openLabels.join(', ')}. See the Reconciliation tab.`);
+          toast.error(`Can't lock — reason needed for: ${openLabels.join(', ')}. See the Reconciliation tab.`, {
+            action: { label: 'View', onClick: () => setActiveTab('reconciliation') },
+          });
           setSaving(false);
           return;
         }
@@ -214,7 +217,7 @@ const AnnualReturnPage: React.FC = () => {
           Select a client to see their annual return status.
         </CardContent></Card>
       ) : (
-        <Tabs defaultValue="status">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div className="overflow-x-auto">
             <TabsList>
               <TabsTrigger value="status">Status</TabsTrigger>
@@ -268,7 +271,9 @@ const AnnualReturnPage: React.FC = () => {
                   </CardDescription>
                 </div>
                 {loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading...
+                  </span>
                 ) : (
                   <Badge variant={STATUS_BADGE_VARIANT[status]}>{STATUS_LABEL[status]}</Badge>
                 )}
@@ -307,8 +312,8 @@ const AnnualReturnPage: React.FC = () => {
               here; monthly entry lives on the Duties &amp; Taxes tab, entered separately by design.
             </p>
             <PLOutputCard clientId={selectedClientId} financialYear={financialYear} />
-            <PLInputCard clientId={selectedClientId} financialYear={financialYear} />
-            <PLInputSummaryCard clientId={selectedClientId} financialYear={financialYear} />
+            <PLInputCard clientId={selectedClientId} financialYear={financialYear} onSaved={() => setDutiesVersion((v) => v + 1)} />
+            <PLInputSummaryCard clientId={selectedClientId} financialYear={financialYear} refreshKey={dutiesVersion} />
           </TabsContent>
 
           <TabsContent value="duties" className="space-y-4">
@@ -322,7 +327,7 @@ const AnnualReturnPage: React.FC = () => {
           </TabsContent>
 
           <TabsContent value="rcm" className="space-y-4">
-            <RcmAnnualReturnCard clientId={selectedClientId} financialYear={financialYear} />
+            <RcmAnnualReturnCard clientId={selectedClientId} financialYear={financialYear} onSaved={() => setDutiesVersion((v) => v + 1)} />
           </TabsContent>
 
           <TabsContent value="gstr9input" className="space-y-4">

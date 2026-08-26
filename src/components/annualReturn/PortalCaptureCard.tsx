@@ -39,6 +39,9 @@ const FIELD_GROUPS: { title: string; returnType: ReturnType; keys: NumericKey[] 
 ];
 const FIELD_LABEL: Record<string, string> = { turnover_taxable: 'Taxable', turnover_igst: 'IGST', turnover_cgst: 'CGST', turnover_sgst: 'SGST', outward_igst: 'IGST', outward_cgst: 'CGST', outward_sgst: 'SGST', itc_igst: 'IGST', itc_cgst: 'CGST', itc_sgst: 'SGST', itc2b_igst: 'IGST', itc2b_cgst: 'CGST', itc2b_sgst: 'SGST', rcm_taxable: 'Taxable', rcm_igst: 'IGST', rcm_cgst: 'CGST', rcm_sgst: 'SGST' };
 
+// Fields the firm expects to always be populated every month. RCM is left unmarked — not every client has RCM every month.
+const REQUIRED_KEYS = new Set<NumericKey>(['turnover_taxable', 'outward_igst', 'outward_cgst', 'outward_sgst', 'itc_igst', 'itc_cgst', 'itc_sgst', 'itc2b_igst', 'itc2b_cgst', 'itc2b_sgst']);
+
 // Flattened in the same order as FIELD_GROUPS — this is the paste column order (after Month).
 const PASTE_FIELDS: { key: NumericKey; returnType: ReturnType }[] = FIELD_GROUPS.flatMap((g) => g.keys.map((key) => ({ key, returnType: g.returnType })));
 const PASTE_COLUMN_LABELS = [
@@ -82,6 +85,7 @@ export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) 
   const [dirtyMonths, setDirtyMonths] = useState<Set<string>>(new Set());
   const [touchedGroups, setTouchedGroups] = useState<Record<string, Set<ReturnType>>>({});
   const [pasteOpen, setPasteOpen] = useState(false);
+  const [focusedField, setFocusedField] = useState<string | null>(null);
 
   const load = async () => {
     if (!clientId || !financialYear) { setData({}); setLoading(false); return; }
@@ -213,6 +217,8 @@ export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) 
   const table6A = months.reduce((sum, m) => sum + (data[m]?.hasGstr3b ? data[m].itc_igst + data[m].itc_cgst + data[m].itc_sgst : 0), 0);
   const table8A = months.reduce((sum, m) => sum + (data[m]?.hasGstr2b ? data[m].itc2b_igst + data[m].itc2b_cgst + data[m].itc2b_sgst : 0), 0);
   const allConfirmed = confirmedCount === months.length;
+  const table6AConfirmed = months.every((m) => data[m]?.hasGstr3b);
+  const table8AConfirmed = months.every((m) => data[m]?.hasGstr2b);
 
   if (loading) return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
 
@@ -227,11 +233,11 @@ export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) 
       <div className="grid grid-cols-2 gap-4">
         <Card className="mb-0"><CardContent className="p-4">
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1">Table 6A · Total ITC via GSTR-3B</div>
-          <div className="flex items-baseline justify-between"><div className="text-xl font-semibold font-heading tabular-nums">{fmt(table6A)}</div><Badge variant={allConfirmed ? 'success' : 'warning'}>{allConfirmed ? 'Complete' : 'Partial'}</Badge></div>
+          <div className="flex items-baseline justify-between"><div className="text-xl font-semibold font-heading tabular-nums">{fmt(table6A)}</div><Badge variant={table6AConfirmed ? 'success' : 'warning'}>{table6AConfirmed ? 'Complete' : 'Partial'}</Badge></div>
         </CardContent></Card>
         <Card className="mb-0"><CardContent className="p-4">
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1">Table 8A · ITC as per GSTR-2B</div>
-          <div className="flex items-baseline justify-between"><div className="text-xl font-semibold font-heading tabular-nums">{fmt(table8A)}</div><Badge variant={allConfirmed ? 'success' : 'warning'}>{allConfirmed ? 'Complete' : 'Partial'}</Badge></div>
+          <div className="flex items-baseline justify-between"><div className="text-xl font-semibold font-heading tabular-nums">{fmt(table8A)}</div><Badge variant={table8AConfirmed ? 'success' : 'warning'}>{table8AConfirmed ? 'Complete' : 'Partial'}</Badge></div>
         </CardContent></Card>
       </div>
 
@@ -294,17 +300,23 @@ export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) 
                             {FIELD_GROUPS.map((group) => (
                               <div key={group.title} className="space-y-1.5">
                                 <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{group.title}</div>
-                                {group.keys.map((key) => (
-                                  <div key={key} className="flex items-center justify-between gap-3">
-                                    <span className="text-sm text-muted-foreground">{FIELD_LABEL[key]}</span>
-                                    <Input
-                                      type="number" className="w-32 text-right h-8" disabled={saving}
-                                      value={String(r[key])}
-                                      onChange={(e) => updateField(m, key, group.returnType, e.target.value)}
-                                      aria-label={`${m} ${group.title} ${FIELD_LABEL[key]}`}
-                                    />
-                                  </div>
-                                ))}
+                                {group.keys.map((key) => {
+                                  const fieldId = `${m}:${key}`;
+                                  const isFocused = focusedField === fieldId;
+                                  return (
+                                    <div key={key} className="flex items-center justify-between gap-3">
+                                      <span className="text-sm text-muted-foreground">{FIELD_LABEL[key]}{REQUIRED_KEYS.has(key) && <span className="text-destructive"> *</span>}</span>
+                                      <Input
+                                        type={isFocused ? 'number' : 'text'} className="w-32 text-right h-8" disabled={saving}
+                                        value={isFocused ? String(r[key]) : fmt(r[key])}
+                                        onChange={(e) => updateField(m, key, group.returnType, e.target.value)}
+                                        onFocus={() => setFocusedField(fieldId)}
+                                        onBlur={() => setFocusedField(null)}
+                                        aria-label={`${m} ${group.title} ${FIELD_LABEL[key]}`}
+                                      />
+                                    </div>
+                                  );
+                                })}
                               </div>
                             ))}
                           </div>

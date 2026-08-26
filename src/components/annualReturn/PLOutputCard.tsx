@@ -17,6 +17,7 @@ const BIFURCATION_LABEL: Record<string, string> = {
   sez_wo_tax: 'SEZ W/O',
   non_gst: 'Non-GST',
 };
+const GST_RATE_SUGGESTIONS = ['0%', '0.1%', '0.25%', '1%', '1.5%', '3%', '5%', '7.5%', '12%', '18%', '28%', 'Exempt/Nil'];
 
 interface Line {
   id: string;
@@ -247,21 +248,21 @@ export const PLOutputCard: React.FC<Props> = ({ clientId, financialYear }) => {
           )}
           {partRows.map((row) => (
             <TableRow key={row.key}>
-              <TableCell><Input value={row.ledger_head} onChange={(e) => updateRow(row.key, { ledger_head: e.target.value })} placeholder="e.g. GST Sales 18%" /></TableCell>
+              <TableCell><Input value={row.ledger_head} onChange={(e) => updateRow(row.key, { ledger_head: e.target.value })} placeholder="e.g. GST Sales 18%" aria-label="Ledger head" /></TableCell>
               {part === 'B' && (
                 <TableCell>
                   <Select value={row.bifurcation || undefined} onValueChange={(v) => updateRow(row.key, { bifurcation: v })}>
-                    <SelectTrigger className="w-40"><SelectValue placeholder="Select" /></SelectTrigger>
+                    <SelectTrigger className="w-40" aria-label="Bifurcation"><SelectValue placeholder="Select" /></SelectTrigger>
                     <SelectContent>{BIFURCATIONS.map((b) => <SelectItem key={b} value={b}>{BIFURCATION_LABEL[b]}</SelectItem>)}</SelectContent>
                   </Select>
                 </TableCell>
               )}
-              {part === 'A' && <TableCell><Input value={row.rate} onChange={(e) => updateRow(row.key, { rate: e.target.value })} placeholder="18%" className="w-20" /></TableCell>}
-              <TableCell><Input type="number" value={row.taxable_value} onChange={(e) => updateRow(row.key, { taxable_value: e.target.value })} placeholder="0" className="text-right" /></TableCell>
+              {part === 'A' && <TableCell><Input list="pl-output-rate-suggestions" value={row.rate} onChange={(e) => updateRow(row.key, { rate: e.target.value })} placeholder="18%" className="w-20" aria-label="Rate" /></TableCell>}
+              <TableCell><Input type="number" value={row.taxable_value} onChange={(e) => updateRow(row.key, { taxable_value: e.target.value })} placeholder="0" className="text-right" aria-label="Taxable value" /></TableCell>
               {part === 'A' && <>
-                <TableCell><Input type="number" value={row.igst} onChange={(e) => updateRow(row.key, { igst: e.target.value })} placeholder="0" className="text-right" /></TableCell>
-                <TableCell><Input type="number" value={row.cgst} onChange={(e) => updateRow(row.key, { cgst: e.target.value })} placeholder="0" className="text-right" /></TableCell>
-                <TableCell><Input type="number" value={row.sgst} onChange={(e) => updateRow(row.key, { sgst: e.target.value })} placeholder="0" className="text-right" /></TableCell>
+                <TableCell><Input type="number" value={row.igst} onChange={(e) => updateRow(row.key, { igst: e.target.value })} placeholder="0" className="text-right" aria-label="IGST" /></TableCell>
+                <TableCell><Input type="number" value={row.cgst} onChange={(e) => updateRow(row.key, { cgst: e.target.value })} placeholder="0" className="text-right" aria-label="CGST" /></TableCell>
+                <TableCell><Input type="number" value={row.sgst} onChange={(e) => updateRow(row.key, { sgst: e.target.value })} placeholder="0" className="text-right" aria-label="SGST" /></TableCell>
               </>}
               <TableCell>
                 <div className="flex gap-1 justify-end">
@@ -291,8 +292,6 @@ export const PLOutputCard: React.FC<Props> = ({ clientId, financialYear }) => {
     );
   };
 
-  if (loading) return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
-
   return (
     <Card>
       <CardHeader>
@@ -301,13 +300,24 @@ export const PLOutputCard: React.FC<Props> = ({ clientId, financialYear }) => {
             <CardTitle className="text-lg">PL-OUTPUT</CardTitle>
             <CardDescription>Books sales, annual, by ledger head — Part A (taxable) and Part B (non-taxable). No month here; see Duties &amp; Taxes for the monthly entry.</CardDescription>
           </div>
-          <Button size="sm" onClick={saveAll} disabled={saving || dirty.size === 0}>
-            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
-            Save changes{dirty.size > 0 ? ` (${dirty.size})` : ''}
-          </Button>
+          {!loading && (
+            <Button size="sm" onClick={saveAll} disabled={saving || dirty.size === 0}>
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+              Save changes{dirty.size > 0 ? ` (${dirty.size})` : ''}
+            </Button>
+          )}
         </div>
       </CardHeader>
+      {loading ? (
+        <CardContent className="flex justify-center py-10">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span className="text-sm">Loading...</span>
+          </div>
+        </CardContent>
+      ) : (
       <CardContent className="space-y-6">
+        <datalist id="pl-output-rate-suggestions">{GST_RATE_SUGGESTIONS.map((r) => <option key={r} value={r} />)}</datalist>
         <div>
           <div className="flex items-center justify-between mb-2">
             <h4 className="text-sm font-semibold">Part A — Taxable income</h4>
@@ -336,6 +346,7 @@ export const PLOutputCard: React.FC<Props> = ({ clientId, financialYear }) => {
           )}
         </div>
       </CardContent>
+      )}
       <PasteFromExcelDialog
         open={pasteOpenA}
         onOpenChange={setPasteOpenA}

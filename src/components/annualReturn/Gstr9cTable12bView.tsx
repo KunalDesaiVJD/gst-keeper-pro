@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
 import { Loader2, Inbox } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import { fetchDutiesTaxesInputAnnual, taxTotal } from '@/lib/annualReturnAggregates';
+import { fetchDutiesTaxesInputAnnual, fetchPlInputTotals, fetchRcmTotals, taxTotal } from '@/lib/annualReturnAggregates';
 import { EXPENSE_HEADS } from '@/components/annualReturn/PLInputCard';
 
+const TOLERANCE = 10;
 const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
 interface HeadTotals { value: number; totalItc: number; }
@@ -21,6 +23,7 @@ interface Props { clientId: string; financialYear: string; }
  */
 export const Gstr9cTable12bView: React.FC<Props> = ({ clientId, financialYear }) => {
   const [rows, setRows] = useState<Record<string, HeadTotals>>({});
+  const [gstr9InputTotal, setGstr9InputTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -30,7 +33,9 @@ export const Gstr9cTable12bView: React.FC<Props> = ({ clientId, financialYear })
     Promise.all([
       supabase.from('pl_input_lines').select('expense_head, taxable_value, igst, cgst, sgst').eq('client_id', clientId).eq('financial_year', financialYear),
       fetchDutiesTaxesInputAnnual(clientId, financialYear),
-    ]).then(([linesRes, dt]) => {
+      fetchPlInputTotals(clientId, financialYear),
+      fetchRcmTotals(clientId, financialYear),
+    ]).then(([linesRes, dt, pl, rcmTotals]) => {
       if (cancelled) return;
       if (linesRes.error) throw linesRes.error;
       const next: Record<string, HeadTotals> = {};
@@ -43,6 +48,8 @@ export const Gstr9cTable12bView: React.FC<Props> = ({ clientId, financialYear })
       const netSuspended = taxTotal(dt.netSuspended);
       next['Purchases'].totalItc -= netSuspended;
       setRows(next);
+      // Matches GSTR 9-Input's "Total (matches Table 6O)" computation.
+      setGstr9InputTotal(taxTotal(pl.purchase) + taxTotal(pl.expense) + taxTotal(pl.capital_goods) + taxTotal(rcmTotals.partB) + taxTotal(dt.reclaimTotal));
     }).catch((err) => toast.error('Could not compute GSTR 9C Table 12B: ' + (err instanceof Error ? err.message : 'Unknown error')))
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -113,6 +120,14 @@ export const Gstr9cTable12bView: React.FC<Props> = ({ clientId, financialYear })
             </TableRow>
           </TableFooter>
         </Table>
+        {gstr9InputTotal !== null && (
+          <p className="flex items-center gap-2 px-6 py-3 text-xs text-muted-foreground">
+            vs GSTR9-Input total: <span className="tabular-nums text-foreground">{fmt(gstr9InputTotal)}</span>
+            <Badge variant={Math.abs(totalItc - gstr9InputTotal) <= TOLERANCE ? 'success' : 'warning'} className="text-[10px]">
+              {Math.abs(totalItc - gstr9InputTotal) <= TOLERANCE ? 'Matched' : `Diff ${fmt(totalItc - gstr9InputTotal)}`}
+            </Badge>
+          </p>
+        )}
       </CardContent>
     </Card>
   );
