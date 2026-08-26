@@ -9,6 +9,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { fetchReconciliationLines, ReconLine } from '@/lib/annualReturnReconciliation';
 import { useAuth } from '@/contexts/AuthContext';
 
+const trimmed = (v: string | undefined) => (v || '').trim();
+
 const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
 interface Props {
@@ -30,7 +32,7 @@ export const ReconciliationCard: React.FC<Props> = ({ clientId, financialYear, i
   const [lines, setLines] = useState<ReconLine[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
-  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const load = async (preserveDrafts = false) => {
     if (!clientId || !financialYear) { setLines([]); setLoading(false); return; }
@@ -52,23 +54,33 @@ export const ReconciliationCard: React.FC<Props> = ({ clientId, financialYear, i
 
   useEffect(() => { load(); }, [clientId, financialYear, isNoItcBuilder]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const saveReason = async (line: ReconLine) => {
-    const reason = (drafts[line.key] || '').trim();
-    if (!reason) { toast.error('Enter a reason before saving.'); return; }
-    setSavingKey(line.key);
+  // A line is "dirty" once its draft text differs from what's actually
+  // saved (l.reason) — this drives both the batch-save button's count and
+  // which rows get included in the next save.
+  const dirtyLines = lines.filter((l) => l.reasonRequired && !l.matched && trimmed(drafts[l.key]) !== trimmed(l.reason) && trimmed(drafts[l.key]).length > 0);
+
+  const saveDirtyReasons = async () => {
+    if (dirtyLines.length === 0) return;
+    setSaving(true);
     try {
-      const { error } = await supabase.from('reconciliation_reasons').upsert(
-        { client_id: clientId, financial_year: financialYear, line_key: line.key, reason, entered_by: user?.id || null, updated_at: new Date().toISOString() },
-        { onConflict: 'client_id,financial_year,line_key' },
-      );
+      const now = new Date().toISOString();
+      const payload = dirtyLines.map((l) => ({
+        client_id: clientId, financial_year: financialYear, line_key: l.key,
+        reason: trimmed(drafts[l.key]), entered_by: user?.id || null, updated_at: now,
+      }));
+      const { error } = await supabase.from('reconciliation_reasons').upsert(payload, { onConflict: 'client_id,financial_year,line_key' });
       if (error) throw error;
-      toast.success('Reason saved.');
-      setDrafts((d) => ({ ...d, [line.key]: reason }));
+      toast.success(`${payload.length} reason${payload.length === 1 ? '' : 's'} saved.`);
+      setDrafts((d) => {
+        const next = { ...d };
+        payload.forEach((p) => { next[p.line_key] = p.reason; });
+        return next;
+      });
       await load(true);
     } catch (err) {
       toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {
-      setSavingKey(null);
+      setSaving(false);
     }
   };
 
@@ -93,9 +105,15 @@ export const ReconciliationCard: React.FC<Props> = ({ clientId, financialYear, i
       )}
 
       <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Books vs Portal</CardTitle>
-          <CardDescription>Computed live from Books Input and Portal Capture — nothing here is retyped.</CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-3 flex-wrap">
+          <div>
+            <CardTitle className="text-lg">Books vs Portal</CardTitle>
+            <CardDescription>Computed live from Books Input and Portal Capture — nothing here is retyped.</CardDescription>
+          </div>
+          <Button size="sm" variant={dirtyLines.length > 0 ? 'default' : 'outline'} disabled={saving || dirtyLines.length === 0} onClick={saveDirtyReasons}>
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+            Save reasons{dirtyLines.length > 0 ? ` (${dirtyLines.length})` : ''}
+          </Button>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
@@ -126,17 +144,13 @@ export const ReconciliationCard: React.FC<Props> = ({ clientId, financialYear, i
                     ) : !l.reasonRequired ? (
                       <span className="text-xs text-muted-foreground">Not required — no-ITC scheme client.</span>
                     ) : (
-                      <div className="flex gap-2 items-start">
-                        <Textarea
-                          value={drafts[l.key] ?? ''}
-                          onChange={(e) => setDrafts((d) => ({ ...d, [l.key]: e.target.value }))}
-                          placeholder="Why does this differ?"
-                          className="min-h-[36px] h-9 text-sm"
-                        />
-                        <Button size="sm" disabled={savingKey === l.key} onClick={() => saveReason(l)}>
-                          {savingKey === l.key ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                        </Button>
-                      </div>
+                      <Textarea
+                        value={drafts[l.key] ?? ''}
+                        onChange={(e) => setDrafts((d) => ({ ...d, [l.key]: e.target.value }))}
+                        placeholder="Why does this differ?"
+                        aria-label={`Reason for ${l.label}`}
+                        className="min-h-[36px] h-9 text-sm"
+                      />
                     )}
                   </TableCell>
                 </TableRow>

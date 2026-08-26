@@ -23,7 +23,7 @@ export const PortalTaxPaymentCard: React.FC<Props> = ({ clientId, financialYear 
   const [rows, setRows] = useState<Record<string, Row>>({});
   const [dirty, setDirty] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
-  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const load = async () => {
     if (!clientId || !financialYear) { setRows({}); setLoading(false); return; }
@@ -51,21 +51,28 @@ export const PortalTaxPaymentCard: React.FC<Props> = ({ clientId, financialYear 
     setDirty((prev) => ({ ...prev, [head]: true }));
   };
 
-  const save = async (head: string) => {
-    const r = rows[head];
-    setSavingKey(head);
+  const dirtyHeads = TAX_HEADS.filter((h) => dirty[h]);
+
+  const saveAll = async () => {
+    if (dirtyHeads.length === 0) return;
+    setSaving(true);
     try {
-      const { error } = await supabase.from('portal_tax_payment_entries').upsert(
-        { client_id: clientId, financial_year: financialYear, tax_head: head, payable: num(r.payable), paid_cash: num(r.paid_cash), paid_itc: num(r.paid_itc), interest: num(r.interest), late_fee: num(r.late_fee), penalty: num(r.penalty), updated_at: new Date().toISOString() },
-        { onConflict: 'client_id,financial_year,tax_head' },
-      );
+      const payload = dirtyHeads.map((h) => {
+        const r = rows[h];
+        return { client_id: clientId, financial_year: financialYear, tax_head: h, payable: num(r.payable), paid_cash: num(r.paid_cash), paid_itc: num(r.paid_itc), interest: num(r.interest), late_fee: num(r.late_fee), penalty: num(r.penalty), updated_at: new Date().toISOString() };
+      });
+      const { error } = await supabase.from('portal_tax_payment_entries').upsert(payload, { onConflict: 'client_id,financial_year,tax_head' });
       if (error) throw error;
-      toast.success(`${TAX_HEAD_LABEL[head]} saved.`);
-      setDirty((prev) => ({ ...prev, [head]: false }));
+      toast.success(`${dirtyHeads.length} row${dirtyHeads.length === 1 ? '' : 's'} saved.`);
+      setDirty((prev) => {
+        const next = { ...prev };
+        dirtyHeads.forEach((h) => { next[h] = false; });
+        return next;
+      });
     } catch (err) {
       toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {
-      setSavingKey(null);
+      setSaving(false);
     }
   };
 
@@ -73,9 +80,15 @@ export const PortalTaxPaymentCard: React.FC<Props> = ({ clientId, financialYear 
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">Tax Paid</CardTitle>
-        <CardDescription>From the filed challans — no other source produces this. Feeds GSTR-9 Table 9, Annexure 1, and Notice Format.</CardDescription>
+      <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+        <div>
+          <CardTitle className="text-lg">Tax Paid</CardTitle>
+          <CardDescription>From the filed challans — no other source produces this. Feeds GSTR-9 Table 9, Annexure 1, and Notice Format.</CardDescription>
+        </div>
+        <Button size="sm" disabled={dirtyHeads.length === 0 || saving} onClick={saveAll}>
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+          Save changes{dirtyHeads.length > 0 ? ` (${dirtyHeads.length})` : ''}
+        </Button>
       </CardHeader>
       <CardContent className="p-0">
         <Table>
@@ -83,7 +96,6 @@ export const PortalTaxPaymentCard: React.FC<Props> = ({ clientId, financialYear 
             <TableRow>
               <TableHead>Tax Head</TableHead>
               {FIELDS.map((f) => <TableHead key={f} className="text-right">{FIELD_LABEL[f]}</TableHead>)}
-              <TableHead className="w-16" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -93,13 +105,8 @@ export const PortalTaxPaymentCard: React.FC<Props> = ({ clientId, financialYear 
                 <TableRow key={h}>
                   <TableCell className="font-medium">{TAX_HEAD_LABEL[h]}</TableCell>
                   {FIELDS.map((f) => (
-                    <TableCell key={f}><Input type="number" className="text-right h-8 w-28" value={r[f]} onChange={(e) => update(h, f, e.target.value)} /></TableCell>
+                    <TableCell key={f}><Input type="number" className="text-right h-8 w-28" value={r[f]} disabled={saving} onChange={(e) => update(h, f, e.target.value)} /></TableCell>
                   ))}
-                  <TableCell>
-                    <Button size="sm" variant={dirty[h] ? 'default' : 'ghost'} disabled={savingKey === h} onClick={() => save(h)}>
-                      {savingKey === h ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                    </Button>
-                  </TableCell>
                 </TableRow>
               );
             })}

@@ -22,8 +22,9 @@ interface Line {
   sgst: number;
 }
 
-interface Draft {
-  id?: string;
+interface Row {
+  id: string;
+  isNew: boolean;
   month: string;
   category: string;
   taxable_value: string;
@@ -32,7 +33,8 @@ interface Draft {
   sgst: string;
 }
 
-const emptyDraft = (month: string): Draft => ({ month, category: '', taxable_value: '', igst: '', cgst: '', sgst: '' });
+const rowFromLine = (row: Line): Row => ({ id: row.id, isNew: false, month: row.month, category: row.category, taxable_value: String(row.taxable_value), igst: String(row.igst), cgst: String(row.cgst), sgst: String(row.sgst) });
+const emptyRow = (month: string): Row => ({ id: `new-${crypto.randomUUID()}`, isNew: true, month, category: '', taxable_value: '', igst: '', cgst: '', sgst: '' });
 const num = (v: string) => (v === '' ? 0 : Number(v));
 const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
@@ -48,14 +50,14 @@ interface PartATotals { taxable: number; igst: number; cgst: number; sgst: numbe
  */
 export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }) => {
   const months = monthsForFY(financialYear);
-  const [lines, setLines] = useState<Line[]>([]);
+  const [rows, setRows] = useState<Row[]>([]);
+  const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [partA, setPartA] = useState<PartATotals>({ taxable: 0, igst: 0, cgst: 0, sgst: 0, monthsPresent: 0 });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [draft, setDraft] = useState<Draft | null>(null);
 
   const load = async () => {
-    if (!clientId || !financialYear) { setLines([]); setLoading(false); return; }
+    if (!clientId || !financialYear) { setRows([]); setLoading(false); return; }
     setLoading(true);
     const [linesRes, portalRes] = await Promise.all([
       supabase.from('rcm_annual_return_lines').select('id, month, category, taxable_value, igst, cgst, sgst')
@@ -63,7 +65,8 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
       supabase.from('gst_filed_returns').select('summary').eq('client_id', clientId).eq('return_type', 'RCM').in('period_month', months),
     ]);
     if (linesRes.error) toast.error('Could not load RCM Part B: ' + linesRes.error.message);
-    setLines((linesRes.data || []) as Line[]);
+    setRows(((linesRes.data || []) as Line[]).map(rowFromLine));
+    setDirty(new Set());
     if (portalRes.error) {
       toast.error('Could not load RCM Part A: ' + portalRes.error.message);
     } else {
@@ -78,24 +81,40 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
 
   useEffect(() => { load(); }, [clientId, financialYear]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const startAdd = () => setDraft(emptyDraft(months[0]));
-  const startEdit = (row: Line) => setDraft({ id: row.id, month: row.month, category: row.category, taxable_value: String(row.taxable_value), igst: String(row.igst), cgst: String(row.cgst), sgst: String(row.sgst) });
+  const addLine = () => {
+    const row = emptyRow(months[0]);
+    setRows((prev) => [...prev, row]);
+    setDirty((prev) => new Set(prev).add(row.id));
+  };
 
-  const saveDraft = async () => {
-    if (!draft || !draft.category.trim()) { toast.error('Category is required.'); return; }
+  const updateRow = (id: string, field: keyof Omit<Row, 'id' | 'isNew'>, value: string) => {
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
+    setDirty((prev) => new Set(prev).add(id));
+  };
+
+  const saveChanges = async () => {
+    const dirtyRows = rows.filter((r) => dirty.has(r.id));
+    if (dirtyRows.length === 0) return;
+    const invalid = dirtyRows.find((r) => !r.category.trim());
+    if (invalid) { toast.error(`Category is required for the ${invalid.month} row.`); return; }
     setSaving(true);
     try {
-      const payload = {
-        client_id: clientId, financial_year: financialYear, month: draft.month, category: draft.category.trim(),
-        taxable_value: num(draft.taxable_value), igst: num(draft.igst), cgst: num(draft.cgst), sgst: num(draft.sgst),
+      const buildPayload = (r: Row) => ({
+        client_id: clientId, financial_year: financialYear, month: r.month, category: r.category.trim(),
+        taxable_value: num(r.taxable_value), igst: num(r.igst), cgst: num(r.cgst), sgst: num(r.sgst),
         updated_at: new Date().toISOString(),
-      };
-      const { error } = draft.id
-        ? await supabase.from('rcm_annual_return_lines').update(payload).eq('id', draft.id)
-        : await supabase.from('rcm_annual_return_lines').upsert(payload, { onConflict: 'client_id,financial_year,month,category' });
-      if (error) throw error;
-      toast.success('RCM line saved.');
-      setDraft(null);
+      });
+      const newRows = dirtyRows.filter((r) => r.isNew);
+      const existingRows = dirtyRows.filter((r) => !r.isNew);
+      if (newRows.length > 0) {
+        const { error } = await supabase.from('rcm_annual_return_lines').insert(newRows.map(buildPayload));
+        if (error) { toast.error('Save failed for new rows: ' + error.message); return; }
+      }
+      if (existingRows.length > 0) {
+        const { error } = await supabase.from('rcm_annual_return_lines').upsert(existingRows.map((r) => ({ ...buildPayload(r), id: r.id })), { onConflict: 'id' });
+        if (error) { toast.error('Save failed for existing rows: ' + error.message); return; }
+      }
+      toast.success(`${dirtyRows.length} RCM line${dirtyRows.length > 1 ? 's' : ''} saved.`);
       await load();
     } catch (err) {
       toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
@@ -104,17 +123,22 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
     }
   };
 
-  const deleteRow = async (row: Line) => {
+  const deleteRow = async (row: Row) => {
+    if (row.isNew) {
+      setRows((prev) => prev.filter((r) => r.id !== row.id));
+      setDirty((prev) => { const next = new Set(prev); next.delete(row.id); return next; });
+      return;
+    }
     const { error } = await supabase.from('rcm_annual_return_lines').delete().eq('id', row.id);
     if (error) { toast.error('Delete failed: ' + error.message); return; }
     toast.success('Line removed.');
     load();
   };
 
-  const totalTaxable = lines.reduce((a, r) => a + Number(r.taxable_value), 0);
-  const totalIgst = lines.reduce((a, r) => a + Number(r.igst), 0);
-  const totalCgst = lines.reduce((a, r) => a + Number(r.cgst), 0);
-  const totalSgst = lines.reduce((a, r) => a + Number(r.sgst), 0);
+  const totalTaxable = rows.reduce((a, r) => a + num(r.taxable_value), 0);
+  const totalIgst = rows.reduce((a, r) => a + num(r.igst), 0);
+  const totalCgst = rows.reduce((a, r) => a + num(r.cgst), 0);
+  const totalSgst = rows.reduce((a, r) => a + num(r.sgst), 0);
 
   const partADiff = (totalIgst + totalCgst + totalSgst) - (partA.igst + partA.cgst + partA.sgst);
   const partAMatched = Math.abs(partADiff) <= 10;
@@ -133,7 +157,7 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
           <span className="text-muted-foreground">IGST: <span className="font-medium text-foreground tabular-nums">{fmt(partA.igst)}</span></span>
           <span className="text-muted-foreground">CGST: <span className="font-medium text-foreground tabular-nums">{fmt(partA.cgst)}</span></span>
           <span className="text-muted-foreground">SGST: <span className="font-medium text-foreground tabular-nums">{fmt(partA.sgst)}</span></span>
-          {lines.length > 0 && <Badge variant={partAMatched ? 'success' : 'destructive'}>Diff vs Part B: {fmt(partADiff)}</Badge>}
+          {rows.length > 0 && <Badge variant={partAMatched ? 'success' : 'destructive'}>Diff vs Part B: {fmt(partADiff)}</Badge>}
         </CardContent>
       </Card>
 
@@ -144,10 +168,17 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
               <CardTitle className="text-lg">RCM — Part B (Books)</CardTitle>
               <CardDescription>Category and month-wise, built up from books — matched against Part A above.</CardDescription>
             </div>
-            {!draft && <Button variant="outline" size="sm" onClick={startAdd}><Plus className="h-3.5 w-3.5 mr-1.5" /> Add line</Button>}
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={addLine}><Plus className="h-3.5 w-3.5 mr-1.5" /> Add line</Button>
+              <Button size="sm" onClick={saveChanges} disabled={saving || dirty.size === 0}>
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+                Save changes{dirty.size > 0 ? ` (${dirty.size})` : ''}
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
+        <datalist id="rcm-category-suggestions">{SUGGESTED_CATEGORIES.map((c) => <option key={c} value={c} />)}</datalist>
         <Table>
           <TableHeader>
             <TableRow>
@@ -161,53 +192,33 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
             </TableRow>
           </TableHeader>
           <TableBody>
-            {lines.length === 0 && !draft && (
+            {rows.length === 0 && (
               <TableRow><TableCell colSpan={7} className="text-center text-sm text-muted-foreground py-6">No RCM Part B lines entered yet.</TableCell></TableRow>
             )}
-            {lines.map((row) => (
-              draft?.id === row.id ? null : (
-                <TableRow key={row.id}>
-                  <TableCell>{row.month}</TableCell>
-                  <TableCell className="font-medium">{row.category}</TableCell>
-                  <TableCell className="text-right tabular-nums">{fmt(row.taxable_value)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{fmt(row.igst)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{fmt(row.cgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{fmt(row.sgst)}</TableCell>
-                  <TableCell>
-                    <div className="flex gap-1 justify-end">
-                      <Button variant="ghost" size="sm" onClick={() => startEdit(row)}>Edit</Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => deleteRow(row)} aria-label={`Delete ${row.category}`}><Trash2 className="h-3.5 w-3.5" /></Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              )
-            ))}
-            {draft && (
-              <TableRow>
+            {rows.map((row) => (
+              <TableRow key={row.id}>
                 <TableCell>
-                  <Select value={draft.month} onValueChange={(v) => setDraft({ ...draft, month: v })}>
+                  <Select value={row.month} onValueChange={(v) => updateRow(row.id, 'month', v)}>
                     <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
                     <SelectContent>{months.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
                   </Select>
                 </TableCell>
                 <TableCell>
-                  <Input list="rcm-category-suggestions" value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} placeholder="e.g. Transportation Exp" />
-                  <datalist id="rcm-category-suggestions">{SUGGESTED_CATEGORIES.map((c) => <option key={c} value={c} />)}</datalist>
+                  <Input list="rcm-category-suggestions" value={row.category} onChange={(e) => updateRow(row.id, 'category', e.target.value)} placeholder="e.g. Transportation Exp" />
                 </TableCell>
-                <TableCell><Input type="number" value={draft.taxable_value} onChange={(e) => setDraft({ ...draft, taxable_value: e.target.value })} placeholder="0" className="text-right" /></TableCell>
-                <TableCell><Input type="number" value={draft.igst} onChange={(e) => setDraft({ ...draft, igst: e.target.value })} placeholder="0" className="text-right" /></TableCell>
-                <TableCell><Input type="number" value={draft.cgst} onChange={(e) => setDraft({ ...draft, cgst: e.target.value })} placeholder="0" className="text-right" /></TableCell>
-                <TableCell><Input type="number" value={draft.sgst} onChange={(e) => setDraft({ ...draft, sgst: e.target.value })} placeholder="0" className="text-right" /></TableCell>
+                <TableCell><Input type="number" value={row.taxable_value} onChange={(e) => updateRow(row.id, 'taxable_value', e.target.value)} placeholder="0" className="text-right" /></TableCell>
+                <TableCell><Input type="number" value={row.igst} onChange={(e) => updateRow(row.id, 'igst', e.target.value)} placeholder="0" className="text-right" /></TableCell>
+                <TableCell><Input type="number" value={row.cgst} onChange={(e) => updateRow(row.id, 'cgst', e.target.value)} placeholder="0" className="text-right" /></TableCell>
+                <TableCell><Input type="number" value={row.sgst} onChange={(e) => updateRow(row.id, 'sgst', e.target.value)} placeholder="0" className="text-right" /></TableCell>
                 <TableCell>
                   <div className="flex gap-1 justify-end">
-                    <Button size="sm" onClick={saveDraft} disabled={saving}>{saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}</Button>
-                    <Button variant="ghost" size="sm" onClick={() => setDraft(null)} disabled={saving}>Cancel</Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => deleteRow(row)} aria-label={`Delete ${row.category}`}><Trash2 className="h-3.5 w-3.5" /></Button>
                   </div>
                 </TableCell>
               </TableRow>
-            )}
+            ))}
           </TableBody>
-          {lines.length > 0 && (
+          {rows.length > 0 && (
             <TableFooter>
               <TableRow>
                 <TableCell colSpan={2}>Total Part B</TableCell>

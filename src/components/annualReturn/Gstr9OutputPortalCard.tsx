@@ -36,7 +36,7 @@ export const Gstr9OutputPortalCard: React.FC<Props> = ({ clientId, financialYear
   const [dirty, setDirty] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [rolling, setRolling] = useState(false);
-  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [completeness, setCompleteness] = useState<{ present: number; total: number } | null>(null);
 
   const load = async () => {
@@ -105,21 +105,30 @@ export const Gstr9OutputPortalCard: React.FC<Props> = ({ clientId, financialYear
     setDirty((prev) => ({ ...prev, [category]: true }));
   };
 
-  const save = async (category: string) => {
-    const r = rows[category];
-    setSavingKey(category);
+  const dirtyCategories = CATEGORIES.filter((c) => dirty[c]);
+
+  const saveAll = async () => {
+    if (dirtyCategories.length === 0) return;
+    setSaving(true);
     try {
-      const { error } = await supabase.from('portal_gstr1_category_figures').upsert(
-        { client_id: clientId, financial_year: financialYear, category, taxable_value: num(r.taxable_value), igst: num(r.igst), cgst: num(r.cgst), sgst: num(r.sgst), source: 'manual', updated_at: new Date().toISOString() },
-        { onConflict: 'client_id,financial_year,category' },
-      );
+      const now = new Date().toISOString();
+      const upserts = dirtyCategories.map((c) => {
+        const r = rows[c];
+        return { client_id: clientId, financial_year: financialYear, category: c, taxable_value: num(r.taxable_value), igst: num(r.igst), cgst: num(r.cgst), sgst: num(r.sgst), source: 'manual', updated_at: now };
+      });
+      const { error } = await supabase.from('portal_gstr1_category_figures').upsert(upserts, { onConflict: 'client_id,financial_year,category' });
       if (error) throw error;
-      toast.success(`${CATEGORY_LABEL[category]} saved.`);
-      setDirty((prev) => ({ ...prev, [category]: false }));
+      const saved = dirtyCategories;
+      toast.success(`${saved.length} row${saved.length === 1 ? '' : 's'} saved.`);
+      setDirty((prev) => {
+        const next = { ...prev };
+        saved.forEach((c) => { next[c] = false; });
+        return next;
+      });
     } catch (err) {
       toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {
-      setSavingKey(null);
+      setSaving(false);
     }
   };
 
@@ -141,9 +150,14 @@ export const Gstr9OutputPortalCard: React.FC<Props> = ({ clientId, financialYear
               Computed from GSTR-1 when all 12 months are present{completeness ? ` (last check: ${completeness.present} of ${completeness.total})` : ''}; manual entry is the fallback.
             </CardDescription>
           </div>
-          <Button variant="outline" size="sm" onClick={recompute} disabled={rolling}>
-            {rolling ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />} Recompute from GSTR-1
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={recompute} disabled={rolling}>
+              {rolling ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />} Recompute from GSTR-1
+            </Button>
+            <Button size="sm" onClick={saveAll} disabled={saving || dirtyCategories.length === 0}>
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />} Save changes{dirtyCategories.length > 0 ? ` (${dirtyCategories.length})` : ''}
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="p-0">
@@ -156,7 +170,6 @@ export const Gstr9OutputPortalCard: React.FC<Props> = ({ clientId, financialYear
               <TableHead className="text-right">CGST</TableHead>
               <TableHead className="text-right">SGST</TableHead>
               <TableHead className="w-20">Source</TableHead>
-              <TableHead className="w-16" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -165,16 +178,11 @@ export const Gstr9OutputPortalCard: React.FC<Props> = ({ clientId, financialYear
               return (
                 <TableRow key={c}>
                   <TableCell className="font-medium">{CATEGORY_LABEL[c]}</TableCell>
-                  <TableCell><Input type="number" className="text-right h-8" value={r.taxable_value} onChange={(e) => update(c, 'taxable_value', e.target.value)} /></TableCell>
-                  <TableCell><Input type="number" className="text-right h-8" value={r.igst} onChange={(e) => update(c, 'igst', e.target.value)} /></TableCell>
-                  <TableCell><Input type="number" className="text-right h-8" value={r.cgst} onChange={(e) => update(c, 'cgst', e.target.value)} /></TableCell>
-                  <TableCell><Input type="number" className="text-right h-8" value={r.sgst} onChange={(e) => update(c, 'sgst', e.target.value)} /></TableCell>
+                  <TableCell><Input type="number" className="text-right h-8" value={r.taxable_value} onChange={(e) => update(c, 'taxable_value', e.target.value)} disabled={saving} /></TableCell>
+                  <TableCell><Input type="number" className="text-right h-8" value={r.igst} onChange={(e) => update(c, 'igst', e.target.value)} disabled={saving} /></TableCell>
+                  <TableCell><Input type="number" className="text-right h-8" value={r.cgst} onChange={(e) => update(c, 'cgst', e.target.value)} disabled={saving} /></TableCell>
+                  <TableCell><Input type="number" className="text-right h-8" value={r.sgst} onChange={(e) => update(c, 'sgst', e.target.value)} disabled={saving} /></TableCell>
                   <TableCell><Badge variant={r.source === 'auto' ? 'success' : 'outline'}>{r.source === 'auto' ? 'Auto' : 'Manual'}</Badge></TableCell>
-                  <TableCell>
-                    <Button size="sm" variant={dirty[c] ? 'default' : 'ghost'} disabled={savingKey === c} onClick={() => save(c)}>
-                      {savingKey === c ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                    </Button>
-                  </TableCell>
                 </TableRow>
               );
             })}
@@ -186,7 +194,7 @@ export const Gstr9OutputPortalCard: React.FC<Props> = ({ clientId, financialYear
               <TableCell className="text-right tabular-nums">{fmt(totals.igst)}</TableCell>
               <TableCell className="text-right tabular-nums">{fmt(totals.cgst)}</TableCell>
               <TableCell className="text-right tabular-nums">{fmt(totals.sgst)}</TableCell>
-              <TableCell colSpan={2} />
+              <TableCell />
             </TableRow>
           </TableFooter>
         </Table>

@@ -18,8 +18,9 @@ const DIRECTION_LABEL: Record<string, string> = {
 const CLAUSES = ['8C', '10', '11', '12', '13'] as const;
 
 interface Line { id: string; direction: string; clause_ref: string | null; taxable_value: number; igst: number; cgst: number; sgst: number; notes: string | null; }
-interface Draft { id?: string; direction: string; clause_ref: string; taxable_value: string; igst: string; cgst: string; sgst: string; notes: string; }
-const emptyDraft = (): Draft => ({ direction: DIRECTIONS[0], clause_ref: '8C', taxable_value: '', igst: '', cgst: '', sgst: '', notes: '' });
+interface EditRow { key: string; id?: string; direction: string; clause_ref: string; taxable_value: string; igst: string; cgst: string; sgst: string; notes: string; }
+const emptyRow = (): EditRow => ({ key: `new-${crypto.randomUUID()}`, direction: DIRECTIONS[0], clause_ref: '8C', taxable_value: '', igst: '', cgst: '', sgst: '', notes: '' });
+const lineToRow = (l: Line): EditRow => ({ key: l.id, id: l.id, direction: l.direction, clause_ref: l.clause_ref || '8C', taxable_value: String(l.taxable_value), igst: String(l.igst), cgst: String(l.cgst), sgst: String(l.sgst), notes: l.notes || '' });
 const num = (v: string) => (v === '' ? 0 : Number(v));
 const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
@@ -33,45 +34,61 @@ interface Props { clientId: string; financialYear: string; }
  */
 export const Annexure4Card: React.FC<Props> = ({ clientId, financialYear }) => {
   const confirm = useConfirm();
-  const [lines, setLines] = useState<Line[]>([]);
+  const [rows, setRows] = useState<EditRow[]>([]);
   const [priorLines, setPriorLines] = useState<Line[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const [dirty, setDirty] = useState<Set<string>>(new Set());
 
   const load = async () => {
-    if (!clientId || !financialYear) { setLines([]); setLoading(false); return; }
+    if (!clientId || !financialYear) { setRows([]); setDirty(new Set()); setLoading(false); return; }
     setLoading(true);
     const [curRes, priorRes] = await Promise.all([
       supabase.from('annual_return_carry_forward').select('id, direction, clause_ref, taxable_value, igst, cgst, sgst, notes').eq('client_id', clientId).eq('financial_year', financialYear).order('created_at', { ascending: true }),
       supabase.from('annual_return_carry_forward').select('id, direction, clause_ref, taxable_value, igst, cgst, sgst, notes').eq('client_id', clientId).eq('financial_year', previousFY(financialYear)).order('created_at', { ascending: true }),
     ]);
     if (curRes.error) toast.error('Could not load Annexure 4: ' + curRes.error.message);
-    setLines((curRes.data || []) as Line[]);
+    setRows(((curRes.data || []) as Line[]).map(lineToRow));
     setPriorLines((priorRes.data || []) as Line[]);
+    setDirty(new Set());
     setLoading(false);
   };
 
   useEffect(() => { load(); }, [clientId, financialYear]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const startAdd = () => setDraft(emptyDraft());
-  const startEdit = (row: Line) => setDraft({ id: row.id, direction: row.direction, clause_ref: row.clause_ref || '8C', taxable_value: String(row.taxable_value), igst: String(row.igst), cgst: String(row.cgst), sgst: String(row.sgst), notes: row.notes || '' });
+  const addLine = () => {
+    const row = emptyRow();
+    setRows((prev) => [...prev, row]);
+    setDirty((prev) => new Set(prev).add(row.key));
+  };
 
-  const saveDraft = async () => {
-    if (!draft) return;
+  const updateRow = (key: string, patch: Partial<EditRow>) => {
+    setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+    setDirty((prev) => new Set(prev).add(key));
+  };
+
+  const buildPayload = (r: EditRow) => ({
+    client_id: clientId, financial_year: financialYear, direction: r.direction, clause_ref: r.clause_ref,
+    taxable_value: num(r.taxable_value), igst: num(r.igst), cgst: num(r.cgst), sgst: num(r.sgst),
+    notes: r.notes.trim() || null, updated_at: new Date().toISOString(),
+  });
+
+  const saveAll = async () => {
+    const dirtyRows = rows.filter((r) => dirty.has(r.key));
+    if (dirtyRows.length === 0) return;
     setSaving(true);
     try {
-      const payload = {
-        client_id: clientId, financial_year: financialYear, direction: draft.direction, clause_ref: draft.clause_ref,
-        taxable_value: num(draft.taxable_value), igst: num(draft.igst), cgst: num(draft.cgst), sgst: num(draft.sgst),
-        notes: draft.notes.trim() || null, updated_at: new Date().toISOString(),
-      };
-      const { error } = draft.id
-        ? await supabase.from('annual_return_carry_forward').update(payload).eq('id', draft.id)
-        : await supabase.from('annual_return_carry_forward').insert(payload);
-      if (error) throw error;
-      toast.success('Carry-forward line saved.');
-      setDraft(null);
+      const newRows = dirtyRows.filter((r) => !r.id);
+      const existingRows = dirtyRows.filter((r) => r.id);
+      if (newRows.length > 0) {
+        const { error } = await supabase.from('annual_return_carry_forward').insert(newRows.map(buildPayload));
+        if (error) throw new Error('New rows: ' + error.message);
+      }
+      if (existingRows.length > 0) {
+        const { error } = await supabase.from('annual_return_carry_forward').upsert(existingRows.map((r) => ({ id: r.id, ...buildPayload(r) })), { onConflict: 'id' });
+        if (error) throw new Error('Existing rows: ' + error.message);
+      }
+      toast.success(`Saved ${dirtyRows.length} carry-forward line${dirtyRows.length > 1 ? 's' : ''}.`);
       await load();
     } catch (err) {
       toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
@@ -80,8 +97,13 @@ export const Annexure4Card: React.FC<Props> = ({ clientId, financialYear }) => {
     }
   };
 
-  const deleteRow = async (row: Line) => {
+  const deleteRow = async (row: EditRow) => {
     if (!(await confirm({ title: 'Delete this carry-forward line?', description: "This can't be undone.", destructive: true, confirmText: 'Delete' }))) return;
+    if (!row.id) {
+      setRows((prev) => prev.filter((r) => r.key !== row.key));
+      setDirty((prev) => { const next = new Set(prev); next.delete(row.key); return next; });
+      return;
+    }
     const { error } = await supabase.from('annual_return_carry_forward').delete().eq('id', row.id);
     if (error) { toast.error('Delete failed: ' + error.message); return; }
     toast.success('Line removed.');
@@ -127,7 +149,13 @@ export const Annexure4Card: React.FC<Props> = ({ clientId, financialYear }) => {
               <CardTitle className="text-lg">ANNEXURE-4 — FY {financialYear} items spilling into next year</CardTitle>
               <CardDescription>Clauses 8C, 10, 11, 12, 13 — this becomes next year's "previous year carry-forward" above.</CardDescription>
             </div>
-            {!draft && <Button variant="outline" size="sm" onClick={startAdd}><Plus className="h-3.5 w-3.5 mr-1.5" /> Add line</Button>}
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={addLine}><Plus className="h-3.5 w-3.5 mr-1.5" /> Add line</Button>
+              <Button size="sm" onClick={saveAll} disabled={saving || dirty.size === 0}>
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+                Save changes{dirty.size > 0 ? ` (${dirty.size})` : ''}
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -144,53 +172,34 @@ export const Annexure4Card: React.FC<Props> = ({ clientId, financialYear }) => {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {lines.length === 0 && !draft && (
+              {rows.length === 0 && (
                 <TableRow><TableCell colSpan={7} className="text-center text-sm text-muted-foreground py-6">No carry-forward lines entered yet.</TableCell></TableRow>
               )}
-              {lines.map((row) => (
-                draft?.id === row.id ? null : (
-                  <TableRow key={row.id}>
-                    <TableCell>{row.clause_ref || '—'}</TableCell>
-                    <TableCell>{DIRECTION_LABEL[row.direction] || row.direction}</TableCell>
-                    <TableCell className="text-right tabular-nums">{fmt(row.taxable_value)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{fmt(row.igst)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{fmt(row.cgst)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{fmt(row.sgst)}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-1 justify-end">
-                        <Button variant="ghost" size="sm" onClick={() => startEdit(row)}>Edit</Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => deleteRow(row)} aria-label="Delete line"><Trash2 className="h-3.5 w-3.5" /></Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )
-              ))}
-              {draft && (
-                <TableRow>
+              {rows.map((row) => (
+                <TableRow key={row.key}>
                   <TableCell>
-                    <Select value={draft.clause_ref} onValueChange={(v) => setDraft({ ...draft, clause_ref: v })}>
+                    <Select value={row.clause_ref} onValueChange={(v) => updateRow(row.key, { clause_ref: v })}>
                       <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
                       <SelectContent>{CLAUSES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                     </Select>
                   </TableCell>
                   <TableCell>
-                    <Select value={draft.direction} onValueChange={(v) => setDraft({ ...draft, direction: v })}>
+                    <Select value={row.direction} onValueChange={(v) => updateRow(row.key, { direction: v })}>
                       <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
                       <SelectContent>{DIRECTIONS.map((d) => <SelectItem key={d} value={d}>{DIRECTION_LABEL[d]}</SelectItem>)}</SelectContent>
                     </Select>
                   </TableCell>
-                  <TableCell><Input type="number" value={draft.taxable_value} onChange={(e) => setDraft({ ...draft, taxable_value: e.target.value })} placeholder="0" className="text-right w-28" /></TableCell>
-                  <TableCell><Input type="number" value={draft.igst} onChange={(e) => setDraft({ ...draft, igst: e.target.value })} placeholder="0" className="text-right w-28" /></TableCell>
-                  <TableCell><Input type="number" value={draft.cgst} onChange={(e) => setDraft({ ...draft, cgst: e.target.value })} placeholder="0" className="text-right w-28" /></TableCell>
-                  <TableCell><Input type="number" value={draft.sgst} onChange={(e) => setDraft({ ...draft, sgst: e.target.value })} placeholder="0" className="text-right w-28" /></TableCell>
+                  <TableCell><Input type="number" value={row.taxable_value} onChange={(e) => updateRow(row.key, { taxable_value: e.target.value })} placeholder="0" className="text-right w-28" /></TableCell>
+                  <TableCell><Input type="number" value={row.igst} onChange={(e) => updateRow(row.key, { igst: e.target.value })} placeholder="0" className="text-right w-28" /></TableCell>
+                  <TableCell><Input type="number" value={row.cgst} onChange={(e) => updateRow(row.key, { cgst: e.target.value })} placeholder="0" className="text-right w-28" /></TableCell>
+                  <TableCell><Input type="number" value={row.sgst} onChange={(e) => updateRow(row.key, { sgst: e.target.value })} placeholder="0" className="text-right w-28" /></TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-end">
-                      <Button size="sm" onClick={saveDraft} disabled={saving}>{saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}</Button>
-                      <Button variant="ghost" size="sm" onClick={() => setDraft(null)} disabled={saving}>Cancel</Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => deleteRow(row)} aria-label="Delete line"><Trash2 className="h-3.5 w-3.5" /></Button>
                     </div>
                   </TableCell>
                 </TableRow>
-              )}
+              ))}
             </TableBody>
           </Table>
         </CardContent>

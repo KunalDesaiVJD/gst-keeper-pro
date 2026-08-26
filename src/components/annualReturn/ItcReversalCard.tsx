@@ -29,7 +29,7 @@ export const ItcReversalCard: React.FC<Props> = ({ clientId, financialYear }) =>
   const [rows, setRows] = useState<Record<string, Row>>({});
   const [dirty, setDirty] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
-  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const load = async () => {
     if (!clientId || !financialYear) { setRows({}); setLoading(false); return; }
@@ -53,21 +53,28 @@ export const ItcReversalCard: React.FC<Props> = ({ clientId, financialYear }) =>
     setDirty((prev) => ({ ...prev, [rule]: true }));
   };
 
-  const save = async (rule: string) => {
-    const r = rows[rule];
-    setSavingKey(rule);
+  const dirtyRules = RULES.filter((r) => dirty[r]);
+
+  const saveAll = async () => {
+    if (dirtyRules.length === 0) return;
+    setSaving(true);
     try {
-      const { error } = await supabase.from('itc_reversal_lines').upsert(
-        { client_id: clientId, financial_year: financialYear, rule, igst: num(r.igst), cgst: num(r.cgst), sgst: num(r.sgst), updated_at: new Date().toISOString() },
-        { onConflict: 'client_id,financial_year,rule' },
-      );
+      const payload = dirtyRules.map((rule) => {
+        const r = rows[rule];
+        return { client_id: clientId, financial_year: financialYear, rule, igst: num(r.igst), cgst: num(r.cgst), sgst: num(r.sgst), updated_at: new Date().toISOString() };
+      });
+      const { error } = await supabase.from('itc_reversal_lines').upsert(payload, { onConflict: 'client_id,financial_year,rule' });
       if (error) throw error;
-      toast.success(`${RULE_LABEL[rule]} saved.`);
-      setDirty((prev) => ({ ...prev, [rule]: false }));
+      toast.success(`${dirtyRules.length} row${dirtyRules.length === 1 ? '' : 's'} saved.`);
+      setDirty((prev) => {
+        const next = { ...prev };
+        dirtyRules.forEach((rule) => { next[rule] = false; });
+        return next;
+      });
     } catch (err) {
       toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {
-      setSavingKey(null);
+      setSaving(false);
     }
   };
 
@@ -81,9 +88,15 @@ export const ItcReversalCard: React.FC<Props> = ({ clientId, financialYear }) =>
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">GSTR-9 Table 7 — ITC Reversed &amp; Ineligible</CardTitle>
-        <CardDescription>Rule-wise, for the financial year. Feeds Table 7J and GSTR 9C Table 14.</CardDescription>
+      <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+        <div>
+          <CardTitle className="text-lg">GSTR-9 Table 7 — ITC Reversed &amp; Ineligible</CardTitle>
+          <CardDescription>Rule-wise, for the financial year. Feeds Table 7J and GSTR 9C Table 14.</CardDescription>
+        </div>
+        <Button size="sm" disabled={dirtyRules.length === 0 || saving} onClick={saveAll}>
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+          Save changes{dirtyRules.length > 0 ? ` (${dirtyRules.length})` : ''}
+        </Button>
       </CardHeader>
       <CardContent className="p-0">
         <Table>
@@ -93,7 +106,6 @@ export const ItcReversalCard: React.FC<Props> = ({ clientId, financialYear }) =>
               <TableHead className="text-right">IGST</TableHead>
               <TableHead className="text-right">CGST</TableHead>
               <TableHead className="text-right">SGST</TableHead>
-              <TableHead className="w-16" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -102,14 +114,9 @@ export const ItcReversalCard: React.FC<Props> = ({ clientId, financialYear }) =>
               return (
                 <TableRow key={r}>
                   <TableCell className="font-medium">{RULE_LABEL[r]}</TableCell>
-                  <TableCell><Input type="number" className="text-right h-8" value={row.igst} onChange={(e) => update(r, 'igst', e.target.value)} /></TableCell>
-                  <TableCell><Input type="number" className="text-right h-8" value={row.cgst} onChange={(e) => update(r, 'cgst', e.target.value)} /></TableCell>
-                  <TableCell><Input type="number" className="text-right h-8" value={row.sgst} onChange={(e) => update(r, 'sgst', e.target.value)} /></TableCell>
-                  <TableCell>
-                    <Button size="sm" variant={dirty[r] ? 'default' : 'ghost'} disabled={savingKey === r} onClick={() => save(r)}>
-                      {savingKey === r ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                    </Button>
-                  </TableCell>
+                  <TableCell><Input type="number" className="text-right h-8" value={row.igst} disabled={saving} onChange={(e) => update(r, 'igst', e.target.value)} /></TableCell>
+                  <TableCell><Input type="number" className="text-right h-8" value={row.cgst} disabled={saving} onChange={(e) => update(r, 'cgst', e.target.value)} /></TableCell>
+                  <TableCell><Input type="number" className="text-right h-8" value={row.sgst} disabled={saving} onChange={(e) => update(r, 'sgst', e.target.value)} /></TableCell>
                 </TableRow>
               );
             })}
@@ -120,7 +127,6 @@ export const ItcReversalCard: React.FC<Props> = ({ clientId, financialYear }) =>
               <TableCell className="text-right tabular-nums">{fmt(totals.igst)}</TableCell>
               <TableCell className="text-right tabular-nums">{fmt(totals.cgst)}</TableCell>
               <TableCell className="text-right tabular-nums">{fmt(totals.sgst)}</TableCell>
-              <TableCell />
             </TableRow>
           </TableFooter>
         </Table>
