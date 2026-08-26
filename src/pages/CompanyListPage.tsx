@@ -18,7 +18,7 @@
 // counter to mirror faithfully. Downloaded = clients whose most recent
 // attempt succeeded; Pending = credentialed clients that have never
 // succeeded yet (never attempted, or last attempt failed).
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -90,6 +90,15 @@ const CompanyListPage: React.FC = () => {
   const [extReady, setExtReady] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [fetching, setFetching] = useState(false);
+  // Sync and Fetch Company now share the same underlying extension message
+  // (__gstkPullSectionAllClients, scoped via clientIds) since both are
+  // selection-scoped in the same way — this ref tracks which one is
+  // in-flight so the single result handler below clears the right loading
+  // state and shows the right toast. A ref (not state) avoids the stale-
+  // closure trap: the message listener effect below only runs once on
+  // mount, so a captured `syncing`/`fetching` state value would always read
+  // its initial false.
+  const pendingActionRef = useRef<'sync' | 'fetch' | null>(null);
 
   const fetchAll = async () => {
     setLoading(true);
@@ -111,17 +120,15 @@ const CompanyListPage: React.FC = () => {
       if (!d || typeof d !== 'object') return;
       if (d.__gstkExtensionReady) setExtReady(true);
       if (d.__gstkPullSectionAllClientsResult) {
-        setSyncing(false);
+        const action = pendingActionRef.current;
+        pendingActionRef.current = null;
+        if (action === 'fetch') setFetching(false); else setSyncing(false);
+        const verb = action === 'fetch' ? 'Fetch Company' : 'Sync';
         if (d.__gstkPullSectionAllClientsResult.ok) {
-          toast.success(`Sync started for ${d.__gstkPullSectionAllClientsResult.count} client(s). Complete the CAPTCHA for each as it comes up.`);
+          toast.success(`${verb} started for ${d.__gstkPullSectionAllClientsResult.count} compan${d.__gstkPullSectionAllClientsResult.count === 1 ? 'y' : 'ies'}. Complete the CAPTCHA for each as it comes up.`);
         } else {
-          toast.error(d.__gstkPullSectionAllClientsResult.error || 'Sync failed to start.');
+          toast.error(d.__gstkPullSectionAllClientsResult.error || `${verb} failed to start.`);
         }
-      }
-      if (d.__gstkPullSectionResult) {
-        setFetching(false);
-        if (d.__gstkPullSectionResult.ok) toast.success('Fetch Company started — complete the CAPTCHA on the new tab.');
-        else toast.error(d.__gstkPullSectionResult.error || 'Fetch Company failed to start.');
       }
     };
     window.addEventListener('message', onMsg);
@@ -210,18 +217,25 @@ const CompanyListPage: React.FC = () => {
     fetchAll();
   };
 
+  // Both selection-scoped, matching Notice Alert's own Company List buttons
+  // exactly (confirmed live 2026-08-26): neither runs against every company
+  // — each requires checking rows first and only acts on those. That's
+  // distinct from the Notices Dashboard's separate "Sync All" button, which
+  // intentionally still covers every credentialed client with no selection.
   const handleSync = () => {
+    if (selected.size === 0) { toast.error('Select at least one company first.'); return; }
     if (!extReady) { toast.error('GST Keeper browser extension not detected. Install/enable it to sync.'); return; }
+    pendingActionRef.current = 'sync';
     setSyncing(true);
-    window.postMessage({ __gstkPullSectionAllClients: { mode: 'notices' } }, '*');
+    window.postMessage({ __gstkPullSectionAllClients: { mode: 'notices', clientIds: Array.from(selected) } }, '*');
   };
 
   const handleFetchCompany = () => {
-    if (selected.size !== 1) { toast.error('Select exactly one company to fetch (this pulls one company\'s profile at a time).'); return; }
+    if (selected.size === 0) { toast.error('Select at least one company first.'); return; }
     if (!extReady) { toast.error('GST Keeper browser extension not detected.'); return; }
-    const clientId = Array.from(selected)[0];
+    pendingActionRef.current = 'fetch';
     setFetching(true);
-    window.postMessage({ __gstkPullSection: { clientId, mode: 'taxpayerprofile' } }, '*');
+    window.postMessage({ __gstkPullSectionAllClients: { mode: 'taxpayerprofile', clientIds: Array.from(selected) } }, '*');
   };
 
   const selectedLogs = selected.size > 0 ? syncLogs.filter((l) => selected.has(l.client_id)) : syncLogs.slice(0, 50);

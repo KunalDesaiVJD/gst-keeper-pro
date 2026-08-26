@@ -315,17 +315,28 @@ const API = {
     return { started: true, client: c.name, mode: info.mode, periods: periods.length };
   },
 
-  // Same as startSectionPull but queues EVERY client with saved credentials
-  // instead of one — the Notices Dashboard's "Sync All". content.js's queue
-  // processor (job.idx/job.clients, see the top of the file) already handles
-  // an arbitrary-length clients array generically — this is the only new
-  // piece, reusing that machinery rather than adding a second one. Each
-  // client still needs its own CAPTCHA typed in the portal tab before the
-  // next one starts, same as the extension popup's own "All clients" option.
+  // Same as startSectionPull but queues MULTIPLE clients with saved
+  // credentials instead of one — the Notices Dashboard's "Sync All" (every
+  // credentialed client, info.clientIds omitted) and the Company List
+  // page's selection-scoped "Sync"/"Fetch Company" buttons (info.clientIds
+  // = the checked rows, confirmed live against Notice Alert 2026-08-26:
+  // both of their equivalent buttons require and respect a row selection,
+  // not "run for everyone"). content.js's queue processor (job.idx/
+  // job.clients, see the top of the file) already handles an arbitrary-
+  // length clients array generically — filtering which clients populate
+  // that array is the only new piece, reusing the same machinery rather
+  // than adding a second one. Each client still needs its own CAPTCHA typed
+  // in the portal tab before the next one starts, same as the extension
+  // popup's own "All clients" option.
   startAllClientsSectionPull: async (info) => {
     const all = await API.getClients();
-    const withCreds = all.filter((c) => c.gst_user_id);
-    if (!withCreds.length) throw new Error('No clients have saved GST portal credentials.');
+    let withCreds = all.filter((c) => c.gst_user_id);
+    const scoped = Array.isArray(info.clientIds) && info.clientIds.length;
+    if (scoped) {
+      const idSet = new Set(info.clientIds);
+      withCreds = withCreds.filter((c) => idSet.has(c.id));
+    }
+    if (!withCreds.length) throw new Error(scoped ? 'None of the selected clients have saved GST portal credentials.' : 'No clients have saved GST portal credentials.');
     const job = {
       mode: info.mode, period: info.period_month || '', idx: 0, step: 'login', startedAt: Date.now(),
       // Only the Notices Sync All records a Company List sync-log row per
