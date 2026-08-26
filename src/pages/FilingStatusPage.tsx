@@ -837,10 +837,10 @@ const FilingStatusPage: React.FC = () => {
           // Normalize -0 to 0
           if (difference === 0 || Object.is(difference, -0)) difference = 0;
           
-          // Allow differences up to 1 for rounding errors
-          if (Math.abs(difference) > 1) {
+          // Allow differences up to 20 for rounding errors
+          if (Math.abs(difference) > 20) {
             const displayDiff = difference === 0 ? '0' : difference.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-            toast.error(`Cannot file ${record.return_type}: Suspended Reconciliation difference must be within ₹1. Current difference: ${displayDiff}`);
+            toast.error(`Cannot file ${record.return_type}: Suspended Reconciliation difference must be within ₹20. Current difference: ${displayDiff}`);
             return;
           }
         }
