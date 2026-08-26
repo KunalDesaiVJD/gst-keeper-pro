@@ -4,10 +4,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, ChevronDown, ChevronRight, Save, CheckCircle2 } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronRight, Save, CheckCircle2, ClipboardPaste } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { monthsForFY } from '@/lib/annualReturnPeriods';
+import { PasteFromExcelDialog, type PasteImportResult } from '@/components/annualReturn/PasteFromExcelDialog';
 
 const NUMERIC_KEYS = [
   'turnover_taxable', 'turnover_igst', 'turnover_cgst', 'turnover_sgst',
@@ -38,6 +39,22 @@ const FIELD_GROUPS: { title: string; returnType: ReturnType; keys: NumericKey[] 
 ];
 const FIELD_LABEL: Record<string, string> = { turnover_taxable: 'Taxable', turnover_igst: 'IGST', turnover_cgst: 'CGST', turnover_sgst: 'SGST', outward_igst: 'IGST', outward_cgst: 'CGST', outward_sgst: 'SGST', itc_igst: 'IGST', itc_cgst: 'CGST', itc_sgst: 'SGST', itc2b_igst: 'IGST', itc2b_cgst: 'CGST', itc2b_sgst: 'SGST', rcm_taxable: 'Taxable', rcm_igst: 'IGST', rcm_cgst: 'CGST', rcm_sgst: 'SGST' };
 
+// Flattened in the same order as FIELD_GROUPS — this is the paste column order (after Month).
+const PASTE_FIELDS: { key: NumericKey; returnType: ReturnType }[] = FIELD_GROUPS.flatMap((g) => g.keys.map((key) => ({ key, returnType: g.returnType })));
+const PASTE_COLUMN_LABELS = [
+  'Month', 'Turnover Taxable', 'Turnover IGST', 'Turnover CGST', 'Turnover SGST',
+  'Outward IGST', 'Outward CGST', 'Outward SGST',
+  'ITC IGST', 'ITC CGST', 'ITC SGST',
+  'ITC2B IGST', 'ITC2B CGST', 'ITC2B SGST',
+  'RCM Taxable', 'RCM IGST', 'RCM CGST', 'RCM SGST',
+];
+
+/** Strips currency symbols/commas/whitespace; blank cell -> '0'. Leaves the numeric parsing itself to updateField's own num(). */
+const cleanPastedNumber = (raw: string): string => {
+  const stripped = (raw ?? '').replace(/[^0-9.\-]/g, '');
+  return stripped === '' ? '0' : stripped;
+};
+
 interface Props { clientId: string; financialYear: string; }
 
 /**
@@ -64,6 +81,7 @@ export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [dirtyMonths, setDirtyMonths] = useState<Set<string>>(new Set());
   const [touchedGroups, setTouchedGroups] = useState<Record<string, Set<ReturnType>>>({});
+  const [pasteOpen, setPasteOpen] = useState(false);
 
   const load = async () => {
     if (!clientId || !financialYear) { setData({}); setLoading(false); return; }
@@ -127,6 +145,35 @@ export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) 
       monthSet.add(returnType);
       return { ...prev, [month]: monthSet };
     });
+  };
+
+  const monthLookup = new Map(months.map((m) => [m.toLowerCase(), m]));
+
+  const handlePasteImport = (rows: string[][]): PasteImportResult => {
+    let imported = 0;
+    const warnings: string[] = [];
+    rows.forEach((row, idx) => {
+      const rowNum = idx + 1;
+      const isEmptyRow = row.every((c) => !c || c.trim() === '');
+      if (isEmptyRow) { warnings.push(`Row ${rowNum}: empty row skipped.`); return; }
+      const monthCell = (row[0] || '').trim();
+      const matchedMonth = monthLookup.get(monthCell.toLowerCase());
+      if (!matchedMonth) { warnings.push(`Row ${rowNum}: month "${monthCell}" not recognized.`); return; }
+      PASTE_FIELDS.forEach((f, fi) => {
+        const cellIdx = fi + 1; // cell 0 is Month
+        if (cellIdx >= row.length) return; // column not provided in this row
+        updateField(matchedMonth, f.key, f.returnType, cleanPastedNumber(row[cellIdx] ?? ''));
+      });
+      imported += 1;
+    });
+    const skipped = warnings.length;
+    if (skipped > 0) {
+      const preview = warnings.slice(0, 3).join(' ');
+      toast.error(`Imported ${imported} row${imported === 1 ? '' : 's'}. ${skipped} skipped — see below: ${preview}`, { duration: 8000 });
+    } else {
+      toast.success(`Imported ${imported} row${imported === 1 ? '' : 's'}.`);
+    }
+    return { imported, skipped, warnings };
   };
 
   const saveAll = async () => {
@@ -194,10 +241,16 @@ export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) 
             <CardTitle className="text-lg">Month-wise return figures</CardTitle>
             <CardDescription>GSTR-1 turnover, GSTR-3B outward tax &amp; ITC claimed, GSTR-2B ITC available, and RCM Part A — click a month to expand and edit. Several months can be open at once.</CardDescription>
           </div>
-          <Button size="sm" onClick={saveAll} disabled={saving || dirtyMonths.size === 0}>
-            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
-            Save changes{dirtyMonths.size > 0 ? ` (${dirtyMonths.size})` : ''}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => setPasteOpen(true)}>
+              <ClipboardPaste className="h-3.5 w-3.5 mr-1.5" />
+              Paste from Excel
+            </Button>
+            <Button size="sm" onClick={saveAll} disabled={saving || dirtyMonths.size === 0}>
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+              Save changes{dirtyMonths.size > 0 ? ` (${dirtyMonths.size})` : ''}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
@@ -265,6 +318,14 @@ export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) 
           </Table>
         </CardContent>
       </Card>
+
+      <PasteFromExcelDialog
+        open={pasteOpen}
+        onOpenChange={setPasteOpen}
+        title="Paste month-wise portal figures"
+        columnLabels={PASTE_COLUMN_LABELS}
+        onImport={handlePasteImport}
+      />
     </div>
   );
 };

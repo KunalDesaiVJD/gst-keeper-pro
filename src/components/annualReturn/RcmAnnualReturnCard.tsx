@@ -5,10 +5,11 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, Plus, Save, Trash2 } from 'lucide-react';
+import { ClipboardPaste, Loader2, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { monthsForFY } from '@/lib/annualReturnPeriods';
+import { PasteFromExcelDialog } from '@/components/annualReturn/PasteFromExcelDialog';
 
 const SUGGESTED_CATEGORIES = ['Transportation Exp', 'Delivery Exp', 'Office Rent Expense', 'Advocate Fees'];
 
@@ -55,6 +56,7 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
   const [partA, setPartA] = useState<PartATotals>({ taxable: 0, igst: 0, cgst: 0, sgst: 0, monthsPresent: 0 });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
 
   const load = async () => {
     if (!clientId || !financialYear) { setRows([]); setLoading(false); return; }
@@ -85,6 +87,50 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
     const row = emptyRow(months[0]);
     setRows((prev) => [...prev, row]);
     setDirty((prev) => new Set(prev).add(row.id));
+  };
+
+  const handlePasteImport = (pasted: string[][]) => {
+    const newRows: Row[] = [];
+    const warnings: string[] = [];
+    pasted.forEach((cells, i) => {
+      const rowNum = i + 1;
+      const [monthRaw, categoryRaw, taxableRaw, igstRaw, cgstRaw, sgstRaw] = cells;
+      const isBlank = cells.every((c) => !c || !c.trim());
+      if (isBlank) { warnings.push(`Row ${rowNum}: empty row skipped.`); return; }
+      const monthInput = (monthRaw || '').trim();
+      const month = months.find((m) => m.toLowerCase() === monthInput.toLowerCase());
+      if (!month) { warnings.push(`Row ${rowNum}: unrecognized month "${monthInput}".`); return; }
+      const category = (categoryRaw || '').trim();
+      if (!category) { warnings.push(`Row ${rowNum}: category is required.`); return; }
+      const cleanNum = (v: string | undefined) => {
+        if (!v || !v.trim()) return 0;
+        const n = Number(v.replace(/[₹,\s]/g, ''));
+        return Number.isFinite(n) ? n : 0;
+      };
+      newRows.push({
+        id: `new-${crypto.randomUUID()}`,
+        isNew: true,
+        month,
+        category,
+        taxable_value: String(cleanNum(taxableRaw)),
+        igst: String(cleanNum(igstRaw)),
+        cgst: String(cleanNum(cgstRaw)),
+        sgst: String(cleanNum(sgstRaw)),
+      });
+    });
+    if (newRows.length > 0) {
+      setRows((prev) => [...prev, ...newRows]);
+      setDirty((prev) => { const next = new Set(prev); newRows.forEach((r) => next.add(r.id)); return next; });
+    }
+    const result = { imported: newRows.length, skipped: warnings.length, warnings };
+    const summary = `Imported ${result.imported} row${result.imported === 1 ? '' : 's'}.${result.skipped > 0 ? ` ${result.skipped} skipped — see below:` : ''}`;
+    const detail = warnings.slice(0, 3).join(' ');
+    if (result.skipped > 0) {
+      toast.error(`${summary} ${detail}`, { duration: 10000 });
+    } else {
+      toast.success(summary);
+    }
+    return result;
   };
 
   const updateRow = (id: string, field: keyof Omit<Row, 'id' | 'isNew'>, value: string) => {
@@ -169,6 +215,7 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
               <CardDescription>Category and month-wise, built up from books — matched against Part A above.</CardDescription>
             </div>
             <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => setPasteOpen(true)}><ClipboardPaste className="h-3.5 w-3.5 mr-1.5" /> Paste from Excel</Button>
               <Button variant="outline" size="sm" onClick={addLine}><Plus className="h-3.5 w-3.5 mr-1.5" /> Add line</Button>
               <Button size="sm" onClick={saveChanges} disabled={saving || dirty.size === 0}>
                 {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
@@ -233,6 +280,14 @@ export const RcmAnnualReturnCard: React.FC<Props> = ({ clientId, financialYear }
         </Table>
         </CardContent>
       </Card>
+
+      <PasteFromExcelDialog
+        open={pasteOpen}
+        onOpenChange={setPasteOpen}
+        title="Paste RCM Part B lines from Excel"
+        columnLabels={['Month', 'Category', 'Taxable', 'IGST', 'CGST', 'SGST']}
+        onImport={handlePasteImport}
+      />
     </div>
   );
 };

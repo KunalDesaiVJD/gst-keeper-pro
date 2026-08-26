@@ -5,9 +5,10 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, Plus, Save, Trash2 } from 'lucide-react';
+import { ClipboardPaste, Loader2, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { PasteFromExcelDialog, PasteImportResult } from './PasteFromExcelDialog';
 
 type Part = 'A' | 'B';
 const BIFURCATIONS = ['export_wo_tax', 'sez_wo_tax', 'non_gst'] as const;
@@ -50,6 +51,14 @@ const toEditRow = (row: Line): EditRow => ({
 const num = (v: string) => (v === '' ? 0 : Number(v));
 const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
+/** Lenient numeric paste parsing: blank -> 0, strips stray currency symbols/commas, NaN -> 0. */
+const parsePastedNum = (v: string | undefined) => {
+  if (!v || !v.trim()) return 0;
+  const cleaned = v.replace(/[₹$,\s]/g, '');
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
+};
+
 interface Props {
   clientId: string;
   financialYear: string;
@@ -68,6 +77,8 @@ export const PLOutputCard: React.FC<Props> = ({ clientId, financialYear }) => {
   const [auditedTurnover, setAuditedTurnover] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [pasteOpenA, setPasteOpenA] = useState(false);
+  const [pasteOpenB, setPasteOpenB] = useState(false);
 
   const load = async () => {
     if (!clientId || !financialYear) { setRows([]); setDirty(new Set()); setLoading(false); return; }
@@ -96,6 +107,68 @@ export const PLOutputCard: React.FC<Props> = ({ clientId, financialYear }) => {
   const updateRow = (key: string, patch: Partial<EditRow>) => {
     setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
     setDirty((prev) => new Set(prev).add(key));
+  };
+
+  const reportPasteResult = (result: PasteImportResult) => {
+    if (result.skipped > 0) {
+      const preview = result.warnings.slice(0, 3).join(' ');
+      toast.error(`Imported ${result.imported} row${result.imported === 1 ? '' : 's'}. ${result.skipped} skipped — see below: ${preview}`, { duration: 10000 });
+    } else {
+      toast.success(`Imported ${result.imported} row${result.imported === 1 ? '' : 's'}.`);
+    }
+    return result;
+  };
+
+  const handleImportA = (rows: string[][]): PasteImportResult => {
+    const warnings: string[] = [];
+    const newRows: EditRow[] = [];
+    rows.forEach((cells, i) => {
+      const rowNum = i + 1;
+      if (cells.every((c) => !c || !c.trim())) { warnings.push(`Row ${rowNum}: empty row, skipped.`); return; }
+      const [ledgerHead, rate, taxableValue, igst, cgst, sgst] = cells;
+      const ledger = (ledgerHead || '').trim();
+      if (!ledger) { warnings.push(`Row ${rowNum}: missing Ledger Head, skipped.`); return; }
+      const row = emptyRow('A');
+      row.ledger_head = ledger;
+      row.rate = (rate || '').trim();
+      row.taxable_value = String(parsePastedNum(taxableValue));
+      row.igst = String(parsePastedNum(igst));
+      row.cgst = String(parsePastedNum(cgst));
+      row.sgst = String(parsePastedNum(sgst));
+      newRows.push(row);
+    });
+    if (newRows.length > 0) {
+      setRows((prev) => [...prev, ...newRows]);
+      setDirty((prev) => { const next = new Set(prev); newRows.forEach((r) => next.add(r.key)); return next; });
+    }
+    return reportPasteResult({ imported: newRows.length, skipped: warnings.length, warnings });
+  };
+
+  const handleImportB = (rows: string[][]): PasteImportResult => {
+    const warnings: string[] = [];
+    const newRows: EditRow[] = [];
+    rows.forEach((cells, i) => {
+      const rowNum = i + 1;
+      if (cells.every((c) => !c || !c.trim())) { warnings.push(`Row ${rowNum}: empty row, skipped.`); return; }
+      const [ledgerHead, bifurcation, taxableValue] = cells;
+      const ledger = (ledgerHead || '').trim();
+      if (!ledger) { warnings.push(`Row ${rowNum}: missing Ledger Head, skipped.`); return; }
+      const rawBif = (bifurcation || '').trim();
+      const bifKey = BIFURCATIONS.find(
+        (b) => b.toLowerCase() === rawBif.toLowerCase() || BIFURCATION_LABEL[b].toLowerCase() === rawBif.toLowerCase(),
+      );
+      if (!bifKey) { warnings.push(`Row ${rowNum}: unrecognized Bifurcation "${rawBif}", skipped.`); return; }
+      const row = emptyRow('B');
+      row.ledger_head = ledger;
+      row.bifurcation = bifKey;
+      row.taxable_value = String(parsePastedNum(taxableValue));
+      newRows.push(row);
+    });
+    if (newRows.length > 0) {
+      setRows((prev) => [...prev, ...newRows]);
+      setDirty((prev) => { const next = new Set(prev); newRows.forEach((r) => next.add(r.key)); return next; });
+    }
+    return reportPasteResult({ imported: newRows.length, skipped: warnings.length, warnings });
   };
 
   const saveAll = async () => {
@@ -238,14 +311,20 @@ export const PLOutputCard: React.FC<Props> = ({ clientId, financialYear }) => {
         <div>
           <div className="flex items-center justify-between mb-2">
             <h4 className="text-sm font-semibold">Part A — Taxable income</h4>
-            <Button variant="outline" size="sm" onClick={() => addRow('A')}><Plus className="h-3.5 w-3.5 mr-1.5" /> Add line</Button>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => setPasteOpenA(true)}><ClipboardPaste className="h-3.5 w-3.5 mr-1.5" /> Paste from Excel</Button>
+              <Button variant="outline" size="sm" onClick={() => addRow('A')}><Plus className="h-3.5 w-3.5 mr-1.5" /> Add line</Button>
+            </div>
           </div>
           {renderTable('A')}
         </div>
         <div>
           <div className="flex items-center justify-between mb-2">
             <h4 className="text-sm font-semibold">Part B — Non-taxable income</h4>
-            <Button variant="outline" size="sm" onClick={() => addRow('B')}><Plus className="h-3.5 w-3.5 mr-1.5" /> Add line</Button>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => setPasteOpenB(true)}><ClipboardPaste className="h-3.5 w-3.5 mr-1.5" /> Paste from Excel</Button>
+              <Button variant="outline" size="sm" onClick={() => addRow('B')}><Plus className="h-3.5 w-3.5 mr-1.5" /> Add line</Button>
+            </div>
           </div>
           {renderTable('B')}
         </div>
@@ -257,6 +336,20 @@ export const PLOutputCard: React.FC<Props> = ({ clientId, financialYear }) => {
           )}
         </div>
       </CardContent>
+      <PasteFromExcelDialog
+        open={pasteOpenA}
+        onOpenChange={setPasteOpenA}
+        title="Paste Part A from Excel"
+        columnLabels={['Ledger Head', 'Rate', 'Taxable Value', 'IGST', 'CGST', 'SGST']}
+        onImport={handleImportA}
+      />
+      <PasteFromExcelDialog
+        open={pasteOpenB}
+        onOpenChange={setPasteOpenB}
+        title="Paste Part B from Excel"
+        columnLabels={['Ledger Head', 'Bifurcation', 'Taxable Value']}
+        onImport={handleImportB}
+      />
     </Card>
   );
 };

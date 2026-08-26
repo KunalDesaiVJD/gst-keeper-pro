@@ -5,10 +5,11 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, ChevronDown, ChevronRight, Save } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronRight, Save, ClipboardPaste } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { monthsForFY } from '@/lib/annualReturnPeriods';
+import { PasteFromExcelDialog, PasteImportResult } from '@/components/annualReturn/PasteFromExcelDialog';
 
 const TOLERANCE = 10;
 
@@ -73,6 +74,7 @@ export const DutiesTaxesOutputCard: React.FC<Props> = ({ clientId, financialYear
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [dirtyMonths, setDirtyMonths] = useState<Set<string>>(new Set());
+  const [pasteOpen, setPasteOpen] = useState(false);
 
   const load = async () => {
     if (!clientId || !financialYear) { setData({}); setLoading(false); return; }
@@ -138,6 +140,55 @@ export const DutiesTaxesOutputCard: React.FC<Props> = ({ clientId, financialYear
     }
   };
 
+  const parseAmount = (cell: string | undefined): number => {
+    if (!cell) return 0;
+    const cleaned = cell.replace(/[₹$,\s]/g, '').trim();
+    if (cleaned === '') return 0;
+    const n = Number(cleaned);
+    return isNaN(n) ? 0 : n;
+  };
+
+  const handlePasteImport = (rows: string[][]): PasteImportResult => {
+    let imported = 0;
+    const warnings: string[] = [];
+    rows.forEach((row, i) => {
+      const rowNum = i + 1;
+      if (row.every((c) => !c || c.trim() === '')) {
+        warnings.push(`Row ${rowNum}: empty row skipped.`);
+        return;
+      }
+      const monthCell = (row[0] || '').trim();
+      const matchedMonth = months.find((m) => m.toLowerCase() === monthCell.toLowerCase());
+      if (!matchedMonth) {
+        warnings.push(`Row ${rowNum}: "${monthCell}" is not a recognized month — skipped.`);
+        return;
+      }
+      updateField(matchedMonth, 'sales_igst', String(parseAmount(row[1])));
+      updateField(matchedMonth, 'sales_cgst', String(parseAmount(row[2])));
+      updateField(matchedMonth, 'sales_sgst', String(parseAmount(row[3])));
+      updateField(matchedMonth, 'credit_note_igst', String(parseAmount(row[4])));
+      updateField(matchedMonth, 'credit_note_cgst', String(parseAmount(row[5])));
+      updateField(matchedMonth, 'credit_note_sgst', String(parseAmount(row[6])));
+      updateField(matchedMonth, 'as_per_3b_igst', String(parseAmount(row[7])));
+      updateField(matchedMonth, 'as_per_3b_cgst', String(parseAmount(row[8])));
+      updateField(matchedMonth, 'as_per_3b_sgst', String(parseAmount(row[9])));
+      updateField(matchedMonth, 'other_adjustment_igst', String(parseAmount(row[10])));
+      updateField(matchedMonth, 'other_adjustment_cgst', String(parseAmount(row[11])));
+      updateField(matchedMonth, 'other_adjustment_sgst', String(parseAmount(row[12])));
+      if (row[13] && row[13].trim() !== '') updateReason(matchedMonth, row[13].trim());
+      imported += 1;
+    });
+
+    const skipped = warnings.length;
+    if (skipped > 0) {
+      const preview = warnings.slice(0, 3).join(' ');
+      toast.error(`Imported ${imported} row${imported === 1 ? '' : 's'}. ${skipped} skipped — see below: ${preview}`, { duration: 10000 });
+    } else {
+      toast.success(`Imported ${imported} row${imported === 1 ? '' : 's'}.`);
+    }
+    return { imported, skipped, warnings };
+  };
+
   if (loading) return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
 
   return (
@@ -147,10 +198,16 @@ export const DutiesTaxesOutputCard: React.FC<Props> = ({ clientId, financialYear
           <CardTitle className="text-lg">DUTIES &amp; TAXES-OUTPUT</CardTitle>
           <CardDescription>Month-wise sales vs. as-filed GSTR-3B — separate entry from PL-Output, cross-checked against it. Click a month to expand and edit. Several months can be open at once.</CardDescription>
         </div>
-        <Button size="sm" onClick={saveAll} disabled={saving || dirtyMonths.size === 0}>
-          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
-          Save changes{dirtyMonths.size > 0 ? ` (${dirtyMonths.size})` : ''}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setPasteOpen(true)}>
+            <ClipboardPaste className="h-3.5 w-3.5 mr-1.5" />
+            Paste from Excel
+          </Button>
+          <Button size="sm" onClick={saveAll} disabled={saving || dirtyMonths.size === 0}>
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+            Save changes{dirtyMonths.size > 0 ? ` (${dirtyMonths.size})` : ''}
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         <Table>
@@ -228,6 +285,19 @@ export const DutiesTaxesOutputCard: React.FC<Props> = ({ clientId, financialYear
           </TableBody>
         </Table>
       </CardContent>
+      <PasteFromExcelDialog
+        open={pasteOpen}
+        onOpenChange={setPasteOpen}
+        title="Paste Duties & Taxes-Output from Excel"
+        columnLabels={[
+          'Month', 'Sales IGST', 'Sales CGST', 'Sales SGST',
+          'Credit Note IGST', 'Credit Note CGST', 'Credit Note SGST',
+          'As per 3B IGST', 'As per 3B CGST', 'As per 3B SGST',
+          'Other Adjustment IGST', 'Other Adjustment CGST', 'Other Adjustment SGST',
+          'Other Adjustment Reason',
+        ]}
+        onImport={handlePasteImport}
+      />
     </Card>
   );
 };

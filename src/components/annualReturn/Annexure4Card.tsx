@@ -4,11 +4,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, Plus, Save, Trash2 } from 'lucide-react';
+import { ClipboardPaste, Loader2, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { previousFY } from '@/lib/annualReturnPeriods';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { PasteFromExcelDialog } from './PasteFromExcelDialog';
 
 const DIRECTIONS = ['claimed_in_next_fy', 'claimed_from_prev_fy', 'turnover_declared_next_fy', 'turnover_reduced_next_fy'] as const;
 const DIRECTION_LABEL: Record<string, string> = {
@@ -23,6 +24,23 @@ const emptyRow = (): EditRow => ({ key: `new-${crypto.randomUUID()}`, direction:
 const lineToRow = (l: Line): EditRow => ({ key: l.id, id: l.id, direction: l.direction, clause_ref: l.clause_ref || '8C', taxable_value: String(l.taxable_value), igst: String(l.igst), cgst: String(l.cgst), sgst: String(l.sgst), notes: l.notes || '' });
 const num = (v: string) => (v === '' ? 0 : Number(v));
 const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+
+const PASTE_COLUMNS = ['Clause', 'Direction', 'Taxable', 'IGST', 'CGST', 'SGST', 'Notes'];
+const parseNum = (v: string | undefined) => {
+  const cleaned = (v || '').replace(/[₹,\s]/g, '');
+  if (cleaned === '') return 0;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
+};
+const matchClause = (v: string | undefined): string | null => {
+  const cleaned = (v || '').trim().toUpperCase();
+  return CLAUSES.find((c) => c === cleaned) || null;
+};
+const matchDirection = (v: string | undefined): string | null => {
+  const cleaned = (v || '').trim().toLowerCase();
+  if (!cleaned) return null;
+  return DIRECTIONS.find((d) => d.toLowerCase() === cleaned || DIRECTION_LABEL[d].toLowerCase().includes(cleaned)) || null;
+};
 
 interface Props { clientId: string; financialYear: string; }
 
@@ -39,6 +57,7 @@ export const Annexure4Card: React.FC<Props> = ({ clientId, financialYear }) => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState<Set<string>>(new Set());
+  const [pasteOpen, setPasteOpen] = useState(false);
 
   const load = async () => {
     if (!clientId || !financialYear) { setRows([]); setDirty(new Set()); setLoading(false); return; }
@@ -110,6 +129,46 @@ export const Annexure4Card: React.FC<Props> = ({ clientId, financialYear }) => {
     load();
   };
 
+  const handlePasteImport = (rows: string[][]) => {
+    const newRows: EditRow[] = [];
+    const warnings: string[] = [];
+    rows.forEach((r, i) => {
+      const rowNum = i + 1;
+      const [clauseCell, directionCell, taxableCell, igstCell, cgstCell, sgstCell, notesCell] = r;
+      const isEmpty = r.every((c) => !c || !c.trim());
+      if (isEmpty) { warnings.push(`Row ${rowNum}: empty row, skipped.`); return; }
+      const clause = matchClause(clauseCell);
+      if (!clause) { warnings.push(`Row ${rowNum}: clause "${clauseCell || ''}" not recognized (expected one of ${CLAUSES.join(', ')}).`); return; }
+      const direction = matchDirection(directionCell);
+      if (!direction) { warnings.push(`Row ${rowNum}: direction "${directionCell || ''}" not recognized.`); return; }
+      const row = emptyRow();
+      row.clause_ref = clause;
+      row.direction = direction;
+      row.taxable_value = String(parseNum(taxableCell));
+      row.igst = String(parseNum(igstCell));
+      row.cgst = String(parseNum(cgstCell));
+      row.sgst = String(parseNum(sgstCell));
+      row.notes = (notesCell || '').trim();
+      newRows.push(row);
+    });
+
+    if (newRows.length > 0) {
+      setRows((prev) => [...prev, ...newRows]);
+      setDirty((prev) => { const next = new Set(prev); newRows.forEach((r) => next.add(r.key)); return next; });
+    }
+
+    const imported = newRows.length;
+    const skipped = warnings.length;
+    if (skipped > 0) {
+      const extra = warnings.slice(0, 3).join(' ');
+      const toastFn = imported > 0 ? toast.warning : toast.error;
+      toastFn(`Imported ${imported} row${imported === 1 ? '' : 's'}. ${skipped} skipped — see below: ${extra}`, { duration: 10000 });
+    } else {
+      toast.success(`Imported ${imported} row${imported === 1 ? '' : 's'}.`);
+    }
+    return { imported, skipped, warnings };
+  };
+
   if (loading) return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
 
   return (
@@ -151,6 +210,7 @@ export const Annexure4Card: React.FC<Props> = ({ clientId, financialYear }) => {
             </div>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={addLine}><Plus className="h-3.5 w-3.5 mr-1.5" /> Add line</Button>
+              <Button variant="outline" size="sm" onClick={() => setPasteOpen(true)}><ClipboardPaste className="h-3.5 w-3.5 mr-1.5" /> Paste from Excel</Button>
               <Button size="sm" onClick={saveAll} disabled={saving || dirty.size === 0}>
                 {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
                 Save changes{dirty.size > 0 ? ` (${dirty.size})` : ''}
@@ -204,6 +264,14 @@ export const Annexure4Card: React.FC<Props> = ({ clientId, financialYear }) => {
           </Table>
         </CardContent>
       </Card>
+
+      <PasteFromExcelDialog
+        open={pasteOpen}
+        onOpenChange={setPasteOpen}
+        title="Paste Annexure-4 lines from Excel"
+        columnLabels={PASTE_COLUMNS}
+        onImport={handlePasteImport}
+      />
     </div>
   );
 };

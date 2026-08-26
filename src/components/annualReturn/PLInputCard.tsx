@@ -5,9 +5,10 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, Plus, Save, Trash2 } from 'lucide-react';
+import { ClipboardPaste, Loader2, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { PasteFromExcelDialog, PasteImportResult } from './PasteFromExcelDialog';
 
 export const EXPENSE_HEADS = [
   'Purchases', 'Freight', 'Power & Fuel', 'Imported Goods',
@@ -79,6 +80,7 @@ export const PLInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
   const [mappings, setMappings] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [pasteSection, setPasteSection] = useState<Section | null>(null);
 
   const load = async () => {
     if (!clientId || !financialYear) { setRows([]); setDirty(new Set()); setLoading(false); return; }
@@ -111,6 +113,66 @@ export const PLInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
     const row: EditableRow = { key, section, ledger_head: '', expense_head: SECTION_DEFAULT_HEAD[section] || '', rate: '', taxable_value: '', igst: '', cgst: '', sgst: '' };
     setRows((prev) => [...prev, row]);
     markDirty(key);
+  };
+
+  const handlePasteImport = (section: Section) => (pasted: string[][]): PasteImportResult => {
+    const newRows: EditableRow[] = [];
+    const warnings: string[] = [];
+    const cleanNum = (v: string | undefined) => {
+      if (!v || !v.trim()) return 0;
+      const n = Number(v.replace(/[₹,\s]/g, ''));
+      return Number.isFinite(n) ? n : 0;
+    };
+    pasted.forEach((cells, i) => {
+      const rowNum = i + 1;
+      const isBlank = cells.every((c) => !c || !c.trim());
+      if (isBlank) { warnings.push(`Row ${rowNum}: empty row skipped.`); return; }
+
+      const [ledgerHeadRaw, rateRaw, taxableRaw, igstRaw, cgstRaw, sgstRaw, expenseHeadRaw] = cells;
+      const ledgerHead = (ledgerHeadRaw || '').trim();
+      if (!ledgerHead) { warnings.push(`Row ${rowNum}: Ledger Head is required.`); return; }
+
+      let expenseHead: string;
+      if (section === 'expense') {
+        const raw = (expenseHeadRaw || '').trim();
+        if (raw) {
+          const match = EXPENSE_HEADS.find((h) => h.toLowerCase() === raw.toLowerCase());
+          if (!match) { warnings.push(`Row ${rowNum}: "${raw}" is not a recognized 9C Head.`); return; }
+          expenseHead = match;
+        } else {
+          expenseHead = mappings[ledgerHead] || '';
+        }
+      } else {
+        expenseHead = SECTION_DEFAULT_HEAD[section] || '';
+      }
+
+      newRows.push({
+        key: `new-${crypto.randomUUID()}`,
+        section,
+        ledger_head: ledgerHead,
+        expense_head: expenseHead,
+        rate: (rateRaw || '').trim(),
+        taxable_value: String(cleanNum(taxableRaw)),
+        igst: String(cleanNum(igstRaw)),
+        cgst: String(cleanNum(cgstRaw)),
+        sgst: String(cleanNum(sgstRaw)),
+      });
+    });
+
+    if (newRows.length > 0) {
+      setRows((prev) => [...prev, ...newRows]);
+      setDirty((prev) => { const next = new Set(prev); newRows.forEach((r) => next.add(r.key)); return next; });
+    }
+
+    const result: PasteImportResult = { imported: newRows.length, skipped: warnings.length, warnings };
+    const summary = `Imported ${result.imported} row${result.imported === 1 ? '' : 's'}.${result.skipped > 0 ? ` ${result.skipped} skipped — see below:` : ''}`;
+    const detail = warnings.slice(0, 3).join(' ');
+    if (result.skipped > 0) {
+      toast.error(`${summary} ${detail}`, { duration: 10000 });
+    } else {
+      toast.success(summary);
+    }
+    return result;
   };
 
   const onLedgerHeadBlur = (row: EditableRow) => {
@@ -264,6 +326,7 @@ export const PLInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
   if (loading) return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
 
   return (
+    <>
     <Card>
       <CardHeader>
         <div className="flex items-start justify-between gap-4">
@@ -282,7 +345,10 @@ export const PLInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
           <div key={s}>
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-sm font-semibold">{SECTION_LABEL[s]}</h4>
-              <Button variant="outline" size="sm" onClick={() => addLine(s)}><Plus className="h-3.5 w-3.5 mr-1.5" /> Add line</Button>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setPasteSection(s)}><ClipboardPaste className="h-3.5 w-3.5 mr-1.5" /> Paste from Excel</Button>
+                <Button variant="outline" size="sm" onClick={() => addLine(s)}><Plus className="h-3.5 w-3.5 mr-1.5" /> Add line</Button>
+              </div>
             </div>
             {renderTable(s)}
           </div>
@@ -296,6 +362,18 @@ export const PLInputCard: React.FC<Props> = ({ clientId, financialYear }) => {
         </div>
       </CardContent>
     </Card>
+    {pasteSection && (
+      <PasteFromExcelDialog
+        open={!!pasteSection}
+        onOpenChange={(o) => { if (!o) setPasteSection(null); }}
+        title={`Paste ${SECTION_LABEL[pasteSection]} lines from Excel`}
+        columnLabels={pasteSection === 'expense'
+          ? ['Ledger Head', 'Rate', 'Taxable Value', 'IGST', 'CGST', 'SGST', '9C Head']
+          : ['Ledger Head', 'Rate', 'Taxable Value', 'IGST', 'CGST', 'SGST']}
+        onImport={handlePasteImport(pasteSection)}
+      />
+    )}
+    </>
   );
 };
 

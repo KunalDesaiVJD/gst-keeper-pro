@@ -3,9 +3,10 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, Save } from 'lucide-react';
+import { Loader2, Save, ClipboardPaste } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { PasteFromExcelDialog, PasteImportResult } from '@/components/annualReturn/PasteFromExcelDialog';
 
 const CATEGORIES = ['b2c', 'b2b', 'sez_with', 'sez_without', 'zero_rated', 'deemed_export', 'credit_note'] as const;
 const CATEGORY_LABEL: Record<string, string> = {
@@ -24,11 +25,19 @@ interface Props { clientId: string; financialYear: string; }
  * classification the sheet needs, which PL-Output doesn't carry as a
  * dimension. Column B (auto-populated from gstr1_data) lands in R3.
  */
+const parseLenient = (v: string | undefined) => {
+  if (v === undefined || v === null || v.trim() === '') return 0;
+  const cleaned = v.replace(/[₹$,\s]/g, '');
+  const n = Number(cleaned);
+  return isNaN(n) ? 0 : n;
+};
+
 export const Gstr9OutputLinesCard: React.FC<Props> = ({ clientId, financialYear }) => {
   const [rows, setRows] = useState<Record<string, Row>>({});
   const [dirty, setDirty] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
 
   const load = async () => {
     if (!clientId || !financialYear) { setRows({}); setLoading(false); return; }
@@ -53,6 +62,49 @@ export const Gstr9OutputLinesCard: React.FC<Props> = ({ clientId, financialYear 
   };
 
   const dirtyCategories = CATEGORIES.filter((c) => dirty[c]);
+
+  const findCategory = (raw: string): string | null => {
+    const v = (raw || '').trim().toLowerCase();
+    if (!v) return null;
+    const byKey = CATEGORIES.find((c) => c.toLowerCase() === v);
+    if (byKey) return byKey;
+    const byLabel = CATEGORIES.find((c) => CATEGORY_LABEL[c].toLowerCase() === v);
+    return byLabel || null;
+  };
+
+  const handlePasteImport = (parsedRows: string[][]): PasteImportResult => {
+    const warnings: string[] = [];
+    let imported = 0;
+    parsedRows.forEach((row, i) => {
+      const rowNum = i + 1;
+      if (row.every((cell) => !cell || !cell.trim())) {
+        warnings.push(`Row ${rowNum}: empty row skipped.`);
+        return;
+      }
+      const [rawCategory, rawTaxable, rawIgst, rawCgst, rawSgst] = row;
+      const category = findCategory(rawCategory);
+      if (!category) {
+        warnings.push(`Row ${rowNum}: "${rawCategory ?? ''}" is not a recognized category.`);
+        return;
+      }
+      update(category, 'taxable_value', String(parseLenient(rawTaxable)));
+      update(category, 'igst', String(parseLenient(rawIgst)));
+      update(category, 'cgst', String(parseLenient(rawCgst)));
+      update(category, 'sgst', String(parseLenient(rawSgst)));
+      imported++;
+    });
+
+    if (warnings.length > 0) {
+      const preview = warnings.slice(0, 3).join(' ');
+      const msg = `Imported ${imported} row${imported === 1 ? '' : 's'}. ${warnings.length} skipped — see below: ${preview}`;
+      if (imported > 0) toast.warning(msg, { duration: 8000 });
+      else toast.error(msg, { duration: 8000 });
+    } else {
+      toast.success(`Imported ${imported} row${imported === 1 ? '' : 's'}.`);
+    }
+
+    return { imported, skipped: warnings.length, warnings };
+  };
 
   const saveAll = async () => {
     if (dirtyCategories.length === 0) return;
@@ -92,10 +144,16 @@ export const Gstr9OutputLinesCard: React.FC<Props> = ({ clientId, financialYear 
           <CardTitle className="text-lg">GSTR 9-OUTPUT — Books column</CardTitle>
           <CardDescription>Books-side classification by supply type — compared against the portal's auto-populated figures once R3 lands.</CardDescription>
         </div>
-        <Button size="sm" disabled={dirtyCategories.length === 0 || saving} onClick={saveAll} className="shrink-0">
-          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
-          Save changes{dirtyCategories.length > 0 ? ` (${dirtyCategories.length})` : ''}
-        </Button>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button size="sm" variant="outline" onClick={() => setPasteOpen(true)}>
+            <ClipboardPaste className="h-3.5 w-3.5 mr-1.5" />
+            Paste from Excel
+          </Button>
+          <Button size="sm" disabled={dirtyCategories.length === 0 || saving} onClick={saveAll}>
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+            Save changes{dirtyCategories.length > 0 ? ` (${dirtyCategories.length})` : ''}
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         <Table>
@@ -133,6 +191,13 @@ export const Gstr9OutputLinesCard: React.FC<Props> = ({ clientId, financialYear 
           </TableFooter>
         </Table>
       </CardContent>
+      <PasteFromExcelDialog
+        open={pasteOpen}
+        onOpenChange={setPasteOpen}
+        title="Paste GSTR 9-OUTPUT lines from Excel"
+        columnLabels={['Category', 'Taxable', 'IGST', 'CGST', 'SGST']}
+        onImport={handlePasteImport}
+      />
     </Card>
   );
 };

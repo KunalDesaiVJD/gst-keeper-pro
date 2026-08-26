@@ -5,10 +5,11 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, ChevronDown, ChevronRight, Save } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronRight, Save, ClipboardPaste } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { monthsForFY } from '@/lib/annualReturnPeriods';
+import { PasteFromExcelDialog, PasteImportResult } from '@/components/annualReturn/PasteFromExcelDialog';
 
 const TOLERANCE = 10;
 const LAST_YEAR_EFFECT = 'Last Year Effect';
@@ -82,6 +83,7 @@ export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear,
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [dirtyMonths, setDirtyMonths] = useState<Set<string>>(new Set());
+  const [pasteOpen, setPasteOpen] = useState(false);
 
   const load = async () => {
     if (!clientId || !financialYear) { setData({}); setLoading(false); return; }
@@ -144,6 +146,46 @@ export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear,
     }
   };
 
+  const parseAmount = (cell: string | undefined): number => {
+    if (!cell) return 0;
+    const cleaned = cell.replace(/[₹$,\s]/g, '').trim();
+    if (cleaned === '') return 0;
+    const n = Number(cleaned);
+    return isNaN(n) ? 0 : n;
+  };
+
+  const handlePasteImport = (rows: string[][]): PasteImportResult => {
+    let imported = 0;
+    const warnings: string[] = [];
+    rows.forEach((row, i) => {
+      const rowNum = i + 1;
+      if (row.every((c) => !c || c.trim() === '')) {
+        warnings.push(`Row ${rowNum}: empty row skipped.`);
+        return;
+      }
+      const monthCell = (row[0] || '').trim();
+      const matchedMonth = months.find((m) => m.toLowerCase() === monthCell.toLowerCase());
+      if (!matchedMonth) {
+        warnings.push(`Row ${rowNum}: "${monthCell}" is not a recognized month — skipped.`);
+        return;
+      }
+      NUMERIC_KEYS.forEach((key, idx) => {
+        updateField(matchedMonth, key, String(parseAmount(row[idx + 1])));
+      });
+      if (row[25] && row[25].trim() !== '') updateReason(matchedMonth, row[25].trim());
+      imported += 1;
+    });
+
+    const skipped = warnings.length;
+    if (skipped > 0) {
+      const preview = warnings.slice(0, 3).join(' ');
+      toast.error(`Imported ${imported} row${imported === 1 ? '' : 's'}. ${skipped} skipped — see below: ${preview}`, { duration: 10000 });
+    } else {
+      toast.success(`Imported ${imported} row${imported === 1 ? '' : 's'}.`);
+    }
+    return { imported, skipped, warnings };
+  };
+
   if (loading) return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
 
   return (
@@ -153,10 +195,16 @@ export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear,
           <CardTitle className="text-lg">DUTIES &amp; TAXES-INPUT</CardTitle>
           <CardDescription>Month-wise purchases, debit notes and suspended-ITC reversal/reclaim vs. as-filed GSTR-3B — click a month to expand and edit. Several months can be open at once.</CardDescription>
         </div>
-        <Button size="sm" onClick={saveAll} disabled={saving || dirtyMonths.size === 0}>
-          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
-          Save changes{dirtyMonths.size > 0 ? ` (${dirtyMonths.size})` : ''}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setPasteOpen(true)}>
+            <ClipboardPaste className="h-3.5 w-3.5 mr-1.5" />
+            Paste from Excel
+          </Button>
+          <Button size="sm" onClick={saveAll} disabled={saving || dirtyMonths.size === 0}>
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+            Save changes{dirtyMonths.size > 0 ? ` (${dirtyMonths.size})` : ''}
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         <Table>
@@ -248,6 +296,24 @@ export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear,
           </TableBody>
         </Table>
       </CardContent>
+      <PasteFromExcelDialog
+        open={pasteOpen}
+        onOpenChange={setPasteOpen}
+        title="Paste Duties & Taxes-Input from Excel"
+        columnLabels={[
+          'Month',
+          'Purchase IGST', 'Purchase CGST', 'Purchase SGST',
+          'Debit Note IGST', 'Debit Note CGST', 'Debit Note SGST',
+          'Suspended Reversed IGST', 'Suspended Reversed CGST', 'Suspended Reversed SGST',
+          'Suspended Reversed 180d IGST', 'Suspended Reversed 180d CGST', 'Suspended Reversed 180d SGST',
+          'Suspended Reclaim IGST', 'Suspended Reclaim CGST', 'Suspended Reclaim SGST',
+          'Suspended Reclaim 180d IGST', 'Suspended Reclaim 180d CGST', 'Suspended Reclaim 180d SGST',
+          'As per 3B IGST', 'As per 3B CGST', 'As per 3B SGST',
+          'Other Adjustment IGST', 'Other Adjustment CGST', 'Other Adjustment SGST',
+          'Other Adjustment Reason',
+        ]}
+        onImport={handlePasteImport}
+      />
     </Card>
   );
 };
