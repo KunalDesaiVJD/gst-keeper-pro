@@ -447,26 +447,34 @@ const NoticesDashboardPage: React.FC = () => {
             <CardDescription className="text-[11px]">Onboard clients and pull the latest notices for everyone at once.</CardDescription>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-2 pb-3">
-            {canManageClients && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                <Button size="sm" variant="outline" className="h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={() => navigate('/add-client')}>
-                  <UserPlus className="mr-1.5 h-3.5 w-3.5" /> Add Company
-                </Button>
-                <BulkAddClientsDialog
-                  triggerLabel="Import Company"
-                  triggerClassName="h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary"
-                  onSuccess={() => window.location.reload()}
-                />
-                <Button size="sm" variant="outline" className="h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={downloadClientImportTemplate}>
-                  <Download className="mr-1.5 h-3.5 w-3.5" /> Download Template
-                </Button>
-                <Button size="sm" variant="outline" className="ml-auto h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={handleSyncAll} disabled={syncing}>
-                  {syncing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
-                  Sync All
-                </Button>
-              </div>
-            )}
-            {!extReady && canManageClients && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {canManageClients && (
+                <>
+                  <Button size="sm" variant="outline" className="h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={() => navigate('/add-client')}>
+                    <UserPlus className="mr-1.5 h-3.5 w-3.5" /> Add Company
+                  </Button>
+                  <BulkAddClientsDialog
+                    triggerLabel="Import Company"
+                    triggerClassName="h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary"
+                    onSuccess={() => window.location.reload()}
+                  />
+                  <Button size="sm" variant="outline" className="h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={downloadClientImportTemplate}>
+                    <Download className="mr-1.5 h-3.5 w-3.5" /> Download Template
+                  </Button>
+                </>
+              )}
+              {/* Unlike Add/Import/Download Template (locked behind the
+                  add_edit_clients permission — they touch client master
+                  data), Sync All only pulls notices from the portal, so it's
+                  open to every staff member regardless of that permission —
+                  2026-08-26 decision: any employee should be able to trigger
+                  a sync without being granted client-editing rights. */}
+              <Button size="sm" variant="outline" className="ml-auto h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={handleSyncAll} disabled={syncing}>
+                {syncing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+                Sync All
+              </Button>
+            </div>
+            {!extReady && (
               <p className="text-[11px] text-muted-foreground">Extension not detected — install/enable the GST Keeper extension to use Sync All.</p>
             )}
             <div className="min-h-0 flex-1 overflow-auto rounded-md border">
