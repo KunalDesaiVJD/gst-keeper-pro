@@ -4,9 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, Pencil, Save } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronRight, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { monthsForFY } from '@/lib/annualReturnPeriods';
@@ -59,6 +58,7 @@ const FIELD_GROUPS: { title: string; keys: NumericKey[] }[] = [
   { title: 'Suspended ITC (Reclaim) — 180 days', keys: ['suspended_reclaim_180d_igst', 'suspended_reclaim_180d_cgst', 'suspended_reclaim_180d_sgst'] },
   { title: 'As per 3B', keys: ['as_per_3b_igst', 'as_per_3b_cgst', 'as_per_3b_sgst'] },
 ];
+const OTHER_ADJUSTMENT_KEYS = ['other_adjustment_igst', 'other_adjustment_cgst', 'other_adjustment_sgst'] as const;
 const TAX_LABEL: Record<string, string> = { igst: 'IGST', cgst: 'CGST', sgst: 'SGST' };
 
 interface Props { clientId: string; financialYear: string; onSaved?: () => void; }
@@ -68,13 +68,20 @@ interface Props { clientId: string; financialYear: string; onSaved?: () => void;
  * Reversal/reclaim/180-day columns are running totals, not linked to a
  * specific original transaction (firm decision, 27 Aug 2026 — matches the
  * sheet). Includes the sheet's "Last Year Effect" pseudo-month row.
+ *
+ * Rewritten (26 Aug 2026 UX audit) from a per-month edit dialog to an
+ * always-editable grid, matching PortalCaptureCard's pattern — every month's
+ * row (including the synthetic Last Year Effect row) can be expanded in
+ * place with no modal, several months can be open and edited at once, and
+ * every dirty month is committed in one batch upsert.
  */
 export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear, onSaved }) => {
   const months = [LAST_YEAR_EFFECT, ...monthsForFY(financialYear)];
   const [data, setData] = useState<Record<string, FullMonthRow>>({});
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState<FullMonthRow | null>(null);
   const [saving, setSaving] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [dirtyMonths, setDirtyMonths] = useState<Set<string>>(new Set());
 
   const load = async () => {
     if (!clientId || !financialYear) { setData({}); setLoading(false); return; }
@@ -91,23 +98,43 @@ export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear,
       next[r.month as string] = row;
     });
     setData(next);
+    setDirtyMonths(new Set());
     setLoading(false);
   };
 
   useEffect(() => { load(); }, [clientId, financialYear]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const save = async () => {
-    if (!editing) return;
+  const toggleExpanded = (month: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(month)) next.delete(month); else next.add(month);
+      return next;
+    });
+  };
+
+  const updateField = (month: string, key: NumericKey, value: string) => {
+    setData((prev) => ({ ...prev, [month]: { ...prev[month], [key]: num(value) } }));
+    setDirtyMonths((prev) => new Set(prev).add(month));
+  };
+
+  const updateReason = (month: string, value: string) => {
+    setData((prev) => ({ ...prev, [month]: { ...prev[month], other_adjustment_reason: value } }));
+    setDirtyMonths((prev) => new Set(prev).add(month));
+  };
+
+  const saveAll = async () => {
+    if (dirtyMonths.size === 0) return;
     setSaving(true);
     try {
-      const { hasEntry, ...payload } = editing;
-      const { error } = await supabase.from('duties_taxes_input_monthly').upsert(
-        { client_id: clientId, financial_year: financialYear, ...payload, updated_at: new Date().toISOString() },
-        { onConflict: 'client_id,financial_year,month' },
-      );
+      const now = new Date().toISOString();
+      const upserts = Array.from(dirtyMonths).map((month) => {
+        const row = data[month];
+        const { hasEntry, ...payload } = row;
+        return { client_id: clientId, financial_year: financialYear, ...payload, updated_at: now };
+      });
+      const { error } = await supabase.from('duties_taxes_input_monthly').upsert(upserts, { onConflict: 'client_id,financial_year,month' });
       if (error) throw error;
-      toast.success(`${editing.month} saved.`);
-      setEditing(null);
+      toast.success(`${dirtyMonths.size} month${dirtyMonths.size === 1 ? '' : 's'} saved.`);
       await load();
       onSaved?.();
     } catch (err) {
@@ -121,19 +148,25 @@ export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear,
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">DUTIES &amp; TAXES-INPUT</CardTitle>
-        <CardDescription>Month-wise purchases, debit notes and suspended-ITC reversal/reclaim vs. as-filed GSTR-3B — separate entry from PL-Input.</CardDescription>
+      <CardHeader className="flex flex-row items-start justify-between gap-3 flex-wrap">
+        <div>
+          <CardTitle className="text-lg">DUTIES &amp; TAXES-INPUT</CardTitle>
+          <CardDescription>Month-wise purchases, debit notes and suspended-ITC reversal/reclaim vs. as-filed GSTR-3B — click a month to expand and edit. Several months can be open at once.</CardDescription>
+        </div>
+        <Button size="sm" onClick={saveAll} disabled={saving || dirtyMonths.size === 0}>
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+          Save changes{dirtyMonths.size > 0 ? ` (${dirtyMonths.size})` : ''}
+        </Button>
       </CardHeader>
       <CardContent className="p-0">
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-10" />
               <TableHead>Month</TableHead>
               <TableHead className="text-right">Net Purchase</TableHead>
               <TableHead className="text-right">As per 3B</TableHead>
               <TableHead className="text-right">Diff</TableHead>
-              <TableHead className="w-16" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -143,58 +176,78 @@ export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear,
               const asFiled = as3b(r);
               const diff = net - asFiled;
               const matched = Math.abs(diff) <= TOLERANCE;
+              const isOpen = expanded.has(m);
+              const isAdjustmentRow = m === LAST_YEAR_EFFECT;
               return (
-                <TableRow key={m}>
-                  <TableCell className="font-medium">{m}</TableCell>
-                  <TableCell className="text-right tabular-nums">{fmt(net)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{fmt(asFiled)}</TableCell>
-                  <TableCell className={`text-right tabular-nums font-semibold ${r.hasEntry ? (matched ? 'text-success' : 'text-destructive') : 'text-muted-foreground'}`}>{r.hasEntry ? fmt(diff) : '—'}</TableCell>
-                  <TableCell><Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setEditing(r)} aria-label={`Edit ${m}`}><Pencil className="h-3.5 w-3.5" /></Button></TableCell>
-                </TableRow>
+                <React.Fragment key={m}>
+                  <TableRow className={dirtyMonths.has(m) ? 'bg-warning/5' : undefined}>
+                    <TableCell>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => toggleExpanded(m)} aria-label={isOpen ? `Collapse ${m}` : `Expand ${m}`}>
+                        {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                      </Button>
+                    </TableCell>
+                    <TableCell className={`font-medium ${isAdjustmentRow ? 'italic text-muted-foreground' : ''}`}>
+                      {m}
+                      {isAdjustmentRow && <Badge variant="outline" className="ml-2 align-middle text-[10px] border-dashed text-muted-foreground">adjustment</Badge>}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{fmt(net)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmt(asFiled)}</TableCell>
+                    <TableCell className={`text-right tabular-nums font-semibold ${r.hasEntry ? (matched ? 'text-success' : 'text-destructive') : 'text-muted-foreground'}`}>{r.hasEntry ? fmt(diff) : '—'}</TableCell>
+                  </TableRow>
+                  {isOpen && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="bg-muted/30 p-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {FIELD_GROUPS.map((group) => (
+                            <div key={group.title} className="space-y-1.5">
+                              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{group.title}</div>
+                              {group.keys.map((key) => (
+                                <div key={key} className="flex items-center justify-between gap-3">
+                                  <span className="text-sm text-muted-foreground">{TAX_LABEL[key.split('_').pop() as string]}</span>
+                                  <Input
+                                    type="number" className="w-32 text-right h-8" disabled={saving}
+                                    value={String(r[key])}
+                                    onChange={(e) => updateField(m, key, e.target.value)}
+                                    aria-label={`${m} ${group.title} ${TAX_LABEL[key.split('_').pop() as string]}`}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          ))}
+                          <div className="space-y-1.5">
+                            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Other adjustments (Dr side)</div>
+                            {OTHER_ADJUSTMENT_KEYS.map((key) => (
+                              <div key={key} className="flex items-center justify-between gap-3">
+                                <span className="text-sm text-muted-foreground">{TAX_LABEL[key.split('_').pop() as string]}</span>
+                                <Input
+                                  type="number" className="w-32 text-right h-8" disabled={saving}
+                                  value={String(r[key])}
+                                  onChange={(e) => updateField(m, key, e.target.value)}
+                                  aria-label={`${m} Other adjustments (Dr side) ${TAX_LABEL[key.split('_').pop() as string]}`}
+                                />
+                              </div>
+                            ))}
+                            <Textarea
+                              placeholder="Reason for adjustment" disabled={saving}
+                              value={r.other_adjustment_reason}
+                              onChange={(e) => updateReason(m, e.target.value)}
+                              aria-label={`${m} Other adjustments (Dr side) reason`}
+                            />
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between pt-3 mt-3 border-t text-sm">
+                          <span>Diff</span>
+                          <Badge variant={matched ? 'success' : 'destructive'}>{fmt(diff)}</Badge>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </React.Fragment>
               );
             })}
           </TableBody>
         </Table>
       </CardContent>
-
-      <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>{editing?.month} — Duties &amp; Taxes-Input</DialogTitle></DialogHeader>
-          {editing && (
-            <div className="space-y-4">
-              {FIELD_GROUPS.map((group) => (
-                <div key={group.title} className="space-y-1.5">
-                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{group.title}</div>
-                  {group.keys.map((key) => (
-                    <div key={key} className="flex items-center justify-between gap-3">
-                      <span className="text-sm text-muted-foreground">{TAX_LABEL[key.split('_').pop() as string]}</span>
-                      <Input type="number" className="w-40 text-right" value={String(editing[key])} onChange={(e) => setEditing({ ...editing, [key]: num(e.target.value) })} />
-                    </div>
-                  ))}
-                </div>
-              ))}
-              <div className="pt-2 border-t space-y-2">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Other adjustments (Dr side)</div>
-                {(['other_adjustment_igst', 'other_adjustment_cgst', 'other_adjustment_sgst'] as const).map((key) => (
-                  <div key={key} className="flex items-center justify-between gap-3">
-                    <span className="text-sm text-muted-foreground">{TAX_LABEL[key.split('_').pop() as string]}</span>
-                    <Input type="number" className="w-40 text-right" value={String(editing[key])} onChange={(e) => setEditing({ ...editing, [key]: num(e.target.value) })} />
-                  </div>
-                ))}
-                <Textarea placeholder="Reason for adjustment" value={editing.other_adjustment_reason} onChange={(e) => setEditing({ ...editing, other_adjustment_reason: e.target.value })} />
-              </div>
-              <div className="flex items-center justify-between pt-2 border-t text-sm">
-                <span>Diff</span>
-                <Badge variant={Math.abs(netPurchase(editing) - as3b(editing)) <= TOLERANCE ? 'success' : 'destructive'}>{fmt(netPurchase(editing) - as3b(editing))}</Badge>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditing(null)} disabled={saving}>Cancel</Button>
-            <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}Save</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </Card>
   );
 };

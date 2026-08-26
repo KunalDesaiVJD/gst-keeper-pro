@@ -3,9 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, Pencil, Save, CheckCircle2 } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronRight, Save, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { monthsForFY } from '@/lib/annualReturnPeriods';
@@ -42,19 +41,29 @@ const FIELD_LABEL: Record<string, string> = { turnover_taxable: 'Taxable', turno
 interface Props { clientId: string; financialYear: string; }
 
 /**
- * Phase 2 (R3) — month-wise "as filed on the portal" figures, now split by
- * tax head, with RCM Part A added. Stored on the existing gst_filed_returns
- * table as four return_type rows per month ('GSTR-1' | 'GSTR-3B' | 'GSTR-2B'
- * | 'RCM') rather than a new table. Table 6A/8A are the FY sum of the
- * months here, not separate fields — see the summary tiles below.
+ * Phase 2 (R3) — month-wise "as filed on the portal" figures, split by tax
+ * head, RCM Part A included. Stored on gst_filed_returns as four return_type
+ * rows per month. Table 6A/8A are the FY sum of the months here.
+ *
+ * Rewritten (25 Aug 2026 UX audit) from a per-month edit dialog to an
+ * always-editable grid — every month's row can be expanded in place (no
+ * modal) and several months can be open and edited at once, all committed
+ * with one batch save. touchedGroups tracks, per month, which return-type
+ * groups were actually edited since the last save — this is what makes
+ * save() only write the return-types a user actually touched (or that
+ * already had a saved row) rather than blindly overwriting all four every
+ * time, which was the critical fix from the prior audit pass; that
+ * behaviour is preserved here, just generalised across many months in one
+ * save instead of one month per dialog session.
  */
 export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) => {
   const months = monthsForFY(financialYear);
   const [data, setData] = useState<Record<string, MonthRow>>({});
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState<MonthRow | null>(null);
   const [saving, setSaving] = useState(false);
-  const [touchedGroups, setTouchedGroups] = useState<Set<ReturnType>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [dirtyMonths, setDirtyMonths] = useState<Set<string>>(new Set());
+  const [touchedGroups, setTouchedGroups] = useState<Record<string, Set<ReturnType>>>({});
 
   const load = async () => {
     if (!clientId || !financialYear) { setData({}); setLoading(false); return; }
@@ -95,29 +104,56 @@ export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) 
       }
     });
     setData(next);
+    setDirtyMonths(new Set());
+    setTouchedGroups({});
     setLoading(false);
   };
 
   useEffect(() => { load(); }, [clientId, financialYear]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const save = async () => {
-    if (!editing) return;
+  const toggleExpanded = (month: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(month)) next.delete(month); else next.add(month);
+      return next;
+    });
+  };
+
+  const updateField = (month: string, key: NumericKey, returnType: ReturnType, value: string) => {
+    setData((prev) => ({ ...prev, [month]: { ...prev[month], [key]: num(value) } }));
+    setDirtyMonths((prev) => new Set(prev).add(month));
+    setTouchedGroups((prev) => {
+      const monthSet = new Set(prev[month] || []);
+      monthSet.add(returnType);
+      return { ...prev, [month]: monthSet };
+    });
+  };
+
+  const saveAll = async () => {
+    if (dirtyMonths.size === 0) return;
     setSaving(true);
     try {
       const now = new Date().toISOString();
-      const candidates: { return_type: ReturnType; touched: boolean; summary: Record<string, number> }[] = [
-        { return_type: 'GSTR-1', touched: touchedGroups.has('GSTR-1') || editing.hasGstr1, summary: { turnover_taxable: editing.turnover_taxable, turnover_igst: editing.turnover_igst, turnover_cgst: editing.turnover_cgst, turnover_sgst: editing.turnover_sgst } },
-        { return_type: 'GSTR-3B', touched: touchedGroups.has('GSTR-3B') || editing.hasGstr3b, summary: { outward_igst: editing.outward_igst, outward_cgst: editing.outward_cgst, outward_sgst: editing.outward_sgst, itc_igst: editing.itc_igst, itc_cgst: editing.itc_cgst, itc_sgst: editing.itc_sgst } },
-        { return_type: 'GSTR-2B', touched: touchedGroups.has('GSTR-2B') || editing.hasGstr2b, summary: { itc2b_igst: editing.itc2b_igst, itc2b_cgst: editing.itc2b_cgst, itc2b_sgst: editing.itc2b_sgst } },
-        { return_type: 'RCM', touched: touchedGroups.has('RCM') || editing.hasRcm, summary: { rcm_taxable: editing.rcm_taxable, rcm_igst: editing.rcm_igst, rcm_cgst: editing.rcm_cgst, rcm_sgst: editing.rcm_sgst } },
-      ];
-      const upserts = candidates.filter((c) => c.touched).map((c) => ({ client_id: clientId, period_month: editing.month, return_type: c.return_type, summary: c.summary, updated_at: now }));
+      const upserts: { client_id: string; period_month: string; return_type: ReturnType; summary: Record<string, number>; updated_at: string }[] = [];
+      dirtyMonths.forEach((month) => {
+        const row = data[month];
+        if (!row) return;
+        const touched = touchedGroups[month] || new Set<ReturnType>();
+        const candidates: { return_type: ReturnType; include: boolean; summary: Record<string, number> }[] = [
+          { return_type: 'GSTR-1', include: touched.has('GSTR-1') || row.hasGstr1, summary: { turnover_taxable: row.turnover_taxable, turnover_igst: row.turnover_igst, turnover_cgst: row.turnover_cgst, turnover_sgst: row.turnover_sgst } },
+          { return_type: 'GSTR-3B', include: touched.has('GSTR-3B') || row.hasGstr3b, summary: { outward_igst: row.outward_igst, outward_cgst: row.outward_cgst, outward_sgst: row.outward_sgst, itc_igst: row.itc_igst, itc_cgst: row.itc_cgst, itc_sgst: row.itc_sgst } },
+          { return_type: 'GSTR-2B', include: touched.has('GSTR-2B') || row.hasGstr2b, summary: { itc2b_igst: row.itc2b_igst, itc2b_cgst: row.itc2b_cgst, itc2b_sgst: row.itc2b_sgst } },
+          { return_type: 'RCM', include: touched.has('RCM') || row.hasRcm, summary: { rcm_taxable: row.rcm_taxable, rcm_igst: row.rcm_igst, rcm_cgst: row.rcm_cgst, rcm_sgst: row.rcm_sgst } },
+        ];
+        candidates.filter((c) => c.include).forEach((c) => {
+          upserts.push({ client_id: clientId, period_month: month, return_type: c.return_type, summary: c.summary, updated_at: now });
+        });
+      });
       if (upserts.length > 0) {
         const { error } = await supabase.from('gst_filed_returns').upsert(upserts, { onConflict: 'client_id,period_month,return_type' });
         if (error) throw error;
       }
-      toast.success(`${editing.month} portal figures saved.`);
-      setEditing(null);
+      toast.success(`${dirtyMonths.size} month${dirtyMonths.size === 1 ? '' : 's'} saved.`);
       await load();
     } catch (err) {
       toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
@@ -153,14 +189,21 @@ export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) 
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Month-wise return figures</CardTitle>
-          <CardDescription>GSTR-1 turnover, GSTR-3B outward tax &amp; ITC claimed, GSTR-2B ITC available, and RCM Part A — all IGST/CGST/SGST split.</CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-3 flex-wrap">
+          <div>
+            <CardTitle className="text-lg">Month-wise return figures</CardTitle>
+            <CardDescription>GSTR-1 turnover, GSTR-3B outward tax &amp; ITC claimed, GSTR-2B ITC available, and RCM Part A — click a month to expand and edit. Several months can be open at once.</CardDescription>
+          </div>
+          <Button size="sm" onClick={saveAll} disabled={saving || dirtyMonths.size === 0}>
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+            Save changes{dirtyMonths.size > 0 ? ` (${dirtyMonths.size})` : ''}
+          </Button>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10" />
                 <TableHead>Period</TableHead>
                 <TableHead className="text-right">GSTR-1 Turnover</TableHead>
                 <TableHead className="text-right">3B Outward</TableHead>
@@ -168,55 +211,60 @@ export const PortalCaptureCard: React.FC<Props> = ({ clientId, financialYear }) 
                 <TableHead className="text-right">2B ITC</TableHead>
                 <TableHead className="text-right">RCM</TableHead>
                 <TableHead className="w-32">Status</TableHead>
-                <TableHead className="w-16" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {months.map((m) => {
                 const r = data[m] || emptyMonth(m);
                 const confirmed = r.hasGstr1 && r.hasGstr3b && r.hasGstr2b && r.hasRcm;
+                const isOpen = expanded.has(m);
                 return (
-                  <TableRow key={m}>
-                    <TableCell className="font-medium">{m}</TableCell>
-                    <TableCell className="text-right tabular-nums">{fmt(r.turnover_taxable)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{fmt(r.outward_igst + r.outward_cgst + r.outward_sgst)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{fmt(r.itc_igst + r.itc_cgst + r.itc_sgst)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{fmt(r.itc2b_igst + r.itc2b_cgst + r.itc2b_sgst)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{fmt(r.rcm_igst + r.rcm_cgst + r.rcm_sgst)}</TableCell>
-                    <TableCell><Badge variant={confirmed ? 'success' : 'outline'} className={confirmed ? '' : 'border-dashed text-muted-foreground'}>{confirmed ? 'Confirmed' : 'Needs entry'}</Badge></TableCell>
-                    <TableCell><Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setEditing(r); setTouchedGroups(new Set()); }} aria-label={`Edit ${m}`}><Pencil className="h-3.5 w-3.5" /></Button></TableCell>
-                  </TableRow>
+                  <React.Fragment key={m}>
+                    <TableRow className={dirtyMonths.has(m) ? 'bg-warning/5' : undefined}>
+                      <TableCell>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => toggleExpanded(m)} aria-label={isOpen ? `Collapse ${m}` : `Expand ${m}`}>
+                          {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                        </Button>
+                      </TableCell>
+                      <TableCell className="font-medium">{m}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmt(r.turnover_taxable)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmt(r.outward_igst + r.outward_cgst + r.outward_sgst)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmt(r.itc_igst + r.itc_cgst + r.itc_sgst)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmt(r.itc2b_igst + r.itc2b_cgst + r.itc2b_sgst)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmt(r.rcm_igst + r.rcm_cgst + r.rcm_sgst)}</TableCell>
+                      <TableCell><Badge variant={confirmed ? 'success' : 'outline'} className={confirmed ? '' : 'border-dashed text-muted-foreground'}>{confirmed ? 'Confirmed' : 'Needs entry'}</Badge></TableCell>
+                    </TableRow>
+                    {isOpen && (
+                      <TableRow>
+                        <TableCell colSpan={8} className="bg-muted/30 p-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {FIELD_GROUPS.map((group) => (
+                              <div key={group.title} className="space-y-1.5">
+                                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{group.title}</div>
+                                {group.keys.map((key) => (
+                                  <div key={key} className="flex items-center justify-between gap-3">
+                                    <span className="text-sm text-muted-foreground">{FIELD_LABEL[key]}</span>
+                                    <Input
+                                      type="number" className="w-32 text-right h-8" disabled={saving}
+                                      value={String(r[key])}
+                                      onChange={(e) => updateField(m, key, group.returnType, e.target.value)}
+                                      aria-label={`${m} ${group.title} ${FIELD_LABEL[key]}`}
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </React.Fragment>
                 );
               })}
             </TableBody>
           </Table>
         </CardContent>
       </Card>
-
-      <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>{editing?.month} — Portal figures</DialogTitle></DialogHeader>
-          {editing && (
-            <div className="space-y-4">
-              {FIELD_GROUPS.map((group) => (
-                <div key={group.title} className="space-y-1.5">
-                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{group.title}</div>
-                  {group.keys.map((key) => (
-                    <div key={key} className="flex items-center justify-between gap-3">
-                      <span className="text-sm text-muted-foreground">{FIELD_LABEL[key]}</span>
-                      <Input type="number" className="w-40 text-right" value={String(editing[key])} onChange={(e) => { setEditing({ ...editing, [key]: num(e.target.value) }); setTouchedGroups((prev) => new Set(prev).add(group.returnType)); }} />
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditing(null)} disabled={saving}>Cancel</Button>
-            <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}Save</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };
