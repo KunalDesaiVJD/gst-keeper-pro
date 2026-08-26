@@ -354,18 +354,26 @@ const NoticesDashboardPage: React.FC = () => {
         </nav>
       </div>
 
-      <div className="flex items-center gap-2">
-        <Label htmlFor="type-of-notices" className="text-xs text-muted-foreground">Type Of Notices</Label>
-        <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as TypeOfNoticesFilter)}>
-          <SelectTrigger id="type-of-notices" className="h-8 w-[200px] text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All</SelectItem>
-            <SelectItem value="registration">Registration</SelectItem>
-            <SelectItem value="other">Other than Registration</SelectItem>
-          </SelectContent>
-        </Select>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Label htmlFor="type-of-notices" className="text-xs text-muted-foreground">Type Of Notices</Label>
+          <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as TypeOfNoticesFilter)}>
+            <SelectTrigger id="type-of-notices" className="h-8 w-[200px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              <SelectItem value="registration">Registration</SelectItem>
+              <SelectItem value="other">Other than Registration</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {/* Matches Notice Alert's top-right "Company" button, which opens its
+            own full "View Company List" page (filters, bulk actions, sync
+            history) instead of the mini list below. */}
+        <Button size="sm" variant="outline" className="h-8 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={() => navigate('/notices-company-list')}>
+          <Building2 className="mr-1.5 h-3.5 w-3.5" /> Company
+        </Button>
       </div>
 
       {/*
@@ -507,17 +515,20 @@ const NoticesDashboardPage: React.FC = () => {
                   : marker?.due ? 'bg-destructive/15 text-destructive'
                   : marker?.issue ? 'bg-info/15 text-info'
                   : '';
+                const iso = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={i}
+                    onClick={() => navigate(drillParams({ date: iso }))}
                     className={cn(
-                      'flex h-6 items-center justify-center rounded text-[11px]',
+                      'flex h-6 items-center justify-center rounded text-[11px] transition-colors hover:bg-primary/10 hover:text-primary',
                       bg,
                       isToday && 'ring-1 ring-primary font-semibold',
                     )}
                   >
                     {day}
-                  </div>
+                  </button>
                 );
               })}
             </div>

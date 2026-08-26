@@ -106,6 +106,12 @@ const API = {
   // true upsert rather than delete-then-insert: a failed re-pull leaves
   // whatever the last successful pull wrote untouched instead of blanking
   // it, unlike the list tables above.
+  // One row per Sync All attempt (success or failed) — see db.js's
+  // logClientSync doc comment for the guard that keeps this scoped to the
+  // 'notices' Sync All job only.
+  logClientSync: (clientId, action, status, message) =>
+    post('client_sync_log', [{ client_id: clientId, action, status, message: message || null }]),
+
   upsertTaxpayerProfile: async (clientId, patchObj) => {
     const ex = await sel(`gst_taxpayer_profile?client_id=eq.${clientId}&select=id&limit=1`);
     if (ex[0]) return patch(`gst_taxpayer_profile?id=eq.${ex[0].id}`, patchObj);
@@ -322,6 +328,10 @@ const API = {
     if (!withCreds.length) throw new Error('No clients have saved GST portal credentials.');
     const job = {
       mode: info.mode, period: info.period_month || '', idx: 0, step: 'login', startedAt: Date.now(),
+      // Only the Notices Sync All records a Company List sync-log row per
+      // client — every other section (refunds/drc03/taxpayerprofile/etc)
+      // uses this exact same job machinery unchanged.
+      logSync: info.mode === 'notices',
       clients: withCreds.map((c) => ({
         clientId: c.id,
         creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },

@@ -39,6 +39,12 @@
     fetchCrossOriginAsBase64: (url) => call('fetchCrossOriginAsBase64', url),
     uploadPdf: (path, dataUrl) => call('uploadPdf', path, dataUrl),
     markFiled: (row) => call('markFiled', row),
+    // Records one Sync All attempt's outcome for a client — feeds the
+    // Notices Dashboard's Company List "Last Download Date / Status /
+    // Status Message" columns. Only called from the 'notices' Sync All job
+    // (see content.js's logSyncAttempt, gated on job.logSync) — every other
+    // job/mode is untouched.
+    logClientSync: (clientId, action, status, message) => call('logClientSync', clientId, action, status, message),
     logEvent: (clientId, level, message) => { console.log('[GSTKeeper]', level, clientId, message); },
   };
 })();

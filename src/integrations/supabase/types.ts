@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.5"
+    PostgrestVersion: "14.17"
   }
   graphql_public: {
     Tables: {
@@ -39,6 +39,112 @@ export type Database = {
   }
   public: {
     Tables: {
+      annual_return_carry_forward: {
+        Row: {
+          cess: number
+          cgst: number
+          clause_ref: string | null
+          client_id: string
+          created_at: string
+          direction: string
+          entered_by: string | null
+          financial_year: string
+          id: string
+          igst: number
+          notes: string | null
+          sgst: number
+          taxable_value: number
+          updated_at: string
+        }
+        Insert: {
+          cess?: number
+          cgst?: number
+          clause_ref?: string | null
+          client_id: string
+          created_at?: string
+          direction: string
+          entered_by?: string | null
+          financial_year: string
+          id?: string
+          igst?: number
+          notes?: string | null
+          sgst?: number
+          taxable_value?: number
+          updated_at?: string
+        }
+        Update: {
+          cess?: number
+          cgst?: number
+          clause_ref?: string | null
+          client_id?: string
+          created_at?: string
+          direction?: string
+          entered_by?: string | null
+          financial_year?: string
+          id?: string
+          igst?: number
+          notes?: string | null
+          sgst?: number
+          taxable_value?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "annual_return_carry_forward_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      annual_return_periods: {
+        Row: {
+          client_id: string
+          created_at: string
+          financial_year: string
+          id: string
+          locked_at: string | null
+          notes: string | null
+          prepared_by: string | null
+          reviewed_by: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          financial_year: string
+          id?: string
+          locked_at?: string | null
+          notes?: string | null
+          prepared_by?: string | null
+          reviewed_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          financial_year?: string
+          id?: string
+          locked_at?: string | null
+          notes?: string | null
+          prepared_by?: string | null
+          reviewed_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "annual_return_periods_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       audit_log: {
         Row: {
           action: string
@@ -256,6 +362,65 @@ export type Database = {
           },
         ]
       }
+      books_purchase_lines: {
+        Row: {
+          cgst: number
+          client_id: string
+          created_at: string
+          entered_by: string | null
+          expense_head: string | null
+          financial_year: string
+          id: string
+          igst: number
+          ledger_head: string
+          notes: string | null
+          rate: string | null
+          sgst: number
+          taxable_value: number
+          updated_at: string
+        }
+        Insert: {
+          cgst?: number
+          client_id: string
+          created_at?: string
+          entered_by?: string | null
+          expense_head?: string | null
+          financial_year: string
+          id?: string
+          igst?: number
+          ledger_head: string
+          notes?: string | null
+          rate?: string | null
+          sgst?: number
+          taxable_value?: number
+          updated_at?: string
+        }
+        Update: {
+          cgst?: number
+          client_id?: string
+          created_at?: string
+          entered_by?: string | null
+          expense_head?: string | null
+          financial_year?: string
+          id?: string
+          igst?: number
+          ledger_head?: string
+          notes?: string | null
+          rate?: string | null
+          sgst?: number
+          taxable_value?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "books_purchase_lines_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       books_register: {
         Row: {
           book_treatment: string
@@ -327,6 +492,62 @@ export type Database = {
           },
         ]
       }
+      books_turnover_lines: {
+        Row: {
+          cgst: number
+          client_id: string
+          created_at: string
+          entered_by: string | null
+          financial_year: string
+          id: string
+          igst: number
+          ledger_head: string
+          notes: string | null
+          rate: string | null
+          sgst: number
+          taxable_value: number
+          updated_at: string
+        }
+        Insert: {
+          cgst?: number
+          client_id: string
+          created_at?: string
+          entered_by?: string | null
+          financial_year: string
+          id?: string
+          igst?: number
+          ledger_head: string
+          notes?: string | null
+          rate?: string | null
+          sgst?: number
+          taxable_value?: number
+          updated_at?: string
+        }
+        Update: {
+          cgst?: number
+          client_id?: string
+          created_at?: string
+          entered_by?: string | null
+          financial_year?: string
+          id?: string
+          igst?: number
+          ledger_head?: string
+          notes?: string | null
+          rate?: string | null
+          sgst?: number
+          taxable_value?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "books_turnover_lines_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_advance_adjustments: {
         Row: {
           cgst: number
@@ -383,66 +604,6 @@ export type Database = {
             columns: ["receipt_id"]
             isOneToOne: false
             referencedRelation: "builder_receipts"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      builder_opening_balance_adjustments: {
-        Row: {
-          cgst: number
-          consideration_adjusted: number
-          created_at: string
-          created_by: string | null
-          id: string
-          invoice_id: string
-          period_month: string
-          rate_code: string
-          rate_pct: number
-          sgst: number
-          taxable_value_adjusted: number
-          unit_id: string
-        }
-        Insert: {
-          cgst?: number
-          consideration_adjusted?: number
-          created_at?: string
-          created_by?: string | null
-          id?: string
-          invoice_id: string
-          period_month: string
-          rate_code: string
-          rate_pct?: number
-          sgst?: number
-          taxable_value_adjusted?: number
-          unit_id: string
-        }
-        Update: {
-          cgst?: number
-          consideration_adjusted?: number
-          created_at?: string
-          created_by?: string | null
-          id?: string
-          invoice_id?: string
-          period_month?: string
-          rate_code?: string
-          rate_pct?: number
-          sgst?: number
-          taxable_value_adjusted?: number
-          unit_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "builder_opening_balance_adjustments_invoice_id_fkey"
-            columns: ["invoice_id"]
-            isOneToOne: false
-            referencedRelation: "builder_invoices"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "builder_opening_balance_adjustments_unit_id_fkey"
-            columns: ["unit_id"]
-            isOneToOne: false
-            referencedRelation: "builder_units"
             referencedColumns: ["id"]
           },
         ]
@@ -2099,6 +2260,80 @@ export type Database = {
           },
         ]
       }
+      builder_opening_balance_adjustments: {
+        Row: {
+          cgst: number
+          consideration_adjusted: number
+          created_at: string
+          created_by: string | null
+          id: string
+          invoice_id: string
+          period_month: string
+          rate_code: string
+          rate_pct: number
+          sgst: number
+          taxable_value_adjusted: number
+          unit_id: string
+        }
+        Insert: {
+          cgst?: number
+          consideration_adjusted?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id: string
+          period_month: string
+          rate_code: string
+          rate_pct?: number
+          sgst?: number
+          taxable_value_adjusted?: number
+          unit_id: string
+        }
+        Update: {
+          cgst?: number
+          consideration_adjusted?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id?: string
+          period_month?: string
+          rate_code?: string
+          rate_pct?: number
+          sgst?: number
+          taxable_value_adjusted?: number
+          unit_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_opening_balance_adjustments_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "builder_invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_opening_balance_adjustments_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_dastavej_reco"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_opening_balance_adjustments_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_unit_ledger"
+            referencedColumns: ["unit_id"]
+          },
+          {
+            foreignKeyName: "builder_opening_balance_adjustments_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_opening_balances: {
         Row: {
           agreement_value: number
@@ -3076,6 +3311,50 @@ export type Database = {
         }
         Relationships: []
       }
+      client_annual_turnover: {
+        Row: {
+          aggregate_turnover: number | null
+          client_id: string
+          created_at: string
+          entered_by: string | null
+          exempt_turnover: number | null
+          financial_year: string
+          id: string
+          itc_directly_attributable_exempt: number | null
+          updated_at: string
+        }
+        Insert: {
+          aggregate_turnover?: number | null
+          client_id: string
+          created_at?: string
+          entered_by?: string | null
+          exempt_turnover?: number | null
+          financial_year: string
+          id?: string
+          itc_directly_attributable_exempt?: number | null
+          updated_at?: string
+        }
+        Update: {
+          aggregate_turnover?: number | null
+          client_id?: string
+          created_at?: string
+          entered_by?: string | null
+          exempt_turnover?: number | null
+          financial_year?: string
+          id?: string
+          itc_directly_attributable_exempt?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_annual_turnover_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       client_reminder_settings: {
         Row: {
           client_id: string
@@ -3151,6 +3430,41 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "client_scheme_history_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_sync_log: {
+        Row: {
+          action: string
+          client_id: string
+          created_at: string
+          id: string
+          message: string | null
+          status: string
+        }
+        Insert: {
+          action: string
+          client_id: string
+          created_at?: string
+          id?: string
+          message?: string | null
+          status: string
+        }
+        Update: {
+          action?: string
+          client_id?: string
+          created_at?: string
+          id?: string
+          message?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_sync_log_client_id_fkey"
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
@@ -3250,6 +3564,196 @@ export type Database = {
           updated_at?: string | null
         }
         Relationships: []
+      }
+      duties_taxes_input_monthly: {
+        Row: {
+          as_per_3b_cgst: number
+          as_per_3b_igst: number
+          as_per_3b_sgst: number
+          client_id: string
+          created_at: string
+          debit_note_cgst: number
+          debit_note_igst: number
+          debit_note_sgst: number
+          entered_by: string | null
+          financial_year: string
+          id: string
+          month: string
+          other_adjustment_cgst: number
+          other_adjustment_igst: number
+          other_adjustment_reason: string | null
+          other_adjustment_sgst: number
+          purchase_cgst: number
+          purchase_igst: number
+          purchase_sgst: number
+          suspended_reclaim_180d_cgst: number
+          suspended_reclaim_180d_igst: number
+          suspended_reclaim_180d_sgst: number
+          suspended_reclaim_cgst: number
+          suspended_reclaim_igst: number
+          suspended_reclaim_sgst: number
+          suspended_reversed_180d_cgst: number
+          suspended_reversed_180d_igst: number
+          suspended_reversed_180d_sgst: number
+          suspended_reversed_cgst: number
+          suspended_reversed_igst: number
+          suspended_reversed_sgst: number
+          updated_at: string
+        }
+        Insert: {
+          as_per_3b_cgst?: number
+          as_per_3b_igst?: number
+          as_per_3b_sgst?: number
+          client_id: string
+          created_at?: string
+          debit_note_cgst?: number
+          debit_note_igst?: number
+          debit_note_sgst?: number
+          entered_by?: string | null
+          financial_year: string
+          id?: string
+          month: string
+          other_adjustment_cgst?: number
+          other_adjustment_igst?: number
+          other_adjustment_reason?: string | null
+          other_adjustment_sgst?: number
+          purchase_cgst?: number
+          purchase_igst?: number
+          purchase_sgst?: number
+          suspended_reclaim_180d_cgst?: number
+          suspended_reclaim_180d_igst?: number
+          suspended_reclaim_180d_sgst?: number
+          suspended_reclaim_cgst?: number
+          suspended_reclaim_igst?: number
+          suspended_reclaim_sgst?: number
+          suspended_reversed_180d_cgst?: number
+          suspended_reversed_180d_igst?: number
+          suspended_reversed_180d_sgst?: number
+          suspended_reversed_cgst?: number
+          suspended_reversed_igst?: number
+          suspended_reversed_sgst?: number
+          updated_at?: string
+        }
+        Update: {
+          as_per_3b_cgst?: number
+          as_per_3b_igst?: number
+          as_per_3b_sgst?: number
+          client_id?: string
+          created_at?: string
+          debit_note_cgst?: number
+          debit_note_igst?: number
+          debit_note_sgst?: number
+          entered_by?: string | null
+          financial_year?: string
+          id?: string
+          month?: string
+          other_adjustment_cgst?: number
+          other_adjustment_igst?: number
+          other_adjustment_reason?: string | null
+          other_adjustment_sgst?: number
+          purchase_cgst?: number
+          purchase_igst?: number
+          purchase_sgst?: number
+          suspended_reclaim_180d_cgst?: number
+          suspended_reclaim_180d_igst?: number
+          suspended_reclaim_180d_sgst?: number
+          suspended_reclaim_cgst?: number
+          suspended_reclaim_igst?: number
+          suspended_reclaim_sgst?: number
+          suspended_reversed_180d_cgst?: number
+          suspended_reversed_180d_igst?: number
+          suspended_reversed_180d_sgst?: number
+          suspended_reversed_cgst?: number
+          suspended_reversed_igst?: number
+          suspended_reversed_sgst?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "duties_taxes_input_monthly_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      duties_taxes_output_monthly: {
+        Row: {
+          as_per_3b_cgst: number
+          as_per_3b_igst: number
+          as_per_3b_sgst: number
+          client_id: string
+          created_at: string
+          credit_note_cgst: number
+          credit_note_igst: number
+          credit_note_sgst: number
+          entered_by: string | null
+          financial_year: string
+          id: string
+          month: string
+          other_adjustment_cgst: number
+          other_adjustment_igst: number
+          other_adjustment_reason: string | null
+          other_adjustment_sgst: number
+          sales_cgst: number
+          sales_igst: number
+          sales_sgst: number
+          updated_at: string
+        }
+        Insert: {
+          as_per_3b_cgst?: number
+          as_per_3b_igst?: number
+          as_per_3b_sgst?: number
+          client_id: string
+          created_at?: string
+          credit_note_cgst?: number
+          credit_note_igst?: number
+          credit_note_sgst?: number
+          entered_by?: string | null
+          financial_year: string
+          id?: string
+          month: string
+          other_adjustment_cgst?: number
+          other_adjustment_igst?: number
+          other_adjustment_reason?: string | null
+          other_adjustment_sgst?: number
+          sales_cgst?: number
+          sales_igst?: number
+          sales_sgst?: number
+          updated_at?: string
+        }
+        Update: {
+          as_per_3b_cgst?: number
+          as_per_3b_igst?: number
+          as_per_3b_sgst?: number
+          client_id?: string
+          created_at?: string
+          credit_note_cgst?: number
+          credit_note_igst?: number
+          credit_note_sgst?: number
+          entered_by?: string | null
+          financial_year?: string
+          id?: string
+          month?: string
+          other_adjustment_cgst?: number
+          other_adjustment_igst?: number
+          other_adjustment_reason?: string | null
+          other_adjustment_sgst?: number
+          sales_cgst?: number
+          sales_igst?: number
+          sales_sgst?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "duties_taxes_output_monthly_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       email_outbox: {
         Row: {
@@ -3372,6 +3876,38 @@ export type Database = {
         }
         Relationships: []
       }
+      expense_head_mappings: {
+        Row: {
+          client_id: string
+          expense_head: string
+          id: string
+          ledger_head: string
+          updated_at: string
+        }
+        Insert: {
+          client_id: string
+          expense_head: string
+          id?: string
+          ledger_head: string
+          updated_at?: string
+        }
+        Update: {
+          client_id?: string
+          expense_head?: string
+          id?: string
+          ledger_head?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "expense_head_mappings_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       filing_status: {
         Row: {
           arn: string | null
@@ -3424,6 +3960,660 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "filing_status_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gst_cash_ledger_entries: {
+        Row: {
+          balance: number | null
+          cess: number | null
+          cgst: number | null
+          client_id: string
+          created_at: string
+          description: string | null
+          entry_date: string | null
+          id: string
+          igst: number | null
+          is_debit: boolean | null
+          period_month: string
+          pulled_at: string
+          sgst: number | null
+        }
+        Insert: {
+          balance?: number | null
+          cess?: number | null
+          cgst?: number | null
+          client_id: string
+          created_at?: string
+          description?: string | null
+          entry_date?: string | null
+          id?: string
+          igst?: number | null
+          is_debit?: boolean | null
+          period_month: string
+          pulled_at?: string
+          sgst?: number | null
+        }
+        Update: {
+          balance?: number | null
+          cess?: number | null
+          cgst?: number | null
+          client_id?: string
+          created_at?: string
+          description?: string | null
+          entry_date?: string | null
+          id?: string
+          igst?: number | null
+          is_debit?: boolean | null
+          period_month?: string
+          pulled_at?: string
+          sgst?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gst_cash_ledger_entries_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gst_challans: {
+        Row: {
+          cess_amount: number | null
+          cgst_amount: number | null
+          challan_date: string | null
+          client_id: string
+          cpin: string | null
+          created_at: string
+          id: string
+          igst_amount: number | null
+          payment_mode: string | null
+          pulled_at: string
+          pulled_by: string | null
+          sgst_amount: number | null
+          status: string | null
+          total_amount: number | null
+          updated_at: string
+        }
+        Insert: {
+          cess_amount?: number | null
+          cgst_amount?: number | null
+          challan_date?: string | null
+          client_id: string
+          cpin?: string | null
+          created_at?: string
+          id?: string
+          igst_amount?: number | null
+          payment_mode?: string | null
+          pulled_at?: string
+          pulled_by?: string | null
+          sgst_amount?: number | null
+          status?: string | null
+          total_amount?: number | null
+          updated_at?: string
+        }
+        Update: {
+          cess_amount?: number | null
+          cgst_amount?: number | null
+          challan_date?: string | null
+          client_id?: string
+          cpin?: string | null
+          created_at?: string
+          id?: string
+          igst_amount?: number | null
+          payment_mode?: string | null
+          pulled_at?: string
+          pulled_by?: string | null
+          sgst_amount?: number | null
+          status?: string | null
+          total_amount?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gst_challans_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gst_credit_ledger_transactions: {
+        Row: {
+          cgst: number | null
+          client_id: string
+          created_at: string
+          description: string | null
+          id: string
+          igst: number | null
+          is_debit: boolean
+          period_month: string
+          pulled_at: string
+          sgst: number | null
+        }
+        Insert: {
+          cgst?: number | null
+          client_id: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          igst?: number | null
+          is_debit: boolean
+          period_month: string
+          pulled_at?: string
+          sgst?: number | null
+        }
+        Update: {
+          cgst?: number | null
+          client_id?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          igst?: number | null
+          is_debit?: boolean
+          period_month?: string
+          pulled_at?: string
+          sgst?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gst_credit_ledger_transactions_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gst_credit_reversal_reclaim_entries: {
+        Row: {
+          client_id: string
+          closing_balance_cess: number | null
+          closing_balance_cgst: number | null
+          closing_balance_igst: number | null
+          closing_balance_sgst: number | null
+          created_at: string
+          description: string | null
+          financial_year: string
+          id: string
+          is_opening_balance: boolean
+          itc_claimed_cess: number | null
+          itc_claimed_cgst: number | null
+          itc_claimed_igst: number | null
+          itc_claimed_sgst: number | null
+          itc_reclaimed_cess: number | null
+          itc_reclaimed_cgst: number | null
+          itc_reclaimed_igst: number | null
+          itc_reclaimed_sgst: number | null
+          itc_reversed_cess: number | null
+          itc_reversed_cgst: number | null
+          itc_reversed_igst: number | null
+          itc_reversed_sgst: number | null
+          pulled_at: string
+          reference_no: string | null
+          return_period: string | null
+          transaction_date: string | null
+        }
+        Insert: {
+          client_id: string
+          closing_balance_cess?: number | null
+          closing_balance_cgst?: number | null
+          closing_balance_igst?: number | null
+          closing_balance_sgst?: number | null
+          created_at?: string
+          description?: string | null
+          financial_year: string
+          id?: string
+          is_opening_balance?: boolean
+          itc_claimed_cess?: number | null
+          itc_claimed_cgst?: number | null
+          itc_claimed_igst?: number | null
+          itc_claimed_sgst?: number | null
+          itc_reclaimed_cess?: number | null
+          itc_reclaimed_cgst?: number | null
+          itc_reclaimed_igst?: number | null
+          itc_reclaimed_sgst?: number | null
+          itc_reversed_cess?: number | null
+          itc_reversed_cgst?: number | null
+          itc_reversed_igst?: number | null
+          itc_reversed_sgst?: number | null
+          pulled_at?: string
+          reference_no?: string | null
+          return_period?: string | null
+          transaction_date?: string | null
+        }
+        Update: {
+          client_id?: string
+          closing_balance_cess?: number | null
+          closing_balance_cgst?: number | null
+          closing_balance_igst?: number | null
+          closing_balance_sgst?: number | null
+          created_at?: string
+          description?: string | null
+          financial_year?: string
+          id?: string
+          is_opening_balance?: boolean
+          itc_claimed_cess?: number | null
+          itc_claimed_cgst?: number | null
+          itc_claimed_igst?: number | null
+          itc_claimed_sgst?: number | null
+          itc_reclaimed_cess?: number | null
+          itc_reclaimed_cgst?: number | null
+          itc_reclaimed_igst?: number | null
+          itc_reclaimed_sgst?: number | null
+          itc_reversed_cess?: number | null
+          itc_reversed_cgst?: number | null
+          itc_reversed_igst?: number | null
+          itc_reversed_sgst?: number | null
+          pulled_at?: string
+          reference_no?: string | null
+          return_period?: string | null
+          transaction_date?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gst_credit_reversal_reclaim_entries_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gst_drc03_filings: {
+        Row: {
+          arn: string | null
+          cash_amount: number | null
+          cause_of_payment: string | null
+          cess_amount: number | null
+          cgst_amount: number | null
+          client_id: string
+          created_at: string
+          credit_amount: number | null
+          filed_date: string | null
+          financial_year: string | null
+          id: string
+          igst_amount: number | null
+          interest_amount: number | null
+          late_fee_amount: number | null
+          pdf_url: string | null
+          penalty_amount: number | null
+          period_from: string | null
+          period_to: string | null
+          pulled_at: string
+          pulled_by: string | null
+          section: string | null
+          sgst_amount: number | null
+          status: string | null
+          taxable_value: number | null
+          updated_at: string
+        }
+        Insert: {
+          arn?: string | null
+          cash_amount?: number | null
+          cause_of_payment?: string | null
+          cess_amount?: number | null
+          cgst_amount?: number | null
+          client_id: string
+          created_at?: string
+          credit_amount?: number | null
+          filed_date?: string | null
+          financial_year?: string | null
+          id?: string
+          igst_amount?: number | null
+          interest_amount?: number | null
+          late_fee_amount?: number | null
+          pdf_url?: string | null
+          penalty_amount?: number | null
+          period_from?: string | null
+          period_to?: string | null
+          pulled_at?: string
+          pulled_by?: string | null
+          section?: string | null
+          sgst_amount?: number | null
+          status?: string | null
+          taxable_value?: number | null
+          updated_at?: string
+        }
+        Update: {
+          arn?: string | null
+          cash_amount?: number | null
+          cause_of_payment?: string | null
+          cess_amount?: number | null
+          cgst_amount?: number | null
+          client_id?: string
+          created_at?: string
+          credit_amount?: number | null
+          filed_date?: string | null
+          financial_year?: string | null
+          id?: string
+          igst_amount?: number | null
+          interest_amount?: number | null
+          late_fee_amount?: number | null
+          pdf_url?: string | null
+          penalty_amount?: number | null
+          period_from?: string | null
+          period_to?: string | null
+          pulled_at?: string
+          pulled_by?: string | null
+          section?: string | null
+          sgst_amount?: number | null
+          status?: string | null
+          taxable_value?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gst_drc03_filings_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gst_filed_returns: {
+        Row: {
+          arn: string | null
+          client_id: string
+          created_at: string
+          filed_date: string | null
+          full_json: Json | null
+          full_json_pulled_at: string | null
+          id: string
+          period_month: string
+          return_type: string
+          status: string | null
+          summary: Json
+          updated_at: string
+        }
+        Insert: {
+          arn?: string | null
+          client_id: string
+          created_at?: string
+          filed_date?: string | null
+          full_json?: Json | null
+          full_json_pulled_at?: string | null
+          id?: string
+          period_month: string
+          return_type: string
+          status?: string | null
+          summary?: Json
+          updated_at?: string
+        }
+        Update: {
+          arn?: string | null
+          client_id?: string
+          created_at?: string
+          filed_date?: string | null
+          full_json?: Json | null
+          full_json_pulled_at?: string | null
+          id?: string
+          period_month?: string
+          return_type?: string
+          status?: string | null
+          summary?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gst_filed_returns_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gst_liability_ledger_entries: {
+        Row: {
+          balance: number | null
+          cess: number | null
+          cgst: number | null
+          client_id: string
+          created_at: string
+          description: string | null
+          entry_date: string | null
+          id: string
+          igst: number | null
+          is_debit: boolean | null
+          period_month: string
+          pulled_at: string
+          sgst: number | null
+        }
+        Insert: {
+          balance?: number | null
+          cess?: number | null
+          cgst?: number | null
+          client_id: string
+          created_at?: string
+          description?: string | null
+          entry_date?: string | null
+          id?: string
+          igst?: number | null
+          is_debit?: boolean | null
+          period_month: string
+          pulled_at?: string
+          sgst?: number | null
+        }
+        Update: {
+          balance?: number | null
+          cess?: number | null
+          cgst?: number | null
+          client_id?: string
+          created_at?: string
+          description?: string | null
+          entry_date?: string | null
+          id?: string
+          igst?: number | null
+          is_debit?: boolean | null
+          period_month?: string
+          pulled_at?: string
+          sgst?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gst_liability_ledger_entries_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gst_notices: {
+        Row: {
+          amount_of_demand: number | null
+          assign_to: string | null
+          case_id: string | null
+          client_id: string
+          created_at: string
+          description: string | null
+          due_date: string | null
+          extended_due_date: string | null
+          financial_year: string | null
+          id: string
+          issue_date: string | null
+          issued_by: string | null
+          notice_type: string | null
+          order_date: string | null
+          order_number: string | null
+          pdf_url: string | null
+          priority: string | null
+          pulled_at: string
+          pulled_by: string | null
+          reference_number: string | null
+          remarks: string | null
+          reply_date: string | null
+          reply_ref_number: string | null
+          source: string
+          staff_status: string | null
+          status: string | null
+          submission_arn: string | null
+          submission_date: string | null
+          updated_at: string
+        }
+        Insert: {
+          amount_of_demand?: number | null
+          assign_to?: string | null
+          case_id?: string | null
+          client_id: string
+          created_at?: string
+          description?: string | null
+          due_date?: string | null
+          extended_due_date?: string | null
+          financial_year?: string | null
+          id?: string
+          issue_date?: string | null
+          issued_by?: string | null
+          notice_type?: string | null
+          order_date?: string | null
+          order_number?: string | null
+          pdf_url?: string | null
+          priority?: string | null
+          pulled_at?: string
+          pulled_by?: string | null
+          reference_number?: string | null
+          remarks?: string | null
+          reply_date?: string | null
+          reply_ref_number?: string | null
+          source?: string
+          staff_status?: string | null
+          status?: string | null
+          submission_arn?: string | null
+          submission_date?: string | null
+          updated_at?: string
+        }
+        Update: {
+          amount_of_demand?: number | null
+          assign_to?: string | null
+          case_id?: string | null
+          client_id?: string
+          created_at?: string
+          description?: string | null
+          due_date?: string | null
+          extended_due_date?: string | null
+          financial_year?: string | null
+          id?: string
+          issue_date?: string | null
+          issued_by?: string | null
+          notice_type?: string | null
+          order_date?: string | null
+          order_number?: string | null
+          pdf_url?: string | null
+          priority?: string | null
+          pulled_at?: string
+          pulled_by?: string | null
+          reference_number?: string | null
+          remarks?: string | null
+          reply_date?: string | null
+          reply_ref_number?: string | null
+          source?: string
+          staff_status?: string | null
+          status?: string | null
+          submission_arn?: string | null
+          submission_date?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gst_notices_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gst_rcm_liability_itc_entries: {
+        Row: {
+          client_id: string
+          closing_balance_cess: number | null
+          closing_balance_cgst: number | null
+          closing_balance_igst: number | null
+          closing_balance_sgst: number | null
+          created_at: string
+          description: string | null
+          financial_year: string
+          id: string
+          is_opening_balance: boolean
+          itc_4a2_cess: number | null
+          itc_4a2_igst: number | null
+          itc_4a3_cess: number | null
+          itc_4a3_cgst: number | null
+          itc_4a3_igst: number | null
+          itc_4a3_sgst: number | null
+          liability_3_1d_cess: number | null
+          liability_3_1d_cgst: number | null
+          liability_3_1d_igst: number | null
+          liability_3_1d_sgst: number | null
+          pulled_at: string
+          reference_no: string | null
+          return_period: string | null
+          transaction_date: string | null
+        }
+        Insert: {
+          client_id: string
+          closing_balance_cess?: number | null
+          closing_balance_cgst?: number | null
+          closing_balance_igst?: number | null
+          closing_balance_sgst?: number | null
+          created_at?: string
+          description?: string | null
+          financial_year: string
+          id?: string
+          is_opening_balance?: boolean
+          itc_4a2_cess?: number | null
+          itc_4a2_igst?: number | null
+          itc_4a3_cess?: number | null
+          itc_4a3_cgst?: number | null
+          itc_4a3_igst?: number | null
+          itc_4a3_sgst?: number | null
+          liability_3_1d_cess?: number | null
+          liability_3_1d_cgst?: number | null
+          liability_3_1d_igst?: number | null
+          liability_3_1d_sgst?: number | null
+          pulled_at?: string
+          reference_no?: string | null
+          return_period?: string | null
+          transaction_date?: string | null
+        }
+        Update: {
+          client_id?: string
+          closing_balance_cess?: number | null
+          closing_balance_cgst?: number | null
+          closing_balance_igst?: number | null
+          closing_balance_sgst?: number | null
+          created_at?: string
+          description?: string | null
+          financial_year?: string
+          id?: string
+          is_opening_balance?: boolean
+          itc_4a2_cess?: number | null
+          itc_4a2_igst?: number | null
+          itc_4a3_cess?: number | null
+          itc_4a3_cgst?: number | null
+          itc_4a3_igst?: number | null
+          itc_4a3_sgst?: number | null
+          liability_3_1d_cess?: number | null
+          liability_3_1d_cgst?: number | null
+          liability_3_1d_igst?: number | null
+          liability_3_1d_sgst?: number | null
+          pulled_at?: string
+          reference_no?: string | null
+          return_period?: string | null
+          transaction_date?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gst_rcm_liability_itc_entries_client_id_fkey"
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
@@ -3526,6 +4716,65 @@ export type Database = {
           },
         ]
       }
+      gst_refund_applications: {
+        Row: {
+          arn: string | null
+          claimed_amount: number | null
+          client_id: string
+          created_at: string
+          documents: Json
+          filed_date: string | null
+          id: string
+          pulled_at: string
+          pulled_by: string | null
+          refund_type: string | null
+          sanctioned_amount: number | null
+          source_ledger: string | null
+          status: string | null
+          updated_at: string
+        }
+        Insert: {
+          arn?: string | null
+          claimed_amount?: number | null
+          client_id: string
+          created_at?: string
+          documents?: Json
+          filed_date?: string | null
+          id?: string
+          pulled_at?: string
+          pulled_by?: string | null
+          refund_type?: string | null
+          sanctioned_amount?: number | null
+          source_ledger?: string | null
+          status?: string | null
+          updated_at?: string
+        }
+        Update: {
+          arn?: string | null
+          claimed_amount?: number | null
+          client_id?: string
+          created_at?: string
+          documents?: Json
+          filed_date?: string | null
+          id?: string
+          pulled_at?: string
+          pulled_by?: string | null
+          refund_type?: string | null
+          sanctioned_amount?: number | null
+          source_ledger?: string | null
+          status?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gst_refund_applications_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       gst_running_updates: {
         Row: {
           cgst: number | null
@@ -3598,6 +4847,68 @@ export type Database = {
             foreignKeyName: "gst_running_updates_client_id_fkey"
             columns: ["client_id"]
             isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gst_taxpayer_profile: {
+        Row: {
+          aadhaar_authentication_status: string | null
+          client_id: string
+          constitution_of_business: string | null
+          created_at: string
+          id: string
+          jurisdiction_centre: string | null
+          jurisdiction_state: string | null
+          legal_name: string | null
+          principal_place_address: string | null
+          pulled_at: string
+          pulled_by: string | null
+          registration_certificate_url: string | null
+          registration_date: string | null
+          trade_name: string | null
+          updated_at: string
+        }
+        Insert: {
+          aadhaar_authentication_status?: string | null
+          client_id: string
+          constitution_of_business?: string | null
+          created_at?: string
+          id?: string
+          jurisdiction_centre?: string | null
+          jurisdiction_state?: string | null
+          legal_name?: string | null
+          principal_place_address?: string | null
+          pulled_at?: string
+          pulled_by?: string | null
+          registration_certificate_url?: string | null
+          registration_date?: string | null
+          trade_name?: string | null
+          updated_at?: string
+        }
+        Update: {
+          aadhaar_authentication_status?: string | null
+          client_id?: string
+          constitution_of_business?: string | null
+          created_at?: string
+          id?: string
+          jurisdiction_centre?: string | null
+          jurisdiction_state?: string | null
+          legal_name?: string | null
+          principal_place_address?: string | null
+          pulled_at?: string
+          pulled_by?: string | null
+          registration_certificate_url?: string | null
+          registration_date?: string | null
+          trade_name?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gst_taxpayer_profile_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: true
             referencedRelation: "clients"
             referencedColumns: ["id"]
           },
@@ -3834,6 +5145,101 @@ export type Database = {
           },
         ]
       }
+      gstr2a_import_docs: {
+        Row: {
+          bucket: string
+          cess: number | null
+          client_id: string
+          date: string | null
+          gstr1_filing_date: string | null
+          gstr1_period: string | null
+          id: string
+          import_batch_id: string | null
+          imported_at: string
+          imported_by: string | null
+          input_cgst: number | null
+          input_igst: number | null
+          input_sgst: number | null
+          invoice_type: string | null
+          invoice_value: number | null
+          irn: string | null
+          period_month: string
+          place_of_supply: string | null
+          reverse_charge: boolean
+          source: string | null
+          supplier_gstin: string | null
+          supplier_invoice_number: string | null
+          supplier_name: string | null
+          taxable_value: number | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          bucket?: string
+          cess?: number | null
+          client_id: string
+          date?: string | null
+          gstr1_filing_date?: string | null
+          gstr1_period?: string | null
+          id?: string
+          import_batch_id?: string | null
+          imported_at?: string
+          imported_by?: string | null
+          input_cgst?: number | null
+          input_igst?: number | null
+          input_sgst?: number | null
+          invoice_type?: string | null
+          invoice_value?: number | null
+          irn?: string | null
+          period_month: string
+          place_of_supply?: string | null
+          reverse_charge?: boolean
+          source?: string | null
+          supplier_gstin?: string | null
+          supplier_invoice_number?: string | null
+          supplier_name?: string | null
+          taxable_value?: number | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          bucket?: string
+          cess?: number | null
+          client_id?: string
+          date?: string | null
+          gstr1_filing_date?: string | null
+          gstr1_period?: string | null
+          id?: string
+          import_batch_id?: string | null
+          imported_at?: string
+          imported_by?: string | null
+          input_cgst?: number | null
+          input_igst?: number | null
+          input_sgst?: number | null
+          invoice_type?: string | null
+          invoice_value?: number | null
+          irn?: string | null
+          period_month?: string
+          place_of_supply?: string | null
+          reverse_charge?: boolean
+          source?: string | null
+          supplier_gstin?: string | null
+          supplier_invoice_number?: string | null
+          supplier_name?: string | null
+          taxable_value?: number | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gstr2a_import_docs_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       gstr3b_adjustments: {
         Row: {
           cess: number
@@ -3946,6 +5352,106 @@ export type Database = {
           },
         ]
       }
+      gstr9_output_lines: {
+        Row: {
+          category: string
+          cgst: number
+          client_id: string
+          created_at: string
+          entered_by: string | null
+          financial_year: string
+          id: string
+          igst: number
+          sgst: number
+          taxable_value: number
+          updated_at: string
+        }
+        Insert: {
+          category: string
+          cgst?: number
+          client_id: string
+          created_at?: string
+          entered_by?: string | null
+          financial_year: string
+          id?: string
+          igst?: number
+          sgst?: number
+          taxable_value?: number
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          cgst?: number
+          client_id?: string
+          created_at?: string
+          entered_by?: string | null
+          financial_year?: string
+          id?: string
+          igst?: number
+          sgst?: number
+          taxable_value?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gstr9_output_lines_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      itc_reversal_lines: {
+        Row: {
+          cgst: number
+          client_id: string
+          created_at: string
+          entered_by: string | null
+          financial_year: string
+          id: string
+          igst: number
+          notes: string | null
+          rule: string
+          sgst: number
+          updated_at: string
+        }
+        Insert: {
+          cgst?: number
+          client_id: string
+          created_at?: string
+          entered_by?: string | null
+          financial_year: string
+          id?: string
+          igst?: number
+          notes?: string | null
+          rule: string
+          sgst?: number
+          updated_at?: string
+        }
+        Update: {
+          cgst?: number
+          client_id?: string
+          created_at?: string
+          entered_by?: string | null
+          financial_year?: string
+          id?: string
+          igst?: number
+          notes?: string | null
+          rule?: string
+          sgst?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "itc_reversal_lines_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       itc_summaries: {
         Row: {
           client_id: string
@@ -4026,6 +5532,21 @@ export type Database = {
         }
         Relationships: []
       }
+      Notices: {
+        Row: {
+          created_at: string
+          id: number
+        }
+        Insert: {
+          created_at?: string
+          id?: number
+        }
+        Update: {
+          created_at?: string
+          id?: number
+        }
+        Relationships: []
+      }
       password_reset_requests: {
         Row: {
           id: string
@@ -4056,6 +5577,136 @@ export type Database = {
         }
         Relationships: []
       }
+      pl_input_lines: {
+        Row: {
+          cgst: number
+          client_id: string
+          created_at: string
+          entered_by: string | null
+          expense_head: string | null
+          financial_year: string
+          id: string
+          igst: number
+          ledger_head: string
+          notes: string | null
+          rate: string | null
+          section: string
+          sgst: number
+          sr_no: number | null
+          taxable_value: number
+          updated_at: string
+        }
+        Insert: {
+          cgst?: number
+          client_id: string
+          created_at?: string
+          entered_by?: string | null
+          expense_head?: string | null
+          financial_year: string
+          id?: string
+          igst?: number
+          ledger_head: string
+          notes?: string | null
+          rate?: string | null
+          section: string
+          sgst?: number
+          sr_no?: number | null
+          taxable_value?: number
+          updated_at?: string
+        }
+        Update: {
+          cgst?: number
+          client_id?: string
+          created_at?: string
+          entered_by?: string | null
+          expense_head?: string | null
+          financial_year?: string
+          id?: string
+          igst?: number
+          ledger_head?: string
+          notes?: string | null
+          rate?: string | null
+          section?: string
+          sgst?: number
+          sr_no?: number | null
+          taxable_value?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pl_input_lines_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pl_output_lines: {
+        Row: {
+          bifurcation: string | null
+          cgst: number
+          client_id: string
+          created_at: string
+          entered_by: string | null
+          financial_year: string
+          id: string
+          igst: number
+          ledger_head: string
+          notes: string | null
+          part: string
+          rate: string | null
+          sgst: number
+          sr_no: number | null
+          taxable_value: number
+          updated_at: string
+        }
+        Insert: {
+          bifurcation?: string | null
+          cgst?: number
+          client_id: string
+          created_at?: string
+          entered_by?: string | null
+          financial_year: string
+          id?: string
+          igst?: number
+          ledger_head: string
+          notes?: string | null
+          part: string
+          rate?: string | null
+          sgst?: number
+          sr_no?: number | null
+          taxable_value?: number
+          updated_at?: string
+        }
+        Update: {
+          bifurcation?: string | null
+          cgst?: number
+          client_id?: string
+          created_at?: string
+          entered_by?: string | null
+          financial_year?: string
+          id?: string
+          igst?: number
+          ledger_head?: string
+          notes?: string | null
+          part?: string
+          rate?: string | null
+          sgst?: number
+          sr_no?: number | null
+          taxable_value?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pl_output_lines_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       portal_agent_heartbeat: {
         Row: {
           agent_id: string
@@ -4073,6 +5724,53 @@ export type Database = {
           last_seen?: string
         }
         Relationships: []
+      }
+      portal_gstr1_category_figures: {
+        Row: {
+          category: string
+          cgst: number
+          client_id: string
+          financial_year: string
+          id: string
+          igst: number
+          sgst: number
+          source: string
+          taxable_value: number
+          updated_at: string
+        }
+        Insert: {
+          category: string
+          cgst?: number
+          client_id: string
+          financial_year: string
+          id?: string
+          igst?: number
+          sgst?: number
+          source?: string
+          taxable_value?: number
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          cgst?: number
+          client_id?: string
+          financial_year?: string
+          id?: string
+          igst?: number
+          sgst?: number
+          source?: string
+          taxable_value?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "portal_gstr1_category_figures_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       portal_job_events: {
         Row: {
@@ -4209,6 +5907,59 @@ export type Database = {
           },
         ]
       }
+      portal_tax_payment_entries: {
+        Row: {
+          client_id: string
+          entered_by: string | null
+          financial_year: string
+          id: string
+          interest: number
+          late_fee: number
+          paid_cash: number
+          paid_itc: number
+          payable: number
+          penalty: number
+          tax_head: string
+          updated_at: string
+        }
+        Insert: {
+          client_id: string
+          entered_by?: string | null
+          financial_year: string
+          id?: string
+          interest?: number
+          late_fee?: number
+          paid_cash?: number
+          paid_itc?: number
+          payable?: number
+          penalty?: number
+          tax_head: string
+          updated_at?: string
+        }
+        Update: {
+          client_id?: string
+          entered_by?: string | null
+          financial_year?: string
+          id?: string
+          interest?: number
+          late_fee?: number
+          paid_cash?: number
+          paid_itc?: number
+          payable?: number
+          penalty?: number
+          tax_head?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "portal_tax_payment_entries_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       portal_verifications: {
         Row: {
           actual: Json | null
@@ -4285,6 +6036,59 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      rcm_annual_return_lines: {
+        Row: {
+          category: string
+          cgst: number
+          client_id: string
+          created_at: string
+          entered_by: string | null
+          financial_year: string
+          id: string
+          igst: number
+          month: string
+          sgst: number
+          taxable_value: number
+          updated_at: string
+        }
+        Insert: {
+          category: string
+          cgst?: number
+          client_id: string
+          created_at?: string
+          entered_by?: string | null
+          financial_year: string
+          id?: string
+          igst?: number
+          month: string
+          sgst?: number
+          taxable_value?: number
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          cgst?: number
+          client_id?: string
+          created_at?: string
+          entered_by?: string | null
+          financial_year?: string
+          id?: string
+          igst?: number
+          month?: string
+          sgst?: number
+          taxable_value?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rcm_annual_return_lines_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       rcm_data: {
         Row: {
@@ -4432,6 +6236,47 @@ export type Database = {
           version_number?: number | null
         }
         Relationships: []
+      }
+      reconciliation_reasons: {
+        Row: {
+          client_id: string
+          created_at: string
+          entered_by: string | null
+          financial_year: string
+          id: string
+          line_key: string
+          reason: string
+          updated_at: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          entered_by?: string | null
+          financial_year: string
+          id?: string
+          line_key: string
+          reason: string
+          updated_at?: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          entered_by?: string | null
+          financial_year?: string
+          id?: string
+          line_key?: string
+          reason?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reconciliation_reasons_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       return_reminder_schedules: {
         Row: {
@@ -5049,6 +6894,8 @@ export type Database = {
         | "GSTR-1 (IFF)"
         | "GSTR-3B (Q)"
         | "GSTR-1A"
+        | "GSTR-9"
+        | "GSTR-9C"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -5207,6 +7054,8 @@ export const Constants = {
         "GSTR-1 (IFF)",
         "GSTR-3B (Q)",
         "GSTR-1A",
+        "GSTR-9",
+        "GSTR-9C",
       ],
     },
   },

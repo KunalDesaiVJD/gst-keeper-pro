@@ -27,6 +27,7 @@ import Gstr3bAdjustmentsPage from "@/pages/Gstr3bAdjustmentsPage";
 import AnnualReturnPage from "@/pages/AnnualReturnPage";
 import ReportsPage from "@/pages/ReportsPage";
 import NoticesDashboardPage from "@/pages/NoticesDashboardPage";
+import CompanyListPage from "@/pages/CompanyListPage";
 import AllClientsNoticesPage from "@/pages/AllClientsNoticesPage";
 import AllClientsRefundsPage from "@/pages/AllClientsRefundsPage";
 import AllClientsDrc03Page from "@/pages/AllClientsDrc03Page";
@@ -97,6 +98,7 @@ const App = () => (
                   <Route path="/builder-reports" element={<BuilderReportsPage />} />
                   <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/notices-dashboard" element={<NoticesDashboardPage />} />
+                  <Route path="/notices-company-list" element={<CompanyListPage />} />
                   <Route path="/notices-all" element={<AllClientsNoticesPage />} />
                   <Route path="/refunds-all" element={<AllClientsRefundsPage />} />
                   <Route path="/drc03-all" element={<AllClientsDrc03Page />} />

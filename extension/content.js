@@ -193,6 +193,7 @@
       else if (job.step === 'cashledger') await writeLedgerFailureRow(GSTKdb.replaceCashLedgerEntries, cur, job, 'session kept dropping (bounced to login/error page 3x) while reading the Cash Ledger');
       else if (job.step === 'notices') {
         try { await GSTKdb.replaceNotices(cur.clientId, [{ client_id: cur.clientId, source: 'notices', description: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Notices & Orders' }]); } catch (e2) { /* diagnostic only */ }
+        await logSyncAttempt(job, cur, 'failed', 'Session kept dropping (bounced to login/error page 3x) while reading Notices & Orders.');
       } else if (job.step === 'refunds') {
         try { await GSTKdb.replaceRefundApplications(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Refund applications' }]); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'drc03') {
@@ -299,6 +300,16 @@
       await clearJob();
     }
   }
+  // Records one Sync All attempt for the Notices Dashboard's Company List
+  // page — only when job.logSync is set (see background.js's
+  // startAllClientsSectionPull: only the 'notices' Sync All sets it). Every
+  // other job/mode never sets this flag, so this is a no-op for them, and a
+  // failure here is diagnostic-only — it must never block the job itself.
+  async function logSyncAttempt(job, cur, status, message) {
+    if (!job.logSync) return;
+    try { await GSTKdb.logClientSync(cur.clientId, 'notices', status, message || null); } catch (e) { /* diagnostic only */ }
+  }
+
   async function handleLogout(job) {
     // On the logout page now — let the previous client's session fully clear, then
     // start the next client's login.
@@ -2419,6 +2430,7 @@
       debugPanel(['STEP: View Notices and Orders  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
       banner('Notices & Orders: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       try { await GSTKdb.replaceNotices(cur.clientId, [{ client_id: cur.clientId, source: 'notices', description: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }]); } catch (e2) { /* diagnostic only */ }
+      await logSyncAttempt(job, cur, 'failed', 'Could not read the portal API: ' + ((e && e.message) || 'unknown error'));
       await sleep(1500);
       await chainOrStop(job, 'notices', proceedToRefunds);
       return;
@@ -2565,10 +2577,12 @@
         'PDFs captured     : ' + pdfOk + ' ok, ' + pdfFail + ' failed/not applicable',
       ]);
       banner('Notices & Orders → ' + rows.length + ' entries saved (' + pdfOk + ' PDFs). Now Refund applications…' + progress, '#16a34a');
+      await logSyncAttempt(job, cur, 'success', rows.length + ' entries found (' + pdfOk + ' PDFs captured' + (pdfFail ? ', ' + pdfFail + ' failed' : '') + ').');
     } catch (e) {
       debugPanel(['STEP: View Notices and Orders  (' + location.pathname + ')', 'DB write failed: ' + ((e && e.message) || 'unknown error')]);
       banner('Notices & Orders: read ' + rows.length + ' rows but the save failed (' + ((e && e.message) || 'unknown error') + ') — skipped.' + progress, '#dc2626');
       try { await GSTKdb.replaceNotices(cur.clientId, [{ client_id: cur.clientId, source: 'notices', description: 'PULL FAILED: DB write error — ' + ((e && e.message) || 'unknown error') }]); } catch (e2) { /* diagnostic only */ }
+      await logSyncAttempt(job, cur, 'failed', 'Read ' + rows.length + ' rows but the save failed: ' + ((e && e.message) || 'unknown error'));
     }
     await sleep(1000);
     await chainOrStop(job, 'notices', proceedToRefunds);

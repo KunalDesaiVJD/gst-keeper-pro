@@ -91,6 +91,11 @@ const AllClientsNoticesPage: React.FC = () => {
   const status = params.get('status') || '';
   const typeParam = params.get('type') || '';
   const category = params.get('category') || '';
+  // From the Notices Dashboard calendar's date-click drill-down (matches
+  // Notice Alert's own calendar: clicking a date shows notices issued OR due
+  // that day). YYYY-MM-DD, compared against the date-only prefix of each
+  // ISO timestamp so time-of-day never breaks the match.
+  const dateParam = params.get('date') || '';
   // "Notices & Orders" (editable, gst_notices only) vs "Merged Notices"
   // (Notice Alert's own second tab — every source combined into one
   // chronological, read-only list; confirmed live it's not a flat re-listing
@@ -154,8 +159,9 @@ const AllClientsNoticesPage: React.FC = () => {
     if (filter === 'overdue') list = list.filter((r) => r.due_date && daysUntil(r.due_date) < 0);
     if (filter === 'priority') list = list.filter((r) => r.priority);
     if (filter === 'submitted') list = list.filter((r) => !!r.submission_date || !!r.submission_arn);
+    if (dateParam) list = list.filter((r) => (r.issue_date || '').slice(0, 10) === dateParam || (r.due_date || '').slice(0, 10) === dateParam);
     return list;
-  }, [records, typeParam, category, status, filter]);
+  }, [records, typeParam, category, status, filter, dateParam]);
 
   const table: ReportTable = {
     title: 'Notices — All Clients',
@@ -163,7 +169,8 @@ const AllClientsNoticesPage: React.FC = () => {
       `${filtered.length} record${filtered.length === 1 ? '' : 's'}` +
       (FILTER_LABELS[filter] ? `, ${FILTER_LABELS[filter]}` : '') +
       (status ? `, status ${status}` : '') +
-      (category ? `, ${category}` : ''),
+      (category ? `, ${category}` : '') +
+      (dateParam ? `, issued/due on ${dateParam}` : ''),
     headers: [
       'GSTIN', 'Trade Name', 'Reference No.', 'Case ID', 'Type', 'Description', 'Issue Date', 'Due Date', 'Extended Due Date',
       'Status', 'Priority', 'Reply Ref No.', 'Reply Date', 'Order No.', 'Order Date', 'Submission ARN', 'Submission Date',
