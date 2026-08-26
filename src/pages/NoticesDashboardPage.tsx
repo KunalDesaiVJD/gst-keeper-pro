@@ -22,6 +22,8 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import BulkAddClientsDialog, { downloadClientImportTemplate } from '@/components/clients/BulkAddClientsDialog';
@@ -29,7 +31,7 @@ import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescript
 import {
   Bell, CalendarClock, History, Building2, FolderOpen, AlertTriangle, Flag, Loader2,
   UserPlus, Upload, Download, RefreshCw, Pencil, ChevronLeft, ChevronRight,
-  LayoutDashboard, Send, FileBarChart2,
+  LayoutDashboard, Send, FileBarChart2, Search,
 } from 'lucide-react';
 
 interface NoticeRow {
@@ -114,6 +116,27 @@ const NoticesDashboardPage: React.FC = () => {
   // Company panel — mirrors Notice Alert's mini client list + onboarding shortcuts.
   const [miniClients, setMiniClients] = useState<MiniClient[]>([]);
   const canManageClients = canAddEditClients();
+
+  // The top-right "Company" button — confirmed live against Notice Alert
+  // (2026-08-26): it opens a lightweight "Search Company" picker, NOT the
+  // full Company List page. That page (/notices-company-list) is what their
+  // "View All" link opens instead — this app had those two swapped.
+  const [searchCompanyOpen, setSearchCompanyOpen] = useState(false);
+  const [searchCompanyClients, setSearchCompanyClients] = useState<MiniClient[]>([]);
+  const [companySearch, setCompanySearch] = useState('');
+  const openSearchCompany = () => {
+    setSearchCompanyOpen(true);
+    if (searchCompanyClients.length === 0) {
+      supabase.from('clients').select('id, name, gstin').order('name').then(({ data }) => {
+        setSearchCompanyClients((data || []) as MiniClient[]);
+      });
+    }
+  };
+  const filteredSearchCompanyClients = searchCompanyClients.filter((c) => {
+    const q = companySearch.trim().toLowerCase();
+    if (!q) return true;
+    return c.name.toLowerCase().includes(q) || (c.gstin || '').toLowerCase().includes(q);
+  });
 
   // Extension handshake for "Sync All", same ping/pong pattern ReportsPage uses
   // for its per-client "Pull" buttons.
@@ -368,10 +391,10 @@ const NoticesDashboardPage: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        {/* Matches Notice Alert's top-right "Company" button, which opens its
-            own full "View Company List" page (filters, bulk actions, sync
-            history) instead of the mini list below. */}
-        <Button size="sm" variant="outline" className="h-8 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={() => navigate('/notices-company-list')}>
+        {/* Matches Notice Alert's top-right "Company" button exactly: a
+            lightweight search picker, not the full Company List page (that's
+            "View All" below, on the Company panel). */}
+        <Button size="sm" variant="outline" className="h-8 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={openSearchCompany}>
           <Building2 className="mr-1.5 h-3.5 w-3.5" /> Company
         </Button>
       </div>
@@ -487,7 +510,7 @@ const NoticesDashboardPage: React.FC = () => {
               </Table>
             </div>
             <div className="shrink-0 text-right">
-              <Link to="/clients" className="text-[11px] font-medium text-primary hover:underline">View All</Link>
+              <Link to="/notices-company-list" className="text-[11px] font-medium text-primary hover:underline">View All</Link>
             </div>
           </CardContent>
         </Card>
@@ -615,6 +638,55 @@ const NoticesDashboardPage: React.FC = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* "Company" button's picker — search-only, matches Notice Alert's own
+          "Search Company" modal (no bulk actions here, that's /notices-company-list). */}
+      <Dialog open={searchCompanyOpen} onOpenChange={setSearchCompanyOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Search Company</DialogTitle>
+          </DialogHeader>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              autoFocus
+              value={companySearch}
+              onChange={(e) => setCompanySearch(e.target.value)}
+              placeholder="Search by GSTIN or Trade Name..."
+              className="pl-8"
+            />
+          </div>
+          <div className="max-h-[50vh] overflow-auto rounded-md border">
+            <Table>
+              <TableHeader className="sticky top-0 bg-background">
+                <TableRow>
+                  <TableHead className="text-xs">GSTIN</TableHead>
+                  <TableHead className="text-xs">Trade Name</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {searchCompanyClients.length === 0 ? (
+                  <TableRow><TableCell colSpan={2} className="py-6 text-center"><Loader2 className="mx-auto h-4 w-4 animate-spin text-muted-foreground" /></TableCell></TableRow>
+                ) : filteredSearchCompanyClients.length === 0 ? (
+                  <TableRow><TableCell colSpan={2} className="py-6 text-center text-xs text-muted-foreground">No companies match.</TableCell></TableRow>
+                ) : (
+                  filteredSearchCompanyClients.map((c) => (
+                    <TableRow key={c.id}>
+                      <TableCell className="text-xs">
+                        <Link to={`/edit-client/${c.id}`} className="text-primary hover:underline" onClick={() => setSearchCompanyOpen(false)}>{c.gstin}</Link>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{c.name}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSearchCompanyOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
