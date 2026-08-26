@@ -6308,6 +6308,51 @@ export type Database = {
         }
         Relationships: []
       }
+      staff_task_reminders: {
+        Row: {
+          allocated_to: string
+          client: string
+          created_at: string
+          deadline: string | null
+          id: string
+          is_done: boolean
+          received_from: string
+          reminder_frequency: string
+          sort_order: number
+          task: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          allocated_to?: string
+          client?: string
+          created_at?: string
+          deadline?: string | null
+          id?: string
+          is_done?: boolean
+          received_from?: string
+          reminder_frequency?: string
+          sort_order?: number
+          task?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          allocated_to?: string
+          client?: string
+          created_at?: string
+          deadline?: string | null
+          id?: string
+          is_done?: boolean
+          received_from?: string
+          reminder_frequency?: string
+          sort_order?: number
+          task?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       suspended_reco: {
         Row: {
           client_id: string

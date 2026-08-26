@@ -15,13 +15,15 @@ import {
   ChevronDown,
   ChevronUp,
   LayoutDashboard,
-  Target
+  Target,
+  ListTodo
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import ClientManagementSection from './ClientManagementSection';
 import UserManagementSection from './UserManagementSection';
 import PasswordResetRequestsSection from './PasswordResetRequestsSection';
 import TargetDueAlertDialog from './TargetDueAlertDialog';
+import TaskReminderDialog from './TaskReminderDialog';
 import { ReturnType } from '@/types';
 import { generateFilingRecords, DISPLAY_RETURN_TYPES } from '@/lib/filingRecords';
 import { SchemeHistoryEntry } from '@/utils/schemeResolver';
@@ -82,6 +84,9 @@ const StaffDashboard: React.FC = () => {
   // Target Due Today alert state
   const [showDueAlert, setShowDueAlert] = useState(false);
   const [dueBreakdown, setDueBreakdown] = useState<ReturnBreakdown[]>([]);
+
+  // Task Reminder dialog — private per staff member (see TaskReminderDialog).
+  const [showTaskReminder, setShowTaskReminder] = useState(false);
 
   const generateMonths = useCallback(() => {
     const monthsSet = new Set<string>();
@@ -314,7 +319,11 @@ const StaffDashboard: React.FC = () => {
         subtitle="Welcome back! Here's your overview."
         icon={<LayoutDashboard className="h-6 w-6" />}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            <Button variant="outline" size="sm" onClick={() => setShowTaskReminder(true)}>
+              <ListTodo className="h-4 w-4 mr-1.5" />
+              Task Reminder
+            </Button>
             <Calendar className="h-5 w-5 text-muted-foreground" />
             <div>
               <p className="text-[10px] text-muted-foreground mb-0.5">Return Period</p>
@@ -330,6 +339,9 @@ const StaffDashboard: React.FC = () => {
           </div>
         }
       />
+      {user && (
+        <TaskReminderDialog open={showTaskReminder} onOpenChange={setShowTaskReminder} userId={user.id} />
+      )}
 
       <PasswordResetRequestsSection />
       <Card>
