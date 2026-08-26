@@ -121,7 +121,15 @@ const StaffDashboard: React.FC = () => {
     try {
       const { data: clientData, count: clientCount } = await supabase
         .from('clients')
-        .select('id, selected_returns, registration_date, cancellation_date, registration_cancellation_date, registration_type, target_date_group1, target_date_group2', { count: 'exact' });
+        .select('id, selected_returns, registration_date, cancellation_date, registration_cancellation_date, registration_type, target_date_group1, target_date_group2, inactive_at_hand', { count: 'exact' });
+
+      // "Inactive at hand" clients deliberately still count toward Total
+      // Clients (a headcount, independent of whether returns are being
+      // actively worked) but must NOT count toward anything filing-related
+      // below — Pending Filings, Target Due/Overdue, and the breakdown table
+      // all need to match the Filing Status page, which already excludes
+      // them via generateFilingRecords' own isClientVisibleForMonth check.
+      const inactiveClientIds = new Set((clientData || []).filter((c: any) => c.inactive_at_hand).map((c: any) => c.id));
 
       const { data: filingData } = await supabase
         .from('filing_status')
@@ -148,6 +156,12 @@ const StaffDashboard: React.FC = () => {
         };
       });
 
+      // Deliberately does NOT check inactive_at_hand, unlike the shared
+      // isClientVisibleForMonth in filingRecords.ts — Total Clients is meant
+      // to stay a plain headcount (registered and not cancelled this period)
+      // regardless of whether returns are actively being worked on, so
+      // "Inactive at hand" clients still count here even though they're
+      // excluded from every filing-related tile below.
       const isClientVisibleForMonth = (client: any): boolean => {
         const [monthStr, yearStr] = selectedMonth.split('/');
         const periodDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1);
@@ -177,12 +191,14 @@ const StaffDashboard: React.FC = () => {
       };
 
       const targetDueToday = filingData?.filter(f => {
+        if (inactiveClientIds.has(f.client_id)) return false;
         const td = getAuthoritativeTargetDate(f);
         return td !== null && td <= todayDate && f.status !== 'Filed';
       })?.length || 0;
 
       // Calculate return-wise breakdown for due targets (today + overdue)
       const todayDueFilings = filingData?.filter(f => {
+        if (inactiveClientIds.has(f.client_id)) return false;
         const td = getAuthoritativeTargetDate(f);
         return td !== null && td <= todayDate && f.status !== 'Filed';
       }) || [];
