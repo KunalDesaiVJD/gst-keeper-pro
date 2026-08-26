@@ -13,8 +13,8 @@ import { PasteFromExcelDialog } from './PasteFromExcelDialog';
 
 const DIRECTIONS = ['claimed_in_next_fy', 'claimed_from_prev_fy', 'turnover_declared_next_fy', 'turnover_reduced_next_fy'] as const;
 const DIRECTION_LABEL: Record<string, string> = {
-  claimed_in_next_fy: 'ITC claimed in next FY (Clause 8C)', claimed_from_prev_fy: 'ITC claimed from previous FY',
-  turnover_declared_next_fy: 'Turnover declared in next FY (Clause 10)', turnover_reduced_next_fy: 'Turnover reduced in next FY (Clause 11)',
+  claimed_in_next_fy: 'ITC claimed in next FY', claimed_from_prev_fy: 'ITC claimed from previous FY',
+  turnover_declared_next_fy: 'Turnover declared in next FY', turnover_reduced_next_fy: 'Turnover reduced in next FY',
 };
 const CLAUSES = ['8C', '10', '11', '12', '13'] as const;
 

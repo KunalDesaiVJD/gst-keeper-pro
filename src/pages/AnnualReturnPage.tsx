@@ -86,6 +86,7 @@ const AnnualReturnPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dutiesVersion, setDutiesVersion] = useState(0);
+  const [reconOpenCount, setReconOpenCount] = useState(0);
 
   const isStaff = isStaffRole();
   const selectedClient = clients.find((c) => c.id === selectedClientId) || null;
@@ -122,6 +123,21 @@ const AnnualReturnPage: React.FC = () => {
   }, [selectedClientId, financialYear]);
 
   useEffect(() => { loadPeriod(); }, [loadPeriod]);
+
+  // Powers the Reconciliation tab's badge — same "unexplained gap" count
+  // ReconciliationCard computes for its own banner, fetched here too so the
+  // tab bar can show it before staff ever click into that tab.
+  const loadReconOpenCount = useCallback(async () => {
+    if (!selectedClientId || !financialYear) { setReconOpenCount(0); return; }
+    try {
+      const lines = await fetchReconciliationLines(selectedClientId, financialYear, isNoItcBuilder);
+      setReconOpenCount(lines.filter((l) => l.reasonRequired && !l.reason.trim()).length);
+    } catch {
+      setReconOpenCount(0);
+    }
+  }, [selectedClientId, financialYear, isNoItcBuilder]);
+
+  useEffect(() => { loadReconOpenCount(); }, [loadReconOpenCount]);
 
   const updateStatus = async (status: PeriodStatus) => {
     if (!selectedClientId) return;
@@ -199,20 +215,32 @@ const AnnualReturnPage: React.FC = () => {
         </CardContent></Card>
       ) : (
         <Tabs defaultValue="status">
-          <TabsList>
-            <TabsTrigger value="status">Status</TabsTrigger>
-            <TabsTrigger value="books">Books Input</TabsTrigger>
-            <TabsTrigger value="duties">Duties &amp; Taxes</TabsTrigger>
-            <TabsTrigger value="rcm">RCM</TabsTrigger>
-            <TabsTrigger value="gstr9input">GSTR 9-Input</TabsTrigger>
-            <TabsTrigger value="gstr9output">GSTR 9-Output</TabsTrigger>
-            <TabsTrigger value="gstr9c">GSTR 9C</TabsTrigger>
-            <TabsTrigger value="annexure">Annexure</TabsTrigger>
-            <TabsTrigger value="gstr9form">GSTR-9</TabsTrigger>
-            <TabsTrigger value="notice">Notice Format</TabsTrigger>
-            <TabsTrigger value="portal">Portal Capture</TabsTrigger>
-            <TabsTrigger value="reconciliation">Reconciliation</TabsTrigger>
-          </TabsList>
+          <div className="overflow-x-auto">
+            <TabsList>
+              <TabsTrigger value="status">Status</TabsTrigger>
+              <TabsTrigger value="books">Books Input</TabsTrigger>
+              <TabsTrigger value="duties">Duties &amp; Taxes</TabsTrigger>
+              <TabsTrigger value="rcm">RCM</TabsTrigger>
+              <TabsTrigger value="gstr9input">GSTR 9-Input</TabsTrigger>
+              <TabsTrigger value="gstr9output">GSTR 9-Output</TabsTrigger>
+              <TabsTrigger value="gstr9c">GSTR 9C</TabsTrigger>
+              <TabsTrigger value="annexure">Annexure</TabsTrigger>
+              <TabsTrigger value="gstr9form">GSTR-9</TabsTrigger>
+              <TabsTrigger value="notice">Notice Format</TabsTrigger>
+              <TabsTrigger value="portal">Portal Capture</TabsTrigger>
+              <TabsTrigger value="reconciliation" className="gap-1.5">
+                Reconciliation
+                {reconOpenCount > 0 && (
+                  <Badge
+                    variant="destructive"
+                    className="h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-none"
+                  >
+                    {reconOpenCount}
+                  </Badge>
+                )}
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
           <TabsContent value="status" className="space-y-4">
             {isNoItcBuilder && (

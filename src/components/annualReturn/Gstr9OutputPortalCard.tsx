@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, RefreshCw, Save } from 'lucide-react';
+import { CheckCircle2, Loader2, RefreshCw, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { rollupGstr1Categories, Gstr1Category } from '@/lib/gstr1CategoryRollup';
@@ -36,6 +36,7 @@ export const Gstr9OutputPortalCard: React.FC<Props> = ({ clientId, financialYear
   const [dirty, setDirty] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [rolling, setRolling] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [saving, setSaving] = useState(false);
   const [completeness, setCompleteness] = useState<{ present: number; total: number } | null>(null);
 
@@ -55,6 +56,26 @@ export const Gstr9OutputPortalCard: React.FC<Props> = ({ clientId, financialYear
   };
 
   useEffect(() => { load(); }, [clientId, financialYear]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Read-only: checks how many months of GSTR-1 data are present and updates
+  // the completeness state/toast, but never touches the database — the only
+  // way to see completeness without triggering the recompute-and-overwrite.
+  const checkCompleteness = async () => {
+    setChecking(true);
+    try {
+      const result = await rollupGstr1Categories(clientId, financialYear);
+      setCompleteness({ present: result.monthsPresent, total: result.monthsTotal });
+      if (!result.complete || !result.categories) {
+        toast.warning(`Only ${result.monthsPresent} of ${result.monthsTotal} months have GSTR-1 data — can't auto-populate until all months are present. Enter figures manually below for now.`);
+      } else {
+        toast.success(`All ${result.monthsTotal} months of GSTR-1 data are present — ready to recompute.`);
+      }
+    } catch (err) {
+      toast.error('Completeness check failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setChecking(false);
+    }
+  };
 
   const recompute = async () => {
     setRolling(true);
@@ -151,10 +172,13 @@ export const Gstr9OutputPortalCard: React.FC<Props> = ({ clientId, financialYear
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={recompute} disabled={rolling}>
+            <Button variant="outline" size="sm" onClick={checkCompleteness} disabled={checking || rolling}>
+              {checking ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />} Check completeness
+            </Button>
+            <Button variant="outline" size="sm" onClick={recompute} disabled={rolling || checking}>
               {rolling ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />} Recompute from GSTR-1
             </Button>
-            <Button size="sm" onClick={saveAll} disabled={saving || dirtyCategories.length === 0}>
+            <Button size="sm" onClick={saveAll} disabled={saving || rolling || dirtyCategories.length === 0}>
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />} Save changes{dirtyCategories.length > 0 ? ` (${dirtyCategories.length})` : ''}
             </Button>
           </div>
@@ -178,10 +202,10 @@ export const Gstr9OutputPortalCard: React.FC<Props> = ({ clientId, financialYear
               return (
                 <TableRow key={c}>
                   <TableCell className="font-medium">{CATEGORY_LABEL[c]}</TableCell>
-                  <TableCell><Input type="number" className="text-right h-8" value={r.taxable_value} onChange={(e) => update(c, 'taxable_value', e.target.value)} disabled={saving} /></TableCell>
-                  <TableCell><Input type="number" className="text-right h-8" value={r.igst} onChange={(e) => update(c, 'igst', e.target.value)} disabled={saving} /></TableCell>
-                  <TableCell><Input type="number" className="text-right h-8" value={r.cgst} onChange={(e) => update(c, 'cgst', e.target.value)} disabled={saving} /></TableCell>
-                  <TableCell><Input type="number" className="text-right h-8" value={r.sgst} onChange={(e) => update(c, 'sgst', e.target.value)} disabled={saving} /></TableCell>
+                  <TableCell><Input type="number" className="text-right h-8" value={r.taxable_value} onChange={(e) => update(c, 'taxable_value', e.target.value)} disabled={saving || rolling} /></TableCell>
+                  <TableCell><Input type="number" className="text-right h-8" value={r.igst} onChange={(e) => update(c, 'igst', e.target.value)} disabled={saving || rolling} /></TableCell>
+                  <TableCell><Input type="number" className="text-right h-8" value={r.cgst} onChange={(e) => update(c, 'cgst', e.target.value)} disabled={saving || rolling} /></TableCell>
+                  <TableCell><Input type="number" className="text-right h-8" value={r.sgst} onChange={(e) => update(c, 'sgst', e.target.value)} disabled={saving || rolling} /></TableCell>
                   <TableCell><Badge variant={r.source === 'auto' ? 'success' : 'outline'}>{r.source === 'auto' ? 'Auto' : 'Manual'}</Badge></TableCell>
                 </TableRow>
               );

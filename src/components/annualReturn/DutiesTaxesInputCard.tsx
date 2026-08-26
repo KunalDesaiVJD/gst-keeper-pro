@@ -21,7 +21,6 @@ const NUMERIC_KEYS = [
   'suspended_reversed_180d_igst', 'suspended_reversed_180d_cgst', 'suspended_reversed_180d_sgst',
   'suspended_reclaim_igst', 'suspended_reclaim_cgst', 'suspended_reclaim_sgst',
   'suspended_reclaim_180d_igst', 'suspended_reclaim_180d_cgst', 'suspended_reclaim_180d_sgst',
-  'as_per_3b_igst', 'as_per_3b_cgst', 'as_per_3b_sgst',
   'other_adjustment_igst', 'other_adjustment_cgst', 'other_adjustment_sgst',
 ] as const;
 type NumericKey = typeof NUMERIC_KEYS[number];
@@ -32,6 +31,9 @@ interface MonthRow {
   hasEntry: boolean;
 }
 type FullMonthRow = MonthRow & Record<NumericKey, number>;
+
+interface Portal3b { igst: number; cgst: number; sgst: number; }
+const zeroPortal3b: Portal3b = { igst: 0, cgst: 0, sgst: 0 };
 
 const emptyMonth = (month: string): FullMonthRow => {
   const base = { month, other_adjustment_reason: '', hasEntry: false } as FullMonthRow;
@@ -48,7 +50,7 @@ const netPurchase = (r: FullMonthRow) =>
   - (r.suspended_reversed_180d_igst + r.suspended_reversed_180d_cgst + r.suspended_reversed_180d_sgst)
   + (r.suspended_reclaim_igst + r.suspended_reclaim_cgst + r.suspended_reclaim_sgst)
   + (r.suspended_reclaim_180d_igst + r.suspended_reclaim_180d_cgst + r.suspended_reclaim_180d_sgst);
-const as3b = (r: FullMonthRow) => r.as_per_3b_igst + r.as_per_3b_cgst + r.as_per_3b_sgst;
+const as3bTotal = (p: Portal3b) => p.igst + p.cgst + p.sgst;
 
 const FIELD_GROUPS: { title: string; keys: NumericKey[] }[] = [
   { title: 'Purchase', keys: ['purchase_igst', 'purchase_cgst', 'purchase_sgst'] },
@@ -57,7 +59,6 @@ const FIELD_GROUPS: { title: string; keys: NumericKey[] }[] = [
   { title: 'Suspended ITC (Reversed) — 180 days', keys: ['suspended_reversed_180d_igst', 'suspended_reversed_180d_cgst', 'suspended_reversed_180d_sgst'] },
   { title: 'Suspended ITC (Reclaim)', keys: ['suspended_reclaim_igst', 'suspended_reclaim_cgst', 'suspended_reclaim_sgst'] },
   { title: 'Suspended ITC (Reclaim) — 180 days', keys: ['suspended_reclaim_180d_igst', 'suspended_reclaim_180d_cgst', 'suspended_reclaim_180d_sgst'] },
-  { title: 'As per 3B', keys: ['as_per_3b_igst', 'as_per_3b_cgst', 'as_per_3b_sgst'] },
 ];
 const OTHER_ADJUSTMENT_KEYS = ['other_adjustment_igst', 'other_adjustment_cgst', 'other_adjustment_sgst'] as const;
 const TAX_LABEL: Record<string, string> = { igst: 'IGST', cgst: 'CGST', sgst: 'SGST' };
@@ -75,10 +76,18 @@ interface Props { clientId: string; financialYear: string; onSaved?: () => void;
  * row (including the synthetic Last Year Effect row) can be expanded in
  * place with no modal, several months can be open and edited at once, and
  * every dirty month is committed in one batch upsert.
+ *
+ * "As per 3B" (27 Aug 2026 UX audit) is no longer a manually-retyped field
+ * here — it's the same GSTR-3B ITC-claimed figure already captured once on
+ * Portal Capture, read live from gst_filed_returns and shown read-only.
+ * Confirmed genuine duplication (nothing besides this card's own diff ever
+ * read the old as_per_3b_* columns — Gstr9InputView's own "As per 3B" row
+ * already sources from Portal Capture directly, not from here).
  */
 export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear, onSaved }) => {
   const months = [LAST_YEAR_EFFECT, ...monthsForFY(financialYear)];
   const [data, setData] = useState<Record<string, FullMonthRow>>({});
+  const [portal3b, setPortal3b] = useState<Record<string, Portal3b>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -86,13 +95,16 @@ export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear,
   const [pasteOpen, setPasteOpen] = useState(false);
 
   const load = async () => {
-    if (!clientId || !financialYear) { setData({}); setLoading(false); return; }
+    if (!clientId || !financialYear) { setData({}); setPortal3b({}); setLoading(false); return; }
     setLoading(true);
-    const { data: rows, error } = await supabase.from('duties_taxes_input_monthly').select('*').eq('client_id', clientId).eq('financial_year', financialYear).in('month', months);
-    if (error) { toast.error('Could not load Duties & Taxes-Input: ' + error.message); setLoading(false); return; }
+    const [rowsRes, portalRes] = await Promise.all([
+      supabase.from('duties_taxes_input_monthly').select('*').eq('client_id', clientId).eq('financial_year', financialYear).in('month', months),
+      supabase.from('gst_filed_returns').select('period_month, summary').eq('client_id', clientId).eq('return_type', 'GSTR-3B').in('period_month', months),
+    ]);
+    if (rowsRes.error) { toast.error('Could not load Duties & Taxes-Input: ' + rowsRes.error.message); setLoading(false); return; }
     const next: Record<string, FullMonthRow> = {};
     months.forEach((m) => { next[m] = emptyMonth(m); });
-    (rows || []).forEach((r: Record<string, unknown>) => {
+    (rowsRes.data || []).forEach((r: Record<string, unknown>) => {
       const row = emptyMonth(r.month as string);
       NUMERIC_KEYS.forEach((k) => { row[k] = Number(r[k]) || 0; });
       row.other_adjustment_reason = (r.other_adjustment_reason as string) || '';
@@ -100,6 +112,17 @@ export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear,
       next[r.month as string] = row;
     });
     setData(next);
+    if (portalRes.error) {
+      toast.error('Could not load "As per 3B" from Portal Capture: ' + portalRes.error.message);
+    } else {
+      const p3b: Record<string, Portal3b> = {};
+      (portalRes.data || []).forEach((r: { period_month: string; summary: Record<string, number> | null }) => {
+        const s = r.summary || {};
+        p3b[r.period_month] = { igst: Number(s.itc_igst) || 0, cgst: Number(s.itc_cgst) || 0, sgst: Number(s.itc_sgst) || 0 };
+      });
+      // "Last Year Effect" is a books-only adjustment row — the portal has no month for it, always zero.
+      setPortal3b(p3b);
+    }
     setDirtyMonths(new Set());
     setLoading(false);
   };
@@ -172,7 +195,8 @@ export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear,
       NUMERIC_KEYS.forEach((key, idx) => {
         updateField(matchedMonth, key, String(parseAmount(row[idx + 1])));
       });
-      if (row[25] && row[25].trim() !== '') updateReason(matchedMonth, row[25].trim());
+      const reasonIdx = NUMERIC_KEYS.length + 1;
+      if (row[reasonIdx] && row[reasonIdx].trim() !== '') updateReason(matchedMonth, row[reasonIdx].trim());
       imported += 1;
     });
 
@@ -220,8 +244,9 @@ export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear,
           <TableBody>
             {months.map((m) => {
               const r = data[m] || emptyMonth(m);
+              const p3b = portal3b[m] || zeroPortal3b;
               const net = netPurchase(r);
-              const asFiled = as3b(r);
+              const asFiled = as3bTotal(p3b);
               const diff = net - asFiled;
               const matched = Math.abs(diff) <= TOLERANCE;
               const isOpen = expanded.has(m);
@@ -262,6 +287,19 @@ export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear,
                               ))}
                             </div>
                           ))}
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">As per 3B</span>
+                              <Badge variant="outline" className="text-[10px]">Portal</Badge>
+                            </div>
+                            {(['igst', 'cgst', 'sgst'] as const).map((h) => (
+                              <div key={h} className="flex items-center justify-between gap-3">
+                                <span className="text-sm text-muted-foreground">{h.toUpperCase()}</span>
+                                <span className="text-sm tabular-nums h-8 flex items-center px-1">{fmt(p3b[h])}</span>
+                              </div>
+                            ))}
+                            <p className="text-xs text-muted-foreground pt-1">{isAdjustmentRow ? 'No portal period for this row.' : 'From Portal Capture — not editable here.'}</p>
+                          </div>
                           <div className="space-y-1.5">
                             <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Other adjustments (Dr side)</div>
                             {OTHER_ADJUSTMENT_KEYS.map((key) => (
@@ -308,7 +346,6 @@ export const DutiesTaxesInputCard: React.FC<Props> = ({ clientId, financialYear,
           'Suspended Reversed 180d IGST', 'Suspended Reversed 180d CGST', 'Suspended Reversed 180d SGST',
           'Suspended Reclaim IGST', 'Suspended Reclaim CGST', 'Suspended Reclaim SGST',
           'Suspended Reclaim 180d IGST', 'Suspended Reclaim 180d CGST', 'Suspended Reclaim 180d SGST',
-          'As per 3B IGST', 'As per 3B CGST', 'As per 3B SGST',
           'Other Adjustment IGST', 'Other Adjustment CGST', 'Other Adjustment SGST',
           'Other Adjustment Reason',
         ]}

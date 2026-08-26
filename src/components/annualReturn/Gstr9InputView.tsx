@@ -12,11 +12,11 @@ const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 
 
 interface Props { clientId: string; financialYear: string; }
 
-const Row: React.FC<{ label: string; value: number; tag?: string; tagVariant?: 'success' | 'warning' | 'secondary' | 'outline'; strong?: boolean }> = ({ label, value, tag, tagVariant = 'secondary', strong }) => (
+const Row: React.FC<{ label: string; value: number; tag?: string; tagVariant?: 'success' | 'warning' | 'secondary' | 'outline'; tagTitle?: string; strong?: boolean }> = ({ label, value, tag, tagVariant = 'secondary', tagTitle, strong }) => (
   <div className="flex items-center justify-between gap-3 py-2 border-b last:border-b-0">
     <div className="flex items-center gap-2">
       <span className={strong ? 'text-sm font-semibold' : 'text-sm text-muted-foreground'}>{label}</span>
-      {tag && <Badge variant={tagVariant} className="text-[10px]">{tag}</Badge>}
+      {tag && <Badge variant={tagVariant} className="text-[10px]" title={tagTitle}>{tag}</Badge>}
     </div>
     <span className={`tabular-nums ${strong ? 'text-base font-semibold' : 'text-sm'}`}>{fmt(value)}</span>
   </div>
@@ -87,17 +87,17 @@ export const Gstr9InputView: React.FC<Props> = ({ clientId, financialYear }) => 
           <Row label="Capital Goods" value={capitalGoods} />
           <Row label="RCM" value={rcm} />
           <Row label="ITC Reclaim" value={reclaim} />
-          <Row label="As per 3B" value={asPer3b} tag="Portal" tagVariant="outline" />
+          <Row label="As per 3B" value={asPer3b} tag="Portal" tagVariant="outline" tagTitle="See the Portal Capture tab" />
           <Row label="Total (matches Table 6O)" value={total6O} strong tag={Math.abs(diffVs3b) <= TOLERANCE ? 'Matched' : `Diff ${fmt(diffVs3b)}`} tagVariant={Math.abs(diffVs3b) <= TOLERANCE ? 'success' : 'warning'} />
         </div>
         <div>
           <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Reversals</div>
           <Row label="Other Reversal (H1 — Duties &amp; Taxes suspended)" value={otherReversal} />
-          <Row label="Rule-wise (37/37A/38/39/42/43) + s.17(5)" value={ruleReversal} tag="Table 7 tab" tagVariant="outline" />
+          <Row label="Rule-wise (37/37A/38/39/42/43) + s.17(5)" value={ruleReversal} tag="Table 7 tab" tagVariant="outline" tagTitle="See the GSTR 9-Input tab's Table 7 section" />
           <Row label="Total ITC Reversed" value={reversal} />
           <Row label="Total (matches Table 7J)" value={total7J} strong />
         </div>
-        <Row label="As per books (PL-Input total)" value={asPerBook} tag="Books" tagVariant="outline" />
+        <Row label="As per books (PL-Input total)" value={asPerBook} tag="Books" tagVariant="outline" tagTitle="See the Books Input tab (PL-Input)" />
       </CardContent>
     </Card>
   );

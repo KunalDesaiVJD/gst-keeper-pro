@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
 import { Loader2, Inbox } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -96,7 +97,9 @@ export const Gstr9OutputDiffView: React.FC<Props> = ({ clientId, financialYear }
                   <TableCell className="font-medium">{CATEGORY_LABEL[c]}</TableCell>
                   <TableCell className="text-right tabular-nums">{fmt(b)}</TableCell>
                   <TableCell className="text-right tabular-nums">{fmt(p)}</TableCell>
-                  <TableCell className={`text-right tabular-nums font-semibold ${matched ? 'text-success' : 'text-destructive'}`}>{fmt(diff)}</TableCell>
+                  <TableCell className="text-right">
+                    <Badge variant={matched ? 'success' : 'destructive'}>{matched ? 'Matched' : `Diff ${fmt(diff)}`}</Badge>
+                  </TableCell>
                 </TableRow>
               );
             })}
@@ -104,7 +107,11 @@ export const Gstr9OutputDiffView: React.FC<Props> = ({ clientId, financialYear }
               <TableCell>Total</TableCell>
               <TableCell className="text-right tabular-nums">{fmt(totalBooks)}</TableCell>
               <TableCell className="text-right tabular-nums">{fmt(totalPortal)}</TableCell>
-              <TableCell className={`text-right tabular-nums ${Math.abs(totalBooks - totalPortal) <= TOLERANCE ? 'text-success' : 'text-destructive'}`}>{fmt(totalBooks - totalPortal)}</TableCell>
+              <TableCell className="text-right">
+                <Badge variant={Math.abs(totalBooks - totalPortal) <= TOLERANCE ? 'success' : 'destructive'}>
+                  {Math.abs(totalBooks - totalPortal) <= TOLERANCE ? 'Matched' : `Diff ${fmt(totalBooks - totalPortal)}`}
+                </Badge>
+              </TableCell>
             </TableRow>
           </TableBody>
         </Table>

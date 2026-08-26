@@ -16,7 +16,6 @@ const TOLERANCE = 10;
 const NUMERIC_KEYS = [
   'sales_igst', 'sales_cgst', 'sales_sgst',
   'credit_note_igst', 'credit_note_cgst', 'credit_note_sgst',
-  'as_per_3b_igst', 'as_per_3b_cgst', 'as_per_3b_sgst',
   'other_adjustment_igst', 'other_adjustment_cgst', 'other_adjustment_sgst',
 ] as const;
 type NumericKey = typeof NUMERIC_KEYS[number];
@@ -25,35 +24,35 @@ interface MonthRow {
   month: string;
   sales_igst: number; sales_cgst: number; sales_sgst: number;
   credit_note_igst: number; credit_note_cgst: number; credit_note_sgst: number;
-  as_per_3b_igst: number; as_per_3b_cgst: number; as_per_3b_sgst: number;
   other_adjustment_igst: number; other_adjustment_cgst: number; other_adjustment_sgst: number;
   other_adjustment_reason: string;
   hasEntry: boolean;
 }
 
+interface Portal3b { igst: number; cgst: number; sgst: number; }
+const zeroPortal3b: Portal3b = { igst: 0, cgst: 0, sgst: 0 };
+
 const emptyMonth = (month: string): MonthRow => ({
   month, sales_igst: 0, sales_cgst: 0, sales_sgst: 0, credit_note_igst: 0, credit_note_cgst: 0, credit_note_sgst: 0,
-  as_per_3b_igst: 0, as_per_3b_cgst: 0, as_per_3b_sgst: 0, other_adjustment_igst: 0, other_adjustment_cgst: 0, other_adjustment_sgst: 0,
+  other_adjustment_igst: 0, other_adjustment_cgst: 0, other_adjustment_sgst: 0,
   other_adjustment_reason: '', hasEntry: false,
 });
 
 const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 const num = (v: string) => (v === '' ? 0 : Number(v));
 const netSales = (r: MonthRow) => (r.sales_igst + r.sales_cgst + r.sales_sgst) - (r.credit_note_igst + r.credit_note_cgst + r.credit_note_sgst);
-const as3b = (r: MonthRow) => r.as_per_3b_igst + r.as_per_3b_cgst + r.as_per_3b_sgst;
+const as3bTotal = (p: Portal3b) => p.igst + p.cgst + p.sgst;
 
 interface Props { clientId: string; financialYear: string; onSaved?: () => void; }
 
 const FIELD_GROUPS: { title: string; keys: NumericKey[] }[] = [
   { title: 'Sales', keys: ['sales_igst', 'sales_cgst', 'sales_sgst'] },
   { title: 'Credit Note', keys: ['credit_note_igst', 'credit_note_cgst', 'credit_note_sgst'] },
-  { title: 'As per 3B', keys: ['as_per_3b_igst', 'as_per_3b_cgst', 'as_per_3b_sgst'] },
   { title: 'Other adjustments (Cr side)', keys: ['other_adjustment_igst', 'other_adjustment_cgst', 'other_adjustment_sgst'] },
 ];
 const FIELD_LABEL: Record<NumericKey, string> = {
   sales_igst: 'IGST', sales_cgst: 'CGST', sales_sgst: 'SGST',
   credit_note_igst: 'IGST', credit_note_cgst: 'CGST', credit_note_sgst: 'SGST',
-  as_per_3b_igst: 'IGST', as_per_3b_cgst: 'CGST', as_per_3b_sgst: 'SGST',
   other_adjustment_igst: 'IGST', other_adjustment_cgst: 'CGST', other_adjustment_sgst: 'SGST',
 };
 
@@ -66,10 +65,19 @@ const FIELD_LABEL: Record<NumericKey, string> = {
  * always-editable grid, matching PortalCaptureCard — every month's row can
  * be expanded in place (no modal) and several months can be open and
  * edited at once, all committed with one batch save.
+ *
+ * "As per 3B" (27 Aug 2026 UX audit) is no longer a manually-retyped field
+ * here — it's the same GSTR-3B outward-tax figure already captured once on
+ * Portal Capture, read live from gst_filed_returns and shown read-only.
+ * Retyping it was confirmed genuine duplication (nothing besides this
+ * card's own diff ever read the old as_per_3b_* columns), unlike the
+ * books-vs-portal duplication elsewhere in this module, which is
+ * intentional. Read-only means it can't be dirty/saved from here.
  */
 export const DutiesTaxesOutputCard: React.FC<Props> = ({ clientId, financialYear, onSaved }) => {
   const months = monthsForFY(financialYear);
   const [data, setData] = useState<Record<string, MonthRow>>({});
+  const [portal3b, setPortal3b] = useState<Record<string, Portal3b>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -77,23 +85,35 @@ export const DutiesTaxesOutputCard: React.FC<Props> = ({ clientId, financialYear
   const [pasteOpen, setPasteOpen] = useState(false);
 
   const load = async () => {
-    if (!clientId || !financialYear) { setData({}); setLoading(false); return; }
+    if (!clientId || !financialYear) { setData({}); setPortal3b({}); setLoading(false); return; }
     setLoading(true);
-    const { data: rows, error } = await supabase.from('duties_taxes_output_monthly').select('*').eq('client_id', clientId).eq('financial_year', financialYear).in('month', months);
-    if (error) { toast.error('Could not load Duties & Taxes-Output: ' + error.message); setLoading(false); return; }
+    const [rowsRes, portalRes] = await Promise.all([
+      supabase.from('duties_taxes_output_monthly').select('*').eq('client_id', clientId).eq('financial_year', financialYear).in('month', months),
+      supabase.from('gst_filed_returns').select('period_month, summary').eq('client_id', clientId).eq('return_type', 'GSTR-3B').in('period_month', months),
+    ]);
+    if (rowsRes.error) { toast.error('Could not load Duties & Taxes-Output: ' + rowsRes.error.message); setLoading(false); return; }
     const next: Record<string, MonthRow> = {};
     months.forEach((m) => { next[m] = emptyMonth(m); });
-    (rows || []).forEach((r: Record<string, unknown>) => {
+    (rowsRes.data || []).forEach((r: Record<string, unknown>) => {
       next[r.month as string] = {
         month: r.month as string,
         sales_igst: Number(r.sales_igst), sales_cgst: Number(r.sales_cgst), sales_sgst: Number(r.sales_sgst),
         credit_note_igst: Number(r.credit_note_igst), credit_note_cgst: Number(r.credit_note_cgst), credit_note_sgst: Number(r.credit_note_sgst),
-        as_per_3b_igst: Number(r.as_per_3b_igst), as_per_3b_cgst: Number(r.as_per_3b_cgst), as_per_3b_sgst: Number(r.as_per_3b_sgst),
         other_adjustment_igst: Number(r.other_adjustment_igst), other_adjustment_cgst: Number(r.other_adjustment_cgst), other_adjustment_sgst: Number(r.other_adjustment_sgst),
         other_adjustment_reason: (r.other_adjustment_reason as string) || '', hasEntry: true,
       };
     });
     setData(next);
+    if (portalRes.error) {
+      toast.error('Could not load "As per 3B" from Portal Capture: ' + portalRes.error.message);
+    } else {
+      const p3b: Record<string, Portal3b> = {};
+      (portalRes.data || []).forEach((r: { period_month: string; summary: Record<string, number> | null }) => {
+        const s = r.summary || {};
+        p3b[r.period_month] = { igst: Number(s.outward_igst) || 0, cgst: Number(s.outward_cgst) || 0, sgst: Number(s.outward_sgst) || 0 };
+      });
+      setPortal3b(p3b);
+    }
     setDirtyMonths(new Set());
     setLoading(false);
   };
@@ -169,13 +189,10 @@ export const DutiesTaxesOutputCard: React.FC<Props> = ({ clientId, financialYear
       updateField(matchedMonth, 'credit_note_igst', String(parseAmount(row[4])));
       updateField(matchedMonth, 'credit_note_cgst', String(parseAmount(row[5])));
       updateField(matchedMonth, 'credit_note_sgst', String(parseAmount(row[6])));
-      updateField(matchedMonth, 'as_per_3b_igst', String(parseAmount(row[7])));
-      updateField(matchedMonth, 'as_per_3b_cgst', String(parseAmount(row[8])));
-      updateField(matchedMonth, 'as_per_3b_sgst', String(parseAmount(row[9])));
-      updateField(matchedMonth, 'other_adjustment_igst', String(parseAmount(row[10])));
-      updateField(matchedMonth, 'other_adjustment_cgst', String(parseAmount(row[11])));
-      updateField(matchedMonth, 'other_adjustment_sgst', String(parseAmount(row[12])));
-      if (row[13] && row[13].trim() !== '') updateReason(matchedMonth, row[13].trim());
+      updateField(matchedMonth, 'other_adjustment_igst', String(parseAmount(row[7])));
+      updateField(matchedMonth, 'other_adjustment_cgst', String(parseAmount(row[8])));
+      updateField(matchedMonth, 'other_adjustment_sgst', String(parseAmount(row[9])));
+      if (row[10] && row[10].trim() !== '') updateReason(matchedMonth, row[10].trim());
       imported += 1;
     });
 
@@ -223,8 +240,9 @@ export const DutiesTaxesOutputCard: React.FC<Props> = ({ clientId, financialYear
           <TableBody>
             {months.map((m) => {
               const r = data[m] || emptyMonth(m);
+              const p3b = portal3b[m] || zeroPortal3b;
               const net = netSales(r);
-              const asFiled = as3b(r);
+              const asFiled = as3bTotal(p3b);
               const diff = net - asFiled;
               const matched = Math.abs(diff) <= TOLERANCE;
               const isOpen = expanded.has(m);
@@ -271,6 +289,19 @@ export const DutiesTaxesOutputCard: React.FC<Props> = ({ clientId, financialYear
                               )}
                             </div>
                           ))}
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">As per 3B</span>
+                              <Badge variant="outline" className="text-[10px]">Portal</Badge>
+                            </div>
+                            {(['igst', 'cgst', 'sgst'] as const).map((h) => (
+                              <div key={h} className="flex items-center justify-between gap-3">
+                                <span className="text-sm text-muted-foreground">{h.toUpperCase()}</span>
+                                <span className="text-sm tabular-nums h-8 flex items-center px-1">{fmt(p3b[h])}</span>
+                              </div>
+                            ))}
+                            <p className="text-xs text-muted-foreground pt-1">From Portal Capture — not editable here.</p>
+                          </div>
                         </div>
                         <div className="flex items-center justify-between pt-3 mt-3 border-t text-sm">
                           <span>Diff (Net Sales − As per 3B)</span>
@@ -292,7 +323,6 @@ export const DutiesTaxesOutputCard: React.FC<Props> = ({ clientId, financialYear
         columnLabels={[
           'Month', 'Sales IGST', 'Sales CGST', 'Sales SGST',
           'Credit Note IGST', 'Credit Note CGST', 'Credit Note SGST',
-          'As per 3B IGST', 'As per 3B CGST', 'As per 3B SGST',
           'Other Adjustment IGST', 'Other Adjustment CGST', 'Other Adjustment SGST',
           'Other Adjustment Reason',
         ]}

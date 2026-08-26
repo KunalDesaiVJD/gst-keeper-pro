@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Inbox } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchDutiesTaxesInputAnnual, taxTotal } from '@/lib/annualReturnAggregates';
@@ -52,6 +52,26 @@ export const Gstr9cTable12bView: React.FC<Props> = ({ clientId, financialYear })
 
   const totalValue = Object.values(rows).reduce((a, r) => a + r.value, 0);
   const totalItc = Object.values(rows).reduce((a, r) => a + r.totalItc, 0);
+  const visibleHeads = EXPENSE_HEADS.filter((h) => {
+    const r = rows[h] || { value: 0, totalItc: 0 };
+    return r.value !== 0 || r.totalItc !== 0;
+  });
+  const hiddenCount = EXPENSE_HEADS.length - visibleHeads.length;
+
+  if (visibleHeads.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">GSTR 9C — Table 12B</CardTitle>
+          <CardDescription>ITC by expense head — Purchases net of suspended ITC, matching the sheet.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
+          <Inbox className="h-8 w-8" />
+          <p className="text-sm">No PL-Input entries for this client/year yet.</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -60,6 +80,10 @@ export const Gstr9cTable12bView: React.FC<Props> = ({ clientId, financialYear })
         <CardDescription>ITC by expense head — Purchases net of suspended ITC, matching the sheet.</CardDescription>
       </CardHeader>
       <CardContent className="p-0">
+        <p className="px-6 py-2 text-xs text-muted-foreground">
+          Showing {visibleHeads.length} of {EXPENSE_HEADS.length} expense heads
+          {hiddenCount > 0 ? ` (${hiddenCount} with no ITC hidden)` : ''}
+        </p>
         <Table>
           <TableHeader>
             <TableRow>

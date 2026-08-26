@@ -10,9 +10,12 @@ const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 
 
 interface Props { clientId: string; financialYear: string; }
 
-const Row: React.FC<{ label: string; value: number; strong?: boolean }> = ({ label, value, strong }) => (
+const Row: React.FC<{ label: string; value: number; strong?: boolean; source?: string }> = ({ label, value, strong, source }) => (
   <div className="flex items-baseline justify-between py-2 border-b last:border-b-0">
-    <span className={strong ? 'text-sm font-semibold' : 'text-sm text-muted-foreground'}>{label}</span>
+    <span className={strong ? 'text-sm font-semibold' : 'text-sm text-muted-foreground'}>
+      {label}
+      {source && <span className="ml-1.5 text-[11px] font-normal text-muted-foreground/70">({source})</span>}
+    </span>
     <span className={`tabular-nums ${strong ? 'text-base font-semibold' : 'text-sm'}`}>{fmt(value)}</span>
   </div>
 );
@@ -51,6 +54,19 @@ export const Annexure1Card: React.FC<Props> = ({ clientId, financialYear }) => {
   const totalAsPerPortal = taxTotal(asPerPortal);
   const diff = totalFromNewGstr9 - totalAsPerPortal;
 
+  // A brand-new FY with nothing entered anywhere reads as every fetched total
+  // being zero — books, RCM, portal turnover and every tax-payment field alike.
+  // That's not the same thing as a genuinely reconciled 0-vs-0 year, so it gets
+  // its own neutral badge instead of a false-positive "Matched".
+  const allInputsZero =
+    taxTotal(grossTaxable) === 0 &&
+    taxTotal(rcm) === 0 &&
+    taxTotal(asPerPortal) === 0 &&
+    (['igst', 'cgst', 'sgst'] as const).every((h) => {
+      const p = payments[h];
+      return p.payable === 0 && p.paidCash === 0 && p.paidItc === 0;
+    });
+
   return (
     <Card>
       <CardHeader>
@@ -59,17 +75,23 @@ export const Annexure1Card: React.FC<Props> = ({ clientId, financialYear }) => {
       </CardHeader>
       <CardContent className="max-w-lg space-y-4">
         <div>
-          <Row label="Gross taxable income (PL-Output Part A)" value={taxTotal(grossTaxable)} />
-          <Row label="Tax paid on RCM as per books" value={taxTotal(rcm)} />
+          <Row label="Gross taxable income (PL-Output Part A)" value={taxTotal(grossTaxable)} source="Books Input tab" />
+          <Row label="Tax paid on RCM as per books" value={taxTotal(rcm)} source="RCM tab" />
           <Row label="Total as per new GSTR-9" value={totalFromNewGstr9} strong />
-          <Row label="Total as per auto-calculated GSTR-9 (portal)" value={totalAsPerPortal} />
+          <Row label="Total as per auto-calculated GSTR-9 (portal)" value={totalAsPerPortal} source="Portal Capture tab" />
           <div className="flex items-center justify-between pt-2">
             <span className="text-sm font-semibold">Difference</span>
-            <Badge variant={Math.abs(diff) <= TOLERANCE ? 'success' : 'destructive'}>{fmt(diff)}</Badge>
+            {allInputsZero ? (
+              <Badge variant="outline">No data yet</Badge>
+            ) : (
+              <Badge variant={Math.abs(diff) <= TOLERANCE ? 'success' : 'destructive'}>{fmt(diff)}</Badge>
+            )}
           </div>
         </div>
         <div>
-          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Paid &amp; Payable</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+            Paid &amp; Payable <span className="normal-case font-normal text-muted-foreground/70">(Portal Capture tab)</span>
+          </div>
           {(['igst', 'cgst', 'sgst'] as const).map((h) => {
             const p = payments[h];
             const paidTotal = p.paidCash + p.paidItc;
