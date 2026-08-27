@@ -34,10 +34,10 @@ import { useConfirm } from '@/components/ui/confirm-dialog';
 import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 import {
   Bell, Building2, ChevronLeft, ChevronRight, Loader2, Search, Trash2, History,
   RefreshCw, Upload, DownloadCloud, Pencil, CheckCircle2, XCircle, MinusCircle,
-  LayoutDashboard, Send, FileBarChart2,
 } from 'lucide-react';
 
 interface ClientRow {
@@ -56,13 +56,6 @@ interface SyncLogRow {
   message: string | null;
   created_at: string;
 }
-
-const NAV_ITEMS = [
-  { label: 'Dashboard', icon: LayoutDashboard, to: '/notices-dashboard', active: true },
-  { label: 'Notice', icon: Bell, to: '/notices-all', active: false },
-  { label: 'Submission', icon: Send, to: '/notices-all?filter=submitted', active: false },
-  { label: 'Report', icon: FileBarChart2, to: '/reports', active: false },
-];
 
 const ROWS_PER_PAGE_OPTIONS = [10, 25, 50, 100];
 
@@ -245,21 +238,7 @@ const CompanyListPage: React.FC = () => {
     <div className="space-y-2.5 animate-fade-in">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <PageHeader title="Notices Dashboard" icon={<Bell className="h-5 w-5" />} embedded />
-        <nav className="flex items-center gap-1 rounded-md border bg-muted/30 p-1">
-          {NAV_ITEMS.map((item) => (
-            <Link
-              key={item.label}
-              to={item.to}
-              className={cn(
-                'flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium transition-colors',
-                item.active ? 'border border-primary/40 bg-background text-primary' : 'text-muted-foreground hover:bg-background hover:text-foreground',
-              )}
-            >
-              <item.icon className="h-3.5 w-3.5" />
-              {item.label}
-            </Link>
-          ))}
-        </nav>
+        <NoticesTopNav />
       </div>
 
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">

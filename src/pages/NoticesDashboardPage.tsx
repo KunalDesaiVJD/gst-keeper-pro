@@ -27,11 +27,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import BulkAddClientsDialog, { downloadClientImportTemplate } from '@/components/clients/BulkAddClientsDialog';
-import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription, UNCAPTURED_NOTICE_CATEGORIES, NOTICE_CATEGORY_DISPLAY_ORDER } from '@/utils/noticeCategoryClassifier';
+import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
+import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
+import { computeNoticeSummary, isClosed } from '@/utils/noticeSummaryReport';
 import {
   Bell, CalendarClock, History, Building2, FolderOpen, AlertTriangle, Flag, Loader2,
-  UserPlus, Upload, Download, RefreshCw, Pencil, ChevronLeft, ChevronRight,
-  LayoutDashboard, Send, FileBarChart2, Search,
+  UserPlus, Upload, Download, RefreshCw, Pencil, ChevronLeft, ChevronRight, Search,
 } from 'lucide-react';
 
 interface NoticeRow {
@@ -54,31 +55,6 @@ interface NoticeRow {
 type TypeOfNoticesFilter = 'all' | 'registration' | 'other';
 const isRegistrationRelated = (r: NoticeRow) => isRegistrationDescription(r.description);
 
-interface CategoryRow {
-  type: string;
-  total: number;
-  open: number;
-  closed: number;
-  replied: number;
-  // Refund/DRC-03 rows come from separate tables entirely (not gst_notices),
-  // so clicking them can't reuse the in-page categoryFilter mechanism —
-  // they link straight to their own firm-wide drill-down page instead.
-  to?: string;
-  // Zero-value row for a category this app has no portal capture for yet —
-  // rendered plain/non-clickable, matching Notice Alert's own convention.
-  placeholder?: boolean;
-}
-
-const isClosed = (s: string | null) => (s || '').trim().toLowerCase() === 'closed';
-
-// Refund status strings observed from the real portal pull (see
-// noticeRefundDrc03Reports.ts) — "filed"/"deficiency memo" are still
-// pending action, everything else (disbursed/withdrawn/recredit) is final.
-const isRefundClosed = (s: string | null) => /disburs|withdraw|reject|recredit/i.test(s || '');
-// DRC-03 status strings observed: "Acknowledged" (final) vs "Pending for
-// Action by Tax Officer" (still open).
-const isDrc03Closed = (s: string | null) => /acknowledg/i.test(s || '');
-
 interface MiniClient {
   id: string;
   name: string;
@@ -88,19 +64,6 @@ interface MiniClient {
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
-];
-
-// Mirrors Notice Alert's own top nav (Dashboard/Notice/Submission/Report) —
-// Dashboard is this page; Notice is the unfiltered all-clients list;
-// Submission is the same list filtered to rows with a Submission ARN/date
-// logged (their "View My Submissions" page, confirmed live); Report is the
-// existing Reports Hub, which already carries every per-client Notice/
-// Refund/DRC-03 report.
-const NAV_ITEMS = [
-  { label: 'Dashboard', icon: LayoutDashboard, to: '/notices-dashboard', active: true },
-  { label: 'Notice', icon: Bell, to: '/notices-all', active: false },
-  { label: 'Submission', icon: Send, to: '/notices-all?filter=submitted', active: false },
-  { label: 'Report', icon: FileBarChart2, to: '/reports', active: false },
 ];
 
 const NoticesDashboardPage: React.FC = () => {
@@ -278,50 +241,7 @@ const NoticesDashboardPage: React.FC = () => {
     { label: 'Priority', value: priorityCount, icon: <Flag className="h-8 w-8 text-destructive" />, bgColor: 'bg-destructive/5', to: drillParams({ filter: 'priority' }) },
   ];
 
-  const categoryMap = new Map<string, CategoryRow>();
-  filteredRows.forEach((r) => {
-    const type = classifyNoticeCategory(r);
-    const entry = categoryMap.get(type) || { type, total: 0, open: 0, closed: 0, replied: 0 };
-    entry.total += 1;
-    if (isClosed(r.staff_status)) entry.closed += 1; else entry.open += 1;
-    if (r.reply_date) entry.replied += 1;
-    categoryMap.set(type, entry);
-  });
-  // Refund/DRC-03 aren't gst_notices rows — they're folded into the same
-  // Notice Summary table Notice Alert shows them in, but as their own rows
-  // with their own drill-down page (see AllClientsRefundsPage/Drc03Page)
-  // since categoryFilter's local-filter mechanism only works over `rows`.
-  if (refundStatuses.length > 0) {
-    const closed = refundStatuses.filter((s) => isRefundClosed(s)).length;
-    categoryMap.set('Refund', { type: 'Refund', total: refundStatuses.length, open: refundStatuses.length - closed, closed, replied: 0, to: '/refunds-all' });
-  }
-  if (drc03Statuses.length > 0) {
-    const closed = drc03Statuses.filter((s) => isDrc03Closed(s)).length;
-    categoryMap.set('DRC 03', { type: 'DRC 03', total: drc03Statuses.length, open: drc03Statuses.length - closed, closed, replied: 0, to: '/drc03-all' });
-  }
-
-  // Row order matches Notice Alert's own Notice Summary table exactly
-  // (confirmed live 2026-08-25): every canonical category gets its fixed slot
-  // whether we have real data for it or not (zero-value placeholder rows,
-  // matching Notice Alert's own dashes-not-links convention), then any
-  // category this app tracks but Notice Alert's fixed list doesn't cover
-  // (Registration/Non filers/Demand Notice/raw notice_type buckets) is
-  // appended after, by descending total.
-  const FULL_DISPLAY_ORDER = [
-    ...NOTICE_CATEGORY_DISPLAY_ORDER,
-    ...UNCAPTURED_NOTICE_CATEGORIES.filter((t) => !NOTICE_CATEGORY_DISPLAY_ORDER.includes(t)),
-  ];
-  const canonicalRows: CategoryRow[] = FULL_DISPLAY_ORDER.map((type) => {
-    const real = categoryMap.get(type);
-    if (real) { categoryMap.delete(type); return real; }
-    return { type, total: 0, open: 0, closed: 0, replied: 0, placeholder: true };
-  });
-  const extraRealRows = Array.from(categoryMap.values()).sort((a, b) => b.total - a.total);
-  const categoryRows = [...canonicalRows, ...extraRealRows];
-  const grandTotal = categoryRows.reduce(
-    (acc, r) => ({ total: acc.total + r.total, open: acc.open + r.open, closed: acc.closed + r.closed, replied: acc.replied + r.replied }),
-    { total: 0, open: 0, closed: 0, replied: 0 },
-  );
+  const { categoryRows, grandTotal } = computeNoticeSummary(filteredRows, refundStatuses, drc03Statuses);
 
   // Calendar widget: which days in the shown month have an issue date, a due
   // date, or both, across every notice (not filtered — the calendar is a
@@ -360,21 +280,7 @@ const NoticesDashboardPage: React.FC = () => {
           icon={<Bell className="h-5 w-5" />}
           embedded
         />
-        <nav className="flex items-center gap-1 rounded-md border bg-muted/30 p-1">
-          {NAV_ITEMS.map((item) => (
-            <Link
-              key={item.label}
-              to={item.to}
-              className={cn(
-                'flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium transition-colors',
-                item.active ? 'border border-primary/40 bg-background text-primary' : 'text-muted-foreground hover:bg-background hover:text-foreground',
-              )}
-            >
-              <item.icon className="h-3.5 w-3.5" />
-              {item.label}
-            </Link>
-          ))}
-        </nav>
+        <NoticesTopNav />
       </div>
 
       <div className="flex items-center justify-between gap-2">

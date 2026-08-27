@@ -20,10 +20,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
+import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 import { cn } from '@/lib/utils';
 import {
   Bell, CalendarClock, History, FolderOpen, AlertTriangle, Loader2, Pencil,
-  LayoutDashboard, Send, FileBarChart2, ArrowLeft, FileText,
+  ArrowLeft, FileText,
 } from 'lucide-react';
 
 interface ClientRow {
@@ -62,13 +63,6 @@ interface FilingRow {
   period_month: string;
   filed_date: string | null;
 }
-
-const NAV_ITEMS = [
-  { label: 'Dashboard', icon: LayoutDashboard, to: '/notices-dashboard', active: true },
-  { label: 'Notice', icon: Bell, to: '/notices-all', active: false },
-  { label: 'Submission', icon: Send, to: '/notices-all?filter=submitted', active: false },
-  { label: 'Report', icon: FileBarChart2, to: '/reports', active: false },
-];
 
 const isClosed = (s: string | null) => (s || '').trim().toLowerCase() === 'closed';
 
@@ -166,21 +160,7 @@ const CompanyProfilePage: React.FC = () => {
     <div className="space-y-2.5 animate-fade-in">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <PageHeader title="Notices Dashboard" icon={<Bell className="h-5 w-5" />} embedded />
-        <nav className="flex items-center gap-1 rounded-md border bg-muted/30 p-1">
-          {NAV_ITEMS.map((item) => (
-            <Link
-              key={item.label}
-              to={item.to}
-              className={cn(
-                'flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium transition-colors',
-                item.active ? 'border border-primary/40 bg-background text-primary' : 'text-muted-foreground hover:bg-background hover:text-foreground',
-              )}
-            >
-              <item.icon className="h-3.5 w-3.5" />
-              {item.label}
-            </Link>
-          ))}
-        </nav>
+        <NoticesTopNav />
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
