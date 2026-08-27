@@ -24,6 +24,7 @@ import PLInputSummaryCard from '@/components/annualReturn/PLInputSummaryCard';
 import AnnualCrossCheckCard from '@/components/annualReturn/AnnualCrossCheckCard';
 import Gstr9InputView from '@/components/annualReturn/Gstr9InputView';
 import Gstr9OutputDiffView from '@/components/annualReturn/Gstr9OutputDiffView';
+import BsPlUploadCard from '@/components/annualReturn/BsPlUploadCard';
 import Gstr9cTable5TurnoverRecoCard from '@/components/annualReturn/Gstr9cTable5TurnoverRecoCard';
 import Gstr9cTable7TaxableTurnoverRecoCard from '@/components/annualReturn/Gstr9cTable7TaxableTurnoverRecoCard';
 import Gstr9cTable9RateWiseLiabilityCard from '@/components/annualReturn/Gstr9cTable9RateWiseLiabilityCard';
@@ -354,6 +355,7 @@ const AnnualReturnPage: React.FC = () => {
           </TabsContent>
 
           <TabsContent value="gstr9c" className="space-y-4">
+            <BsPlUploadCard clientId={selectedClientId} financialYear={financialYear} />
             <Gstr9cTable5TurnoverRecoCard clientId={selectedClientId} financialYear={financialYear} />
             <Gstr9cTable7TaxableTurnoverRecoCard clientId={selectedClientId} financialYear={financialYear} />
             <Gstr9cTable9RateWiseLiabilityCard clientId={selectedClientId} financialYear={financialYear} />
