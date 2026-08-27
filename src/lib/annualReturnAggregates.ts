@@ -292,3 +292,32 @@ export async function fetchTable16CompositionDeemedApproval(clientId: string, fi
   });
   return totals;
 }
+
+export type Table5RowKey = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'Q';
+const TABLE5_ROW_KEYS: Table5RowKey[] = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'Q'];
+const TABLE5_ADD_KEYS: Table5RowKey[] = ['A', 'B', 'C', 'D', 'F', 'J', 'M', 'N', 'O'];
+const TABLE5_SUB_KEYS: Table5RowKey[] = ['E', 'G', 'H', 'I', 'K', 'L'];
+/** GSTR-9C Table 5 — Reconciliation of Gross Turnover (verified against GSTR_9C_Offline_Utility.xlsm v2.8, 27 Aug 2026). Standalone manual entry. */
+export async function fetchGstr9cTable5TurnoverReco(clientId: string, financialYear: string): Promise<Record<Table5RowKey, number>> {
+  const { data, error } = await supabase.from('gstr9c_table5_turnover_reco').select('row_key, amount').eq('client_id', clientId).eq('financial_year', financialYear);
+  if (error) throw error;
+  const totals = {} as Record<Table5RowKey, number>;
+  TABLE5_ROW_KEYS.forEach((k) => { totals[k] = 0; });
+  (data || []).forEach((r: { row_key: Table5RowKey; amount: number }) => { if (r.row_key in totals) totals[r.row_key] = Number(r.amount); });
+  return totals;
+}
+/** P — Annual Turnover after adjustments, per the real sheet's formula (=A+B+C+D-E+F-G-H-I+J-K-L+M+N+O). Single source of truth — Table 7's row A reads this, never re-derives it. */
+export const computeGstr9cTable5P = (rows: Record<Table5RowKey, number>): number =>
+  TABLE5_ADD_KEYS.reduce((s, k) => s + (rows[k] || 0), 0) - TABLE5_SUB_KEYS.reduce((s, k) => s + (rows[k] || 0), 0);
+
+export type Table7RowKey = 'B' | 'C' | 'D' | 'D1' | 'F';
+const TABLE7_ROW_KEYS: Table7RowKey[] = ['B', 'C', 'D', 'D1', 'F'];
+/** GSTR-9C Table 7 — Reconciliation of Taxable Turnover (verified against GSTR_9C_Offline_Utility.xlsm v2.8, 27 Aug 2026). Standalone manual entry; row A is Table 5's P, computed, never stored here. */
+export async function fetchGstr9cTable7TaxableTurnoverReco(clientId: string, financialYear: string): Promise<Record<Table7RowKey, number>> {
+  const { data, error } = await supabase.from('gstr9c_table7_taxable_turnover_reco').select('row_key, amount').eq('client_id', clientId).eq('financial_year', financialYear);
+  if (error) throw error;
+  const totals = {} as Record<Table7RowKey, number>;
+  TABLE7_ROW_KEYS.forEach((k) => { totals[k] = 0; });
+  (data || []).forEach((r: { row_key: Table7RowKey; amount: number }) => { if (r.row_key in totals) totals[r.row_key] = Number(r.amount); });
+  return totals;
+}
