@@ -2577,11 +2577,12 @@
       // (Intimations/Notices/Replies/Orders/Closure, each with its own
       // attachments), not just the single ORDRS PDF captured above. Reuses
       // the exact same `folders` fetch already done for that PDF — every
-      // OTHER folder type (INTM/NOTC/RPLY/CLSR etc, whatever the portal
-      // actually returns) gets the same items+attachments treatment here,
-      // best-effort: raw_json is stored verbatim so nothing captured is
-      // lost even where a field's exact meaning isn't known yet (only
-      // docupdtl/crn are proven, from the ORDRS case above).
+      // Every other folder type the portal returns (confirmed live
+      // 2026-08-27 against a real case: INTIM/NOTCE/REPLY/ORDRS/DRC7A — note
+      // NOT the INTM/NOTC/RPLY/CLSR guessed above) gets the same
+      // items+attachments treatment here, best-effort: raw_json is stored
+      // verbatim so nothing captured is lost even where a field's exact
+      // meaning isn't known yet.
       if (t.caseId && t.arn && Array.isArray(folders) && folders.length) {
         try {
           const folderItems = [];
@@ -2596,10 +2597,31 @@
               for (const fi of fItems) {
                 let fParsed = null;
                 try { fParsed = fi.itemJson ? JSON.parse(fi.itemJson) : null; } catch (e) { /* keep raw_json as the unparsed string below */ }
+                // Document descriptors are nested differently by section —
+                // confirmed live: sdtls.<srscn|remnd|dtscn|dtorder>.maindocs[]
+                // /.suppdocs[] wrap each doc under a `dcupdtls` key, but
+                // INTIM's own `docModel[]` entries are the bare descriptor
+                // with no wrapper, and REPLY/DRC7A nest under different
+                // top-level keys (reply./draftdrc7.) entirely. Rather than
+                // hardcode a path per section (fragile — a 6th section would
+                // silently capture nothing), this recursively finds every
+                // object shaped like a doc descriptor ({id, docName}, with
+                // or without a dcupdtls wrapper) anywhere in the parsed JSON.
+                const findDocDescriptors = (node, seen, out) => {
+                  if (!node || typeof node !== 'object' || seen.has(node)) return;
+                  seen.add(node);
+                  if (Array.isArray(node)) { node.forEach((n) => findDocDescriptors(n, seen, out)); return; }
+                  const candidate = (node.dcupdtls && typeof node.dcupdtls === 'object') ? node.dcupdtls : node;
+                  if (candidate.id && candidate.docName) out.push(candidate);
+                  Object.keys(node).forEach((k) => { if (k !== 'dcupdtls') findDocDescriptors(node[k], seen, out); });
+                };
+                const rawDocs = [];
+                findDocDescriptors(fParsed, new Set(), rawDocs);
+                const seenDocIds = new Set();
                 const attachments = [];
-                const docs = (fParsed && Array.isArray(fParsed.docupdtl)) ? fParsed.docupdtl : [];
-                for (const doc of docs) {
-                  if (!doc || !doc.id) continue;
+                for (const doc of rawDocs) {
+                  if (seenDocIds.has(doc.id)) continue;
+                  seenDocIds.add(doc.id);
                   try {
                     const docArn = (fParsed && fParsed.crn) || t.arn;
                     const eh = await fetchEncrypDocEh(doc.id, docArn);
@@ -2611,7 +2633,7 @@
                     const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
                     const path = 'notices/' + cur.clientId + '/case-folder/' + t.arn + '/' + doc.id + '.pdf';
                     const url = await GSTKdb.uploadPdf(path, dataUrl);
-                    attachments.push({ label: doc.docNm || doc.fileName || (doc.id + '.pdf'), url });
+                    attachments.push({ label: doc.docName || doc.docttl || (doc.id + '.pdf'), url });
                   } catch (e) { /* best-effort per attachment */ }
                 }
                 folderItems.push({

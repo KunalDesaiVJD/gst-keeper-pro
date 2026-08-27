@@ -44,16 +44,19 @@ interface FolderItemRow {
   pulled_at: string;
 }
 
-// Best-effort mapping of the portal's own caseFolderTypeCd to Notice Alert's
-// section labels — only 'ORDRS' is confirmed (the case this app already
-// captures a PDF for); the rest are informed guesses at common GST portal
-// abbreviations. An unmapped code still gets its own section, labeled with
-// the raw code, rather than being silently dropped or mis-bucketed.
+// Mapping of the portal's own caseFolderTypeCd to Notice Alert's section
+// labels — confirmed live 2026-08-27 against a real case's captured data:
+// INTIM/NOTCE/REPLY/ORDRS all appeared exactly as coded here. 'CLOSURE' has
+// no confirmed portal code yet (this test case never had a closure-folder
+// item) — kept as a guess. DRC7A (recovery-proceeding items, also seen live)
+// isn't one of Notice Alert's 5 fixed sections, so it gets its own section
+// labeled with the raw code rather than being dropped or mis-bucketed —
+// same fallback used for any other still-unseen folder type.
 const SECTION_ORDER = ['INTIMATIONS', 'NOTICES', 'REPLIES', 'ORDERS', 'CLOSURE'];
 const SECTION_CODE_MAP: Record<string, string> = {
-  INTM: 'INTIMATIONS', INTIMATIONS: 'INTIMATIONS',
-  NOTC: 'NOTICES', NOTICE: 'NOTICES', NOTICES: 'NOTICES',
-  RPLY: 'REPLIES', REPLY: 'REPLIES', REPLIES: 'REPLIES',
+  INTIM: 'INTIMATIONS', INTIMATIONS: 'INTIMATIONS',
+  NOTCE: 'NOTICES', NOTICE: 'NOTICES', NOTICES: 'NOTICES',
+  REPLY: 'REPLIES', REPLIES: 'REPLIES',
   ORDRS: 'ORDERS', ORDER: 'ORDERS', ORDERS: 'ORDERS',
   CLSR: 'CLOSURE', CLOSURE: 'CLOSURE',
 };
@@ -62,16 +65,44 @@ const sectionLabel = (code: string | null) => {
   return SECTION_CODE_MAP[code.toUpperCase()] || code.toUpperCase();
 };
 
-// Internal-only keys (doc metadata already surfaced via Attachments, or
-// portal bookkeeping fields with no display value) filtered out of the
-// generic field dump below.
-const HIDDEN_KEYS = new Set(['docupdtl', 'crn']);
+// Internal-only keys — doc descriptors already surfaced via Attachments, or
+// portal bookkeeping with no display value — filtered out of the generic
+// field dump below. The actually useful fields (type, section number, due
+// date, reason, officer/signer details) live one or two levels deep under a
+// wrapper key that differs per section (sdtls.srscn / sdtls.remnd /
+// sdtls.dtscn / sdtls.dtorder for Intimations/Notices/Orders; a top-level
+// `reply` object for Replies; `draftdrc7` for DRC-7A — confirmed live
+// 2026-08-27), so this recurses through nested objects rather than only
+// reading top-level keys.
+const HIDDEN_KEYS = new Set(['docupdtl', 'dcupdtls', 'maindocs', 'suppdocs', 'docmodel', 'crn', 'state_cd']);
+// Dense line-item arrays (tax/interest/penalty breakdowns, period ranges)
+// carry real numbers but read as noise in a flat field list — left out of
+// the dump; the attached PDF is the authoritative source for these anyway.
+const HIDDEN_ARRAY_KEYS = new Set(['dmddtls', 'pymtdtls', 'gdssvcdtls']);
 const humanizeKey = (k: string) => k.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase());
-const fieldsOf = (raw: Record<string, unknown> | null): { key: string; value: string }[] => {
-  if (!raw || typeof raw !== 'object') return [];
-  return Object.entries(raw)
-    .filter(([k, v]) => !HIDDEN_KEYS.has(k) && v !== null && v !== undefined && v !== '')
-    .map(([k, v]) => ({ key: humanizeKey(k), value: typeof v === 'object' ? JSON.stringify(v) : String(v) }));
+const fieldsOf = (raw: Record<string, unknown> | null, prefix = '', depth = 0): { key: string; value: string }[] => {
+  if (!raw || typeof raw !== 'object' || depth > 2) return [];
+  const out: { key: string; value: string }[] = [];
+  Object.entries(raw).forEach(([k, v]) => {
+    const lk = k.toLowerCase();
+    if (HIDDEN_KEYS.has(lk) || v === null || v === undefined || v === '') return;
+    const label = prefix ? `${prefix} — ${humanizeKey(k)}` : humanizeKey(k);
+    if (Array.isArray(v)) {
+      if (HIDDEN_ARRAY_KEYS.has(lk) || v.length === 0) return;
+      if (v.every((item) => item === null || typeof item !== 'object')) {
+        out.push({ key: label, value: v.join(', ') });
+      }
+      // Arrays of objects other than the hidden ones (e.g. docModel) are
+      // document descriptors, already surfaced via Attachments — skipped.
+      return;
+    }
+    if (typeof v === 'object') {
+      out.push(...fieldsOf(v as Record<string, unknown>, label, depth + 1));
+      return;
+    }
+    out.push({ key: label, value: String(v) });
+  });
+  return out;
 };
 
 const AdditionalNoticeFolderPage: React.FC = () => {
