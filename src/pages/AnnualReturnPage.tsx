@@ -29,6 +29,7 @@ import Annexure1Card from '@/components/annualReturn/Annexure1Card';
 import Annexure2Card from '@/components/annualReturn/Annexure2Card';
 import Annexure3Card from '@/components/annualReturn/Annexure3Card';
 import Annexure4Card from '@/components/annualReturn/Annexure4Card';
+import Table14DifferentialTaxCard from '@/components/annualReturn/Table14DifferentialTaxCard';
 import ItcReversalCard from '@/components/annualReturn/ItcReversalCard';
 import Gstr9FormView from '@/components/annualReturn/Gstr9FormView';
 import NoticeFormatView from '@/components/annualReturn/NoticeFormatView';
@@ -350,6 +351,7 @@ const AnnualReturnPage: React.FC = () => {
             <Annexure2Card clientId={selectedClientId} financialYear={financialYear} />
             <Annexure3Card clientId={selectedClientId} financialYear={financialYear} />
             <Annexure4Card clientId={selectedClientId} financialYear={financialYear} />
+            <Table14DifferentialTaxCard clientId={selectedClientId} financialYear={financialYear} />
           </TabsContent>
 
           <TabsContent value="gstr9form" className="space-y-4">

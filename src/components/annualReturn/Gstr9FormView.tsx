@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 import {
   fetchPlInputTotals, fetchPlOutputPartBByBifurcation, fetchDutiesTaxesInputAnnual, fetchRcmTotals,
   fetchPortalItcClaimedAnnual, fetchPortal2bAnnual, fetchPortalCategoryTotals, fetchItcReversalTotals,
-  fetchTaxPaymentTotals, fetchCarryForwardTotals, taxTotal,
+  fetchTaxPaymentTotals, fetchCarryForwardTotals, fetchTable14DifferentialTax, taxTotal,
 } from '@/lib/annualReturnAggregates';
 import { supabase } from '@/integrations/supabase/client';
 import { exportGstr9FormToPDF, type Gstr9PdfSection } from '@/utils/gstr9FormPdfExport';
@@ -77,6 +77,7 @@ interface Computed {
   t8A: number; t8B: number; t8C: number; t8D: number;
   payIgst: { payable: number; paid: number }; payCgst: { payable: number; paid: number }; paySgst: { payable: number; paid: number };
   t10: number; t11: number; t12: number; t13: number;
+  t14: Record<'igst' | 'cgst' | 'sgst' | 'cess' | 'interest', { payable: number; paid: number }>;
 }
 
 const GROUPS = [
@@ -84,7 +85,7 @@ const GROUPS = [
   { id: 'itc', label: 'Table 6–7 · ITC' },
   { id: 'reco8', label: 'Table 8 · ITC vs 2B' },
   { id: 'taxpaid', label: 'Table 9 · Tax paid' },
-  { id: 'nextyear', label: 'Table 10–13 · Next year' },
+  { id: 'nextyear', label: 'Table 10–14 · Next year' },
 ] as const;
 
 // Builds the on-screen table sections and the PDF export from the same data
@@ -182,6 +183,21 @@ const buildGroups = (c: Computed): Record<typeof GROUPS[number]['id'], Gstr9Card
         { tableNo: '13', description: 'ITC of the FY availed in next FY', value: c.t13 },
       ],
     },
+    {
+      title: 'Table 14 — Differential tax paid',
+      description: "On account of the declarations in Table 10 & 11 — from the Annexure tab's Table 14 entry.",
+      rows: (['igst', 'cgst', 'sgst', 'cess', 'interest'] as const).map((h) => {
+        const v = c.t14[h];
+        const diff = v.payable - v.paid;
+        return {
+          tableNo: '14',
+          description: h === 'igst' ? 'Integrated Tax' : h === 'cgst' ? 'Central Tax' : h === 'sgst' ? 'State/UT Tax' : h === 'cess' ? 'Cess' : 'Interest',
+          value: v.payable,
+          tag: Math.abs(diff) <= TOLERANCE ? `Matched (paid ${fmt(v.paid)})` : `Diff ${fmt(diff)} (paid ${fmt(v.paid)})`,
+          tagVariant: (Math.abs(diff) <= TOLERANCE ? 'success' : 'destructive') as BadgeVariant,
+        };
+      }),
+    },
   ],
 });
 
@@ -213,7 +229,8 @@ export const Gstr9FormView: React.FC<Props> = ({ clientId, financialYear }) => {
       fetchItcReversalTotals(clientId, financialYear),
       fetchTaxPaymentTotals(clientId, financialYear),
       fetchCarryForwardTotals(clientId, financialYear),
-    ]).then(([pl, plOutB, dt, rcm, portalItc, portal2b, cat, itcRev, pay, cf]) => {
+      fetchTable14DifferentialTax(clientId, financialYear),
+    ]).then(([pl, plOutB, dt, rcm, portalItc, portal2b, cat, itcRev, pay, cf, t14]) => {
       if (cancelled) return;
       const t4A = taxTotal(cat.b2c), t4B = taxTotal(cat.b2b), t4D = taxTotal(cat.sez_with), t4E = taxTotal(cat.deemed_export);
       const t4G = taxTotal(rcm.partA);
@@ -257,6 +274,7 @@ export const Gstr9FormView: React.FC<Props> = ({ clientId, financialYear }) => {
         payIgst, payCgst, paySgst,
         t10: taxTotal(cf.turnover_declared_next_fy), t11: taxTotal(cf.turnover_reduced_next_fy),
         t12: taxTotal(cf.claimed_in_next_fy) * -1, t13: taxTotal(cf.claimed_in_next_fy),
+        t14,
       });
       setStatus('ready');
     }).catch((err) => {

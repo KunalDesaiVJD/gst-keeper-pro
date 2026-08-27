@@ -202,3 +202,18 @@ export async function fetchCarryForwardTotals(clientId: string, financialYear: s
   });
   return totals;
 }
+
+export type Table14TaxHead = 'igst' | 'cgst' | 'sgst' | 'cess' | 'interest';
+export interface Table14Row { payable: number; paid: number; }
+/** GSTR-9 Table 14 — differential tax paid on the Table 10/11 declarations (portal roadmap, 27 Aug 2026). */
+export async function fetchTable14DifferentialTax(clientId: string, financialYear: string): Promise<Record<Table14TaxHead, Table14Row>> {
+  const { data, error } = await supabase.from('gstr9_table14_differential_tax').select('tax_head, payable, paid').eq('client_id', clientId).eq('financial_year', financialYear);
+  if (error) throw error;
+  const totals: Record<Table14TaxHead, Table14Row> = {
+    igst: { payable: 0, paid: 0 }, cgst: { payable: 0, paid: 0 }, sgst: { payable: 0, paid: 0 }, cess: { payable: 0, paid: 0 }, interest: { payable: 0, paid: 0 },
+  };
+  (data || []).forEach((r: { tax_head: Table14TaxHead; payable: number; paid: number }) => {
+    if (totals[r.tax_head]) totals[r.tax_head] = { payable: Number(r.payable), paid: Number(r.paid) };
+  });
+  return totals;
+}
