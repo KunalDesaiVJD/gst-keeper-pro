@@ -6,7 +6,7 @@ import { Loader2, Inbox } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchDutiesTaxesInputAnnual, fetchPlInputTotals, fetchRcmTotals, taxTotal } from '@/lib/annualReturnAggregates';
-import { EXPENSE_HEADS } from '@/components/annualReturn/PLInputCard';
+import { EXPENSE_HEADS, TABLE14_EXPENSE_HEADS } from '@/components/annualReturn/PLInputCard';
 
 const TOLERANCE = 10;
 const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
@@ -16,12 +16,22 @@ interface HeadTotals { value: number; totalItc: number; }
 interface Props { clientId: string; financialYear: string; }
 
 /**
- * GSTR 9C Table 12B — the 16 expense-head categories, from PL-Input lines
- * grouped by expense_head. Net suspended ITC (from Duties & Taxes-Input) is
- * deducted from the Purchases bucket only, matching the sheet — every other
- * head is unaffected.
+ * GSTR-9C TABLE 14 — "Reconciliation of ITC declared in Annual Return
+ * (GSTR9) with ITC availed on expenses as per audited Annual Financial
+ * Statement or books of account". The 17 official expense-head rows (A-Q),
+ * from PL-Input lines grouped by expense_head. Net suspended ITC (from
+ * Duties & Taxes-Input) is deducted from the Purchases bucket only,
+ * matching the sheet — every other head is unaffected.
+ *
+ * Renamed 27 Aug 2026 (was "Table 12B", which doesn't exist in the real
+ * offline utility — GSTR-9C's Table 12 is a separate 4-line summary, see
+ * Table12NetItcSummaryCard). RCM is deliberately excluded from this
+ * table's total: the real form has no RCM row here at all — RCM ITC is
+ * reconciled instead via GSTR-9's own Table 6C/D — but it's still shown as
+ * a memo line so its contribution to any unreconciled gap below isn't a
+ * silent mystery.
  */
-export const Gstr9cTable12bView: React.FC<Props> = ({ clientId, financialYear }) => {
+export const Gstr9cTable14ItcByExpenseHeadView: React.FC<Props> = ({ clientId, financialYear }) => {
   const [rows, setRows] = useState<Record<string, HeadTotals>>({});
   const [gstr9InputTotal, setGstr9InputTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,29 +58,32 @@ export const Gstr9cTable12bView: React.FC<Props> = ({ clientId, financialYear })
       const netSuspended = taxTotal(dt.netSuspended);
       next['Purchases'].totalItc -= netSuspended;
       setRows(next);
-      // Matches GSTR 9-Input's "Total (matches Table 6O)" computation.
+      // Matches GSTR 9-Input's "Total (matches Table 6O)" computation — this
+      // deliberately INCLUDES RCM (row E/S), while the table below excludes
+      // it, so any RCM-driven gap shows up honestly as unreconciled.
       setGstr9InputTotal(taxTotal(pl.purchase) + taxTotal(pl.expense) + taxTotal(pl.capital_goods) + taxTotal(rcmTotals.partB) + taxTotal(dt.reclaimTotal));
-    }).catch((err) => toast.error('Could not compute GSTR 9C Table 12B: ' + (err instanceof Error ? err.message : 'Unknown error')))
+    }).catch((err) => toast.error('Could not compute GSTR 9C Table 14: ' + (err instanceof Error ? err.message : 'Unknown error')))
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [clientId, financialYear]);
 
   if (loading) return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
 
-  const totalValue = Object.values(rows).reduce((a, r) => a + r.value, 0);
-  const totalItc = Object.values(rows).reduce((a, r) => a + r.totalItc, 0);
-  const visibleHeads = EXPENSE_HEADS.filter((h) => {
+  const totalValue = TABLE14_EXPENSE_HEADS.reduce((a, h) => a + (rows[h]?.value || 0), 0);
+  const totalItc = TABLE14_EXPENSE_HEADS.reduce((a, h) => a + (rows[h]?.totalItc || 0), 0);
+  const visibleHeads = TABLE14_EXPENSE_HEADS.filter((h) => {
     const r = rows[h] || { value: 0, totalItc: 0 };
     return r.value !== 0 || r.totalItc !== 0;
   });
-  const hiddenCount = EXPENSE_HEADS.length - visibleHeads.length;
+  const hiddenCount = TABLE14_EXPENSE_HEADS.length - visibleHeads.length;
+  const rcm = rows['RCM'] || { value: 0, totalItc: 0 };
 
-  if (visibleHeads.length === 0) {
+  if (visibleHeads.length === 0 && rcm.value === 0 && rcm.totalItc === 0) {
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">GSTR 9C — Table 12B</CardTitle>
-          <CardDescription>ITC by expense head — Purchases net of suspended ITC, matching the sheet.</CardDescription>
+          <CardTitle className="text-lg">GSTR-9C TABLE 14 — ITC by expense head</CardTitle>
+          <CardDescription>Purchases net of suspended ITC, matching the sheet.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
           <Inbox className="h-8 w-8" />
@@ -83,12 +96,12 @@ export const Gstr9cTable12bView: React.FC<Props> = ({ clientId, financialYear })
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg">GSTR 9C — Table 12B</CardTitle>
-        <CardDescription>ITC by expense head — Purchases net of suspended ITC, matching the sheet.</CardDescription>
+        <CardTitle className="text-lg">GSTR-9C TABLE 14 — ITC by expense head</CardTitle>
+        <CardDescription>Purchases net of suspended ITC, matching the sheet. RCM has no row here (see memo below) — reconciled via the RCM tab instead.</CardDescription>
       </CardHeader>
       <CardContent className="p-0">
         <p className="px-6 py-2 text-xs text-muted-foreground">
-          Showing {visibleHeads.length} of {EXPENSE_HEADS.length} expense heads
+          Showing {visibleHeads.length} of {TABLE14_EXPENSE_HEADS.length} expense heads
           {hiddenCount > 0 ? ` (${hiddenCount} with no ITC hidden)` : ''}
         </p>
         <Table>
@@ -100,7 +113,7 @@ export const Gstr9cTable12bView: React.FC<Props> = ({ clientId, financialYear })
             </TableRow>
           </TableHeader>
           <TableBody>
-            {EXPENSE_HEADS.map((h) => {
+            {TABLE14_EXPENSE_HEADS.map((h) => {
               const r = rows[h] || { value: 0, totalItc: 0 };
               if (r.value === 0 && r.totalItc === 0) return null;
               return (
@@ -114,17 +127,24 @@ export const Gstr9cTable12bView: React.FC<Props> = ({ clientId, financialYear })
           </TableBody>
           <TableFooter>
             <TableRow>
-              <TableCell>Total eligible ITC availed</TableCell>
+              <TableCell>R — Total eligible ITC availed</TableCell>
               <TableCell className="text-right tabular-nums">{fmt(totalValue)}</TableCell>
               <TableCell className="text-right tabular-nums">{fmt(totalItc)}</TableCell>
             </TableRow>
+            {(rcm.value !== 0 || rcm.totalItc !== 0) && (
+              <TableRow>
+                <TableCell className="text-muted-foreground italic">RCM (excluded from Table 14 — see RCM tab / Table 6C/D)</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">{fmt(rcm.value)}</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">{fmt(rcm.totalItc)}</TableCell>
+              </TableRow>
+            )}
           </TableFooter>
         </Table>
         {gstr9InputTotal !== null && (
           <p className="flex items-center gap-2 px-6 py-3 text-xs text-muted-foreground">
-            vs GSTR9-Input total: <span className="tabular-nums text-foreground">{fmt(gstr9InputTotal)}</span>
+            S — ITC claimed in GSTR-9: <span className="tabular-nums text-foreground">{fmt(gstr9InputTotal)}</span>
             <Badge variant={Math.abs(totalItc - gstr9InputTotal) <= TOLERANCE ? 'success' : 'warning'} className="text-[10px]">
-              {Math.abs(totalItc - gstr9InputTotal) <= TOLERANCE ? 'Matched' : `Diff ${fmt(totalItc - gstr9InputTotal)}`}
+              {Math.abs(totalItc - gstr9InputTotal) <= TOLERANCE ? 'Matched (T)' : `T — Diff ${fmt(totalItc - gstr9InputTotal)}`}
             </Badge>
           </p>
         )}
@@ -133,4 +153,4 @@ export const Gstr9cTable12bView: React.FC<Props> = ({ clientId, financialYear })
   );
 };
 
-export default Gstr9cTable12bView;
+export default Gstr9cTable14ItcByExpenseHeadView;

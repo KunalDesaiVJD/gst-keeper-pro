@@ -24,7 +24,8 @@ import PLInputSummaryCard from '@/components/annualReturn/PLInputSummaryCard';
 import AnnualCrossCheckCard from '@/components/annualReturn/AnnualCrossCheckCard';
 import Gstr9InputView from '@/components/annualReturn/Gstr9InputView';
 import Gstr9OutputDiffView from '@/components/annualReturn/Gstr9OutputDiffView';
-import Gstr9cTable12bView from '@/components/annualReturn/Gstr9cTable12bView';
+import Table12NetItcSummaryCard from '@/components/annualReturn/Table12NetItcSummaryCard';
+import Gstr9cTable14ItcByExpenseHeadView from '@/components/annualReturn/Gstr9cTable14ItcByExpenseHeadView';
 import Annexure1Card from '@/components/annualReturn/Annexure1Card';
 import Annexure2Card from '@/components/annualReturn/Annexure2Card';
 import Annexure3Card from '@/components/annualReturn/Annexure3Card';
@@ -343,7 +344,8 @@ const AnnualReturnPage: React.FC = () => {
           </TabsContent>
 
           <TabsContent value="gstr9c" className="space-y-4">
-            <Gstr9cTable12bView clientId={selectedClientId} financialYear={financialYear} />
+            <Table12NetItcSummaryCard clientId={selectedClientId} financialYear={financialYear} />
+            <Gstr9cTable14ItcByExpenseHeadView clientId={selectedClientId} financialYear={financialYear} />
           </TabsContent>
 
           <TabsContent value="annexure" className="space-y-4">

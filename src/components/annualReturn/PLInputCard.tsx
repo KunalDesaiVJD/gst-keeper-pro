@@ -10,12 +10,22 @@ import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { PasteFromExcelDialog, PasteImportResult } from './PasteFromExcelDialog';
 
+// The 17 official GSTR-9C Table 14 expense heads (A-Q), plus RCM — kept as
+// an 18th selectable head for the firm's own classification even though the
+// real Table 14 has no RCM row; RCM ITC is excluded from that table's
+// rollup and reconciled instead via GSTR-9's own Table 6C/D (RCM tab).
+// (27 Aug 2026 — corrected against GSTR 9C_Offline_Utility.xlsm v2.8:
+// "Other" is really 3 distinct rows there, not one.)
 export const EXPENSE_HEADS = [
   'Purchases', 'Freight', 'Power & Fuel', 'Imported Goods',
   'Rent & Insurance', 'Goods Lost/Destroyed/Gifted', 'Royalties',
   "Employees' Cost", 'Conveyance', 'Bank Charges', 'Entertainment',
-  'Stationery', 'Repair & Maintenance', 'Capital Goods', 'RCM', 'Other',
+  'Stationery', 'Repair & Maintenance', 'Capital Goods',
+  'Other Misc. Expenses', 'Any Other Expense 1', 'Any Other Expense 2',
+  'RCM',
 ] as const;
+/** The 17 heads that actually appear as rows in GSTR-9C Table 14 — RCM is deliberately excluded (see note above). */
+export const TABLE14_EXPENSE_HEADS = EXPENSE_HEADS.filter((h) => h !== 'RCM');
 
 type Section = 'purchase' | 'expense' | 'capital_goods';
 const SECTION_LABEL: Record<Section, string> = { purchase: '(A) Purchase', expense: '(B) Direct & Indirect Expense', capital_goods: '(C) Capital Goods' };
