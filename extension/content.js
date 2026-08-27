@@ -2560,7 +2560,7 @@
                   if (buf && buf.byteLength > 200) {
                     const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
                     const path = 'notices/' + cur.clientId + '/' + (refId || docId) + '.pdf';
-                    row.pdf_url = await GSTKdb.uploadPdf(path, dataUrl);
+                    row.pdf_url = await withTimeout(GSTKdb.uploadPdf(path, dataUrl), 20000, 'uploadPdf');
                     pdfOk++;
                   } else pdfFail++;
                 } else pdfFail++;
@@ -2632,7 +2632,7 @@
                     if (!buf || buf.byteLength <= 200) continue;
                     const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
                     const path = 'notices/' + cur.clientId + '/case-folder/' + t.arn + '/' + doc.id + '.pdf';
-                    const url = await GSTKdb.uploadPdf(path, dataUrl);
+                    const url = await withTimeout(GSTKdb.uploadPdf(path, dataUrl), 20000, 'uploadPdf');
                     attachments.push({ label: doc.docName || doc.docttl || (doc.id + '.pdf'), url });
                   } catch (e) { /* best-effort per attachment */ }
                 }

@@ -184,21 +184,35 @@ const API = {
   },
 
   // Upload a base64 data-URL PDF to the return-pdfs bucket, return its public URL.
+  // AbortController timeout (not just a content.js-side race) so a stuck
+  // upload doesn't leave the request itself running indefinitely — this
+  // call went from "once per notice row" to "once per case-folder
+  // attachment, across every case" (see content.js's Additional Notice
+  // Folder capture), multiplying how often a single slow/stuck request can
+  // occur. Confirmed live 2026-08-27: a real sync hung 20+ minutes with no
+  // progress and no error, on exactly this class of unbounded fetch.
   uploadPdf: async (path, dataUrl) => {
     const b64 = String(dataUrl).split(',')[1] || '';
     const bin = atob(b64);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    const r = await fetch(SUPABASE_URL + '/storage/v1/object/return-pdfs/' + path, {
-      method: 'POST',
-      headers: {
-        apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
-        'Content-Type': 'application/pdf', 'x-upsert': 'true',
-      },
-      body: bytes,
-    });
-    if (!r.ok) throw new Error('PDF upload -> ' + r.status + ' ' + (await r.text()).slice(0, 100));
-    return SUPABASE_URL + '/storage/v1/object/public/return-pdfs/' + path;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    try {
+      const r = await fetch(SUPABASE_URL + '/storage/v1/object/return-pdfs/' + path, {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
+          'Content-Type': 'application/pdf', 'x-upsert': 'true',
+        },
+        body: bytes,
+        signal: controller.signal,
+      });
+      if (!r.ok) throw new Error('PDF upload -> ' + r.status + ' ' + (await r.text()).slice(0, 100));
+      return SUPABASE_URL + '/storage/v1/object/public/return-pdfs/' + path;
+    } finally {
+      clearTimeout(timer);
+    }
   },
 
   // Mark a return Filed (with ARN + filed_date + PDF url). Passes the app's
