@@ -8,7 +8,7 @@ import { Loader2, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { fetchDutiesTaxesInputAnnual, fetchPlInputTotals, fetchRcmTotals, taxTotal } from '@/lib/annualReturnAggregates';
+import { fetchDutiesTaxesInputAnnual, fetchPlInputTotals, fetchRcmTotals, fetchGstr9cTable12NetItc, taxTotal } from '@/lib/annualReturnAggregates';
 
 const TOLERANCE = 10;
 const REASON_LINE_KEY = 'gstr9c_table13_itc_reasons';
@@ -54,16 +54,16 @@ export const Table12NetItcSummaryCard: React.FC<Props> = ({ clientId, financialY
     let cancelled = false;
     setLoading(true);
     Promise.all([
-      supabase.from('gstr9c_table12_net_itc').select('itc_per_financials, itc_earlier_fy_claimed_this_fy, itc_this_fy_claimed_later_fy').eq('client_id', clientId).eq('financial_year', financialYear).maybeSingle(),
+      fetchGstr9cTable12NetItc(clientId, financialYear),
       fetchPlInputTotals(clientId, financialYear),
       fetchRcmTotals(clientId, financialYear),
       fetchDutiesTaxesInputAnnual(clientId, financialYear),
       supabase.from('reconciliation_reasons').select('reason').eq('client_id', clientId).eq('financial_year', financialYear).eq('line_key', REASON_LINE_KEY).maybeSingle(),
-    ]).then(([rowRes, pl, rcm, dt, reasonRes]) => {
+    ]).then(([row, pl, rcm, dt, reasonRes]) => {
       if (cancelled) return;
-      const av = Number(rowRes.data?.itc_per_financials) || 0;
-      const bv = Number(rowRes.data?.itc_earlier_fy_claimed_this_fy) || 0;
-      const cv = Number(rowRes.data?.itc_this_fy_claimed_later_fy) || 0;
+      const av = row.itc_per_financials;
+      const bv = row.itc_earlier_fy_claimed_this_fy;
+      const cv = row.itc_this_fy_claimed_later_fy;
       setA(av); setB(bv); setC(cv);
       setDraftA(String(av)); setDraftB(String(bv)); setDraftC(String(cv));
       // Same "ITC claimed in GSTR-9" total GSTR9-Input's Table 6O / Table 14's row S already compute.

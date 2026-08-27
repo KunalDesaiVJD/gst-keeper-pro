@@ -364,3 +364,95 @@ export async function fetchGstr9cTable11AdditionalLiability(clientId: string, fi
   });
   return totals;
 }
+
+/** A single free-text reconciliation reason (Tables 6/8/10/13/15), by line_key. */
+export async function fetchReconciliationReason(clientId: string, financialYear: string, lineKey: string): Promise<string> {
+  const { data, error } = await supabase.from('reconciliation_reasons').select('reason').eq('client_id', clientId).eq('financial_year', financialYear).eq('line_key', lineKey).maybeSingle();
+  if (error) throw error;
+  return data?.reason || '';
+}
+
+export interface Table12NetItc { itc_per_financials: number; itc_earlier_fy_claimed_this_fy: number; itc_this_fy_claimed_later_fy: number; }
+/** GSTR-9C Table 12 — Net ITC recon, raw A/B/C manual entries (D/E/F are derived, computed by the caller). */
+export async function fetchGstr9cTable12NetItc(clientId: string, financialYear: string): Promise<Table12NetItc> {
+  const { data, error } = await supabase.from('gstr9c_table12_net_itc').select('itc_per_financials, itc_earlier_fy_claimed_this_fy, itc_this_fy_claimed_later_fy').eq('client_id', clientId).eq('financial_year', financialYear).maybeSingle();
+  if (error) throw error;
+  return {
+    itc_per_financials: Number(data?.itc_per_financials) || 0,
+    itc_earlier_fy_claimed_this_fy: Number(data?.itc_earlier_fy_claimed_this_fy) || 0,
+    itc_this_fy_claimed_later_fy: Number(data?.itc_this_fy_claimed_later_fy) || 0,
+  };
+}
+
+export type Table16ItcRowKey = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+const TABLE16_ITC_ROW_KEYS: Table16ItcRowKey[] = ['A', 'B', 'C', 'D', 'E', 'F'];
+/** GSTR-9C Table 16 — Tax payable on un-reconciled ITC, fixed 6-row grid. */
+export async function fetchGstr9cTable16TaxPayable(clientId: string, financialYear: string): Promise<Record<Table16ItcRowKey, number>> {
+  const { data, error } = await supabase.from('gstr9c_table16_tax_payable_unreconciled_itc').select('row_key, amount').eq('client_id', clientId).eq('financial_year', financialYear);
+  if (error) throw error;
+  const totals = {} as Record<Table16ItcRowKey, number>;
+  TABLE16_ITC_ROW_KEYS.forEach((k) => { totals[k] = 0; });
+  (data || []).forEach((r: { row_key: Table16ItcRowKey; amount: number }) => { if (r.row_key in totals) totals[r.row_key] = Number(r.amount); });
+  return totals;
+}
+
+export type PartVRowKey = 'A' | 'A1' | 'B' | 'C' | 'D' | 'D1' | 'E' | 'F' | 'G' | 'G1' | 'G2' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O';
+const PART_V_ROW_KEYS: PartVRowKey[] = ['A', 'A1', 'B', 'C', 'D', 'D1', 'E', 'F', 'G', 'G1', 'G2', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O'];
+/** GSTR-9C Part V — Additional liability due to non-reconciliation, fixed 19-row grid. */
+export async function fetchGstr9cPartVAdditionalLiability(clientId: string, financialYear: string): Promise<Record<PartVRowKey, RateWiseRow>> {
+  const { data, error } = await supabase.from('gstr9c_part_v_additional_liability')
+    .select('row_key, taxable_value, central_tax, state_tax, integrated_tax, cess').eq('client_id', clientId).eq('financial_year', financialYear);
+  if (error) throw error;
+  const totals = {} as Record<PartVRowKey, RateWiseRow>;
+  PART_V_ROW_KEYS.forEach((k) => { totals[k] = zeroRateWise(); });
+  (data || []).forEach((r: { row_key: PartVRowKey } & RateWiseRow) => {
+    if (totals[r.row_key]) totals[r.row_key] = { taxable_value: Number(r.taxable_value), central_tax: Number(r.central_tax), state_tax: Number(r.state_tax), integrated_tax: Number(r.integrated_tax), cess: Number(r.cess) };
+  });
+  return totals;
+}
+
+export interface Table14HeadTotals { value: number; totalItc: number; }
+/**
+ * GSTR-9C Table 14 — ITC by expense head, plus S (ITC claimed in GSTR-9).
+ * Same computation Gstr9cTable14ItcByExpenseHeadView renders — single
+ * source of truth, so the JSON export can never drift from what's shown
+ * on screen.
+ */
+export async function fetchGstr9cTable14ByExpenseHead(clientId: string, financialYear: string): Promise<{ heads: Record<string, Table14HeadTotals>; gstr9InputTotal: number }> {
+  // Imported here (not at module scope) to avoid a lib->component import cycle at load time.
+  const { EXPENSE_HEADS } = await import('@/components/annualReturn/PLInputCard');
+  const [linesRes, dt, pl, rcmTotals] = await Promise.all([
+    supabase.from('pl_input_lines').select('expense_head, taxable_value, igst, cgst, sgst').eq('client_id', clientId).eq('financial_year', financialYear),
+    fetchDutiesTaxesInputAnnual(clientId, financialYear),
+    fetchPlInputTotals(clientId, financialYear),
+    fetchRcmTotals(clientId, financialYear),
+  ]);
+  if (linesRes.error) throw linesRes.error;
+  const heads: Record<string, Table14HeadTotals> = {};
+  EXPENSE_HEADS.forEach((h) => { heads[h] = { value: 0, totalItc: 0 }; });
+  (linesRes.data || []).forEach((r: { expense_head: string | null; taxable_value: number; igst: number; cgst: number; sgst: number }) => {
+    if (!r.expense_head || !heads[r.expense_head]) return;
+    heads[r.expense_head].value += Number(r.taxable_value);
+    heads[r.expense_head].totalItc += Number(r.igst) + Number(r.cgst) + Number(r.sgst);
+  });
+  heads['Purchases'].totalItc -= taxTotal(dt.netSuspended);
+  const gstr9InputTotal = taxTotal(pl.purchase) + taxTotal(pl.expense) + taxTotal(pl.capital_goods) + taxTotal(rcmTotals.partB) + taxTotal(dt.reclaimTotal);
+  return { heads, gstr9InputTotal };
+}
+
+export interface Gstr9cCertification {
+  place: string; signatory_name: string; membership_no: string; signature_date: string;
+  building_no: string; floor_number: string; premises_name: string; road_street: string;
+  city_town_locality: string; district: string; state: string; pin_code: string; pan: string;
+}
+/** GSTR-9C certification block — signatory and address details for the verification declaration. */
+export async function fetchGstr9cCertification(clientId: string, financialYear: string): Promise<Gstr9cCertification> {
+  const { data, error } = await supabase.from('gstr9c_certification').select('*').eq('client_id', clientId).eq('financial_year', financialYear).maybeSingle();
+  if (error) throw error;
+  return {
+    place: data?.place || '', signatory_name: data?.signatory_name || '', membership_no: data?.membership_no || '',
+    signature_date: data?.signature_date || '', building_no: data?.building_no || '', floor_number: data?.floor_number || '',
+    premises_name: data?.premises_name || '', road_street: data?.road_street || '', city_town_locality: data?.city_town_locality || '',
+    district: data?.district || '', state: data?.state || '', pin_code: data?.pin_code || '', pan: data?.pan || '',
+  };
+}

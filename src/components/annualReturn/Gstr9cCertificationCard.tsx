@@ -7,6 +7,7 @@ import { Loader2, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { fetchGstr9cCertification } from '@/lib/annualReturnAggregates';
 
 interface Fields {
   place: string; signatory_name: string; membership_no: string; signature_date: string;
@@ -47,19 +48,14 @@ export const Gstr9cCertificationCard: React.FC<Props> = ({ clientId, financialYe
     if (!clientId || !financialYear) { setLoading(false); return; }
     let cancelled = false;
     setLoading(true);
-    supabase.from('gstr9c_certification').select('*').eq('client_id', clientId).eq('financial_year', financialYear).maybeSingle()
-      .then(({ data, error }) => {
+    fetchGstr9cCertification(clientId, financialYear)
+      .then((next) => {
         if (cancelled) return;
-        if (error) { toast.error('Could not load certification details: ' + error.message); return; }
-        const next: Fields = {
-          place: data?.place || '', signatory_name: data?.signatory_name || '', membership_no: data?.membership_no || '',
-          signature_date: data?.signature_date || '', building_no: data?.building_no || '', floor_number: data?.floor_number || '',
-          premises_name: data?.premises_name || '', road_street: data?.road_street || '', city_town_locality: data?.city_town_locality || '',
-          district: data?.district || '', state: data?.state || '', pin_code: data?.pin_code || '', pan: data?.pan || '',
-        };
         setSaved(next);
         setDraft(next);
-      }).finally(() => { if (!cancelled) setLoading(false); });
+      })
+      .catch((err) => toast.error('Could not load certification details: ' + (err instanceof Error ? err.message : 'Unknown error')))
+      .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [clientId, financialYear]);
 

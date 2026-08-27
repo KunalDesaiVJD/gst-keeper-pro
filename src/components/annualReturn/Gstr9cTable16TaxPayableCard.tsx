@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Loader2, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchGstr9cTable16TaxPayable } from '@/lib/annualReturnAggregates';
 
 const ROW_KEYS = ['A', 'B', 'C', 'D', 'E', 'F'] as const;
 type RowKey = typeof ROW_KEYS[number];
@@ -34,14 +35,17 @@ export const Gstr9cTable16TaxPayableCard: React.FC<Props> = ({ clientId, financi
   const load = async () => {
     if (!clientId || !financialYear) { setLoading(false); return; }
     setLoading(true);
-    const { data, error } = await supabase.from('gstr9c_table16_tax_payable_unreconciled_itc').select('row_key, amount').eq('client_id', clientId).eq('financial_year', financialYear);
-    if (error) { toast.error('Could not load Table 16: ' + error.message); setLoading(false); return; }
-    const next = {} as Record<RowKey, string>;
-    ROW_KEYS.forEach((k) => { next[k] = '0'; });
-    (data || []).forEach((r: { row_key: RowKey; amount: number }) => { next[r.row_key] = String(r.amount); });
-    setRows(next);
-    setDirty({} as Record<RowKey, boolean>);
-    setLoading(false);
+    try {
+      const data = await fetchGstr9cTable16TaxPayable(clientId, financialYear);
+      const next = {} as Record<RowKey, string>;
+      ROW_KEYS.forEach((k) => { next[k] = String(data[k]); });
+      setRows(next);
+      setDirty({} as Record<RowKey, boolean>);
+    } catch (err) {
+      toast.error('Could not load Table 16: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { load(); }, [clientId, financialYear]); // eslint-disable-line react-hooks/exhaustive-deps

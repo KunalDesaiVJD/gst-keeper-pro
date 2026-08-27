@@ -2,9 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Inbox } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Loader2, Inbox, FileSpreadsheet } from 'lucide-react';
 import { toast } from 'sonner';
+import { supabase } from '@/integrations/supabase/client';
 import { fetchTable17HsnOutward, Table17Row } from '@/lib/annualReturnAggregates';
+import { exportGstr9HsnToExcel } from '@/utils/gstr9HsnExcelExport';
 
 const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
@@ -56,6 +59,11 @@ export const Table17HsnOutwardCard: React.FC<Props> = ({ clientId, financialYear
     taxable: a.taxable + r.taxable, igst: a.igst + r.igst, cgst: a.cgst + r.cgst, sgst: a.sgst + r.sgst, cess: a.cess + r.cess,
   }), { taxable: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 });
 
+  const handleExportExcel = async () => {
+    const { data: client } = await supabase.from('clients').select('name').eq('id', clientId).maybeSingle();
+    exportGstr9HsnToExcel(client?.name || 'Unknown', financialYear, rows);
+  };
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-3 flex-wrap">
@@ -63,7 +71,13 @@ export const Table17HsnOutwardCard: React.FC<Props> = ({ clientId, financialYear
           <CardTitle className="text-lg">TABLE 17 — HSN-wise summary of outward supplies</CardTitle>
           <CardDescription>Computed from imported GSTR-1 data, aggregated by HSN code and rate across the year. Nothing is entered here.</CardDescription>
         </div>
-        <Badge variant={complete ? 'success' : 'warning'}>{monthsPresent} of {monthsTotal} months present</Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant={complete ? 'success' : 'warning'}>{monthsPresent} of {monthsTotal} months present</Badge>
+          <Button size="sm" variant="outline" disabled={rows.length === 0} onClick={handleExportExcel} className="gap-2">
+            <FileSpreadsheet className="h-4 w-4" />
+            Export Excel
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         {!complete && (

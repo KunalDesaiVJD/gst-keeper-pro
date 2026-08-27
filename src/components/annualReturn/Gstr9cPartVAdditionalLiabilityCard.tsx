@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Loader2, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchGstr9cPartVAdditionalLiability } from '@/lib/annualReturnAggregates';
 
 const RATE_ROW_KEYS = ['A', 'A1', 'B', 'C', 'D', 'D1', 'E', 'F', 'G', 'G1', 'G2'] as const;
 const OTHER_ROW_KEYS = ['H', 'I', 'J', 'K', 'L', 'M', 'N', 'O'] as const;
@@ -44,17 +45,20 @@ export const Gstr9cPartVAdditionalLiabilityCard: React.FC<Props> = ({ clientId, 
   const load = async () => {
     if (!clientId || !financialYear) { setLoading(false); return; }
     setLoading(true);
-    const { data, error } = await supabase.from('gstr9c_part_v_additional_liability')
-      .select('row_key, taxable_value, central_tax, state_tax, integrated_tax, cess').eq('client_id', clientId).eq('financial_year', financialYear);
-    if (error) { toast.error('Could not load Part V: ' + error.message); setLoading(false); return; }
-    const next = {} as FieldRows;
-    ALL_ROW_KEYS.forEach((k) => { next[k] = emptyFieldRow(); });
-    (data || []).forEach((r: { row_key: RowKey; taxable_value: number; central_tax: number; state_tax: number; integrated_tax: number; cess: number }) => {
-      if (next[r.row_key]) next[r.row_key] = { taxable_value: String(r.taxable_value), central_tax: String(r.central_tax), state_tax: String(r.state_tax), integrated_tax: String(r.integrated_tax), cess: String(r.cess) };
-    });
-    setRows(next);
-    setDirty({} as Record<RowKey, boolean>);
-    setLoading(false);
+    try {
+      const data = await fetchGstr9cPartVAdditionalLiability(clientId, financialYear);
+      const next = {} as FieldRows;
+      ALL_ROW_KEYS.forEach((k) => {
+        const r = data[k];
+        next[k] = { taxable_value: String(r.taxable_value), central_tax: String(r.central_tax), state_tax: String(r.state_tax), integrated_tax: String(r.integrated_tax), cess: String(r.cess) };
+      });
+      setRows(next);
+      setDirty({} as Record<RowKey, boolean>);
+    } catch (err) {
+      toast.error('Could not load Part V: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { load(); }, [clientId, financialYear]); // eslint-disable-line react-hooks/exhaustive-deps

@@ -32,7 +32,7 @@ export const exportGstr9FormToPDF = ({ clientName, clientGstin, financialYear, s
 
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.text('GSTR-9 — Tables 4 to 13', 105, 15, { align: 'center' });
+  doc.text('GSTR-9 — Tables 4 to 16', 105, 15, { align: 'center' });
 
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');

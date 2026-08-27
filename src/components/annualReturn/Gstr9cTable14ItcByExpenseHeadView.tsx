@@ -8,8 +8,8 @@ import { Loader2, Inbox, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { fetchDutiesTaxesInputAnnual, fetchPlInputTotals, fetchRcmTotals, taxTotal } from '@/lib/annualReturnAggregates';
-import { EXPENSE_HEADS, TABLE14_EXPENSE_HEADS } from '@/components/annualReturn/PLInputCard';
+import { fetchGstr9cTable14ByExpenseHead } from '@/lib/annualReturnAggregates';
+import { TABLE14_EXPENSE_HEADS } from '@/components/annualReturn/PLInputCard';
 
 const TOLERANCE = 10;
 const REASON_LINE_KEY = 'gstr9c_table15_itc_reasons';
@@ -49,28 +49,15 @@ export const Gstr9cTable14ItcByExpenseHeadView: React.FC<Props> = ({ clientId, f
     let cancelled = false;
     setLoading(true);
     Promise.all([
-      supabase.from('pl_input_lines').select('expense_head, taxable_value, igst, cgst, sgst').eq('client_id', clientId).eq('financial_year', financialYear),
-      fetchDutiesTaxesInputAnnual(clientId, financialYear),
-      fetchPlInputTotals(clientId, financialYear),
-      fetchRcmTotals(clientId, financialYear),
+      fetchGstr9cTable14ByExpenseHead(clientId, financialYear),
       supabase.from('reconciliation_reasons').select('reason').eq('client_id', clientId).eq('financial_year', financialYear).eq('line_key', REASON_LINE_KEY).maybeSingle(),
-    ]).then(([linesRes, dt, pl, rcmTotals, reasonRes]) => {
+    ]).then(([{ heads, gstr9InputTotal }, reasonRes]) => {
       if (cancelled) return;
-      if (linesRes.error) throw linesRes.error;
-      const next: Record<string, HeadTotals> = {};
-      EXPENSE_HEADS.forEach((h) => { next[h] = { value: 0, totalItc: 0 }; });
-      (linesRes.data || []).forEach((r: { expense_head: string | null; taxable_value: number; igst: number; cgst: number; sgst: number }) => {
-        if (!r.expense_head || !next[r.expense_head]) return;
-        next[r.expense_head].value += Number(r.taxable_value);
-        next[r.expense_head].totalItc += Number(r.igst) + Number(r.cgst) + Number(r.sgst);
-      });
-      const netSuspended = taxTotal(dt.netSuspended);
-      next['Purchases'].totalItc -= netSuspended;
-      setRows(next);
+      setRows(heads);
       // Matches GSTR 9-Input's "Total (matches Table 6O)" computation — this
       // deliberately INCLUDES RCM (row E/S), while the table below excludes
       // it, so any RCM-driven gap shows up honestly as unreconciled.
-      setGstr9InputTotal(taxTotal(pl.purchase) + taxTotal(pl.expense) + taxTotal(pl.capital_goods) + taxTotal(rcmTotals.partB) + taxTotal(dt.reclaimTotal));
+      setGstr9InputTotal(gstr9InputTotal);
       setReason(reasonRes.data?.reason || '');
       setSavedReason(reasonRes.data?.reason || '');
     }).catch((err) => toast.error('Could not compute GSTR 9C Table 14: ' + (err instanceof Error ? err.message : 'Unknown error')))
