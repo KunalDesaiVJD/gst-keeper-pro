@@ -260,3 +260,35 @@ export async function fetchTable14DifferentialTax(clientId: string, financialYea
   });
   return totals;
 }
+
+export type Table15RowKey = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G';
+export interface Table15Row { central_tax: number; state_tax: number; integrated_tax: number; cess: number; interest: number; penalty: number; }
+const TABLE15_ROW_KEYS: Table15RowKey[] = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
+/** GSTR-9 Table 15 — Demands and Refunds (portal roadmap, 27 Aug 2026). Standalone manual entry. */
+export async function fetchTable15DemandsRefunds(clientId: string, financialYear: string): Promise<Record<Table15RowKey, Table15Row>> {
+  const { data, error } = await supabase.from('gstr9_table15_demands_refunds')
+    .select('row_key, central_tax, state_tax, integrated_tax, cess, interest, penalty').eq('client_id', clientId).eq('financial_year', financialYear);
+  if (error) throw error;
+  const totals = {} as Record<Table15RowKey, Table15Row>;
+  TABLE15_ROW_KEYS.forEach((k) => { totals[k] = { central_tax: 0, state_tax: 0, integrated_tax: 0, cess: 0, interest: 0, penalty: 0 }; });
+  (data || []).forEach((r: { row_key: Table15RowKey } & Table15Row) => {
+    if (totals[r.row_key]) totals[r.row_key] = { central_tax: Number(r.central_tax), state_tax: Number(r.state_tax), integrated_tax: Number(r.integrated_tax), cess: Number(r.cess), interest: Number(r.interest), penalty: Number(r.penalty) };
+  });
+  return totals;
+}
+
+export type Table16RowKey = 'A' | 'B' | 'C';
+export interface Table16Row { taxable_value: number; central_tax: number; state_tax: number; integrated_tax: number; cess: number; }
+const TABLE16_ROW_KEYS: Table16RowKey[] = ['A', 'B', 'C'];
+/** GSTR-9 Table 16 — Composition/deemed-supply/approval-basis (portal roadmap, 27 Aug 2026). Standalone manual entry. */
+export async function fetchTable16CompositionDeemedApproval(clientId: string, financialYear: string): Promise<Record<Table16RowKey, Table16Row>> {
+  const { data, error } = await supabase.from('gstr9_table16_composition_deemed_approval')
+    .select('row_key, taxable_value, central_tax, state_tax, integrated_tax, cess').eq('client_id', clientId).eq('financial_year', financialYear);
+  if (error) throw error;
+  const totals = {} as Record<Table16RowKey, Table16Row>;
+  TABLE16_ROW_KEYS.forEach((k) => { totals[k] = { taxable_value: 0, central_tax: 0, state_tax: 0, integrated_tax: 0, cess: 0 }; });
+  (data || []).forEach((r: { row_key: Table16RowKey } & Table16Row) => {
+    if (totals[r.row_key]) totals[r.row_key] = { taxable_value: Number(r.taxable_value), central_tax: Number(r.central_tax), state_tax: Number(r.state_tax), integrated_tax: Number(r.integrated_tax), cess: Number(r.cess) };
+  });
+  return totals;
+}

@@ -9,7 +9,9 @@ import { toast } from 'sonner';
 import {
   fetchPlInputTotals, fetchPlOutputPartBByBifurcation, fetchDutiesTaxesInputAnnual, fetchRcmTotals,
   fetchPortalItcClaimedAnnual, fetchPortal2bAnnual, fetchPortalCategoryTotals, fetchItcReversalTotals,
-  fetchTaxPaymentTotals, fetchCarryForwardTotals, fetchTable14DifferentialTax, taxTotal,
+  fetchTaxPaymentTotals, fetchCarryForwardTotals, fetchTable14DifferentialTax,
+  fetchTable15DemandsRefunds, fetchTable16CompositionDeemedApproval, taxTotal,
+  type Table15RowKey, type Table15Row, type Table16RowKey, type Table16Row,
 } from '@/lib/annualReturnAggregates';
 import { supabase } from '@/integrations/supabase/client';
 import { exportGstr9FormToPDF, type Gstr9PdfSection } from '@/utils/gstr9FormPdfExport';
@@ -78,6 +80,8 @@ interface Computed {
   payIgst: { payable: number; paid: number }; payCgst: { payable: number; paid: number }; paySgst: { payable: number; paid: number };
   t10: number; t11: number; t12: number; t13: number;
   t14: Record<'igst' | 'cgst' | 'sgst' | 'cess' | 'interest', { payable: number; paid: number }>;
+  t15: Record<Table15RowKey, Table15Row>;
+  t16: Record<Table16RowKey, Table16Row>;
 }
 
 const GROUPS = [
@@ -85,7 +89,7 @@ const GROUPS = [
   { id: 'itc', label: 'Table 6–7 · ITC' },
   { id: 'reco8', label: 'Table 8 · ITC vs 2B' },
   { id: 'taxpaid', label: 'Table 9 · Tax paid' },
-  { id: 'nextyear', label: 'Table 10–14 · Next year' },
+  { id: 'nextyear', label: 'Table 10–16 · Next year' },
 ] as const;
 
 // Builds the on-screen table sections and the PDF export from the same data
@@ -198,6 +202,31 @@ const buildGroups = (c: Computed): Record<typeof GROUPS[number]['id'], Gstr9Card
         };
       }),
     },
+    {
+      title: 'Table 15 — Demands and Refunds',
+      description: "From the Annexure tab's Table 15 entry.",
+      rows: (['A', 'B', 'C', 'D', 'E', 'F', 'G'] as const).map((k) => {
+        const v = c.t15[k];
+        const total = v.central_tax + v.state_tax + v.integrated_tax + v.cess + v.interest + v.penalty;
+        const label = {
+          A: 'Total Refund claimed', B: 'Total Refund sanctioned', C: 'Total Refund Rejected', D: 'Total Refund Pending',
+          E: 'Total demand of taxes', F: 'Total taxes paid in respect of E above', G: 'Total demands pending out of E above',
+        }[k];
+        return { tableNo: `15${k}`, description: label, value: total };
+      }),
+    },
+    {
+      title: 'Table 16 — Composition / Deemed Supply / Approval Basis',
+      description: "From the Annexure tab's Table 16 entry.",
+      rows: (['A', 'B', 'C'] as const).map((k) => {
+        const v = c.t16[k];
+        const total = v.taxable_value + v.central_tax + v.state_tax + v.integrated_tax + v.cess;
+        const label = {
+          A: 'Supplies received from Composition taxpayers', B: 'Deemed supply under Section 143', C: 'Goods sent on approval basis but not returned',
+        }[k];
+        return { tableNo: `16${k}`, description: label, value: total };
+      }),
+    },
   ],
 });
 
@@ -230,7 +259,9 @@ export const Gstr9FormView: React.FC<Props> = ({ clientId, financialYear }) => {
       fetchTaxPaymentTotals(clientId, financialYear),
       fetchCarryForwardTotals(clientId, financialYear),
       fetchTable14DifferentialTax(clientId, financialYear),
-    ]).then(([pl, plOutB, dt, rcm, portalItc, portal2b, cat, itcRev, pay, cf, t14]) => {
+      fetchTable15DemandsRefunds(clientId, financialYear),
+      fetchTable16CompositionDeemedApproval(clientId, financialYear),
+    ]).then(([pl, plOutB, dt, rcm, portalItc, portal2b, cat, itcRev, pay, cf, t14, t15, t16]) => {
       if (cancelled) return;
       const t4A = taxTotal(cat.b2c), t4B = taxTotal(cat.b2b), t4D = taxTotal(cat.sez_with), t4E = taxTotal(cat.deemed_export);
       const t4G = taxTotal(rcm.partA);
@@ -274,7 +305,7 @@ export const Gstr9FormView: React.FC<Props> = ({ clientId, financialYear }) => {
         payIgst, payCgst, paySgst,
         t10: taxTotal(cf.turnover_declared_next_fy), t11: taxTotal(cf.turnover_reduced_next_fy),
         t12: taxTotal(cf.claimed_in_next_fy) * -1, t13: taxTotal(cf.claimed_in_next_fy),
-        t14,
+        t14, t15, t16,
       });
       setStatus('ready');
     }).catch((err) => {
