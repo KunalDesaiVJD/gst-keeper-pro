@@ -89,6 +89,10 @@ export const buildViewNoticesAndOrdersReport = async (clientId: string): Promise
       r.pdf_url || '—',
     ]),
     rowIds: rows.map((r) => r.id),
+    // Same client for every row here (single-client report) — lets the
+    // Reference No. column link to the Additional Notice Folder page the
+    // same way the firm-wide Notices — All Clients list does.
+    clientIds: rows.map(() => clientId),
     fileNameBase: `${fileSafe(title)}_${fileSafe(client.name)}`,
     columnWidths: [16, 16, 16, 40, 12, 12, 14, 10, 8, 14, 12, 14, 12, 16, 14, 14, 24, 12, 12, 14, 12],
   };

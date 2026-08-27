@@ -45,6 +45,9 @@
     // (see content.js's logSyncAttempt, gated on job.logSync) — every other
     // job/mode is untouched.
     logClientSync: (clientId, action, status, message) => call('logClientSync', clientId, action, status, message),
+    // Additional Notice Folder detail — one row per case-folder item, see
+    // handleNotices' task-list loop in content.js for the capture.
+    replaceCaseFolderItems: (clientId, caseId, rows) => call('replaceCaseFolderItems', clientId, caseId, rows),
     logEvent: (clientId, level, message) => { console.log('[GSTKeeper]', level, clientId, message); },
   };
 })();

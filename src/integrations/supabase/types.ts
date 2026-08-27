@@ -39,6 +39,47 @@ export type Database = {
   }
   public: {
     Tables: {
+      annexure3_other_payments: {
+        Row: {
+          amount: number
+          client_id: string
+          created_at: string
+          entered_by: string | null
+          financial_year: string
+          id: string
+          notes: string | null
+          updated_at: string
+        }
+        Insert: {
+          amount?: number
+          client_id: string
+          created_at?: string
+          entered_by?: string | null
+          financial_year: string
+          id?: string
+          notes?: string | null
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          client_id?: string
+          created_at?: string
+          entered_by?: string | null
+          financial_year?: string
+          id?: string
+          notes?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "annexure3_other_payments_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       annual_return_carry_forward: {
         Row: {
           cess: number
@@ -3967,6 +4008,47 @@ export type Database = {
           },
         ]
       }
+      gst_case_folder_items: {
+        Row: {
+          attachments: Json
+          case_id: string
+          client_id: string
+          folder_section: string | null
+          id: string
+          pulled_at: string
+          raw_json: Json | null
+          reference_number: string | null
+        }
+        Insert: {
+          attachments?: Json
+          case_id: string
+          client_id: string
+          folder_section?: string | null
+          id?: string
+          pulled_at?: string
+          raw_json?: Json | null
+          reference_number?: string | null
+        }
+        Update: {
+          attachments?: Json
+          case_id?: string
+          client_id?: string
+          folder_section?: string | null
+          id?: string
+          pulled_at?: string
+          raw_json?: Json | null
+          reference_number?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gst_case_folder_items_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       gst_cash_ledger_entries: {
         Row: {
           balance: number | null
@@ -5395,6 +5477,267 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "gstr9_output_lines_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gstr9_table14_differential_tax: {
+        Row: {
+          client_id: string
+          entered_by: string | null
+          financial_year: string
+          id: string
+          paid: number
+          payable: number
+          tax_head: string
+          updated_at: string
+        }
+        Insert: {
+          client_id: string
+          entered_by?: string | null
+          financial_year: string
+          id?: string
+          paid?: number
+          payable?: number
+          tax_head: string
+          updated_at?: string
+        }
+        Update: {
+          client_id?: string
+          entered_by?: string | null
+          financial_year?: string
+          id?: string
+          paid?: number
+          payable?: number
+          tax_head?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gstr9_table14_differential_tax_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gstr9_table15_demands_refunds: {
+        Row: {
+          central_tax: number
+          cess: number
+          client_id: string
+          entered_by: string | null
+          financial_year: string
+          id: string
+          integrated_tax: number
+          interest: number
+          penalty: number
+          row_key: string
+          state_tax: number
+          updated_at: string
+        }
+        Insert: {
+          central_tax?: number
+          cess?: number
+          client_id: string
+          entered_by?: string | null
+          financial_year: string
+          id?: string
+          integrated_tax?: number
+          interest?: number
+          penalty?: number
+          row_key: string
+          state_tax?: number
+          updated_at?: string
+        }
+        Update: {
+          central_tax?: number
+          cess?: number
+          client_id?: string
+          entered_by?: string | null
+          financial_year?: string
+          id?: string
+          integrated_tax?: number
+          interest?: number
+          penalty?: number
+          row_key?: string
+          state_tax?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gstr9_table15_demands_refunds_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gstr9_table16_composition_deemed_approval: {
+        Row: {
+          central_tax: number
+          cess: number
+          client_id: string
+          entered_by: string | null
+          financial_year: string
+          id: string
+          integrated_tax: number
+          row_key: string
+          state_tax: number
+          taxable_value: number
+          updated_at: string
+        }
+        Insert: {
+          central_tax?: number
+          cess?: number
+          client_id: string
+          entered_by?: string | null
+          financial_year: string
+          id?: string
+          integrated_tax?: number
+          row_key: string
+          state_tax?: number
+          taxable_value?: number
+          updated_at?: string
+        }
+        Update: {
+          central_tax?: number
+          cess?: number
+          client_id?: string
+          entered_by?: string | null
+          financial_year?: string
+          id?: string
+          integrated_tax?: number
+          row_key?: string
+          state_tax?: number
+          taxable_value?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gstr9_table16_composition_deemed_approval_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gstr9c_table12_net_itc: {
+        Row: {
+          client_id: string
+          entered_by: string | null
+          financial_year: string
+          id: string
+          itc_earlier_fy_claimed_this_fy: number
+          itc_per_financials: number
+          itc_this_fy_claimed_later_fy: number
+          updated_at: string
+        }
+        Insert: {
+          client_id: string
+          entered_by?: string | null
+          financial_year: string
+          id?: string
+          itc_earlier_fy_claimed_this_fy?: number
+          itc_per_financials?: number
+          itc_this_fy_claimed_later_fy?: number
+          updated_at?: string
+        }
+        Update: {
+          client_id?: string
+          entered_by?: string | null
+          financial_year?: string
+          id?: string
+          itc_earlier_fy_claimed_this_fy?: number
+          itc_per_financials?: number
+          itc_this_fy_claimed_later_fy?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gstr9c_table12_net_itc_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gstr9c_table5_turnover_reco: {
+        Row: {
+          amount: number
+          client_id: string
+          entered_by: string | null
+          financial_year: string
+          id: string
+          row_key: string
+          updated_at: string
+        }
+        Insert: {
+          amount?: number
+          client_id: string
+          entered_by?: string | null
+          financial_year: string
+          id?: string
+          row_key: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          client_id?: string
+          entered_by?: string | null
+          financial_year?: string
+          id?: string
+          row_key?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gstr9c_table5_turnover_reco_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gstr9c_table7_taxable_turnover_reco: {
+        Row: {
+          amount: number
+          client_id: string
+          entered_by: string | null
+          financial_year: string
+          id: string
+          row_key: string
+          updated_at: string
+        }
+        Insert: {
+          amount?: number
+          client_id: string
+          entered_by?: string | null
+          financial_year: string
+          id?: string
+          row_key: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          client_id?: string
+          entered_by?: string | null
+          financial_year?: string
+          id?: string
+          row_key?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gstr9c_table7_taxable_turnover_reco_client_id_fkey"
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"

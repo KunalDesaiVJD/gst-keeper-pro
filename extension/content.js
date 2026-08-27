@@ -2529,13 +2529,17 @@
         description: t.taskDesc || null, issue_date: epochMsToIsoDate(t.assignmentDt),
         due_date: null, status: null, issued_by: null, case_id: t.arn || null, pdf_url: null,
       };
+      // Hoisted out of the try block below (was `const`, scoped only to
+      // that try) so the Additional Notice Folder capture further down can
+      // reuse this same fetch instead of hitting case/folder a second time.
+      let folders = [];
       if (t.caseId && t.arn) {
         try {
           const fr = await fetch('https://services.gst.gov.in/litserv/auth/api/case/folder', {
             method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ caseId: t.caseId, gstid: cur.creds.gstin || '', caseTypeCd: t.caseTpeCd || '' }),
           });
-          const folders = fr.ok ? await fr.json() : [];
+          folders = fr.ok ? await fr.json() : [];
           const ordersFolder = Array.isArray(folders) ? folders.find((f) => f.caseFolderTypeCd === 'ORDRS') : null;
           if (ordersFolder) {
             const ir = await fetch('https://services.gst.gov.in/litserv/auth/api/case/folder/items', {
@@ -2567,6 +2571,65 @@
       }
       rows.push(row);
       taskRows++;
+
+      // Additional Notice Folder capture — Notice Alert parity: clicking a
+      // case-linked row's Reference No. opens the full case folder
+      // (Intimations/Notices/Replies/Orders/Closure, each with its own
+      // attachments), not just the single ORDRS PDF captured above. Reuses
+      // the exact same `folders` fetch already done for that PDF — every
+      // OTHER folder type (INTM/NOTC/RPLY/CLSR etc, whatever the portal
+      // actually returns) gets the same items+attachments treatment here,
+      // best-effort: raw_json is stored verbatim so nothing captured is
+      // lost even where a field's exact meaning isn't known yet (only
+      // docupdtl/crn are proven, from the ORDRS case above).
+      if (t.caseId && t.arn && Array.isArray(folders) && folders.length) {
+        try {
+          const folderItems = [];
+          for (const folder of folders) {
+            try {
+              const fir = await fetch('https://services.gst.gov.in/litserv/auth/api/case/folder/items', {
+                method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ caseFolderId: folder.caseFolderId }),
+              });
+              const fItems = fir.ok ? await fir.json() : [];
+              if (!Array.isArray(fItems)) continue;
+              for (const fi of fItems) {
+                let fParsed = null;
+                try { fParsed = fi.itemJson ? JSON.parse(fi.itemJson) : null; } catch (e) { /* keep raw_json as the unparsed string below */ }
+                const attachments = [];
+                const docs = (fParsed && Array.isArray(fParsed.docupdtl)) ? fParsed.docupdtl : [];
+                for (const doc of docs) {
+                  if (!doc || !doc.id) continue;
+                  try {
+                    const docArn = (fParsed && fParsed.crn) || t.arn;
+                    const eh = await fetchEncrypDocEh(doc.id, docArn);
+                    if (!eh) continue;
+                    const pdfR = await fetch('https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(doc.id) + '&arn=' + encodeURIComponent(docArn) + '&eh=' + encodeURIComponent(eh), { credentials: 'include' });
+                    if (!pdfR.ok) continue;
+                    const buf = await pdfR.arrayBuffer();
+                    if (!buf || buf.byteLength <= 200) continue;
+                    const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
+                    const path = 'notices/' + cur.clientId + '/case-folder/' + t.arn + '/' + doc.id + '.pdf';
+                    const url = await GSTKdb.uploadPdf(path, dataUrl);
+                    attachments.push({ label: doc.docNm || doc.fileName || (doc.id + '.pdf'), url });
+                  } catch (e) { /* best-effort per attachment */ }
+                }
+                folderItems.push({
+                  client_id: cur.clientId,
+                  case_id: t.arn,
+                  folder_section: folder.caseFolderTypeCd || null,
+                  reference_number: fi.refId || (fParsed && fParsed.crn) || null,
+                  attachments,
+                  raw_json: fParsed !== null ? fParsed : (fi.itemJson || null),
+                });
+              }
+            } catch (e) { /* best-effort per folder */ }
+          }
+          if (folderItems.length) {
+            try { await GSTKdb.replaceCaseFolderItems(cur.clientId, t.arn, folderItems); } catch (e2) { /* diagnostic only */ }
+          }
+        } catch (e) { /* best-effort, never blocks the main notices row above */ }
+      }
     }
 
     try {

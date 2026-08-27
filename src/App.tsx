@@ -31,6 +31,7 @@ import CompanyListPage from "@/pages/CompanyListPage";
 import CompanyProfilePage from "@/pages/CompanyProfilePage";
 import NoticeSummaryReportPage from "@/pages/NoticeSummaryReportPage";
 import GstinWiseNoticeCountPage from "@/pages/GstinWiseNoticeCountPage";
+import AdditionalNoticeFolderPage from "@/pages/AdditionalNoticeFolderPage";
 import AllClientsNoticesPage from "@/pages/AllClientsNoticesPage";
 import AllClientsRefundsPage from "@/pages/AllClientsRefundsPage";
 import AllClientsDrc03Page from "@/pages/AllClientsDrc03Page";
@@ -105,6 +106,7 @@ const App = () => (
                   <Route path="/notices-company/:clientId" element={<CompanyProfilePage />} />
                   <Route path="/notices-report" element={<NoticeSummaryReportPage />} />
                   <Route path="/notices-gstin-wise-count" element={<GstinWiseNoticeCountPage />} />
+                  <Route path="/notices-case-folder/:clientId/:caseId" element={<AdditionalNoticeFolderPage />} />
                   <Route path="/notices-all" element={<AllClientsNoticesPage />} />
                   <Route path="/refunds-all" element={<AllClientsRefundsPage />} />
                   <Route path="/drc03-all" element={<AllClientsDrc03Page />} />

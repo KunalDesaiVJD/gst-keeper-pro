@@ -112,6 +112,13 @@ const API = {
   logClientSync: (clientId, action, status, message) =>
     post('client_sync_log', [{ client_id: clientId, action, status, message: message || null }]),
 
+  // Delete-then-insert per client+case, same pattern as replaceNotices — a
+  // later successful pull overwrites the previous capture for that case.
+  replaceCaseFolderItems: async (clientId, caseId, rows) => {
+    await del('gst_case_folder_items', `client_id=eq.${clientId}&case_id=eq.${enc(caseId)}`);
+    return rows.length ? post('gst_case_folder_items', rows) : true;
+  },
+
   upsertTaxpayerProfile: async (clientId, patchObj) => {
     const ex = await sel(`gst_taxpayer_profile?client_id=eq.${clientId}&select=id&limit=1`);
     if (ex[0]) return patch(`gst_taxpayer_profile?id=eq.${ex[0].id}`, patchObj);

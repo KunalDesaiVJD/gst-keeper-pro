@@ -6,6 +6,7 @@
 // filed, order received, and application submitted for that notice — none
 // of which the portal itself ever exposes for these rows.
 import React, { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { useAuth } from '@/contexts/AuthContext';
@@ -212,6 +213,12 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
   const rowIds = table.rowIds;
   const clientIds = table.clientIds;
   const referenceColIdx = useMemo(() => headers.findIndex((h) => /^reference no\.?$/i.test(h.trim())), [headers]);
+  // Case-linked rows (Additional Notices, LUT, DRC-03 — anything with a
+  // portal Case ID) get their Reference No. wired to the Additional Notice
+  // Folder page, matching Notice Alert's own blue-link-only-for-case-id-rows
+  // convention (confirmed live 2026-08-26) — a plain get/notices row with no
+  // Case ID stays plain text, same as theirs.
+  const caseIdColIdx = useMemo(() => headers.findIndex((h) => /^case id$/i.test(h.trim())), [headers]);
 
   const openInPortal = (idx: number) => {
     const clientId = clientIds?.[idx];
@@ -788,6 +795,23 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
                         return (
                           <TableCell key={ci} className="whitespace-nowrap px-3 py-1.5 text-xs">
                             <Badge variant={STATUS_VARIANT(current)} className="py-0 text-[10px]">{current}</Badge>
+                          </TableCell>
+                        );
+                      }
+                    }
+
+                    // Reference No. column: links to the Additional Notice
+                    // Folder page when this row has a Case ID and we know
+                    // which client it belongs to — plain text otherwise.
+                    if (ci === referenceColIdx && String(cell ?? '').trim() && !isSentinel(cell)) {
+                      const caseId = caseIdColIdx !== -1 ? cellToText(rows[idx]?.[caseIdColIdx]) : '';
+                      const linkClientId = clientIds?.[idx];
+                      if (caseId && linkClientId) {
+                        return (
+                          <TableCell key={ci} className="whitespace-nowrap px-3 py-1.5 text-xs">
+                            <Link to={`/notices-case-folder/${linkClientId}/${encodeURIComponent(caseId)}`} className="text-primary hover:underline">
+                              {String(cell)}
+                            </Link>
                           </TableCell>
                         );
                       }
