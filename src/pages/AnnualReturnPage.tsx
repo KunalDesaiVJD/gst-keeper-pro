@@ -26,6 +26,8 @@ import Gstr9InputView from '@/components/annualReturn/Gstr9InputView';
 import Gstr9OutputDiffView from '@/components/annualReturn/Gstr9OutputDiffView';
 import Gstr9cTable5TurnoverRecoCard from '@/components/annualReturn/Gstr9cTable5TurnoverRecoCard';
 import Gstr9cTable7TaxableTurnoverRecoCard from '@/components/annualReturn/Gstr9cTable7TaxableTurnoverRecoCard';
+import Gstr9cTable9RateWiseLiabilityCard from '@/components/annualReturn/Gstr9cTable9RateWiseLiabilityCard';
+import Gstr9cTable11AdditionalLiabilityCard from '@/components/annualReturn/Gstr9cTable11AdditionalLiabilityCard';
 import Table12NetItcSummaryCard from '@/components/annualReturn/Table12NetItcSummaryCard';
 import Gstr9cTable14ItcByExpenseHeadView from '@/components/annualReturn/Gstr9cTable14ItcByExpenseHeadView';
 import Annexure1Card from '@/components/annualReturn/Annexure1Card';
@@ -351,6 +353,8 @@ const AnnualReturnPage: React.FC = () => {
           <TabsContent value="gstr9c" className="space-y-4">
             <Gstr9cTable5TurnoverRecoCard clientId={selectedClientId} financialYear={financialYear} />
             <Gstr9cTable7TaxableTurnoverRecoCard clientId={selectedClientId} financialYear={financialYear} />
+            <Gstr9cTable9RateWiseLiabilityCard clientId={selectedClientId} financialYear={financialYear} />
+            <Gstr9cTable11AdditionalLiabilityCard clientId={selectedClientId} financialYear={financialYear} />
             <Table12NetItcSummaryCard clientId={selectedClientId} financialYear={financialYear} />
             <Gstr9cTable14ItcByExpenseHeadView clientId={selectedClientId} financialYear={financialYear} />
           </TabsContent>

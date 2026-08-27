@@ -321,3 +321,46 @@ export async function fetchGstr9cTable7TaxableTurnoverReco(clientId: string, fin
   (data || []).forEach((r: { row_key: Table7RowKey; amount: number }) => { if (r.row_key in totals) totals[r.row_key] = Number(r.amount); });
   return totals;
 }
+
+export interface RateWiseRow { taxable_value: number; central_tax: number; state_tax: number; integrated_tax: number; cess: number; }
+const zeroRateWise = (): RateWiseRow => ({ taxable_value: 0, central_tax: 0, state_tax: 0, integrated_tax: 0, cess: 0 });
+
+export type Table9RowKey = 'A' | 'B' | 'B1' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'H1' | 'H2' | 'I' | 'J' | 'K' | 'K1' | 'K2' | 'L' | 'M' | 'N' | 'O' | 'Q';
+const TABLE9_ROW_KEYS: Table9RowKey[] = ['A', 'B', 'B1', 'C', 'D', 'E', 'F', 'G', 'H', 'H1', 'H2', 'I', 'J', 'K', 'K1', 'K2', 'L', 'M', 'N', 'O', 'Q'];
+const TABLE9_SUM_KEYS: Table9RowKey[] = ['A', 'B', 'B1', 'C', 'D', 'E', 'F', 'G', 'H', 'H1', 'H2', 'I', 'J', 'K', 'K1', 'K2', 'L', 'M', 'N', 'O']; // A-O, excludes Q
+/** GSTR-9C Table 9 — Reconciliation of rate-wise liability (verified against GSTR_9C_Offline_Utility.xlsm v2.8, 27 Aug 2026). Standalone manual entry. */
+export async function fetchGstr9cTable9RateWiseLiabilityReco(clientId: string, financialYear: string): Promise<Record<Table9RowKey, RateWiseRow>> {
+  const { data, error } = await supabase.from('gstr9c_table9_rate_wise_liability_reco')
+    .select('row_key, taxable_value, central_tax, state_tax, integrated_tax, cess').eq('client_id', clientId).eq('financial_year', financialYear);
+  if (error) throw error;
+  const totals = {} as Record<Table9RowKey, RateWiseRow>;
+  TABLE9_ROW_KEYS.forEach((k) => { totals[k] = zeroRateWise(); });
+  (data || []).forEach((r: { row_key: Table9RowKey } & RateWiseRow) => {
+    if (totals[r.row_key]) totals[r.row_key] = { taxable_value: Number(r.taxable_value), central_tax: Number(r.central_tax), state_tax: Number(r.state_tax), integrated_tax: Number(r.integrated_tax), cess: Number(r.cess) };
+  });
+  return totals;
+}
+/** P — Total amount to be paid as per tables above (sum A-O), per the real sheet's formula. Single source of truth. */
+export const computeGstr9cTable9P = (rows: Record<Table9RowKey, RateWiseRow>): RateWiseRow =>
+  TABLE9_SUM_KEYS.reduce((acc, k) => ({
+    taxable_value: acc.taxable_value + (rows[k]?.taxable_value || 0),
+    central_tax: acc.central_tax + (rows[k]?.central_tax || 0),
+    state_tax: acc.state_tax + (rows[k]?.state_tax || 0),
+    integrated_tax: acc.integrated_tax + (rows[k]?.integrated_tax || 0),
+    cess: acc.cess + (rows[k]?.cess || 0),
+  }), zeroRateWise());
+
+export type Table11RowKey = 'A' | 'A1' | 'B' | 'C' | 'D' | 'D1' | 'E' | 'F' | 'G' | 'G1' | 'G2' | 'H' | 'I' | 'J' | 'K';
+const TABLE11_ROW_KEYS: Table11RowKey[] = ['A', 'A1', 'B', 'C', 'D', 'D1', 'E', 'F', 'G', 'G1', 'G2', 'H', 'I', 'J', 'K'];
+/** GSTR-9C Table 11 — Additional amount payable but not paid (verified against GSTR_9C_Offline_Utility.xlsm v2.8, 27 Aug 2026). Entirely manual, no formula cells in the real sheet. */
+export async function fetchGstr9cTable11AdditionalLiability(clientId: string, financialYear: string): Promise<Record<Table11RowKey, RateWiseRow>> {
+  const { data, error } = await supabase.from('gstr9c_table11_additional_liability')
+    .select('row_key, taxable_value, central_tax, state_tax, integrated_tax, cess').eq('client_id', clientId).eq('financial_year', financialYear);
+  if (error) throw error;
+  const totals = {} as Record<Table11RowKey, RateWiseRow>;
+  TABLE11_ROW_KEYS.forEach((k) => { totals[k] = zeroRateWise(); });
+  (data || []).forEach((r: { row_key: Table11RowKey } & RateWiseRow) => {
+    if (totals[r.row_key]) totals[r.row_key] = { taxable_value: Number(r.taxable_value), central_tax: Number(r.central_tax), state_tax: Number(r.state_tax), integrated_tax: Number(r.integrated_tax), cess: Number(r.cess) };
+  });
+  return totals;
+}
