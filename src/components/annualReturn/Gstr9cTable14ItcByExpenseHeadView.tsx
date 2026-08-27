@@ -1,14 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Textarea } from '@/components/ui/textarea';
+import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Inbox } from 'lucide-react';
+import { Loader2, Inbox, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 import { fetchDutiesTaxesInputAnnual, fetchPlInputTotals, fetchRcmTotals, taxTotal } from '@/lib/annualReturnAggregates';
 import { EXPENSE_HEADS, TABLE14_EXPENSE_HEADS } from '@/components/annualReturn/PLInputCard';
 
 const TOLERANCE = 10;
+const REASON_LINE_KEY = 'gstr9c_table15_itc_reasons';
 const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
 interface HeadTotals { value: number; totalItc: number; }
@@ -32,9 +36,13 @@ interface Props { clientId: string; financialYear: string; }
  * silent mystery.
  */
 export const Gstr9cTable14ItcByExpenseHeadView: React.FC<Props> = ({ clientId, financialYear }) => {
+  const { user } = useAuth();
   const [rows, setRows] = useState<Record<string, HeadTotals>>({});
   const [gstr9InputTotal, setGstr9InputTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [reason, setReason] = useState('');
+  const [savedReason, setSavedReason] = useState('');
 
   useEffect(() => {
     if (!clientId || !financialYear) { setLoading(false); return; }
@@ -45,7 +53,8 @@ export const Gstr9cTable14ItcByExpenseHeadView: React.FC<Props> = ({ clientId, f
       fetchDutiesTaxesInputAnnual(clientId, financialYear),
       fetchPlInputTotals(clientId, financialYear),
       fetchRcmTotals(clientId, financialYear),
-    ]).then(([linesRes, dt, pl, rcmTotals]) => {
+      supabase.from('reconciliation_reasons').select('reason').eq('client_id', clientId).eq('financial_year', financialYear).eq('line_key', REASON_LINE_KEY).maybeSingle(),
+    ]).then(([linesRes, dt, pl, rcmTotals, reasonRes]) => {
       if (cancelled) return;
       if (linesRes.error) throw linesRes.error;
       const next: Record<string, HeadTotals> = {};
@@ -62,10 +71,31 @@ export const Gstr9cTable14ItcByExpenseHeadView: React.FC<Props> = ({ clientId, f
       // deliberately INCLUDES RCM (row E/S), while the table below excludes
       // it, so any RCM-driven gap shows up honestly as unreconciled.
       setGstr9InputTotal(taxTotal(pl.purchase) + taxTotal(pl.expense) + taxTotal(pl.capital_goods) + taxTotal(rcmTotals.partB) + taxTotal(dt.reclaimTotal));
+      setReason(reasonRes.data?.reason || '');
+      setSavedReason(reasonRes.data?.reason || '');
     }).catch((err) => toast.error('Could not compute GSTR 9C Table 14: ' + (err instanceof Error ? err.message : 'Unknown error')))
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [clientId, financialYear]);
+
+  const reasonDirty = reason !== savedReason;
+  const saveReason = async () => {
+    if (!reasonDirty) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase.from('reconciliation_reasons').upsert(
+        { client_id: clientId, financial_year: financialYear, line_key: REASON_LINE_KEY, reason: reason.trim(), entered_by: user?.id || null, updated_at: new Date().toISOString() },
+        { onConflict: 'client_id,financial_year,line_key' },
+      );
+      if (error) throw error;
+      setSavedReason(reason.trim());
+      toast.success('Table 15 reason saved.');
+    } catch (err) {
+      toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   if (loading) return <Card><CardContent className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
 
@@ -147,6 +177,18 @@ export const Gstr9cTable14ItcByExpenseHeadView: React.FC<Props> = ({ clientId, f
               {Math.abs(totalItc - gstr9InputTotal) <= TOLERANCE ? 'Matched (T)' : `T — Diff ${fmt(totalItc - gstr9InputTotal)}`}
             </Badge>
           </p>
+        )}
+        {gstr9InputTotal !== null && Math.abs(totalItc - gstr9InputTotal) > TOLERANCE && (
+          <div className="px-6 pb-4 space-y-2 border-t pt-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-medium">Table 15 — Reason for the Un-Reconciled difference</div>
+              <Button size="sm" variant={reasonDirty ? 'default' : 'outline'} disabled={saving || !reasonDirty} onClick={saveReason}>
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+                Save
+              </Button>
+            </div>
+            <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why doesn't the ITC-by-expense-head total reconcile?" rows={3} disabled={saving} className="text-sm" />
+          </div>
         )}
       </CardContent>
     </Card>

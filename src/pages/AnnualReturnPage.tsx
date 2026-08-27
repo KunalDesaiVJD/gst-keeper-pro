@@ -30,6 +30,7 @@ import Gstr9cTable9RateWiseLiabilityCard from '@/components/annualReturn/Gstr9cT
 import Gstr9cTable11AdditionalLiabilityCard from '@/components/annualReturn/Gstr9cTable11AdditionalLiabilityCard';
 import Table12NetItcSummaryCard from '@/components/annualReturn/Table12NetItcSummaryCard';
 import Gstr9cTable14ItcByExpenseHeadView from '@/components/annualReturn/Gstr9cTable14ItcByExpenseHeadView';
+import Gstr9cTable16TaxPayableCard from '@/components/annualReturn/Gstr9cTable16TaxPayableCard';
 import Annexure1Card from '@/components/annualReturn/Annexure1Card';
 import Annexure2Card from '@/components/annualReturn/Annexure2Card';
 import Annexure3Card from '@/components/annualReturn/Annexure3Card';
@@ -357,6 +358,7 @@ const AnnualReturnPage: React.FC = () => {
             <Gstr9cTable11AdditionalLiabilityCard clientId={selectedClientId} financialYear={financialYear} />
             <Table12NetItcSummaryCard clientId={selectedClientId} financialYear={financialYear} />
             <Gstr9cTable14ItcByExpenseHeadView clientId={selectedClientId} financialYear={financialYear} />
+            <Gstr9cTable16TaxPayableCard clientId={selectedClientId} financialYear={financialYear} />
           </TabsContent>
 
           <TabsContent value="annexure" className="space-y-4">

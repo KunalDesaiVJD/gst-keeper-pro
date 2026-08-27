@@ -2,13 +2,16 @@ import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 import { fetchDutiesTaxesInputAnnual, fetchPlInputTotals, fetchRcmTotals, taxTotal } from '@/lib/annualReturnAggregates';
 
 const TOLERANCE = 10;
+const REASON_LINE_KEY = 'gstr9c_table13_itc_reasons';
 const fmt = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 const num = (v: string) => (v === '' ? 0 : Number(v));
 
@@ -33,6 +36,7 @@ interface Props { clientId: string; financialYear: string; }
  * head breakdown, corrected alongside this addition.
  */
 export const Table12NetItcSummaryCard: React.FC<Props> = ({ clientId, financialYear }) => {
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [a, setA] = useState(0);
@@ -42,6 +46,8 @@ export const Table12NetItcSummaryCard: React.FC<Props> = ({ clientId, financialY
   const [draftB, setDraftB] = useState('0');
   const [draftC, setDraftC] = useState('0');
   const [e, setE] = useState(0);
+  const [reason, setReason] = useState('');
+  const [savedReason, setSavedReason] = useState('');
 
   useEffect(() => {
     if (!clientId || !financialYear) { setLoading(false); return; }
@@ -52,7 +58,8 @@ export const Table12NetItcSummaryCard: React.FC<Props> = ({ clientId, financialY
       fetchPlInputTotals(clientId, financialYear),
       fetchRcmTotals(clientId, financialYear),
       fetchDutiesTaxesInputAnnual(clientId, financialYear),
-    ]).then(([rowRes, pl, rcm, dt]) => {
+      supabase.from('reconciliation_reasons').select('reason').eq('client_id', clientId).eq('financial_year', financialYear).eq('line_key', REASON_LINE_KEY).maybeSingle(),
+    ]).then(([rowRes, pl, rcm, dt, reasonRes]) => {
       if (cancelled) return;
       const av = Number(rowRes.data?.itc_per_financials) || 0;
       const bv = Number(rowRes.data?.itc_earlier_fy_claimed_this_fy) || 0;
@@ -61,21 +68,34 @@ export const Table12NetItcSummaryCard: React.FC<Props> = ({ clientId, financialY
       setDraftA(String(av)); setDraftB(String(bv)); setDraftC(String(cv));
       // Same "ITC claimed in GSTR-9" total GSTR9-Input's Table 6O / Table 14's row S already compute.
       setE(taxTotal(pl.purchase) + taxTotal(pl.expense) + taxTotal(pl.capital_goods) + taxTotal(rcm.partB) + taxTotal(dt.reclaimTotal));
+      setReason(reasonRes.data?.reason || '');
+      setSavedReason(reasonRes.data?.reason || '');
     }).catch((err) => toast.error('Could not compute Table 12: ' + (err instanceof Error ? err.message : 'Unknown error')))
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [clientId, financialYear]);
 
+  const reasonDirty = reason !== savedReason;
+
   const saveAll = async () => {
     setSaving(true);
     try {
+      const now = new Date().toISOString();
       const payload = {
         client_id: clientId, financial_year: financialYear,
         itc_per_financials: num(draftA), itc_earlier_fy_claimed_this_fy: num(draftB), itc_this_fy_claimed_later_fy: num(draftC),
-        updated_at: new Date().toISOString(),
+        updated_at: now,
       };
       const { error } = await supabase.from('gstr9c_table12_net_itc').upsert(payload, { onConflict: 'client_id,financial_year' });
       if (error) throw error;
+      if (reasonDirty) {
+        const { error: reasonErr } = await supabase.from('reconciliation_reasons').upsert(
+          { client_id: clientId, financial_year: financialYear, line_key: REASON_LINE_KEY, reason: reason.trim(), entered_by: user?.id || null, updated_at: now },
+          { onConflict: 'client_id,financial_year,line_key' },
+        );
+        if (reasonErr) throw reasonErr;
+        setSavedReason(reason.trim());
+      }
       setA(num(draftA)); setB(num(draftB)); setC(num(draftC));
       toast.success('Table 12 saved.');
     } catch (err) {
@@ -95,7 +115,7 @@ export const Table12NetItcSummaryCard: React.FC<Props> = ({ clientId, financialY
     </Card>
   );
 
-  const dirty = num(draftA) !== a || num(draftB) !== b || num(draftC) !== c;
+  const dirty = num(draftA) !== a || num(draftB) !== b || num(draftC) !== c || reasonDirty;
   const d = num(draftA) + num(draftB) - num(draftC);
   const f = e - d;
   const matched = Math.abs(f) <= TOLERANCE;
@@ -131,6 +151,12 @@ export const Table12NetItcSummaryCard: React.FC<Props> = ({ clientId, financialY
           <span className="text-sm font-semibold">F — Un-reconciled ITC (E − D)</span>
           <Badge variant={matched ? 'success' : 'destructive'}>{matched ? 'Matched' : `Diff ${fmt(f)}`}</Badge>
         </div>
+        {!matched && (
+          <div className="pt-4 mt-2 border-t space-y-2">
+            <div className="text-sm font-medium">Table 13 — Reason for the Un-Reconciled difference</div>
+            <Textarea value={reason} onChange={(e2) => setReason(e2.target.value)} placeholder="Why doesn't the ITC reconcile?" rows={3} disabled={saving} className="text-sm" />
+          </div>
+        )}
       </CardContent>
     </Card>
   );
