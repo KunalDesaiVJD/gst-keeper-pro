@@ -66,6 +66,48 @@ const classifyB2b = (inv: any): '4A' | '4B' | '6B' | '6C' => {
   return '4A';
 };
 
+export interface Gstr1HsnRow {
+  hsn_sc: string;
+  desc: string;
+  uqc: string;
+  qty: number;
+  rt: number;
+  txval: number;
+  iamt: number;
+  camt: number;
+  samt: number;
+  csamt: number;
+}
+
+/**
+ * Full per-HSN-code line items from a single month's GSTR-1 JSON — used by
+ * GSTR-9 Table 17 (portal roadmap, 27 Aug 2026), which needs every row, not
+ * just the count+value tile buildGstr1Summary's own Table 12 section keeps.
+ * Same two JSON shapes as buildGstr1Summary's own HSN parsing above.
+ * `desc` often comes back blank in the taxpayer's own JSON — the portal
+ * resolves the human-readable description from its own HSN master at
+ * display time, which this app has no equivalent of; callers should treat
+ * a blank description as expected, not a parsing bug.
+ */
+export function extractGstr1HsnRows(json: any): Gstr1HsnRow[] {
+  const j = json || {};
+  const raw: any[] = j.hsn?.data ? j.hsn.data : [...(j.hsn?.hsn_b2b || []), ...(j.hsn?.hsn_b2c || [])];
+  return raw
+    .map((h: any) => ({
+      hsn_sc: String(h?.hsn_sc || '').trim(),
+      desc: String(h?.desc || h?.user_desc || '').trim(),
+      uqc: String(h?.uqc || '').trim(),
+      qty: num(h?.qty),
+      rt: num(h?.rt),
+      txval: num(h?.txval),
+      iamt: num(h?.iamt),
+      camt: num(h?.camt),
+      samt: num(h?.samt),
+      csamt: num(h?.csamt),
+    }))
+    .filter((r) => r.hsn_sc);
+}
+
 export function buildGstr1Summary(json: any): Gstr1Summary {
   const j = json || {};
 

@@ -31,6 +31,7 @@ import Annexure2Card from '@/components/annualReturn/Annexure2Card';
 import Annexure3Card from '@/components/annualReturn/Annexure3Card';
 import Annexure4Card from '@/components/annualReturn/Annexure4Card';
 import Table14DifferentialTaxCard from '@/components/annualReturn/Table14DifferentialTaxCard';
+import Table17HsnOutwardCard from '@/components/annualReturn/Table17HsnOutwardCard';
 import ItcReversalCard from '@/components/annualReturn/ItcReversalCard';
 import Gstr9FormView from '@/components/annualReturn/Gstr9FormView';
 import NoticeFormatView from '@/components/annualReturn/NoticeFormatView';
@@ -361,6 +362,7 @@ const AnnualReturnPage: React.FC = () => {
               The full official form, Tables 4–13 — assembled, nothing entered here.
             </p>
             <Gstr9FormView clientId={selectedClientId} financialYear={financialYear} />
+            <Table17HsnOutwardCard clientId={selectedClientId} financialYear={financialYear} />
           </TabsContent>
 
           <TabsContent value="notice" className="space-y-4">

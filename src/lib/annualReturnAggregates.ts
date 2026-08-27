@@ -1,5 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { monthsForFY } from '@/lib/annualReturnPeriods';
+import { extractGstr1HsnRows } from '@/utils/buildGstr1Summary';
 
 export interface TaxSum { taxable: number; igst: number; cgst: number; sgst: number; }
 const zero = (): TaxSum => ({ taxable: 0, igst: 0, cgst: 0, sgst: 0 });
@@ -201,6 +202,48 @@ export async function fetchCarryForwardTotals(clientId: string, financialYear: s
     if (totals[r.direction]) totals[r.direction] = add(totals[r.direction], { taxable: r.taxable_value, igst: r.igst, cgst: r.cgst, sgst: r.sgst });
   });
   return totals;
+}
+
+export interface Table17Row {
+  hsn: string; desc: string; uqc: string; qty: number; rate: number;
+  taxable: number; igst: number; cgst: number; sgst: number; cess: number;
+}
+/**
+ * GSTR-9 Table 17 — HSN-wise summary of outward supplies (portal roadmap,
+ * 27 Aug 2026). Aggregated across every imported month of gstr1_data for
+ * the FY, keyed by (HSN code, rate) — the same pairing the portal itself
+ * groups by, since one HSN can carry line items at more than one rate.
+ * Nothing here is manually entered; it's entirely derived from GSTR-1 data
+ * already imported elsewhere in the app.
+ */
+export async function fetchTable17HsnOutward(clientId: string, financialYear: string): Promise<{ rows: Table17Row[]; monthsPresent: number; monthsTotal: number }> {
+  const months = monthsForFY(financialYear);
+  const { data, error } = await supabase.from('gstr1_data').select('period_month, raw_json').eq('client_id', clientId).in('period_month', months);
+  if (error) throw error;
+  const byKey: Record<string, Table17Row> = {};
+  let monthsPresent = 0;
+  (data || []).forEach((r: { period_month: string; raw_json: unknown }) => {
+    if (!r.raw_json) return;
+    monthsPresent += 1;
+    extractGstr1HsnRows(r.raw_json).forEach((h) => {
+      const key = `${h.hsn_sc}__${h.rt}`;
+      if (!byKey[key]) byKey[key] = { hsn: h.hsn_sc, desc: h.desc, uqc: h.uqc, qty: 0, rate: h.rt, taxable: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 };
+      const row = byKey[key];
+      if (!row.desc && h.desc) row.desc = h.desc;
+      if (!row.uqc && h.uqc) row.uqc = h.uqc;
+      row.qty += h.qty;
+      row.taxable += h.txval;
+      row.igst += h.iamt;
+      row.cgst += h.camt;
+      row.sgst += h.samt;
+      row.cess += h.csamt;
+    });
+  });
+  return {
+    rows: Object.values(byKey).sort((a, b) => a.hsn.localeCompare(b.hsn) || a.rate - b.rate),
+    monthsPresent,
+    monthsTotal: months.length,
+  };
 }
 
 export type Table14TaxHead = 'igst' | 'cgst' | 'sgst' | 'cess' | 'interest';
