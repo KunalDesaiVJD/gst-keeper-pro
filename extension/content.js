@@ -2535,28 +2535,28 @@
       let folders = [];
       if (t.caseId && t.arn) {
         try {
-          const fr = await fetch('https://services.gst.gov.in/litserv/auth/api/case/folder', {
+          const fr = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder', {
             method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ caseId: t.caseId, gstid: cur.creds.gstin || '', caseTypeCd: t.caseTpeCd || '' }),
-          });
+          }), 15000, 'case/folder');
           folders = fr.ok ? await fr.json() : [];
           const ordersFolder = Array.isArray(folders) ? folders.find((f) => f.caseFolderTypeCd === 'ORDRS') : null;
           if (ordersFolder) {
-            const ir = await fetch('https://services.gst.gov.in/litserv/auth/api/case/folder/items', {
+            const ir = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder/items', {
               method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ caseFolderId: ordersFolder.caseFolderId }),
-            });
+            }), 15000, 'case/folder/items');
             const items = ir.ok ? await ir.json() : [];
             const item = Array.isArray(items) ? (items.find((it) => it.refId === refId) || items[0]) : null;
             const parsed = item && item.itemJson ? JSON.parse(item.itemJson) : null;
             const docId = parsed && parsed.docupdtl && parsed.docupdtl[0] ? parsed.docupdtl[0].id : null;
             const docArn = (parsed && parsed.crn) || t.arn;
             if (docId) {
-              const eh = await fetchEncrypDocEh(docId, docArn);
+              const eh = await withTimeout(fetchEncrypDocEh(docId, docArn), 15000, 'getEncrypDocIds');
               if (eh) {
-                const pdfR = await fetch('https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(docId) + '&arn=' + encodeURIComponent(docArn) + '&eh=' + encodeURIComponent(eh), { credentials: 'include' });
+                const pdfR = await withTimeout(fetch('https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(docId) + '&arn=' + encodeURIComponent(docArn) + '&eh=' + encodeURIComponent(eh), { credentials: 'include' }), 20000, 'downloadhb');
                 if (pdfR.ok) {
-                  const buf = await pdfR.arrayBuffer();
+                  const buf = await withTimeout(pdfR.arrayBuffer(), 15000, 'pdf arrayBuffer');
                   if (buf && buf.byteLength > 200) {
                     const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
                     const path = 'notices/' + cur.clientId + '/' + (refId || docId) + '.pdf';
@@ -2588,10 +2588,10 @@
           const folderItems = [];
           for (const folder of folders) {
             try {
-              const fir = await fetch('https://services.gst.gov.in/litserv/auth/api/case/folder/items', {
+              const fir = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder/items', {
                 method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ caseFolderId: folder.caseFolderId }),
-              });
+              }), 15000, 'case/folder/items');
               const fItems = fir.ok ? await fir.json() : [];
               if (!Array.isArray(fItems)) continue;
               for (const fi of fItems) {
@@ -2624,11 +2624,11 @@
                   seenDocIds.add(doc.id);
                   try {
                     const docArn = (fParsed && fParsed.crn) || t.arn;
-                    const eh = await fetchEncrypDocEh(doc.id, docArn);
+                    const eh = await withTimeout(fetchEncrypDocEh(doc.id, docArn), 15000, 'getEncrypDocIds');
                     if (!eh) continue;
-                    const pdfR = await fetch('https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(doc.id) + '&arn=' + encodeURIComponent(docArn) + '&eh=' + encodeURIComponent(eh), { credentials: 'include' });
+                    const pdfR = await withTimeout(fetch('https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(doc.id) + '&arn=' + encodeURIComponent(docArn) + '&eh=' + encodeURIComponent(eh), { credentials: 'include' }), 20000, 'downloadhb');
                     if (!pdfR.ok) continue;
-                    const buf = await pdfR.arrayBuffer();
+                    const buf = await withTimeout(pdfR.arrayBuffer(), 15000, 'pdf arrayBuffer');
                     if (!buf || buf.byteLength <= 200) continue;
                     const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
                     const path = 'notices/' + cur.clientId + '/case-folder/' + t.arn + '/' + doc.id + '.pdf';
@@ -3943,6 +3943,21 @@
     const scripty = (el.getAttribute('onclick') || '') + ' ' + (el.getAttribute('ng-click') || '');
     const m = scripty.match(/['"]([\w-]{6,})['"]/);
     return m ? m[1] : null;
+  }
+
+  // A hung fetch (no response ever arrives) neither resolves nor rejects,
+  // so `await` blocks forever and no surrounding try/catch ever fires —
+  // confirmed live 2026-08-27: the Additional Notice Folder capture's
+  // per-attachment loop (potentially dozens of calls per case, across many
+  // cases) stalled a real sync indefinitely with no error, no timeout, and
+  // no visible sign it wasn't just "still working." Every fetch in that
+  // capture is now wrapped in this so one bad request can't hang everything
+  // downstream of it — it just fails that one attachment and moves on.
+  function withTimeout(promise, ms, label) {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error((label || 'request') + ' timed out after ' + ms + 'ms')), ms)),
+    ]);
   }
 
   async function fetchEncrypDocEh(docId, arn) {
