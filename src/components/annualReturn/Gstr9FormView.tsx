@@ -263,14 +263,17 @@ export const Gstr9FormView: React.FC<Props> = ({ clientId, financialYear }) => {
       fetchTable16CompositionDeemedApproval(clientId, financialYear),
     ]).then(([pl, plOutB, dt, rcm, portalItc, portal2b, cat, itcRev, pay, cf, t14, t15, t16]) => {
       if (cancelled) return;
-      const t4A = taxTotal(cat.b2c), t4B = taxTotal(cat.b2b), t4D = taxTotal(cat.sez_with), t4E = taxTotal(cat.deemed_export);
-      const t4G = taxTotal(rcm.partA);
-      const t4I = -Math.abs(taxTotal(cat.credit_note));
+      // Table 4/5 are turnover (taxable value), not tax — read .taxable, never
+      // taxTotal() (igst+cgst+sgst). Table 6 onward are genuine tax-amount
+      // reconciliations, where taxTotal() is correct and stays unchanged.
+      const t4A = cat.b2c.taxable, t4B = cat.b2b.taxable, t4D = cat.sez_with.taxable, t4E = cat.deemed_export.taxable;
+      const t4G = rcm.partA.taxable;
+      const t4I = -Math.abs(cat.credit_note.taxable);
       const t4H = t4A + t4B + t4D + t4E + t4G;
       const t4M = t4I;
       const t4N = t4H + t4M;
 
-      const t5A = taxTotal(plOutB.export_wo_tax), t5B = taxTotal(plOutB.sez_wo_tax), t5F = taxTotal(plOutB.non_gst);
+      const t5A = plOutB.export_wo_tax.taxable, t5B = plOutB.sez_wo_tax.taxable, t5F = plOutB.non_gst.taxable;
       const t5G = t5A + t5B + t5F;
       const t5M = t5G;
       const t5N = t4N + t5M - t4G;
