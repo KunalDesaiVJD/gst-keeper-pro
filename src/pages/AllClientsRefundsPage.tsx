@@ -4,13 +4,14 @@
 // (the same read-only list the per-client "Refund Filed On Portal" report
 // uses) fed a firm-wide ReportTable with GSTIN/Trade Name columns prepended.
 import React, { useEffect, useState } from 'react';
-import { Navigate, Link } from 'react-router-dom';
+import { Navigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { EvidenceEventListView } from '@/components/reports/views/EvidenceEventListView';
 import type { ReportTable } from '@/utils/allClientsReports';
+import { isRefundClosed, isClosed } from '@/utils/noticeSummaryReport';
 import { Banknote, ArrowLeft, Loader2 } from 'lucide-react';
 
 interface RefundRecord {
@@ -24,10 +25,28 @@ interface RefundRecord {
   clients: { name: string | null; gstin: string | null } | null;
 }
 
+// The Additional Notices case-folder sync also writes a "Refunds"-typed
+// gst_notices row per refund case — a MINORITY of those share an ARN with a
+// dedicated gst_refund_applications row (confirmed live 2026-08-29: 9 of 49),
+// but most don't, meaning most refund cases only exist here, never in the
+// dedicated table. Without merging both sources this page silently showed
+// far fewer records (28) than the Notice Summary panel's own count (51) for
+// the exact same underlying data — same dedup-by-ARN as computeNoticeSummary.
+interface CaseRefundRow {
+  case_id: string | null;
+  description: string | null;
+  issue_date: string | null;
+  staff_status: string | null;
+  pdf_url: string | null;
+  clients: { name: string | null; gstin: string | null } | null;
+}
+
 const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 
 const AllClientsRefundsPage: React.FC = () => {
   const { isStaffRole } = useAuth();
+  const [params] = useSearchParams();
+  const status = params.get('status') || '';
   const [records, setRecords] = useState<RefundRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -35,12 +54,38 @@ const AllClientsRefundsPage: React.FC = () => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const { data } = await supabase
-        .from('gst_refund_applications')
-        .select('arn, refund_type, filed_date, claimed_amount, sanctioned_amount, status, documents, clients(name, gstin)')
-        .order('filed_date', { ascending: false });
+      const [{ data }, { data: caseData }] = await Promise.all([
+        supabase
+          .from('gst_refund_applications')
+          .select('arn, refund_type, filed_date, claimed_amount, sanctioned_amount, status, documents, clients(name, gstin)')
+          .order('filed_date', { ascending: false }),
+        supabase
+          .from('gst_notices')
+          .select('case_id, description, issue_date, staff_status, pdf_url, clients(name, gstin)')
+          .eq('source', 'notices')
+          .eq('notice_type', 'Refunds'),
+      ]);
       if (!cancelled) {
-        setRecords((data || []) as unknown as RefundRecord[]);
+        const dedicated = (data || []) as unknown as RefundRecord[];
+        // Dedupe by ARN, matching computeNoticeSummary's own key-based union
+        // exactly (28 raw dedicated rows include 2 duplicate ARNs; the 49
+        // raw case rows include further duplicates and overlap with
+        // dedicated ARNs — a naive concat over-counts by ~17 vs the Notice
+        // Summary panel's own total). Dedicated wins on a shared key since
+        // it carries the richer amount/status fields.
+        const byKey = new Map<string, RefundRecord>();
+        dedicated.forEach((r) => { if (r.arn) byKey.set(r.arn, r); });
+        ((caseData || []) as unknown as CaseRefundRow[]).forEach((r) => {
+          if (!r.case_id || byKey.has(r.case_id)) return;
+          byKey.set(r.case_id, {
+            arn: r.case_id, refund_type: r.description, filed_date: r.issue_date,
+            claimed_amount: null, sanctioned_amount: null,
+            status: r.staff_status || 'Open',
+            documents: r.pdf_url ? [{ tab: '', label: 'PDF', url: r.pdf_url }] : [],
+            clients: r.clients,
+          });
+        });
+        setRecords(Array.from(byKey.values()));
         setLoading(false);
       }
     })();
@@ -49,8 +94,16 @@ const AllClientsRefundsPage: React.FC = () => {
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
+  // Dedicated rows close via isRefundClosed's portal-status wording; case-only
+  // rows (staff_status 'Open'/'Closed') via isClosed instead — same split
+  // computeNoticeSummary uses when merging the two sources.
+  const rowIsClosed = (r: RefundRecord) => isRefundClosed(r.status) || isClosed(r.status);
+  const filteredRecords = status
+    ? records.filter((r) => (status.toLowerCase() === 'closed' ? rowIsClosed(r) : !rowIsClosed(r)))
+    : records;
+
   let totClaimed = 0, totSanctioned = 0;
-  const dataRows = records.map((r) => {
+  const dataRows = filteredRecords.map((r) => {
     totClaimed += num(r.claimed_amount); totSanctioned += num(r.sanctioned_amount);
     const docs = Array.isArray(r.documents) ? r.documents : [];
     return [
@@ -66,7 +119,8 @@ const AllClientsRefundsPage: React.FC = () => {
 
   const table: ReportTable = {
     title: 'Refund — All Clients',
-    subtitle: `${records.length} record${records.length === 1 ? '' : 's'} across every client on record`,
+    subtitle: `${filteredRecords.length} record${filteredRecords.length === 1 ? '' : 's'}` +
+      (status ? `, status ${status}` : ' across every client on record'),
     headers: ['GSTIN', 'Trade Name', 'ARN', 'Refund Type', 'Filed Date', 'Claimed Amount', 'Sanctioned Amount', 'Status', 'Documents'],
     rows: dataRows,
     fileNameBase: 'Refund_All_Clients',

@@ -16,6 +16,7 @@ import React, { useEffect, useState } from 'react';
 import { Navigate, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
@@ -29,7 +30,7 @@ import { toast } from 'sonner';
 import BulkAddClientsDialog, { downloadClientImportTemplate } from '@/components/clients/BulkAddClientsDialog';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
-import { computeNoticeSummary, isClosed } from '@/utils/noticeSummaryReport';
+import { computeNoticeSummary, isClosed, summaryCellHref, type SummaryCellKind } from '@/utils/noticeSummaryReport';
 import {
   Bell, CalendarClock, History, Building2, FolderOpen, AlertTriangle, Flag, Loader2,
   UserPlus, Upload, Download, RefreshCw, Pencil, ChevronLeft, ChevronRight, Search,
@@ -45,6 +46,12 @@ interface NoticeRow {
   due_date: string | null;
   reply_date: string | null;
   pulled_at: string;
+  case_id: string | null;
+}
+
+interface StatusRow {
+  arn: string | null;
+  status: string | null;
 }
 
 // "Registration" isn't its own notice_type in this schema — it shows up as a
@@ -114,19 +121,20 @@ const NoticesDashboardPage: React.FC = () => {
   // Refund/DRC-03 rows the Notice Summary table folds in — separate tables,
   // status-only select since only the category-row counts are needed here
   // (the drill-down page re-fetches full detail itself).
-  const [refundStatuses, setRefundStatuses] = useState<(string | null)[]>([]);
-  const [drc03Statuses, setDrc03Statuses] = useState<(string | null)[]>([]);
+  const [refundRows, setRefundRows] = useState<StatusRow[]>([]);
+  const [drc03Rows, setDrc03Rows] = useState<StatusRow[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const { data } = await supabase
-        .from('gst_notices')
-        .select('client_id, notice_type, description, staff_status, priority, issue_date, due_date, reply_date, pulled_at')
-        .eq('source', 'notices');
+      const data = await fetchAllRows<NoticeRow>(
+        'gst_notices',
+        'client_id, notice_type, description, staff_status, priority, issue_date, due_date, reply_date, pulled_at, case_id',
+        (q) => q.eq('source', 'notices'),
+      );
       if (!cancelled) {
-        setRows((data || []) as NoticeRow[]);
+        setRows(data);
         setLoading(false);
       }
     })();
@@ -137,12 +145,12 @@ const NoticesDashboardPage: React.FC = () => {
     let cancelled = false;
     (async () => {
       const [refundRes, drc03Res] = await Promise.all([
-        supabase.from('gst_refund_applications').select('status'),
-        supabase.from('gst_drc03_filings').select('status'),
+        supabase.from('gst_refund_applications').select('arn, status'),
+        supabase.from('gst_drc03_filings').select('arn, status'),
       ]);
       if (!cancelled) {
-        setRefundStatuses((refundRes.data || []).map((r) => r.status));
-        setDrc03Statuses((drc03Res.data || []).map((r) => r.status));
+        setRefundRows((refundRes.data || []) as StatusRow[]);
+        setDrc03Rows((drc03Res.data || []) as StatusRow[]);
       }
     })();
     return () => { cancelled = true; };
@@ -241,7 +249,7 @@ const NoticesDashboardPage: React.FC = () => {
     { label: 'Priority', value: priorityCount, icon: <Flag className="h-8 w-8 text-destructive" />, bgColor: 'bg-destructive/5', to: drillParams({ filter: 'priority' }) },
   ];
 
-  const { categoryRows, grandTotal } = computeNoticeSummary(filteredRows, refundStatuses, drc03Statuses);
+  const { categoryRows, grandTotal } = computeNoticeSummary(filteredRows, refundRows, drc03Rows);
 
   // Calendar widget: which days in the shown month have an issue date, a due
   // date, or both, across every notice (not filtered — the calendar is a
@@ -520,24 +528,42 @@ const NoticesDashboardPage: React.FC = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {categoryRows.map((r) => (
-                      <TableRow
-                        key={r.type}
-                        className={cn(
-                          !r.placeholder && 'cursor-pointer',
-                          categoryFilter === r.type && 'bg-primary/10 hover:bg-primary/15',
-                        )}
-                        onClick={r.placeholder ? undefined : () => (r.to ? navigate(r.to) : setCategoryFilter((prev) => (prev === r.type ? null : r.type)))}
-                      >
-                        <TableCell className={cn('px-2 py-1 text-[11px] font-medium', r.placeholder ? 'text-muted-foreground' : 'text-primary')}>{r.type}</TableCell>
-                        <TableCell className={cn('px-2 py-1 text-right text-[11px] tabular-nums', !r.placeholder && 'text-primary underline-offset-2 hover:underline')}>
-                          {r.placeholder ? '—' : r.total}
-                        </TableCell>
-                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.open || '—'}</TableCell>
-                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.closed || '—'}</TableCell>
-                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{r.replied || '—'}</TableCell>
-                      </TableRow>
-                    ))}
+                    {categoryRows.map((r) => {
+                      // Remarks label click keeps the existing local-drill behaviour
+                      // (filters the KPI tiles above to this category); each
+                      // Total/Open/Closed/Replied cell is its own hyperlink to the
+                      // correspondingly filtered firm-wide list, per Notice Alert.
+                      const cell = (kind: SummaryCellKind, value: number) => {
+                        const href = summaryCellHref(r, kind);
+                        return (
+                          <TableCell
+                            className={cn(
+                              'px-2 py-1 text-right text-[11px] tabular-nums',
+                              href && 'cursor-pointer text-primary underline-offset-2 hover:underline',
+                            )}
+                            onClick={href ? (e) => { e.stopPropagation(); navigate(href); } : undefined}
+                          >
+                            {value || '—'}
+                          </TableCell>
+                        );
+                      };
+                      return (
+                        <TableRow
+                          key={r.type}
+                          className={cn(
+                            !r.placeholder && 'cursor-pointer',
+                            categoryFilter === r.type && 'bg-primary/10 hover:bg-primary/15',
+                          )}
+                          onClick={r.placeholder ? undefined : () => (r.to ? navigate(r.to) : setCategoryFilter((prev) => (prev === r.type ? null : r.type)))}
+                        >
+                          <TableCell className={cn('px-2 py-1 text-[11px] font-medium', r.placeholder ? 'text-muted-foreground' : 'text-primary')}>{r.type}</TableCell>
+                          {cell('total', r.total)}
+                          {cell('open', r.open)}
+                          {cell('closed', r.closed)}
+                          {cell('replied', r.replied)}
+                        </TableRow>
+                      );
+                    })}
                     <TableRow className="bg-primary/5 font-semibold hover:bg-primary/10">
                       <TableCell className="px-2 py-1 text-[11px]">Total</TableCell>
                       <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.total}</TableCell>

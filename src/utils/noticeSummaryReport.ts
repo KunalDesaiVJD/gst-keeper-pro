@@ -10,6 +10,20 @@ export interface NoticeSummarySourceRow {
   description: string | null;
   staff_status: string | null;
   reply_date: string | null;
+  // Needed to dedupe the "Refunds"/"Voluntary Payment" case-summary rows
+  // against gst_refund_applications/gst_drc03_filings by ARN — see
+  // computeNoticeSummary below.
+  case_id?: string | null;
+}
+
+export interface RefundSummarySourceRow {
+  arn: string | null;
+  status: string | null;
+}
+
+export interface Drc03SummarySourceRow {
+  arn: string | null;
+  status: string | null;
 }
 
 export interface CategoryRow {
@@ -49,13 +63,26 @@ export interface NoticeSummaryResult {
 // category this app tracks but Notice Alert's fixed list doesn't cover
 // (Registration/Non filers/Demand Notice/raw notice_type buckets) is
 // appended after, by descending total.
+// The Additional Notices case-folder sync writes its own case-summary row
+// per case into gst_notices, using these two literal notice_type values for
+// refund and DRC-03 (voluntary payment) cases. A minority of those same
+// cases are ALSO captured by the dedicated Refund/DRC-03 tab sync into
+// gst_refund_applications/gst_drc03_filings (confirmed live 2026-08-29: 9 of
+// 49 "Refunds" rows and 11 of 146 "Voluntary Payment" rows share an ARN with
+// an existing dedicated-table row) — counting both would double-count those
+// cases. So these two notice_types are excluded from the normal per-row
+// loop below and folded into the Refund/DRC 03 rows via ARN dedup instead.
+const CASE_REFUND_TYPE = 'Refunds';
+const CASE_DRC03_TYPE = 'Voluntary Payment';
+
 export function computeNoticeSummary(
   filteredRows: NoticeSummarySourceRow[],
-  refundStatuses: (string | null)[],
-  drc03Statuses: (string | null)[],
+  refundRows: RefundSummarySourceRow[],
+  drc03Rows: Drc03SummarySourceRow[],
 ): NoticeSummaryResult {
   const categoryMap = new Map<string, CategoryRow>();
   filteredRows.forEach((r) => {
+    if (r.notice_type === CASE_REFUND_TYPE || r.notice_type === CASE_DRC03_TYPE) return;
     const type = classifyNoticeCategory(r);
     const entry = categoryMap.get(type) || { type, total: 0, open: 0, closed: 0, replied: 0 };
     entry.total += 1;
@@ -63,18 +90,36 @@ export function computeNoticeSummary(
     if (r.reply_date) entry.replied += 1;
     categoryMap.set(type, entry);
   });
-  // Refund/DRC-03 aren't gst_notices rows — they're folded into the same
-  // Notice Summary table Notice Alert shows them in, but as their own rows
-  // with their own drill-down page (see AllClientsRefundsPage/Drc03Page)
-  // since a local categoryFilter mechanism only works over gst_notices rows.
-  if (refundStatuses.length > 0) {
-    const closed = refundStatuses.filter((s) => isRefundClosed(s)).length;
-    categoryMap.set('Refund', { type: 'Refund', total: refundStatuses.length, open: refundStatuses.length - closed, closed, replied: 0, to: '/refunds-all' });
-  }
-  if (drc03Statuses.length > 0) {
-    const closed = drc03Statuses.filter((s) => isDrc03Closed(s)).length;
-    categoryMap.set('DRC 03', { type: 'DRC 03', total: drc03Statuses.length, open: drc03Statuses.length - closed, closed, replied: 0, to: '/drc03-all' });
-  }
+
+  // Refund/DRC-03 aren't gst_notices rows for this purpose — they're folded
+  // into the same Notice Summary table Notice Alert shows them in, but as
+  // their own rows with their own drill-down page (see
+  // AllClientsRefundsPage/Drc03Page), deduped against the case-summary rows
+  // above by ARN (dedicated table's arn === case row's case_id, both being
+  // the portal's own ARN for that case).
+  const mergeIntoCategory = (
+    label: string,
+    dedicated: { arn: string | null; status: string | null }[],
+    caseType: string,
+    isDedicatedClosed: (s: string | null) => boolean,
+    to: string,
+  ) => {
+    const caseRows = filteredRows.filter((r) => r.notice_type === caseType);
+    const keys = new Set<string>();
+    dedicated.forEach((d) => { if (d.arn) keys.add(d.arn); });
+    caseRows.forEach((r) => { if (r.case_id) keys.add(r.case_id); });
+    if (keys.size === 0) return;
+    let closed = 0;
+    keys.forEach((key) => {
+      const d = dedicated.find((x) => x.arn === key);
+      if (d) { if (isDedicatedClosed(d.status)) closed += 1; return; }
+      const cr = caseRows.find((x) => x.case_id === key);
+      if (cr && isClosed(cr.staff_status)) closed += 1;
+    });
+    categoryMap.set(label, { type: label, total: keys.size, open: keys.size - closed, closed, replied: 0, to });
+  };
+  mergeIntoCategory('Refund', refundRows, CASE_REFUND_TYPE, isRefundClosed, '/refunds-all');
+  mergeIntoCategory('DRC 03', drc03Rows, CASE_DRC03_TYPE, isDrc03Closed, '/drc03-all');
 
   const FULL_DISPLAY_ORDER = [
     ...NOTICE_CATEGORY_DISPLAY_ORDER,
@@ -92,4 +137,25 @@ export function computeNoticeSummary(
     { total: 0, open: 0, closed: 0, replied: 0 },
   );
   return { categoryRows, grandTotal };
+}
+
+export type SummaryCellKind = 'total' | 'open' | 'closed' | 'replied';
+
+// Shared by NoticesDashboardPage and NoticeSummaryReportPage so every number
+// in the table — not just the row/Total — is its own hyperlink to the
+// correspondingly filtered list, per Notice Alert's own behaviour (each of
+// Total/Open/Closed/Replied opens a differently-filtered dashboard).
+// Returns null for a placeholder row, a zero cell (nothing to show), or the
+// Replied column on a Refund/DRC-03 row (those have no reply concept).
+export function summaryCellHref(r: CategoryRow, kind: SummaryCellKind): string | null {
+  if (r.placeholder) return null;
+  const value = kind === 'total' ? r.total : kind === 'open' ? r.open : kind === 'closed' ? r.closed : r.replied;
+  if (!value) return null;
+  if (kind === 'total') return r.to || `/notices-all?category=${encodeURIComponent(r.type)}`;
+  if (kind === 'replied') {
+    if (r.to) return null;
+    return `/notices-all?category=${encodeURIComponent(r.type)}&filter=replied`;
+  }
+  const status = kind === 'open' ? 'Open' : 'Closed';
+  return r.to ? `${r.to}?status=${status}` : `/notices-all?category=${encodeURIComponent(r.type)}&status=${status}`;
 }

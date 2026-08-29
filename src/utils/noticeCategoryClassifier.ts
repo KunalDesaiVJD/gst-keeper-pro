@@ -18,11 +18,34 @@ export const isNonFilerRelated = (description: string | null) => /return default
 export const isDemandNoticeRelated = (description: string | null) =>
   /ITC mismatch|liability mismatch|DRC-01B|DRC-01C/i.test(description || '');
 
+// The Additional Notices case-folder sync writes its own case-summary row
+// into gst_notices with the portal's literal case-type text as notice_type —
+// confirmed live 2026-08-29 (69 "Determination Of Tax", 61 "Letter Of
+// Undertaking", 18 "Scrutiny Of Returns", etc rows already on file). These
+// don't match Notice Alert's own category labels verbatim, so without this
+// map they were showing up as their own stray extra rows instead of filling
+// the canonical DRC 01/LUT/ASMT 10/etc placeholder rows that already existed
+// for exactly this data. "Refunds" and "Voluntary Payment" are deliberately
+// NOT mapped here — those two overlap with the dedicated gst_refund_applications/
+// gst_drc03_filings tables (same case synced through two different capture
+// paths), so they're deduped by ARN in computeNoticeSummary instead of being
+// classified like a normal category.
+const CASE_NOTICE_TYPE_MAP: Record<string, string> = {
+  'Determination Of Tax': 'DRC 01',
+  'Letter Of Undertaking': 'LUT',
+  'Scrutiny Of Returns': 'ASMT 10',
+  'Enforcement Case': 'Enforcement',
+  'Rectification Of Orders': 'Order Rectification',
+  'Pre-Gst Recovery': 'Recovery',
+  'Waiver Scheme U/S 128a': 'Others',
+};
+
 export const classifyNoticeCategory = (r: ClassifiableNotice): string => {
   if (isRegistrationRelated(r.description)) return 'Registration';
   if (isNonFilerRelated(r.description)) return 'Non filers';
   if (isDemandNoticeRelated(r.description)) return 'Demand Notice';
-  return r.notice_type || 'Uncategorised';
+  const type = r.notice_type || 'Uncategorised';
+  return CASE_NOTICE_TYPE_MAP[type] || type;
 };
 
 // Notice Alert categories confirmed to come from a portal source ("Additional

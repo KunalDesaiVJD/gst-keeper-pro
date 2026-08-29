@@ -10,6 +10,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Navigate, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -19,6 +20,7 @@ import { EvidenceEventListView } from '@/components/reports/views/EvidenceEventL
 import { AddNoticeDialog } from '@/components/notices/AddNoticeDialog';
 import type { ReportTable } from '@/utils/allClientsReports';
 import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
+import { isClosed } from '@/utils/noticeSummaryReport';
 import { Bell, ArrowLeft, Loader2, ChevronRight, Layers } from 'lucide-react';
 
 interface RefundRecord {
@@ -77,6 +79,7 @@ const FILTER_LABELS: Record<string, string> = {
   overdue: 'overdue',
   priority: 'flagged priority',
   submitted: 'with a submission logged',
+  replied: 'with a reply logged',
 };
 
 const AllClientsNoticesPage: React.FC = () => {
@@ -114,20 +117,21 @@ const AllClientsNoticesPage: React.FC = () => {
 
   const fetchAll = async () => {
     setLoading(true);
-    const [noticesRes, refundsRes, drc03Res] = await Promise.all([
-      supabase
-        .from('gst_notices')
-        .select(
-          'id, client_id, reference_number, case_id, notice_type, description, issue_date, due_date, extended_due_date, ' +
-          'staff_status, priority, reply_ref_number, reply_date, order_number, order_date, submission_arn, submission_date, ' +
-          'amount_of_demand, remarks, issued_by, financial_year, assign_to, pdf_url, pulled_at, clients(name, gstin)',
-        )
-        .eq('source', 'notices')
-        .order('issue_date', { ascending: false }),
+    const [noticesData, refundsRes, drc03Res] = await Promise.all([
+      fetchAllRows<NoticeRecord>(
+        'gst_notices',
+        'id, client_id, reference_number, case_id, notice_type, description, issue_date, due_date, extended_due_date, ' +
+        'staff_status, priority, reply_ref_number, reply_date, order_number, order_date, submission_arn, submission_date, ' +
+        'amount_of_demand, remarks, issued_by, financial_year, assign_to, pdf_url, pulled_at, clients(name, gstin)',
+        (q) => q.eq('source', 'notices'),
+      ),
       supabase.from('gst_refund_applications').select('arn, refund_type, filed_date, status, documents, clients(name, gstin)'),
       supabase.from('gst_drc03_filings').select('arn, cause_of_payment, filed_date, status, pdf_url, clients(name, gstin)'),
     ]);
-    setRecords((noticesRes.data || []) as unknown as NoticeRecord[]);
+    // fetchAllRows paginates in .range() chunks rather than one ordered
+    // query, so the combined result needs its own sort afterward.
+    noticesData.sort((a, b) => (b.issue_date || '').localeCompare(a.issue_date || ''));
+    setRecords(noticesData as unknown as NoticeRecord[]);
     setRefunds((refundsRes.data || []) as unknown as RefundRecord[]);
     setDrc03s((drc03Res.data || []) as unknown as Drc03Record[]);
     setLoading(false);
@@ -155,13 +159,18 @@ const AllClientsNoticesPage: React.FC = () => {
     if (typeParam === 'registration') list = list.filter(isRegistrationRelated);
     if (typeParam === 'other') list = list.filter((r) => !isRegistrationRelated(r));
     if (category) list = list.filter((r) => classifyNoticeCategory(r) === category);
-    if (status) list = list.filter((r) => (r.staff_status || '').trim().toLowerCase() === status.toLowerCase());
+    // "Open" here means "not closed" (matches the Notice Summary panel's own
+    // isClosed logic) — most rows have staff_status = null, which reads as
+    // Open, not as a literal "Open" string, so an exact-match filter here
+    // would silently show 0 results for every Open drill-down.
+    if (status) list = list.filter((r) => (status.toLowerCase() === 'closed' ? isClosed(r.staff_status) : !isClosed(r.staff_status)));
     if (filter === 'last15') list = list.filter((r) => daysAgo(r.issue_date) <= 15);
     if (filter === 'last24h') list = list.filter((r) => daysAgo(r.pulled_at) <= 1);
     if (filter === 'due7') list = list.filter((r) => r.due_date && daysUntil(r.due_date) >= 0 && daysUntil(r.due_date) <= 7);
     if (filter === 'overdue') list = list.filter((r) => r.due_date && daysUntil(r.due_date) < 0);
     if (filter === 'priority') list = list.filter((r) => r.priority);
     if (filter === 'submitted') list = list.filter((r) => !!r.submission_date || !!r.submission_arn);
+    if (filter === 'replied') list = list.filter((r) => !!r.reply_date);
     if (dateParam) list = list.filter((r) => (r.issue_date || '').slice(0, 10) === dateParam || (r.due_date || '').slice(0, 10) === dateParam);
     if (clientParam) list = list.filter((r) => r.client_id === clientParam);
     return list;

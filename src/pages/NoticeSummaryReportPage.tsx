@@ -10,6 +10,7 @@ import React, { useEffect, useState } from 'react';
 import { Navigate, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 import { Card, CardContent } from '@/components/ui/card';
@@ -18,7 +19,7 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { computeNoticeSummary, type NoticeSummarySourceRow } from '@/utils/noticeSummaryReport';
+import { computeNoticeSummary, summaryCellHref, type NoticeSummarySourceRow, type SummaryCellKind } from '@/utils/noticeSummaryReport';
 import { isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
 import { renderReportToExcel, type ReportTable } from '@/utils/allClientsReports';
 import { Bell, Loader2, FileSpreadsheet } from 'lucide-react';
@@ -27,14 +28,19 @@ interface NoticeRow extends NoticeSummarySourceRow {
   description: string | null;
 }
 
+interface StatusRow {
+  arn: string | null;
+  status: string | null;
+}
+
 type TypeOfNoticesFilter = 'all' | 'registration' | 'other';
 
 const NoticeSummaryReportPage: React.FC = () => {
   const { isStaffRole } = useAuth();
   const navigate = useNavigate();
   const [rows, setRows] = useState<NoticeRow[]>([]);
-  const [refundStatuses, setRefundStatuses] = useState<(string | null)[]>([]);
-  const [drc03Statuses, setDrc03Statuses] = useState<(string | null)[]>([]);
+  const [refundRows, setRefundRows] = useState<StatusRow[]>([]);
+  const [drc03Rows, setDrc03Rows] = useState<StatusRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<TypeOfNoticesFilter>('all');
 
@@ -42,15 +48,15 @@ const NoticeSummaryReportPage: React.FC = () => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [noticesRes, refundRes, drc03Res] = await Promise.all([
-        supabase.from('gst_notices').select('notice_type, description, staff_status, reply_date').eq('source', 'notices'),
-        supabase.from('gst_refund_applications').select('status'),
-        supabase.from('gst_drc03_filings').select('status'),
+      const [noticesData, refundRes, drc03Res] = await Promise.all([
+        fetchAllRows<NoticeRow>('gst_notices', 'notice_type, description, staff_status, reply_date, case_id', (q) => q.eq('source', 'notices')),
+        supabase.from('gst_refund_applications').select('arn, status'),
+        supabase.from('gst_drc03_filings').select('arn, status'),
       ]);
       if (!cancelled) {
-        setRows((noticesRes.data || []) as NoticeRow[]);
-        setRefundStatuses((refundRes.data || []).map((r) => r.status));
-        setDrc03Statuses((drc03Res.data || []).map((r) => r.status));
+        setRows(noticesData);
+        setRefundRows((refundRes.data || []) as StatusRow[]);
+        setDrc03Rows((drc03Res.data || []) as StatusRow[]);
         setLoading(false);
       }
     })();
@@ -64,7 +70,7 @@ const NoticeSummaryReportPage: React.FC = () => {
     if (typeFilter === 'other') return !isRegistrationDescription(r.description);
     return true;
   });
-  const { categoryRows, grandTotal } = computeNoticeSummary(filteredRows, refundStatuses, drc03Statuses);
+  const { categoryRows, grandTotal } = computeNoticeSummary(filteredRows, refundRows, drc03Rows);
 
   const handleExport = () => {
     const table: ReportTable = {
@@ -130,19 +136,28 @@ const NoticeSummaryReportPage: React.FC = () => {
                 {loading ? (
                   <TableRow><TableCell colSpan={5} className="py-10 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" /></TableCell></TableRow>
                 ) : (
-                  categoryRows.map((r) => (
-                    <TableRow
-                      key={r.type}
-                      className={cn(!r.placeholder && 'cursor-pointer')}
-                      onClick={r.placeholder ? undefined : () => navigate(r.to || `/notices-all?category=${encodeURIComponent(r.type)}`)}
-                    >
-                      <TableCell className={cn('text-xs font-medium', r.placeholder ? 'text-muted-foreground' : 'text-primary')}>{r.type}</TableCell>
-                      <TableCell className={cn('text-right text-xs tabular-nums', !r.placeholder && 'text-primary underline-offset-2 hover:underline')}>{r.placeholder ? '—' : r.total}</TableCell>
-                      <TableCell className="text-right text-xs tabular-nums">{r.open || '—'}</TableCell>
-                      <TableCell className="text-right text-xs tabular-nums">{r.closed || '—'}</TableCell>
-                      <TableCell className="text-right text-xs tabular-nums">{r.replied || '—'}</TableCell>
-                    </TableRow>
-                  ))
+                  categoryRows.map((r) => {
+                    const cell = (kind: SummaryCellKind, value: number) => {
+                      const href = summaryCellHref(r, kind);
+                      return (
+                        <TableCell
+                          className={cn('text-right text-xs tabular-nums', href && 'cursor-pointer text-primary underline-offset-2 hover:underline')}
+                          onClick={href ? () => navigate(href) : undefined}
+                        >
+                          {value || '—'}
+                        </TableCell>
+                      );
+                    };
+                    return (
+                      <TableRow key={r.type}>
+                        <TableCell className={cn('text-xs font-medium', r.placeholder ? 'text-muted-foreground' : 'text-primary')}>{r.type}</TableCell>
+                        {cell('total', r.total)}
+                        {cell('open', r.open)}
+                        {cell('closed', r.closed)}
+                        {cell('replied', r.replied)}
+                      </TableRow>
+                    );
+                  })
                 )}
               </TableBody>
               {!loading && (
