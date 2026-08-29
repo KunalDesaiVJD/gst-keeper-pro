@@ -55,7 +55,7 @@ const SECTION_CODE_MAP: Record<string, string> = {
   NOTCE: 'NOTICES', NOTICE: 'NOTICES', NOTICES: 'NOTICES',
   REPLY: 'REPLIES', REPLIES: 'REPLIES',
   ORDRS: 'ORDERS', ORDER: 'ORDERS', ORDERS: 'ORDERS',
-  CLSR: 'CLOSURE', CLOSURE: 'CLOSURE',
+  CLSR: 'CLOSURE', CLOSR: 'CLOSURE', CLOSURE: 'CLOSURE',
 };
 const sectionLabel = (code: string | null) => {
   if (!code) return 'OTHERS';
@@ -74,6 +74,14 @@ const toDisplayDate = (v: unknown): string => {
   return v;
 };
 const str = (v: unknown): string => (v === null || v === undefined || v === '' ? '—' : String(v));
+
+// DD/MM/YYYY -> a comparable timestamp, for picking the most recent of several dates.
+const parseDMY = (v: unknown): number | null => {
+  if (typeof v !== 'string') return null;
+  const m = v.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return null;
+  return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1])).getTime();
+};
 
 // Intimations/Notices/Orders each nest their real fields one level under
 // `sdtls`, but under a DIFFERENT key depending on the notice's own sub-type
@@ -124,11 +132,22 @@ const NOTICES_COLUMNS: ColumnDef[] = [
   { label: 'Subject', render: (raw) => str(subDetail(raw)?.facts ?? subDetail(raw)?.reason ?? subDetail(raw)?.grounds) },
 ];
 
+// Confirmed live 2026-08-29 against SHREEJIKRUPA BUILDCON's case
+// AD2406250264365: Notice Alert's "Type/Reply No." column reads the reply's
+// own type text (replyty), not its reference number, and "Reply filed
+// Against" shows blank rather than falling back to the intimation ref when
+// there's no underlying notice (ntcno). "Reply Date/Ph" is the date of the
+// notice/intimation being replied to (ntcdt, falling back to intdt for a
+// reply against an Intimation) — not the reply's own filing date
+// (decdtls.dt), confirmed against both this case (21-06-2025 = intdt) and
+// the earlier NAVRATNA case (02-09-2025 = ntcdt, not decdtls.dt's
+// 02-10-2025). "Reply Type" itself has no confirmed source field yet — left
+// blank, matching Notice Alert's own (also blank) column in both examples.
 const REPLIES_COLUMNS: ColumnDef[] = [
-  { label: 'Type/Reply No.', render: (_raw, ref) => str(ref) },
-  { label: 'Reply Type', render: (raw) => str(replyOf(raw)?.replyty) },
-  { label: 'Reply filed Against', render: (raw) => str(replyOf(raw)?.ntcno ?? replyOf(raw)?.intrefno) },
-  { label: 'Reply Date/Ph', render: (raw) => toDisplayDate(replyOf(raw)?.decdtls && (replyOf(raw)?.decdtls as Record<string, unknown>).dt) },
+  { label: 'Type/Reply No.', render: (raw) => str(replyOf(raw)?.replyty) },
+  { label: 'Reply Type', render: () => '—' },
+  { label: 'Reply filed Against', render: (raw) => str(replyOf(raw)?.ntcno) },
+  { label: 'Reply Date/Ph', render: (raw) => toDisplayDate(replyOf(raw)?.ntcdt ?? replyOf(raw)?.intdt) },
   // Not present in any case confirmed live yet — left blank rather than guessed.
   { label: 'Original Due Date', render: () => '—' },
   { label: 'Filed By', render: (raw) => str(replyOf(raw)?.decdtls && (replyOf(raw)?.decdtls as Record<string, unknown>).asnm) },
@@ -142,11 +161,25 @@ const ORDERS_COLUMNS: ColumnDef[] = [
   { label: 'Passed By', render: (raw) => str(raw?.todtls && (raw.todtls as Record<string, unknown>).nm) },
 ];
 
+// CLOSR-coded items (e.g. "Acceptance of response to DRC-01A") nest their
+// real fields directly under sdtls (no dtscn/dtorder wrapper, unlike the
+// other sections) — confirmed live 2026-08-29 against the same SHREEJIKRUPA
+// case. Notice Alert's own Closure table showed no rows for this same data,
+// but the fields are genuinely present on the portal response, so they're
+// rendered here with real columns rather than dropped.
+const CLOSURE_COLUMNS: ColumnDef[] = [
+  { label: 'Type', render: (raw) => str(raw?.sdtls && (raw.sdtls as Record<string, unknown>).type) },
+  { label: 'Reference Number', render: (_raw, ref) => str(ref) },
+  { label: 'Date', render: (raw) => toDisplayDate(raw?.refdt) },
+  { label: 'Passed By', render: (raw) => str(raw?.todtls && (raw.todtls as Record<string, unknown>).nm) },
+];
+
 const SECTION_COLUMNS: Record<string, ColumnDef[]> = {
   INTIMATIONS: INTIMATIONS_COLUMNS,
   NOTICES: NOTICES_COLUMNS,
   REPLIES: REPLIES_COLUMNS,
   ORDERS: ORDERS_COLUMNS,
+  CLOSURE: CLOSURE_COLUMNS,
 };
 
 // Fallback for sections with no confirmed live example yet (CLOSURE) or no
@@ -216,13 +249,29 @@ const AdditionalNoticeFolderPage: React.FC = () => {
   const extraSections = Array.from(bySection.keys()).filter((s) => !SECTION_ORDER.includes(s));
   const allSections = [...SECTION_ORDER, ...extraSections];
 
-  // The case's own application date (arndt) is the same across every item
-  // captured for it — take it from whichever item has one, since it's a
-  // more accurate "Date Of Application/Case Creation" than the parent
-  // gst_notices row's own issue_date (a different notice inside the same
-  // case, not necessarily the case's original filing date).
+  // Despite the "Date Of Application/Case Creation" label (kept for Notice
+  // Alert parity), both apps actually show the date of the MOST RECENT event
+  // on the case — confirmed 2026-08-29 against a live case where Notice
+  // Alert showed the order date (18-12-2025), not the case's own arndt
+  // (07-07-2025). Each item's own event date is whichever field its section
+  // column already uses (refdt for Intimations/Notices/Orders, the reply's
+  // decdtls.dt for Replies); the case's static arndt is the fallback when no
+  // item has one, and the parent gst_notices row's issue_date after that.
+  const itemEventDate = (it: FolderItemRow): unknown =>
+    it.raw_json?.refdt ?? (replyOf(it.raw_json)?.decdtls as Record<string, unknown> | undefined)?.dt;
+  const latestEventDate = items
+    .map((it) => itemEventDate(it))
+    .filter((v): v is string => typeof v === 'string' && parseDMY(v) !== null)
+    .reduce<string | null>((latest, v) => (latest === null || parseDMY(v)! > parseDMY(latest)! ? v : latest), null);
   const caseArndt = items.map((it) => it.raw_json?.arndt).find((v) => typeof v === 'string');
-  const applicationDate = toDisplayDate(caseArndt ?? header?.issue_date ?? null);
+  const applicationDate = toDisplayDate(latestEventDate ?? caseArndt ?? header?.issue_date ?? null);
+
+  // Notice Alert shows CLOSE for a case once it has a closure item (e.g. an
+  // "Acceptance of response" record) — confirmed live 2026-08-29 against the
+  // SHREEJIKRUPA BUILDCON case above. staff_status, when set, still wins
+  // (a human override of the portal-derived default).
+  const hasClosureItem = items.some((it) => sectionLabel(it.folder_section) === 'CLOSURE');
+  const displayStatus = header?.staff_status || (hasClosureItem ? 'Closed' : 'Open');
 
   return (
     <div className="space-y-2.5 animate-fade-in">
@@ -261,7 +310,7 @@ const AdditionalNoticeFolderPage: React.FC = () => {
                 </div>
                 <div>
                   <p className="text-muted-foreground">Status</p>
-                  <p className="font-semibold">{(header?.staff_status || 'Open').toUpperCase()}</p>
+                  <p className="font-semibold">{displayStatus.toUpperCase()}</p>
                 </div>
               </div>
 
