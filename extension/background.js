@@ -12,6 +12,32 @@ const H = {
 };
 const enc = encodeURIComponent;
 
+// The GSTR-3A summary API (return.gst.gov.in/returns/auth/api/gstr3a/summary)
+// WAF-rejects any request whose Referer isn't the portal's own "View Notices
+// and Orders" page — confirmed live 2026-09-03: a plain fetch() from this
+// worker got a 200 "Access Denied" HTML page instead of JSON (every row,
+// every client), while clicking the notice's own "View" link on the portal
+// (which sends that Referer naturally) succeeded. `fetch()` cannot set
+// Referer itself — it's a forbidden header per the Fetch spec, extension or
+// not — so this rewrites it at the network layer instead via
+// declarativeNetRequest, which is allowed to. Registered once per worker
+// startup; scoped narrowly to this one endpoint so it can't affect any other
+// cross-origin fetch this file makes.
+try {
+  chrome.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds: [1],
+    addRules: [{
+      id: 1,
+      priority: 1,
+      condition: { urlFilter: '||return.gst.gov.in/returns/auth/api/gstr3a/summary', resourceTypes: ['xmlhttprequest'] },
+      action: {
+        type: 'modifyHeaders',
+        requestHeaders: [{ header: 'Referer', operation: 'set', value: 'https://services.gst.gov.in/services/auth/notices' }],
+      },
+    }],
+  }).catch(() => { /* best-effort — a failed registration just leaves the old fetch behavior */ });
+} catch (e) { /* best-effort — a failed registration just leaves the old fetch behavior */ }
+
 const sel = async (path) => {
   const r = await fetch(base + path, { headers: H });
   if (!r.ok) throw new Error('GET ' + path + ' -> ' + r.status + ' ' + (await r.text()).slice(0, 120));
@@ -181,6 +207,20 @@ const API = {
     if (!r.ok) throw new Error('fetchCrossOriginAsBase64 -> HTTP ' + r.status);
     const buf = await r.arrayBuffer();
     return { base64: abToBase64(buf), contentType: r.headers.get('content-type') || 'application/octet-stream' };
+  },
+
+  // Diagnostic-only, called once per GSTR-3A batch from content.js and folded
+  // into the same client_sync_log message the rest of that batch's errors
+  // already go to — confirms whether the Referer-rewrite declarativeNetRequest
+  // rule (registered at the top of this file) actually registered, without
+  // needing anyone to open the service worker's own DevTools to check.
+  getDnrDebug: async () => {
+    try {
+      const rules = await chrome.declarativeNetRequest.getDynamicRules();
+      return { ok: true, rules };
+    } catch (e) {
+      return { ok: false, error: String(e && e.message ? e.message : e) };
+    }
   },
 
   // Upload a base64 data-URL PDF to the return-pdfs bucket, return its public URL.

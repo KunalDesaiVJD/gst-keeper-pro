@@ -2466,7 +2466,29 @@
     // "Letter Of Undertaking" entries don't), so this is best-effort per row
     // and a failure here must not drop that row's own reference/description.
     let pdfOk = 0, pdfFail = 0;
+    const gstr3aErrors = [];
+    try {
+      const dnr = await GSTKdb.getDnrDebug();
+      gstr3aErrors.push('DNR rules: ' + JSON.stringify(dnr).slice(0, 300));
+    } catch (e) { gstr3aErrors.push('DNR debug call failed: ' + ((e && e.message) || String(e))); }
     const rows = [];
+    // Rows with no docId/applnId aren't necessarily document-less — confirmed
+    // live 2026-08-29: a "Notice to return defaulter u/s 46" row instead
+    // carries pdfDownloadURL ("/returns/auth/gstr3a") + appDefId. That's the
+    // portal's own GSTR-3A notice viewer (return.gst.gov.in) — reverse
+    // engineered live: it fetches a small JSON summary (gstin/name/address/
+    // ret_period/orderId/retTyp) from /returns/auth/api/gstr3a/summary, then
+    // builds the actual PDF client-side via pdfMake using a FIXED legal-text
+    // template (see returnstatic.gst.gov.in/uiassets/js/returns/gstr3actrl.js,
+    // publicly fetchable, no auth needed) and immediately calls
+    // pdfMake...download() — which is a real Chrome "Save As" prompt per
+    // notice, confirmed live, and why an earlier version of this capture
+    // (opening that page in a tab and screenshotting it) forced the user to
+    // click through a save dialog per notice during every sync. Fetching the
+    // same summary JSON directly and rebuilding that exact template ourselves
+    // (buildGstr3aNoticePdf below) needs no tab and never touches Chrome's
+    // download UI — same silent, background-fetch shape as every other
+    // notice type's PDF capture in this loop.
     for (const n of list) {
       const row = {
         client_id: cur.clientId, source: 'notices',
@@ -2486,6 +2508,28 @@
             pdfOk++;
           } else pdfFail++;
         } catch (e) { pdfFail++; }
+      } else if (n.pdfDownloadURL && n.noticeOrderId && n.appDefId) {
+        try {
+          const summaryUrl = 'https://return.gst.gov.in/returns/auth/api/gstr3a/summary?defaulter_id=' +
+            encodeURIComponent(n.appDefId) + '&order_id=' + encodeURIComponent(n.noticeOrderId);
+          const { base64 } = await withTimeout(GSTKdb.fetchCrossOriginAsBase64(summaryUrl), 15000, 'gstr3a summary');
+          let raw;
+          try { raw = atob(base64); } catch (e) { throw new Error('base64 decode failed: ' + (e && e.message)); }
+          let summary;
+          try { summary = JSON.parse(raw); } catch (e) { throw new Error('not JSON (' + raw.length + ' chars): ' + raw.slice(0, 120)); }
+          if (summary && summary.data) {
+            const pdfDataUrl = buildGstr3aNoticePdf(summary.data, n.dtOfIssue, n.noticeOrderId);
+            const path = 'notices/' + cur.clientId + '/' + n.noticeOrderId + '.pdf';
+            row.pdf_url = await withTimeout(GSTKdb.uploadPdf(path, pdfDataUrl), 20000, 'uploadPdf');
+            pdfOk++;
+          } else {
+            pdfFail++;
+            gstr3aErrors.push(n.noticeOrderId + ': no .data in response — ' + JSON.stringify(summary).slice(0, 150));
+          }
+        } catch (e) {
+          pdfFail++;
+          gstr3aErrors.push(n.noticeOrderId + ': ' + ((e && e.message) || String(e)));
+        }
       }
       rows.push(row);
     }
@@ -2656,13 +2700,23 @@
 
     try {
       await GSTKdb.replaceNotices(cur.clientId, rows);
+
       debugPanel([
         'STEP: View Notices and Orders  (' + location.pathname + ')',
         'rows read         : ' + rows.length + ' (' + (rows.length - taskRows) + ' notices, ' + taskRows + ' LUT/case-task)',
         'PDFs captured     : ' + pdfOk + ' ok, ' + pdfFail + ' failed/not applicable',
+        ...(gstr3aErrors.length ? ['GSTR-3A errors    :', ...gstr3aErrors.map((m) => '  - ' + m)] : []),
       ]);
       banner('Notices & Orders → ' + rows.length + ' entries saved (' + pdfOk + ' PDFs). Now Refund applications…' + progress, '#16a34a');
       await logSyncAttempt(job, cur, 'success', rows.length + ' entries found (' + pdfOk + ' PDFs captured' + (pdfFail ? ', ' + pdfFail + ' failed' : '') + ').');
+      // Temporary diagnostic — the debug panel navigates away with the page
+      // before a human can read it, so this writes the same detail
+      // somewhere durable regardless of job.logSync (client_sync_log),
+      // queryable straight from Supabase after the fact.
+      if (gstr3aErrors.length) {
+        const realFailures = gstr3aErrors.some((m) => !m.startsWith('DNR rules') && !m.startsWith('DNR debug call failed'));
+        try { await GSTKdb.logClientSync(cur.clientId, 'notices_gstr3a_debug', realFailures ? 'failed' : 'success', gstr3aErrors.join(' | ').slice(0, 2000)); } catch (e) { /* diagnostic only */ }
+      }
     } catch (e) {
       debugPanel(['STEP: View Notices and Orders  (' + location.pathname + ')', 'DB write failed: ' + ((e && e.message) || 'unknown error')]);
       banner('Notices & Orders: read ' + rows.length + ' rows but the save failed (' + ((e && e.message) || 'unknown error') + ') — skipped.' + progress, '#dc2626');
@@ -2671,6 +2725,96 @@
     }
     await sleep(1000);
     await chainOrStop(job, 'notices', proceedToRefunds);
+  }
+
+  // Rebuilds the exact GSTR-3A "Notice to return defaulter" PDF the portal's
+  // own gstr3actrl.js generates client-side via pdfMake — reverse engineered
+  // live 2026-08-29 from returnstatic.gst.gov.in/uiassets/js/returns/gstr3actrl.js
+  // (a public, unauthenticated static file). `details` is the summary API's
+  // response.data (gstin/name/address/ret_period/orderId/retTyp/and, for a
+  // cancellation notice, canellationOrderId/cancellationDate/cancelArn/
+  // arnDate). All three notice variants (normal / annual retTyp '9' /
+  // cancellation retTyp '10') use their ORIGINAL legal wording verbatim —
+  // this only reflows it with jsPDF instead of pdfMake, so the sentence text
+  // itself must never be edited here independent of the source controller.
+  function buildGstr3aNoticePdf(details, dtOfIssue, noticeOrderId) {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 40;
+    let y = 56;
+
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(18);
+    doc.text('Form GSTR-3A', pageWidth / 2, y, { align: 'center' }); y += 22;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(11);
+    doc.text('[See rule 68]', pageWidth / 2, y, { align: 'center' }); y += 28;
+
+    doc.setFontSize(10);
+    doc.text('Reference No: ' + (details.orderId || noticeOrderId || '-'), margin, y);
+    doc.text('Date: ' + (dtOfIssue || '-'), pageWidth - margin, y, { align: 'right' });
+    y += 24;
+
+    doc.text('To', margin, y); y += 14;
+    doc.text(details.gstin || '-', margin, y); y += 14;
+    doc.text(details.name || '-', margin, y); y += 14;
+    const addrLines = doc.splitTextToSize(details.address || '-', pageWidth - margin * 2);
+    doc.text(addrLines, margin, y); y += addrLines.length * 14 + 12;
+
+    const retTyp = details.retTyp;
+    const heading = retTyp === '10'
+      ? 'Notice to return defaulter u/s 46 for not filing final return upon cancellation of registration'
+      : retTyp === '9'
+      ? 'Notice to return defaulter u/s 46 for not filing annual return'
+      : 'Notice to return defaulter u/s 46 for not filing return';
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+    const headingLines = doc.splitTextToSize(heading, pageWidth - margin * 2);
+    doc.text(headingLines, pageWidth / 2, y, { align: 'center' }); y += headingLines.length * 16 + 12;
+
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+    if (retTyp === '10') {
+      doc.text('Cancellation order No.: ' + (details.canellationOrderId || '-'), margin, y);
+      doc.text('Date: ' + (details.cancellationDate || '-'), pageWidth - margin, y, { align: 'right' });
+      y += 16;
+      doc.text('Application Reference Number, if any: ' + (details.cancelArn || '-'), margin, y);
+      doc.text('Date: ' + (details.arnDate || '-'), pageWidth - margin, y, { align: 'right' });
+      y += 16;
+    } else {
+      const isAnnual = retTyp === '4X' || retTyp === '9';
+      const periodLabel = isAnnual ? 'Financial Year: ' : 'Tax Period: ';
+      const periodValue = isAnnual ? (details.ret_period || '-').split(', ')[1] || '-' : (details.ret_period || '-');
+      doc.text(periodLabel + periodValue, margin, y);
+      doc.text('Type of Return: GSTR-' + (retTyp === '4X' ? '4 (Annual)' : (retTyp || '-')), pageWidth - margin, y, { align: 'right' });
+      y += 16;
+    }
+    y += 16;
+
+    const paragraphs = retTyp === '9' ? [
+      'Being a registered taxpayer, you are required to furnish annual return for the supplies made or received and/or to include self-certified reconciliation statement for the aforesaid financial year by due date. The due date specified for filing annual return for the said financial year is over and it has been noticed that you have not filed the said return till date.',
+      'You are, therefore, requested to furnish the said return within 15 days failing which appropriate action including imposition of penalty as per law will be taken.',
+      'This notice shall be deemed to have been withdrawn in case the return referred above, is filed by you before issue of the show cause notice of penalty proceeding.',
+      'This is a system generated notice and does not require signature.',
+    ] : retTyp === '10' ? [
+      'Consequent upon applying for surrender of registration or cancellation of your registration for the reasons specified in the order, you were required to submit a final return in form GSTR-10 as required under section 45 of the Act.',
+      'It has been noticed that you have not filed the final return by the due date.',
+      'You are, therefore, requested to furnish the final return as specified under section 45 of the Act within 15 days failing which your tax liability for the aforesaid tax period may be determined in accordance with the provisions of the Act based on the relevant material available with or gathered by this office. Please note that in addition to tax so assessed, you will also be liable to pay interest as per provisions of the Act.',
+      'This notice shall be deemed to be withdrawn in case the return is filed by you before issue of the assessment order.',
+      'This is a system generated notice and does not require signature.',
+    ] : [
+      'Being a registered taxpayer, you are required to furnish return for the supplies made or received and to discharge resultant tax liability for the aforesaid tax period by due date. It has been noticed that you have not filed the said return till date.',
+      'You are, therefore, requested to furnish the said return within 15 days failing which the tax liability may be assessed u/s 62 of the Act, based on the relevant material available with this office. Please note that in addition to tax so assessed, you will also be liable to pay interest and penalty as per provisions of the Act.',
+      'Please note that no further communication will be issued for assessing the liability.',
+      'The notice shall be deemed to have been withdrawn in case the return referred above, is filed by you before issue of the assessment order.',
+      'This is a system generated notice and will not require signature.',
+    ];
+    paragraphs.forEach((p, i) => {
+      const lines = doc.splitTextToSize((i + 1) + '. ' + p, pageWidth - margin * 2);
+      if (y + lines.length * 14 > pageHeight - margin) { doc.addPage(); y = margin; }
+      doc.text(lines, margin, y);
+      y += lines.length * 14 + 8;
+    });
+
+    return doc.output('datauristring');
   }
 
   // DD/MM/YYYY for "today" — the notices API wants an explicit upper bound,

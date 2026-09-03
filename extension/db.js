@@ -37,6 +37,7 @@
     replaceCreditReversalReclaimEntries: (clientId, financialYear, rows) => call('replaceCreditReversalReclaimEntries', clientId, financialYear, rows),
     replaceRcmLiabilityItcEntries: (clientId, financialYear, rows) => call('replaceRcmLiabilityItcEntries', clientId, financialYear, rows),
     fetchCrossOriginAsBase64: (url) => call('fetchCrossOriginAsBase64', url),
+    getDnrDebug: () => call('getDnrDebug'),
     uploadPdf: (path, dataUrl) => call('uploadPdf', path, dataUrl),
     markFiled: (row) => call('markFiled', row),
     // Records one Sync All attempt's outcome for a client — feeds the
