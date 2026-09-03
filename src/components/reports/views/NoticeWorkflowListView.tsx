@@ -24,6 +24,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { FileText, Search, DownloadCloud, Inbox, Pencil, Flag, Loader2, FileSpreadsheet, ExternalLink, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { renderReportToExcel } from '@/utils/allClientsReports';
+import { isoDateToDMY, dmyToISODate } from '@/utils/formatDate';
 
 interface NoticeWorkflowListViewProps {
   table: ReportTable;
@@ -113,8 +114,13 @@ const parseDateLoose = (v: string | number | undefined): number => {
   if (typeof v === 'number') return v;
   const s = String(v).trim();
   if (!s || s === '—' || isSentinel(s)) return NaN;
-  const direct = Date.parse(s);
-  if (!Number.isNaN(direct)) return direct;
+  // DD/MM/YYYY (or DD-MM-YYYY) is checked BEFORE Date.parse — Date.parse
+  // treats an ambiguous slash-separated string as MM/DD/YYYY (US order), so
+  // a display date like "04/08/2026" (4 Aug) would silently parse as 8
+  // April instead. Confirmed as a real risk 2026-09-03 when the notice/
+  // refund/DRC-03 report builders switched from raw ISO cells to this
+  // format — this reordering is what keeps date filters/sorting correct
+  // afterward.
   const m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
   if (m) {
     const day = Number(m[1]);
@@ -124,6 +130,8 @@ const parseDateLoose = (v: string | number | undefined): number => {
     const d = new Date(year, month - 1, day);
     if (!Number.isNaN(d.getTime())) return d.getTime();
   }
+  const direct = Date.parse(s);
+  if (!Number.isNaN(direct)) return direct;
   return NaN;
 };
 
@@ -464,12 +472,12 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     setEditForm({
       priority: priorityColIdx !== -1 ? cellToText(row[priorityColIdx]) : '',
       replyRefNumber: replyRefColIdx !== -1 ? cellToText(row[replyRefColIdx]) : '',
-      replyDate: replyDateColIdx !== -1 ? cellToText(row[replyDateColIdx]) : '',
+      replyDate: replyDateColIdx !== -1 ? dmyToISODate(cellToText(row[replyDateColIdx])) : '',
       orderNumber: orderNoColIdx !== -1 ? cellToText(row[orderNoColIdx]) : '',
-      orderDate: orderDateColIdx !== -1 ? cellToText(row[orderDateColIdx]) : '',
+      orderDate: orderDateColIdx !== -1 ? dmyToISODate(cellToText(row[orderDateColIdx])) : '',
       submissionArn: submissionArnColIdx !== -1 ? cellToText(row[submissionArnColIdx]) : '',
-      submissionDate: submissionDateColIdx !== -1 ? cellToText(row[submissionDateColIdx]) : '',
-      extendedDueDate: extendedDueDateColIdx !== -1 ? cellToText(row[extendedDueDateColIdx]) : '',
+      submissionDate: submissionDateColIdx !== -1 ? dmyToISODate(cellToText(row[submissionDateColIdx])) : '',
+      extendedDueDate: extendedDueDateColIdx !== -1 ? dmyToISODate(cellToText(row[extendedDueDateColIdx])) : '',
       amountOfDemand: amountColIdx !== -1 ? cellToText(row[amountColIdx]) : '',
       remarks: remarksColIdx !== -1 ? cellToText(row[remarksColIdx]) : '',
       financialYear: financialYearColIdx !== -1 ? cellToText(row[financialYearColIdx]) : '',
@@ -508,12 +516,12 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
       const next = [...r];
       if (priorityColIdx !== -1) next[priorityColIdx] = editForm.priority || '—';
       if (replyRefColIdx !== -1) next[replyRefColIdx] = editForm.replyRefNumber || '—';
-      if (replyDateColIdx !== -1) next[replyDateColIdx] = editForm.replyDate || '—';
+      if (replyDateColIdx !== -1) next[replyDateColIdx] = isoDateToDMY(editForm.replyDate);
       if (orderNoColIdx !== -1) next[orderNoColIdx] = editForm.orderNumber || '—';
-      if (orderDateColIdx !== -1) next[orderDateColIdx] = editForm.orderDate || '—';
+      if (orderDateColIdx !== -1) next[orderDateColIdx] = isoDateToDMY(editForm.orderDate);
       if (submissionArnColIdx !== -1) next[submissionArnColIdx] = editForm.submissionArn || '—';
-      if (submissionDateColIdx !== -1) next[submissionDateColIdx] = editForm.submissionDate || '—';
-      if (extendedDueDateColIdx !== -1) next[extendedDueDateColIdx] = editForm.extendedDueDate || '—';
+      if (submissionDateColIdx !== -1) next[submissionDateColIdx] = isoDateToDMY(editForm.submissionDate);
+      if (extendedDueDateColIdx !== -1) next[extendedDueDateColIdx] = isoDateToDMY(editForm.extendedDueDate);
       if (amountColIdx !== -1) next[amountColIdx] = amount !== null ? amount : '—';
       if (remarksColIdx !== -1) next[remarksColIdx] = editForm.remarks || '—';
       if (financialYearColIdx !== -1) next[financialYearColIdx] = editForm.financialYear || '—';

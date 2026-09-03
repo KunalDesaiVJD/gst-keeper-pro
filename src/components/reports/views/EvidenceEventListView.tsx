@@ -99,8 +99,13 @@ const parseDateLoose = (v: string | number | undefined): number => {
   if (typeof v === 'number') return v;
   const s = String(v).trim();
   if (!s || s === '—' || isSentinel(s)) return NaN;
-  const direct = Date.parse(s);
-  if (!Number.isNaN(direct)) return direct;
+  // DD/MM/YYYY (or DD-MM-YYYY) is checked BEFORE Date.parse — Date.parse
+  // treats an ambiguous slash-separated string as MM/DD/YYYY (US order), so
+  // a display date like "04/08/2026" (4 Aug) would silently parse as 8
+  // April instead. Confirmed as a real risk 2026-09-03 when the notice/
+  // refund/DRC-03 report builders switched from raw ISO cells to this
+  // format — this reordering is what keeps date filters/sorting correct
+  // afterward.
   const m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
   if (m) {
     const day = Number(m[1]);
@@ -110,6 +115,8 @@ const parseDateLoose = (v: string | number | undefined): number => {
     const d = new Date(year, month - 1, day);
     if (!Number.isNaN(d.getTime())) return d.getTime();
   }
+  const direct = Date.parse(s);
+  if (!Number.isNaN(direct)) return direct;
   return NaN;
 };
 

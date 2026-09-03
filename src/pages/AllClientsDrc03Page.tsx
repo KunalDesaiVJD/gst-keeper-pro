@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { EvidenceEventListView } from '@/components/reports/views/EvidenceEventListView';
 import type { ReportTable } from '@/utils/allClientsReports';
 import { isDrc03Closed, isClosed } from '@/utils/noticeSummaryReport';
+import { isoDateToDMY } from '@/utils/formatDate';
 import { FileWarning, ArrowLeft, Loader2 } from 'lucide-react';
 
 interface Drc03Record {
@@ -123,7 +124,7 @@ const AllClientsDrc03Page: React.FC = () => {
     return [
       r.clients?.gstin || '—', r.clients?.name || '—',
       r.arn || '—', r.cause_of_payment || '—', r.section || '—', r.financial_year || '—',
-      r.filed_date || '—', `${r.period_from || '—'} to ${r.period_to || '—'}`,
+      isoDateToDMY(r.filed_date), `${isoDateToDMY(r.period_from)} to ${isoDateToDMY(r.period_to)}`,
       num(r.taxable_value), num(r.igst_amount), num(r.cgst_amount), num(r.sgst_amount), num(r.cess_amount),
       num(r.interest_amount), num(r.late_fee_amount), num(r.penalty_amount),
       num(r.cash_amount), num(r.credit_amount), r.status || '—', r.pdf_url || '—',

@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { EvidenceEventListView } from '@/components/reports/views/EvidenceEventListView';
 import type { ReportTable } from '@/utils/allClientsReports';
 import { isRefundClosed, isClosed } from '@/utils/noticeSummaryReport';
+import { isoDateToDMY } from '@/utils/formatDate';
 import { Banknote, ArrowLeft, Loader2 } from 'lucide-react';
 
 interface RefundRecord {
@@ -108,7 +109,7 @@ const AllClientsRefundsPage: React.FC = () => {
     const docs = Array.isArray(r.documents) ? r.documents : [];
     return [
       r.clients?.gstin || '—', r.clients?.name || '—',
-      r.arn || '—', r.refund_type || '—', r.filed_date || '—',
+      r.arn || '—', r.refund_type || '—', isoDateToDMY(r.filed_date),
       num(r.claimed_amount), num(r.sanctioned_amount), r.status || '—',
       docs.length === 0 ? '—' : docs[0].url,
     ];

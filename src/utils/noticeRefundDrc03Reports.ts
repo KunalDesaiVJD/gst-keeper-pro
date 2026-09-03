@@ -7,6 +7,7 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import type { ReportTable } from './allClientsReports';
+import { isoDateToDMY } from './formatDate';
 
 interface ClientLite { id: string; name: string; gstin: string; }
 
@@ -41,7 +42,7 @@ export const buildAdditionalNoticesAndOrdersReport = async (clientId: string): P
     title,
     subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   All periods on record, most recent first`,
     headers: ['Reference No.', 'Type', 'Description', 'Issue Date', 'Due Date', 'Status', 'PDF'],
-    rows: rows.map((r) => [r.reference_number || '—', r.notice_type || '—', r.description || '—', r.issue_date || '—', r.due_date || '—', r.status || '—', r.pdf_url || '—']),
+    rows: rows.map((r) => [r.reference_number || '—', r.notice_type || '—', r.description || '—', isoDateToDMY(r.issue_date), isoDateToDMY(r.due_date), r.status || '—', r.pdf_url || '—']),
     fileNameBase: `${fileSafe(title)}_${fileSafe(client.name)}`,
     columnWidths: [16, 16, 40, 12, 12, 14, 12],
   };
@@ -81,10 +82,10 @@ export const buildViewNoticesAndOrdersReport = async (clientId: string): Promise
     ],
     rows: rows.map((r) => [
       r.reference_number || '—', r.case_id || '—', r.notice_type || '—', r.description || '—',
-      r.issue_date || '—', r.due_date || '—', r.extended_due_date || '—',
+      isoDateToDMY(r.issue_date), isoDateToDMY(r.due_date), isoDateToDMY(r.extended_due_date),
       r.staff_status || '—', r.priority || '—',
-      r.reply_ref_number || '—', r.reply_date || '—', r.order_number || '—', r.order_date || '—',
-      r.submission_arn || '—', r.submission_date || '—',
+      r.reply_ref_number || '—', isoDateToDMY(r.reply_date), r.order_number || '—', isoDateToDMY(r.order_date),
+      r.submission_arn || '—', isoDateToDMY(r.submission_date),
       r.amount_of_demand != null ? num(r.amount_of_demand) : '—', r.remarks || '—', r.issued_by || '—', r.financial_year || '—', r.assign_to || '—',
       r.pdf_url || '—',
     ]),
@@ -123,7 +124,7 @@ const refundRow = (r: {
   // broken href. The count lives in the ARN's own documents array for
   // anything that needs the rest, not squeezed into this one flat cell.
   const docsCell = docs.length === 0 ? '—' : docs[0].url;
-  return [r.arn || '—', r.refund_type || '—', r.filed_date || '—', num(r.claimed_amount), num(r.sanctioned_amount), r.status || '—', docsCell];
+  return [r.arn || '—', r.refund_type || '—', isoDateToDMY(r.filed_date), num(r.claimed_amount), num(r.sanctioned_amount), r.status || '—', docsCell];
 };
 
 export const buildRefundFiledOnPortalReport = async (clientId: string): Promise<ReportTable> => {
@@ -214,7 +215,7 @@ const drc03Row = (r: {
   cash_amount: number | null; credit_amount: number | null; status: string | null; pdf_url: string | null;
 }): (string | number)[] => [
   r.arn || '—', r.cause_of_payment || '—', r.section || '—', r.financial_year || '—',
-  r.filed_date || '—', `${r.period_from || '—'} to ${r.period_to || '—'}`,
+  isoDateToDMY(r.filed_date), `${isoDateToDMY(r.period_from)} to ${isoDateToDMY(r.period_to)}`,
   num(r.taxable_value), num(r.igst_amount), num(r.cgst_amount), num(r.sgst_amount), num(r.cess_amount),
   num(r.interest_amount), num(r.late_fee_amount), num(r.penalty_amount),
   num(r.cash_amount), num(r.credit_amount), r.status || '—', r.pdf_url || '—',

@@ -21,6 +21,7 @@ import { AddNoticeDialog } from '@/components/notices/AddNoticeDialog';
 import type { ReportTable } from '@/utils/allClientsReports';
 import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
 import { isClosed } from '@/utils/noticeSummaryReport';
+import { isoDateToDMY } from '@/utils/formatDate';
 import { Bell, ArrowLeft, Loader2, ChevronRight, Layers } from 'lucide-react';
 
 interface RefundRecord {
@@ -192,10 +193,10 @@ const AllClientsNoticesPage: React.FC = () => {
     rows: filtered.map((r) => [
       r.clients?.gstin || '—', r.clients?.name || '—',
       r.reference_number || '—', r.case_id || '—', r.notice_type || '—', r.description || '—',
-      r.issue_date || '—', r.due_date || '—', r.extended_due_date || '—',
+      isoDateToDMY(r.issue_date), isoDateToDMY(r.due_date), isoDateToDMY(r.extended_due_date),
       r.staff_status || '—', r.priority || '—',
-      r.reply_ref_number || '—', r.reply_date || '—', r.order_number || '—', r.order_date || '—',
-      r.submission_arn || '—', r.submission_date || '—',
+      r.reply_ref_number || '—', isoDateToDMY(r.reply_date), r.order_number || '—', isoDateToDMY(r.order_date),
+      r.submission_arn || '—', isoDateToDMY(r.submission_date),
       r.amount_of_demand != null ? num(r.amount_of_demand) : '—', r.remarks || '—', r.issued_by || '—', r.financial_year || '—', r.assign_to || '—',
       r.pdf_url || '—',
     ]),
@@ -234,7 +235,7 @@ const AllClientsNoticesPage: React.FC = () => {
     title: 'Merged Notices — All Clients',
     subtitle: `${mergedRows.length} record${mergedRows.length === 1 ? '' : 's'} — every source (Notices & Orders, Refunds, DRC-03) combined, most recent first`,
     headers: ['GSTIN', 'Trade Name', 'Section', 'Ref ID', 'Type', 'Issued Date', 'Due Date', 'Description', 'Status', 'PDF'],
-    rows: mergedRows.map((r) => [r.gstin, r.trade, r.section, r.ref, r.type, r.date || '—', r.due, r.desc, r.status, r.pdf || '—']),
+    rows: mergedRows.map((r) => [r.gstin, r.trade, r.section, r.ref, r.type, isoDateToDMY(r.date), isoDateToDMY(r.due), r.desc, r.status, r.pdf || '—']),
     fileNameBase: 'Merged_Notices_All_Clients',
     columnWidths: [16, 24, 16, 18, 16, 12, 12, 40, 12, 30],
   };

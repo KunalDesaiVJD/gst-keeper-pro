@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 import { cn } from '@/lib/utils';
+import { isoDateToDMY } from '@/utils/formatDate';
 import {
   Bell, CalendarClock, History, FolderOpen, AlertTriangle, Loader2, Pencil,
   ArrowLeft, FileText,
@@ -252,7 +253,7 @@ const CompanyProfilePage: React.FC = () => {
                       <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">{i + 1}</span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-medium">{n.notice_type || n.description || 'Notice'}</p>
-                        <p className="text-muted-foreground">Ref Id: {n.reference_number || '—'} · Issue: {n.issue_date || '—'}</p>
+                        <p className="text-muted-foreground">Ref Id: {n.reference_number || '—'} · Issue: {isoDateToDMY(n.issue_date)}</p>
                       </div>
                       {n.pdf_url && <a href={n.pdf_url} target="_blank" rel="noreferrer"><FileText className="h-4 w-4 text-destructive" /></a>}
                     </div>
@@ -270,7 +271,7 @@ const CompanyProfilePage: React.FC = () => {
                       <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">{i + 1}</span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-medium">{n.description || n.notice_type || 'Submission'}</p>
-                        <p className="text-muted-foreground">ARN: {n.submission_arn || '—'} · Date: {n.submission_date || '—'}</p>
+                        <p className="text-muted-foreground">ARN: {n.submission_arn || '—'} · Date: {isoDateToDMY(n.submission_date)}</p>
                       </div>
                     </div>
                   ))}
