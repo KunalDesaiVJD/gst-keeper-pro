@@ -49,13 +49,25 @@ interface FolderItemRow {
 // aren't among Notice Alert's 5 fixed sections, so they get their own
 // section labeled with the raw code rather than being dropped or
 // mis-bucketed — same fallback for any other still-unseen folder type.
-const SECTION_ORDER = ['INTIMATIONS', 'NOTICES', 'REPLIES', 'ORDERS', 'CLOSURE'];
+// APPLICATIONS/NOTICE-ACKNOWLEDGEMENT lead for a refund case (Notice Alert's
+// own "Refund Notice Folder" order: Application → Notice/Acknowledgement →
+// Replies → Orders) — confirmed live 2026-09-03 against a real refund case.
+// They're harmless no-ops for non-refund cases (just render as an empty
+// section, same as every other canonical section already does).
+const SECTION_ORDER = ['APPLICATIONS', 'NOTICE/ACKNOWLEDGEMENT', 'INTIMATIONS', 'NOTICES', 'REPLIES', 'ORDERS', 'CLOSURE'];
 const SECTION_CODE_MAP: Record<string, string> = {
   INTIM: 'INTIMATIONS', INTIMATIONS: 'INTIMATIONS',
   NOTCE: 'NOTICES', NOTICE: 'NOTICES', NOTICES: 'NOTICES',
   REPLY: 'REPLIES', REPLIES: 'REPLIES',
   ORDRS: 'ORDERS', ORDER: 'ORDERS', ORDERS: 'ORDERS',
   CLSR: 'CLOSURE', CLOSR: 'CLOSURE', CLOSURE: 'CLOSURE',
+  // Refund-case-only codes, confirmed live 2026-09-03 against a real refund
+  // case (M J SURGICAL, AA2407261761073) — previously fell through to the
+  // raw-code fallback section (literally titled "APLCN"/"NOTAC"), which is
+  // exactly what the user's comparison doc flagged as unclear/inconsistent
+  // with Notice Alert's own labeling.
+  APLCN: 'APPLICATIONS',
+  NOTAC: 'NOTICE/ACKNOWLEDGEMENT',
 };
 const sectionLabel = (code: string | null) => {
   if (!code) return 'OTHERS';
@@ -75,10 +87,17 @@ const toDisplayDate = (v: unknown): string => {
 };
 const str = (v: unknown): string => (v === null || v === undefined || v === '' ? '—' : String(v));
 
-// DD/MM/YYYY -> a comparable timestamp, for picking the most recent of several dates.
+// DD/MM/YYYY or DD-MM-YYYY -> a comparable timestamp, for picking the most
+// recent of several dates. Refund-case items (APLCN/NOTAC/ORDRS) return
+// their own refdt dash-separated ("13-08-2026") rather than the slash format
+// every other case type uses — confirmed live 2026-09-03: this only
+// matching slash-separated dates meant a refund case's "most recent event"
+// silently found nothing, falling back to the parent gst_notices row's own
+// issue_date (11-08-2026) instead of the real latest item date (13-08-2026,
+// matching Notice Alert's own header for this exact case).
 const parseDMY = (v: unknown): number | null => {
   if (typeof v !== 'string') return null;
-  const m = v.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  const m = v.match(/^(\d{2})[/-](\d{2})[/-](\d{4})$/);
   if (!m) return null;
   return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1])).getTime();
 };
@@ -174,7 +193,36 @@ const CLOSURE_COLUMNS: ColumnDef[] = [
   { label: 'Passed By', render: (raw) => str(raw?.todtls && (raw.todtls as Record<string, unknown>).nm) },
 ];
 
+// APLCN (refund Application, GST RFD-01) — confirmed live 2026-09-03: fields
+// sit flat on raw_json (no sdtls wrapper), and the ARN date carries a time
+// suffix ("31/07/2026 20:51:30") the shared DD/MM/YYYY parser doesn't expect,
+// so it's stripped before formatting. Notice Alert's own ARN column reads
+// blank on `refundRsn` in the one case checked live — shown here anyway
+// since the portal genuinely returns it and dropping real data to match a
+// blank cell isn't the goal.
+const APPLICATIONS_COLUMNS: ColumnDef[] = [
+  { label: 'ARN', render: (raw, ref) => str(ref ?? raw?.applnAckNum) },
+  { label: 'ARN Date', render: (raw) => toDisplayDate(typeof raw?.rfdSubDt === 'string' ? (raw.rfdSubDt as string).split(' ')[0] : null) },
+  { label: 'Reason of Refund', render: (raw) => str(raw?.refundRsn) },
+];
+
+// NOTAC (Notice/Acknowledgement — GST RFD-02 acknowledgement or RFD-08
+// rejection notice, confirmed live 2026-09-03 against the same refund case).
+// Unlike Intimations/Notices/Orders, its own sub-detail sits directly under
+// sdtls (no dtscn/dtorder wrapper) — same shape as CLOSURE's. `duedate` and
+// `rsnnoticeother` only exist on the RFD-08 variant; RFD-02 (a plain
+// acknowledgement) has neither, rendering as '—'.
+const NOTICE_ACKNOWLEDGEMENT_COLUMNS: ColumnDef[] = [
+  { label: 'Type of Notice', render: (raw) => str(raw?.sdtls && (raw.sdtls as Record<string, unknown>).tynotice) },
+  { label: 'Date of Notice', render: (raw) => toDisplayDate(raw?.refdt) },
+  { label: 'Reference No.', render: (_raw, ref) => str(ref) },
+  { label: 'Reason of Notice', render: (raw) => str(raw?.sdtls && (raw.sdtls as Record<string, unknown>).rsnnoticeother) },
+  { label: 'Due Date of Reply', render: (raw) => toDisplayDate(raw?.sdtls && (raw.sdtls as Record<string, unknown>).duedate) },
+];
+
 const SECTION_COLUMNS: Record<string, ColumnDef[]> = {
+  APPLICATIONS: APPLICATIONS_COLUMNS,
+  'NOTICE/ACKNOWLEDGEMENT': NOTICE_ACKNOWLEDGEMENT_COLUMNS,
   INTIMATIONS: INTIMATIONS_COLUMNS,
   NOTICES: NOTICES_COLUMNS,
   REPLIES: REPLIES_COLUMNS,
@@ -271,7 +319,14 @@ const AdditionalNoticeFolderPage: React.FC = () => {
   // SHREEJIKRUPA BUILDCON case above. staff_status, when set, still wins
   // (a human override of the portal-derived default).
   const hasClosureItem = items.some((it) => sectionLabel(it.folder_section) === 'CLOSURE');
-  const displayStatus = header?.staff_status || (hasClosureItem ? 'Closed' : 'Open');
+  // Refund cases have no CLOSURE-coded item at all — they close via an Order
+  // (Sanction/Rejection) instead. Confirmed live 2026-09-03: a real refund
+  // case whose audit trail ends "Refund disbursed" had an ORDRS item but no
+  // CLOSURE one, and our Status still showed OPEN — the header rule above
+  // simply never fired for this case type.
+  const isRefundCase = items.some((it) => sectionLabel(it.folder_section) === 'APPLICATIONS');
+  const hasOrderItem = items.some((it) => sectionLabel(it.folder_section) === 'ORDERS');
+  const displayStatus = header?.staff_status || (hasClosureItem || (isRefundCase && hasOrderItem) ? 'Closed' : 'Open');
 
   return (
     <div className="space-y-2.5 animate-fade-in">
@@ -289,7 +344,9 @@ const AdditionalNoticeFolderPage: React.FC = () => {
       </div>
 
       <Card>
-        <CardHeader className="pb-2 pt-4"><CardTitle className="text-base">Additional Notice Folder</CardTitle></CardHeader>
+        <CardHeader className="pb-2 pt-4">
+          <CardTitle className="text-base">{isRefundCase ? 'Refund Notice Folder' : 'Additional Notice Folder'}</CardTitle>
+        </CardHeader>
         <CardContent className="pb-4">
           {loading ? (
             <div className="flex items-center justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
