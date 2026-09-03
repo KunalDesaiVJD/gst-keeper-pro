@@ -106,8 +106,13 @@ const parseDMY = (v: unknown): number | null => {
 // `sdtls`, but under a DIFFERENT key depending on the notice's own sub-type
 // (a plain SCN uses `dtscn`, a system-generated notice uses `srscn`, a
 // reminder uses `remnd`, an order uses `dtorder`) — only one is ever present
-// per item, so this just returns whichever one is.
-const SDTLS_SUBKEYS = ['dtscn', 'srscn', 'remnd', 'dtorder'] as const;
+// per item, so this just returns whichever one is. `sancordervo`/
+// `payadviceordervo` are the refund-case equivalents (Sanction/Rejection
+// Order and Payment Order respectively, confirmed live 2026-09-03) — same
+// one-of-several-wrapper-keys shape, just refund-specific names, and their
+// own type text sits under `ordertype` rather than `type` (see subDetailType
+// below).
+const SDTLS_SUBKEYS = ['dtscn', 'srscn', 'remnd', 'dtorder', 'sancordervo', 'payadviceordervo'] as const;
 const subDetail = (raw: Record<string, unknown> | null): Record<string, unknown> | null => {
   const sdtls = raw && (raw as Record<string, unknown>).sdtls;
   if (!sdtls || typeof sdtls !== 'object') return null;
@@ -121,6 +126,34 @@ const replyOf = (raw: Record<string, unknown> | null): Record<string, unknown> |
   const r = raw && (raw as Record<string, unknown>).reply;
   return r && typeof r === 'object' ? (r as Record<string, unknown>) : null;
 };
+
+// A refund-case reply (RFD-09) has NO `reply` wrapper at all — its fields
+// (tyreply, ntcno, replydt, sigfn/sigln) sit flat on raw_json, confirmed live
+// 2026-09-03. Without this, REPLIES_COLUMNS read replyOf(raw) as null for
+// every one of these and rendered every cell as '—' except Attachments —
+// exactly the all-dashes row the comparison screenshot showed. Normalizes
+// both shapes to one set of field names instead of scattering `??`
+// fallbacks with different key names across every column's render function.
+const replyFields = (raw: Record<string, unknown> | null) => {
+  const r = replyOf(raw);
+  if (r) {
+    const dec = r.decdtls as Record<string, unknown> | undefined;
+    return {
+      type: r.replyty, against: r.ntcno, date: r.ntcdt ?? r.intdt,
+      filedBy: dec?.asnm, pershrng: r.pershrng,
+    };
+  }
+  if (raw?.tyreply) {
+    const filedBy = [raw?.sigfn, raw?.sigln].filter((v) => typeof v === 'string' && v).join(' ');
+    return { type: raw.tyreply, against: raw?.ntcno, date: raw?.replydt, filedBy: filedBy || undefined, pershrng: undefined };
+  }
+  return { type: undefined, against: undefined, date: undefined, filedBy: undefined, pershrng: undefined };
+};
+
+// ORDERS' own sub-detail type text sits under `ordertype` for a refund case
+// (sancordervo/payadviceordervo) rather than `type` (dtorder) — confirmed
+// live 2026-09-03. Falls back to `type` for every other case type unchanged.
+const subDetailType = (raw: Record<string, unknown> | null): unknown => subDetail(raw)?.type ?? subDetail(raw)?.ordertype;
 
 interface ColumnDef {
   label: string;
@@ -163,18 +196,18 @@ const NOTICES_COLUMNS: ColumnDef[] = [
 // 02-10-2025). "Reply Type" itself has no confirmed source field yet — left
 // blank, matching Notice Alert's own (also blank) column in both examples.
 const REPLIES_COLUMNS: ColumnDef[] = [
-  { label: 'Type/Reply No.', render: (raw) => str(replyOf(raw)?.replyty) },
+  { label: 'Type/Reply No.', render: (raw) => str(replyFields(raw).type) },
   { label: 'Reply Type', render: () => '—' },
-  { label: 'Reply filed Against', render: (raw) => str(replyOf(raw)?.ntcno) },
-  { label: 'Reply Date/Ph', render: (raw) => toDisplayDate(replyOf(raw)?.ntcdt ?? replyOf(raw)?.intdt) },
+  { label: 'Reply filed Against', render: (raw) => str(replyFields(raw).against) },
+  { label: 'Reply Date/Ph', render: (raw) => toDisplayDate(replyFields(raw).date) },
   // Not present in any case confirmed live yet — left blank rather than guessed.
   { label: 'Original Due Date', render: () => '—' },
-  { label: 'Filed By', render: (raw) => str(replyOf(raw)?.decdtls && (replyOf(raw)?.decdtls as Record<string, unknown>).asnm) },
-  { label: 'Option for Personal Hearing', render: (raw) => str(replyOf(raw)?.pershrng) },
+  { label: 'Filed By', render: (raw) => str(replyFields(raw).filedBy) },
+  { label: 'Option for Personal Hearing', render: (raw) => str(replyFields(raw).pershrng) },
 ];
 
 const ORDERS_COLUMNS: ColumnDef[] = [
-  { label: 'Type', render: (raw) => str(subDetail(raw)?.type) },
+  { label: 'Type', render: (raw) => str(subDetailType(raw)) },
   { label: 'Order Number', render: (_raw, ref) => str(ref) },
   { label: 'Order Date', render: (raw) => toDisplayDate(raw?.refdt) },
   { label: 'Passed By', render: (raw) => str(raw?.todtls && (raw.todtls as Record<string, unknown>).nm) },
@@ -259,6 +292,72 @@ const fieldsOf = (raw: Record<string, unknown> | null, prefix = '', depth = 0): 
   return out;
 };
 
+interface AuditEntry {
+  date: string | null;
+  action: string;
+  reference: string;
+  actionBy: string;
+}
+
+// Synthesizes Notice Alert's "Audit History" section — a chronological
+// narrative Notice Alert has as its own fixed section but nothing in our own
+// captured data corresponds to a single item type; it's derived from every
+// OTHER section's items instead, one row per event, confirmed live
+// 2026-09-03 against a real refund case's own Audit History (Application
+// filed → Acknowledged → SCN issued → Reply submitted → Order(s) issued).
+// One entry Notice Alert shows that we can't reproduce: "Refund disbursed to
+// taxpayer's account" — that comes from bank/PFMS data this app has never
+// captured from any portal endpoint, so it's simply absent here rather than
+// guessed.
+const buildAuditHistory = (items: FolderItemRow[]): AuditEntry[] => {
+  const entries: AuditEntry[] = [];
+  items.forEach((it) => {
+    const raw = it.raw_json;
+    const section = sectionLabel(it.folder_section);
+    if (section === 'APPLICATIONS') {
+      const dt = typeof raw?.rfdSubDt === 'string' ? (raw.rfdSubDt as string).split(' ')[0] : (raw?.rfdSubtmstp as string | undefined);
+      entries.push({
+        date: toDisplayDate(dt ?? null),
+        action: 'Refund Application filed' + (raw?.formNo ? ` (${str(raw.formNo)})` : ''),
+        reference: str((raw?.applnAckNum as string | undefined) ?? it.reference_number),
+        actionBy: 'Taxpayer',
+      });
+    } else if (section === 'NOTICE/ACKNOWLEDGEMENT') {
+      entries.push({
+        date: toDisplayDate(raw?.refdt ?? null),
+        action: str(raw?.sdtls && (raw.sdtls as Record<string, unknown>).tynotice),
+        reference: str(it.reference_number),
+        actionBy: 'Tax Officer',
+      });
+    } else if (section === 'REPLIES') {
+      const f = replyFields(raw);
+      entries.push({
+        date: toDisplayDate(f.date ?? null),
+        action: 'Reply submitted by taxpayer' + (f.type ? ` (${str(f.type)})` : ''),
+        reference: str(it.reference_number),
+        actionBy: 'Taxpayer',
+      });
+    } else if (section === 'ORDERS') {
+      entries.push({
+        date: toDisplayDate(raw?.refdt ?? null),
+        action: str(subDetailType(raw)),
+        reference: str(it.reference_number),
+        actionBy: 'Tax Officer',
+      });
+    }
+  });
+  // toDisplayDate above already normalizes to DD-MM-YYYY, which parseDMY
+  // (fixed earlier to accept both '/' and '-') reads directly.
+  return entries.sort((a, b) => {
+    const da = parseDMY(a.date);
+    const db = parseDMY(b.date);
+    if (da === null && db === null) return 0;
+    if (da === null) return 1;
+    if (db === null) return -1;
+    return da - db;
+  });
+};
+
 const AdditionalNoticeFolderPage: React.FC = () => {
   const { isStaffRole } = useAuth();
   const { clientId, caseId } = useParams<{ clientId: string; caseId: string }>();
@@ -294,8 +393,20 @@ const AdditionalNoticeFolderPage: React.FC = () => {
     list.push(it);
     bySection.set(label, list);
   });
+  // Notice Alert's Refund Notice Folder shows exactly 5 sections — Applications,
+  // Notice/Acknowledgement, Replies, Orders, Audit History — and never
+  // Intimations/Notices/Closure, not even as empty placeholders. Confirmed
+  // live 2026-09-03: our page previously showed all 7 canonical sections
+  // unconditionally, so a refund case (which structurally never has an
+  // Intimations/Notices/Closure item) still displayed two-to-three extra
+  // "There are no records to display" boxes Notice Alert never shows.
+  const isRefundCase = items.some((it) => sectionLabel(it.folder_section) === 'APPLICATIONS');
+  const sectionOrderForCase = isRefundCase
+    ? SECTION_ORDER.filter((s) => !['INTIMATIONS', 'NOTICES', 'CLOSURE'].includes(s))
+    : SECTION_ORDER;
   const extraSections = Array.from(bySection.keys()).filter((s) => !SECTION_ORDER.includes(s));
-  const allSections = [...SECTION_ORDER, ...extraSections];
+  const allSections = [...sectionOrderForCase, ...extraSections];
+  const auditHistory = isRefundCase ? buildAuditHistory(items) : [];
 
   // Despite the "Date Of Application/Case Creation" label (kept for Notice
   // Alert parity), both apps actually show the date of the MOST RECENT event
@@ -323,8 +434,8 @@ const AdditionalNoticeFolderPage: React.FC = () => {
   // (Sanction/Rejection) instead. Confirmed live 2026-09-03: a real refund
   // case whose audit trail ends "Refund disbursed" had an ORDRS item but no
   // CLOSURE one, and our Status still showed OPEN — the header rule above
-  // simply never fired for this case type.
-  const isRefundCase = items.some((it) => sectionLabel(it.folder_section) === 'APPLICATIONS');
+  // simply never fired for this case type. (isRefundCase computed above,
+  // needed there already for the section list.)
   const hasOrderItem = items.some((it) => sectionLabel(it.folder_section) === 'ORDERS');
   const displayStatus = header?.staff_status || (hasClosureItem || (isRefundCase && hasOrderItem) ? 'Closed' : 'Open');
 
@@ -458,6 +569,36 @@ const AdditionalNoticeFolderPage: React.FC = () => {
                     </div>
                   );
                 })}
+
+                {isRefundCase && (
+                  <div className="overflow-x-auto rounded-md border">
+                    <div className="bg-muted/60 px-3 py-1.5 text-xs font-semibold">AUDIT HISTORY</div>
+                    {auditHistory.length === 0 ? (
+                      <p className="py-4 text-center text-xs text-muted-foreground">There are no records to display</p>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="text-[11px]">Date</TableHead>
+                            <TableHead className="text-[11px]">Action</TableHead>
+                            <TableHead className="text-[11px]">Reference No</TableHead>
+                            <TableHead className="text-[11px]">Action By</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {auditHistory.map((e, i) => (
+                            <TableRow key={i}>
+                              <TableCell className="align-top whitespace-nowrap text-xs">{e.date || '—'}</TableCell>
+                              <TableCell className="align-top text-xs">{e.action}</TableCell>
+                              <TableCell className="align-top whitespace-nowrap text-xs">{e.reference}</TableCell>
+                              <TableCell className="align-top whitespace-nowrap text-xs">{e.actionBy}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="mt-3 flex justify-end">
