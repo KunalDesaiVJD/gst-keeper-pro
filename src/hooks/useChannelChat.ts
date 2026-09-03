@@ -52,6 +52,23 @@ export const useChannelChat = () => {
     return result;
   }, []);
 
+  // Batched counterpart to resolveProfile — used by fetchChannels below so N
+  // DM channels cost 2 queries total instead of 2 per channel. Warms the same
+  // cache resolveProfile reads from, and skips ids already cached.
+  const resolveProfiles = useCallback(async (userIds: string[]): Promise<void> => {
+    const missing = [...new Set(userIds)].filter((id) => !profileCache.current[id]);
+    if (missing.length === 0) return;
+    const [{ data: profiles }, { data: roles }] = await Promise.all([
+      supabase.from('profiles').select('user_id, first_name').in('user_id', missing),
+      supabase.from('user_roles').select('user_id, role').in('user_id', missing),
+    ]);
+    const roleMap = new Map((roles || []).map((r) => [r.user_id, r.role]));
+    const nameMap = new Map((profiles || []).map((p) => [p.user_id, p.first_name]));
+    missing.forEach((id) => {
+      profileCache.current[id] = { first_name: nameMap.get(id) || 'Unknown', role: roleMap.get(id) || 'employee' };
+    });
+  }, []);
+
   // Fetch channels the user is a member of
   const fetchChannels = useCallback(async () => {
     if (!user) return;
@@ -68,7 +85,7 @@ export const useChannelChat = () => {
         .from('chat_channels')
         .select('*')
         .eq('channel_type', 'group');
-      
+
       if (groupChannels && groupChannels.length > 0) {
         for (const ch of groupChannels) {
           await supabase.from('chat_channel_members').insert({ channel_id: ch.id, user_id: user.id });
@@ -89,66 +106,72 @@ export const useChannelChat = () => {
 
     if (!channelData) { setChannels([]); return; }
 
-    // Get read status for each channel
-    const { data: readStatuses } = await supabase
-      .from('chat_channel_read_status')
-      .select('channel_id, last_read_at')
-      .eq('user_id', user.id)
-      .in('channel_id', channelIds);
+    // Everything below used to be a `for` loop awaiting 3-5 Supabase calls
+    // PER channel (DM partner lookup, unread HEAD-count, last message) —
+    // with 16 channels that's ~80 sequential round trips on every page load,
+    // confirmed live 2026-09-03 as the main cause of the app feeling slow,
+    // and the burst of near-identical HEAD+count=exact requests also
+    // triggered a wall of 503s from Cloudflare's rate limiting in front of
+    // Supabase. Replaced with a fixed number of batched queries regardless
+    // of channel count.
+    const dmChannelIds = channelData.filter((c) => c.channel_type === 'dm').map((c) => c.id);
+    const [{ data: readStatuses }, { data: dmMembers }] = await Promise.all([
+      supabase
+        .from('chat_channel_read_status')
+        .select('channel_id, last_read_at')
+        .eq('user_id', user.id)
+        .in('channel_id', channelIds),
+      dmChannelIds.length
+        ? supabase
+            .from('chat_channel_members')
+            .select('channel_id, user_id')
+            .in('channel_id', dmChannelIds)
+            .neq('user_id', user.id)
+        : Promise.resolve({ data: [] as { channel_id: string; user_id: string }[] }),
+    ]);
 
     const readMap = new Map((readStatuses || []).map(r => [r.channel_id, r.last_read_at]));
+    const dmOtherUserMap = new Map((dmMembers || []).map((m) => [m.channel_id, m.user_id]));
+    await resolveProfiles([...dmOtherUserMap.values()]);
 
-    // Enrich channels
-    const enriched: ChatChannel[] = [];
+    // One bulk fetch of every channel's messages instead of a per-channel
+    // unread-count + last-message pair. This firm's chat history is small
+    // (a few dozen messages across all channels at the time of this fix) —
+    // the cap below is a generous, pragmatic bound for that scale, not a
+    // true aggregate query; if message volume grows enough to threaten it, a
+    // Postgres RPC doing the GROUP BY server-side would be the next step.
+    const { data: allMessages } = await supabase
+      .from('chat_channel_messages')
+      .select('channel_id, sender_id, message, created_at')
+      .in('channel_id', channelIds)
+      .order('created_at', { ascending: false })
+      .limit(5000);
 
-    for (const ch of channelData) {
-      let otherUserName: string | undefined;
-      let otherUserId: string | undefined;
-
-      if (ch.channel_type === 'dm') {
-        const { data: members } = await supabase
-          .from('chat_channel_members')
-          .select('user_id')
-          .eq('channel_id', ch.id)
-          .neq('user_id', user.id);
-        
-        if (members && members.length > 0) {
-          otherUserId = members[0].user_id;
-          const profile = await resolveProfile(otherUserId);
-          otherUserName = profile.first_name;
-        }
+    const lastMessageByChannel = new Map<string, { message: string; created_at: string }>();
+    const unreadByChannel = new Map<string, number>();
+    (allMessages || []).forEach((m) => {
+      if (!lastMessageByChannel.has(m.channel_id)) {
+        lastMessageByChannel.set(m.channel_id, { message: m.message, created_at: m.created_at });
       }
+      const lastRead = readMap.get(m.channel_id) || '1970-01-01T00:00:00Z';
+      if (m.sender_id !== user.id && m.created_at > lastRead) {
+        unreadByChannel.set(m.channel_id, (unreadByChannel.get(m.channel_id) || 0) + 1);
+      }
+    });
 
-      // Count unread — exclude the current user's own messages so they don't
-      // count toward their own unread badge.
-      const lastRead = readMap.get(ch.id) || '1970-01-01T00:00:00Z';
-      const { count } = await supabase
-        .from('chat_channel_messages')
-        .select('*', { count: 'exact', head: true })
-        .eq('channel_id', ch.id)
-        .neq('sender_id', user.id)
-        .gt('created_at', lastRead);
-
-      const unread = count || 0;
-
-      // Get last message
-      const { data: lastMsg } = await supabase
-        .from('chat_channel_messages')
-        .select('message, created_at')
-        .eq('channel_id', ch.id)
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      enriched.push({
+    const enriched: ChatChannel[] = channelData.map((ch) => {
+      const otherUserId = ch.channel_type === 'dm' ? dmOtherUserMap.get(ch.id) : undefined;
+      const lastMsg = lastMessageByChannel.get(ch.id);
+      return {
         ...ch,
         channel_type: ch.channel_type as 'group' | 'dm',
-        otherUserName,
+        otherUserName: otherUserId ? profileCache.current[otherUserId]?.first_name : undefined,
         otherUserId,
-        unreadCount: unread,
-        lastMessage: lastMsg?.[0]?.message,
-        lastMessageAt: lastMsg?.[0]?.created_at,
-      });
-    }
+        unreadCount: unreadByChannel.get(ch.id) || 0,
+        lastMessage: lastMsg?.message,
+        lastMessageAt: lastMsg?.created_at,
+      };
+    });
 
     // Collapse duplicate DM channels for the same user into one row (keep the
     // most recently active channel, fold unread counts into it) so a person
@@ -187,7 +210,7 @@ export const useChannelChat = () => {
     });
 
     setChannels(deduped);
-  }, [user, resolveProfile]);
+  }, [user, resolveProfiles]);
 
   // Load messages for active channel
   const loadMessages = useCallback(async (channelId?: string, before?: string) => {
