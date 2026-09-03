@@ -641,14 +641,31 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
             <span className="text-xs text-muted-foreground animate-in fade-in">{downloadNotice}</span>
           )}
 
-          {canEdit && selectedIdx.size > 0 && (
+          {/* Always visible — matching Notice Alert's own toolbar — rather
+              than only appearing once a row is checked. Confirmed live
+              2026-09-03: staff hadn't discovered these existed because
+              they'd never happened to check a row first. Disabled (with a
+              hint) until at least one row is selected. */}
+          {canEdit && (
             <>
-              <span className="text-xs text-muted-foreground">{selectedIdx.size} selected</span>
-              <Button variant="outline" size="sm" className="h-8" onClick={() => setBulkStatusOpen(true)}>
+              {selectedIdx.size > 0 && (
+                <span className="text-xs text-muted-foreground">{selectedIdx.size} selected</span>
+              )}
+              <Button
+                variant="outline" size="sm" className="h-8"
+                disabled={selectedIdx.size === 0}
+                title={selectedIdx.size === 0 ? 'Select one or more rows first' : undefined}
+                onClick={() => setBulkStatusOpen(true)}
+              >
                 Update Status
               </Button>
               {priorityColIdx !== -1 && (
-                <Button variant="outline" size="sm" className="h-8" onClick={() => setBulkPriorityOpen(true)}>
+                <Button
+                  variant="outline" size="sm" className="h-8"
+                  disabled={selectedIdx.size === 0}
+                  title={selectedIdx.size === 0 ? 'Select one or more rows first' : undefined}
+                  onClick={() => setBulkPriorityOpen(true)}
+                >
                   Priority
                 </Button>
               )}
@@ -669,8 +686,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
         </div>
 
         {/* Table */}
-        <div className="max-h-[65vh] overflow-auto rounded-md border">
-          <Table>
+        <Table containerClassName="max-h-[65vh] rounded-md border">
             <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
                 {canEdit && (
@@ -896,8 +912,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
                 </TableRow>
               ))}
             </TableBody>
-          </Table>
-        </div>
+        </Table>
       </CardContent>
 
       <Dialog open={bulkStatusOpen} onOpenChange={(open) => { setBulkStatusOpen(open); if (!open) setBulkStatus(''); }}>

@@ -2,9 +2,20 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(
-  ({ className, ...props }, ref) => (
-    <div className="relative w-full overflow-auto">
+interface TableProps extends React.HTMLAttributes<HTMLTableElement> {
+  // Lets a caller move the height/scroll constraint onto THIS wrapper
+  // instead of adding their own around <Table> — nesting a second
+  // overflow-auto div around this one silently breaks position:sticky
+  // headers (sticky binds to the nearest scrolling ancestor, which becomes
+  // the inner one — this wrapper — but that one never actually scrolls
+  // itself since its height is unconstrained, so nothing ever sticks).
+  // Confirmed live 2026-09-03 against the Notices list.
+  containerClassName?: string;
+}
+
+const Table = React.forwardRef<HTMLTableElement, TableProps>(
+  ({ className, containerClassName, ...props }, ref) => (
+    <div className={cn("relative w-full overflow-auto", containerClassName)}>
       <table ref={ref} className={cn("w-full caption-bottom text-sm", className)} {...props} />
     </div>
   ),
