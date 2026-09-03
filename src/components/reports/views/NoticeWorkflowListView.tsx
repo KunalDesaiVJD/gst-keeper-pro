@@ -21,7 +21,7 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@
 import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { FileText, Search, DownloadCloud, Inbox, Pencil, Flag, Loader2, FileSpreadsheet, ExternalLink } from 'lucide-react';
+import { FileText, Search, DownloadCloud, Inbox, Pencil, Flag, Loader2, FileSpreadsheet, ExternalLink, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { renderReportToExcel } from '@/utils/allClientsReports';
 
@@ -66,6 +66,14 @@ const DUE_DATE_HEADER_RE = /^due date$/i;
 const DATE_HEADER_PRIORITY = [/^issue date$/i, /^date\/time$/i, /^date$/i];
 
 const STATUS_OPEN_CLOSED = ['Open', 'Closed'];
+
+// Rendering every row's Status cell as a live Radix <Select> (canEdit users)
+// meant 1000+ simultaneously-mounted Select instances on a firm-wide list —
+// confirmed live 2026-09-03 as a genuine main-thread freeze (Chrome's own
+// "Page Unresponsive" dialog), not just sluggishness. Paginating so only one
+// page's worth of rows actually mount is the fix — same convention already
+// used on CompanyListPage.
+const ROWS_PER_PAGE_OPTIONS = [50, 100, 250, 500];
 
 // Matches Notice Alert's own "Filter" dropdown on this exact page (confirmed
 // live 2026-08-25): date-range presets over Issue Date / Due Date, on top of
@@ -169,6 +177,8 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(50);
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
   const [savingIdx, setSavingIdx] = useState<number | null>(null);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
@@ -348,6 +358,13 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     return list;
   }, [dataRows, search, statusFilter, statusColIdx, typeFilter, typeColIdx, priorityFilter, priorityColIdx, dateFilter, dateColIdx, dueDateColIdx, replyDateColIdx]);
 
+  useEffect(() => { setPage(0); }, [search, statusFilter, typeFilter, priorityFilter, dateFilter, rowsPerPage]);
+  const pageCount = Math.max(1, Math.ceil(visibleRows.length / rowsPerPage));
+  const pagedRows = useMemo(
+    () => visibleRows.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
+    [visibleRows, page, rowsPerPage],
+  );
+
   const handleDownloadAll = () => {
     if (evidenceColIdx === -1) return;
     const urls = visibleRows.map(({ row }) => row[evidenceColIdx]).filter(isUrl);
@@ -391,8 +408,15 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     });
   };
 
-  const toggleSelectAllVisible = (checked: boolean) => {
-    setSelectedIdx(checked ? new Set(visibleRows.map(({ idx }) => idx)) : new Set());
+  // Scoped to the CURRENT PAGE, not every filtered row — selections on other
+  // pages are left alone (added/removed via the same Set) rather than wiped,
+  // so a bulk action can still be built up across multiple pages if needed.
+  const toggleSelectAllOnPage = (checked: boolean) => {
+    setSelectedIdx((prev) => {
+      const next = new Set(prev);
+      pagedRows.forEach(({ idx }) => { if (checked) next.add(idx); else next.delete(idx); });
+      return next;
+    });
   };
 
   const applyBulkStatus = async () => {
@@ -692,9 +716,9 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
                 {canEdit && (
                   <TableHead className="w-10 bg-muted/60 px-3 py-2">
                     <Checkbox
-                      checked={visibleRows.length > 0 && visibleRows.every(({ idx }) => selectedIdx.has(idx))}
-                      onCheckedChange={(checked) => toggleSelectAllVisible(checked === true)}
-                      aria-label="Select all visible rows"
+                      checked={pagedRows.length > 0 && pagedRows.every(({ idx }) => selectedIdx.has(idx))}
+                      onCheckedChange={(checked) => toggleSelectAllOnPage(checked === true)}
+                      aria-label="Select all rows on this page"
                     />
                   </TableHead>
                 )}
@@ -726,7 +750,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
                 </TableRow>
               )}
 
-              {visibleRows.map(({ row, idx }) => (
+              {pagedRows.map(({ row, idx }) => (
                 <TableRow key={idx}>
                   {canEdit && (
                     <TableCell className="px-3 py-1.5">
@@ -913,6 +937,25 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
               ))}
             </TableBody>
         </Table>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+          <div className="flex items-center gap-1.5">
+            Rows per page:
+            <Select value={String(rowsPerPage)} onValueChange={(v) => setRowsPerPage(Number(v))}>
+              <SelectTrigger className="h-7 w-[80px] text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {ROWS_PER_PAGE_OPTIONS.map((n) => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-2">
+            <span>
+              {visibleRows.length === 0 ? '0' : `${page * rowsPerPage + 1}-${Math.min(visibleRows.length, (page + 1) * rowsPerPage)}`} of {visibleRows.length}
+            </span>
+            <Button size="icon" variant="ghost" className="h-6 w-6" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}><ChevronLeft className="h-3.5 w-3.5" /></Button>
+            <Button size="icon" variant="ghost" className="h-6 w-6" disabled={page >= pageCount - 1} onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}><ChevronRight className="h-3.5 w-3.5" /></Button>
+          </div>
+        </div>
       </CardContent>
 
       <Dialog open={bulkStatusOpen} onOpenChange={(open) => { setBulkStatusOpen(open); if (!open) setBulkStatus(''); }}>
