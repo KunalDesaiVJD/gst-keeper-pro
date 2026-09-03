@@ -19,7 +19,7 @@
 // attempt succeeded; Pending = credentialed clients that have never
 // succeeded yet (never attempted, or last attempt failed).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate, useNavigate, Link } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -68,8 +68,15 @@ const CompanyListPage: React.FC = () => {
   const [syncLogs, setSyncLogs] = useState<SyncLogRow[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Pre-selects Status from the Notices Dashboard's "Failed Logins" tile
+  // (?status=failed) — read once on mount, same one-way-in convention as
+  // every other dashboard-tile drill-down link in this app.
+  const [searchParams] = useSearchParams();
+  const initialStatusParam = searchParams.get('status');
   const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'failed' | 'never'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'failed' | 'never'>(
+    initialStatusParam === 'failed' || initialStatusParam === 'success' || initialStatusParam === 'never' ? initialStatusParam : 'all',
+  );
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(0);

@@ -32,8 +32,8 @@ import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
 import { computeNoticeSummary, isClosed, summaryCellHref, type SummaryCellKind } from '@/utils/noticeSummaryReport';
 import {
-  Bell, CalendarClock, History, Building2, FolderOpen, AlertTriangle, Flag, Loader2,
-  UserPlus, Upload, Download, RefreshCw, Pencil, ChevronLeft, ChevronRight, Search,
+  Bell, CalendarClock, History, Building2, FolderOpen, AlertTriangle, Loader2,
+  UserPlus, Upload, Download, RefreshCw, RotateCcw, Pencil, ChevronLeft, ChevronRight, Search,
 } from 'lucide-react';
 
 interface NoticeRow {
@@ -52,6 +52,12 @@ interface NoticeRow {
 interface StatusRow {
   arn: string | null;
   status: string | null;
+}
+
+interface SyncLogRow {
+  client_id: string;
+  status: 'success' | 'failed';
+  created_at: string;
 }
 
 // "Registration" isn't its own notice_type in this schema — it shows up as a
@@ -124,6 +130,15 @@ const NoticesDashboardPage: React.FC = () => {
   const [refundRows, setRefundRows] = useState<StatusRow[]>([]);
   const [drc03Rows, setDrc03Rows] = useState<StatusRow[]>([]);
 
+  // Failed Logins tile — replaces Priority in this slot to match Notice
+  // Alert's own dashboard (confirmed live 2026-09-03: Notice Alert shows
+  // Failed Logins here, we showed Priority). "Failed" = the client's most
+  // RECENT Sync All (Notices) attempt failed — same definition and same
+  // latest-log-per-client computation the Company List page already uses
+  // for its own Status column, so the tile's count matches what you see
+  // after clicking through to it.
+  const [syncLogs, setSyncLogs] = useState<SyncLogRow[]>([]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -152,6 +167,19 @@ const NoticesDashboardPage: React.FC = () => {
         setRefundRows((refundRes.data || []) as StatusRow[]);
         setDrc03Rows((drc03Res.data || []) as StatusRow[]);
       }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('client_sync_log')
+        .select('client_id, status, created_at')
+        .eq('action', 'notices')
+        .order('created_at', { ascending: false });
+      if (!cancelled) setSyncLogs((data || []) as SyncLogRow[]);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -223,7 +251,12 @@ const NoticesDashboardPage: React.FC = () => {
   const openNotices = displayRows.filter((r) => !isClosed(r.staff_status)).length;
   const dueSoon = displayRows.filter((r) => r.due_date && daysUntil(r.due_date) >= 0 && daysUntil(r.due_date) <= 7).length;
   const overdue = displayRows.filter((r) => r.due_date && daysUntil(r.due_date) < 0).length;
-  const priorityCount = displayRows.filter((r) => r.priority).length;
+
+  // Latest Sync All (Notices) attempt per client — logs are already ordered
+  // newest-first, so the first one seen per client_id is its latest.
+  const latestLogByClient = new Map<string, SyncLogRow>();
+  syncLogs.forEach((l) => { if (!latestLogByClient.has(l.client_id)) latestLogByClient.set(l.client_id, l); });
+  const failedLoginsCount = Array.from(latestLogByClient.values()).filter((l) => l.status === 'failed').length;
 
   // Every tile except Total GSTIN drills into the firm-wide notice list,
   // carrying the current Type Of Notices / category selections along so the
@@ -246,7 +279,7 @@ const NoticesDashboardPage: React.FC = () => {
     { label: 'Open Notices', value: openNotices, icon: <FolderOpen className="h-8 w-8 text-warning" />, bgColor: 'bg-warning/5', to: drillParams({ status: 'Open' }) },
     { label: '7 Days Due', value: dueSoon, icon: <CalendarClock className="h-8 w-8 text-warning" />, bgColor: 'bg-warning/5', to: drillParams({ filter: 'due7' }) },
     { label: 'Over Due', value: overdue, icon: <AlertTriangle className="h-8 w-8 text-destructive" />, bgColor: 'bg-destructive/5', to: drillParams({ filter: 'overdue' }) },
-    { label: 'Priority', value: priorityCount, icon: <Flag className="h-8 w-8 text-destructive" />, bgColor: 'bg-destructive/5', to: drillParams({ filter: 'priority' }) },
+    { label: 'Failed Logins', value: failedLoginsCount, icon: <RotateCcw className="h-8 w-8 text-destructive" />, bgColor: 'bg-destructive/5', to: '/notices-company-list?status=failed' },
   ];
 
   const { categoryRows, grandTotal } = computeNoticeSummary(filteredRows, refundRows, drc03Rows);
