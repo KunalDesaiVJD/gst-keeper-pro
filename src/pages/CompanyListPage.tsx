@@ -227,7 +227,11 @@ const CompanyListPage: React.FC = () => {
     if (!extReady) { toast.error('GST Keeper browser extension not detected. Install/enable it to sync.'); return; }
     pendingActionRef.current = 'sync';
     setSyncing(true);
-    window.postMessage({ __gstkPullSectionAllClients: { mode: 'notices', clientIds: Array.from(selected) } }, '*');
+    // 'notices_bundle': same mode the Notices Dashboard's own "Sync All" now
+    // uses — pulls Notices & Orders, then chains through Refunds and DRC-03
+    // for each selected client before moving to the next, instead of
+    // stopping after Notices alone (see chainOrStop in content.js).
+    window.postMessage({ __gstkPullSectionAllClients: { mode: 'notices_bundle', clientIds: Array.from(selected) } }, '*');
   };
 
   const handleFetchCompany = () => {
