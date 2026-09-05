@@ -6,6 +6,7 @@
 // link) and a bulk "open every visible PDF" action, on top of the generic
 // search/status filter/sort every report in this family needs.
 import React, { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -138,6 +139,20 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
   const statusColIdx = useMemo(() => headers.findIndex((h) => STATUS_HEADER_RE.test(h.trim())), [headers]);
   const typeColIdx = useMemo(() => headers.findIndex((h) => TYPE_HEADER_RE.test(h.trim())), [headers]);
   const dateColIdx = useMemo(() => findDateColIdx(headers), [headers]);
+  // ARN doubles as the portal Case ID for refund cases — when the caller
+  // supplies clientIds (opt-in; most EvidenceEventListView consumers don't),
+  // this links straight to the same case-folder page the Notices table
+  // already links to, instead of leaving ARN as plain text. Keyed by row
+  // object identity rather than a plain index, since visibleRows below is a
+  // filtered/sorted VIEW over dataRows/table.rows — the row arrays
+  // themselves keep their identity through filter/sort, just not their
+  // position.
+  const arnColIdx = useMemo(() => headers.findIndex((h) => /^arn$/i.test(h.trim())), [headers]);
+  const clientIdByRow = useMemo(() => {
+    const map = new Map<(string | number)[], string | null>();
+    table.rows.forEach((row, i) => map.set(row, table.clientIds?.[i] ?? null));
+    return map;
+  }, [table.rows, table.clientIds]);
 
   const { dataRows, totalRows } = useMemo(() => {
     const data: (string | number)[][] = [];
@@ -424,6 +439,20 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
                           </Badge>
                         </TableCell>
                       );
+                    }
+
+                    // ARN → case folder link (only when the caller opted in with clientIds).
+                    if (ci === arnColIdx && String(cell ?? '').trim() && !isSentinel(cell)) {
+                      const linkClientId = clientIdByRow.get(row);
+                      if (linkClientId) {
+                        return (
+                          <TableCell key={ci} className="whitespace-nowrap px-3 py-1.5 text-xs">
+                            <Link to={`/notices-case-folder/${linkClientId}/${encodeURIComponent(String(cell))}`} className="text-primary hover:underline">
+                              {String(cell)}
+                            </Link>
+                          </TableCell>
+                        );
+                      }
                     }
 
                     // Sentinel ("NOT PULLED" / "not captured" / "not pulled").

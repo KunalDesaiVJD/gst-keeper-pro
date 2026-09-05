@@ -24,6 +24,7 @@ interface RefundRecord {
   status: string | null;
   documents: { tab: string; label: string; url: string }[] | null;
   clients: { name: string | null; gstin: string | null } | null;
+  client_id: string | null;
 }
 
 // The Additional Notices case-folder sync also writes a "Refunds"-typed
@@ -40,6 +41,7 @@ interface CaseRefundRow {
   staff_status: string | null;
   pdf_url: string | null;
   clients: { name: string | null; gstin: string | null } | null;
+  client_id: string | null;
 }
 
 const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -58,11 +60,11 @@ const AllClientsRefundsPage: React.FC = () => {
       const [{ data }, { data: caseData }] = await Promise.all([
         supabase
           .from('gst_refund_applications')
-          .select('arn, refund_type, filed_date, claimed_amount, sanctioned_amount, status, documents, clients(name, gstin)')
+          .select('arn, refund_type, filed_date, claimed_amount, sanctioned_amount, status, documents, client_id, clients(name, gstin)')
           .order('filed_date', { ascending: false }),
         supabase
           .from('gst_notices')
-          .select('case_id, description, issue_date, staff_status, pdf_url, clients(name, gstin)')
+          .select('case_id, description, issue_date, staff_status, pdf_url, client_id, clients(name, gstin)')
           .eq('source', 'notices')
           .eq('notice_type', 'Refunds'),
       ]);
@@ -84,6 +86,7 @@ const AllClientsRefundsPage: React.FC = () => {
             status: r.staff_status || 'Open',
             documents: r.pdf_url ? [{ tab: '', label: 'PDF', url: r.pdf_url }] : [],
             clients: r.clients,
+            client_id: r.client_id,
           });
         });
         setRecords(Array.from(byKey.values()));
@@ -114,8 +117,10 @@ const AllClientsRefundsPage: React.FC = () => {
       docs.length === 0 ? '—' : docs[0].url,
     ];
   });
+  const clientIds: (string | null)[] = filteredRecords.map((r) => r.client_id);
   if (dataRows.length > 0) {
     dataRows.push(['', '', '', 'TOTAL', '', totClaimed, totSanctioned, '', '']);
+    clientIds.push(null);
   }
 
   const table: ReportTable = {
@@ -124,6 +129,7 @@ const AllClientsRefundsPage: React.FC = () => {
       (status ? `, status ${status}` : ' across every client on record'),
     headers: ['GSTIN', 'Trade Name', 'ARN', 'Refund Type', 'Filed Date', 'Claimed Amount', 'Sanctioned Amount', 'Status', 'Documents'],
     rows: dataRows,
+    clientIds,
     fileNameBase: 'Refund_All_Clients',
     columnWidths: [16, 24, 18, 20, 12, 16, 18, 20, 12],
   };
