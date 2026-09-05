@@ -36,6 +36,7 @@ interface Drc03Record {
   status: string | null;
   pdf_url: string | null;
   clients: { name: string | null; gstin: string | null } | null;
+  client_id: string | null;
 }
 
 // See AllClientsRefundsPage for why this merge exists: the Additional
@@ -51,6 +52,7 @@ interface CaseDrc03Row {
   staff_status: string | null;
   pdf_url: string | null;
   clients: { name: string | null; gstin: string | null } | null;
+  client_id: string | null;
 }
 
 const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -72,12 +74,12 @@ const AllClientsDrc03Page: React.FC = () => {
           .select(
             'arn, cause_of_payment, section, financial_year, filed_date, period_from, period_to, ' +
             'taxable_value, igst_amount, cgst_amount, sgst_amount, cess_amount, interest_amount, late_fee_amount, penalty_amount, ' +
-            'cash_amount, credit_amount, status, pdf_url, clients(name, gstin)',
+            'cash_amount, credit_amount, status, pdf_url, client_id, clients(name, gstin)',
           )
           .order('filed_date', { ascending: false }),
         supabase
           .from('gst_notices')
-          .select('case_id, description, issue_date, staff_status, pdf_url, clients(name, gstin)')
+          .select('case_id, description, issue_date, staff_status, pdf_url, client_id, clients(name, gstin)')
           .eq('source', 'notices')
           .eq('notice_type', 'Voluntary Payment'),
       ]);
@@ -97,7 +99,7 @@ const AllClientsDrc03Page: React.FC = () => {
             filed_date: r.issue_date, period_from: null, period_to: null,
             taxable_value: null, igst_amount: null, cgst_amount: null, sgst_amount: null, cess_amount: null,
             interest_amount: null, late_fee_amount: null, penalty_amount: null, cash_amount: null, credit_amount: null,
-            status: r.staff_status || 'Open', pdf_url: r.pdf_url, clients: r.clients,
+            status: r.staff_status || 'Open', pdf_url: r.pdf_url, clients: r.clients, client_id: r.client_id,
           });
         });
         setRecords(Array.from(byKey.values()));
@@ -130,11 +132,13 @@ const AllClientsDrc03Page: React.FC = () => {
       num(r.cash_amount), num(r.credit_amount), r.status || '—', r.pdf_url || '—',
     ];
   });
+  const clientIds: (string | null)[] = filteredRecords.map((r) => r.client_id);
   if (dataRows.length > 0) {
     dataRows.push([
       '', '', '', 'TOTAL', '', '', '', '',
       totTaxable, totIgst, totCgst, totSgst, totCess, totIntr, totFee, totPnlty, totCash, totCredit, '', '',
     ]);
+    clientIds.push(null);
   }
 
   const table: ReportTable = {
@@ -147,6 +151,7 @@ const AllClientsDrc03Page: React.FC = () => {
       'Cash Amount', 'Credit Amount', 'Status', 'PDF',
     ],
     rows: dataRows,
+    clientIds,
     fileNameBase: 'DRC03_All_Clients',
     columnWidths: [16, 24, 18, 30, 10, 10, 12, 18, 14, 12, 12, 12, 10, 12, 12, 12, 14, 14, 16, 30],
   };
