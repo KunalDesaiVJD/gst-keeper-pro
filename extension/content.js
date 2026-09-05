@@ -367,7 +367,12 @@
         job.step = 'cashledger';
         await setJob(job);
         location.href = 'https://payment.gst.gov.in/payment/auth/ledger/detailedledger';
-      } else if (job.mode === 'notices') {
+      } else if (job.mode === 'notices' || job.mode === 'notices_bundle') {
+        // 'notices_bundle' is the Notices Dashboard's "Sync All" — starts the
+        // same place as a standalone Notices pull, but (via chainOrStop
+        // below) continues on through Refunds and DRC-03 for the same
+        // client instead of stopping, since a human clicking one "Sync All"
+        // button expects all three, not just the first.
         banner('Logged in — reading Notices & Orders…' + progress);
         job.step = 'notices';
         await setJob(job);
@@ -2271,8 +2276,14 @@
   // has no business going on to pull Taxpayer Profile). When job.mode isn't
   // this step's own mode (the full-chain case, where job.mode is undefined),
   // it behaves exactly as before: call proceedFn to continue the chain.
+  // myMode may also be an array of modes that should all stop here — used by
+  // the Notices/Refunds/DRC-03 bundle ('notices_bundle'), which needs to
+  // fall through notices->refunds normally but then stop after DRC-03
+  // instead of continuing into Taxpayer Profile and the rest of the full
+  // chain.
   async function chainOrStop(job, myMode, proceedFn) {
-    if (job.mode === myMode) { await advance(job); return; }
+    const stopModes = Array.isArray(myMode) ? myMode : [myMode];
+    if (stopModes.includes(job.mode)) { await advance(job); return; }
     await proceedFn(job);
   }
 
@@ -3345,7 +3356,7 @@
       banner('DRC-03: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       try { await GSTKdb.replaceDrc03Filings(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }]); } catch (e2) { /* diagnostic only */ }
       await sleep(1500);
-      await chainOrStop(job, 'drc03', proceedToTaxpayerProfile);
+      await chainOrStop(job, ['drc03', 'notices_bundle'], proceedToTaxpayerProfile);
       return;
     }
 
@@ -3385,7 +3396,7 @@
     ]);
     banner('DRC-03 filings → ' + rows.length + ' entries saved (' + pdfOk + ' PDFs). Now Taxpayer Profile…' + progress, '#16a34a');
     await sleep(1000);
-    await chainOrStop(job, 'drc03', proceedToTaxpayerProfile);
+    await chainOrStop(job, ['drc03', 'notices_bundle'], proceedToTaxpayerProfile);
   }
 
   async function proceedToTaxpayerProfile(job) {

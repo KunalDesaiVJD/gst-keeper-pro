@@ -400,10 +400,13 @@ const API = {
     if (!withCreds.length) throw new Error(scoped ? 'None of the selected clients have saved GST portal credentials.' : 'No clients have saved GST portal credentials.');
     const job = {
       mode: info.mode, period: info.period_month || '', idx: 0, step: 'login', startedAt: Date.now(),
-      // Only the Notices Sync All records a Company List sync-log row per
-      // client — every other section (refunds/drc03/taxpayerprofile/etc)
-      // uses this exact same job machinery unchanged.
-      logSync: info.mode === 'notices',
+      // Only the Notices Dashboard's Sync All records a Company List
+      // sync-log row per client — every other section (refunds/drc03/
+      // taxpayerprofile/etc) uses this exact same job machinery unchanged.
+      // 'notices_bundle' is that same Sync All button, just also chaining
+      // through Refunds and DRC-03 (see chainOrStop in content.js) — still
+      // one client_sync_log entry per client, from the notices step itself.
+      logSync: info.mode === 'notices' || info.mode === 'notices_bundle',
       clients: withCreds.map((c) => ({
         clientId: c.id,
         creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },

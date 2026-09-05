@@ -225,7 +225,12 @@ const NoticesDashboardPage: React.FC = () => {
       return;
     }
     setSyncing(true);
-    window.postMessage({ __gstkPullSectionAllClients: { mode: 'notices' } }, '*');
+    // 'notices_bundle': same per-client Notices pull as before, but the
+    // extension now also chains through Refunds and DRC-03 for that same
+    // client before moving to the next one (see chainOrStop in content.js) —
+    // one CAPTCHA per client still covers all three, since it's the same
+    // logged-in session throughout.
+    window.postMessage({ __gstkPullSectionAllClients: { mode: 'notices_bundle' } }, '*');
   };
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
@@ -412,11 +417,12 @@ const NoticesDashboardPage: React.FC = () => {
               )}
               {/* Unlike Add/Import/Download Template (locked behind the
                   add_edit_clients permission — they touch client master
-                  data), Sync All only pulls notices from the portal, so it's
-                  open to every staff member regardless of that permission —
-                  2026-08-26 decision: any employee should be able to trigger
-                  a sync without being granted client-editing rights. */}
-              <Button size="sm" variant="outline" className="ml-auto h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={handleSyncAll} disabled={syncing}>
+                  data), Sync All only pulls Notices/Refunds/DRC-03 from the
+                  portal, so it's open to every staff member regardless of
+                  that permission — 2026-08-26 decision: any employee should
+                  be able to trigger a sync without being granted
+                  client-editing rights. */}
+              <Button size="sm" variant="outline" className="ml-auto h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={handleSyncAll} disabled={syncing} title="Pulls Notices & Orders, Refund applications, and DRC-03 filings for every client with saved credentials">
                 {syncing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
                 Sync All
               </Button>
