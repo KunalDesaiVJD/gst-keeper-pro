@@ -139,15 +139,18 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
   const statusColIdx = useMemo(() => headers.findIndex((h) => STATUS_HEADER_RE.test(h.trim())), [headers]);
   const typeColIdx = useMemo(() => headers.findIndex((h) => TYPE_HEADER_RE.test(h.trim())), [headers]);
   const dateColIdx = useMemo(() => findDateColIdx(headers), [headers]);
-  // ARN doubles as the portal Case ID for refund cases — when the caller
-  // supplies clientIds (opt-in; most EvidenceEventListView consumers don't),
-  // this links straight to the same case-folder page the Notices table
-  // already links to, instead of leaving ARN as plain text. Keyed by row
-  // object identity rather than a plain index, since visibleRows below is a
-  // filtered/sorted VIEW over dataRows/table.rows — the row arrays
-  // themselves keep their identity through filter/sort, just not their
-  // position.
-  const arnColIdx = useMemo(() => headers.findIndex((h) => /^arn$/i.test(h.trim())), [headers]);
+  // ARN doubles as the portal Case ID for refund/DRC-03 cases — "Ref ID" is
+  // the same idea under the Merged Notices table's own header name — so when
+  // the caller supplies clientIds (opt-in; most EvidenceEventListView
+  // consumers don't, and a caller that mixes case-ID rows with plain
+  // reference-number rows under one "Ref ID" column just passes a null
+  // clientId for the latter), this links straight to the same case-folder
+  // page the Notices table already links to, instead of leaving the cell as
+  // plain text. Keyed by row object identity rather than a plain index,
+  // since visibleRows below is a filtered/sorted VIEW over
+  // dataRows/table.rows — the row arrays themselves keep their identity
+  // through filter/sort, just not their position.
+  const arnColIdx = useMemo(() => headers.findIndex((h) => /^(arn|ref id)$/i.test(h.trim())), [headers]);
   const clientIdByRow = useMemo(() => {
     const map = new Map<(string | number)[], string | null>();
     table.rows.forEach((row, i) => map.set(row, table.clientIds?.[i] ?? null));

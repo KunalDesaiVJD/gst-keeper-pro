@@ -31,6 +31,7 @@ interface RefundRecord {
   status: string | null;
   documents: { tab: string; label: string; url: string }[] | null;
   clients: { name: string | null; gstin: string | null } | null;
+  client_id: string | null;
 }
 
 interface Drc03Record {
@@ -40,6 +41,7 @@ interface Drc03Record {
   status: string | null;
   pdf_url: string | null;
   clients: { name: string | null; gstin: string | null } | null;
+  client_id: string | null;
 }
 
 interface NoticeRecord {
@@ -126,8 +128,8 @@ const AllClientsNoticesPage: React.FC = () => {
         'amount_of_demand, remarks, issued_by, financial_year, assign_to, pdf_url, pulled_at, clients(name, gstin)',
         (q) => q.eq('source', 'notices'),
       ),
-      supabase.from('gst_refund_applications').select('arn, refund_type, filed_date, status, documents, clients(name, gstin)'),
-      supabase.from('gst_drc03_filings').select('arn, cause_of_payment, filed_date, status, pdf_url, clients(name, gstin)'),
+      supabase.from('gst_refund_applications').select('arn, refund_type, filed_date, status, documents, client_id, clients(name, gstin)'),
+      supabase.from('gst_drc03_filings').select('arn, cause_of_payment, filed_date, status, pdf_url, client_id, clients(name, gstin)'),
     ]);
     // fetchAllRows paginates in .range() chunks rather than one ordered
     // query, so the combined result needs its own sort afterward.
@@ -207,26 +209,30 @@ const AllClientsNoticesPage: React.FC = () => {
   };
 
   const mergedRows = useMemo(() => {
-    type MergedRow = { gstin: string; trade: string; section: string; ref: string; type: string; date: string; due: string; desc: string; status: string; pdf: string | null };
+    // client_id only populated for Refunds/DRC-03 rows, where `ref` (the ARN)
+    // is itself a valid case-folder key — Notices & Orders rows here carry
+    // reference_number, not case_id, so linking those would point at the
+    // wrong (or a nonexistent) folder; they stay plain text, same as before.
+    type MergedRow = { gstin: string; trade: string; section: string; ref: string; type: string; date: string; due: string; desc: string; status: string; pdf: string | null; clientId: string | null };
     const noticeRows: MergedRow[] = records
       .filter((r) => (typeParam === 'registration' ? isRegistrationRelated(r) : typeParam === 'other' ? !isRegistrationRelated(r) : true))
       .map((r) => ({
         gstin: r.clients?.gstin || '—', trade: r.clients?.name || '—', section: 'Notices & Orders',
         ref: r.reference_number || '—', type: r.notice_type || '—', date: r.issue_date || '', due: r.due_date || '—',
-        desc: r.description || '—', status: r.staff_status || '—', pdf: r.pdf_url,
+        desc: r.description || '—', status: r.staff_status || '—', pdf: r.pdf_url, clientId: null,
       }));
     const refundRows: MergedRow[] = typeParam === 'registration' ? [] : refunds.map((r) => {
       const docs = Array.isArray(r.documents) ? r.documents : [];
       return {
         gstin: r.clients?.gstin || '—', trade: r.clients?.name || '—', section: 'Refunds',
         ref: r.arn || '—', type: 'GST RFD-01', date: r.filed_date || '', due: '—',
-        desc: r.refund_type || '—', status: r.status || '—', pdf: docs[0]?.url || null,
+        desc: r.refund_type || '—', status: r.status || '—', pdf: docs[0]?.url || null, clientId: r.client_id,
       };
     });
     const drc03Rows: MergedRow[] = typeParam === 'registration' ? [] : drc03s.map((r) => ({
       gstin: r.clients?.gstin || '—', trade: r.clients?.name || '—', section: 'DRC-03',
       ref: r.arn || '—', type: 'DRC-03', date: r.filed_date || '', due: '—',
-      desc: r.cause_of_payment || '—', status: r.status || '—', pdf: r.pdf_url,
+      desc: r.cause_of_payment || '—', status: r.status || '—', pdf: r.pdf_url, clientId: r.client_id,
     }));
     return [...noticeRows, ...refundRows, ...drc03Rows].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   }, [records, refunds, drc03s, typeParam]);
@@ -236,6 +242,7 @@ const AllClientsNoticesPage: React.FC = () => {
     subtitle: `${mergedRows.length} record${mergedRows.length === 1 ? '' : 's'} — every source (Notices & Orders, Refunds, DRC-03) combined, most recent first`,
     headers: ['GSTIN', 'Trade Name', 'Section', 'Ref ID', 'Type', 'Issued Date', 'Due Date', 'Description', 'Status', 'PDF'],
     rows: mergedRows.map((r) => [r.gstin, r.trade, r.section, r.ref, r.type, isoDateToDMY(r.date), isoDateToDMY(r.due), r.desc, r.status, r.pdf || '—']),
+    clientIds: mergedRows.map((r) => r.clientId),
     fileNameBase: 'Merged_Notices_All_Clients',
     columnWidths: [16, 24, 16, 18, 16, 12, 12, 40, 12, 30],
   };
