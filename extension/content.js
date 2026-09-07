@@ -239,8 +239,6 @@
     else if (job.step === 'liabilityledger') await handleLiabilityLedger(job, cur, progress);
     else if (job.step === 'cashledger') await handleCashLedger(job, cur, progress);
     else if (job.step === 'notices') await handleNotices(job, cur, progress);
-    else if (job.step === 'refunds_reg_check') await handleRefundsRegCheck(job, cur, progress);
-    else if (job.step === 'refunds_warmup') await handleRefundsWarmup(job, cur, progress);
     else if (job.step === 'refunds') await handleRefunds(job, cur, progress);
     else if (job.step === 'refund_docs') await handleRefundDocs(job, cur, progress);
     else if (job.step === 'drc03') await handleDrc03(job, cur, progress);
@@ -385,19 +383,20 @@
         // date lookup needed for this (DRC-03 doesn't need one either — that
         // was only ever a Filing-Year-form workaround, now moot since the
         // whole DOM form is gone). 'refund_docs' (the document harvest,
-        // below) is unrelated and still needs the reg-date-based window
-        // logic, so it keeps its own routing. 'notices_bundle' never reaches
-        // here — it's matched earlier in this same if-chain (starts at
-        // Notices, chains into 'refunds' afterward, see chainOrStop).
+        // below) is now the exact same story — see handleRefundDocs — so it
+        // shares this same direct routing rather than its old separate
+        // reg-date/window-walk detour. 'notices_bundle' never reaches here —
+        // it's matched earlier in this same if-chain (starts at Notices,
+        // chains into 'refunds' afterward, see chainOrStop).
         banner('Logged in — reading Refund applications…' + progress);
         job.step = 'refunds';
         await setJob(job);
         location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
       } else if (job.mode === 'refund_docs') {
-        banner('Logged in — checking registration date…' + progress);
-        job.step = 'refunds_reg_check';
+        banner('Logged in — reading Refund documents…' + progress);
+        job.step = 'refund_docs';
         await setJob(job);
-        location.href = 'https://services.gst.gov.in/services/auth/myprofile';
+        location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
       } else if (job.mode === 'drc03') {
         banner('Logged in — reading DRC-03 filings…' + progress);
         job.step = 'drc03';
@@ -2661,24 +2660,6 @@
               for (const fi of fItems) {
                 let fParsed = null;
                 try { fParsed = fi.itemJson ? JSON.parse(fi.itemJson) : null; } catch (e) { /* keep raw_json as the unparsed string below */ }
-                // Document descriptors are nested differently by section —
-                // confirmed live: sdtls.<srscn|remnd|dtscn|dtorder>.maindocs[]
-                // /.suppdocs[] wrap each doc under a `dcupdtls` key, but
-                // INTIM's own `docModel[]` entries are the bare descriptor
-                // with no wrapper, and REPLY/DRC7A nest under different
-                // top-level keys (reply./draftdrc7.) entirely. Rather than
-                // hardcode a path per section (fragile — a 6th section would
-                // silently capture nothing), this recursively finds every
-                // object shaped like a doc descriptor ({id, docName}, with
-                // or without a dcupdtls wrapper) anywhere in the parsed JSON.
-                const findDocDescriptors = (node, seen, out) => {
-                  if (!node || typeof node !== 'object' || seen.has(node)) return;
-                  seen.add(node);
-                  if (Array.isArray(node)) { node.forEach((n) => findDocDescriptors(n, seen, out)); return; }
-                  const candidate = (node.dcupdtls && typeof node.dcupdtls === 'object') ? node.dcupdtls : node;
-                  if (candidate.id && candidate.docName) out.push(candidate);
-                  Object.keys(node).forEach((k) => { if (k !== 'dcupdtls') findDocDescriptors(node[k], seen, out); });
-                };
                 const rawDocs = [];
                 findDocDescriptors(fParsed, new Set(), rawDocs);
                 const seenDocIds = new Set();
@@ -2856,81 +2837,6 @@
     location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
   }
 
-  async function proceedToRefundsWarmup(job) {
-    // Same Dashboard warm-up the standalone Refund pull's login branch
-    // routes through — the full ledger/reco chain reaches Track Application
-    // Status by the same direct URL, so it's exposed to the identical
-    // empty-year bug without this stop.
-    job.step = 'refunds_warmup';
-    await setJob(job);
-    location.href = 'https://services.gst.gov.in/services/auth/dashboard';
-  }
-
-  // Confirmed by the user: the document-harvest window walk was defaulting
-  // to GST's 2017 inception for a client that actually registered in 2023,
-  // wasting ~30 guaranteed-empty search cycles. The previous fix derived a
-  // floor from the Filing Year dropdown Track Application Status offers —
-  // wrong assumption: that dropdown appears to list a fairly generic year
-  // range, not one scoped to the individual taxpayer, so it was an
-  // unreliable signal even when the scrape itself succeeded. The client's
-  // ACTUAL registration date (My Profile's own rgdt field, already stored
-  // in gst_taxpayer_profile once pulled) is the real signal. Checks the DB
-  // first — no portal visit needed if a prior Taxpayer Profile pull already
-  // has it — and only visits My Profile if it's genuinely unknown.
-  // The document harvest (job.mode 'refund_docs') is a separate, explicit
-  // action now — see the mode split in handleLogin and the note on
-  // handleRefunds' own chaining below. It doesn't need Track Application
-  // Status's Dashboard-warm-up dance (that bug is specific to that page's
-  // Filing Year dropdown, not My Applications), so it skips straight to
-  // proceedToRefundDocs instead of proceedToRefundsWarmup.
-  async function proceedAfterRegCheck(job) {
-    if (job.mode === 'refund_docs') { await proceedToRefundDocs(job); return; }
-    await proceedToRefundsWarmup(job);
-  }
-
-  async function handleRefundsRegCheck(job, cur, progress) {
-    if (job.clientRegYear === undefined) {
-      try {
-        const regDate = await GSTKdb.getTaxpayerRegistrationDate(cur.clientId);
-        const y = regDate ? parseInt(String(regDate).slice(0, 4), 10) : NaN;
-        job.clientRegYear = Number.isFinite(y) ? y : null;
-      } catch (e) { job.clientRegYear = null; }
-      await setJob(job);
-    }
-    if (job.clientRegYear) { await proceedAfterRegCheck(job); return; }
-
-    if (!/\/services\/auth\/myprofile/.test(url)) { location.href = 'https://services.gst.gov.in/services/auth/myprofile'; return; }
-    banner('Checking registration date before Refunds…' + progress);
-    try {
-      const r = await fetch('https://services.gst.gov.in/services/auth/profile/detail', {
-        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: '{}',
-      });
-      if (r.ok) {
-        const j = await r.json();
-        const regDate = ddmmyyyyToIso(j.rgdt || '');
-        if (regDate) {
-          try { await GSTKdb.upsertTaxpayerProfile(cur.clientId, { registration_date: regDate, updated_at: new Date().toISOString() }); } catch (e) { /* non-fatal */ }
-          const y = parseInt(regDate.slice(0, 4), 10);
-          if (Number.isFinite(y)) job.clientRegYear = y;
-        }
-      }
-    } catch (e) { /* non-fatal — falls through with clientRegYear still null; window builder falls back to 2017 */ }
-    await proceedAfterRegCheck(job);
-  }
-
-  async function handleRefundsWarmup(job, cur, progress) {
-    if (!/\/services\/auth\/dashboard/.test(url)) { location.href = 'https://services.gst.gov.in/services/auth/dashboard'; return; }
-    banner('Warming up the dashboard before Refunds…' + progress);
-    // Wait for the Dashboard to actually finish rendering (its "Ledger
-    // Balance" panel), not just a blind sleep — the whole point is landing
-    // here the same way a human genuinely would before moving on.
-    await waitFor('button', 10000);
-    await sleep(800);
-    job.step = 'refunds';
-    await setJob(job);
-    location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
-  }
-
   // Refund applications -> the 3 Refund reports. Every prior approach here
   // (a "Filing Year" DOM form on Track Application Status, scraped various
   // ways over 2026-09-03 through 09-07) was reliably reading the newest
@@ -3021,246 +2927,135 @@
     location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
   }
 
-  // Best-effort document harvest for every refund application already saved
-  // by handleRefunds above — via "My Applications" (Application Type =
-  // Refunds), clicking into each ARN's Case Details folder and walking
-  // every sidebar tab (Applications, Notice/Acknowledgement, Replies/
-  // Undertaking/Request, Orders, Audit History), capturing whatever PDF
-  // icon links each tab shows. Confirmed live (screenshots) that this page
-  // is reached at services.gst.gov.in/litserv/auth/case/search — the SAME
-  // URL DRC-03's own automation lands on (proceedToDrc03 below), just
-  // filtered to a different Application Type — and that an ARN's folder
-  // page carries no ARN in its own URL (Angular keeps it in route state
-  // from the click), so a specific ARN can only be reached by clicking its
-  // link from the results list, not a direct deep link. Separate from
-  // handleRefunds' base scrape entirely, so a failure here can never risk
-  // the financial data already saved. NOT verified against a live account —
-  // this is a first pass built from screenshots, not a confirmed working
-  // flow; the debug panel below reports exactly what it found so a failed
-  // run is diagnosable instead of silent.
-  // The client's real registration date (handleRefundsRegCheck, a direct
-  // DB/profile fact) — the Filing Year dropdown-derived guess this used to
-  // also fall back to was confirmed live to be an unreliable signal (that
-  // dropdown appears to offer a fairly generic year range rather than one
-  // scoped to the individual taxpayer), so it's gone rather than kept as a
-  // silent second guess; unresolved falls straight to 2017 in buildRefundWindows.
-  function resolveRefundEarliestYear(job) {
-    return job.clientRegYear || null;
-  }
+  // Friendly label per folder-tab code, for the UI's "documents[].tab"
+  // column — falls back to the raw code for any section not seen yet rather
+  // than silently dropping documents from an unrecognized folder.
+  // Confirmed live 2026-09-07 against a real Refund case (see handleRefunds'
+  // caseId): the portal's own caseFolderTypeName is already a perfectly
+  // good display label ("APPLICATIONS", "NOTICE/ ACKNOWLEDGEMENT", "ORDERS",
+  // etc.) — no need to guess codes and maintain a translation table, unlike
+  // the Notices capture above (which only had caseFolderTypeCd to go on,
+  // hence its own hardcoded map). Kept as a thin fallback only for the rare
+  // folder whose typeName the API omits.
+  const REFUND_FOLDER_LABELS = { APLCN: 'Applications', NOTAC: 'Notice/Acknowledgement', REPLY: 'Replies', ORDRS: 'Orders', AUDIT: 'Audit History' };
 
-  function buildRefundWindows(earliestYear) {
-    // This form enforces a 3-month window per search (confirmed live — see
-    // the same note on handleDrc03 below: that page's OWN case/search JSON
-    // API has no such cap, only its UI form does). Same style of limit as
-    // Challan Summary's own ~5.5-month cap, walked here in 89-day steps —
-    // a single full-range search here silently fails the portal's own
-    // validation and returns nothing. Starts from this client's earliest
-    // known year (see resolveRefundEarliestYear) rather than GST's 2017
-    // inception for every client — month 3 (April) since FYs run Apr-Mar,
-    // vs month 6 (July, GST's actual inception) for the fallback.
-    const p2 = (n) => String(n).padStart(2, '0');
-    const fmt = (d) => p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + '/' + d.getFullYear();
-    const windows = [];
-    let winStart = earliestYear ? new Date(earliestYear, 3, 1) : new Date(2017, 6, 1);
-    const today = new Date();
-    while (winStart <= today) {
-      const winEnd = new Date(winStart.getTime() + 89 * 24 * 60 * 60 * 1000);
-      windows.push([fmt(winStart), fmt(winEnd > today ? today : winEnd)]);
-      winStart = new Date(winEnd.getTime() + 24 * 60 * 60 * 1000);
-    }
-    return windows;
-  }
-
-  async function finishRefundDocs(job, extra) {
-    debugPanel([
-      'STEP: Refund Application Documents  (' + location.pathname + ')',
-      'windows checked   : ' + buildRefundWindows(resolveRefundEarliestYear(job)).length + ' (89-day steps from ' + (resolveRefundEarliestYear(job) ? resolveRefundEarliestYear(job) + '-04-01 — from registration date' : '2017-07-01 — registration date unknown') + '), ' + (job.refundWindowsFailed || 0) + ' failed',
-      'ARNs visited      : ' + (job.refundSeenArns || []).length,
-      'documents captured: ' + (job.refundDocsOk || 0) + ' ok, ' + (job.refundDocsFail || 0) + ' failed/none' + (extra || ''),
-      'window regressions: ' + (job.refundRegressionCount || 0) + ' (should always be 0 — see handleRefundDocs comments if not)',
-    ]);
-    banner('Refund documents → ' + (job.refundDocsOk || 0) + ' captured across ' + (job.refundArnsWithDocs || 0) + ' application(s).' + (job._progress || ''), extra ? '#dc2626' : '#16a34a');
-    delete job.refundWindowIdx; delete job.refundSeenArns; delete job.refundDocsOk; delete job.refundDocsFail;
-    delete job.refundArnsWithDocs; delete job.refundWindowsFailed; delete job.refundConsecutiveFailures;
-    delete job.refundMaxWindowIdx; delete job.refundRegressionCount;
-    await sleep(1000);
-    await chainOrStop(job, 'refunds', proceedToDrc03);
-  }
-
-  // Processes exactly ONE refund application per invocation, then hard-
-  // navigates back to My Applications and returns — relying on the job
-  // dispatcher's normal per-page-load re-entry to pick up the next one,
-  // rather than looping internally with history.back() to return to the
-  // results list. That was tried first and confirmed unreliable live: this
-  // app pushes more than one history entry per ARN visited (the folder
-  // navigation itself, plus apparently at least one per sidebar tab click),
-  // so a single history.back() didn't reliably land back on the CURRENT
-  // window's results — it could land several entries further back, on an
-  // EARLIER window's still-cached results, which is exactly the "fetched
-  // 2024, then looped back to re-searching 2023" symptom. A full page
-  // reload + re-search of the SAME window (tracked via job.refundWindowIdx,
-  // not the browser's own history stack) is slower per application but
-  // deterministic regardless of how many history entries anything pushes.
+  // Document harvest for every refund case the portal has for this client —
+  // rewritten 2026-09-07 the same way handleRefunds above was: no DOM
+  // interaction at all (no My Applications form, no ARN links, no sidebar
+  // tab clicks, no PDF-icon scraping). Every prior version of this function
+  // (never confirmed working against a live account) walked "My
+  // Applications" by hand; this instead reuses the exact case/folder ->
+  // case/folder/items -> getEncrypDocIds -> downloadhb API chain the
+  // Notices step's LUT/Additional-Notice-Folder capture already uses
+  // successfully (confirmed live 2026-08-24/08-27, see handleNotices above)
+  // — that flow already proved every one of these calls works for a
+  // litserv/auth/case-family case (LUT is the same "case" concept as Refund
+  // and DRC-03, just a different caseTypeCd), so applying it to RFUND here
+  // is a much smaller leap than the original from-screenshots DOM approach
+  // ever was.
+  //
+  // For each RFUND case (from case/search, the same call handleRefunds
+  // makes):
+  //   1. POST case/folder {caseId, gstid, caseTypeCd: 'RFUND'} -> every
+  //      folder tab this case has (Applications/Notice/Replies/Orders/…).
+  //   2. Per folder: POST case/folder/items {caseFolderId} -> that folder's
+  //      items, each carrying an itemJson STRING to parse.
+  //   3. Recursively find every doc descriptor ({id, docName}, with or
+  //      without a dcupdtls wrapper) anywhere in the parsed JSON — the exact
+  //      same findDocDescriptors approach the Notices capture uses, since
+  //      where a doc sits inside itemJson varies by section there too.
+  //   4. fetchEncrypDocEh(docId, arn) + downloadhb/download/new turns each
+  //      into a real PDF; GSTKdb.patchRefundDocument saves the per-ARN list.
+  //
+  // All within ONE page load — no per-ARN or per-window page reload needed,
+  // since none of this touches the DOM. A single case's own folder/document
+  // fetches failing never drops another case's documents (best-effort, same
+  // contract as the old version); the debug panel reports exactly what was
+  // found so a partial run is diagnosable, not silent.
   async function handleRefundDocs(job, cur, progress) {
     if (!/litserv\/auth\/case\/search/.test(url)) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; }
-    job._progress = progress;
-    if (!(await waitFor('select, input', 15000))) { banner('My Applications did not load — skipped.' + progress, '#f59e0b'); await finishRefundDocs(job); return; }
-
-    const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
-    const windows = buildRefundWindows(resolveRefundEarliestYear(job));
-    const seenArns = new Set(job.refundSeenArns || []);
-    let winIdx = job.refundWindowIdx || 0;
-    let docsOk = job.refundDocsOk || 0, docsFail = job.refundDocsFail || 0;
-    let arnsWithDocs = job.refundArnsWithDocs || 0, windowsFailed = job.refundWindowsFailed || 0;
-    let consecutiveFailures = job.refundConsecutiveFailures || 0;
-    // Self-healing safety net: the window index should only ever move
-    // forward across reloads (it's read back from storage, not derived
-    // from anything the portal's own navigation could disturb) — but if
-    // storage ever somehow returned a stale/older value, clamp forward
-    // rather than silently re-processing earlier windows. Surfaces as a
-    // WARNING line in the debug panel if it ever actually triggers, so a
-    // real regression is provable instead of guessed at from a screenshot.
-    if (winIdx < (job.refundMaxWindowIdx || 0)) {
-      job.refundRegressionCount = (job.refundRegressionCount || 0) + 1;
-      banner('Window index regressed (' + winIdx + ' -> was at ' + job.refundMaxWindowIdx + ') — correcting forward…' + progress, '#f59e0b');
-      winIdx = job.refundMaxWindowIdx;
-      await sleep(1200);
-    }
-    job.refundMaxWindowIdx = Math.max(job.refundMaxWindowIdx || 0, winIdx);
-
-    if (consecutiveFailures >= 10) {
-      await finishRefundDocs(job, ' — STOPPED EARLY: 10 failures in a row with zero successes (session likely died — or if this recurs on a fresh session too, the PDF-icon detection doesn\'t match this portal\'s real markup)');
-      return;
-    }
-
-    const typeSel = await selectWhereOption('Refund', { startsWith: true, timeout: 8000 });
-    if (!typeSel) { banner('Could not select "Refunds" on My Applications — skipped.' + progress, '#f59e0b'); await finishRefundDocs(job); return; }
-    await sleep(500);
-
-    const findDateInputs = () => $$('input').filter((i) => /date/i.test((i.placeholder || '') + (i.id || '') + (i.name || '')));
-    const findSearchBtn = () => $$('button').find((b) => /^search$/i.test(clean(b.textContent)));
-    const isArnLike = (s) => /^[A-Z]{2}\d{10,}[A-Z0-9]*$/.test(s);
-    const findUnseenArnLink = () => $$('a').find((a) => isArnLike(clean(a.textContent)) && !seenArns.has(clean(a.textContent)));
-
-    // Advance through windows and pagination — all still within THIS one
-    // page load, no navigation involved yet — until an unseen ARN turns up
-    // or every window is exhausted.
-    let targetLink = null;
-    while (winIdx < windows.length && !targetLink) {
-      const [fromStr, toStr] = windows[winIdx];
-      // Includes total applications processed so far — the SAME window
-      // number repeating across reloads is expected (and not stuck/looping)
-      // whenever that window has more than one application in it; this
-      // count is how to tell the two apart from the banner alone.
-      banner('Reading Refund documents — window ' + (winIdx + 1) + '/' + windows.length + ' (' + fromStr + '–' + toStr + '), ' + seenArns.size + ' application(s) done so far…' + progress);
-      const di = findDateInputs();
-      const searchBtn = findSearchBtn();
-      if (di.length < 2 || !searchBtn) { windowsFailed++; winIdx++; continue; }
-      setVal(di[0], fromStr);
-      setVal(di[1], toStr);
-      await sleep(200);
-      searchBtn.click();
-      await sleep(1500);
-
-      targetLink = findUnseenArnLink();
-      for (let p = 0; p < 20 && !targetLink; p++) {
-        const next = $$('a, button').find((el) => clean(el.textContent) === '»');
-        if (!next) break;
-        next.click();
-        await sleep(1200);
-        targetLink = findUnseenArnLink();
-      }
-      if (!targetLink) winIdx++;
-    }
-
-    if (!targetLink) {
-      job.refundWindowIdx = winIdx; job.refundSeenArns = [...seenArns];
-      job.refundDocsOk = docsOk; job.refundDocsFail = docsFail;
-      job.refundArnsWithDocs = arnsWithDocs; job.refundWindowsFailed = windowsFailed;
-      await finishRefundDocs(job);
-      return;
-    }
-
-    const arn = clean(targetLink.textContent);
-    seenArns.add(arn);
-    const arnDocs = [];
+    banner('Reading Refund documents…' + progress);
+    let cases = [];
     try {
-      targetLink.click();
-      let onFolder = false;
-      for (let w = 0; w < 20 && !onFolder; w++) { await sleep(400); if (/litserv\/auth\/case\/folder/.test(location.href)) onFolder = true; }
-      if (onFolder) {
-        await sleep(500);
-        const TAB_NAMES = ['APPLICATIONS', 'NOTICE/ACKNOWLEDGEMENT', 'REPLIES/UNDERTAKING/REQUEST', 'ORDERS', 'AUDIT HISTORY'];
-        const tabEls = $$('*').filter((el) => el.children.length === 0 && TAB_NAMES.includes(clean(el.textContent).toUpperCase()));
-        for (const tabEl of tabEls) {
-          const tabName = clean(tabEl.textContent);
-          tabEl.click();
-          await sleep(800);
-          const icons = $$('img, a').filter((el) => /pdf/i.test((el.getAttribute('src') || '') + (el.getAttribute('href') || '') + (el.className || '')));
-          for (const icon of icons) {
-            const link = icon.closest('a') || icon;
-            const href = link.href || link.getAttribute('href') || '';
-            const label = clean((link.textContent || '')) || clean((link.title || '')) || tabName;
+      const r = await fetch('https://services.gst.gov.in/litserv/auth/api/case/search', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caseTypeCd: 'RFUND', startDate: '01/07/2017', endDate: shownTodayDdMmYyyy() }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' from case/search');
+      cases = await r.json();
+      if (!Array.isArray(cases)) cases = [];
+    } catch (e) {
+      debugPanel(['STEP: Refund Application Documents  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
+      banner('Refund documents: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
+      await chainOrStop(job, 'refund_docs', proceedToDrc03);
+      return;
+    }
 
-            // Confirmed live (2026-08-21) against a real case folder (a
-            // Letter of Undertaking case, same litserv/auth/case family as
-            // Refund and DRC-03): the PDF icon's wrapping <a> carries a
-            // plain, literal href of exactly this shape — GET
-            // /document/{docId}/ (docId only, empty second segment), no eh
-            // token at all. `link.href` (the DOM property, not the raw
-            // attribute) already resolves this to an absolute URL, so the
-            // `fetchUrl = href` branch below was already correct for this —
-            // meaning Refund's document capture very likely already works as
-            // originally shipped. The extra relative-'/document/...' branch
-            // is a defensive addition for the case `icon.closest('a')` isn't
-            // itself an anchor with a resolvable .href, not proof that path
-            // was actually broken. DRC-03's own case rows are a different UI
-            // (a results table, not a folder-tab icon) and may genuinely
-            // need the eh token (see fetchEncrypDocEh) — that path stays as
-            // the last-resort fallback, unverified either way.
-            let fetchUrl = null;
-            if (/^https?:/i.test(href)) {
-              fetchUrl = href;
-            } else if (/^\/document\//.test(href)) {
-              fetchUrl = 'https://services.gst.gov.in' + href;
-            } else {
-              const docId = extractDocId(icon) || extractDocId(link) || extractDocId(icon.parentElement);
-              if (docId) {
-                const eh = await fetchEncrypDocEh(docId, arn);
-                if (eh) fetchUrl = 'https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(docId) + '&arn=' + encodeURIComponent(arn) + '&eh=' + encodeURIComponent(eh);
+    let arnsWithDocs = 0, docsOk = 0, docsFail = 0, casesFailed = 0;
+    for (const c of cases) {
+      const arn = c.arn;
+      if (!c.caseId || !arn) { casesFailed++; continue; }
+      const arnDocs = [];
+      try {
+        const fr = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ caseId: c.caseId, gstid: (cur.creds && cur.creds.gstin) || '', caseTypeCd: 'RFUND' }),
+        }), 15000, 'case/folder');
+        const folders = fr.ok ? await fr.json() : [];
+        if (!Array.isArray(folders) || !folders.length) { casesFailed++; continue; }
+
+        const seenDocIds = new Set();
+        for (const folder of folders) {
+          try {
+            const ir = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder/items', {
+              method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ caseFolderId: folder.caseFolderId }),
+            }), 15000, 'case/folder/items');
+            const items = ir.ok ? await ir.json() : [];
+            if (!Array.isArray(items)) continue;
+            const folderLabel = folder.caseFolderTypeName || REFUND_FOLDER_LABELS[folder.caseFolderTypeCd] || folder.caseFolderTypeCd || 'Documents';
+            for (const item of items) {
+              let parsed = null;
+              try { parsed = item.itemJson ? JSON.parse(item.itemJson) : null; } catch (e) { /* skip unparseable item */ }
+              const rawDocs = [];
+              findDocDescriptors(parsed, new Set(), rawDocs);
+              const docArn = (parsed && parsed.crn) || arn;
+              for (const doc of rawDocs) {
+                if (seenDocIds.has(doc.id)) continue;
+                seenDocIds.add(doc.id);
+                try {
+                  const eh = await withTimeout(fetchEncrypDocEh(doc.id, docArn), 15000, 'getEncrypDocIds');
+                  if (!eh) { docsFail++; continue; }
+                  const pdfR = await withTimeout(fetch('https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(doc.id) + '&arn=' + encodeURIComponent(docArn) + '&eh=' + encodeURIComponent(eh), { credentials: 'include' }), 20000, 'downloadhb');
+                  if (!pdfR.ok) { docsFail++; continue; }
+                  const buf = await withTimeout(pdfR.arrayBuffer(), 15000, 'pdf arrayBuffer');
+                  if (!buf || buf.byteLength <= 200) { docsFail++; continue; } // guard against an HTML error page, not a real PDF
+                  const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
+                  const path = 'refund/' + cur.clientId + '/' + arn.replace(/[^A-Za-z0-9]/g, '_') + '/' + doc.id + '.pdf';
+                  const url = await withTimeout(GSTKdb.uploadPdf(path, dataUrl), 20000, 'uploadPdf');
+                  arnDocs.push({ tab: folderLabel, label: doc.docName || doc.docttl || (doc.id + '.pdf'), url });
+                  docsOk++;
+                } catch (e) { docsFail++; }
               }
             }
-            if (!fetchUrl) { docsFail++; consecutiveFailures++; continue; }
-            try {
-              const r = await fetch(fetchUrl, { credentials: 'include' });
-              if (!r.ok) { docsFail++; consecutiveFailures++; continue; }
-              const buf = await r.arrayBuffer();
-              if (!buf || buf.byteLength < 200) { docsFail++; consecutiveFailures++; continue; } // guard against an HTML error page, not a real PDF
-              const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
-              const path = 'refund/' + cur.clientId + '/' + arn.replace(/[^A-Za-z0-9]/g, '_') + '/' + tabName.replace(/[^A-Za-z0-9]/g, '_') + '_' + label.replace(/[^A-Za-z0-9]/g, '_') + '.pdf';
-              const url = await GSTKdb.uploadPdf(path, dataUrl);
-              arnDocs.push({ tab: tabName, label, url });
-              docsOk++;
-              consecutiveFailures = 0;
-            } catch (e) { docsFail++; consecutiveFailures++; }
-            if (consecutiveFailures >= 10) break;
-          }
-          if (consecutiveFailures >= 10) break;
+          } catch (e) { /* best-effort per folder */ }
         }
-      }
-    } catch (e) { /* keep going with the next ARN */ }
+      } catch (e) { casesFailed++; continue; }
 
-    if (arnDocs.length) {
-      try { await GSTKdb.patchRefundDocument(cur.clientId, arn, { documents: arnDocs }); arnsWithDocs++; } catch (e) { /* non-fatal */ }
+      if (arnDocs.length) {
+        try { await GSTKdb.patchRefundDocument(cur.clientId, arn, { documents: arnDocs }); arnsWithDocs++; } catch (e) { /* non-fatal */ }
+      }
     }
 
-    job.refundWindowIdx = winIdx; // same window next time — more unseen ARNs may still be in it
-    job.refundSeenArns = [...seenArns];
-    job.refundDocsOk = docsOk; job.refundDocsFail = docsFail;
-    job.refundArnsWithDocs = arnsWithDocs; job.refundWindowsFailed = windowsFailed;
-    job.refundConsecutiveFailures = consecutiveFailures;
-    await setJob(job);
-    location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
+    debugPanel([
+      'STEP: Refund Application Documents  (' + location.pathname + ')',
+      'cases read        : ' + cases.length + ' (' + casesFailed + ' folder-fetch failed)',
+      'documents captured: ' + docsOk + ' ok, ' + docsFail + ' failed',
+      'applications w/docs: ' + arnsWithDocs,
+    ]);
+    banner('Refund documents → ' + docsOk + ' captured across ' + arnsWithDocs + ' application(s).' + progress, '#16a34a');
+    await sleep(1000);
+    await chainOrStop(job, 'refund_docs', proceedToDrc03);
   }
 
   async function proceedToDrc03(job) {
@@ -4043,6 +3838,26 @@
   // token out of an onclick/ng-click handler's literal attribute text
   // (AngularJS directives like ng-click="dl('abc123')" stay in the DOM as
   // plain strings even though this app disables Angular's DOM debug info).
+  // Document descriptors are nested differently by section — confirmed
+  // live: sdtls.<srscn|remnd|dtscn|dtorder>.maindocs[]/.suppdocs[] wrap each
+  // doc under a `dcupdtls` key, but INTIM's own `docModel[]` entries are the
+  // bare descriptor with no wrapper, and REPLY/DRC7A nest under different
+  // top-level keys (reply./draftdrc7.) entirely — Refund's own APLCN folder
+  // nests supporting docs under `suppdocs[].dcupdtls` too. Rather than
+  // hardcode a path per section (fragile — a new one would silently capture
+  // nothing), this recursively finds every object shaped like a doc
+  // descriptor ({id, docName}, with or without a dcupdtls wrapper) anywhere
+  // in the parsed JSON. Shared by handleNotices' Additional Notice Folder
+  // capture and handleRefundDocs' case/folder document harvest.
+  function findDocDescriptors(node, seen, out) {
+    if (!node || typeof node !== 'object' || seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) { node.forEach((n) => findDocDescriptors(n, seen, out)); return; }
+    const candidate = (node.dcupdtls && typeof node.dcupdtls === 'object') ? node.dcupdtls : node;
+    if (candidate.id && candidate.docName) out.push(candidate);
+    Object.keys(node).forEach((k) => { if (k !== 'dcupdtls') findDocDescriptors(node[k], seen, out); });
+  }
+
   function extractDocId(el) {
     if (!el) return null;
     const direct = el.getAttribute('data-doc-id') || el.getAttribute('data-docid')
