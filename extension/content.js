@@ -2992,11 +2992,23 @@
       return;
     }
 
-    let arnsWithDocs = 0, docsOk = 0, docsFail = 0, casesFailed = 0;
+    let arnsWithDocs = 0, docsOk = 0, docsFail = 0, casesFailed = 0, casesWithFolderItems = 0;
     for (const c of cases) {
       const arn = c.arn;
       if (!c.caseId || !arn) { casesFailed++; continue; }
       const arnDocs = [];
+      // One row per case/folder/items entry, mirroring exactly what the
+      // Additional Notice Folder capture (handleNotices above) already
+      // writes for LUT/DRC-03 case tasks — this is the ONLY thing feeding
+      // AdditionalNoticeFolderPage.tsx's "Refund Notice Folder" view (case
+      // header + Applications/Notice-Acknowledgement/Replies/Orders/Audit
+      // History sections), which was built and live-verified 2026-09-03 but
+      // had no writer for cases outside that separate case/task/get task
+      // list. arnDocs above (the flat {tab,label,url} list) stays for
+      // gst_refund_applications.documents — AllClientsRefundsPage's own
+      // "Documents" column reads that shape specifically, so both writes
+      // are needed, not a replacement of one by the other.
+      const folderItems = [];
       try {
         const fr = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder', {
           method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
@@ -3021,6 +3033,7 @@
               const rawDocs = [];
               findDocDescriptors(parsed, new Set(), rawDocs);
               const docArn = (parsed && parsed.crn) || arn;
+              const itemAttachments = [];
               for (const doc of rawDocs) {
                 if (seenDocIds.has(doc.id)) continue;
                 seenDocIds.add(doc.id);
@@ -3034,10 +3047,20 @@
                   const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
                   const path = 'refund/' + cur.clientId + '/' + arn.replace(/[^A-Za-z0-9]/g, '_') + '/' + doc.id + '.pdf';
                   const url = await withTimeout(GSTKdb.uploadPdf(path, dataUrl), 20000, 'uploadPdf');
-                  arnDocs.push({ tab: folderLabel, label: doc.docName || doc.docttl || (doc.id + '.pdf'), url });
+                  const label = doc.docName || doc.docttl || (doc.id + '.pdf');
+                  arnDocs.push({ tab: folderLabel, label, url });
+                  itemAttachments.push({ label, url });
                   docsOk++;
                 } catch (e) { docsFail++; }
               }
+              folderItems.push({
+                client_id: cur.clientId,
+                case_id: arn,
+                folder_section: folder.caseFolderTypeCd || null,
+                reference_number: item.refId || (parsed && parsed.crn) || null,
+                attachments: itemAttachments,
+                raw_json: parsed !== null ? parsed : (item.itemJson || null),
+              });
             }
           } catch (e) { /* best-effort per folder */ }
         }
@@ -3046,6 +3069,9 @@
       if (arnDocs.length) {
         try { await GSTKdb.patchRefundDocument(cur.clientId, arn, { documents: arnDocs }); arnsWithDocs++; } catch (e) { /* non-fatal */ }
       }
+      if (folderItems.length) {
+        try { await GSTKdb.replaceCaseFolderItems(cur.clientId, arn, folderItems); casesWithFolderItems++; } catch (e) { /* non-fatal */ }
+      }
     }
 
     debugPanel([
@@ -3053,6 +3079,7 @@
       'cases read        : ' + cases.length + ' (' + casesFailed + ' folder-fetch failed)',
       'documents captured: ' + docsOk + ' ok, ' + docsFail + ' failed',
       'applications w/docs: ' + arnsWithDocs,
+      'cases w/folder items: ' + casesWithFolderItems + ' (feeds the Refund Notice Folder page)',
     ]);
     // Same durable-logging gap handleRefunds already learned from (the
     // in-page debug panel above navigates away with the page, leaving no
@@ -3060,7 +3087,7 @@
     // the first pass of this rewrite, confirmed live 2026-09-07 when a
     // stale-build run left literally no record anywhere that anything had
     // even attempted to run.
-    try { await GSTKdb.logClientSync(cur.clientId, 'refund_docs_debug', 'success', 'build=' + chrome.runtime.getManifest().version + ' | cases: ' + cases.length + ' (' + casesFailed + ' folder-fetch failed) | docs: ' + docsOk + ' ok, ' + docsFail + ' failed | applications w/docs: ' + arnsWithDocs); } catch (e) { /* diagnostic only */ }
+    try { await GSTKdb.logClientSync(cur.clientId, 'refund_docs_debug', 'success', 'build=' + chrome.runtime.getManifest().version + ' | cases: ' + cases.length + ' (' + casesFailed + ' folder-fetch failed) | docs: ' + docsOk + ' ok, ' + docsFail + ' failed | applications w/docs: ' + arnsWithDocs + ' | cases w/folder items: ' + casesWithFolderItems); } catch (e) { /* diagnostic only */ }
     banner('Refund documents → ' + docsOk + ' captured across ' + arnsWithDocs + ' application(s).' + progress, '#16a34a');
     await sleep(1000);
     await chainOrStop(job, 'refund_docs', proceedToDrc03);

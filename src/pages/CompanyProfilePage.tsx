@@ -26,7 +26,7 @@ import { cn } from '@/lib/utils';
 import { isoDateToDMY } from '@/utils/formatDate';
 import {
   Bell, CalendarClock, History, FolderOpen, AlertTriangle, Loader2, Pencil,
-  ArrowLeft, FileText,
+  ArrowLeft, FileText, Eye,
 } from 'lucide-react';
 
 interface ClientRow {
@@ -58,6 +58,11 @@ interface NoticeRow {
   submission_date: string | null;
   pdf_url: string | null;
   pulled_at: string;
+  // Matches gst_case_folder_items.case_id when this event has a drill-down
+  // "Notice Folder" page (AdditionalNoticeFolderPage) — real gst_notices
+  // rows carry their own case_id column; synthesized refund/drc03 rows use
+  // the ARN itself, same convention gst_case_folder_items already uses.
+  case_id: string | null;
   // 'refund'/'drc03' rows are synthesized from gst_refund_applications /
   // gst_drc03_filings below — neither table carries a staff_status or
   // due_date (that workflow tracking only exists on gst_notices), so they
@@ -128,7 +133,7 @@ const CompanyProfilePage: React.FC = () => {
       const [clientRes, profileRes, noticesRes, filingsRes, refundsRes, drc03Res] = await Promise.all([
         supabase.from('clients').select('id, name, gstin, registration_type, registration_date, email, mobile').eq('id', clientId).maybeSingle(),
         supabase.from('gst_taxpayer_profile').select('legal_name, trade_name, registration_date, principal_place_address').eq('client_id', clientId).maybeSingle(),
-        supabase.from('gst_notices').select('id, reference_number, notice_type, description, issue_date, due_date, staff_status, submission_arn, submission_date, pdf_url, pulled_at').eq('client_id', clientId).eq('source', 'notices').order('issue_date', { ascending: false }),
+        supabase.from('gst_notices').select('id, case_id, reference_number, notice_type, description, issue_date, due_date, staff_status, submission_arn, submission_date, pdf_url, pulled_at').eq('client_id', clientId).eq('source', 'notices').order('issue_date', { ascending: false }),
         // gst_filed_returns holds the actual as-filed-on-portal date (pulled
         // straight from the portal's own GSTR-1/3B JSON APIs) — filing_status
         // is this app's own internal prep/compliance tracker (a manually-set
@@ -163,6 +168,11 @@ const CompanyProfilePage: React.FC = () => {
           submission_date: null,
           pdf_url: (Array.isArray(r.documents) && r.documents[0]?.url) || null,
           pulled_at: r.pulled_at,
+          // gst_case_folder_items.case_id for a refund case is its own ARN
+          // (see handleRefundDocs in extension/content.js) — links this row
+          // straight to its "Refund Notice Folder" drill-down page once that
+          // capture has run for it.
+          case_id: r.arn,
           kind: 'refund',
         }));
         const drc03Rows = ((drc03Res.data || []) as Drc03FilingRow[]).map((d): NoticeRow => ({
@@ -177,6 +187,7 @@ const CompanyProfilePage: React.FC = () => {
           submission_date: null,
           pdf_url: d.pdf_url,
           pulled_at: d.pulled_at,
+          case_id: d.arn,
           kind: 'drc03',
         }));
         const combined = [...gstNoticeRows, ...refundRows, ...drc03Rows].sort((a, b) => {
@@ -362,7 +373,13 @@ const CompanyProfilePage: React.FC = () => {
                         <p className="truncate font-medium">{n.notice_type || n.description || 'Notice'}</p>
                         <p className="text-muted-foreground">Ref Id: {n.reference_number || '—'} · Issue: {isoDateToDMY(n.issue_date)}</p>
                       </div>
-                      {n.pdf_url && <a href={n.pdf_url} target="_blank" rel="noreferrer"><FileText className="h-4 w-4 text-destructive" /></a>}
+                      {n.case_id ? (
+                        <Link to={`/notices-case-folder/${client.id}/${encodeURIComponent(n.case_id)}`} title="Open Notice Folder">
+                          <Eye className="h-4 w-4 text-primary" />
+                        </Link>
+                      ) : n.pdf_url ? (
+                        <a href={n.pdf_url} target="_blank" rel="noreferrer"><FileText className="h-4 w-4 text-destructive" /></a>
+                      ) : null}
                     </div>
                   ))}
                   {filteredNotices.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">No notices on record.</p>}
