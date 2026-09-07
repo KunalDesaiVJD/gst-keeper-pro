@@ -377,14 +377,23 @@
         job.step = 'notices';
         await setJob(job);
         location.href = 'https://services.gst.gov.in/services/auth/notices';
-      } else if (job.mode === 'refunds' || job.mode === 'refund_docs') {
-        // Two distinct, separately-triggerable pulls now: 'refunds' is just
-        // the fast application list (Track Application Status); 'refund_docs'
-        // is the slow, page-reload-per-application document harvest (My
-        // Applications). They used to always chain together, which made
-        // every Refund pull take as long as the document harvest even when
-        // all that was wanted was an updated list — see handleRefunds'
-        // ending and proceedAfterRegCheck above.
+      } else if (job.mode === 'refunds') {
+        // Reads the case list straight from the same JSON API DRC-03 already
+        // uses (litserv/auth/api/case/search, caseTypeCd 'RFUND' instead of
+        // 'ADJVP') — confirmed live 2026-09-07 directly from the portal's
+        // own public casesearchctrl.js source, not guessed. No registration-
+        // date lookup needed for this (DRC-03 doesn't need one either — that
+        // was only ever a Filing-Year-form workaround, now moot since the
+        // whole DOM form is gone). 'refund_docs' (the document harvest,
+        // below) is unrelated and still needs the reg-date-based window
+        // logic, so it keeps its own routing. 'notices_bundle' never reaches
+        // here — it's matched earlier in this same if-chain (starts at
+        // Notices, chains into 'refunds' afterward, see chainOrStop).
+        banner('Logged in — reading Refund applications…' + progress);
+        job.step = 'refunds';
+        await setJob(job);
+        location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
+      } else if (job.mode === 'refund_docs') {
         banner('Logged in — checking registration date…' + progress);
         job.step = 'refunds_reg_check';
         await setJob(job);
@@ -2837,9 +2846,14 @@
   }
 
   async function proceedToRefunds(job) {
-    job.step = 'refunds_reg_check';
+    // No registration-date lookup needed here anymore — that only ever
+    // existed to work around the old Filing-Year DOM form's empty-list bug,
+    // which is moot now that Refunds reads straight from the same JSON API
+    // DRC-03 already uses (see handleRefunds). Matches proceedToDrc03's own
+    // equally direct routing just below.
+    job.step = 'refunds';
     await setJob(job);
-    location.href = 'https://services.gst.gov.in/services/auth/myprofile';
+    location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
   }
 
   async function proceedToRefundsWarmup(job) {
@@ -2914,141 +2928,80 @@
     await sleep(800);
     job.step = 'refunds';
     await setJob(job);
-    location.href = 'https://services.gst.gov.in/services/auth/trackstatus';
+    location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
   }
 
-  // Refund applications (Track Application Status) -> the 3 Refund reports.
-  // DOM-scraped, unlike the ledger/notices JSON APIs above: the underlying
-  // postTrackARNFiling response can't be read via a page-context script (CORS
-  // blocks it even though the portal's own Angular app can call it), so this
-  // reads the rendered table instead, the same fallback the credit/reversal
-  // ledgers already use. Confirmed live against a client with real refund
-  // history: Module=Refunds, "Filing Year" radio, one search per year option
-  // the portal actually offers, "«  1 2  »" pagination (5 rows/page, no
-  // page-size control) walked until a click produces no change.
+  // Refund applications -> the 3 Refund reports. Every prior approach here
+  // (a "Filing Year" DOM form on Track Application Status, scraped various
+  // ways over 2026-09-03 through 09-07) was reliably reading the newest
+  // financial year as 0 rows even when real data was confirmed present on
+  // the portal by hand — never fully explained despite extensive live
+  // instrumentation (radio state, settle timing, retries, per-year fresh
+  // page loads all ruled out as the cause in turn). Replaced entirely
+  // 2026-09-07 with the same JSON API DRC-03 already reads its own case
+  // list from (litserv/auth/api/case/search), which has never shown any of
+  // that flakiness — confirmed directly from the portal's own public
+  // casesearchctrl.js (static.gst.gov.in/uiassets/js/litigation/
+  // casesearchctrl.js, no auth needed to fetch): its own "REFUNDS"
+  // Application Type branch calls
+  //   POST auth/api/case/search {"caseTypeCd": "RFUND", "startDate": fromDate, "endDate": toDate}
+  // — the exact same endpoint and shape as DRC-03's 'ADJVP', just a
+  // different code. Each result row's actual fields (ARN, amount, refund
+  // reason, filing date) sit inside two JSON-encoded strings on the row
+  // (appItem.itemJson and caseJson), per that same controller's response
+  // handling — not flat top-level fields.
   async function handleRefunds(job, cur, progress) {
-    if (!/trackstatus/.test(url)) { location.href = 'https://services.gst.gov.in/services/auth/trackstatus'; return; }
+    if (!/litserv\/auth\/case\/search/.test(url)) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; }
     banner('Reading Refund applications…' + progress);
-    if (!(await waitFor('select', 15000))) { banner('Refund tracker did not load — skipped.' + progress, '#f59e0b'); await chainOrStop(job, 'refunds', proceedToDrc03); return; }
-    const modSel = await selectWhereOption('Refunds', { timeout: 8000 });
-    if (!modSel) { banner('Could not select the Refunds module — skipped.' + progress, '#f59e0b'); await chainOrStop(job, 'refunds', proceedToDrc03); return; }
-    await sleep(700);
-
-    // "Filing Year" is the first of the two radio buttons (Filing Year / ARN).
-    const radios = $$('input[type=radio]');
-    if (radios[0]) { radios[0].click(); radios[0].dispatchEvent(new Event('change', { bubbles: true })); }
-
-    const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
-    const isRefundTable = (t) => /ARN/i.test(t.textContent || '') && /GSTIN/i.test(t.textContent || '');
-    // Accepts both "2024-25" and "2024-2025" — confirmed live the option
-    // text is 4-digit-dash-4-digit ("2024-2025"), not the 2-digit form used
-    // by GSTR-1/3B period pickers elsewhere on the portal; the old regex
-    // required exactly 2 trailing digits so it matched zero options here,
-    // even though the <select> had real year options a manual click showed.
-    const isYearOption = (t) => /^\d{4}-\d{2,4}$/.test(t);
-    const findYearSelect = () => $$('select').find((s) => [...s.options].some((o) => isYearOption(clean(o.textContent))));
-
-    // The Filing Year <select>'s options populate asynchronously after the
-    // radio click (Angular re-fetches the offered years) — a fixed sleep
-    // here used to read the DOM before that landed, finding only the
-    // placeholder "Select" option and silently pulling zero years. Poll
-    // instead of guessing a delay. Confirmed live: the options DO arrive
-    // eventually (a manual click later on the same stuck page showed real
-    // years) — the previous 6s budget just wasn't long enough on a slower
-    // run; 30s gives real headroom before actually giving up.
-    let yearSelect = null;
-    for (let i = 0; i < 100 && !yearSelect; i++) { await sleep(300); yearSelect = findYearSelect(); }
-    const years = yearSelect ? [...yearSelect.options].map((o) => clean(o.textContent)).filter(isYearOption) : [];
-
-    // Confirmed live: reloading THIS SAME trackstatus URL directly does NOT
-    // reliably fix an empty Filing Year list, even repeated — routing back
-    // through the Dashboard warm-up (handleRefundsWarmup / proceedToRefunds
-    // above) first is what a human revisiting the page normally does, and
-    // is what actually populates it. Retry via that warm-up, not a bare
-    // reload of this URL, before giving up.
-    if (years.length === 0 && (job.refundRetries || 0) < 2) {
-      job.refundRetries = (job.refundRetries || 0) + 1;
-      job.step = 'refunds_warmup';
-      await setJob(job);
-      banner('Filing Year list came back empty — retrying via dashboard (' + job.refundRetries + '/2)…' + progress, '#f59e0b');
-      location.href = 'https://services.gst.gov.in/services/auth/dashboard';
+    let cases = [];
+    try {
+      const r = await fetch('https://services.gst.gov.in/litserv/auth/api/case/search', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caseTypeCd: 'RFUND', startDate: '01/07/2017', endDate: shownTodayDdMmYyyy() }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' from case/search');
+      cases = await r.json();
+      if (!Array.isArray(cases)) cases = [];
+    } catch (e) {
+      debugPanel(['STEP: Refund Applications  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
+      banner('Refund applications: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
+      try { await GSTKdb.replaceRefundApplications(cur.clientId, [{ client_id: cur.clientId, arn: null, refund_type: null, source_ledger: null, filed_date: null, claimed_amount: 0, sanctioned_amount: null, status: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }]); } catch (e2) { /* diagnostic only */ }
+      await chainOrStop(job, 'refunds', proceedToDrc03);
       return;
     }
-    delete job.refundRetries;
 
     const allRows = [];
-    const yearCounts = [];
-    for (const year of years) {
-      // selectWhereOption already retries internally against transient DOM
-      // churn, but reselecting the SAME <select> repeatedly in this loop (one
-      // heavy Angular re-render per prior year's search) is a harsher case
-      // than its normal callers — give a year one extra attempt before
-      // silently skipping it, and record which years actually failed instead
-      // of leaving no trace at all.
-      let sel = await selectWhereOption(year, { timeout: 5000 });
-      if (!sel) sel = await selectWhereOption(year, { timeout: 5000 });
-      if (!sel) { yearCounts.push(year + ':select-failed'); continue; }
-      await sleep(300);
-      const searchBtn = $$('button').find((b) => /^search$/i.test(clean(b.textContent)));
-      if (!searchBtn) { yearCounts.push(year + ':no-search-btn'); continue; }
-      const beforeSearch = (($$('table').find(isRefundTable) || {}).textContent) || '';
-      searchBtn.click();
-      // A fixed sleep here used to read the table before a slower (busier,
-      // usually more recent) year's search had actually resolved — silently
-      // re-scraping the PREVIOUS year's stale table (or an empty pre-search
-      // one) and reporting zero rows for what was really just "not done
-      // loading yet". Poll for the table to actually change instead.
-      let settled = false;
-      for (let w = 0; w < 20 && !settled; w++) {
-        await sleep(400);
-        const t = $$('table').find(isRefundTable);
-        if (t && t.textContent !== beforeSearch) settled = true;
-      }
-      if (!settled) await sleep(500);
-
-      let yearRows = 0;
-      for (let page = 0; page < 20; page++) {
-        const table = $$('table').find(isRefundTable);
-        if (!table) break;
-        const dataRows = [...table.querySelectorAll('tr')].filter((tr) => !tr.closest('thead') && tr.querySelectorAll('td').length >= 8);
-        for (const tr of dataRows) {
-          const tds = [...tr.children].map((td) => clean(td.textContent));
-          const arn = tds[1];
-          if (!arn) continue;
-          // Columns: GSTIN, ARN, ARN Date, Category, Tax Period, Jurisdiction
-          // Information, Refund Amount Claimed, Action/Status.
-          const category = tds[3] || '';
-          allRows.push({
-            client_id: cur.clientId, arn,
-            refund_type: category || null,
-            source_ledger: /\bITC\b/i.test(category) ? 'ITC' : null,
-            filed_date: ddmmyyyyToIso(tds[2] || ''),
-            claimed_amount: Number((tds[6] || '').replace(/,/g, '')) || 0,
-            sanctioned_amount: null,
-            status: tds[7] || null,
-          });
-          yearRows++;
-        }
-        const next = $$('a, button').find((a) => clean(a.textContent) === '»');
-        if (!next) break;
-        const before = table.textContent;
-        next.click();
-        await sleep(1200);
-        const tableAfter = $$('table').find(isRefundTable);
-        if (!tableAfter || tableAfter.textContent === before) break; // no change -> no more pages
-      }
-      yearCounts.push(year + ':' + yearRows);
+    for (const c of cases) {
+      let itemJson = {};
+      try { itemJson = JSON.parse((c.appItem && c.appItem.itemJson) || '{}'); } catch (e) { /* leave empty */ }
+      // caseJson is parsed by the portal's own controller too (for
+      // caseJson.autoFiling) but nothing we save needs it.
+      const category = itemJson.refundRsn || null;
+      allRows.push({
+        client_id: cur.clientId,
+        arn: c.arn || null,
+        refund_type: category,
+        source_ledger: category && /\bITC\b/i.test(category) ? 'ITC' : null,
+        // caseCreationDate carries a trailing time ("31/07/2026 20:51:30") —
+        // ddmmyyyyToIso only matches a bare DD/MM/YYYY string.
+        filed_date: ddmmyyyyToIso(String(c.caseCreationDate || '').split(' ')[0]),
+        claimed_amount: Number(itemJson.ttlRfdAmt) || 0,
+        sanctioned_amount: null,
+        status: c.statusDesc || null,
+      });
     }
 
     try { await GSTKdb.replaceRefundApplications(cur.clientId, allRows); } catch (e) { /* non-fatal */ }
-
     debugPanel([
       'STEP: Refund Applications  (' + location.pathname + ')',
-      'years checked     : ' + yearCounts.join(', '),
       'rows read         : ' + allRows.length,
     ]);
+    // Same durable-logging pattern as before (see git history for why) —
+    // keeps a queryable trail in client_sync_log even though this step no
+    // longer has a fragile multi-stage DOM flow to diagnose.
+    try { await GSTKdb.logClientSync(cur.clientId, 'refunds_debug', 'success', 'build=0.2.0 (JSON API) | rows: ' + allRows.length + ' | arns: ' + allRows.map((r) => r.arn).filter(Boolean).join(',')); } catch (e) { /* diagnostic only */ }
     banner('Refund applications → ' + allRows.length + ' entries saved. Now Refund documents…' + progress, '#16a34a');
-    await sleep(1000);
+    await sleep(500);
     // Document capture (My Applications — ARN-by-ARN, a full page reload
     // per application) used to always run right after this, chained
     // automatically. That made every Refund pull take as long as the
