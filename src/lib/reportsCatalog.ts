@@ -649,6 +649,18 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     build: ({ clientId }) => buildRefundFiledOnPortalReport(clientId!),
   },
   {
+    key: 'refund-application-documents',
+    title: 'Refund Application Documents',
+    description: 'Supporting documents, notices/acknowledgements, replies, and orders captured for every refund application on record. Use Pull to fetch them from the portal — pull "Refund Filed On Portal" first for the application list itself; this only fetches documents.',
+    icon: FileStack,
+    category: 'refund',
+    status: 'extends-login',
+    needs: 'client',
+    viewKind: 'evidence-event-list',
+    pull: { mode: 'refund_docs' },
+    build: ({ clientId }) => buildRefundFiledOnPortalReport(clientId!),
+  },
+  {
     key: 'refund-claimed-from-itc-ledger',
     title: 'Refund Claimed From ITC Ledger',
     description: 'Refund applications claimed against the Electronic Credit Ledger. Use Pull (on "Refund Filed On Portal") to fetch it from the portal.',
