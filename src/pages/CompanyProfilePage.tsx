@@ -58,6 +58,33 @@ interface NoticeRow {
   submission_date: string | null;
   pdf_url: string | null;
   pulled_at: string;
+  // 'refund'/'drc03' rows are synthesized from gst_refund_applications /
+  // gst_drc03_filings below — neither table carries a staff_status or
+  // due_date (that workflow tracking only exists on gst_notices), so they
+  // count toward Total/Last-15-Days/Last-24-Hours and the notices list, but
+  // are excluded from Open/7-Days-Due/Over Due rather than guessing
+  // open/closed from the portal's own status text.
+  kind?: 'notice' | 'refund' | 'drc03';
+}
+
+interface RefundApplicationRow {
+  id: string;
+  arn: string | null;
+  refund_type: string | null;
+  filed_date: string | null;
+  status: string | null;
+  documents: { tab: string; label: string; url: string }[] | null;
+  pulled_at: string;
+}
+
+interface Drc03FilingRow {
+  id: string;
+  arn: string | null;
+  cause_of_payment: string | null;
+  filed_date: string | null;
+  status: string | null;
+  pdf_url: string | null;
+  pulled_at: string;
 }
 
 interface FilingRow {
@@ -98,7 +125,7 @@ const CompanyProfilePage: React.FC = () => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [clientRes, profileRes, noticesRes, filingsRes] = await Promise.all([
+      const [clientRes, profileRes, noticesRes, filingsRes, refundsRes, drc03Res] = await Promise.all([
         supabase.from('clients').select('id, name, gstin, registration_type, registration_date, email, mobile').eq('id', clientId).maybeSingle(),
         supabase.from('gst_taxpayer_profile').select('legal_name, trade_name, registration_date, principal_place_address').eq('client_id', clientId).maybeSingle(),
         supabase.from('gst_notices').select('id, reference_number, notice_type, description, issue_date, due_date, staff_status, submission_arn, submission_date, pdf_url, pulled_at').eq('client_id', clientId).eq('source', 'notices').order('issue_date', { ascending: false }),
@@ -110,11 +137,54 @@ const CompanyProfilePage: React.FC = () => {
         // the former, confirmed against Notice Alert's own equivalent table
         // (2026-09-08).
         supabase.from('gst_filed_returns').select('return_type, period_month, filed_date').eq('client_id', clientId).in('return_type', ['GSTR1', 'GSTR3B']).not('filed_date', 'is', null),
+        // Folded into the unified notices/KPI list below (2026-09-08 fix) —
+        // gst_notices' Additional Notice Folder capture only ever writes the
+        // case-folder DOCUMENTS (its acknowledgement/order, keyed by their
+        // own portal reference), never the refund APPLICATION event itself
+        // (keyed by its ARN, e.g. "a refund was filed on 18/08/2026").
+        // Notice Alert shows both as separate timeline rows for the same
+        // case; this recovers the missing one.
+        supabase.from('gst_refund_applications').select('id, arn, refund_type, filed_date, status, documents, pulled_at').eq('client_id', clientId),
+        supabase.from('gst_drc03_filings').select('id, arn, cause_of_payment, filed_date, status, pdf_url, pulled_at').eq('client_id', clientId),
       ]);
       if (!cancelled) {
         setClient((clientRes.data || null) as ClientRow | null);
         setProfile((profileRes.data || null) as TaxpayerProfileRow | null);
-        setNotices((noticesRes.data || []) as NoticeRow[]);
+        const gstNoticeRows = ((noticesRes.data || []) as NoticeRow[]).map((n) => ({ ...n, kind: 'notice' as const }));
+        const refundRows = ((refundsRes.data || []) as RefundApplicationRow[]).map((r): NoticeRow => ({
+          id: 'refund-' + r.id,
+          reference_number: r.arn,
+          notice_type: 'Refunds',
+          description: r.refund_type,
+          issue_date: r.filed_date,
+          due_date: null,
+          staff_status: null,
+          submission_arn: null,
+          submission_date: null,
+          pdf_url: (Array.isArray(r.documents) && r.documents[0]?.url) || null,
+          pulled_at: r.pulled_at,
+          kind: 'refund',
+        }));
+        const drc03Rows = ((drc03Res.data || []) as Drc03FilingRow[]).map((d): NoticeRow => ({
+          id: 'drc03-' + d.id,
+          reference_number: d.arn,
+          notice_type: 'DRC-03',
+          description: d.cause_of_payment,
+          issue_date: d.filed_date,
+          due_date: null,
+          staff_status: null,
+          submission_arn: null,
+          submission_date: null,
+          pdf_url: d.pdf_url,
+          pulled_at: d.pulled_at,
+          kind: 'drc03',
+        }));
+        const combined = [...gstNoticeRows, ...refundRows, ...drc03Rows].sort((a, b) => {
+          const ad = a.issue_date ? new Date(a.issue_date).getTime() : 0;
+          const bd = b.issue_date ? new Date(b.issue_date).getTime() : 0;
+          return bd - ad;
+        });
+        setNotices(combined);
         setFilings((filingsRes.data || []) as FilingRow[]);
         setLoading(false);
       }
@@ -140,7 +210,15 @@ const CompanyProfilePage: React.FC = () => {
   const totalNotices = filteredNotices.length;
   const last15Days = filteredNotices.filter((n) => daysAgo(n.issue_date) <= 15).length;
   const last24Hours = filteredNotices.filter((n) => daysAgo(n.pulled_at) <= 1).length;
-  const openNotices = filteredNotices.filter((n) => !isClosed(n.staff_status)).length;
+  // Open/7-Days-Due/Over-Due are staff_status/due_date workflow concepts —
+  // gst_refund_applications and gst_drc03_filings carry neither (that
+  // tracking only exists on gst_notices), so synthesized refund/drc03 rows
+  // are excluded here rather than guessed at from the portal's own status
+  // text. due_date is already null on every such row, so dueSoon/overdue
+  // exclude them naturally; openNotices needs the explicit kind check since
+  // a null staff_status alone reads as "open".
+  const workflowRows = filteredNotices.filter((n) => n.kind !== 'refund' && n.kind !== 'drc03');
+  const openNotices = workflowRows.filter((n) => !isClosed(n.staff_status)).length;
   const dueSoon = filteredNotices.filter((n) => n.due_date && daysUntil(n.due_date) >= 0 && daysUntil(n.due_date) <= 7).length;
   const overdue = filteredNotices.filter((n) => n.due_date && daysUntil(n.due_date) < 0).length;
 
