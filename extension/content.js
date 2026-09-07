@@ -2987,6 +2987,7 @@
     } catch (e) {
       debugPanel(['STEP: Refund Application Documents  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
       banner('Refund documents: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
+      try { await GSTKdb.logClientSync(cur.clientId, 'refund_docs_debug', 'failed', 'build=' + chrome.runtime.getManifest().version + ' | fetch failed: ' + ((e && e.message) || 'unknown error')); } catch (e2) { /* diagnostic only */ }
       await chainOrStop(job, 'refund_docs', proceedToDrc03);
       return;
     }
@@ -3053,6 +3054,13 @@
       'documents captured: ' + docsOk + ' ok, ' + docsFail + ' failed',
       'applications w/docs: ' + arnsWithDocs,
     ]);
+    // Same durable-logging gap handleRefunds already learned from (the
+    // in-page debug panel above navigates away with the page, leaving no
+    // trace to diagnose a failed run from afterward) — this was missed on
+    // the first pass of this rewrite, confirmed live 2026-09-07 when a
+    // stale-build run left literally no record anywhere that anything had
+    // even attempted to run.
+    try { await GSTKdb.logClientSync(cur.clientId, 'refund_docs_debug', 'success', 'build=' + chrome.runtime.getManifest().version + ' | cases: ' + cases.length + ' (' + casesFailed + ' folder-fetch failed) | docs: ' + docsOk + ' ok, ' + docsFail + ' failed | applications w/docs: ' + arnsWithDocs); } catch (e) { /* diagnostic only */ }
     banner('Refund documents → ' + docsOk + ' captured across ' + arnsWithDocs + ' application(s).' + progress, '#16a34a');
     await sleep(1000);
     await chainOrStop(job, 'refund_docs', proceedToDrc03);
