@@ -20,6 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 import { cn } from '@/lib/utils';
 import { isoDateToDMY } from '@/utils/formatDate';
@@ -90,6 +91,7 @@ const CompanyProfilePage: React.FC = () => {
   const [notices, setNotices] = useState<NoticeRow[]>([]);
   const [filings, setFilings] = useState<FilingRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [typeFilter, setTypeFilter] = useState('all');
 
   useEffect(() => {
     if (!clientId) return;
@@ -100,7 +102,14 @@ const CompanyProfilePage: React.FC = () => {
         supabase.from('clients').select('id, name, gstin, registration_type, registration_date, email, mobile').eq('id', clientId).maybeSingle(),
         supabase.from('gst_taxpayer_profile').select('legal_name, trade_name, registration_date, principal_place_address').eq('client_id', clientId).maybeSingle(),
         supabase.from('gst_notices').select('id, reference_number, notice_type, description, issue_date, due_date, staff_status, submission_arn, submission_date, pdf_url, pulled_at').eq('client_id', clientId).eq('source', 'notices').order('issue_date', { ascending: false }),
-        supabase.from('filing_status').select('return_type, period_month, filed_date').eq('client_id', clientId).in('return_type', ['GSTR1', 'GSTR3B']).not('filed_date', 'is', null),
+        // gst_filed_returns holds the actual as-filed-on-portal date (pulled
+        // straight from the portal's own GSTR-1/3B JSON APIs) — filing_status
+        // is this app's own internal prep/compliance tracker (a manually-set
+        // date, defaults to 'Prepared'), a different signal entirely.
+        // "Track Return Status" is meant to mirror the portal, so it needs
+        // the former, confirmed against Notice Alert's own equivalent table
+        // (2026-09-08).
+        supabase.from('gst_filed_returns').select('return_type, period_month, filed_date').eq('client_id', clientId).in('return_type', ['GSTR1', 'GSTR3B']).not('filed_date', 'is', null),
       ]);
       if (!cancelled) {
         setClient((clientRes.data || null) as ClientRow | null);
@@ -116,17 +125,24 @@ const CompanyProfilePage: React.FC = () => {
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
   if (!clientId) return <Navigate to="/notices-company-list" replace />;
 
+  // Distinct notice_type values on record for this client, for the "Types
+  // Of Notices" filter — matches Notice Alert's own equivalent dropdown
+  // (2026-09-08 comparison). Derived from the unfiltered list so a chosen
+  // filter never hides itself from its own options.
+  const noticeTypes = Array.from(new Set(notices.map((n) => n.notice_type).filter((t): t is string => !!t))).sort();
+  const filteredNotices = typeFilter === 'all' ? notices : notices.filter((n) => n.notice_type === typeFilter);
+
   const now = Date.now();
   const DAY_MS = 24 * 60 * 60 * 1000;
   const daysAgo = (v: string | null) => (v ? (now - new Date(v).getTime()) / DAY_MS : Infinity);
   const daysUntil = (v: string | null) => (v ? (new Date(v).getTime() - now) / DAY_MS : -Infinity);
 
-  const totalNotices = notices.length;
-  const last15Days = notices.filter((n) => daysAgo(n.issue_date) <= 15).length;
-  const last24Hours = notices.filter((n) => daysAgo(n.pulled_at) <= 1).length;
-  const openNotices = notices.filter((n) => !isClosed(n.staff_status)).length;
-  const dueSoon = notices.filter((n) => n.due_date && daysUntil(n.due_date) >= 0 && daysUntil(n.due_date) <= 7).length;
-  const overdue = notices.filter((n) => n.due_date && daysUntil(n.due_date) < 0).length;
+  const totalNotices = filteredNotices.length;
+  const last15Days = filteredNotices.filter((n) => daysAgo(n.issue_date) <= 15).length;
+  const last24Hours = filteredNotices.filter((n) => daysAgo(n.pulled_at) <= 1).length;
+  const openNotices = filteredNotices.filter((n) => !isClosed(n.staff_status)).length;
+  const dueSoon = filteredNotices.filter((n) => n.due_date && daysUntil(n.due_date) >= 0 && daysUntil(n.due_date) <= 7).length;
+  const overdue = filteredNotices.filter((n) => n.due_date && daysUntil(n.due_date) < 0).length;
 
   const kpiCards = [
     { label: 'Total Notices', value: totalNotices, icon: <Bell className="h-7 w-7 text-primary" />, bgColor: 'bg-primary/5' },
@@ -137,7 +153,7 @@ const CompanyProfilePage: React.FC = () => {
     { label: 'Over Due', value: overdue, icon: <AlertTriangle className="h-7 w-7 text-destructive" />, bgColor: 'bg-destructive/5' },
   ];
 
-  const submissions = notices.filter((n) => n.submission_arn || n.submission_date);
+  const submissions = filteredNotices.filter((n) => n.submission_arn || n.submission_date);
 
   const filingsByPeriod = useMemo(() => {
     const m = new Map<string, { period: string; fy: string; gstr1: string | null; gstr3b: string | null }>();
@@ -172,6 +188,19 @@ const CompanyProfilePage: React.FC = () => {
         </div>
         {client && <div className="font-medium text-foreground">{client.gstin} | {tradeName}</div>}
       </div>
+
+      {!loading && client && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Types Of Notices</span>
+          <Select value={typeFilter} onValueChange={setTypeFilter}>
+            <SelectTrigger className="h-8 w-[220px] text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              {noticeTypes.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
@@ -248,7 +277,7 @@ const CompanyProfilePage: React.FC = () => {
               <Card>
                 <CardHeader className="pb-2 pt-3"><CardTitle className="text-sm">Notices & Orders</CardTitle></CardHeader>
                 <CardContent className="space-y-2 pb-3">
-                  {notices.slice(0, 5).map((n, i) => (
+                  {filteredNotices.slice(0, 5).map((n, i) => (
                     <div key={n.id} className="flex items-start gap-2 border-b pb-2 text-xs last:border-0 last:pb-0">
                       <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">{i + 1}</span>
                       <div className="min-w-0 flex-1">
@@ -258,7 +287,7 @@ const CompanyProfilePage: React.FC = () => {
                       {n.pdf_url && <a href={n.pdf_url} target="_blank" rel="noreferrer"><FileText className="h-4 w-4 text-destructive" /></a>}
                     </div>
                   ))}
-                  {notices.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">No notices on record.</p>}
+                  {filteredNotices.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">No notices on record.</p>}
                   <Link to={`/notices-all?client=${client.id}`} className="block text-right text-[11px] font-medium text-primary hover:underline">View All</Link>
                 </CardContent>
               </Card>
