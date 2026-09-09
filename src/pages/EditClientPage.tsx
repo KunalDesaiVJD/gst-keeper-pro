@@ -73,7 +73,7 @@ const EditClientPage: React.FC = () => {
     otherTargetDate: '',
     gstUserId: '',
     gstPassword: '',
-    regularSubType: '' as '' | 'Builder' | 'Normal',
+    regularSubType: '' as '' | 'Builder' | 'Contractor' | 'Normal',
     builderItcType: '' as '' | 'NO_ITC' | 'CLAIM_ITC' | 'PARTIAL_ITC',
     commercialArea: '',
     residentialArea: '',
@@ -221,7 +221,7 @@ const EditClientPage: React.FC = () => {
     }
 
     if (formData.registrationType === 'Regular' && !formData.regularSubType) {
-      newErrors.regularSubType = 'Please select Builder or Normal';
+      newErrors.regularSubType = 'Please select Builder, Contractor or Normal';
     }
 
     if (formData.regularSubType === 'Builder' && !formData.builderItcType) {
@@ -545,13 +545,13 @@ const EditClientPage: React.FC = () => {
                     value={formData.regularSubType}
                     onValueChange={(value) => setFormData(prev => ({
                       ...prev,
-                      regularSubType: value as 'Builder' | 'Normal',
+                      regularSubType: value as 'Builder' | 'Contractor' | 'Normal',
                       builderItcType: '',
                       commercialArea: '',
                       residentialArea: ''
                     }))}
                   >
-                    {(['Builder', 'Normal'] as const).map((option) => (
+                    {(['Builder', 'Contractor', 'Normal'] as const).map((option) => (
                       <label
                         key={option}
                         htmlFor={`regularSubType-${option}`}
