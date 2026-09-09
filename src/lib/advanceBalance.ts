@@ -199,6 +199,12 @@ export interface AdvanceLedger {
   closingTotal: TaxAmount;
   /** Oldest month still contributing an unadjusted balance (MM/YYYY), if any. */
   oldestOpenPeriod: string | null;
+  /**
+   * Per key, the month its still-open balance first arose in. The ageing
+   * report needs this per key, not just the single oldest — one advance open
+   * since April and another since last month are different findings.
+   */
+  openSinceByKey: Map<string, string>;
   /** Months with a GSTR-1 row, so callers can say how much history backs this. */
   monthsCovered: number;
   /** True if any amendment was applied anywhere in the range. */
@@ -403,12 +409,16 @@ export function buildAdvanceLedger(params: {
     .map(([, period]) => period)
     .sort((a, b) => periodOrdinal(a) - periodOrdinal(b))[0] || null;
 
+  const openSinceByKey = new Map<string, string>();
+  openSince.forEach((period, key) => { if (closingByKey.has(key)) openSinceByKey.set(key, period); });
+
   return {
     clientId,
     months,
     closingByKey,
     closingTotal,
     oldestOpenPeriod,
+    openSinceByKey,
     monthsCovered: filedReceived.size,
     hasAmendments,
   };
