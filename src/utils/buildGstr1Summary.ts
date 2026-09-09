@@ -32,6 +32,19 @@ export interface Gstr1Summary {
   sections: Gstr1SummaryRow[];
   tiles: Gstr1Tile[];
   totals: { value: number; igst: number; cgst: number; sgst: number; cess: number };
+  /**
+   * Table 11(2) — amendments restating an EARLIER period's Table 11A / 11B.
+   * Deliberately kept out of `totals`: an amendment states the revised figure
+   * for the month it corrects, not additional liability for this one, so
+   * adding it to this period's total would double-count.
+   * See docs/ADVANCE_SETOFF_POSITIONS.md §7.
+   */
+  amendmentTotals: {
+    advancesReceived: { value: number; igst: number; cgst: number; sgst: number; cess: number };
+    advancesAdjusted: { value: number; igst: number; cgst: number; sgst: number; cess: number };
+    /** Distinct original periods (`omon`, MMYYYY) touched by either table. */
+    originalPeriods: string[];
+  };
 }
 
 interface Acc { count: number; value: number; igst: number; cgst: number; sgst: number; cess: number }
@@ -113,6 +126,9 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
 
   const s4A = acc(), s4B = acc(), s5 = acc(), s6A = acc(), s6B = acc(), s6C = acc();
   const s7 = acc(), s8 = acc(), s9BR = acc(), s9BUR = acc(), s11A = acc(), s11B = acc();
+  // Table 11(2) — amendments to an earlier period's 11A / 11B.
+  const s11A2 = acc(), s11B2 = acc();
+  const amendedPeriods = new Set<string>();
   // Table 10 — amendments to earlier B2CS entries (retrospective re-rating).
   const s10 = acc();
   const s12 = acc(), s13 = acc();
@@ -235,6 +251,29 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
     });
   });
 
+  // 11(2) — Amendments to Table 11A / 11B of an EARLIER period. Same group
+  // shape as at/txpd plus `omon`, the original month being restated — which is
+  // the whole point of the table and the reason these are accumulated
+  // separately rather than folded into s11A/s11B. An amendment carries the
+  // REVISED figure for that earlier month, not a differential and not this
+  // month's liability, so it never reaches `forTotal` below.
+  const addAdvanceAmendment = (rows: any[], a: Acc) => {
+    (rows || []).forEach((r: any) => {
+      a.count += 1;
+      const omon = String(r.omon || '').trim();
+      if (omon) amendedPeriods.add(omon);
+      (r.itms || []).forEach((it: any) => {
+        a.value += num(it.ad_amt);
+        a.igst += num(it.iamt);
+        a.cgst += num(it.camt);
+        a.sgst += num(it.samt);
+        a.cess += num(it.csamt);
+      });
+    });
+  };
+  addAdvanceAmendment(j.ata, s11A2);
+  addAdvanceAmendment(j.txpda, s11B2);
+
   // 12 — HSN summary. Portal shows Value = taxable ONLY (not taxable + tax),
   // and counts UNIQUE non-blank HSN codes (rate/UQC variants of the same HSN
   // collapse into one; blank hsn_sc rows contribute to Value but not to
@@ -296,6 +335,8 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
     row('10', 'Amendments to taxable outward supplies to unregistered persons — B2CS Amended', s10, 'Net Value'),
     row('11A', 'Tax liability on advances received', s11A, 'Advance'),
     row('11B', 'Adjustment of advances', s11B, 'Advance'),
+    row('11(2)', 'Amendment to tax liability on advances received (earlier periods)', s11A2, 'Advance'),
+    row('11(2)', 'Amendment to adjustment of advances (earlier periods)', s11B2, 'Advance'),
     row('12', 'HSN-wise summary of outward supplies', s12, '-'),
     row('13', 'Documents issued', s13, '-'),
   ];
@@ -329,9 +370,17 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
     { key: 'b2csa', label: '10 - Amended B2C (Others)', count: s10.count, value: s10.value },
     { key: 'at', label: '11A(1), 11A(2) - Tax Liability (Advances Received)', count: s11A.count, value: s11A.value },
     { key: 'txpd', label: '11B(1), 11B(2) - Adjustment of Advances', count: s11B.count, value: s11B.value },
+    { key: 'ata', label: '11(2) - Amended Advances Received', count: s11A2.count, value: s11A2.value },
+    { key: 'txpda', label: '11(2) - Amended Adjustment of Advances', count: s11B2.count, value: s11B2.value },
     { key: 'hsn', label: '12 - HSN-wise summary of outward supplies', count: s12.count, value: s12.value },
     { key: 'doc', label: '13 - Documents Issued', count: s13.count, value: 0 },
   ];
 
-  return { sections, tiles, totals };
+  const amendmentTotals = {
+    advancesReceived: { value: s11A2.value, igst: s11A2.igst, cgst: s11A2.cgst, sgst: s11A2.sgst, cess: s11A2.cess },
+    advancesAdjusted: { value: s11B2.value, igst: s11B2.igst, cgst: s11B2.cgst, sgst: s11B2.sgst, cess: s11B2.cess },
+    originalPeriods: Array.from(amendedPeriods).sort(),
+  };
+
+  return { sections, tiles, totals, amendmentTotals };
 }
