@@ -205,13 +205,18 @@ export const ReceiptFormDialog: React.FC<ReceiptFormDialogProps> = ({
         </div>
 
         <div className="rounded-md border border-border bg-muted/30 p-3 text-xs space-y-1">
+          {/* The wrapper below is the flex container, so the copy has to sit
+              inside a single child — otherwise each inline element becomes its
+              own flex item and the sentence stacks into narrow columns. */}
           {isGoods ? (
-            <p className="flex items-start gap-2 text-muted-foreground">
+            <div className="flex items-start gap-2 text-muted-foreground">
               <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-              An advance against a supply of <strong>goods</strong> is not taxable on receipt
-              (Notification 66/2017-CT) — tax falls due at the invoice. This is recorded as a memo with no
-              Table 11A liability, so a later invoice is not set off against it by mistake.
-            </p>
+              <p>
+                An advance against a supply of <strong>goods</strong> is not taxable on receipt
+                (Notification 66/2017-CT) — tax falls due at the invoice. This is recorded as a memo with no
+                Table 11A liability, so a later invoice is not set off against it by mistake.
+              </p>
+            </div>
           ) : (
             <>
               <div className="flex justify-between"><span className="text-muted-foreground">Taxable value (grossed down)</span><span className="tabular-nums font-semibold">₹{taxable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
