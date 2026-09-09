@@ -30,7 +30,7 @@ import { computeGstReceivableRecoDiff } from '@/lib/gstReceivableRecoCalc';
 import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
 
-interface Client { id: string; name: string; gstin: string; regular_sub_type?: string | null }
+interface Client { id: string; name: string; gstin: string; regular_sub_type?: string | null; registration_type?: string | null }
 
 interface Gstr3bPushVersion {
   id: string;
@@ -252,7 +252,7 @@ const Gstr3bPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    supabase.from('clients').select('id, name, gstin, regular_sub_type').order('name').then(({ data }) => setClients((data || []) as Client[]));
+    supabase.from('clients').select('id, name, gstin, regular_sub_type, registration_type').order('name').then(({ data }) => setClients((data || []) as Client[]));
   }, []);
 
   const selectedClientData = clients.find((c) => c.id === selectedClient);
@@ -371,6 +371,7 @@ const Gstr3bPage: React.FC = () => {
       periodMonth: selectedMonth,
       draftJson: (g1 as { raw_json?: unknown } | null)?.raw_json ?? null,
       regularSubType: selectedClientData?.regular_sub_type,
+      registrationType: selectedClientData?.registration_type,
     });
     if (!advanceOk) return;
 

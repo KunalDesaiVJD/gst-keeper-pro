@@ -78,6 +78,7 @@ interface Client {
   // Promoters file from the builder module: their outward side is computed from
   // bookings, receipts and BU events, so there is no JSON to upload.
   regular_sub_type?: string | null;
+  registration_type?: string | null;
   // 'manual' clients only send bills — their GSTR-1 is prepared entirely
   // outside this app, so the Import/Upload actions don't apply to them.
   // 'json_manual' clients import/upload a JSON as usual but staff can also
@@ -304,7 +305,7 @@ const GSTR1DataPage: React.FC = () => {
 
   const fetchClients = useCallback(async () => {
     const { data } = await supabase
-      .from('clients').select('id, name, gstin, regular_sub_type, gstr1_import_mode').order('name');
+      .from('clients').select('id, name, gstin, regular_sub_type, registration_type, gstr1_import_mode').order('name');
     setClients((data || []) as Client[]);
   }, []);
 
@@ -790,6 +791,7 @@ const GSTR1DataPage: React.FC = () => {
       periodMonth: selectedMonth,
       draftJson: gstr1Data.raw_json,
       regularSubType: clients.find((c) => c.id === selectedClient)?.regular_sub_type,
+      registrationType: clients.find((c) => c.id === selectedClient)?.registration_type,
     });
     if (!advanceOk) {
       setUploadDialogOpen(false);

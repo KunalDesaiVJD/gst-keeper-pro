@@ -27,6 +27,8 @@ export interface EvaluateInput {
   /** The JSON about to be filed — the draft, not necessarily what is stored. */
   draftJson: unknown;
   regularSubType?: string | null;
+  /** clients.registration_type — lets the checker spot an optional IFF month. */
+  registrationType?: string | null;
 }
 
 export interface UseAdvanceSetoffGateOptions {
@@ -58,6 +60,7 @@ export function useAdvanceSetoffGate(options: UseAdvanceSetoffGateOptions) {
       periodMonth: i.periodMonth,
       draftJson: i.draftJson,
       regularSubType: i.regularSubType,
+      registrationType: i.registrationType,
     });
     const existing = await fetchOverride(i.clientId, i.periodMonth, options.returnType);
     const decision = evaluateGate(result, existing);

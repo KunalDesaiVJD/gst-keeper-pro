@@ -92,11 +92,9 @@ differences it created itself trains people to ignore it.
 against it.
 
 **Position — only `INVOICE` legs are reported in Table 11B.** A refund,
-cancellation or write-back closes the receipt in the register but is not
-emitted as an adjustment of advance. Where the firm's position turns out to be
-that a refunded advance also needs an 11B, the return will be short by that
-amount and rule 8 surfaces it — which is a real finding, not an artefact. See
-§10.
+cancellation or write-back closes the receipt in the register and nets against
+Table 11A instead — see §11, which settles this and follows the Builder
+module's cancellation treatment.
 
 **Position — FIFO is the default allocation, not the rule.** Oldest advance
 absorbed first needs no judgement and ages the ledger correctly. It is a
@@ -209,8 +207,14 @@ overridden by reflex.
 | 6 | Advance open longer than 6 months | Soft (dashboard, digest) | Review |
 | 7 | Draft has `at` but no corresponding receipt in the register (register clients only) | Soft | Add receipt |
 | 8 | Register closing ≠ JSON-derived closing | Soft | Reconcile |
+| 9 | Refund / write-back leg recorded this period (register clients only) | Soft | Net against Table 11A per §11 |
 
-**Position — the materiality threshold is configurable and defaults to ₹1,000.**
+**Position — every finding drops to advisory on an optional IFF month.** Under
+QRMP an advance genuinely cannot be set off in months 1 and 2 of a quarter, so a
+hard block there would fire on a correct return. Applied once, centrally, rather
+than inside each rule. See §10 item 4.
+
+**Position — the materiality threshold is ₹1,000, set in code.**
 A gate that fires on three rupees of rounding becomes a reflex click within a
 week, and a reflex click is indistinguishable from no gate at all. The threshold
 protects the *credibility* of the hard block, which is the only thing that makes
@@ -326,11 +330,13 @@ Three consequences follow, and all three are load-bearing:
 earlier-period figure is not this period's liability, so `ata` is **not** added
 to `forTotal`. It is reported on its own rows and in its own `amendmentTotals`.
 
-> **Known inconsistency, deliberately left alone.** Table 10 (`b2csa`), also an
-> amendment table, *is* currently inside `forTotal`. That predates this module.
-> Changing it would silently move the totals on returns already produced and
-> checked against the portal, so it is out of scope here and recorded as an open
-> question in §10 rather than fixed in passing.
+Table 10 (`b2csa`) is treated the same way, as of September 2026. It had been
+inside `forTotal` since before this module — an inconsistency left alone at
+first, because changing it could have moved totals on returns already produced
+and checked against the portal. It was removed once it was confirmed that no
+stored return has ever carried a `b2csa` block, so nothing moves. Had one
+existed, this would have needed a cut-over period rather than a straight
+change.
 
 ### 7.2 Amendments are NOT auto-netted into GSTR-3B 3.1(a)
 
@@ -439,34 +445,83 @@ unfulfilled claim.
 
 ---
 
-## 10. Open questions — not yet decided
+## 10. Questions that were open — all decided September 2026
 
-Recorded so they are not silently decided by whoever writes the code next.
+Recorded with the reasoning, so a later reader can tell a decision from an
+accident.
 
-1. ~~Can an employee request an override at all?~~ **Decided (Sept 2026):** yes
-   — an employee requests with a reason, a GST Manager approves. §6 is the
-   binding description.
-2. **Which column leads in R1** — as-amended primary with as-filed as memo, or
-   the reverse. Affects how the working paper reads in assessment.
-3. **Table 10 (`b2csa`) in `forTotal`** — see §7.1. Whether the existing
-   inclusion is correct, and if not, from which period to change it, given
-   returns already filed on the current basis.
-4. **QRMP clients.** The checker is written per month. For a quarterly filer the
-   GSTR-1/IFF period and the 3B period differ, and the gate needs to reason
-   about the quarter. Not yet designed.
-5. **How is a refunded advance reported?** The register closes the receipt on a
-   `REFUND_TO_PARTY` leg but emits no Table 11B entry for it. If the firm's
-   position is that a refund voucher does belong in 11B, `buildTxpdFromLegs`
-   needs to include that reason and the migration comment needs amending.
-   Until then rule 8 will flag the difference rather than hide it.
-6. **The materiality threshold is a code constant, not a setting yet.**
-   `ADVANCE_MATERIALITY_DEFAULT` in `advanceSetoffCheck.ts`. Exposing it in
-   Settings needs a firm-wide settings store, which this app does not have —
-   deliberately not invented for one number.
-7. **`ata` / `txpda` key names and row shape are taken from the GSTN offline
-   utility schema and have not yet been seen in a real import** by this app.
-   Verify against the first genuine amended return before relying on the parser
-   in anger, and widen the parser if the live shape differs.
+1. **Can an employee request an override at all?** — **Yes.** An employee
+   requests with a reason, a GST Manager approves. §6 is the binding
+   description.
+
+2. **Which figure leads in the ledger and in R1?** — **As-amended leads, with
+   the as-filed figure as a memo underneath.** The working paper states the
+   correct position first; the originally-filed number stays visible on the same
+   line so the paper still ties to the portal. (The firm chose this over the
+   as-filed-leading alternative that was recommended.)
+
+3. **How is a refunded advance reported?** — **Exactly as the Builder module
+   handles a cancellation SETOFF.** See §11 below; this one had enough substance
+   to earn its own section.
+
+4. **QRMP clients.** — **Findings are raised but downgraded to advisory on an
+   optional IFF month.** Under QRMP the invoices for months 1 and 2 of a quarter
+   go out in the IFF while Table 11B lives only in the quarter-end GSTR-1, so an
+   advance genuinely cannot be set off in those months and a hard block would
+   fire on a return that is correct as filed. The full gate stands at the
+   quarterly GSTR-1 and GSTR-3B (Q). The downgrade is applied once, centrally,
+   rather than inside each rule — a rule that has to remember to check the
+   scheme is a rule that will one day forget. Seven clients are on QRMP against
+   108 monthly filers.
+
+5. **Table 10 (`b2csa`) inside `forTotal`.** — **Removed.** Table 10 is an
+   amendment table and now behaves like Table 11(2): excluded from the period's
+   liability total, because an amendment states the revised figure for the
+   period it corrects rather than additional liability for this one. Safe to
+   change because no stored return has ever carried a `b2csa` block, so no
+   previously-produced summary moves. Had one existed, this would have needed a
+   cut-over period instead.
+
+6. **The materiality threshold stays a code constant.**
+   `ADVANCE_MATERIALITY_DEFAULT = 1000` in `advanceSetoffCheck.ts`. A firm-wide
+   settings store was deliberately not invented for a single number that is
+   expected to change approximately never. Revisit when a second knob appears.
+
+7. **`ata` / `txpda` shapes remain unverified against a real return.** Still
+   true, and still the one genuinely outstanding item: no stored return has ever
+   carried either block, so the parser has never met live data. Export the JSON
+   the first time a genuine Table 11(2) amendment is filed and confirm or widen
+   the parser then. Until that happens, treat the amendment tables as untested
+   rather than broken.
+
+## 11. Refunded and cancelled advances — *position*
+
+**Position — a refund is not a Table 11B adjustment.** Table 11B is for advances
+adjusted *against invoices issued*. A refund is a different event and is not
+reported there.
+
+**Position — a refund nets against the refund month's own Table 11A pool**, at
+the same rate, capped at what that pool holds. The cap exists because the portal
+rejects a negative Table 11A.
+
+**Position — whatever does not fit is forfeited permanently, and is never
+carried forward.** This is the cancellation rule, not the bounce rule: a bounce
+reversal carries forward to later months at the same rate, a cancellation does
+not.
+
+All three follow the Builder module's SETOFF path exactly, on the firm's
+instruction (September 2026) — see `BUILDER_GST_POSITIONS.md` §9 and §11 and
+`planCancellationOffset` in `utils/builderAdjustments.ts`, which
+`planRefundOffsets` mirrors. This is the one place the two modules deliberately
+agree; everywhere else they are kept apart (§1).
+
+The alternative route, where the tax is genuinely to be recovered rather than
+forfeited, is a **credit note under s.34** — outside this module, and subject to
+the 30 November window described in the builder doc.
+
+Rule 9 surfaces the offset as an instruction rather than a detected error: the
+JSON cannot be asked whether the Table 11A reduction has already been made, so
+the finding is advisory and worded as an action to confirm.
 
 ---
 
