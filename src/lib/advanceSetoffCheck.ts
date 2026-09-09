@@ -16,6 +16,7 @@ import {
   zeroTax, addTax, subTax, totalTax, periodOrdinal, fpToMmYyyy, shortToMmYyyy,
   type AdvanceLedger, type TaxAmount,
 } from './advanceBalance';
+import { fetchRegister, registerClosingByKey, reconcileRegister, receiptKey } from './advanceRegister';
 
 /**
  * Rupee value below which a difference is treated as rounding noise.
@@ -39,7 +40,9 @@ export type AdvanceFindingCode =
   | 'OVER_ADJUSTED'           // rule 3
   | 'AMENDMENT_UNRECONCILED'  // rule 4
   | 'OPEN_NO_INVOICE'         // rule 5
-  | 'STALE_ADVANCE';          // rule 6
+  | 'STALE_ADVANCE'           // rule 6
+  | 'RECEIPT_NOT_IN_REGISTER' // rule 7 — register-backed clients only
+  | 'REGISTER_DIVERGED';      // rule 8 — register-backed clients only
 
 export type AdvanceSeverity = 'hard' | 'soft';
 
@@ -355,6 +358,53 @@ export async function runAdvanceSetoffCheck(input: AdvanceCheckInput): Promise<A
           'correction is made and the 3B side is not.',
       });
     }
+  }
+
+  // Rules 7 and 8 — register-backed clients only. Both are SOFT by design:
+  // they mean the working paper and the filed return disagree, which needs a
+  // human, but the RETURN is what was filed. The register is a record we keep,
+  // not authority to block a filing on.
+  const register = await fetchRegister(input.clientId);
+  if (register.receipts.length > 0) {
+    // 7 — Table 11A reported with no receipt voucher behind it. The register
+    // is the document trail for an advance; an 11A entry with nothing behind
+    // it cannot be evidenced later.
+    const receiptKeysThisPeriod = new Set(
+      register.receipts
+        .filter((r) => r.period_month === input.periodMonth && r.supply_nature !== 'GOODS')
+        .map((r) => keyOf(receiptKey(r))),
+    );
+    draftAt.forEach((amt, key) => {
+      if (amt.taxable <= threshold) return;
+      if (receiptKeysThisPeriod.has(key)) return;
+      const label = describeKey(parseKey(key));
+      findings.push({
+        code: 'RECEIPT_NOT_IN_REGISTER',
+        severity: 'soft',
+        key, keyLabel: label,
+        title: 'Table 11A has no receipt voucher in the register',
+        detail:
+          `${label}: this return reports ${inr(amt.taxable)} of advance received, but no receipt is recorded ` +
+          'in the Advance Register for this period. Add it so the advance can be linked to the invoice that ' +
+          'later absorbs it.',
+        amountAtRisk: amt.taxable,
+      });
+    });
+
+    // 8 — the register's own closing disagrees with the filed position.
+    const regClosing = registerClosingByKey(register.receipts, register.adjustments, input.periodMonth);
+    reconcileRegister(regClosing, ledger.closingByKey, threshold).forEach((row) => {
+      findings.push({
+        code: 'REGISTER_DIVERGED',
+        severity: 'soft',
+        key: row.key, keyLabel: row.label,
+        title: 'Advance Register does not agree with the filed returns',
+        detail:
+          `${row.label}: the register shows ${inr(row.register)} open, the returns show ${inr(row.filed)} — ` +
+          `a difference of ${inr(Math.abs(row.difference))}. One of the two is missing an entry.`,
+        amountAtRisk: Math.abs(row.difference),
+      });
+    });
   }
 
   const hasHard = findings.some((f) => f.severity === 'hard');

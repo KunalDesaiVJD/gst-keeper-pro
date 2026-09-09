@@ -24,6 +24,8 @@ interface UserPermissions {
    * with no row-level grant (see canApproveAdvanceOverride).
    */
   override_advance_setoff: boolean;
+  /** Add and edit receipt vouchers and set-off legs in the Advance Register. */
+  manage_advance_register: boolean;
   // Builder module
   manage_builder_projects: boolean;
   manage_builder_units: boolean;
@@ -50,6 +52,7 @@ const DEFAULT_PERMISSIONS: UserPermissions = {
   import_excel: false,
   manual_override: false,
   override_advance_setoff: false,
+  manage_advance_register: false,
   manage_builder_projects: false,
   manage_builder_units: false,
   enter_builder_receipts: false,
@@ -94,6 +97,7 @@ interface AuthContextType {
   canManualOverride: () => boolean;
   canRequestAdvanceOverride: () => boolean;
   canApproveAdvanceOverride: () => boolean;
+  canManageAdvanceRegister: () => boolean;
   canManage2BLiberalMode: () => boolean;
   canManageBuilderProjects: () => boolean;
   canManageBuilderUnits: () => boolean;
@@ -577,6 +581,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return hasPermission('override_advance_setoff');
   }, [user, hasPermission]);
 
+  // Maintaining the register is ordinary working-paper entry, so it follows the
+  // usual pattern (manager and above implicitly, employees by grant) rather
+  // than the stricter rule the override itself needs.
+  const canManageAdvanceRegister = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission('manage_advance_register');
+  }, [user, hasPermission]);
+
   // Never row-grantable. An employee who could approve their own request would
   // turn the two-step flow back into a one-step dismissal, which is exactly
   // what the hard block exists to prevent.
@@ -672,6 +685,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canManualOverride,
         canRequestAdvanceOverride,
         canApproveAdvanceOverride,
+        canManageAdvanceRegister,
         canManage2BLiberalMode,
         canManageBuilderProjects,
         canManageBuilderUnits,
