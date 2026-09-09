@@ -266,8 +266,10 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   const txpdaTotal = advanceAmendment(g?.txpda);
   if (ataTotal.value || txpdaTotal.value) {
     const parts: string[] = [];
-    if (ataTotal.value) parts.push(`11A amended by ₹${ataTotal.value.toFixed(2)}`);
-    if (txpdaTotal.value) parts.push(`11B amended by ₹${txpdaTotal.value.toFixed(2)}`);
+    // "restated to", not "amended by": an amendment row carries the REVISED
+    // figure for the earlier period, not a delta against it.
+    if (ataTotal.value) parts.push(`11A restated to ₹${ataTotal.value.toFixed(2)}`);
+    if (txpdaTotal.value) parts.push(`11B restated to ₹${txpdaTotal.value.toFixed(2)}`);
     const periods = Array.from(new Set([...ataTotal.periods, ...txpdaTotal.periods])).join(', ');
     flags.push(
       `GSTR-1 Table 11(2) advance amendment present (${parts.join('; ')}${periods ? `, restating ${periods}` : ''}) — ` +

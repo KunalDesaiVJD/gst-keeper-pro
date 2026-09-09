@@ -38,6 +38,8 @@ import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { isBuilderGenerated as isBuilderSourced, stripInternalFields } from '@/utils/builderGstr1';
 import Gstr1ManualEntryPanel from '@/components/gstr1/Gstr1ManualEntryPanel';
+import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
+import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
 
 // gstr1_data stores period_month as the short label ("Jun-26"). The rest of
 // the app shares a single MonthContext value in "MM/YYYY" form, so convert
@@ -181,6 +183,25 @@ const GSTR1DataPage: React.FC = () => {
   const [isImporting, setIsImporting] = useState(false);
   const [activeTab, setActiveTab] = useState('b2b');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Advance set-off gate. This is the GSTR-1 call site, and the only one that
+  // can fix the draft in place — Table 11B lives in this JSON, so persistDraft
+  // writes the corrected return straight back and the check re-runs.
+  // docs/ADVANCE_SETOFF_POSITIONS.md §5.
+  const advanceGate = useAdvanceSetoffGate({
+    returnType: 'GSTR-1',
+    returnLabel: 'GSTR-1 upload',
+    persistDraft: async (nextJson) => {
+      if (!selectedClient || !selectedMonth) return;
+      const { error } = await supabase
+        .from('gstr1_data')
+        .update({ raw_json: nextJson as never, updated_at: new Date().toISOString() })
+        .eq('client_id', selectedClient)
+        .eq('period_month', mmYyyyToShort(selectedMonth));
+      if (error) throw error;
+      await fetchGSTR1Data();
+    },
+  });
 
   // "Upload to GST Portal" flow — extension-driven.
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
@@ -755,6 +776,23 @@ const GSTR1DataPage: React.FC = () => {
         'Documents Issued (Table 13) is empty. Enter it in the manual entry grid before uploading — it is never '
         + 'prefilled — or tick "NIL Return" above if this period had no activity.'
       );
+      return;
+    }
+
+    // Advance set-off. Last of the pre-flight checks and the only one that can
+    // be passed with a manager's recorded approval rather than a correction —
+    // every other failure above is unambiguous, this one has genuine
+    // exceptions (§6).
+    const advanceOk = await advanceGate.evaluate({
+      clientId: selectedClient,
+      clientName: clients.find((c) => c.id === selectedClient)?.name || '',
+      gstin: clientGstin,
+      periodMonth: selectedMonth,
+      draftJson: gstr1Data.raw_json,
+      regularSubType: clients.find((c) => c.id === selectedClient)?.regular_sub_type,
+    });
+    if (!advanceOk) {
+      setUploadDialogOpen(false);
       return;
     }
 
@@ -3114,6 +3152,8 @@ const GSTR1DataPage: React.FC = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AdvanceSetoffGateDialog {...advanceGate.dialogProps} />
     </div>
   );
 };

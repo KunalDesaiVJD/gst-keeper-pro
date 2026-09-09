@@ -81,29 +81,49 @@ with nothing to key in.
 
 ## 3. The balance formula
 
-For a client, at reporting month `M`, per `(pos, rate_pct, sply_ty)`:
-
-```
-open_advance(M) =   Σ at(period ≤ M)
-                  − Σ txpd(period ≤ M)
-                  + Σ ata(omon ≤ M)          [restatement of an earlier 11A]
-                  − Σ txpda(omon ≤ M)        [restatement of an earlier 11B]
-                  + opening_balance(as_on ≤ M)
-```
+**Position — an amendment REPLACES the figure it corrects; it is not added to
+it.** A GSTR-1 amendment row states the *revised* value in full, the same way
+Table 9A restates a whole corrected invoice. So an amendment does not
+contribute its own amount to the balance — it substitutes for the original
+month's amount at the same key.
 
 **Position — an amendment belongs to the month it corrects, not the month it is
-filed in.** `ata` and `txpda` rows carry `omon` (the original period, `MMYYYY`).
-The ledger applies them against `omon`, never against the filing period. Filing
-them into the current month would show an advance as still open in the months
+filed in.** `ata` and `txpda` carry `omon` (the original period, `MMYYYY`). The
+ledger applies them against `omon`, never against the filing period. Applying
+them to the filing month would show an advance as still open in every month
 between the original receipt and the correction, which is factually wrong and
-would fire false blocks on every intervening return.
+would fire false blocks on all of them.
+
+Together, for a client at reporting month `M`, per key `(pos, rate_pct,
+sply_ty)`:
+
+```
+effective11A(m) = latest ata where omon = m   ??  at(m)
+effective11B(m) = latest txpda where omon = m ??  txpd(m)
+
+open_advance(M) = opening_balance
+                + Σ over m ≤ M [ effective11A(m) − effective11B(m) ]
+```
+
+"Latest" is by filing period: where the same key has been amended more than
+once, the most recently filed correction is the one that stands.
+
+A useful by-product falls out of writing it this way: `effective − original` is
+the **differential**, which is exactly the figure that has to be entered in
+GSTR-3B Adjustments (§7.2). The engine computes it rather than leaving staff to
+work it out.
+
+**Position — the as-amended view applies every amendment known today**,
+regardless of which period it was filed in. It states the true current
+position, which is what the warning engine must reason about. The as-filed view
+is the historical record and is what reconciles to the portal.
 
 **Position — two views, both retained.**
 
 - **As-filed** — what was actually reported in each month's return, amendments
   sitting in the month they were filed. This is what reconciles to the portal.
-- **As-amended** — the restated position, amendments pushed back to `omon`. This
-  is the true open advance and the one the warning engine uses.
+- **As-amended** — the restated position, amendments substituted back at `omon`.
+  This is the true open advance and the one the warning engine uses.
 
 A reconciliation between the two is a report in its own right (R4), because it
 is precisely what an officer asks for in scrutiny.
@@ -197,19 +217,26 @@ permanent.*
 
 ### Who
 
-New permission key `override_advance_setoff`.
+New permission key `override_advance_setoff`, and **two** helpers on the auth
+context rather than one — raising a request and deciding it are different
+powers, and collapsing them into a single `canOverride` would quietly hand an
+employee the manager's half.
 
-| Role | Can override |
-|---|---|
-| `superadmin` | Always |
-| `gst_manager` | Always |
-| `employee` | Only if granted `override_advance_setoff` in User Control |
+| | `canRequestAdvanceOverride()` | `canApproveAdvanceOverride()` |
+|---|---|---|
+| `superadmin` | Always | Always |
+| `gst_manager` | Always | Always |
+| `employee` | Only if granted `override_advance_setoff` | **Never** — not row-grantable |
 
 **Position — the GST Manager owns this control.** They grant and revoke the key
 in User Control, and they are the approver in the two-step flow below. This
 mirrors `canManualOverride` (`AuthContext.tsx`), which restricts overriding
 portal figures to manager and above, with the employee knob restored here
 because a request-and-approve flow makes a junior grant safe.
+
+**Position — approval is never row-grantable.** An employee who could approve
+their own request would turn the two-step flow back into a one-step dismissal,
+which is precisely what the hard block exists to prevent.
 
 ### How
 
@@ -368,9 +395,9 @@ Bank guarantee expiry feeds the existing reminders module (`gstReminders.ts`).
 
 Recorded so they are not silently decided by whoever writes the code next.
 
-1. **Can an employee request an override at all**, or is the block absolute for
-   employees with only a manager able to pass it? §6 currently assumes
-   request-and-approve. Awaiting the partner's call.
+1. ~~Can an employee request an override at all?~~ **Decided (Sept 2026):** yes
+   — an employee requests with a reason, a GST Manager approves. §6 is the
+   binding description.
 2. **Which column leads in R1** — as-amended primary with as-filed as memo, or
    the reverse. Affects how the working paper reads in assessment.
 3. **Table 10 (`b2csa`) in `forTotal`** — see §7.1. Whether the existing
@@ -379,7 +406,11 @@ Recorded so they are not silently decided by whoever writes the code next.
 4. **QRMP clients.** The checker is written per month. For a quarterly filer the
    GSTR-1/IFF period and the 3B period differ, and the gate needs to reason
    about the quarter. Not yet designed.
-5. **`ata` / `txpda` key names and row shape are taken from the GSTN offline
+5. **The materiality threshold is a code constant, not a setting yet.**
+   `ADVANCE_MATERIALITY_DEFAULT` in `advanceSetoffCheck.ts`. Exposing it in
+   Settings needs a firm-wide settings store, which this app does not have —
+   deliberately not invented for one number.
+6. **`ata` / `txpda` key names and row shape are taken from the GSTN offline
    utility schema and have not yet been seen in a real import** by this app.
    Verify against the first genuine amended return before relying on the parser
    in anger, and widen the parser if the live shape differs.
