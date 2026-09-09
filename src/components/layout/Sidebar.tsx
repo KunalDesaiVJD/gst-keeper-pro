@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import {
+  HandCoins,
   LayoutDashboard,
   FileText,
   Calculator,
@@ -117,6 +118,12 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     path: '/gstr3b-adjustments',
     icon: <FileSignature className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager'],
+  },
+  {
+    label: 'Advances',
+    path: '/advances',
+    icon: <HandCoins className="h-5 w-5" />,
+    roles: ['superadmin', 'gst_manager', 'employee'],
   },
   // Deliberately its own top-level item, not folded into the "GST Working"
   // group or any other tab — the annual return draws on all of them (2B

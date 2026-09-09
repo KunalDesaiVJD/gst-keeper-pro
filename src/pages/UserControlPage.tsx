@@ -74,6 +74,11 @@ const AVAILABLE_PERMISSIONS = [
     description: 'Override opening balance on Suspended Reco and GST Receivable Reco (requires justification)',
   },
   {
+    key: 'manage_advance_register',
+    label: 'Manage Advance Register',
+    description: 'Add and edit advance receipt vouchers and their set-off against invoices',
+  },
+  {
     key: 'override_advance_setoff',
     label: 'Request Advance Set-off Override',
     description: 'Raise a request to file past a blocked advance set-off check (a GST Manager still has to approve it — this never grants approval)',

@@ -77,6 +77,32 @@ produces an invoice-wise working paper. Ship the balance layer first: it covers
 every existing non-builder client retroactively from the first imported month,
 with nothing to key in.
 
+### Register semantics
+
+**Position — one definition of "open".** `registerClosingByKey` is derived from
+`receiptPositions`, not computed separately. Two independent definitions is not
+a tidiness problem, it is a correctness one: a refunded receipt read as closed
+on the Register tab and still-open in the reconciliation, so rule 8 fired on a
+definitional difference rather than a missing entry. A check that reports
+differences it created itself trains people to ignore it.
+
+**Position — an amended leg replaces the leg it supersedes**, the same rule as
+§7 applied to the register. A leg pointed at by another leg's
+`amends_adjustment_id` drops out of every calculation rather than netting
+against it.
+
+**Position — only `INVOICE` legs are reported in Table 11B.** A refund,
+cancellation or write-back closes the receipt in the register but is not
+emitted as an adjustment of advance. Where the firm's position turns out to be
+that a refunded advance also needs an 11B, the return will be short by that
+amount and rule 8 surfaces it — which is a real finding, not an artefact. See
+§10.
+
+**Position — FIFO is the default allocation, not the rule.** Oldest advance
+absorbed first needs no judgement and ages the ledger correctly. It is a
+*suggestion* the set-off workspace pre-fills; only staff know which advance a
+given invoice actually relates to, so every line stays editable.
+
 ---
 
 ## 3. The balance formula
@@ -406,11 +432,16 @@ Recorded so they are not silently decided by whoever writes the code next.
 4. **QRMP clients.** The checker is written per month. For a quarterly filer the
    GSTR-1/IFF period and the 3B period differ, and the gate needs to reason
    about the quarter. Not yet designed.
-5. **The materiality threshold is a code constant, not a setting yet.**
+5. **How is a refunded advance reported?** The register closes the receipt on a
+   `REFUND_TO_PARTY` leg but emits no Table 11B entry for it. If the firm's
+   position is that a refund voucher does belong in 11B, `buildTxpdFromLegs`
+   needs to include that reason and the migration comment needs amending.
+   Until then rule 8 will flag the difference rather than hide it.
+6. **The materiality threshold is a code constant, not a setting yet.**
    `ADVANCE_MATERIALITY_DEFAULT` in `advanceSetoffCheck.ts`. Exposing it in
    Settings needs a firm-wide settings store, which this app does not have —
    deliberately not invented for one number.
-6. **`ata` / `txpda` key names and row shape are taken from the GSTN offline
+7. **`ata` / `txpda` key names and row shape are taken from the GSTN offline
    utility schema and have not yet been seen in a real import** by this app.
    Verify against the first genuine amended return before relying on the parser
    in anger, and widen the parser if the live shape differs.
