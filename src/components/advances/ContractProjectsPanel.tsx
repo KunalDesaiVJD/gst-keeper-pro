@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { Plus, Loader2, Trash2, Pencil, ShieldAlert, Building2 } from 'lucide-react';
+import { Plus, Loader2, Trash2, Pencil, ShieldAlert, Building2, FileDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { GST_STATE_CODES } from '@/utils/gstr1ManualBuild';
 import {
@@ -17,11 +17,15 @@ import {
   type ContractProject, type ContractRaBill, type RecoveryRule,
 } from '@/lib/contractProjects';
 import type { AdvanceReceipt, AdvanceAdjustment } from '@/lib/advanceRegister';
+import { buildProjectReport } from '@/lib/advanceReportData';
+import { projectWorkingPaperPdf } from '@/utils/advanceReportsPdf';
 
 const inr = (n: number) => (n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 interface Props {
   clientId: string;
+  clientName: string;
+  clientGstin: string;
   homeState: string;
   periodMonth: string;
   receipts: AdvanceReceipt[];
@@ -40,7 +44,8 @@ const Tile: React.FC<{ label: string; value: string; note?: string }> = ({ label
 );
 
 export const ContractProjectsPanel: React.FC<Props> = ({
-  clientId, homeState, periodMonth, receipts, adjustments, canEdit, actor, onChanged,
+  clientId, clientName, clientGstin, homeState, periodMonth, receipts, adjustments,
+  canEdit, actor, onChanged,
 }) => {
   const confirm = useConfirm();
   const [projects, setProjects] = useState<ContractProject[]>([]);
@@ -80,6 +85,24 @@ export const ContractProjectsPanel: React.FC<Props> = ({
     [project, bills, receipts, adjustments, homeState],
   );
   const bgDays = project ? bgDaysRemaining(project) : null;
+
+  // Refetches rather than printing the screen's state, for the same reason the
+  // other working papers do: a paper that disagrees with its own source is
+  // worse than none.
+  const [exporting, setExporting] = useState(false);
+  const exportWorkingPaper = async () => {
+    if (!project) return;
+    setExporting(true);
+    try {
+      const data = await buildProjectReport(clientId, project.id, homeState);
+      if (!data) { toast.error('Project not found.'); return; }
+      projectWorkingPaperPdf({ clientId, clientName, clientGstin, periodMonth }, data);
+    } catch (e) {
+      toast.error(`Could not generate the working paper: ${(e as Error).message}`);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const removeProject = async () => {
     if (!project) return;
@@ -122,8 +145,16 @@ export const ContractProjectsPanel: React.FC<Props> = ({
             </Select>
           </div>
           {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+          <div className="ml-auto flex gap-2">
+            {project && (
+              <Button size="sm" variant="outline" onClick={exportWorkingPaper} disabled={exporting}>
+                {exporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <FileDown className="h-3.5 w-3.5 mr-1.5" />}
+                Working paper
+              </Button>
+            )}
+          </div>
           {canEdit && (
-            <div className="ml-auto flex gap-2">
+            <div className="flex gap-2">
               <Button size="sm" variant="outline" onClick={() => { setEditingProject(null); setProjectDialog(true); }}>
                 <Plus className="h-3.5 w-3.5 mr-1.5" /> New project
               </Button>

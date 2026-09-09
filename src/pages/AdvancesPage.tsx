@@ -9,7 +9,7 @@ import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { HandCoins, Plus, Loader2, Trash2, Pencil, Wand2, Link2 } from 'lucide-react';
+import { HandCoins, Plus, Loader2, Trash2, Pencil, Wand2, Link2, FileDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -27,6 +27,13 @@ import {
 } from '@/lib/advanceRegister';
 import ReceiptFormDialog from '@/components/advances/ReceiptFormDialog';
 import ContractProjectsPanel from '@/components/advances/ContractProjectsPanel';
+import {
+  buildLedgerReport, buildRegisterReport, buildControlSheet, fetchOverridesForCertificate,
+} from '@/lib/advanceReportData';
+import {
+  advanceLedgerPdf, advanceAgeingPdf, setoffRegisterPdf, amendmentBridgePdf,
+  controlSheetPdf, overrideCertificatePdf,
+} from '@/utils/advanceReportsPdf';
 
 interface Client { id: string; name: string; gstin: string; regular_sub_type?: string | null }
 
@@ -250,6 +257,60 @@ const AdvancesPage: React.FC = () => {
     toast.success('Table 11B written to the GSTR-1 draft.');
   };
 
+  // ── Working papers (docs/ADVANCE_SETOFF_POSITIONS.md §8) ────────────────
+  // Each one refetches rather than printing whatever the screen happens to be
+  // showing: a working paper that quietly disagrees with the ledger it was
+  // exported from is worse than no working paper.
+  const [exporting, setExporting] = useState<string | null>(null);
+
+  const reportCtx = useMemo(() => ({
+    clientId: selectedClient || '',
+    clientName: selected?.name || '',
+    clientGstin: selected?.gstin || '',
+    periodMonth: selectedMonth,
+  }), [selectedClient, selected?.name, selected?.gstin, selectedMonth]);
+
+  const runExport = async (name: string, fn: () => Promise<void>) => {
+    setExporting(name);
+    try {
+      await fn();
+    } catch (e) {
+      toast.error(`Could not generate the report: ${(e as Error).message}`);
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const exportLedger = () => runExport('ledger', async () => {
+    advanceLedgerPdf(reportCtx, await buildLedgerReport(reportCtx));
+  });
+  const exportAgeing = () => runExport('ageing', async () => {
+    advanceAgeingPdf(reportCtx, await buildLedgerReport(reportCtx));
+  });
+  const exportBridge = () => runExport('bridge', async () => {
+    const { ledger: l } = await buildLedgerReport(reportCtx);
+    amendmentBridgePdf(reportCtx, l);
+  });
+  const exportCertificate = () => runExport('certificate', async () => {
+    overrideCertificatePdf(reportCtx, await fetchOverridesForCertificate(reportCtx.clientId, reportCtx.periodMonth));
+  });
+  const exportRegister = () => runExport('register', async () => {
+    const { ledger: l } = await buildLedgerReport(reportCtx);
+    setoffRegisterPdf(reportCtx, await buildRegisterReport(reportCtx, l));
+  });
+  const exportControlSheet = () => runExport('control', async () => {
+    const rows = await buildControlSheet(selectedMonth);
+    if (rows.length === 0) { toast.error('No client is carrying an open advance for this period.'); return; }
+    controlSheetPdf(selectedMonth, rows);
+  });
+
+  const ExportButton: React.FC<{ id: string; label: string; onClick: () => void; disabled?: boolean }> = ({ id, label, onClick, disabled }) => (
+    <Button variant="outline" size="sm" onClick={onClick} disabled={disabled || exporting !== null}>
+      {exporting === id ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <FileDown className="h-3.5 w-3.5 mr-1.5" />}
+      {label}
+    </Button>
+  );
+
   const onSaveReceipt = async (values: Partial<AdvanceReceipt>) => {
     try {
       await saveReceipt(
@@ -356,6 +417,17 @@ const AdvancesPage: React.FC = () => {
           <TabsContent value="ledger">
             <Card>
               <CardContent className="p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <p className="text-xs text-muted-foreground">
+                    Working papers print as at {selectedMonth}, in the firm&apos;s house style, for filing with the return.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <ExportButton id="ledger" label="Ledger" onClick={exportLedger} disabled={!selectedClient} />
+                    <ExportButton id="ageing" label="Ageing" onClick={exportAgeing} disabled={!selectedClient} />
+                    <ExportButton id="bridge" label="Amendment bridge" onClick={exportBridge} disabled={!selectedClient} />
+                    <ExportButton id="certificate" label="Exception certificate" onClick={exportCertificate} disabled={!selectedClient} />
+                  </div>
+                </div>
                 {!ledger || ledger.months.length === 0 ? (
                   <TableEmptyState title="No advance activity in the imported returns for this client." />
                 ) : (
@@ -422,11 +494,14 @@ const AdvancesPage: React.FC = () => {
                     Receipt vouchers and the invoices that absorbed them. GSTR-1 Table 11A carries only place of
                     supply and rate, so this is the only place the party and invoice behind an advance are recorded.
                   </p>
-                  {canEdit && selectedClient && (
-                    <Button size="sm" onClick={() => { setEditing(null); setReceiptDialogOpen(true); }}>
-                      <Plus className="h-3.5 w-3.5 mr-1.5" /> Add receipt
-                    </Button>
-                  )}
+                  <div className="flex gap-2 shrink-0">
+                    <ExportButton id="register" label="Set-off register" onClick={exportRegister} disabled={!selectedClient} />
+                    {canEdit && selectedClient && (
+                      <Button size="sm" onClick={() => { setEditing(null); setReceiptDialogOpen(true); }}>
+                        <Plus className="h-3.5 w-3.5 mr-1.5" /> Add receipt
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
                 {reconciliation.length > 0 && (
@@ -584,6 +659,8 @@ const AdvancesPage: React.FC = () => {
             <TabsContent value="projects">
               <ContractProjectsPanel
                 clientId={selectedClient || ''}
+                clientName={selected?.name || ''}
+                clientGstin={selected?.gstin || ''}
                 homeState={homeState}
                 periodMonth={selectedMonth}
                 receipts={register.receipts}
@@ -603,9 +680,12 @@ const AdvancesPage: React.FC = () => {
                   <p className="text-xs text-muted-foreground">
                     Every client carrying an open advance as at {selectedMonth}, derived from their filed returns.
                   </p>
-                  <Button variant="outline" size="sm" onClick={loadBoard} disabled={boardLoading}>
-                    {boardLoading && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />} Refresh
-                  </Button>
+                  <div className="flex gap-2">
+                    <ExportButton id="control" label="Control sheet" onClick={exportControlSheet} />
+                    <Button variant="outline" size="sm" onClick={loadBoard} disabled={boardLoading}>
+                      {boardLoading && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />} Refresh
+                    </Button>
+                  </div>
                 </div>
                 {boardLoading ? (
                   <p className="text-sm text-muted-foreground py-6 text-center">

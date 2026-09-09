@@ -387,9 +387,19 @@ existing builder output is byte-identical.
 | R6 | Pre-Filing Exception & Override Certificate | Per client-period: findings, action taken, requester, approver, reason, timestamp, ARN |
 | R7 | Project-wise Advance & Recovery Working Paper | Contract value / Billed / Advance / Recovered / Balance / Retention / Open GST |
 
-All seven register in the Reports Hub under a new `advances` category
-(`reportRegistry.ts`, `reportsCatalog.ts`) so they archive the same way every
-other report does.
+All seven are exported from the **Advances** page — the ledger papers and the
+certificate from the Ledger tab, the register from the Register tab, the control
+sheet from All clients, and the project paper from the Projects tab.
+
+They are **not** registered in the Reports Hub. The Hub renders an on-screen
+`ReportTable` and exports from that, which is a different artefact from a
+typographic working paper; wiring these through it would either duplicate every
+report or flatten them into grids. Registering them there is a reasonable
+follow-up if the firm would rather have one place to look, but it is not what
+"generated in PDF for future save and tracking" asked for.
+
+R1 states figures **as amended**, with the amount originally filed alongside in
+its own column (§10 item 2).
 
 R6 is the one that protects the firm: it turns "someone clicked override" into a
 signed working paper naming who decided what, and why.
