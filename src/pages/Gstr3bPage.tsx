@@ -27,8 +27,10 @@ import { exportGstr3bToPDF } from '@/utils/gstr3bPdf';
 import { computeSuspendedRecoDiff } from '@/lib/suspendedRecoCalc';
 import type { RecoDiffResult } from '@/lib/suspendedRecoCalc';
 import { computeGstReceivableRecoDiff } from '@/lib/gstReceivableRecoCalc';
+import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
+import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
 
-interface Client { id: string; name: string; gstin: string; }
+interface Client { id: string; name: string; gstin: string; regular_sub_type?: string | null }
 
 interface Gstr3bPushVersion {
   id: string;
@@ -250,7 +252,7 @@ const Gstr3bPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    supabase.from('clients').select('id, name, gstin').order('name').then(({ data }) => setClients((data || []) as Client[]));
+    supabase.from('clients').select('id, name, gstin, regular_sub_type').order('name').then(({ data }) => setClients((data || []) as Client[]));
   }, []);
 
   const selectedClientData = clients.find((c) => c.id === selectedClient);
@@ -331,7 +333,16 @@ const Gstr3bPage: React.FC = () => {
     });
   };
 
-  const handlePush = () => {
+  // Advance set-off gate — the GSTR-3B call site. 3.1(a) is derived from the
+  // GSTR-1 JSON (buildGstr3bJson), so a missing Table 11B understates this
+  // return exactly as it does GSTR-1, and the same check has to stand here.
+  // No persistDraft: the correction belongs on the GSTR-1 page, not this one.
+  const advanceGate = useAdvanceSetoffGate({
+    returnType: 'GSTR-3B',
+    returnLabel: 'GSTR-3B push',
+  });
+
+  const handlePush = async () => {
     if (!result || !selectedClient || !selectedMonth) return;
     if (!extReady) {
       toast.error('Install / enable the GST Keeper browser extension to push from this page.');
@@ -345,6 +356,24 @@ const Gstr3bPage: React.FC = () => {
       toast.error('Resolve the Suspended Reco / GST Receivable Reco difference before pushing to the portal.');
       return;
     }
+    // The check reads the GSTR-1 JSON this 3B was built from — that is where
+    // Table 11A/11B live.
+    const { data: g1 } = await supabase
+      .from('gstr1_data')
+      .select('raw_json')
+      .eq('client_id', selectedClient)
+      .eq('period_month', toShort(selectedMonth))
+      .maybeSingle();
+    const advanceOk = await advanceGate.evaluate({
+      clientId: selectedClient,
+      clientName: selectedClientData?.name || '',
+      gstin: selectedClientData.gstin,
+      periodMonth: selectedMonth,
+      draftJson: (g1 as { raw_json?: unknown } | null)?.raw_json ?? null,
+      regularSubType: selectedClientData?.regular_sub_type,
+    });
+    if (!advanceOk) return;
+
     setIsPushing(true);
     setPushResult(null);
     window.postMessage(
@@ -802,6 +831,8 @@ const Gstr3bPage: React.FC = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AdvanceSetoffGateDialog {...advanceGate.dialogProps} />
     </div>
   );
 };

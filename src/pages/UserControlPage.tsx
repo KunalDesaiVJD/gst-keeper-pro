@@ -74,6 +74,11 @@ const AVAILABLE_PERMISSIONS = [
     description: 'Override opening balance on Suspended Reco and GST Receivable Reco (requires justification)',
   },
   {
+    key: 'override_advance_setoff',
+    label: 'Request Advance Set-off Override',
+    description: 'Raise a request to file past a blocked advance set-off check (a GST Manager still has to approve it — this never grants approval)',
+  },
+  {
     key: 'manage_builder_projects',
     label: 'Manage Builder Projects',
     description: 'Create and edit builder projects, blocks, and client-level GST elections',

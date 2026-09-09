@@ -18,6 +18,12 @@ interface UserPermissions {
   edit_update_sheet: boolean;
   import_excel: boolean;
   manual_override: boolean;
+  /**
+   * Lets an EMPLOYEE raise an advance set-off override request. It never
+   * grants the power to approve one — approval is gst_manager/superadmin only,
+   * with no row-level grant (see canApproveAdvanceOverride).
+   */
+  override_advance_setoff: boolean;
   // Builder module
   manage_builder_projects: boolean;
   manage_builder_units: boolean;
@@ -43,6 +49,7 @@ const DEFAULT_PERMISSIONS: UserPermissions = {
   edit_update_sheet: false,
   import_excel: false,
   manual_override: false,
+  override_advance_setoff: false,
   manage_builder_projects: false,
   manage_builder_units: false,
   enter_builder_receipts: false,
@@ -85,6 +92,8 @@ interface AuthContextType {
   canEditUpdateSheet: () => boolean;
   canImportExcel: () => boolean;
   canManualOverride: () => boolean;
+  canRequestAdvanceOverride: () => boolean;
+  canApproveAdvanceOverride: () => boolean;
   canManage2BLiberalMode: () => boolean;
   canManageBuilderProjects: () => boolean;
   canManageBuilderUnits: () => boolean;
@@ -558,6 +567,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return user.role === 'superadmin' || user.role === 'gst_manager';
   }, [user]);
 
+  // ── Advance set-off gate (docs/ADVANCE_SETOFF_POSITIONS.md §6) ───────────
+  // Two separate powers, deliberately not one helper: raising a request and
+  // deciding it are the whole point of the control. An employee may ask, with
+  // a reason; only a manager may let the return out.
+  const canRequestAdvanceOverride = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission('override_advance_setoff');
+  }, [user, hasPermission]);
+
+  // Never row-grantable. An employee who could approve their own request would
+  // turn the two-step flow back into a one-step dismissal, which is exactly
+  // what the hard block exists to prevent.
+  const canApproveAdvanceOverride = useCallback((): boolean => {
+    if (!user) return false;
+    return user.role === 'superadmin' || user.role === 'gst_manager';
+  }, [user]);
+
   // Switching a client between Strict (Import 2B only) and Liberal (directly
   // editable) 2B Reconciliation changes what the whole team trusts that
   // client's sheet to mean — superadmin/gst_manager only, no employee grant.
@@ -643,6 +670,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canEditUpdateSheet,
         canImportExcel,
         canManualOverride,
+        canRequestAdvanceOverride,
+        canApproveAdvanceOverride,
         canManage2BLiberalMode,
         canManageBuilderProjects,
         canManageBuilderUnits,

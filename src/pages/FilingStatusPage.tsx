@@ -23,6 +23,8 @@ import { generateFilingRecords } from '@/lib/filingRecords';
 import { MultiSelectPopover } from '@/components/ui/multi-select-popover';
 import { isFsiConsentBlocked } from '@/lib/builderFsiData';
 import { isBuAgreementConfirmationBlocked } from '@/lib/builderAgreementConfirmData';
+import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
+import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
 
 // Normalize an accountant name by stripping the trailing "/<number>" reference
 // (e.g. "PUNITBHAI/16" / "PAVANBHAI /66" / "PRIYA,MUKESHBHAI/ 28") so the same
@@ -76,6 +78,7 @@ interface Client {
   email: string | null;
   assigned_accountant: string | null;
   registration_type: string;
+  regular_sub_type?: string | null;
   selected_returns: string[] | null;
   registration_date: string;
   cancellation_date?: string | null;
@@ -337,7 +340,7 @@ const FilingStatusPage: React.FC = () => {
   const fetchClients = useCallback(async () => {
     const { data, error } = await supabase
       .from('clients')
-      .select('id, name, gstin, mobile, email, assigned_accountant, registration_type, selected_returns, registration_date, cancellation_date, registration_cancellation_date, inactive_at_hand, target_date_group1, target_date_group2')
+      .select('id, name, gstin, mobile, email, assigned_accountant, registration_type, regular_sub_type, selected_returns, registration_date, cancellation_date, registration_cancellation_date, inactive_at_hand, target_date_group1, target_date_group2')
       .order('name');
     
     if (error) {
@@ -652,6 +655,16 @@ const FilingStatusPage: React.FC = () => {
     return data?.status === 'Filed';
   };
 
+  // Advance set-off gate — the Filing Status call site. This one is the
+  // backstop: a return can reach the portal by routes this app doesn't drive,
+  // but it cannot be RECORDED as filed here without the same check passing.
+  // No persistDraft — Table 11B lives in the GSTR-1 JSON, so the correction
+  // belongs on that page (docs/ADVANCE_SETOFF_POSITIONS.md §5).
+  const advanceGate = useAdvanceSetoffGate({
+    returnType: 'FILING_STATUS',
+    returnLabel: 'marking Filed',
+  });
+
   const handleStatusChange = async (record: FilingRecord, newStatus: FilingStatusType, localArn?: string) => {
     const isNewRecord = record.id.startsWith('temp-');
     
@@ -849,7 +862,34 @@ const FilingStatusPage: React.FC = () => {
         // Continue with filing if there's an error fetching suspended reco data
       }
     }
-    
+
+    // Advance set-off. Outward returns only — those are the ones whose
+    // liability a missed Table 11B actually misstates. Last of the pre-filing
+    // checks, and the only one that can be passed with a manager's recorded
+    // approval rather than a correction.
+    if (
+      newStatus === 'Filed'
+      && ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-3B', 'GSTR-3B (Q)'].includes(record.return_type)
+    ) {
+      const advClient = clients.find((c) => c.id === record.client_id);
+      const advPeriod = record.period_month || selectedMonth;
+      const { data: advG1 } = await supabase
+        .from('gstr1_data')
+        .select('raw_json')
+        .eq('client_id', record.client_id)
+        .eq('period_month', toShortMonth(advPeriod))
+        .maybeSingle();
+      const advanceOk = await advanceGate.evaluate({
+        clientId: record.client_id,
+        clientName: advClient?.name || record.clientName || '',
+        gstin: advClient?.gstin || '',
+        periodMonth: advPeriod,
+        draftJson: (advG1 as { raw_json?: unknown } | null)?.raw_json ?? null,
+        regularSubType: advClient?.regular_sub_type,
+      });
+      if (!advanceOk) return;
+    }
+
     try {
       if (isNewRecord) {
         // Insert new record with audit info
@@ -1958,6 +1998,8 @@ const FilingStatusPage: React.FC = () => {
           </Tabs>
         </CardContent>
       </Card>
+
+      <AdvanceSetoffGateDialog {...advanceGate.dialogProps} />
     </div>
   );
 };
