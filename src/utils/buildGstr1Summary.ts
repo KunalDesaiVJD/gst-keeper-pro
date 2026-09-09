@@ -344,7 +344,18 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
   // Liability-bearing sections only, for the grand total (HSN is a memo of the
   // above, Documents carries no value, so both are excluded to avoid double
   // counting).
-  const forTotal = [s4A, s4B, s5, s6A, s6B, s6C, s7, s10, s9BR, s9BUR, s11A];
+  //
+  // AMENDMENT tables are excluded too — Table 10 (b2csa) alongside Table 11(2)
+  // (ata/txpda). An amendment states the revised figure for the period it
+  // corrects, not additional liability for this one, so adding it here
+  // double-counts against the month it restates.
+  //
+  // s10 used to sit inside this total, which made the two amendment families
+  // behave differently for no stated reason. Changed Sept 2026 once it was
+  // confirmed that no stored return has ever carried a b2csa block, so no
+  // previously-produced summary moves. See docs/ADVANCE_SETOFF_POSITIONS.md
+  // §7.1 and §10.
+  const forTotal = [s4A, s4B, s5, s6A, s6B, s6C, s7, s9BR, s9BUR, s11A];
   const totals = forTotal.reduce(
     (t, a) => ({
       value: t.value + a.value,

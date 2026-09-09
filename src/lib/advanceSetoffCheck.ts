@@ -16,7 +16,11 @@ import {
   zeroTax, addTax, subTax, totalTax, periodOrdinal, fpToMmYyyy, shortToMmYyyy,
   type AdvanceLedger, type TaxAmount,
 } from './advanceBalance';
-import { fetchRegister, registerClosingByKey, reconcileRegister, receiptKey } from './advanceRegister';
+import {
+  fetchRegister, registerClosingByKey, reconcileRegister, receiptKey, planRefundOffsets,
+} from './advanceRegister';
+import { resolveSchemeForPeriod } from '@/utils/schemeResolver';
+import { isQuarterEndMonth } from '@/types';
 
 /**
  * Rupee value below which a difference is treated as rounding noise.
@@ -42,7 +46,8 @@ export type AdvanceFindingCode =
   | 'OPEN_NO_INVOICE'         // rule 5
   | 'STALE_ADVANCE'           // rule 6
   | 'RECEIPT_NOT_IN_REGISTER' // rule 7 — register-backed clients only
-  | 'REGISTER_DIVERGED';      // rule 8 — register-backed clients only
+  | 'REGISTER_DIVERGED'       // rule 8 — register-backed clients only
+  | 'REFUND_NEEDS_11A_OFFSET';// rule 9 — register-backed clients only
 
 export type AdvanceSeverity = 'hard' | 'soft';
 
@@ -179,7 +184,40 @@ export interface AdvanceCheckInput {
   draftJson: any; // eslint-disable-line @typescript-eslint/no-explicit-any
   /** clients.regular_sub_type — 'Builder' short-circuits the whole check. */
   regularSubType?: string | null;
+  /**
+   * clients.registration_type. Used to spot a QRMP client filing an OPTIONAL
+   * IFF month, where a hard block would be definitionally wrong — see below.
+   */
+  registrationType?: string | null;
   materialityThreshold?: number;
+}
+
+/**
+ * Under QRMP the invoices for months 1 and 2 of a quarter go out in the IFF,
+ * but Table 11B lives only in the quarter-end GSTR-1. So an advance genuinely
+ * cannot be set off in an optional IFF month, and a hard block there would fire
+ * on a return that is correct as filed.
+ *
+ * Findings are still RAISED — staff should see the advance coming — but every
+ * one is downgraded to advisory. The full gate stands at the quarterly GSTR-1
+ * and GSTR-3B (Q), which is where Table 11B actually is.
+ */
+async function isOptionalIffPeriod(
+  clientId: string,
+  periodMonth: string,
+  registrationType?: string | null,
+): Promise<boolean> {
+  if (!registrationType) return false;
+  try {
+    const scheme = await resolveSchemeForPeriod(clientId, periodMonth, registrationType as never);
+    if (String(scheme) !== 'IFF') return false;
+    const month = Number((periodMonth || '').split('/')[0]);
+    return !!month && !isQuarterEndMonth(month);
+  } catch {
+    // Unknown scheme must not silently relax the gate — fail towards the
+    // stricter behaviour, which is the full check.
+    return false;
+  }
 }
 
 export async function runAdvanceSetoffCheck(input: AdvanceCheckInput): Promise<AdvanceCheckResult> {
@@ -391,6 +429,33 @@ export async function runAdvanceSetoffCheck(input: AdvanceCheckInput): Promise<A
       });
     });
 
+    // 9 — a refund recorded this period nets against THIS period's Table 11A,
+    // not Table 11B (§ refund treatment). Raised as an instruction rather than
+    // a detected error: whether the reduction has already been made to the
+    // draft is not something the JSON can be asked, so this stays advisory and
+    // is worded as an action to confirm.
+    planRefundOffsets(register.receipts, register.adjustments, input.periodMonth, new Map(
+      Array.from(draftAt.entries()).map(([k, v]) => [k, v.taxable]),
+    )).forEach((plan) => {
+      if (plan.refundTotal <= threshold) return;
+      const label = describeKey(parseKey(plan.key));
+      findings.push({
+        code: 'REFUND_NEEDS_11A_OFFSET',
+        severity: 'soft',
+        key: plan.key, keyLabel: label,
+        title: 'Refunded advance nets against Table 11A, not 11B',
+        detail:
+          `${label}: ${inr(plan.refundTotal)} of advance was refunded or written back this period. ` +
+          `Reduce Table 11A by ${inr(plan.offsetAmount)} against this month's pool of ` +
+          `${inr(plan.availableInPeriod)}` +
+          (plan.forfeitedAmount > threshold
+            ? `; ${inr(plan.forfeitedAmount)} exceeds the pool and is forfeited — the portal rejects a negative Table 11A. Recover it by credit note under s.34 if that route is open.`
+            : '.') +
+          ' It does not belong in Table 11B.',
+        amountAtRisk: plan.refundTotal,
+      });
+    });
+
     // 8 — the register's own closing disagrees with the filed position.
     const regClosing = registerClosingByKey(register.receipts, register.adjustments, input.periodMonth);
     reconcileRegister(regClosing, ledger.closingByKey, threshold).forEach((row) => {
@@ -407,11 +472,26 @@ export async function runAdvanceSetoffCheck(input: AdvanceCheckInput): Promise<A
     });
   }
 
-  const hasHard = findings.some((f) => f.severity === 'hard');
+  // QRMP: on an optional IFF month every finding drops to advisory. Done here,
+  // once, rather than at each rule — a rule that has to remember to check the
+  // scheme is a rule that will one day forget.
+  const optionalIff = await isOptionalIffPeriod(input.clientId, input.periodMonth, input.registrationType);
+  const finalFindings = optionalIff
+    ? findings.map((f) => (f.severity === 'hard'
+      ? {
+        ...f,
+        severity: 'soft' as AdvanceSeverity,
+        detail: `${f.detail} (Advisory only: this is an optional IFF month under QRMP — Table 11B is reported in the quarter-end GSTR-1, so the set-off cannot be made here.)`,
+      }
+      : f))
+    : findings;
+
+  const findingsOut = finalFindings;
+  const hasHard = findingsOut.some((f) => f.severity === 'hard');
   return {
-    severity: hasHard ? 'hard' : findings.length > 0 ? 'soft' : 'ok',
-    findings,
-    fingerprint: fingerprintOf(findings),
+    severity: hasHard ? 'hard' : findingsOut.length > 0 ? 'soft' : 'ok',
+    findings: findingsOut,
+    fingerprint: fingerprintOf(findingsOut),
     ledger,
     openTotal: ledger.closingTotal,
   };

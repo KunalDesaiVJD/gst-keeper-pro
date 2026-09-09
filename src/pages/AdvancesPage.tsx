@@ -375,8 +375,21 @@ const AdvancesPage: React.FC = () => {
                         <TableRow key={m.period}>
                           <TableCell className="font-medium">{m.period}</TableCell>
                           <TableCell className="text-right tabular-nums">{inr(m.opening.taxable)}</TableCell>
-                          <TableCell className="text-right tabular-nums">{inr(m.effective.received.taxable)}</TableCell>
-                          <TableCell className="text-right tabular-nums">{inr(m.effective.adjusted.taxable)}</TableCell>
+                          {/* As-AMENDED is the primary figure (firm's election,
+                              Sept 2026); the as-filed number sits under it as a
+                              memo so the paper still ties to the portal. */}
+                          <TableCell className="text-right tabular-nums">
+                            {inr(m.effective.received.taxable)}
+                            {m.amended && Math.abs(m.effective.received.taxable - m.filed.received.taxable) > 0.5 && (
+                              <div className="text-[11px] text-muted-foreground font-normal">as filed {inr(m.filed.received.taxable)}</div>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {inr(m.effective.adjusted.taxable)}
+                            {m.amended && Math.abs(m.effective.adjusted.taxable - m.filed.adjusted.taxable) > 0.5 && (
+                              <div className="text-[11px] text-muted-foreground font-normal">as filed {inr(m.filed.adjusted.taxable)}</div>
+                            )}
+                          </TableCell>
                           <TableCell className="text-right tabular-nums font-semibold">{inr(m.closing.taxable)}</TableCell>
                           <TableCell className="text-xs text-muted-foreground">
                             {m.amended
@@ -390,9 +403,10 @@ const AdvancesPage: React.FC = () => {
                 )}
                 {ledger?.hasAmendments && (
                   <p className="text-xs text-muted-foreground mt-3">
-                    Amended rows show the <strong>restated</strong> figure — a Table 11(2) amendment replaces the
-                    month it corrects rather than adding to it. The differential in brackets is what belongs in
-                    GSTR-3B Adjustments for that correction.
+                    Amended rows lead with the <strong>restated</strong> figure, with the amount originally
+                    filed shown underneath as a memo — a Table 11(2) amendment replaces the month it corrects
+                    rather than adding to it. The differential in brackets is what belongs in GSTR-3B
+                    Adjustments for that correction.
                   </p>
                 )}
               </CardContent>

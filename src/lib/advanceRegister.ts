@@ -281,6 +281,77 @@ export function suggestAllocation(
   return out;
 }
 
+export interface RefundOffsetPlan {
+  key: string;
+  pos: string;
+  ratePct: number;
+  splyTy: string;
+  /** Refund legs recorded in this period, before capping. */
+  refundTotal: number;
+  /** Table 11A reported in the draft for this key, the pool to net against. */
+  availableInPeriod: number;
+  /** What can actually be netted off — min(refund, available). */
+  offsetAmount: number;
+  /** Refund beyond the pool. Forfeited permanently, NOT carried forward. */
+  forfeitedAmount: number;
+}
+
+/**
+ * How a refunded (or cancelled / written-back) advance is reported.
+ *
+ * POSITION — mirrors the Builder module's SETOFF path exactly, on the firm's
+ * instruction (Sept 2026). See docs/BUILDER_GST_POSITIONS.md §9 and §11 and
+ * lib/builderCancellationData.ts, whose planCancellationOffset this follows.
+ *
+ *   A refund is NOT a Table 11B adjustment. Table 11B is for advances adjusted
+ *   against invoices issued; a refund is a different event.
+ *
+ *   It nets against the REFUND MONTH'S OWN Table 11A pool at the same rate,
+ *   capped at what that pool holds, because the portal rejects a negative
+ *   Table 11A.
+ *
+ *   Whatever does not fit is FORFEITED PERMANENTLY and never carried forward.
+ *   This is the cancellation rule, not the bounce rule — a bounce reversal
+ *   carries forward, a cancellation does not (BUILDER_GST_POSITIONS §9).
+ *
+ * The alternative route, where the tax is genuinely to be recovered rather
+ * than forfeited, is a credit note under s.34 — outside this module.
+ */
+export function planRefundOffsets(
+  receipts: AdvanceReceipt[],
+  adjustments: AdvanceAdjustment[],
+  periodMonth: string,
+  availableAtByKey: Map<string, number>,
+): RefundOffsetPlan[] {
+  const byId = new Map(receipts.map((r) => [r.id, r]));
+  const refundByKey = new Map<string, number>();
+
+  effectiveLegs(adjustments).forEach((a) => {
+    if (a.reason === 'INVOICE') return;
+    if (a.period_month !== periodMonth) return;
+    const r = byId.get(a.receipt_id);
+    if (!r || r.supply_nature === 'GOODS') return;
+    const k = keyOf(receiptKey(r));
+    refundByKey.set(k, r2((refundByKey.get(k) || 0) + num(a.taxable_value_adjusted)));
+  });
+
+  return Array.from(refundByKey.entries()).map(([key, refundTotal]) => {
+    const k = parseKey(key);
+    const availableInPeriod = Math.max(0, r2(availableAtByKey.get(key) || 0));
+    const offsetAmount = r2(Math.min(refundTotal, availableInPeriod));
+    return {
+      key,
+      pos: k.pos,
+      ratePct: k.ratePct,
+      splyTy: k.splyTy,
+      refundTotal,
+      availableInPeriod,
+      offsetAmount,
+      forfeitedAmount: r2(refundTotal - offsetAmount),
+    };
+  }).sort((a, b) => b.refundTotal - a.refundTotal);
+}
+
 /**
  * Table 11B groups for a period, built from the register's own INVOICE legs.
  * Same shape assembleGstr1Json emits, so it can be written straight into a

@@ -886,6 +886,7 @@ const FilingStatusPage: React.FC = () => {
         periodMonth: advPeriod,
         draftJson: (advG1 as { raw_json?: unknown } | null)?.raw_json ?? null,
         regularSubType: advClient?.regular_sub_type,
+        registrationType: advClient?.registration_type,
       });
       if (!advanceOk) return;
     }
