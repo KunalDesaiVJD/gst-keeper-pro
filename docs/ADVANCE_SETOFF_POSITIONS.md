@@ -410,10 +410,32 @@ finding, not a rounding difference.
 **Position — place of supply is inherited from the project, not the client.**
 Works contract on immovable property takes POS from the location of the property
 (s.12(3)). Carrying `pos_state` on the project and inheriting it onto receipts
-and invoices removes the IGST/CGST misclassification at source, which is a
+and RA bills removes the IGST/CGST misclassification at source, which is a
 second, independent error class this layer eliminates for free.
 
-Bank guarantee expiry feeds the existing reminders module (`gstReminders.ts`).
+**Position — RA bills are stored, not derived.** The GSTR-1 JSON carries no
+project reference, so two projects for the same client billed in the same month
+are indistinguishable in the return. Without stored bills there is no
+per-project working paper and nothing to compute an expected recovery against.
+
+**Position — the schedule walks bills in `bill_no` order, not by date.** That is
+the order recovery actually happens in; sorting by date would reorder a bill
+raised late for an earlier period and silently shift the whole schedule. A bill
+whose period precedes the advance is marked `beforeAdvance` and recovers
+nothing — it stays in the working paper rather than being dropped, so the
+billing history remains complete.
+
+**Position — deleting a project never deletes its advance receipts.** The FK is
+`ON DELETE SET NULL`, not `CASCADE`. Those receipts are the evidence for tax
+already paid in Table 11A and they outlive the project master. RA bills do
+cascade — they have no meaning outside their project.
+
+**Bank guarantee expiry is an in-page banner, not a reminder.** The project
+shows a warning under 60 days and after expiry, whenever advance is still
+unrecovered. Wiring it into `gstReminders.ts` was *not* done: that module is an
+email-confirmation queue tied to filing events, not a general reminder store, so
+it would need its own template and trigger. Recorded here rather than left as an
+unfulfilled claim.
 
 ---
 

@@ -26,6 +26,7 @@ import {
   type AdvanceReceipt, type ReceiptPosition, type RegisterData,
 } from '@/lib/advanceRegister';
 import ReceiptFormDialog from '@/components/advances/ReceiptFormDialog';
+import ContractProjectsPanel from '@/components/advances/ContractProjectsPanel';
 
 interface Client { id: string; name: string; gstin: string; regular_sub_type?: string | null }
 
@@ -63,6 +64,10 @@ const AdvancesPage: React.FC = () => {
 
   const selected = clients.find((c) => c.id === selectedClient) || null;
   const isBuilder = selected?.regular_sub_type === 'Builder';
+  // The projects layer is unlocked by the client's sub-type, the same way the
+  // Builder module is — a contractor's advance is recovered per project, so
+  // without one there is nothing to scope the recovery schedule to.
+  const isContractor = selected?.regular_sub_type === 'Contractor';
   const homeState = (selected?.gstin || '').slice(0, 2);
 
   const monthOptions = useMemo(() => {
@@ -343,6 +348,7 @@ const AdvancesPage: React.FC = () => {
             <TabsTrigger value="ledger">Ledger</TabsTrigger>
             <TabsTrigger value="register">Register</TabsTrigger>
             <TabsTrigger value="setoff">Set-off</TabsTrigger>
+            {isContractor && <TabsTrigger value="projects">Projects</TabsTrigger>}
             <TabsTrigger value="board" onClick={() => { if (board.length === 0) loadBoard(); }}>All clients</TabsTrigger>
           </TabsList>
 
@@ -558,6 +564,22 @@ const AdvancesPage: React.FC = () => {
               </CardContent>
             </Card>
           </TabsContent>
+
+          {/* ---------------- Projects (contractors) ---------------- */}
+          {isContractor && (
+            <TabsContent value="projects">
+              <ContractProjectsPanel
+                clientId={selectedClient || ''}
+                homeState={homeState}
+                periodMonth={selectedMonth}
+                receipts={register.receipts}
+                adjustments={register.adjustments}
+                canEdit={canEdit}
+                actor={{ id: user?.id || null, name: user?.firstName || user?.email || 'Unknown' }}
+                onChanged={load}
+              />
+            </TabsContent>
+          )}
 
           {/* ---------------- All clients ---------------- */}
           <TabsContent value="board">

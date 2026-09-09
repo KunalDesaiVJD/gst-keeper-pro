@@ -51,7 +51,7 @@ const AddClientPage: React.FC = () => {
     gstUserId: '', // GST Portal User ID
     gstPassword: '', // GST Portal Password
     // Builder bifurcation for Regular type
-    regularSubType: '' as '' | 'Builder' | 'Normal',
+    regularSubType: '' as '' | 'Builder' | 'Contractor' | 'Normal',
     builderItcType: '' as '' | 'NO_ITC' | 'CLAIM_ITC' | 'PARTIAL_ITC',
     commercialArea: '',
     residentialArea: '',
@@ -172,7 +172,7 @@ const AddClientPage: React.FC = () => {
 
     // Validate builder fields for Regular type
     if (formData.registrationType === 'Regular' && !formData.regularSubType) {
-      newErrors.regularSubType = 'Please select Builder or Normal';
+      newErrors.regularSubType = 'Please select Builder, Contractor or Normal';
     }
 
     if (formData.regularSubType === 'Builder' && !formData.builderItcType) {
@@ -424,13 +424,13 @@ const AddClientPage: React.FC = () => {
                     value={formData.regularSubType}
                     onValueChange={(value) => setFormData(prev => ({
                       ...prev,
-                      regularSubType: value as 'Builder' | 'Normal',
+                      regularSubType: value as 'Builder' | 'Contractor' | 'Normal',
                       builderItcType: '',
                       commercialArea: '',
                       residentialArea: ''
                     }))}
                   >
-                    {(['Builder', 'Normal'] as const).map((option) => (
+                    {(['Builder', 'Contractor', 'Normal'] as const).map((option) => (
                       <label
                         key={option}
                         htmlFor={`regularSubType-${option}`}
