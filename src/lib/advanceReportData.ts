@@ -7,7 +7,7 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import {
-  fetchAdvanceLedger, parseKey, describeKey, periodOrdinal, keyOf,
+  fetchAdvanceLedger, fetchAdvanceLedgersForClients, parseKey, describeKey, periodOrdinal, keyOf,
   type AdvanceLedger, type TaxAmount,
 } from './advanceBalance';
 import {
@@ -113,13 +113,14 @@ export async function buildControlSheet(periodMonth: string): Promise<ControlShe
     .from('clients').select('id, name, gstin, regular_sub_type').order('name');
   const clients = (data as { id: string; name: string; gstin: string; regular_sub_type: string | null }[]) || [];
 
+  const withGstin = clients.filter((c) => c.gstin);
+  // Two queries for the whole firm, not two per client.
+  const ledgers = await fetchAdvanceLedgersForClients(withGstin, periodMonth);
+
   const rows: ControlSheetRow[] = [];
-  // Sequential: each client's ledger reads that client's whole GSTR-1 history,
-  // and firing a hundred of those at once gets rate-limited rather than fast.
-  for (const c of clients) {
-    if (!c.gstin) continue;
-    const ledger = await fetchAdvanceLedger({ clientId: c.id, gstin: c.gstin, upto: periodMonth });
-    if (ledger.closingTotal.taxable <= 1) continue;
+  withGstin.forEach((c) => {
+    const ledger = ledgers.get(c.id);
+    if (!ledger || ledger.closingTotal.taxable <= 1) return;
     const ageMonths = ledger.oldestOpenPeriod
       ? Math.max(0, periodOrdinal(periodMonth) - periodOrdinal(ledger.oldestOpenPeriod))
       : 0;
@@ -134,7 +135,7 @@ export async function buildControlSheet(periodMonth: string): Promise<ControlShe
       bucket: ledger.oldestOpenPeriod ? bucketFor(ageMonths) : '—',
       adjustedThisMonth: r2(thisMonth?.effective.adjusted.taxable || 0),
     });
-  }
+  });
   return rows.sort((a, b) => b.open - a.open);
 }
 

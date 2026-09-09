@@ -452,7 +452,11 @@ export function assembleGstr1Json(params: {
     const map = new Map<string, any>();
     rows.forEach((r) => {
       const omon = String(r.omon || '').trim();
-      if (!omon || !r.pos || !num(r.ad_amt)) return;
+      // A zero amount is NOT a reason to drop an amendment row: restating an
+      // earlier 11A/11B to nil ("that advance was reported in error") is a
+      // real correction and has to reach the portal. Only an untouched row —
+      // no original period and no place of supply — is skipped.
+      if (!omon || !r.pos) return;
       const sply_ty = r.pos && homeState && r.pos === homeState ? 'INTRA' : 'INTER';
       const key = `${omon}__${r.pos}__${sply_ty}`;
       if (!map.has(key)) map.set(key, { omon, pos: r.pos, sply_ty, itms: [] });
@@ -656,10 +660,12 @@ export function findInvalidAmendmentPeriodRows(
 
   (['ata', 'txpda'] as const).forEach((section) => {
     (rowsBySection[section] || []).forEach((r) => {
-      // Rows with no amount aren't emitted at all — an untouched blank row at
-      // the bottom of the grid isn't an error.
-      if (!num(r.ad_amt)) return;
       const omon = String(r.omon || '').trim();
+      // Only a wholly untouched row is skipped. A row carrying an amount OR a
+      // place of supply is one the operator started, so a missing or malformed
+      // original period on it is an error worth reporting — including on a
+      // deliberate restatement to nil.
+      if (!omon && !r.pos && !num(r.ad_amt)) return;
       if (!omon) {
         invalid.push({ section, omon: '(blank)', reason: 'Original period is required (MMYYYY).' });
         return;

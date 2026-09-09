@@ -118,7 +118,7 @@ export function recoverySchedule(params: {
   effectiveLegs(adjustments)
     .filter((a) => a.reason === 'INVOICE' && a.project_id === project.id)
     .forEach((a) => {
-      const k = (a as AdvanceAdjustment & { ra_bill_id?: string | null }).ra_bill_id || '';
+      const k = a.ra_bill_id || '';
       if (!k) return;
       actualByBill.set(k, r2((actualByBill.get(k) || 0) + num(a.taxable_value_adjusted)));
     });

@@ -440,6 +440,10 @@ export async function fetchAdvanceLedger(params: {
   const { clientId, gstin, upto, draftOverride } = params;
   const homeState = (gstin || '').slice(0, 2);
 
+  // Deliberately unbounded by `upto`: an amendment filed in a LATER period
+  // restates an earlier month, and the as-amended view applies every amendment
+  // known today (§3). Filtering the fetch to <= upto would silently drop those
+  // restatements, so the bound is applied when walking the months, not here.
   const [returnsRes, openingRes] = await Promise.all([
     supabase.from('gstr1_data').select('period_month, raw_json').eq('client_id', clientId),
     // Not in the generated Supabase types (added by the Phase 1 migration),
@@ -475,4 +479,60 @@ export async function fetchAdvanceLedger(params: {
   }
 
   return buildAdvanceLedger({ clientId, homeState, returns, openingBalances, upto });
+}
+
+/**
+ * Ledgers for many clients at once.
+ *
+ * One query for every client's returns and one for every opening balance,
+ * grouped in memory — the firm-wide board and the control sheet used to call
+ * fetchAdvanceLedger per client, which meant a round-trip each. At ~100 clients
+ * that is ~200 sequential round-trips and ten to twenty seconds of staring at a
+ * spinner, for a few hundred kilobytes of data.
+ */
+export async function fetchAdvanceLedgersForClients(
+  clients: { id: string; gstin: string }[],
+  upto: string,
+): Promise<Map<string, AdvanceLedger>> {
+  const out = new Map<string, AdvanceLedger>();
+  const ids = clients.map((c) => c.id).filter(Boolean);
+  if (ids.length === 0) return out;
+
+  const [returnsRes, openingRes] = await Promise.all([
+    supabase.from('gstr1_data').select('client_id, period_month, raw_json').in('client_id', ids),
+    supabase.from('advance_opening_balances' as never).select('*').in('client_id', ids),
+  ]);
+  if (returnsRes.error) throw returnsRes.error;
+
+  const returnsByClient = new Map<string, RawReturn[]>();
+  ((returnsRes.data as { client_id: string; period_month: string; raw_json: unknown }[]) || []).forEach((r) => {
+    const period = shortToMmYyyy(r.period_month);
+    if (!period) return;
+    if (!returnsByClient.has(r.client_id)) returnsByClient.set(r.client_id, []);
+    returnsByClient.get(r.client_id)!.push({ period, json: r.raw_json });
+  });
+
+  const openingByClient = new Map<string, OpeningBalanceRow[]>();
+  if (!openingRes.error) {
+    ((openingRes.data as any[]) || []).forEach((r) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+      const row: OpeningBalanceRow = {
+        pos: String(r.pos || ''), rate_pct: num(r.rate_pct), sply_ty: String(r.sply_ty || ''),
+        taxable: num(r.taxable), igst: num(r.igst), cgst: num(r.cgst), sgst: num(r.sgst), cess: num(r.cess),
+        as_on_period: String(r.as_on_period || ''),
+      };
+      if (!openingByClient.has(r.client_id)) openingByClient.set(r.client_id, []);
+      openingByClient.get(r.client_id)!.push(row);
+    });
+  }
+
+  clients.forEach((c) => {
+    out.set(c.id, buildAdvanceLedger({
+      clientId: c.id,
+      homeState: (c.gstin || '').slice(0, 2),
+      returns: returnsByClient.get(c.id) || [],
+      openingBalances: openingByClient.get(c.id) || [],
+      upto,
+    }));
+  });
+  return out;
 }

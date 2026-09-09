@@ -262,13 +262,15 @@ export async function runAdvanceSetoffCheck(input: AdvanceCheckInput): Promise<A
     const k = parseKey(key);
     const label = describeKey(k);
     const openTaxable = openAmt.taxable;
-    if (openTaxable <= threshold) return;
-
     const invoiceTaxable = invoices.get(key) || 0;
     const reported = (draftTxpd.get(key) || zeroTax()).taxable;
 
-    // Rule 3 — adjusting more advance than exists. Reported first because it
-    // is a SHORT payment, the more dangerous direction.
+    // Rule 3 — adjusting more advance than exists. Checked FIRST, before the
+    // open-balance guard below, because the worst case is exactly the one the
+    // guard would swallow: an 11B reported against NO open advance nets
+    // `available` to zero, so a guard-first ordering let a reversal of tax
+    // that was never paid through as clean. That is a short payment, the more
+    // dangerous direction, and it must not depend on a balance being present.
     if (reported - openTaxable > threshold) {
       findings.push({
         code: 'OVER_ADJUSTED',
@@ -283,6 +285,9 @@ export async function runAdvanceSetoffCheck(input: AdvanceCheckInput): Promise<A
       });
       return;
     }
+
+    // Everything below concerns an advance that is actually open.
+    if (openTaxable <= threshold) return;
 
     if (invoiceTaxable <= 0) {
       // Rule 5 — an advance is open but nothing was billed against it here.
@@ -502,7 +507,11 @@ export async function runAdvanceSetoffCheck(input: AdvanceCheckInput): Promise<A
  * Existing txpd rows for the same key are REPLACED by the suggested figure,
  * not added to — the suggestion is the full amount that should be reported.
  */
-export function applySuggestedSetoff(draftJson: any, findings: AdvanceFinding[]): any { // eslint-disable-line @typescript-eslint/no-explicit-any
+export function applySuggestedSetoff(
+  draftJson: any, // eslint-disable-line @typescript-eslint/no-explicit-any
+  findings: AdvanceFinding[],
+  homeState: string,
+): any { // eslint-disable-line @typescript-eslint/no-explicit-any
   const suggestions = findings.filter((f) => f.suggested).map((f) => f.suggested!);
   if (suggestions.length === 0) return draftJson;
 
@@ -512,7 +521,15 @@ export function applySuggestedSetoff(draftJson: any, findings: AdvanceFinding[])
   const existing = new Map<string, { pos: string; splyTy: string; ratePct: number; tax: TaxAmount }>();
   (j.txpd || []).forEach((g: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
     const pos = String(g?.pos || '');
-    const splyTy = String(g?.sply_ty || 'INTRA').toUpperCase();
+    // Derive the supply type the SAME way advanceByKey does. Defaulting a
+    // missing sply_ty to INTRA here while the reader derived it from POS made
+    // the keys disagree on an inter-state group, so the suggestion was
+    // appended alongside the existing row instead of replacing it — Table 11B
+    // reported twice.
+    const declared = String(g?.sply_ty || '').toUpperCase();
+    const splyTy = declared === 'INTRA' || declared === 'INTER'
+      ? declared
+      : (pos && pos === homeState ? 'INTRA' : 'INTER');
     const itms = Array.isArray(g?.itms) && g.itms.length ? g.itms : [g];
     itms.forEach((it: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
       const ratePct = num(it?.rt);
@@ -524,8 +541,14 @@ export function applySuggestedSetoff(draftJson: any, findings: AdvanceFinding[])
   });
 
   suggestions.forEach((s) => {
-    existing.set(keyOf({ pos: s.pos, ratePct: s.ratePct, splyTy: s.splyTy }), {
-      pos: s.pos, splyTy: s.splyTy, ratePct: s.ratePct, tax: s.tax,
+    const k = keyOf({ pos: s.pos, ratePct: s.ratePct, splyTy: s.splyTy });
+    // Cess is never auto-computed anywhere in this app, so a suggestion
+    // carries none. Keep whatever the row already had rather than silently
+    // zeroing an amount the operator entered by hand.
+    const priorCess = existing.get(k)?.tax.cess || 0;
+    existing.set(k, {
+      pos: s.pos, splyTy: s.splyTy, ratePct: s.ratePct,
+      tax: { ...s.tax, cess: priorCess },
     });
   });
 
