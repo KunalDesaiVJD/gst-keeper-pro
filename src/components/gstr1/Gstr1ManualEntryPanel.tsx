@@ -13,17 +13,18 @@ import { supabase } from '@/integrations/supabase/client';
 import {
   Gstr1Section, ManualRow, ColumnDef, SECTION_COLUMNS, NIL_SUPPLY_TYPES, DOC_TYPES,
   gstinHomeState, recomputeRowTax, assembleGstr1Json, hydrateManualEntriesFromJson, hasMissingHsnSummary,
-  findInvalidGstinRows, findInvoiceValueMismatchRows,
+  findInvalidGstinRows, findInvoiceValueMismatchRows, findInvalidAmendmentPeriodRows,
 } from '@/utils/gstr1ManualBuild';
 import { buildGstr1Summary } from '@/utils/buildGstr1Summary';
 
-const INVOICE_SECTIONS: Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>[] = ['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp', 'at', 'txpd'];
+const INVOICE_SECTIONS: Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>[] = ['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp', 'at', 'txpd', 'ata', 'txpda'];
 
 const SECTION_LABELS: Record<Gstr1Section, string> = {
   b2b: '4A/4B — B2B (Registered)', b2cl: '5 — B2CL (Large, Unregistered)',
   b2cs: '7 — B2CS (Others)', cdnr: '9B — Credit/Debit Notes (Registered)',
   cdnur: '9B — Credit/Debit Notes (Unregistered)', exp: '6A — Exports',
   at: '11A — Advances Received', txpd: '11B — Advance Adjustment',
+  ata: '11(2) — Amended Advances Received', txpda: '11(2) — Amended Advance Adjustment',
   nil: '8 — Nil Rated / Exempted', hsn: '12 — HSN-wise Summary', doc: '13 — Documents Issued',
 };
 
@@ -53,7 +54,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
   const [summaryOpen, setSummaryOpen] = useState(false);
 
   const [rowsBySection, setRowsBySection] = useState<Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, ManualRow[]>>({
-    b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [], at: [], txpd: [],
+    b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [], at: [], txpd: [], ata: [], txpda: [],
   });
   const [nilRows, setNilRows] = useState<ManualRow[]>([]);
   const [docRows, setDocRows] = useState<ManualRow[]>([]);
@@ -86,7 +87,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
       const rows = (data as any[]) || [];
       let finalDocRows: ManualRow[] = [];
       if (rows.length > 0) {
-        const bySection: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, ManualRow[]> = { b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [], at: [], txpd: [] };
+        const bySection: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, ManualRow[]> = { b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [], at: [], txpd: [], ata: [], txpda: [] };
         const nil: ManualRow[] = [];
         const doc: ManualRow[] = [];
         const hsn: ManualRow[] = [];
@@ -118,7 +119,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
           finalDocRows = hydrated.docRows;
         }
       } else {
-        setRowsBySection({ b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [], at: [], txpd: [] });
+        setRowsBySection({ b2b: [], b2cl: [], b2cs: [], cdnr: [], cdnur: [], exp: [], at: [], txpd: [], ata: [], txpda: [] });
         setNilRows([]);
         setDocRows([]);
         setHsnRows([]);
@@ -277,6 +278,20 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
       toast.error(
         `${valueMismatches.length} invoice(s) have an Invoice/Note Value that doesn't match taxable value + tax — ` +
         `the portal will reject the upload. Fix these first: ${preview}${valueMismatches.length > 5 ? '…' : ''}`
+      );
+      return;
+    }
+    // A Table 11(2) amendment row with a blank, malformed or non-earlier
+    // original period is dropped silently by assembleGstr1Json's group filter
+    // — the operator would see the row on screen and never see it in the JSON.
+    const invalidAmendments = findInvalidAmendmentPeriodRows(rowsBySection, periodShort);
+    if (invalidAmendments.length > 0) {
+      const preview = invalidAmendments.slice(0, 5)
+        .map((m) => `${SECTION_LABELS[m.section]}: ${m.omon} — ${m.reason}`)
+        .join('; ');
+      toast.error(
+        `${invalidAmendments.length} amendment row(s) have an invalid original period and would be dropped from the JSON. ` +
+        `Fix these first: ${preview}${invalidAmendments.length > 5 ? '…' : ''}`
       );
       return;
     }

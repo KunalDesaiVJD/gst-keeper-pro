@@ -58,6 +58,8 @@ const SECTION_LABELS: Record<string, string> = {
   nil: 'NIL — 8',
   at: 'AT — 11A (Advances)',
   txpd: 'TXPD — 11B (Adjustment)',
+  ata: 'ATA — 11(2) (Amended Advances)',
+  txpda: 'TXPDA — 11(2) (Amended Adjustment)',
   doc: 'DOC — 13 (Documents)',
 };
 const mmYyyyToShort = (mmYyyy: string): string => {
@@ -224,7 +226,7 @@ const GSTR1DataPage: React.FC = () => {
   // Per-tab collapse: when a section id is in the set, its table shows only the
   // header + totals row (data rows hidden). Every section starts collapsed so
   // the page opens on a totals-first view.
-  const ALL_TAB_IDS = ['b2b', 'b2cl', 'b2cs', 'b2csa', 'cdnr', 'cdnur', 'exp', 'hsn', 'nil', 'at', 'txpd', 'doc'];
+  const ALL_TAB_IDS = ['b2b', 'b2cl', 'b2cs', 'b2csa', 'cdnr', 'cdnur', 'exp', 'hsn', 'nil', 'at', 'txpd', 'ata', 'txpda', 'doc'];
   const [collapsedTabs, setCollapsedTabs] = useState<Set<string>>(() => new Set(ALL_TAB_IDS));
   const isCollapsed = (key: string) => collapsedTabs.has(key);
   const toggleCollapse = (key: string) =>
@@ -1135,33 +1137,43 @@ const GSTR1DataPage: React.FC = () => {
     return json.nil || {};
   }, [json.nil]);
 
-  // AT (Advances) data
-  const atRows = useMemo(() => {
-    return (json.at || []).map((item: any) => ({
-      pos: item.pos,
-      sply_ty: item.sply_ty,
-      rt: item.itms?.[0]?.rt || item.rt,
-      ad_amt: item.itms?.[0]?.ad_amt || item.ad_amt,
-      iamt: item.itms?.[0]?.iamt || item.iamt,
-      camt: item.itms?.[0]?.camt || item.camt,
-      samt: item.itms?.[0]?.samt || item.samt,
-      csamt: item.itms?.[0]?.csamt || item.csamt,
-    }));
-  }, [json.at]);
+  // AT / TXPD (Advances and their adjustment) and the two Table 11(2)
+  // amendment sections. One group can carry several rate lines — a POS with
+  // both an 18% and a 12% advance is one group with two `itms`. Flatten every
+  // rate line into its own row, the same way b2b/b2cl/cdnr are flattened.
+  // Reading only itms[0] (as this did) silently dropped every rate but the
+  // first, so the table footer disagreed with the tile and with
+  // buildGstr1Summary, which has always summed all of them.
+  const flattenAdvanceGroups = (groups: any[], withOmon: boolean) => {
+    const rows: any[] = [];
+    (groups || []).forEach((group: any) => {
+      // Tolerate a flat, itms-less shape too — some older stored rows carry
+      // the rate line directly on the group.
+      const itms = Array.isArray(group.itms) && group.itms.length ? group.itms : [group];
+      itms.forEach((itm: any) => {
+        rows.push({
+          ...(withOmon ? { omon: group.omon } : {}),
+          pos: group.pos,
+          sply_ty: group.sply_ty,
+          rt: itm.rt,
+          ad_amt: itm.ad_amt,
+          iamt: itm.iamt,
+          camt: itm.camt,
+          samt: itm.samt,
+          csamt: itm.csamt,
+        });
+      });
+    });
+    return rows;
+  };
 
-  // TXPD (Advance Adjustments) data
-  const txpdRows = useMemo(() => {
-    return (json.txpd || []).map((item: any) => ({
-      pos: item.pos,
-      sply_ty: item.sply_ty,
-      rt: item.itms?.[0]?.rt || item.rt,
-      ad_amt: item.itms?.[0]?.ad_amt || item.ad_amt,
-      iamt: item.itms?.[0]?.iamt || item.iamt,
-      camt: item.itms?.[0]?.camt || item.camt,
-      samt: item.itms?.[0]?.samt || item.samt,
-      csamt: item.itms?.[0]?.csamt || item.csamt,
-    }));
-  }, [json.txpd]);
+  const atRows = useMemo(() => flattenAdvanceGroups(json.at, false), [json.at]);
+  const txpdRows = useMemo(() => flattenAdvanceGroups(json.txpd, false), [json.txpd]);
+  // Table 11(2) — amendments to an earlier period's 11A / 11B. `omon` (the
+  // original month) is the first column because it is what gives the row its
+  // meaning; see docs/ADVANCE_SETOFF_POSITIONS.md §7.
+  const ataRows = useMemo(() => flattenAdvanceGroups(json.ata, true), [json.ata]);
+  const txpdaRows = useMemo(() => flattenAdvanceGroups(json.txpda, true), [json.txpda]);
 
   // DOC data. The portal JSON keys each group by "doc_num" (a serial code for
   // the document type, e.g. 1 = Invoices for outward supply) and doesn't
@@ -2569,6 +2581,108 @@ const GSTR1DataPage: React.FC = () => {
                           <TableCell className={footTd}>{formatNumber(sumBy(txpdRows, 'camt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(txpdRows, 'samt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(txpdRows, 'csamt'))}</TableCell>
+                        </TableRow>
+                      </TableFooter>
+                    </Table>
+                  </div>
+                )}
+              </TabsContent>
+
+              {/* ATA Tab — Table 11(2) amendment. Carries the original month
+                  ({'omon'}) the row restates; without it the row means nothing. */}
+              <TabsContent value="ata">
+                {ataRows.length === 0 ? renderEmptyState('Amended Advances') : (
+                  <div className={TABLE_SHELL}>
+                    <Table>
+                      <TableHeader className="sticky top-0 z-10">
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Original Period</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Supply Type</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Revised Advance Amount</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {!isCollapsed('ata') && ataRows.map((row: any, i: number) => (
+                          <TableRow key={i}>
+                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
+                            <TableCell className="border border-border tabular-nums">{row.omon}</TableCell>
+                            <TableCell className="border border-border">{row.pos}</TableCell>
+                            <TableCell className="border border-border">{row.sply_ty}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.ad_amt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                      <TableFooter>
+                        <TableRow className="bg-muted hover:bg-muted">
+                          <TableCell className="border border-border font-semibold" colSpan={5}>Total ({ataRows.length} rows)</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(ataRows, 'ad_amt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(ataRows, 'iamt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(ataRows, 'camt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(ataRows, 'samt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(ataRows, 'csamt'))}</TableCell>
+                        </TableRow>
+                      </TableFooter>
+                    </Table>
+                  </div>
+                )}
+              </TabsContent>
+
+              {/* TXPDA Tab — Table 11(2) amendment. Carries the original month
+                  ({'omon'}) the row restates; without it the row means nothing. */}
+              <TabsContent value="txpda">
+                {txpdaRows.length === 0 ? renderEmptyState('Amended Advance Adjustment') : (
+                  <div className={TABLE_SHELL}>
+                    <Table>
+                      <TableHeader className="sticky top-0 z-10">
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Original Period</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Supply Type</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Revised Advance Adjusted</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
+                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {!isCollapsed('txpda') && txpdaRows.map((row: any, i: number) => (
+                          <TableRow key={i}>
+                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
+                            <TableCell className="border border-border tabular-nums">{row.omon}</TableCell>
+                            <TableCell className="border border-border">{row.pos}</TableCell>
+                            <TableCell className="border border-border">{row.sply_ty}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.ad_amt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
+                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                      <TableFooter>
+                        <TableRow className="bg-muted hover:bg-muted">
+                          <TableCell className="border border-border font-semibold" colSpan={5}>Total ({txpdaRows.length} rows)</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(txpdaRows, 'ad_amt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(txpdaRows, 'iamt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(txpdaRows, 'camt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(txpdaRows, 'samt'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumBy(txpdaRows, 'csamt'))}</TableCell>
                         </TableRow>
                       </TableFooter>
                     </Table>

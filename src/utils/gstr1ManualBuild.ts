@@ -21,7 +21,11 @@
 //    serial-number continuity, including cancelled numbers) — entered as its
 //    own small fixed-shape table.
 
-export type Gstr1Section = 'b2b' | 'b2cl' | 'b2cs' | 'cdnr' | 'cdnur' | 'exp' | 'at' | 'txpd' | 'nil' | 'doc' | 'hsn';
+// 'ata' / 'txpda' are Table 11(2) — amendments to a PRIOR period's Table 11A /
+// 11B. They carry an `omon` (original month, MMYYYY) and restate that month's
+// figure in full; they are not this period's liability. See
+// docs/ADVANCE_SETOFF_POSITIONS.md §7 before changing how they are totalled.
+export type Gstr1Section = 'b2b' | 'b2cl' | 'b2cs' | 'cdnr' | 'cdnur' | 'exp' | 'at' | 'txpd' | 'ata' | 'txpda' | 'nil' | 'doc' | 'hsn';
 
 export interface ManualRow {
   id: string;           // client-side row id (uuid), stable across edits
@@ -201,6 +205,31 @@ export const SECTION_COLUMNS: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'
     { key: 'samt', label: 'SGST', type: 'number', width: 'w-24', computed: true },
     { key: 'csamt', label: 'Cess', type: 'number', width: 'w-20' },
   ],
+  // Table 11(2) amendments. `omon` leads because it's the field that makes the
+  // row mean anything — the same POS/rate/amount against a different original
+  // month is a different correction entirely. Entered as MMYYYY (the portal's
+  // own format) and validated by findInvalidAmendmentPeriodRows before
+  // Generate JSON.
+  ata: [
+    { key: 'omon', label: 'Original Period (MMYYYY)', type: 'text', width: 'w-36' },
+    { key: 'pos', label: 'POS', type: 'state', width: 'w-24' },
+    { key: 'rt', label: 'Rate %', type: 'number', width: 'w-16' },
+    { key: 'ad_amt', label: 'Revised Advance Received', type: 'number', width: 'w-36' },
+    { key: 'iamt', label: 'IGST', type: 'number', width: 'w-24', computed: true },
+    { key: 'camt', label: 'CGST', type: 'number', width: 'w-24', computed: true },
+    { key: 'samt', label: 'SGST', type: 'number', width: 'w-24', computed: true },
+    { key: 'csamt', label: 'Cess', type: 'number', width: 'w-20' },
+  ],
+  txpda: [
+    { key: 'omon', label: 'Original Period (MMYYYY)', type: 'text', width: 'w-36' },
+    { key: 'pos', label: 'POS', type: 'state', width: 'w-24' },
+    { key: 'rt', label: 'Rate %', type: 'number', width: 'w-16' },
+    { key: 'ad_amt', label: 'Revised Advance Adjusted', type: 'number', width: 'w-36' },
+    { key: 'iamt', label: 'IGST', type: 'number', width: 'w-24', computed: true },
+    { key: 'camt', label: 'CGST', type: 'number', width: 'w-24', computed: true },
+    { key: 'samt', label: 'SGST', type: 'number', width: 'w-24', computed: true },
+    { key: 'csamt', label: 'Cess', type: 'number', width: 'w-20' },
+  ],
 };
 
 export const NIL_SUPPLY_TYPES = [
@@ -250,7 +279,7 @@ export function recomputeRowTax(section: Gstr1Section, row: ManualRow, homeState
     const split = computeTaxSplit(row.rt, row.txval, row.pos, homeState);
     return { ...row, ...split };
   }
-  if (section === 'at' || section === 'txpd') {
+  if (section === 'at' || section === 'txpd' || section === 'ata' || section === 'txpda') {
     const split = computeTaxSplit(row.rt, row.ad_amt, row.pos, homeState);
     return { ...row, ...split };
   }
@@ -276,6 +305,17 @@ const toPortalDate = (iso: string): string => {
   return `${dd}-${mm}-${yyyy}`;
 };
 
+const MONTH_MAP: Record<string, string> = {
+  Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06',
+  Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12',
+};
+
+/** "Jul-26" -> "072026" (the portal's `fp` / `omon` format). '' if unparseable. */
+export const periodShortToFp = (periodShort: string): string => {
+  const [mon, yr] = (periodShort || '').split('-');
+  return mon && yr ? `${MONTH_MAP[mon] || '01'}20${yr}` : '';
+};
+
 export function assembleGstr1Json(params: {
   gstin: string;
   periodShort: string; // "Jul-26"
@@ -287,13 +327,7 @@ export function assembleGstr1Json(params: {
   const { gstin, periodShort, rowsBySection, nilRows, docRows, hsnRows } = params;
   const homeState = gstinHomeState(gstin);
 
-  // fp: MMYYYY from a short label like "Jul-26"
-  const MONTH_MAP: Record<string, string> = {
-    Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06',
-    Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12',
-  };
-  const [mon, yr] = (periodShort || '').split('-');
-  const fp = mon && yr ? `${MONTH_MAP[mon] || '01'}20${yr}` : '';
+  const fp = periodShortToFp(periodShort);
 
   // --- b2b: group by ctin -> inum ---
   const b2bMap = new Map<string, Map<string, any>>();
@@ -409,6 +443,26 @@ export function assembleGstr1Json(params: {
   const at = buildAdvanceGroups(rowsBySection.at || []);
   const txpd = buildAdvanceGroups(rowsBySection.txpd || []);
 
+  // --- ata / txpda (Table 11(2) amendments): same shape as at/txpd, but the
+  // group key carries `omon` too. Two corrections to the same POS for
+  // different original months are different rows on the portal and must not
+  // be merged into one group — that would silently reassign one month's
+  // restatement to another.
+  const buildAmendmentGroups = (rows: ManualRow[]) => {
+    const map = new Map<string, any>();
+    rows.forEach((r) => {
+      const omon = String(r.omon || '').trim();
+      if (!omon || !r.pos || !num(r.ad_amt)) return;
+      const sply_ty = r.pos && homeState && r.pos === homeState ? 'INTRA' : 'INTER';
+      const key = `${omon}__${r.pos}__${sply_ty}`;
+      if (!map.has(key)) map.set(key, { omon, pos: r.pos, sply_ty, itms: [] });
+      map.get(key)!.itms.push({ rt: num(r.rt), ad_amt: num(r.ad_amt), iamt: num(r.iamt), camt: num(r.camt), samt: num(r.samt), csamt: num(r.csamt) });
+    });
+    return Array.from(map.values());
+  };
+  const ata = buildAmendmentGroups(rowsBySection.ata || []);
+  const txpda = buildAmendmentGroups(rowsBySection.txpda || []);
+
   // --- nil: pass through, only non-empty rows ---
   const nilInv = (nilRows || [])
     .filter((r) => num(r.nil_amt) || num(r.expt_amt) || num(r.ngsup_amt))
@@ -475,6 +529,8 @@ export function assembleGstr1Json(params: {
   if (exp.length) out.exp = exp;
   if (at.length) out.at = at;
   if (txpd.length) out.txpd = txpd;
+  if (ata.length) out.ata = ata;
+  if (txpda.length) out.txpda = txpda;
   if (nilInv.length) out.nil = { inv: nilInv };
   if (hsnB2b.length || hsnB2c.length) {
     out.hsn = {};
@@ -573,6 +629,55 @@ export function findInvoiceValueMismatchRows(rowsBySection: Record<Exclude<Gstr1
   return mismatches;
 }
 
+/**
+ * Pre-flight check before Generate JSON: a Table 11(2) amendment row is
+ * meaningless without a valid original period. `omon` must be MMYYYY and must
+ * be EARLIER than the return's own period — an amendment to the current month
+ * isn't an amendment, it's just a Table 11A/11B entry, and the portal rejects
+ * it. A blank or future `omon` would otherwise be dropped silently by
+ * assembleGstr1Json's group filter, so the operator would see the row on
+ * screen and never see it in the JSON.
+ */
+export function findInvalidAmendmentPeriodRows(
+  rowsBySection: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, ManualRow[]>,
+  periodShort: string,
+): { section: 'ata' | 'txpda'; omon: string; reason: string }[] {
+  const currentFp = periodShortToFp(periodShort);
+  // MMYYYY sorts correctly only as (year, month) — compare numerically.
+  const asOrdinal = (fp: string): number => {
+    const m = /^(\d{2})(\d{4})$/.exec(fp);
+    if (!m) return NaN;
+    const mm = Number(m[1]);
+    if (mm < 1 || mm > 12) return NaN;
+    return Number(m[2]) * 12 + mm;
+  };
+  const currentOrdinal = asOrdinal(currentFp);
+  const invalid: { section: 'ata' | 'txpda'; omon: string; reason: string }[] = [];
+
+  (['ata', 'txpda'] as const).forEach((section) => {
+    (rowsBySection[section] || []).forEach((r) => {
+      // Rows with no amount aren't emitted at all — an untouched blank row at
+      // the bottom of the grid isn't an error.
+      if (!num(r.ad_amt)) return;
+      const omon = String(r.omon || '').trim();
+      if (!omon) {
+        invalid.push({ section, omon: '(blank)', reason: 'Original period is required (MMYYYY).' });
+        return;
+      }
+      const ordinal = asOrdinal(omon);
+      if (Number.isNaN(ordinal)) {
+        invalid.push({ section, omon, reason: 'Original period must be MMYYYY, e.g. 072026.' });
+        return;
+      }
+      if (!Number.isNaN(currentOrdinal) && ordinal >= currentOrdinal) {
+        invalid.push({ section, omon, reason: `Original period must be earlier than this return (${currentFp}).` });
+      }
+    });
+  });
+
+  return invalid;
+}
+
 // ---------------------------------------------------------------------------
 // Hydrate: portal JSON -> flat rows (for re-opening a generated return)
 // ---------------------------------------------------------------------------
@@ -638,6 +743,18 @@ export function hydrateManualEntriesFromJson(json: any): {
     txpd.push({ id: nextId(), pos: group.pos, rt: itm.rt, ad_amt: itm.ad_amt, iamt: itm.iamt, camt: itm.camt, samt: itm.samt, csamt: itm.csamt });
   }));
 
+  // Table 11(2) amendments — one flat row per (group, rate), carrying the
+  // group's `omon` down onto every row so re-assembly can regroup by it.
+  const ata: ManualRow[] = [];
+  (j.ata || []).forEach((group: any) => (group.itms || []).forEach((itm: any) => {
+    ata.push({ id: nextId(), omon: group.omon, pos: group.pos, rt: itm.rt, ad_amt: itm.ad_amt, iamt: itm.iamt, camt: itm.camt, samt: itm.samt, csamt: itm.csamt });
+  }));
+
+  const txpda: ManualRow[] = [];
+  (j.txpda || []).forEach((group: any) => (group.itms || []).forEach((itm: any) => {
+    txpda.push({ id: nextId(), omon: group.omon, pos: group.pos, rt: itm.rt, ad_amt: itm.ad_amt, iamt: itm.iamt, camt: itm.camt, samt: itm.samt, csamt: itm.csamt });
+  }));
+
   const nilRows: ManualRow[] = (j.nil?.inv || []).map((r: any) => ({ id: nextId(), sply_ty: r.sply_ty, nil_amt: r.nil_amt, expt_amt: r.expt_amt, ngsup_amt: r.ngsup_amt }));
 
   // Table 13 is intentionally never hydrated from a Builder-generated return:
@@ -660,5 +777,5 @@ export function hydrateManualEntriesFromJson(json: any): {
     ...(j.hsn?.hsn_b2c || []).map((h: any) => ({ id: nextId(), _src: 'hsn_b2c', hsn_sc: h.hsn_sc, desc: h.desc, uqc: h.uqc, qty: h.qty, rt: h.rt, txval: h.txval, iamt: h.iamt, camt: h.camt, samt: h.samt, csamt: h.csamt })),
   ];
 
-  return { rowsBySection: { b2b, b2cl, b2cs, cdnr, cdnur, exp, at, txpd }, nilRows, docRows, hsnRows };
+  return { rowsBySection: { b2b, b2cl, b2cs, cdnr, cdnur, exp, at, txpd, ata, txpda }, nilRows, docRows, hsnRows };
 }

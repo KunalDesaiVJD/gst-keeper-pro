@@ -185,16 +185,33 @@ function computeOutward(g: any, periodMonth: string, alreadyFiled: boolean) {
     // builder, where most of the consideration arrives as advances long before
     // any invoice. AT adds value and tax; TXPD takes both back out when an
     // invoice later absorbs the advance and reports the full value in Table 7.
-    (g.at || []).forEach((a: any) => {
-      const it = a.itms?.[0] || a;
+    //
+    // One POS group can carry SEVERAL rate lines (an 18% and a 12% advance at
+    // the same place of supply is one group with two `itms`). Reading only
+    // itms[0], as this did, dropped every rate but the first straight out of
+    // 3.1(a) — understating the liability on 11A and overstating it on 11B.
+    // Sum every line, the way buildGstr1Summary always has.
+    const advanceLines = (a: any): any[] =>
+      Array.isArray(a?.itms) && a.itms.length ? a.itms : [a];
+    (g.at || []).forEach((a: any) => advanceLines(a).forEach((it: any) => {
       det.txval += num(it.ad_amt);
       det.iamt += num(it.iamt); det.camt += num(it.camt); det.samt += num(it.samt);
-    });
-    (g.txpd || []).forEach((a: any) => {
-      const it = a.itms?.[0] || a;
+    }));
+    (g.txpd || []).forEach((a: any) => advanceLines(a).forEach((it: any) => {
       det.txval -= num(it.ad_amt);
       det.iamt -= num(it.iamt); det.camt -= num(it.camt); det.samt -= num(it.samt);
-    });
+    }));
+    // Table 11(2) — `ata` / `txpda`, amendments to an EARLIER period's 11A /
+    // 11B — are deliberately NOT folded in here. An amendment row states the
+    // REVISED figure for the month it corrects, not a differential and not
+    // this month's liability, so the amount that actually belongs in this
+    // period's 3.1(a) depends on what was reported in that earlier period's
+    // 3B — which the JSON does not carry and this function cannot infer.
+    // Auto-netting a restated figure would silently mis-state 3.1(a), which is
+    // a worse failure than the omission it would be trying to prevent. The
+    // caller raises a flag instead, pointing at GSTR-3B Adjustments (source
+    // 'Prior Period') where a human enters the differential.
+    // See docs/ADVANCE_SETOFF_POSITIONS.md §7.2.
     // Exports = zero-rated.
     (g.exp || []).forEach((e: any) => (e.inv || []).forEach((inv: any) => (inv.itms || []).forEach((i: any) => { zero.txval += num(i.txval); zero.iamt += num(i.iamt); })));
     // Nil / exempt / non-GST.
@@ -228,6 +245,36 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   if (!itc) flags.push('No ITC Summary — Table 4 (ITC) is all zero.');
 
   const out = computeOutward(g, input.periodMonth, input.alreadyFiled);
+
+  // Table 11(2) advance amendments restate an earlier period and are never
+  // auto-included in 3.1(a) (see computeOutward). Surface them loudly so the
+  // differential is entered deliberately rather than forgotten — a silently
+  // dropped amendment is exactly the failure mode this whole module exists to
+  // stop. docs/ADVANCE_SETOFF_POSITIONS.md §7.2.
+  const advanceAmendment = (rows: any[]) => {
+    let value = 0;
+    const periods = new Set<string>();
+    (rows || []).forEach((r: any) => {
+      const omon = String(r?.omon || '').trim();
+      if (omon) periods.add(omon);
+      const itms = Array.isArray(r?.itms) && r.itms.length ? r.itms : [r];
+      itms.forEach((it: any) => { value += num(it?.ad_amt); });
+    });
+    return { value: r2(value), periods: Array.from(periods).sort() };
+  };
+  const ataTotal = advanceAmendment(g?.ata);
+  const txpdaTotal = advanceAmendment(g?.txpda);
+  if (ataTotal.value || txpdaTotal.value) {
+    const parts: string[] = [];
+    if (ataTotal.value) parts.push(`11A amended by ₹${ataTotal.value.toFixed(2)}`);
+    if (txpdaTotal.value) parts.push(`11B amended by ₹${txpdaTotal.value.toFixed(2)}`);
+    const periods = Array.from(new Set([...ataTotal.periods, ...txpdaTotal.periods])).join(', ');
+    flags.push(
+      `GSTR-1 Table 11(2) advance amendment present (${parts.join('; ')}${periods ? `, restating ${periods}` : ''}) — ` +
+      'NOT included in Table 3.1(a). An amendment states the revised figure for the earlier period, so the differential ' +
+      "against that period's own 3B must be entered in GSTR-3B Adjustments (table 3.1(a), source 'Prior Period')."
+    );
+  }
 
   // ---- GSTR-3B Adjustments module — fold mapped rows into the relevant
   // Table 3.1 / Table 4 bucket before anything downstream (totalLiability,
