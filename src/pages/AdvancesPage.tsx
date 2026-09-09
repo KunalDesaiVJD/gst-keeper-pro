@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { SearchableSelect } from '@/components/ui/searchable-select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
@@ -26,9 +27,13 @@ import {
   type AdvanceReceipt, type ReceiptPosition, type RegisterData,
 } from '@/lib/advanceRegister';
 import ReceiptFormDialog from '@/components/advances/ReceiptFormDialog';
+import { fetchProjects, fetchRaBills, type ContractProject, type ContractRaBill } from '@/lib/contractProjects';
 import ContractProjectsPanel from '@/components/advances/ContractProjectsPanel';
+import OverrideApprovalsPanel from '@/components/advances/OverrideApprovalsPanel';
+import { fetchPendingOverrides } from '@/lib/advanceSetoffOverrides';
 import {
   buildLedgerReport, buildRegisterReport, buildControlSheet, fetchOverridesForCertificate,
+  type ControlSheetRow,
 } from '@/lib/advanceReportData';
 import {
   advanceLedgerPdf, advanceAgeingPdf, setoffRegisterPdf, amendmentBridgePdf,
@@ -52,7 +57,7 @@ const ageBucket = (since: string | null, now: string): string => {
 };
 
 const AdvancesPage: React.FC = () => {
-  const { user, canManageAdvanceRegister } = useAuth();
+  const { user, canManageAdvanceRegister, canApproveAdvanceOverride } = useAuth();
   const { selectedMonth, setSelectedMonth } = useMonth();
   const { selectedClientId: selectedClient, setSelectedClientId: setSelectedClient } = useClient();
   const confirm = useConfirm();
@@ -66,8 +71,25 @@ const AdvancesPage: React.FC = () => {
   const [editing, setEditing] = useState<AdvanceReceipt | null>(null);
 
   // Firm-wide board.
-  const [board, setBoard] = useState<{ client: Client; open: number; oldest: string | null }[]>([]);
+  const [board, setBoard] = useState<ControlSheetRow[]>([]);
   const [boardLoading, setBoardLoading] = useState(false);
+
+  // Pending override requests, badged on the tab so a manager sees a blocked
+  // return waiting on them without having to go looking for it.
+  const canApprove = canApproveAdvanceOverride();
+  const [pendingCount, setPendingCount] = useState(0);
+  const refreshPending = useCallback(async () => {
+    if (!canApprove) { setPendingCount(0); return; }
+    setPendingCount((await fetchPendingOverrides()).length);
+  }, [canApprove]);
+  useEffect(() => { refreshPending(); }, [refreshPending]);
+
+  // A contractor's advance is recovered per project and per RA bill; without
+  // those links the recovery schedule has nothing to compare and the working
+  // paper reports zeros.
+  const [projects, setProjects] = useState<ContractProject[]>([]);
+  const [raBills, setRaBills] = useState<ContractRaBill[]>([]);
+  const [setoffBillId, setSetoffBillId] = useState<string>('');
 
   const selected = clients.find((c) => c.id === selectedClient) || null;
   const isBuilder = selected?.regular_sub_type === 'Builder';
@@ -103,12 +125,18 @@ const AdvancesPage: React.FC = () => {
       ]);
       setLedger(l);
       setRegister(reg);
+      const projs = selected?.regular_sub_type === 'Contractor'
+        ? await fetchProjects(selectedClient)
+        : [];
+      setProjects(projs);
+      const bills = await Promise.all(projs.map((p) => fetchRaBills(p.id)));
+      setRaBills(bills.flat());
     } catch (e) {
       toast.error(`Could not load the advance ledger: ${(e as Error).message}`);
     } finally {
       setLoading(false);
     }
-  }, [selectedClient, selected?.gstin, selectedMonth]);
+  }, [selectedClient, selected?.gstin, selected?.regular_sub_type, selectedMonth]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -128,28 +156,20 @@ const AdvancesPage: React.FC = () => {
   }, [ledger, register, selectedMonth]);
 
   // --- firm-wide board --------------------------------------------------
+  // Built by the SAME function the printed control sheet uses, so the screen
+  // and the working paper cannot drift apart — they were two implementations
+  // of one thing.
   const loadBoard = useCallback(async () => {
     setBoardLoading(true);
     try {
-      // Sequential rather than one big Promise.all: each client's ledger reads
-      // that client's whole GSTR-1 history, and firing 200 of those at once is
-      // how you get rate-limited rather than fast.
-      const rows: { client: Client; open: number; oldest: string | null }[] = [];
-      for (const c of clients) {
-        if (!c.gstin) continue;
-        const l = await fetchAdvanceLedger({ clientId: c.id, gstin: c.gstin, upto: selectedMonth });
-        if (l.closingTotal.taxable > 1) {
-          rows.push({ client: c, open: l.closingTotal.taxable, oldest: l.oldestOpenPeriod });
-        }
-      }
-      rows.sort((a, b) => b.open - a.open);
+      const rows = await buildControlSheet(selectedMonth);
       setBoard(rows);
     } catch (e) {
       toast.error(`Could not build the board: ${(e as Error).message}`);
     } finally {
       setBoardLoading(false);
     }
-  }, [clients, selectedMonth]);
+  }, [selectedMonth]);
 
   // --- set-off workspace -------------------------------------------------
   const [alloc, setAlloc] = useState<Record<string, string>>({});
@@ -204,10 +224,15 @@ const AdvancesPage: React.FC = () => {
         legs.map((l) => {
           const p = positions.find((x) => x.receipt.id === l.receiptId)!;
           const tax = taxForRate(l.amount, Number(p.receipt.rate_pct), p.receipt.sply_ty);
+          const bill = raBills.find((b) => b.id === setoffBillId);
           return {
             receipt_id: l.receiptId,
             client_id: selectedClient!,
-            invoice_no: invoiceNo.trim(),
+            // Inherited, never re-picked: a leg belongs to whatever project its
+            // receipt does, and asking twice is how the two drift apart.
+            project_id: p.receipt.project_id || null,
+            ra_bill_id: setoffBillId || null,
+            invoice_no: invoiceNo.trim() || (bill ? (bill.bill_ref || `RA-${bill.bill_no}`) : ''),
             period_month: selectedMonth,
             rate_pct: Number(p.receipt.rate_pct),
             consideration_adjusted: l.amount,
@@ -220,6 +245,7 @@ const AdvancesPage: React.FC = () => {
       );
       setAlloc({});
       setInvoiceNo('');
+      setSetoffBillId('');
       await load();
       toast.success('Set-off recorded. Write it to the GSTR-1 draft when the return is ready.');
     } catch (e) {
@@ -410,6 +436,16 @@ const AdvancesPage: React.FC = () => {
             <TabsTrigger value="register">Register</TabsTrigger>
             <TabsTrigger value="setoff">Set-off</TabsTrigger>
             {isContractor && <TabsTrigger value="projects">Projects</TabsTrigger>}
+            {canApprove && (
+              <TabsTrigger value="approvals">
+                Approvals
+                {pendingCount > 0 && (
+                  <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-destructive/15 text-destructive tabular-nums">
+                    {pendingCount}
+                  </span>
+                )}
+              </TabsTrigger>
+            )}
             <TabsTrigger value="board" onClick={() => { if (board.length === 0) loadBoard(); }}>All clients</TabsTrigger>
           </TabsList>
 
@@ -584,6 +620,24 @@ const AdvancesPage: React.FC = () => {
                       <label className="text-xs text-muted-foreground block mb-1">Invoice no.</label>
                       <Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} className="w-40 h-9" placeholder="INV-001" />
                     </div>
+                    {/* Contractors recover an advance from a specific RA bill;
+                        without naming it the project's recovery variance has
+                        nothing to compare the actual against. */}
+                    {isContractor && raBills.length > 0 && (
+                      <div>
+                        <label className="text-xs text-muted-foreground block mb-1">Recovered from RA bill</label>
+                        <Select value={setoffBillId} onValueChange={setSetoffBillId}>
+                          <SelectTrigger className="w-52 h-9"><SelectValue placeholder="Select RA bill" /></SelectTrigger>
+                          <SelectContent>
+                            {raBills.map((b) => (
+                              <SelectItem key={b.id} value={b.id}>
+                                {b.bill_ref || `RA-${b.bill_no}`} · {b.period_month}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
                     <Button variant="outline" size="sm" onClick={suggestAll} disabled={openPositions.length === 0}>
                       <Wand2 className="h-3.5 w-3.5 mr-1.5" /> Suggest (oldest first)
                     </Button>
@@ -672,6 +726,13 @@ const AdvancesPage: React.FC = () => {
             </TabsContent>
           )}
 
+          {/* ---------------- Override approvals ---------------- */}
+          {canApprove && (
+            <TabsContent value="approvals">
+              <OverrideApprovalsPanel onDecided={refreshPending} />
+            </TabsContent>
+          )}
+
           {/* ---------------- All clients ---------------- */}
           <TabsContent value="board">
             <Card>
@@ -705,21 +766,22 @@ const AdvancesPage: React.FC = () => {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {board.map((r) => (
-                        <TableRow
-                          key={r.client.id}
-                          className="cursor-pointer"
-                          onClick={() => setSelectedClient(r.client.id)}
-                        >
-                          <TableCell className="font-medium">{r.client.name}</TableCell>
-                          <TableCell className="text-right tabular-nums font-semibold">{inr(r.open)}</TableCell>
-                          <TableCell>{r.oldest || '—'}</TableCell>
-                          <TableCell>{ageBucket(r.oldest, selectedMonth)}</TableCell>
-                          <TableCell className="text-xs text-muted-foreground">
-                            {r.client.regular_sub_type === 'Builder' ? 'Builder module' : 'Advance Register'}
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {board.map((r) => {
+                        const match = clients.find((c) => c.gstin === r.clientGstin);
+                        return (
+                          <TableRow
+                            key={r.clientGstin || r.clientName}
+                            className={match ? 'cursor-pointer' : undefined}
+                            onClick={() => match && setSelectedClient(match.id)}
+                          >
+                            <TableCell className="font-medium">{r.clientName}</TableCell>
+                            <TableCell className="text-right tabular-nums font-semibold">{inr(r.open)}</TableCell>
+                            <TableCell>{r.oldest || '—'}</TableCell>
+                            <TableCell>{r.bucket}</TableCell>
+                            <TableCell className="text-xs text-muted-foreground">{r.managedBy}</TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 )}
@@ -734,6 +796,7 @@ const AdvancesPage: React.FC = () => {
         onOpenChange={setReceiptDialogOpen}
         homeState={homeState}
         periodMonth={selectedMonth}
+        projects={projects}
         existing={editing}
         onSave={onSaveReceipt}
       />

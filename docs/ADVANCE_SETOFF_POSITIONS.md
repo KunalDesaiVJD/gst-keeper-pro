@@ -209,6 +209,13 @@ overridden by reflex.
 | 8 | Register closing ≠ JSON-derived closing | Soft | Reconcile |
 | 9 | Refund / write-back leg recorded this period (register clients only) | Soft | Net against Table 11A per §11 |
 
+**Position — an advisory finding still has to reach a person.** A soft-only
+result never blocks, and the blocking dialog only opens on a block — so
+findings raised without one need their own route out. They surface as a toast
+naming how many, with a *Review* action that opens the same dialog. Without
+this, rules 5-9 reached nobody and the QRMP rule below silenced findings
+instead of demoting them.
+
 **Position — every finding drops to advisory on an optional IFF month.** Under
 QRMP an advance genuinely cannot be set off in months 1 and 2 of a quarter, so a
 hard block there would fire on a correct return. Applied once, centrally, rather
@@ -299,15 +306,31 @@ firm-wide trail stays single-source.
 ### Three rules that stop it becoming a rubber stamp
 
 1. **Scoped.** One client, one period, one return type. An override never
-   carries forward to the next month.
+   carries forward to the next month. The Filing Status gate carries the
+   *actual* return in its scope (`FILING_STATUS:GSTR-3B (Q)` and so on) because
+   four return types pass through that one screen — collapsing them to a bare
+   `FILING_STATUS` let an approval granted while marking GSTR-1 filed also pass
+   GSTR-3B in the same period.
 2. **Lapses on change.** `findings_fingerprint` hashes the findings the approver
    actually saw. Edit the draft afterwards and the fingerprint changes, the
    override moves to `LAPSED`, and the block returns. Approving once must not
    authorise filing anything.
-3. **Permanently visible.** Every override appears in the Version History
-   dialog, on the Filing Status row, in the R6 certificate PDF, and in a
-   firm-wide overrides report. An override is a decision the firm can defend in
+3. **Permanently visible.** Every override appears in the R6 certificate PDF
+   and in the manager's inbox. An override is a decision the firm can defend in
    assessment — not a popup someone dismissed.
+
+### Where the manager decides
+
+The **Approvals** tab on the Advances page, visible to `gst_manager` and
+`superadmin`, badged with the number waiting. It lists each pending request with
+the findings the requester saw, their reason, and Approve / Reject; a rejection
+requires a note, because a rejection without one leaves the requester nothing to
+act on.
+
+Once the return is actually marked Filed, the standing approval is stamped with
+the ARN (`markFiledForPeriod`). That happens **after** the filing is recorded,
+not at approval: an approval is permission to file, not evidence that filing
+happened.
 
 ---
 
@@ -428,6 +451,14 @@ Works contract on immovable property takes POS from the location of the property
 (s.12(3)). Carrying `pos_state` on the project and inheriting it onto receipts
 and RA bills removes the IGST/CGST misclassification at source, which is a
 second, independent error class this layer eliminates for free.
+
+**Position — a receipt is linked to its project, and a leg inherits that link.**
+The receipt dialog asks for the project on a contractor client and takes the
+place of supply and rate from it; a set-off leg takes the project from its own
+receipt rather than asking again, and carries the RA bill it was recovered
+from. Nothing in the recovery schedule works without those three links — an
+unlinked receipt is invisible to the project it belongs to, and the working
+paper reports zeros while looking perfectly healthy.
 
 **Position — RA bills are stored, not derived.** The GSTR-1 JSON carries no
 project reference, so two projects for the same client billed in the same month

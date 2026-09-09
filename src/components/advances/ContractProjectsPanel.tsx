@@ -73,7 +73,11 @@ export const ContractProjectsPanel: React.FC<Props> = ({
   useEffect(() => { if (clientId) loadProjects(); }, [clientId, loadProjects]);
   useEffect(() => {
     if (!selectedId) { setBills([]); return; }
-    fetchRaBills(selectedId).then(setBills);
+    // Guarded: switching projects quickly could land an earlier project's
+    // bills on a later project's schedule.
+    let cancelled = false;
+    fetchRaBills(selectedId).then((b) => { if (!cancelled) setBills(b); });
+    return () => { cancelled = true; };
   }, [selectedId]);
 
   const schedule = useMemo(

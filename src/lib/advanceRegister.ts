@@ -62,6 +62,8 @@ export interface AdvanceAdjustment {
   sgst: number;
   cess: number;
   reason: AdjustmentReason;
+  /** The RA bill this recovery was made from — contractor projects only. */
+  ra_bill_id: string | null;
   amends_adjustment_id: string | null;
   original_period: string | null;
   amendment_reason: string;

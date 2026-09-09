@@ -11,7 +11,17 @@ import { supabase } from '@/integrations/supabase/client';
 import type { AdvanceCheckResult, AdvanceFinding } from './advanceSetoffCheck';
 
 export type OverrideStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'LAPSED';
-export type OverrideReturnType = 'GSTR-1' | 'GSTR-3B' | 'FILING_STATUS';
+
+/**
+ * Which gate an override was granted at.
+ *
+ * The Filing Status gate carries the RETURN it was marking filed, because four
+ * different return types pass through that one screen. Collapsing them to a
+ * bare 'FILING_STATUS' let an override approved while marking GSTR-1 filed also
+ * pass GSTR-3B in the same period — which contradicts the scoping rule this
+ * module states in §6 and in the migration.
+ */
+export type OverrideReturnType = 'GSTR-1' | 'GSTR-3B' | `FILING_STATUS:${string}`;
 
 export interface AdvanceOverride {
   id: string;
@@ -192,6 +202,30 @@ export async function markFiledUnderOverride(overrideId: string, arn?: string | 
     .from(TABLE as never)
     .update({ filed_after_override: true, arn: arn || null, updated_at: new Date().toISOString() } as never)
     .eq('id', overrideId);
+}
+
+/**
+ * Stamp the standing APPROVED override for this (client, period, return) as
+ * the authority a return actually went out under.
+ *
+ * Called after the filing is recorded rather than at approval time: an
+ * approval is permission to file, not evidence that filing happened. Without
+ * this the certificate printed "Filed under this override: No" on every return
+ * that had in fact gone out under one.
+ */
+export async function markFiledForPeriod(params: {
+  clientId: string;
+  periodMonth: string;
+  returnType: OverrideReturnType;
+  arn?: string | null;
+}): Promise<void> {
+  try {
+    const standing = await fetchOverride(params.clientId, params.periodMonth, params.returnType);
+    if (!standing || standing.status !== 'APPROVED') return;
+    await markFiledUnderOverride(standing.id, params.arn);
+  } catch {
+    // Never let bookkeeping about an override block the filing itself.
+  }
 }
 
 export type GateDecision =

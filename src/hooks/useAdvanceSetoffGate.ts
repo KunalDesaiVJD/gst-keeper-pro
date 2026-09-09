@@ -29,6 +29,12 @@ export interface EvaluateInput {
   regularSubType?: string | null;
   /** clients.registration_type — lets the checker spot an optional IFF month. */
   registrationType?: string | null;
+  /**
+   * Overrides the hook's return type for this evaluation. The Filing Status
+   * gate needs it: four return types pass through that one screen, and an
+   * override must not carry from one to another.
+   */
+  returnType?: OverrideReturnType;
 }
 
 export interface UseAdvanceSetoffGateOptions {
@@ -52,8 +58,14 @@ export function useAdvanceSetoffGate(options: UseAdvanceSetoffGateOptions) {
   const [override, setOverride] = useState<AdvanceOverride | null>(null);
   const [input, setInput] = useState<EvaluateInput | null>(null);
 
-  /** Runs the check and the gate. Returns true when the return may go out. */
-  const assess = useCallback(async (i: EvaluateInput): Promise<boolean> => {
+  /** The return this evaluation is scoped to — per call, falling back to the hook's. */
+  const scopeOf = useCallback(
+    (i: EvaluateInput | null): OverrideReturnType => i?.returnType || options.returnType,
+    [options.returnType],
+  );
+
+  /** Runs the check and the gate. Reports whether the return may go out. */
+  const assess = useCallback(async (i: EvaluateInput): Promise<{ allowed: boolean; findingCount: number }> => {
     const result = await runAdvanceSetoffCheck({
       clientId: i.clientId,
       gstin: i.gstin,
@@ -62,7 +74,7 @@ export function useAdvanceSetoffGate(options: UseAdvanceSetoffGateOptions) {
       regularSubType: i.regularSubType,
       registrationType: i.registrationType,
     });
-    const existing = await fetchOverride(i.clientId, i.periodMonth, options.returnType);
+    const existing = await fetchOverride(i.clientId, i.periodMonth, scopeOf(i));
     const decision = evaluateGate(result, existing);
 
     // A stale approval is retired as soon as it is seen, so it stops showing
@@ -75,16 +87,27 @@ export function useAdvanceSetoffGate(options: UseAdvanceSetoffGateOptions) {
     setOverride(existing);
     setGate(decision);
     setInput(i);
-    return decision.allowed;
-  }, [options.returnType]);
+    return { allowed: decision.allowed, findingCount: result.findings.length };
+  }, [scopeOf]);
 
   const evaluate = useCallback(async (i: EvaluateInput): Promise<boolean> => {
     setBusy(true);
     try {
-      const allowed = await assess(i);
-      if (!allowed) {
+      const result = await assess(i);
+      if (!result.allowed) {
         setOpen(true);
         return false;
+      }
+      // A soft-only result never blocked, and until now never showed either —
+      // the dialog opened on a block alone, so rules 5-9 reached nobody and
+      // the QRMP downgrade silenced findings instead of demoting them. Surface
+      // them without stopping the return: a toast that says how many, with a
+      // way into the same dialog.
+      if (result.findingCount > 0) {
+        toast.warning(
+          `${result.findingCount} advisory advance finding${result.findingCount === 1 ? '' : 's'} — not blocking this return.`,
+          { action: { label: 'Review', onClick: () => setOpen(true) }, duration: 8000 },
+        );
       }
       return true;
     } catch (err) {
@@ -102,10 +125,10 @@ export function useAdvanceSetoffGate(options: UseAdvanceSetoffGateOptions) {
     if (!input || !check || !options.persistDraft) return;
     setBusy(true);
     try {
-      const next = applySuggestedSetoff(input.draftJson, check.findings);
+      const next = applySuggestedSetoff(input.draftJson, check.findings, (input.gstin || '').slice(0, 2));
       await options.persistDraft(next);
       const nextInput = { ...input, draftJson: next };
-      const allowed = await assess(nextInput);
+      const { allowed } = await assess(nextInput);
       if (allowed) {
         setOpen(false);
         toast.success('Table 11B written and the advance set-off check now passes. Re-run the action to continue.');
@@ -127,7 +150,7 @@ export function useAdvanceSetoffGate(options: UseAdvanceSetoffGateOptions) {
         clientId: input.clientId,
         clientName: input.clientName,
         periodMonth: input.periodMonth,
-        returnType: options.returnType,
+        returnType: scopeOf(input),
         check,
         reason,
         userId: user?.id || null,
@@ -147,7 +170,7 @@ export function useAdvanceSetoffGate(options: UseAdvanceSetoffGateOptions) {
     } finally {
       setBusy(false);
     }
-  }, [input, check, options.returnType, user, assess]);
+  }, [input, check, scopeOf, user, assess]);
 
   return {
     evaluate,

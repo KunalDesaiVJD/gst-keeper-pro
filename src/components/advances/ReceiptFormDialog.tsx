@@ -6,8 +6,10 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, Info } from 'lucide-react';
+import { toast } from 'sonner';
 import { GST_STATE_CODES } from '@/utils/gstr1ManualBuild';
 import { taxForRate, type AdvanceReceipt, type SupplyNature } from '@/lib/advanceRegister';
+import type { ContractProject } from '@/lib/contractProjects';
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -17,18 +19,25 @@ export interface ReceiptFormDialogProps {
   /** Client's own state code — decides intra vs inter from the POS. */
   homeState: string;
   periodMonth: string;
+  /**
+   * Contractor projects, where the client has any. A contractor's advance is
+   * recovered per project, so a receipt that isn't linked to one can never
+   * appear in that project's recovery schedule — which is exactly how the
+   * working paper came to report zeros.
+   */
+  projects?: ContractProject[];
   existing?: AdvanceReceipt | null;
   onSave: (values: Partial<AdvanceReceipt>) => Promise<void>;
 }
 
 export const ReceiptFormDialog: React.FC<ReceiptFormDialogProps> = ({
-  open, onOpenChange, homeState, periodMonth, existing, onSave,
+  open, onOpenChange, homeState, periodMonth, projects = [], existing, onSave,
 }) => {
   const [saving, setSaving] = useState(false);
   const [f, setF] = useState({
     receipt_no: '', receipt_date: '', party_gstin: '', party_name: '',
     pos: homeState, rate_pct: '18', gross_amount: '', supply_nature: 'SERVICE' as SupplyNature,
-    notes: '',
+    notes: '', project_id: '',
   });
 
   useEffect(() => {
@@ -43,9 +52,12 @@ export const ReceiptFormDialog: React.FC<ReceiptFormDialogProps> = ({
       gross_amount: existing ? String(existing.gross_amount) : '',
       supply_nature: (existing?.supply_nature as SupplyNature) || 'SERVICE',
       notes: existing?.notes || '',
+      // A single-project client shouldn't have to pick every time.
+      project_id: existing?.project_id || (projects.length === 1 ? projects[0].id : ''),
     });
-  }, [open, existing, homeState]);
+  }, [open, existing, homeState, projects]);
 
+  const selectedProject = projects.find((p) => p.id === f.project_id) || null;
   const rate = Number(f.rate_pct) || 0;
   const gross = Number(f.gross_amount) || 0;
   const splyTy = f.pos && homeState && f.pos === homeState ? 'INTRA' : 'INTER';
@@ -59,7 +71,10 @@ export const ReceiptFormDialog: React.FC<ReceiptFormDialogProps> = ({
   const valid = !!f.receipt_date && !!f.pos && gross > 0;
 
   const submit = async () => {
-    if (!valid) return;
+    if (!valid || (projects.length > 0 && !f.project_id)) {
+      if (projects.length > 0 && !f.project_id) toast.error('Choose the project this advance belongs to.');
+      return;
+    }
     setSaving(true);
     try {
       await onSave({
@@ -69,6 +84,7 @@ export const ReceiptFormDialog: React.FC<ReceiptFormDialogProps> = ({
         period_month: existing?.period_month || periodMonth,
         party_gstin: f.party_gstin.trim().toUpperCase(),
         party_name: f.party_name.trim(),
+        project_id: f.project_id || null,
         pos: f.pos,
         rate_pct: rate,
         sply_ty: splyTy,
@@ -86,6 +102,10 @@ export const ReceiptFormDialog: React.FC<ReceiptFormDialogProps> = ({
         notes: f.notes.trim(),
       });
       onOpenChange(false);
+    } catch {
+      // onSave has already reported the reason; keep the dialog open with the
+      // operator's entry intact rather than letting this become an unhandled
+      // rejection.
     } finally {
       setSaving(false);
     }
@@ -118,6 +138,37 @@ export const ReceiptFormDialog: React.FC<ReceiptFormDialogProps> = ({
             <Label className="text-xs">Party name</Label>
             <Input value={f.party_name} onChange={(e) => setF({ ...f, party_name: e.target.value })} />
           </div>
+          {projects.length > 0 && (
+            <div className="col-span-2">
+              <Label className="text-xs">Project *</Label>
+              <Select
+                value={f.project_id}
+                onValueChange={(v) => {
+                  // Inherit the project's place of supply and rate — for a
+                  // works contract POS is the property's location (s.12(3)),
+                  // not the client's own state.
+                  const proj = projects.find((p) => p.id === v);
+                  setF({
+                    ...f,
+                    project_id: v,
+                    ...(proj ? { pos: proj.pos_state, rate_pct: String(proj.rate_pct) } : {}),
+                  });
+                }}
+              >
+                <SelectTrigger><SelectValue placeholder="Select the project this advance belongs to" /></SelectTrigger>
+                <SelectContent>
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.code ? `${p.code} — ` : ''}{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {selectedProject && (
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Place of supply {selectedProject.pos_state} taken from the project.
+                </p>
+              )}
+            </div>
+          )}
           <div>
             <Label className="text-xs">Place of supply *</Label>
             <Select value={f.pos} onValueChange={(v) => setF({ ...f, pos: v })}>

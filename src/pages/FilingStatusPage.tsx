@@ -25,6 +25,7 @@ import { isFsiConsentBlocked } from '@/lib/builderFsiData';
 import { isBuAgreementConfirmationBlocked } from '@/lib/builderAgreementConfirmData';
 import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
+import { markFiledForPeriod } from '@/lib/advanceSetoffOverrides';
 
 // Normalize an accountant name by stripping the trailing "/<number>" reference
 // (e.g. "PUNITBHAI/16" / "PAVANBHAI /66" / "PRIYA,MUKESHBHAI/ 28") so the same
@@ -661,7 +662,9 @@ const FilingStatusPage: React.FC = () => {
   // No persistDraft — Table 11B lives in the GSTR-1 JSON, so the correction
   // belongs on that page (docs/ADVANCE_SETOFF_POSITIONS.md §5).
   const advanceGate = useAdvanceSetoffGate({
-    returnType: 'FILING_STATUS',
+    // Per-evaluation scope is passed below: four return types pass through this
+    // one screen, and an override granted for one must not pass another.
+    returnType: 'FILING_STATUS:UNSCOPED',
     returnLabel: 'marking Filed',
   });
 
@@ -880,6 +883,7 @@ const FilingStatusPage: React.FC = () => {
         .eq('period_month', toShortMonth(advPeriod))
         .maybeSingle();
       const advanceOk = await advanceGate.evaluate({
+        returnType: `FILING_STATUS:${record.return_type}` as const,
         clientId: record.client_id,
         clientName: advClient?.name || record.clientName || '',
         gstin: advClient?.gstin || '',
@@ -946,6 +950,20 @@ const FilingStatusPage: React.FC = () => {
           filedDate: new Date().toISOString().split('T')[0],
           filingStatusId: isNewRecord ? null : record.id,
           staffName: user?.firstName ?? null,
+        });
+      }
+
+      // If this return went out under an approved advance set-off override,
+      // stamp that override with the ARN. Done here, after the filing is
+      // recorded, because an approval is permission to file, not evidence that
+      // filing happened — without this the exception certificate printed
+      // "Filed under this override: No" on every return that had.
+      if (newStatus === 'Filed' && ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-3B', 'GSTR-3B (Q)'].includes(record.return_type)) {
+        await markFiledForPeriod({
+          clientId: record.client_id,
+          periodMonth: record.period_month || selectedMonth,
+          returnType: `FILING_STATUS:${record.return_type}` as const,
+          arn: normalizeArn(localArn ?? record.arn),
         });
       }
 
