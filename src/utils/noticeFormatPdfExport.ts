@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { drawFirmLogo } from '@/utils/reportTheme';
 
 interface NoticeFormatPdfParams {
   clientName: string;
@@ -13,21 +14,24 @@ const fmt = (v: number): string => v.toLocaleString('en-IN', { maximumFractionDi
 
 export const exportNoticeFormatToPDF = ({ clientName, clientGstin, financialYear, outward, inward }: NoticeFormatPdfParams): void => {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  // Firm letterhead, shared with every other report.
+  drawFirmLogo(doc, { width: 78, y: 7, align: 'center' });
+
 
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.text('Notice Format', 105, 15, { align: 'center' });
+  doc.text('Notice Format', 105, 31, { align: 'center' });
 
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Client: ${clientName}`, 14, 25);
-  doc.text(`GSTIN: ${clientGstin}`, 14, 30);
-  doc.text(`Financial Year: ${financialYear}`, 14, 35);
-  doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, 150, 25);
+  doc.text(`Client: ${clientName}`, 14, 41);
+  doc.text(`GSTIN: ${clientGstin}`, 14, 46);
+  doc.text(`Financial Year: ${financialYear}`, 14, 51);
+  doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, 150, 41);
 
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
-  doc.text('Outward', 14, 45);
+  doc.text('Outward', 14, 61);
 
   autoTable(doc, {
     head: [['Description', 'Table No. in GSTR-9', 'IGST', 'CGST', 'SGST']],
@@ -35,7 +39,7 @@ export const exportNoticeFormatToPDF = ({ clientName, clientGstin, financialYear
       ['Total output tax liability', '9', fmt(outward.igst), fmt(outward.cgst), fmt(outward.sgst)],
       ['Net tax payable', '9', fmt(outward.net.igst), fmt(outward.net.cgst), fmt(outward.net.sgst)],
     ],
-    startY: 48,
+    startY: 64,
     styles: { fontSize: 9, cellPadding: 1.5 },
     headStyles: { fillColor: [74, 144, 164], textColor: 255, fontStyle: 'bold' },
     columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },

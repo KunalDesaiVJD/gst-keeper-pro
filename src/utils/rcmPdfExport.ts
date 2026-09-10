@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { drawFirmLogo } from '@/utils/reportTheme';
 
 interface RCMMonthlyData {
   [month: string]: number;
@@ -83,18 +84,21 @@ export const exportRCMToPDF = (
   months: string[]
 ): void => {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  // Firm letterhead, shared with every other report.
+  drawFirmLogo(doc, { width: 78, y: 7, align: 'center' });
+
 
   // Header
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.text('RCM Summary', 148.5, 15, { align: 'center' });
+  doc.text('RCM Summary', 148.5, 31, { align: 'center' });
 
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Client: ${clientName}`, 14, 25);
-  doc.text(`GSTIN: ${gstin}`, 14, 30);
-  doc.text(`Financial Year: ${financialYear}`, 14, 35);
-  doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, 250, 25);
+  doc.text(`Client: ${clientName}`, 14, 41);
+  doc.text(`GSTIN: ${gstin}`, 14, 46);
+  doc.text(`Financial Year: ${financialYear}`, 14, 51);
+  doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, 250, 41);
 
   // Table headers
   const headers = ['Particulars', 'RATE', ...months, 'TOTAL'];
@@ -179,7 +183,7 @@ export const exportRCMToPDF = (
   autoTable(doc, {
     head: [headers],
     body: tableData,
-    startY: 42,
+    startY: 58,
     styles: {
       fontSize: 7,
       cellPadding: 1.5,

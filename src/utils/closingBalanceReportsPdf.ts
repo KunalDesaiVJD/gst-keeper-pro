@@ -6,7 +6,7 @@
 
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import logoSmall from '@/assets/logo-small.png';
+import { drawFirmLogo } from '@/utils/reportTheme';
 import type { ReportTable } from './allClientsReports';
 
 const formatNumberForPdf = (v: any): string => {
@@ -20,10 +20,9 @@ export const renderReportToPdf = (report: ReportTable) => {
   const doc = new jsPDF('l', 'mm', 'a4');
   const pageWidth = doc.internal.pageSize.getWidth();
 
-  // Centered logo
-  const logoWidth = 60;
-  const logoHeight = 20;
-  doc.addImage(logoSmall, 'PNG', (pageWidth - logoWidth) / 2, 8, logoWidth, logoHeight);
+  // Centered letterhead, through the shared helper so the mark keeps its true
+  // proportions rather than being stretched into a 60 x 20mm box.
+  drawFirmLogo(doc, { width: 86, y: 10, align: 'center' });
 
   // Title (centered)
   doc.setFontSize(14);

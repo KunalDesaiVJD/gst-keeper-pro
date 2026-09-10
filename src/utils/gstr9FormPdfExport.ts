@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { drawFirmLogo } from '@/utils/reportTheme';
 
 export interface Gstr9PdfRow {
   tableNo: string;
@@ -29,19 +30,22 @@ const fmt = (v: number): string => {
 
 export const exportGstr9FormToPDF = ({ clientName, clientGstin, financialYear, sections }: Gstr9PdfParams): void => {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  // Firm letterhead, shared with every other report.
+  drawFirmLogo(doc, { width: 78, y: 7, align: 'center' });
+
 
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.text('GSTR-9 — Tables 4 to 16', 105, 15, { align: 'center' });
+  doc.text('GSTR-9 — Tables 4 to 16', 105, 31, { align: 'center' });
 
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Client: ${clientName}`, 14, 25);
-  doc.text(`GSTIN: ${clientGstin}`, 14, 30);
-  doc.text(`Financial Year: ${financialYear}`, 14, 35);
-  doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, 150, 25);
+  doc.text(`Client: ${clientName}`, 14, 41);
+  doc.text(`GSTIN: ${clientGstin}`, 14, 46);
+  doc.text(`Financial Year: ${financialYear}`, 14, 51);
+  doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, 150, 41);
 
-  let startY = 42;
+  let startY = 58;
   sections.forEach((section) => {
     if (startY > 250) { doc.addPage(); startY = 20; }
     doc.setFontSize(11);

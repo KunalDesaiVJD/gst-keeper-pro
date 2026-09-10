@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { FilingStatusRecord, filingStatusDisplayLabel } from '@/types';
-import logoSmall from '@/assets/logo-small.png';
+import { drawFirmLogo } from '@/utils/reportTheme';
 
 export const exportFilingStatusToPDF = (
   records: FilingStatusRecord[],
@@ -10,13 +10,10 @@ export const exportFilingStatusToPDF = (
 ) => {
   const doc = new jsPDF('l', 'mm', 'a4'); // Landscape
 
-  // Add logo image at the center
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const logoWidth = 60; // Adjust width as needed
-  const logoHeight = 20; // Adjust height as needed
-  const logoX = (pageWidth - logoWidth) / 2;
-  
-  doc.addImage(logoSmall, 'PNG', logoX, 8, logoWidth, logoHeight);
+  // Letterhead. Drawn through the shared helper so the mark keeps its true
+  // proportions — this used to be a hard-coded 60 x 20mm box, which stretched
+  // a 6:1 logo to half again its height.
+  drawFirmLogo(doc, { width: 86, y: 10, align: 'center' });
 
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
