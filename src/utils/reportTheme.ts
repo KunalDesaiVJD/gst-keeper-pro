@@ -52,7 +52,12 @@ export const drawFirmLogo = (doc: jsPDF, opts: LogoOptions): number => {
     ? (doc.internal.pageSize.getWidth() - opts.width) / 2
     : (opts.x ?? 14);
   try {
-    doc.addImage(firmLogo, 'PNG', x, opts.y, opts.width, height);
+    // 'SLOW' is load-bearing, not a nicety. jsPDF defaults to compression
+    // 'NONE', which writes the mark's pixels into the PDF essentially raw: a
+    // ten-page register measured 141 kB that way and 38 kB with 'SLOW'. The
+    // explicit alias only pins the de-duplication jsPDF already does by
+    // hashing the data, so one copy is embedded however many pages carry it.
+    doc.addImage(firmLogo, 'PNG', x, opts.y, opts.width, height, 'vjd-firm-logo', 'SLOW');
   } catch {
     // A report that cannot load the logo is still a report worth having —
     // fall back to the firm name rather than throwing away the export.
