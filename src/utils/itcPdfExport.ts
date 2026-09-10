@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { drawFirmLogo } from '@/utils/reportTheme';
 
 interface ITCRow {
   srNo: string;
@@ -49,14 +50,9 @@ export const exportITCSummaryToPDF = (params: ITCExportParams) => {
   
   const doc = new jsPDF('l', 'mm', 'a4'); // Landscape
 
-  // Title
-  doc.setFontSize(18);
-  doc.setFont('helvetica', 'bold');
-  doc.text('V. J. Desai & Co. LLP', 148, 15, { align: 'center' });
-  
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Chartered Accountants', 148, 22, { align: 'center' });
+  // Letterhead. The logo carries the firm name and "Chartered Accountants",
+  // so it replaces both lines that used to be set as text here.
+  drawFirmLogo(doc, { width: 86, y: 10, align: 'center' });
 
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');

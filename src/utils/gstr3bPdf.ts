@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { drawFirmLogo } from '@/utils/reportTheme';
 import type { Gstr3bResult } from './buildGstr3bJson';
 
 interface Params {
@@ -17,18 +18,21 @@ const fmt2 = (n: number) =>
 export const exportGstr3bToPDF = ({ result, clientName, gstin, monthLabel }: Params) => {
   const s = result.summary;
   const doc = new jsPDF('p', 'mm', 'a4');
+  // Firm letterhead, shared with every other report.
+  drawFirmLogo(doc, { width: 78, y: 7, align: 'center' });
+
 
   doc.setFontSize(15);
   doc.setFont('helvetica', 'bold');
-  doc.text('Form GSTR-3B', 105, 14, { align: 'center' });
+  doc.text('Form GSTR-3B', 105, 30, { align: 'center' });
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
-  doc.text(`${clientName}${gstin ? `  (${gstin})` : ''}`, 105, 20, { align: 'center' });
-  doc.text(`Tax Period: ${monthLabel}`, 105, 25, { align: 'center' });
+  doc.text(`${clientName}${gstin ? `  (${gstin})` : ''}`, 105, 36, { align: 'center' });
+  doc.text(`Tax Period: ${monthLabel}`, 105, 41, { align: 'center' });
 
   // Table 3.1 — outward supplies & inward RCM.
   autoTable(doc, {
-    startY: 31,
+    startY: 47,
     head: [['3.1 Nature of supplies', 'Taxable value', 'Integrated tax', 'Central tax', 'State/UT tax']],
     body: [
       ['(a) Outward taxable (other than zero/nil/exempt)', fmt2(s.outward.txval), fmt2(s.outward.igst), fmt2(s.outward.cgst), fmt2(s.outward.sgst)],

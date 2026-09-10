@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import logoSmall from '@/assets/logo-small.png';
+import { drawFirmLogo } from '@/utils/reportTheme';
 
 interface GSTUpdateRow {
   client_name?: string;
@@ -31,11 +31,9 @@ export const exportGSTUpdateToPDF = (
 ) => {
   const doc = new jsPDF('l', 'mm', 'a4');
   const pageWidth = doc.internal.pageSize.getWidth();
-  const logoWidth = 60;
-  const logoHeight = 20;
-  const logoX = (pageWidth - logoWidth) / 2;
-
-  doc.addImage(logoSmall, 'PNG', logoX, 8, logoWidth, logoHeight);
+  // Letterhead, through the shared helper so the mark keeps its true
+  // proportions rather than being stretched into a 60 x 20mm box.
+  drawFirmLogo(doc, { width: 86, y: 10, align: 'center' });
 
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');

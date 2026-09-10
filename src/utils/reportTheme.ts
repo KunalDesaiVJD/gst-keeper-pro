@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable, { type UserOptions } from 'jspdf-autotable';
+import firmLogo from '@/assets/logo-small.png';
 
 // The house look for every printed working paper — builder, advance and
 // contractor alike.
@@ -19,6 +20,48 @@ export const REPORT_FIRM = {
   name: 'V. J. Desai & Co. LLP',
   designation: 'Chartered Accountants',
   email: 'gst@vjdesai.com',
+};
+
+/**
+ * The firm logo, as it appears in the app itself.
+ *
+ * Its true proportions are 895 x 142 — a little over 6:1. Callers give a WIDTH
+ * and the height follows from that ratio, because the three exports that drew
+ * it before this helper existed each hard-coded 60 x 20mm and stretched the
+ * mark to half again its height. A squashed logo on a client-facing paper is
+ * worse than no logo.
+ */
+const LOGO_W = 895;
+const LOGO_H = 142;
+export const LOGO_ASPECT = LOGO_W / LOGO_H;
+
+export interface LogoOptions {
+  /** Printed width in mm. Height is derived. */
+  width: number;
+  /** Top edge in mm. */
+  y: number;
+  /** Left edge in mm, or omit with align:'center'. */
+  x?: number;
+  align?: 'left' | 'center';
+}
+
+/** Draws the firm logo and returns the y just below it. */
+export const drawFirmLogo = (doc: jsPDF, opts: LogoOptions): number => {
+  const height = opts.width / LOGO_ASPECT;
+  const x = opts.align === 'center'
+    ? (doc.internal.pageSize.getWidth() - opts.width) / 2
+    : (opts.x ?? 14);
+  try {
+    doc.addImage(firmLogo, 'PNG', x, opts.y, opts.width, height);
+  } catch {
+    // A report that cannot load the logo is still a report worth having —
+    // fall back to the firm name rather than throwing away the export.
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(17, 24, 39);
+    doc.text(REPORT_FIRM.name, x, opts.y + height * 0.7);
+  }
+  return opts.y + height;
 };
 
 // Ink, not accent. Text never wears a data colour.
@@ -53,15 +96,9 @@ export const drawHeader = (doc: jsPDF, meta: DocMeta): number => {
   const W = pageWidth(doc);
   const M = 14;
 
-  doc.setTextColor(...INK);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(15);
-  doc.text(REPORT_FIRM.name, M, 16);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.setTextColor(...INK_MUTED);
-  doc.text(REPORT_FIRM.designation, M, 21.5);
+  // The logo carries the firm name and "Chartered Accountants" already, so it
+  // replaces both text lines rather than sitting above them.
+  drawFirmLogo(doc, { width: 62, y: 11, x: M, align: 'left' });
 
   // Report name sits right-aligned against the firm block.
   doc.setFont('helvetica', 'bold');

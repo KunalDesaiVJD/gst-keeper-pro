@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { drawFirmLogo } from '@/utils/reportTheme';
 import type { Gstr1Summary } from './buildGstr1Summary';
 
 interface Params {
@@ -17,15 +18,18 @@ const fmt2 = (n: number) =>
 // driven by the same buildGstr1Summary() output the on-screen dialog uses.
 export const exportGstr1SummaryToPDF = ({ summary, clientName, gstin, monthLabel }: Params) => {
   const doc = new jsPDF('l', 'mm', 'a4'); // Landscape — 8 numeric columns
+  // Firm letterhead, shared with every other report.
+  drawFirmLogo(doc, { width: 78, y: 7, align: 'center' });
+
 
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.text('GSTR-1 Summary', 148, 14, { align: 'center' });
+  doc.text('GSTR-1 Summary', 148, 30, { align: 'center' });
 
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
-  doc.text(`${clientName}${gstin ? `  (${gstin})` : ''}`, 148, 21, { align: 'center' });
-  doc.text(`Tax Period: ${monthLabel}`, 148, 27, { align: 'center' });
+  doc.text(`${clientName}${gstin ? `  (${gstin})` : ''}`, 148, 37, { align: 'center' });
+  doc.text(`Tax Period: ${monthLabel}`, 148, 43, { align: 'center' });
 
   const body = summary.sections.map((s) => [
     `${s.code}  ${s.title}`,
@@ -50,7 +54,7 @@ export const exportGstr1SummaryToPDF = ({ summary, clientName, gstin, monthLabel
   ]);
 
   autoTable(doc, {
-    startY: 33,
+    startY: 49,
     head: [[
       'Description',
       'No. of records',
