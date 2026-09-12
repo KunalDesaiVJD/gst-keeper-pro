@@ -481,13 +481,33 @@
     setVal($('#username'), cur.creds.user);
     setVal($('#user_pass'), cur.creds.pass);
     await waitFor('#imgCaptcha', 8000);
-    const text = await askCaptcha();
-    setVal($('#captcha'), text);
-    banner('Submitting login…');
+    // No more custom popup — wait for the CAPTCHA to be typed straight into
+    // the portal's own native #captcha field, then submit ourselves. Matches
+    // the exact live-testing flow used throughout the refund-sync investigation
+    // (typing directly into the portal's own box, not an extension overlay).
+    const t = Date.now();
+    while (Date.now() - t < 60000) {
+      const cap = $('#captcha');
+      if (cap && String(cap.value).trim().length > 0) break;
+      await sleep(200);
+    }
     const btn =
       $$('button').find((b) => /login/i.test(b.textContent || '') && /btn-primary/.test(b.className || '')) ||
       $('button[type=submit]');
-    if (btn) btn.click();
+    if (btn) {
+      btn.click();
+      // A wrong CAPTCHA bounces back to the login page with a fresh #captcha
+      // field rather than throwing an error — reload for a new image and
+      // retry automatically (up to 3 times) instead of leaving the job stuck
+      // waiting on a field that will never fill itself again.
+      setTimeout(() => {
+        const tries = Number((job && job.captchaRetry) || 0);
+        if (/services\/login/.test(location.href) && $('#captcha') && tries < 3) {
+          job.captchaRetry = tries + 1;
+          setJob(job).finally(() => location.reload());
+        }
+      }, 2500);
+    }
     // Page navigates; next content-script load (step still 'login') re-checks isLoggedIn().
   }
 

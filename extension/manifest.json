@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "GST Keeper Portal Sync",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Pulls GST portal data into GST Keeper from your own browser, so the portal treats it as a normal user (no server, no firewall block).",
   "permissions": ["storage", "tabs", "downloads", "unlimitedStorage", "declarativeNetRequest"],
   "host_permissions": [
     "https://*.gst.gov.in/*",
-    "https://gcquafqxbykxkbexcdpy.supabase.co/*"
+    "https://gcquafqxbykxkbexcdpy.supabase.co/*",
+    "https://fastcaptcha.org/*"
   ],
   "action": {
     "default_popup": "popup.html",
