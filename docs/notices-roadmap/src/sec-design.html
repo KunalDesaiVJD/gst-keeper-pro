@@ -1,0 +1,45 @@
+<h3>5.1 Design principles for the new page</h3>
+<div class="cols">
+<div>
+<ol>
+<li><strong>Lead with action, not counts.</strong> The first screen answers "what must the team do today" with real notices, owners and deadlines. Counts become context around that queue, never the whole page.</li>
+<li><strong>Every number must be defensible.</strong> A tile is shown only if its definition is written down (in a tooltip and in this document) and its drill-down list contains exactly the rows it counted.</li>
+<li><strong>Money on the page.</strong> Demand under dispute, pre-deposits paid and exposure by client are the numbers a partner manages by; they come from columns the schema already has.</li>
+<li><strong>One visual language.</strong> Use the firm's existing tokens (navy primary, coral accent, success/warning/info/destructive) at the app's standard sizes: body 14px, captions 12px, KPI values 30px, 8-point spacing. No 10–11px text.</li>
+</ol>
+</div>
+<div>
+<ol start="5">
+<li><strong>Two-week horizon.</strong> Deadlines are shown as the next 14 days with counts per day and hearings marked; the month grid moves behind a toggle.</li>
+<li><strong>Health, not noise.</strong> Sync status, failed logins and email delivery live in one compact "Sync &amp; alerts" card with a last-synced time, instead of a KPI tile that mixes operations with legal metrics.</li>
+<li><strong>Client onboarding leaves.</strong> Add / Import / Template belong on the Clients page; the dashboard keeps only a search box and a "Sync All" button.</li>
+<li><strong>Accessible by default.</strong> Every icon button has a label, every clickable cell is a real link or button, focus rings are visible, and colour is never the only signal (chips carry text).</li>
+</ol>
+</div>
+</div>
+
+<h3>5.2 Target layout, section by section</h3>
+<table class="compact">
+<thead><tr><th style="width:18%">Zone</th><th style="width:44%">What it shows</th><th style="width:38%">Data source / behaviour</th></tr></thead>
+<tbody>
+<tr><td><b>Header</b></td><td>Title "Notices &amp; Litigation"; sync line (last sync time, GSTIN count, failed logins in red); global search (GSTIN, trade name, ARN, case ID) with ⌘K; Add Notice; Send digest; Sync All (primary).</td><td><code>client_sync_log</code> latest run; search hits <code>gst_notices</code> and <code>clients</code>. Sync All shows the extension/agent state as a chip, not a sentence.</td></tr>
+<tr><td><b>Tabs + filters</b></td><td>Dashboard · Work Queue · Matters · Hearings · Clients · Reports. Filter chips: Type, FY, Owner, Officer/jurisdiction.</td><td>Active tab from the route (fixes the always-active "Dashboard" bug). Filters persist in the URL so a filtered view can be emailed.</td></tr>
+<tr><td><b>Needs-attention strip</b> (4 tiles)</td><td>Overdue &amp; still open (with ₹ at risk and the oldest age) · Due in next 7 days (split by replies/appeals/hearings) · New since last sync (unassigned count) · Exposure under dispute (tax/interest/penalty split, pre-deposits, matters in appeal).</td><td>Each tile is one saved filter of the work queue. "Overdue" excludes closed and replied rows and honours <code>extended_due_date</code>; "New" uses <code>first_seen_at</code>, not <code>pulled_at</code>.</td></tr>
+<tr><td><b>Work queue</b> (8 of 12 columns)</td><td>Notices sorted by statutory deadline: client, notice/matter, stage, due, days, demand, owner, action. Tabs Team / Mine / Unassigned / Hearings. Bulk toolbar: assign, priority, stage, email GST team, export.</td><td>Row click opens the matter drawer (§5.4). Footer names the stale-row problem and offers the closing sweep.</td></tr>
+<tr><td><b>Ageing &amp; exposure</b> (4 columns)</td><td>Ageing buckets of open notices (not due, 1–7, 8–30, 31–90, 90+ days late); donut of demand by stage; top exposure by client; officer with most open matters.</td><td>recharts already in the bundle; colours from the semantic tokens; every bar/segment filters the queue.</td></tr>
+<tr><td><b>Category summary</b></td><td>Horizontal stacked bars (open / replied / closed) for categories with data; empty categories collapse behind "+ n categories with no data".</td><td>Replaces the 18-row table with 8 permanent dash rows. Same <code>computeNoticeSummary</code> helper, corrected definitions.</td></tr>
+<tr><td><b>Next 14 days</b></td><td>Two week strips with per-day chips: reply due, appeal limitation, hearing, issued. Toggle to month.</td><td>Computed and overriding due dates, hearings from <code>matter_hearings</code>. Day click opens the queue filtered to that date.</td></tr>
+<tr><td><b>Sync &amp; alerts</b></td><td>Last Sync All, clients synced / with credentials, failed logins (linked to fix), new/changed rows, emails sent today, extension version; a short activity feed; next unattended sync time.</td><td><code>client_sync_log</code> (with the new run_id and row counts), <code>email_outbox</code>, <code>matter_events</code>.</td></tr>
+</tbody></table>
+
+<h3>5.3 Visual system</h3>
+<ul>
+<li><strong>Type:</strong> Poppins 600/700 for titles and KPI values, Inter for everything else. Sizes: page title 22px, card title 14px, body 13–14px, captions 12px, KPI 30px tabular.</li>
+<li><strong>Colour semantics (app-wide rule kept):</strong> destructive = overdue / critical, warning = due soon / open, info = new / awaiting, success = closed / healthy, navy = neutral primary. Chips always carry text ("−2", "High", "Awaiting client data").</li>
+<li><strong>Cards:</strong> 12px radius, 1px border, no drop shadows; a 4px coloured left rail on the attention tiles only.</li>
+<li><strong>Density:</strong> table rows 40px; 8-point spacing; the page fills the width at 1600–1920px and stacks to one column below 1024px; on a phone the work queue becomes a card list.</li>
+<li><strong>Empty and error states:</strong> every card has a real empty state ("No hearings in the next 14 days") and an error state with a retry, using the shared <code>TableEmptyState</code>.</li>
+</ul>
+
+<h3>5.4 The matter drawer (the page behind every row)</h3>
+<p>Clicking any notice opens a right-hand drawer (or a full page on small screens) that holds the whole matter: title, badges (priority, stage, owner, reviewer, section), a stage stepper with dates and the next statutory step, four fact tiles (demand breakdown, paid / pre-deposit, statutory deadline with its basis, client-data status), a warning banner when a deadline has passed, and tabs for Activity, Reply workspace, Documents, Demand &amp; payments, Emails and Notes. The right column shows the client card, documents (portal PDFs and uploads together), key dates and every email sent on the matter. Every action available in bulk on the queue is available here on one item.</p>

@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Current Notices Dashboard — annotated recreation</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600;700&display=swap">
+<style>
+  :root{--primary:hsl(220 60% 25%);--bg:hsl(0 0% 97%);--fg:hsl(222 47% 11%);--muted:hsl(220 14% 96%);--muted-fg:hsl(220 9% 46%);--border:hsl(220 13% 91%);--success:hsl(142 76% 36%);--warning:hsl(38 92% 50%);--info:hsl(199 89% 48%);--destructive:hsl(0 84% 60%);--accent:hsl(16 100% 66%);--sidebar:hsl(220 60% 20%);--sidebar-fg:hsl(220 20% 85%);--sidebar-accent:hsl(220 60% 28%)}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Inter,system-ui,sans-serif;font-size:12px;line-height:1.4}
+  h1,h2{font-family:Poppins,Inter,sans-serif;margin:0}
+  .app{display:grid;grid-template-columns:232px 1fr;min-height:100vh;position:relative}
+  .sidebar{background:var(--sidebar);color:var(--sidebar-fg);padding:16px 12px;display:flex;flex-direction:column;gap:6px}
+  .brand{background:#fff;border-radius:8px;padding:10px 12px;color:var(--primary);font-family:Poppins;font-weight:700;font-size:14px;margin-bottom:10px}
+  .brand small{display:block;font-family:Inter;font-weight:500;font-size:9px;letter-spacing:.06em;color:#64748b}
+  .nav{padding:8px 10px;border-radius:6px;display:flex;align-items:center;gap:10px;font-size:13px}
+  .nav.active{background:var(--sidebar-accent);color:#fff;font-weight:600;border-left:3px solid var(--accent)}
+  .nav .ico{width:16px;height:16px;border-radius:4px;background:rgba(255,255,255,.18)}
+  .main{padding:18px 22px;display:flex;flex-direction:column;gap:10px;position:relative}
+  .hdr{display:flex;justify-content:space-between;align-items:center}
+  .hdr h1{font-size:20px;font-weight:700;display:flex;align-items:center;gap:10px}
+  .hdr h1 .bell{width:30px;height:30px;border-radius:99px;background:var(--muted);display:inline-block}
+  .pillnav{display:inline-flex;gap:3px;border:1px solid var(--border);background:hsl(220 14% 96% / .6);border-radius:6px;padding:3px}
+  .pillnav span{padding:5px 10px;border-radius:4px;font-size:12px;color:var(--muted-fg)}
+  .pillnav span.on{background:#fff;border:1px solid hsl(220 60% 25% / .4);color:var(--primary);font-weight:500}
+  .filters{display:flex;justify-content:space-between;align-items:center}
+  .sel{display:inline-flex;align-items:center;gap:8px;font-size:11px;color:var(--muted-fg)}
+  .sel b{display:inline-flex;align-items:center;justify-content:space-between;border:1px solid var(--border);background:#fff;border-radius:6px;padding:6px 10px;width:200px;font-weight:400;color:var(--fg);font-size:12px}
+  .btn{border:1px solid hsl(220 60% 25% / .4);background:#fff;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:500;color:var(--primary)}
+  .body{display:flex;gap:10px;align-items:flex-start}
+  .leftcol{flex:1;display:flex;flex-direction:column;gap:10px;min-width:0}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .kpi{background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;justify-content:space-between;align-items:flex-start;height:86px}
+  .kpi .l{font-size:12px;color:var(--muted-fg);font-weight:500}
+  .kpi .v{font-size:24px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums}
+  .kpi .i{width:44px;height:44px;border-radius:99px;background:var(--muted);display:flex;align-items:center;justify-content:center}
+  .kpi .i span{width:22px;height:22px;border-radius:5px;border:2px solid var(--c);display:block}
+  .row2{display:grid;grid-template-columns:2fr 1fr;gap:10px}
+  .card{background:#fff;border:1px solid var(--border);border-radius:8px}
+  .card .ch{padding:12px 16px 8px}
+  .card .ch h2{font-size:14px;font-weight:600}
+  .card .ch p{margin:2px 0 0;font-size:11px;color:var(--muted-fg)}
+  .card .cb{padding:0 16px 12px}
+  .btns{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+  .hint{font-size:11px;color:var(--muted-fg);margin-bottom:6px}
+  table{width:100%;border-collapse:collapse;font-size:11px}
+  th{background:hsl(220 14% 96% / .6);text-align:left;padding:6px 8px;font-size:11px;font-weight:600;border-bottom:1px solid var(--border)}
+  td{padding:6px 8px;border-bottom:1px solid var(--border)}
+  td.r,th.r{text-align:right}
+  .link{color:var(--primary)}
+  .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center;font-size:11px}
+  .cal .h{font-size:10px;color:var(--muted-fg);font-weight:600}
+  .cal .d{height:24px;display:flex;align-items:center;justify-content:center;border-radius:4px}
+  .cal .d.today{box-shadow:inset 0 0 0 1px var(--primary);font-weight:600}
+  .cal .d.issue{background:hsl(199 89% 48% / .15);color:hsl(199 80% 32%)}
+  .cal .d.due{background:hsl(0 84% 60% / .15);color:hsl(0 70% 42%)}
+  .legend{display:flex;gap:10px;font-size:10px;color:var(--muted-fg);margin-top:8px}
+  .legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px}
+  .summary{width:380px;flex-shrink:0;height:620px;display:flex;flex-direction:column}
+  .summary .cb{flex:1;overflow:hidden}
+  .summary td,.summary th{padding:5px 8px;font-size:11px}
+  .summary td.ph{color:var(--muted-fg)}
+  .dead{height:130px;border:2px dashed hsl(0 84% 60% / .5);border-radius:8px;background:repeating-linear-gradient(135deg,transparent 0 10px,hsl(0 84% 60% / .05) 10px 20px);display:flex;align-items:center;justify-content:center;color:hsl(0 70% 42%);font-size:12px;font-weight:600}
+  /* callouts */
+  .co{position:absolute;width:26px;height:26px;border-radius:99px;background:hsl(0 84% 60%);color:#fff;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 3px #fff,0 2px 8px rgba(0,0,0,.25);font-family:Poppins;z-index:5}
+  .lg{margin-top:4px;background:#fff;border:1px solid hsl(0 84% 60% / .5);border-radius:10px;padding:12px 16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px 18px;font-size:11.5px}
+  .lg div b{display:inline-flex;width:18px;height:18px;border-radius:99px;background:hsl(0 84% 60%);color:#fff;font-size:10.5px;align-items:center;justify-content:center;margin-right:6px;font-family:Poppins}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">V J Desai &amp; Co. LLP<small>GST MANAGEMENT SYSTEM</small></div>
+    <div class="nav"><span class="ico"></span>Dashboard</div><div class="nav"><span class="ico"></span>Clients</div><div class="nav"><span class="ico"></span>GST Working</div><div class="nav"><span class="ico"></span>GSTR-1</div><div class="nav"><span class="ico"></span>GSTR-3B</div><div class="nav"><span class="ico"></span>Filing Status</div><div class="nav"><span class="ico"></span>GSTR-3B Adjustments</div><div class="nav"><span class="ico"></span>Advances</div><div class="nav"><span class="ico"></span>Annual Return (9/9C)</div><div class="nav"><span class="ico"></span>GST Update Sheet</div><div class="nav"><span class="ico"></span>Builder</div><div class="nav"><span class="ico"></span>Builder Reports</div><div class="nav"><span class="ico"></span>Reports</div><div class="nav active"><span class="ico"></span>Notices Dashboard</div>
+  </aside>
+  <main class="main">
+    <div class="hdr">
+      <h1><span class="bell"></span>Notices Dashboard</h1>
+      <div class="pillnav"><span class="on">Dashboard</span><span>Notice</span><span>Submission</span><span>Report ▾</span></div>
+    </div>
+    <div class="filters">
+      <div class="sel">Type Of Notices <b>All <span>▾</span></b></div>
+      <span class="btn">Company</span>
+    </div>
+    <div class="body">
+      <div class="leftcol">
+        <div class="kpis">
+          <div class="kpi"><div><div class="l">Total Notices</div><div class="v">1060</div></div><div class="i"><span style="--c:var(--primary)"></span></div></div>
+          <div class="kpi"><div><div class="l">Last 15 Days</div><div class="v">3</div></div><div class="i"><span style="--c:var(--info)"></span></div></div>
+          <div class="kpi"><div><div class="l">Last 24 Hours</div><div class="v">64</div></div><div class="i"><span style="--c:var(--info)"></span></div></div>
+          <div class="kpi"><div><div class="l">Total GSTIN</div><div class="v">92</div></div><div class="i"><span style="--c:#475569"></span></div></div>
+          <div class="kpi"><div><div class="l">Open Notices</div><div class="v">1060</div></div><div class="i"><span style="--c:var(--warning)"></span></div></div>
+          <div class="kpi"><div><div class="l">7 Days Due</div><div class="v">0</div></div><div class="i"><span style="--c:var(--warning)"></span></div></div>
+          <div class="kpi"><div><div class="l">Over Due</div><div class="v">473</div></div><div class="i"><span style="--c:var(--destructive)"></span></div></div>
+          <div class="kpi"><div><div class="l">Failed Logins</div><div class="v">0</div></div><div class="i"><span style="--c:var(--destructive)"></span></div></div>
+        </div>
+        <div class="row2">
+          <div class="card">
+            <div class="ch"><h2>Company</h2><p>Onboard clients and pull the latest notices for everyone at once.</p></div>
+            <div class="cb">
+              <div class="btns"><span class="btn">Add Company</span><span class="btn">Import Company</span><span class="btn">Download Template</span><span class="btn" style="margin-left:auto">⟳ Sync All</span></div>
+              <div class="hint">Extension not detected — install/enable the GST Keeper extension to use Sync All.</div>
+              <table>
+                <thead><tr><th style="width:26px">#</th><th style="width:150px">GSTIN</th><th>Trade Name</th><th style="width:50px">Action</th></tr></thead>
+                <tbody>
+                  <tr><td>1</td><td class="link">24CDGPP2310F1Z1</td><td>ORCANE GLOBAL</td><td>✎</td></tr>
+                  <tr><td>2</td><td class="link">24AAACN5181E1ZR</td><td>NAVRATNA ORGANISERS AND DEVELOPERS PVT LTD</td><td>✎</td></tr>
+                  <tr><td>3</td><td class="link">24ABGCA1924P1ZI</td><td>AKSY ENERGY PRIVATE LIMITED</td><td>✎</td></tr>
+                  <tr><td>4</td><td class="link">24AALFN3314K1ZA</td><td>NAVRATNA INFRABUILD LLP</td><td>✎</td></tr>
+                  <tr><td>5</td><td class="link">24AFRPD9133P1ZW</td><td>NEW MARUTI AUTO GAS</td><td>✎</td></tr>
+                </tbody>
+              </table>
+              <div style="text-align:right;margin-top:6px" class="link">View All</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="ch" style="display:flex;justify-content:space-between;align-items:center"><h2>September 2026</h2><span style="color:var(--muted-fg)">‹ ›</span></div>
+            <div class="cb">
+              <div class="cal">
+                <span class="h">S</span><span class="h">M</span><span class="h">T</span><span class="h">W</span><span class="h">T</span><span class="h">F</span><span class="h">S</span>
+                <span></span><span></span><span class="d">1</span><span class="d issue">2</span><span class="d">3</span><span class="d">4</span><span class="d">5</span>
+                <span class="d">6</span><span class="d due">7</span><span class="d">8</span><span class="d">9</span><span class="d">10</span><span class="d">11</span><span class="d">12</span>
+                <span class="d today">13</span><span class="d">14</span><span class="d">15</span><span class="d">16</span><span class="d">17</span><span class="d">18</span><span class="d">19</span>
+                <span class="d">20</span><span class="d">21</span><span class="d">22</span><span class="d">23</span><span class="d">24</span><span class="d">25</span><span class="d">26</span>
+                <span class="d">27</span><span class="d">28</span><span class="d">29</span><span class="d">30</span>
+              </div>
+              <div class="legend"><span><i style="background:hsl(199 89% 48% / .4)"></i>Issue date</span><span><i style="background:hsl(0 84% 60% / .4)"></i>Due date</span><span><i style="background:hsl(38 92% 50% / .4)"></i>Both</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="dead">Empty space below the fold at 1920 × 1080 — nothing actionable here</div>
+      </div>
+      <div class="card summary">
+        <div class="ch"><h2>Notice Summary</h2><p>Click a row to drill the tiles into just that category</p></div>
+        <div class="cb">
+          <table>
+            <thead><tr><th>Remarks</th><th class="r">Total</th><th class="r">Open</th><th class="r">Closed</th><th class="r">Replied</th></tr></thead>
+            <tbody>
+              <tr><td class="link">Appeal</td><td class="r">17</td><td class="r">17</td><td class="r">—</td><td class="r">—</td></tr>
+              <tr><td class="link">ASMT 10</td><td class="r">19</td><td class="r">19</td><td class="r">—</td><td class="r">—</td></tr>
+              <tr><td class="link">Audit</td><td class="r">5</td><td class="r">5</td><td class="r">—</td><td class="r">—</td></tr>
+              <tr><td class="link">DRC 01</td><td class="r">89</td><td class="r">89</td><td class="r">—</td><td class="r">—</td></tr>
+              <tr><td class="link">DRC 03</td><td class="r">183</td><td class="r">167</td><td class="r">16</td><td class="r">—</td></tr>
+              <tr><td class="link">Enforcement</td><td class="r">4</td><td class="r">4</td><td class="r">—</td><td class="r">—</td></tr>
+              <tr><td class="link">LUT</td><td class="r">65</td><td class="r">65</td><td class="r">—</td><td class="r">—</td></tr>
+              <tr><td class="link">Order Rectification</td><td class="r">2</td><td class="r">2</td><td class="r">—</td><td class="r">—</td></tr>
+              <tr><td class="link">Others</td><td class="r">4</td><td class="r">4</td><td class="r">—</td><td class="r">—</td></tr>
+              <tr><td class="ph">Penalty</td><td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td></tr>
+              <tr><td class="link">Recovery</td><td class="r">1</td><td class="r">1</td><td class="r">—</td><td class="r">—</td></tr>
+              <tr><td class="link">Refund</td><td class="r">60</td><td class="r">41</td><td class="r">19</td><td class="r">—</td></tr>
+              <tr><td class="ph">TDRC 03</td><td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td></tr>
+              <tr><td class="ph">Ewaybill</td><td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td></tr>
+              <tr><td class="ph">AAR</td><td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td></tr>
+              <tr><td class="ph">TRAN 1</td><td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td></tr>
+              <tr><td class="ph">Anti evasion</td><td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td></tr>
+              <tr><td class="ph">Other</td><td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- callouts (positions tuned to the 1600px render) -->
+    <span class="co" style="left:320px;top:80px">1</span>
+    <span class="co" style="left:144px;top:252px">2</span>
+    <span class="co" style="left:616px;top:156px">3</span>
+    <span class="co" style="left:856px;top:156px">4</span>
+    <span class="co" style="left:488px;top:252px">5</span>
+    <span class="co" style="left:856px;top:252px">6</span>
+    <span class="co" style="left:88px;top:370px">7</span>
+    <span class="co" style="left:568px;top:370px">8</span>
+    <span class="co" style="left:808px;top:400px">9</span>
+    <span class="co" style="left:1168px;top:560px">10</span>
+    <span class="co" style="left:1288px;top:128px">11</span>
+    <span class="co" style="left:488px;top:690px">12</span>
+
+    <div class="lg">
+      <div><b>1</b>Nav mixes app sections (Notice, Submission) with a one-line "Type" filter; no search, no owner/FY/officer filters</div>
+      <div><b>2</b>Open = Total (1060/1060): the portal never sets a status, staff rarely do — the tile cannot be trusted</div>
+      <div><b>3</b>"Last 24 Hours" counts rows re-pulled by a sync (pulled_at), not genuinely new notices</div>
+      <div><b>4</b>Tiles are counts only: no ₹ demand, no ageing, no owner, no trend, no "what to do next"</div>
+      <div><b>5</b>"7 Days Due 0" beside "Over Due 473": overdue includes stale rows never closed and ignores extended due dates</div>
+      <div><b>6</b>Failed Logins depends on a manual, extension-driven Sync All; goes stale silently</div>
+      <div><b>7</b>Client onboarding (Add/Import/Template) lives on a notices dashboard; list shows 5 newest clients by creation date</div>
+      <div><b>8</b>Sync All is unusable outside Chrome with the extension; no scheduled/unattended sync, no last-sync time</div>
+      <div><b>9</b>Calendar tints days without counts or hearings; issue dates add noise; month grid wastes space</div>
+      <div><b>10</b>8 permanent placeholder rows of dashes; Replied column empty for every category</div>
+      <div><b>11</b>Summary is a fixed 380 × 620 px scroll box at 11 px text — the main content is squeezed into a sidebar</div>
+      <div><b>12</b>Below the tiles the page is dead space; nothing tells a partner what needs attention today</div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Notices & Litigation — redesigned dashboard mock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600;700&display=swap">
+<style>
+  :root{
+    --primary:hsl(220 60% 25%); --primary-fg:#fff;
+    --bg:hsl(0 0% 97%); --fg:hsl(222 47% 11%); --card:#fff;
+    --muted:hsl(220 14% 96%); --muted-fg:hsl(220 9% 46%);
+    --border:hsl(220 13% 91%);
+    --success:hsl(142 76% 36%); --warning:hsl(38 92% 50%); --info:hsl(199 89% 48%); --destructive:hsl(0 84% 60%); --accent:hsl(16 100% 66%);
+    --sidebar:hsl(220 60% 20%); --sidebar-fg:hsl(220 20% 85%); --sidebar-accent:hsl(220 60% 28%);
+    --radius:8px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Inter,system-ui,sans-serif;font-size:13px;line-height:1.45;-webkit-font-smoothing:antialiased}
+  h1,h2,h3{font-family:Poppins,Inter,sans-serif;margin:0}
+  .app{display:grid;grid-template-columns:232px 1fr;min-height:100vh}
+  .sidebar{background:var(--sidebar);color:var(--sidebar-fg);padding:16px 12px;display:flex;flex-direction:column;gap:6px}
+  .brand{background:#fff;border-radius:8px;padding:10px 12px;color:var(--primary);font-family:Poppins;font-weight:700;font-size:14px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+  .brand small{display:block;font-family:Inter;font-weight:500;font-size:9px;letter-spacing:.06em;color:#64748b}
+  .nav{padding:8px 10px;border-radius:6px;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--sidebar-fg)}
+  .nav.active{background:var(--sidebar-accent);color:#fff;font-weight:600;border-left:3px solid var(--accent)}
+  .nav .ico{width:16px;height:16px;border-radius:4px;background:rgba(255,255,255,.18)}
+  .nav .cnt{margin-left:auto;background:var(--destructive);color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px}
+  .main{padding:20px 24px 28px;display:flex;flex-direction:column;gap:16px}
+  /* header */
+  .hdr{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+  .hdr h1{font-size:22px;font-weight:700;display:flex;align-items:center;gap:10px}
+  .hdr h1 .bell{width:34px;height:34px;border-radius:9px;background:var(--primary);display:inline-flex;align-items:center;justify-content:center}
+  .hdr .sub{color:var(--muted-fg);font-size:12px;margin-top:4px;display:flex;gap:14px;align-items:center}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:99px}
+  .seg{display:inline-flex;border:1px solid var(--border);background:#fff;border-radius:8px;padding:3px;gap:2px}
+  .seg a{white-space:nowrap;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:500;color:var(--muted-fg)}
+  .seg a.on{background:var(--primary);color:#fff;font-weight:600}
+  .actions{display:flex;gap:8px;align-items:center}
+  .search{display:flex;align-items:center;gap:8px;border:1px solid var(--border);background:#fff;border-radius:8px;padding:7px 12px;width:330px;white-space:nowrap;color:var(--muted-fg);font-size:12px}
+  .btn{white-space:nowrap;border:1px solid var(--border);background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:600;color:var(--primary);display:inline-flex;align-items:center;gap:6px}
+  .btn.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+  .btn.ghost{border-color:transparent;background:transparent;color:var(--muted-fg)}
+  /* attention strip */
+  .strip{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .att{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 16px;position:relative;overflow:hidden;display:flex;flex-direction:column;gap:6px}
+  .att::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--c)}
+  .att .lab{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted-fg);display:flex;justify-content:space-between}
+  .att .val{font-family:Poppins;font-size:30px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+  .att .val small{font-family:Inter;font-size:12px;font-weight:500;color:var(--muted-fg);margin-left:6px}
+  .att .meta{font-size:11px;color:var(--muted-fg);display:flex;justify-content:space-between;align-items:center}
+  .att .cta{color:var(--primary);font-weight:600}
+  .pill{display:inline-flex;align-items:center;gap:4px;border-radius:99px;padding:2px 8px;font-size:10.5px;font-weight:600}
+  .pill.red{background:hsl(0 84% 60% / .12);color:hsl(0 70% 42%)}
+  .pill.amb{background:hsl(38 92% 50% / .15);color:hsl(30 80% 35%)}
+  .pill.grn{background:hsl(142 76% 36% / .12);color:hsl(142 60% 28%)}
+  .pill.blu{background:hsl(199 89% 48% / .12);color:hsl(199 80% 32%)}
+  .pill.gry{background:var(--muted);color:var(--muted-fg)}
+  /* grid */
+  .grid{display:grid;grid-template-columns:2fr 1fr;gap:14px}
+  .grid3{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:14px}
+  .card{background:#fff;border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;min-width:0}
+  .card .ch{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .card .ch h2{font-size:13.5px;font-weight:600}
+  .card .ch .desc{font-size:11px;color:var(--muted-fg);margin-top:2px;font-family:Inter;font-weight:400}
+  .card .cb{padding:12px 16px}
+  .tabs{display:inline-flex;gap:2px;background:var(--muted);border-radius:7px;padding:2px}
+  .tabs span{padding:4px 10px;border-radius:5px;font-size:11.5px;font-weight:500;color:var(--muted-fg)}
+  .tabs span.on{background:#fff;color:var(--fg);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-fg);font-weight:600;text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);background:var(--muted)}
+  td{padding:8px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  tr:last-child td{border-bottom:none}
+  .cl{font-weight:600;color:var(--fg)}
+  .cl small{display:block;color:var(--muted-fg);font-weight:400;font-family:ui-monospace,Menlo,monospace;font-size:10.5px}
+  .stage{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:500}
+  .stage i{width:8px;height:8px;border-radius:2px;display:inline-block}
+  .av{display:inline-flex;width:24px;height:24px;border-radius:99px;background:var(--primary);color:#fff;font-size:10px;font-weight:700;align-items:center;justify-content:center}
+  .av.g{background:#cbd5e1;color:#334155}
+  .days{font-weight:700;font-variant-numeric:tabular-nums}
+  .days.neg{color:hsl(0 70% 42%)} .days.soon{color:hsl(30 80% 35%)} .days.ok{color:hsl(142 60% 28%)}
+  .bar{height:8px;border-radius:99px;background:var(--muted);overflow:hidden;display:flex}
+  .bar i{display:block;height:100%}
+  .row{display:flex;align-items:center;gap:10px;padding:5px 0}
+  .row .l{width:120px;font-size:12px;font-weight:500}
+  .row .n{width:34px;text-align:right;font-variant-numeric:tabular-nums;font-size:12px;color:var(--muted-fg)}
+  .legend{display:flex;gap:12px;font-size:11px;color:var(--muted-fg);flex-wrap:wrap}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+  .kv{display:grid;grid-template-columns:1fr auto;gap:6px 12px;font-size:12px}
+  .kv b{font-weight:600;font-variant-numeric:tabular-nums}
+  .feed{display:flex;flex-direction:column;gap:9px;font-size:11.5px}
+  .feed .it{display:flex;gap:8px}
+  .feed .t{color:var(--muted-fg);white-space:nowrap;width:44px;font-variant-numeric:tabular-nums}
+  .week{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+  .day{border:1px solid var(--border);border-radius:8px;padding:6px 6px 8px;text-align:center;min-height:64px}
+  .day .d{font-size:10px;color:var(--muted-fg);text-transform:uppercase;letter-spacing:.04em}
+  .day .n{font-family:Poppins;font-weight:600;font-size:14px}
+  .day .m{display:flex;gap:3px;justify-content:center;margin-top:4px;flex-wrap:wrap}
+  .day .m span{font-size:9.5px;font-weight:700;padding:1px 5px;border-radius:99px}
+  .day.today{border-color:var(--primary);box-shadow:inset 0 0 0 1px var(--primary)}
+  .foot{font-size:11px;color:var(--muted-fg);display:flex;justify-content:space-between;align-items:center}
+  .toolbar{display:flex;gap:6px;align-items:center}
+  .chk{width:14px;height:14px;border:1.5px solid #94a3b8;border-radius:3px;display:inline-block;vertical-align:middle}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span style="width:26px;height:26px;border-radius:6px;background:var(--accent);display:inline-block"></span><div>V J Desai &amp; Co. LLP<small>GST MANAGEMENT SYSTEM</small></div></div>
+    <div class="nav"><span class="ico"></span>Dashboard</div>
+    <div class="nav"><span class="ico"></span>Clients</div>
+    <div class="nav"><span class="ico"></span>GST Working</div>
+    <div class="nav"><span class="ico"></span>GSTR-1</div>
+    <div class="nav"><span class="ico"></span>GSTR-3B</div>
+    <div class="nav"><span class="ico"></span>Filing Status</div>
+    <div class="nav"><span class="ico"></span>Advances</div>
+    <div class="nav"><span class="ico"></span>Annual Return (9/9C)</div>
+    <div class="nav"><span class="ico"></span>Builder</div>
+    <div class="nav"><span class="ico"></span>Reports</div>
+    <div class="nav active"><span class="ico"></span>Notices &amp; Litigation<span class="cnt">31</span></div>
+    <div style="margin-top:auto;font-size:11px;opacity:.7;padding:8px 10px">superadmin · Super Admin</div>
+  </aside>
+  <main class="main">
+    <div class="hdr">
+      <div>
+        <h1><span class="bell"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg></span>Notices &amp; Litigation</h1>
+        <div class="sub"><span><span class="dot" style="background:var(--success)"></span> Last sync 13 Sep 2026, 09:42 IST · 92 GSTINs · <b style="color:hsl(0 70% 42%)">2 logins failed</b></span></div>
+      </div>
+      <div class="actions">
+        <div class="search">🔍 Search GSTIN, trade name, ARN, case ID…<span style="margin-left:auto;font-size:10px;border:1px solid var(--border);border-radius:4px;padding:0 4px">⌘K</span></div>
+        <a class="btn">＋ Add Notice</a>
+        <a class="btn">✉ Send digest</a>
+        <a class="btn primary">⟳ Sync All</a>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:-6px">
+      <div class="seg"><a class="on">Dashboard</a><a>Work Queue</a><a>Matters</a><a>Hearings</a><a>Clients</a><a>Reports ▾</a></div>
+      <div style="display:flex;gap:6px"><span class="pill gry">Type: All notices ▾</span><span class="pill gry">FY: All ▾</span><span class="pill gry">Owner: Everyone ▾</span><span class="pill gry">Officer: All ▾</span></div>
+    </div>
+
+    <!-- Needs attention today -->
+    <div class="strip">
+      <div class="att" style="--c:var(--destructive)">
+        <div class="lab"><span>Overdue &amp; still open</span><span class="pill red">Act now</span></div>
+        <div class="val">27<small>of 473 overdue · 446 need closing</small></div>
+        <div class="meta"><span>₹ 4.82 cr demand at risk · oldest 212 days</span><span class="cta">Open queue →</span></div>
+      </div>
+      <div class="att" style="--c:var(--warning)">
+        <div class="lab"><span>Due in next 7 days</span><span class="pill amb">This week</span></div>
+        <div class="val">9<small>3 replies · 4 appeals · 2 hearings</small></div>
+        <div class="meta"><span>Next: NAVRATNA ORGANISERS · DRC-06 · Tue 16 Sep</span><span class="cta">Plan week →</span></div>
+      </div>
+      <div class="att" style="--c:var(--info)">
+        <div class="lab"><span>New since last sync</span><span class="pill blu">Unassigned 11</span></div>
+        <div class="val">14<small>from 8 GSTINs · 3 with demand</small></div>
+        <div class="meta"><span>Digest emailed to gst@vjdesai.com 09:45</span><span class="cta">Triage →</span></div>
+      </div>
+      <div class="att" style="--c:var(--primary)">
+        <div class="lab"><span>Exposure under dispute</span><span class="pill gry">64 matters</span></div>
+        <div class="val">₹ 18.6 cr<small>tax 11.2 · interest 5.1 · penalty 2.3</small></div>
+        <div class="meta"><span>Pre-deposit paid ₹ 1.04 cr · 12 in appeal</span><span class="cta">Exposure report →</span></div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <!-- Work queue -->
+      <div class="card">
+        <div class="ch">
+          <div><h2>Work queue — what needs action</h2><div class="desc">Sorted by statutory deadline. Click a row to open the notice drawer; select rows for bulk actions.</div></div>
+          <div class="tabs"><span class="on">Team · 31</span><span>Mine · 7</span><span>Unassigned · 11</span><span>Hearings · 4</span></div>
+        </div>
+        <div class="cb" style="padding-top:8px">
+          <div class="toolbar" style="margin-bottom:8px">
+            <a class="btn ghost">☐ Select all</a><a class="btn">Assign ▾</a><a class="btn">Set priority ▾</a><a class="btn">Change stage ▾</a><a class="btn">✉ Email GST team</a><a class="btn">⬇ Export</a>
+            <span style="margin-left:auto" class="pill gry">Filters: Open · Due ≤ 30d</span>
+          </div>
+          <table>
+            <thead><tr><th style="width:26px"></th><th>Client</th><th>Notice / Matter</th><th>Stage</th><th>Due</th><th class="num">Days</th><th class="num">Demand ₹</th><th>Owner</th><th></th></tr></thead>
+            <tbody>
+              <tr><td><span class="chk"></span></td><td class="cl">ORCANE GLOBAL<small>24CDGPP2310F1Z1</small></td><td>DRC-01 SCN u/s 73 · FY 22-23<br><span class="pill red">High</span> <span class="pill gry">ZD2409260012345</span></td><td><span class="stage"><i style="background:var(--warning)"></i>Reply drafting</span></td><td>11 Sep 2026</td><td class="num days neg">−2</td><td class="num">42,18,600</td><td><span class="av">HP</span></td><td style="color:var(--primary);font-weight:600">Open ›</td></tr>
+              <tr><td><span class="chk"></span></td><td class="cl">NAVRATNA ORGANISERS &amp; DEV.<small>24AAACN5181E1ZR</small></td><td>DRC-01A intimation · ITC mismatch<br><span class="pill amb">Medium</span></td><td><span class="stage"><i style="background:var(--info)"></i>Awaiting client data</span></td><td>16 Sep 2026</td><td class="num days soon">3</td><td class="num">8,72,410</td><td><span class="av">RS</span></td><td style="color:var(--primary);font-weight:600">Open ›</td></tr>
+              <tr><td><span class="chk"></span></td><td class="cl">AKSY ENERGY PVT LTD<small>24ABGCA1924P1ZI</small></td><td>APL-01 first appeal · DRC-07 dt 19 Jun 26<br><span class="pill red">High</span> <span class="pill blu">Pre-deposit 10% due</span></td><td><span class="stage"><i style="background:var(--destructive)"></i>Appeal limitation</span></td><td>18 Sep 2026</td><td class="num days soon">5</td><td class="num">1,26,40,000</td><td><span class="av g">?</span></td><td style="color:var(--primary);font-weight:600">Assign ›</td></tr>
+              <tr><td><span class="chk"></span></td><td class="cl">NAVRATNA INFRABUILD LLP<small>24AALFN3314K1ZA</small></td><td>Personal hearing · DRC-01 · FY 20-21<br><span class="pill gry">Hearing</span></td><td><span class="stage"><i style="background:var(--primary)"></i>PH scheduled</span></td><td>19 Sep 2026 · 11:30</td><td class="num days soon">6</td><td class="num">17,05,880</td><td><span class="av">VD</span></td><td style="color:var(--primary);font-weight:600">Open ›</td></tr>
+              <tr><td><span class="chk"></span></td><td class="cl">NEW MARUTI AUTO GAS<small>24AFRPD9133P1ZW</small></td><td>ASMT-10 scrutiny · GSTR-3B vs 2B<br><span class="pill amb">Medium</span></td><td><span class="stage"><i style="background:var(--warning)"></i>Reply drafting</span></td><td>22 Sep 2026</td><td class="num days ok">9</td><td class="num">2,31,050</td><td><span class="av">HP</span></td><td style="color:var(--primary);font-weight:600">Open ›</td></tr>
+              <tr><td><span class="chk"></span></td><td class="cl">SHREEJI TEXTILES<small>24AAGFS0912M1ZQ</small></td><td>RFD-08 SCN on refund · ARN AA240726…<br><span class="pill amb">Medium</span></td><td><span class="stage"><i style="background:var(--warning)"></i>RFD-09 reply</span></td><td>24 Sep 2026</td><td class="num days ok">11</td><td class="num">6,40,000</td><td><span class="av">RS</span></td><td style="color:var(--primary);font-weight:600">Open ›</td></tr>
+              <tr><td><span class="chk"></span></td><td class="cl">OM SAI ENTERPRISE<small>24AKJPS4471C1Z3</small></td><td>REG-17 SCN · cancellation<br><span class="pill red">High</span></td><td><span class="stage"><i style="background:var(--info)"></i>Awaiting client data</span></td><td>25 Sep 2026</td><td class="num days ok">12</td><td class="num">—</td><td><span class="av g">?</span></td><td style="color:var(--primary);font-weight:600">Assign ›</td></tr>
+            </tbody>
+          </table>
+          <div class="foot" style="margin-top:10px"><span>Showing 7 of 31 · 446 open rows have no due date or stage — <b style="color:var(--primary)">run the closing sweep</b></span><span style="color:var(--primary);font-weight:600">View full work queue →</span></div>
+        </div>
+      </div>
+
+      <!-- Exposure & ageing -->
+      <div class="card">
+        <div class="ch"><div><h2>Ageing &amp; exposure</h2><div class="desc">Open notices by days past due · demand by stage</div></div><span class="pill gry">Open only</span></div>
+        <div class="cb">
+          <div class="row"><span class="l">Not yet due</span><div class="bar" style="flex:1"><i style="width:38%;background:var(--success)"></i></div><span class="n">174</span></div>
+          <div class="row"><span class="l">1–7 days late</span><div class="bar" style="flex:1"><i style="width:9%;background:var(--warning)"></i></div><span class="n">41</span></div>
+          <div class="row"><span class="l">8–30 days late</span><div class="bar" style="flex:1"><i style="width:14%;background:hsl(24 90% 55%)"></i></div><span class="n">66</span></div>
+          <div class="row"><span class="l">31–90 days late</span><div class="bar" style="flex:1"><i style="width:22%;background:var(--destructive)"></i></div><span class="n">103</span></div>
+          <div class="row"><span class="l">90+ days late</span><div class="bar" style="flex:1"><i style="width:57%;background:hsl(0 70% 38%)"></i></div><span class="n">263</span></div>
+          <div style="height:1px;background:var(--border);margin:10px 0"></div>
+          <div style="display:flex;gap:14px;align-items:center">
+            <svg width="118" height="118" viewBox="0 0 42 42">
+              <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--muted)" stroke-width="6"/>
+              <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--warning)" stroke-width="6" stroke-dasharray="46 54" stroke-dashoffset="25"/>
+              <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--primary)" stroke-width="6" stroke-dasharray="31 69" stroke-dashoffset="-21"/>
+              <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--destructive)" stroke-width="6" stroke-dasharray="15 85" stroke-dashoffset="-52"/>
+              <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--success)" stroke-width="6" stroke-dasharray="8 92" stroke-dashoffset="-67"/>
+              <text x="21" y="20" text-anchor="middle" font-size="5.5" font-weight="700" font-family="Poppins" fill="hsl(222 47% 11%)">₹18.6cr</text>
+              <text x="21" y="26" text-anchor="middle" font-size="3" fill="hsl(220 9% 46%)">under dispute</text>
+            </svg>
+            <div class="kv" style="flex:1">
+              <span><i class="dot" style="background:var(--warning);margin-right:6px"></i>SCN / reply stage</span><b>₹ 8.5 cr</b>
+              <span><i class="dot" style="background:var(--primary);margin-right:6px"></i>First appeal (s.107)</span><b>₹ 5.8 cr</b>
+              <span><i class="dot" style="background:var(--destructive);margin-right:6px"></i>Recovery / attachment</span><b>₹ 2.8 cr</b>
+              <span><i class="dot" style="background:var(--success);margin-right:6px"></i>Rectification / other</span><b>₹ 1.5 cr</b>
+            </div>
+          </div>
+          <div style="height:1px;background:var(--border);margin:12px 0"></div>
+          <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-fg);margin-bottom:6px">Top exposure by client</div>
+          <table>
+            <tbody>
+              <tr><td class="cl" style="padding:5px 4px">AKSY ENERGY PVT LTD</td><td style="padding:5px 4px"><span class="stage"><i style="background:var(--primary)"></i>Appeal</span></td><td class="num" style="padding:5px 4px">1,26,40,000</td></tr>
+              <tr><td class="cl" style="padding:5px 4px">RIDDHI SIDDHI INFRA</td><td style="padding:5px 4px"><span class="stage"><i style="background:var(--destructive)"></i>Recovery</span></td><td class="num" style="padding:5px 4px">98,12,300</td></tr>
+              <tr><td class="cl" style="padding:5px 4px">ORCANE GLOBAL</td><td style="padding:5px 4px"><span class="stage"><i style="background:var(--warning)"></i>SCN reply</span></td><td class="num" style="padding:5px 4px">42,18,600</td></tr>
+              <tr><td class="cl" style="padding:5px 4px">NAVRATNA INFRABUILD LLP</td><td style="padding:5px 4px"><span class="stage"><i style="background:var(--primary)"></i>Hearing</span></td><td class="num" style="padding:5px 4px">17,05,880</td></tr>
+              <tr><td class="cl" style="padding:5px 4px">NAVRATNA ORGANISERS</td><td style="padding:5px 4px"><span class="stage"><i style="background:var(--info)"></i>DRC-01A</span></td><td class="num" style="padding:5px 4px">8,72,410</td></tr>
+            </tbody>
+          </table>
+          <div class="foot" style="margin-top:10px"><span>Officer with most open matters: Ahmedabad South, Range III (22)</span><span style="color:var(--primary);font-weight:600">By client →</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid3">
+      <!-- Category summary -->
+      <div class="card">
+        <div class="ch"><div><h2>Notice summary by category</h2><div class="desc">Open · Replied · Closed — click a bar to filter</div></div><span class="pill gry">1,060 total</span></div>
+        <div class="cb">
+          <div class="row"><span class="l">DRC 03</span><div class="bar" style="flex:1"><i style="width:82%;background:var(--warning)"></i><i style="width:8%;background:var(--success)"></i></div><span class="n">183</span></div>
+          <div class="row"><span class="l">DRC 01</span><div class="bar" style="flex:1"><i style="width:40%;background:var(--warning)"></i><i style="width:6%;background:var(--info)"></i></div><span class="n">89</span></div>
+          <div class="row"><span class="l">LUT</span><div class="bar" style="flex:1"><i style="width:34%;background:var(--warning)"></i></div><span class="n">65</span></div>
+          <div class="row"><span class="l">Refund</span><div class="bar" style="flex:1"><i style="width:22%;background:var(--warning)"></i><i style="width:10%;background:var(--success)"></i></div><span class="n">60</span></div>
+          <div class="row"><span class="l">ASMT 10</span><div class="bar" style="flex:1"><i style="width:10%;background:var(--warning)"></i></div><span class="n">19</span></div>
+          <div class="row"><span class="l">Appeal</span><div class="bar" style="flex:1"><i style="width:9%;background:var(--warning)"></i></div><span class="n">17</span></div>
+          <div class="row"><span class="l">Audit</span><div class="bar" style="flex:1"><i style="width:3%;background:var(--warning)"></i></div><span class="n">5</span></div>
+          <div class="row"><span class="l">Enforcement</span><div class="bar" style="flex:1"><i style="width:2%;background:var(--warning)"></i></div><span class="n">4</span></div>
+          <div class="row"><span class="l">Others</span><div class="bar" style="flex:1"><i style="width:2%;background:var(--warning)"></i></div><span class="n">4</span></div>
+          <div class="row"><span class="l">Registration</span><div class="bar" style="flex:1"><i style="width:1.5%;background:var(--warning)"></i></div><span class="n">3</span></div>
+          <div class="foot" style="margin-top:8px"><span class="legend"><span><i style="background:var(--warning)"></i>Open</span><span><i style="background:var(--info)"></i>Replied</span><span><i style="background:var(--success)"></i>Closed</span></span><span style="color:var(--primary);font-weight:600">+ 8 categories with no data</span></div>
+        </div>
+      </div>
+
+      <!-- Deadline calendar -->
+      <div class="card">
+        <div class="ch"><div><h2>Next 14 days</h2><div class="desc">Statutory due dates &amp; hearings</div></div><div class="tabs"><span class="on">2 weeks</span><span>Month</span></div></div>
+        <div class="cb">
+          <div class="week">
+            <div class="day today"><div class="d">Sun</div><div class="n">13</div></div>
+            <div class="day"><div class="d">Mon</div><div class="n">14</div><div class="m"><span class="pill blu">2</span></div></div>
+            <div class="day"><div class="d">Tue</div><div class="n">15</div></div>
+            <div class="day"><div class="d">Wed</div><div class="n">16</div><div class="m"><span class="pill amb">1</span></div></div>
+            <div class="day"><div class="d">Thu</div><div class="n">17</div></div>
+            <div class="day"><div class="d">Fri</div><div class="n">18</div><div class="m"><span class="pill red">1</span><span class="pill amb">2</span></div></div>
+            <div class="day"><div class="d">Sat</div><div class="n">19</div><div class="m"><span class="pill" style="background:hsl(220 60% 25% / .12);color:var(--primary)">PH</span></div></div>
+          </div>
+          <div class="week" style="margin-top:6px">
+            <div class="day"><div class="d">Sun</div><div class="n">20</div></div>
+            <div class="day"><div class="d">Mon</div><div class="n">21</div></div>
+            <div class="day"><div class="d">Tue</div><div class="n">22</div><div class="m"><span class="pill amb">1</span></div></div>
+            <div class="day"><div class="d">Wed</div><div class="n">23</div></div>
+            <div class="day"><div class="d">Thu</div><div class="n">24</div><div class="m"><span class="pill amb">1</span></div></div>
+            <div class="day"><div class="d">Fri</div><div class="n">25</div><div class="m"><span class="pill amb">1</span></div></div>
+            <div class="day"><div class="d">Sat</div><div class="n">26</div><div class="m"><span class="pill" style="background:hsl(220 60% 25% / .12);color:var(--primary)">PH</span></div></div>
+          </div>
+          <div class="legend" style="margin-top:10px"><span><i style="background:var(--destructive)"></i>Appeal limitation</span><span><i style="background:var(--warning)"></i>Reply due</span><span><i style="background:var(--info)"></i>Issued</span><span><i style="background:var(--primary)"></i>Hearing</span></div>
+          <div class="foot" style="margin-top:8px"><span>Fri 18: AKSY ENERGY appeal window closes (s.107)</span><span style="color:var(--primary);font-weight:600">Full calendar →</span></div>
+        </div>
+      </div>
+
+      <!-- Sync & alerts health -->
+      <div class="card">
+        <div class="ch"><div><h2>Sync &amp; alerts</h2><div class="desc">Portal pulls, failed logins, emails sent</div></div><span class="pill grn">Healthy</span></div>
+        <div class="cb">
+          <div class="kv">
+            <span>Last Sync All (notices + refunds + DRC-03)</span><b>Today 09:42</b>
+            <span>Clients synced / with credentials</span><b>90 / 92</b>
+            <span>Failed logins (latest attempt)</span><b style="color:hsl(0 70% 42%)">2 · fix →</b>
+            <span>New rows this sync · changed</span><b>14 · 6</b>
+            <span>Emails sent today (digest + alerts)</span><b>9</b>
+            <span>Extension</span><b>v2.4.1 · connected</b>
+          </div>
+          <div style="height:1px;background:var(--border);margin:10px 0"></div>
+          <div class="feed">
+            <div class="it"><span class="t">09:45</span><span><b>Digest</b> emailed to gst@vjdesai.com · 14 new, 27 overdue</span></div>
+            <div class="it"><span class="t">09:43</span><span><b>New</b> DRC-01 · ORCANE GLOBAL · ₹ 42.2 L · due 11 Sep <span class="pill red">overdue on arrival</span></span></div>
+            <div class="it"><span class="t">09:42</span><span><b>Login failed</b> · SHIVAM TRADERS · password expired · alert sent</span></div>
+            <div class="it"><span class="t">Fri</span><span><b>HP</b> filed DRC-06 reply · NEW MARUTI · ARN AD240913…</span></div>
+            <div class="it"><span class="t">Fri</span><span><b>VD</b> assigned 4 notices to RS · closed 12 LUT rows</span></div>
+          </div>
+          <div class="foot" style="margin-top:10px"><span>Next scheduled unattended sync: 06:00 IST</span><span style="color:var(--primary);font-weight:600">Sync log →</span></div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

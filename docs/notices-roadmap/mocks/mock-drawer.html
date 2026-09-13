@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Notice work item — matter drawer mock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600;700&display=swap">
+<style>
+  :root{--primary:hsl(220 60% 25%);--bg:hsl(0 0% 97%);--fg:hsl(222 47% 11%);--muted:hsl(220 14% 96%);--muted-fg:hsl(220 9% 46%);--border:hsl(220 13% 91%);--success:hsl(142 76% 36%);--warning:hsl(38 92% 50%);--info:hsl(199 89% 48%);--destructive:hsl(0 84% 60%);--accent:hsl(16 100% 66%)}
+  *{box-sizing:border-box}
+  body{margin:0;background:#cbd5e1;color:var(--fg);font-family:Inter,system-ui,sans-serif;font-size:12.5px;line-height:1.45}
+  h1,h2,h3{font-family:Poppins,Inter,sans-serif;margin:0}
+  .drawer{width:1120px;margin:0;background:#fff;min-height:100vh;display:grid;grid-template-columns:1fr 340px;box-shadow:-8px 0 30px rgba(0,0,0,.18)}
+  .left{padding:22px 26px;display:flex;flex-direction:column;gap:16px;border-right:1px solid var(--border)}
+  .right{background:var(--bg);padding:22px 20px;display:flex;flex-direction:column;gap:14px}
+  .crumb{font-size:11px;color:var(--muted-fg)}
+  .title{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+  .title h1{font-size:19px;font-weight:700}
+  .title .sub{font-size:12px;color:var(--muted-fg);margin-top:3px}
+  .pill{display:inline-flex;align-items:center;gap:4px;border-radius:99px;padding:2px 8px;font-size:10.5px;font-weight:600}
+  .pill.red{background:hsl(0 84% 60% / .12);color:hsl(0 70% 42%)} .pill.amb{background:hsl(38 92% 50% / .15);color:hsl(30 80% 35%)} .pill.grn{background:hsl(142 76% 36% / .12);color:hsl(142 60% 28%)} .pill.blu{background:hsl(199 89% 48% / .12);color:hsl(199 80% 32%)} .pill.gry{background:var(--muted);color:var(--muted-fg)} .pill.nav{background:hsl(220 60% 25% / .12);color:var(--primary)}
+  .btn{white-space:nowrap;border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 11px;font-size:12px;font-weight:600;color:var(--primary);display:inline-flex;align-items:center;gap:6px}
+  .btn.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+  .btn.danger{color:hsl(0 70% 42%)}
+  /* stepper */
+  .stepper{display:flex;align-items:center;gap:0;border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:#fff}
+  .step{flex:1;display:flex;flex-direction:column;gap:4px;position:relative;padding-right:10px}
+  .step .n{width:22px;height:22px;border-radius:99px;border:2px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--muted-fg);background:#fff}
+  .step.done .n{background:var(--success);border-color:var(--success);color:#fff}
+  .step.now .n{background:var(--warning);border-color:var(--warning);color:#fff;box-shadow:0 0 0 4px hsl(38 92% 50% / .2)}
+  .step .l{font-size:11px;font-weight:600}
+  .step .d{font-size:10px;color:var(--muted-fg)}
+  .step::after{content:"";position:absolute;left:26px;top:10px;right:6px;height:2px;background:var(--border)}
+  .step.done::after{background:var(--success)}
+  .step:last-child::after{display:none}
+  .facts{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .fact{border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+  .fact .k{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-fg);font-weight:600}
+  .fact .v{font-family:Poppins;font-weight:600;font-size:15px;margin-top:2px;font-variant-numeric:tabular-nums}
+  .fact .v small{font-family:Inter;font-weight:500;font-size:11px;color:var(--muted-fg)}
+  .tabs{display:flex;gap:2px;border-bottom:1px solid var(--border)}
+  .tabs span{padding:8px 12px;font-size:12px;font-weight:500;color:var(--muted-fg);border-bottom:2px solid transparent;margin-bottom:-1px}
+  .tabs span.on{color:var(--primary);border-color:var(--primary);font-weight:600}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-fg);font-weight:600;text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);background:var(--muted)}
+  td{padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .sec h3{font-size:12.5px;font-weight:600;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+  .card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:12px}
+  .kv span{color:var(--muted-fg)} .kv b{font-weight:600}
+  .tl{display:flex;flex-direction:column;gap:10px;font-size:11.5px}
+  .tl .it{display:grid;grid-template-columns:14px 1fr;gap:8px}
+  .tl .it i{width:10px;height:10px;border-radius:99px;background:var(--border);margin-top:4px;display:block}
+  .tl .it i.g{background:var(--success)} .tl .it i.b{background:var(--info)} .tl .it i.a{background:var(--warning)} .tl .it i.r{background:var(--destructive)}
+  .tl .t{color:var(--muted-fg);font-size:10.5px}
+  .av{display:inline-flex;width:22px;height:22px;border-radius:99px;background:var(--primary);color:#fff;font-size:9.5px;font-weight:700;align-items:center;justify-content:center;vertical-align:middle}
+  .doc{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px}
+  .doc:last-child{border-bottom:none}
+  .doc .ic{width:26px;height:30px;border-radius:4px;background:hsl(0 84% 60% / .12);color:hsl(0 70% 42%);font-size:8.5px;font-weight:700;display:flex;align-items:center;justify-content:center}
+  .doc .ic.w{background:hsl(199 89% 48% / .12);color:hsl(199 80% 32%)}
+  .doc .m{margin-left:auto;color:var(--muted-fg);font-size:10.5px;white-space:nowrap}
+  .note{background:hsl(38 92% 50% / .08);border:1px solid hsl(38 92% 50% / .35);border-radius:8px;padding:8px 10px;font-size:11.5px}
+</style>
+</head>
+<body>
+<div class="drawer">
+  <div class="left">
+    <div class="crumb">Work queue › ORCANE GLOBAL · 24CDGPP2310F1Z1 › Matter M-2026-0412</div>
+    <div class="title">
+      <div>
+        <h1>DRC-01 Show Cause Notice u/s 73 · FY 2022-23</h1>
+        <div class="sub">Ref ZD2409260012345 · Issued 12 Aug 2026 by Superintendent, Ahmedabad South, Range III (CGST) · Case ID AD240826000123X</div>
+        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"><span class="pill red">Priority: High</span><span class="pill amb">Stage: Reply drafting</span><span class="pill gry">Owner: Harsh P.</span><span class="pill gry">Reviewer: V. Desai</span><span class="pill nav">Section 73 · ITC mismatch (2B vs 3B)</span></div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+        <a class="btn">Assign ▾</a><a class="btn">Change stage ▾</a><a class="btn">✉ Email</a><a class="btn">⬇ PDF</a><a class="btn primary">Log reply / order</a>
+      </div>
+    </div>
+
+    <div class="stepper">
+      <div class="step done"><span class="n">✓</span><span class="l">DRC-01A intimation</span><span class="d">21 Jul 2026 · replied 04 Aug</span></div>
+      <div class="step done"><span class="n">✓</span><span class="l">DRC-01 SCN</span><span class="d">12 Aug 2026 · ₹ 42.19 L</span></div>
+      <div class="step now"><span class="n">3</span><span class="l">DRC-06 reply</span><span class="d">due 11 Sep · <b style="color:hsl(0 70% 42%)">2 days overdue</b></span></div>
+      <div class="step"><span class="n">4</span><span class="l">Personal hearing</span><span class="d">not yet fixed</span></div>
+      <div class="step"><span class="n">5</span><span class="l">DRC-07 order</span><span class="d">—</span></div>
+      <div class="step"><span class="n">6</span><span class="l">APL-01 appeal</span><span class="d">3 m + 1 m · 10% pre-deposit</span></div>
+    </div>
+
+    <div class="facts">
+      <div class="fact"><div class="k">Demand (tax + int + pen)</div><div class="v">₹ 42,18,600</div><div style="font-size:10.5px;color:var(--muted-fg)">CGST 14.2 L · SGST 14.2 L · Int 11.1 L · Pen 2.7 L</div></div>
+      <div class="fact"><div class="k">Paid / pre-deposit</div><div class="v">₹ 0 <small>DRC-03 none linked</small></div></div>
+      <div class="fact"><div class="k">Statutory deadline</div><div class="v" style="color:hsl(0 70% 42%)">11 Sep 2026 <small>30 d from SCN</small></div><div style="font-size:10.5px;color:var(--muted-fg)">Extended: request adjournment (DRC-06 ¶ 12)</div></div>
+      <div class="fact"><div class="k">Client data</div><div class="v"><span class="pill amb">Awaiting</span></div><div style="font-size:10.5px;color:var(--muted-fg)">Requested 28 Aug · reminder 2 sent 08 Sep</div></div>
+    </div>
+
+    <div class="note">⚠ Deadline passed on 11 Sep with no reply logged. If a reply was filed on the portal, log its ARN below to clear the alert; otherwise file an adjournment request today. Partner (V. Desai) was emailed at 09:45.</div>
+
+    <div class="tabs"><span class="on">Activity</span><span>Reply workspace</span><span>Documents · 6</span><span>Demand &amp; payments</span><span>Emails · 4</span><span>Notes · 2</span></div>
+
+    <div class="sec">
+      <div class="tl">
+        <div class="it"><i class="r"></i><div><b>Overdue alert</b> emailed to gst@vjdesai.com and V. Desai · <span class="t">13 Sep 09:45 · system</span></div></div>
+        <div class="it"><i class="a"></i><div><b>Reminder 2</b> sent to client (documents pending: purchase register Q3, 2B reconciliation) · <span class="t">08 Sep 10:02 · system</span></div></div>
+        <div class="it"><i class="b"></i><div><span class="av">HP</span> Draft reply v2 saved in Reply workspace — grounds: (i) ITC reflected in 2B of Apr-24, (ii) Rule 36(4) not applicable · <span class="t">05 Sep 17:40 · Harsh P.</span></div></div>
+        <div class="it"><i class="g"></i><div><span class="av">VD</span> Assigned to Harsh P., reviewer V. Desai · priority set High · <span class="t">13 Aug 11:15 · V. Desai</span></div></div>
+        <div class="it"><i class="b"></i><div><b>New notice captured</b> by Sync All · PDF saved · "New notice" alert emailed to GST team · <span class="t">13 Aug 09:40 · system</span></div></div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <h3>Demand &amp; payments <span class="btn" style="font-size:11px;padding:4px 8px">Link DRC-03</span></h3>
+      <table>
+        <thead><tr><th>Head</th><th class="num">CGST</th><th class="num">SGST</th><th class="num">IGST</th><th class="num">Cess</th><th class="num">Total</th></tr></thead>
+        <tbody>
+          <tr><td>Tax</td><td class="num">14,20,000</td><td class="num">14,20,000</td><td class="num">—</td><td class="num">—</td><td class="num"><b>28,40,000</b></td></tr>
+          <tr><td>Interest (s.50)</td><td class="num">5,54,300</td><td class="num">5,54,300</td><td class="num">—</td><td class="num">—</td><td class="num"><b>11,08,600</b></td></tr>
+          <tr><td>Penalty (s.73(9))</td><td class="num">1,35,000</td><td class="num">1,35,000</td><td class="num">—</td><td class="num">—</td><td class="num"><b>2,70,000</b></td></tr>
+          <tr><td>Paid via DRC-03</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num"><b>0</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="card">
+      <div class="sec"><h3>Client</h3></div>
+      <div class="kv">
+        <span>Trade name</span><b>ORCANE GLOBAL</b>
+        <span>GSTIN</span><b style="font-family:ui-monospace,Menlo,monospace;font-weight:500">24CDGPP2310F1Z1</b>
+        <span>Contact</span><b>Mr. Patel · +91 98xxx · orcane@…</b>
+        <span>Jurisdiction</span><b>CGST · Ahmedabad South · Range III</b>
+        <span>Open matters</span><b>3 · ₹ 58.4 L</b>
+        <span>Portal login</span><b><span class="pill grn">OK · synced 09:42</span></b>
+      </div>
+    </div>
+    <div class="card">
+      <div class="sec"><h3>Documents <span style="font-size:11px;color:var(--primary)">Upload</span></h3></div>
+      <div class="doc"><span class="ic">PDF</span><span>DRC-01 SCN (portal)</span><span class="m">12 Aug · 1.2 MB</span></div>
+      <div class="doc"><span class="ic">PDF</span><span>DRC-01A intimation</span><span class="m">21 Jul</span></div>
+      <div class="doc"><span class="ic w">DOC</span><span>Reply to DRC-01A (filed)</span><span class="m">04 Aug</span></div>
+      <div class="doc"><span class="ic w">DOC</span><span>Draft DRC-06 reply v2</span><span class="m">05 Sep · HP</span></div>
+      <div class="doc"><span class="ic">XLS</span><span>2B vs 3B working FY 22-23</span><span class="m">02 Sep</span></div>
+      <div class="doc"><span class="ic w">DOC</span><span>Precedent: similar SCN, M-2025-0088</span><span class="m">linked</span></div>
+    </div>
+    <div class="card">
+      <div class="sec"><h3>Key dates</h3></div>
+      <div class="kv">
+        <span>SCN issued</span><b>12 Aug 2026</b>
+        <span>Reply due</span><b style="color:hsl(0 70% 42%)">11 Sep 2026 · overdue</b>
+        <span>Hearing</span><b>—</b>
+        <span>Time-limit for order (s.73(10))</span><b>31 Dec 2026 · FY 22-23</b>
+        <span>Next reminder</span><b>Daily until reply logged</b>
+      </div>
+    </div>
+    <div class="card">
+      <div class="sec"><h3>Emails on this matter</h3></div>
+      <div class="tl">
+        <div class="it"><i class="r"></i><div>Overdue reply — GST team + partner <span class="t">13 Sep</span></div></div>
+        <div class="it"><i class="a"></i><div>Documents reminder 2 — client <span class="t">08 Sep</span></div></div>
+        <div class="it"><i class="a"></i><div>Documents request — client <span class="t">28 Aug</span></div></div>
+        <div class="it"><i class="b"></i><div>New notice received — GST team <span class="t">13 Aug</span></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

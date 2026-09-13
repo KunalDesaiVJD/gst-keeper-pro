@@ -1,0 +1,40 @@
+<h3>8.1 Target schema (additive; existing pages keep working)</h3>
+<p>The model keeps <code>gst_notices</code>, <code>gst_refund_applications</code> and <code>gst_drc03_filings</code> exactly as the portal sync writes them and adds a <strong>matter</strong> layer above them. Nothing below removes a column the current pages read. Orange headers are new tables, blue headers are existing tables that gain columns.</p>
+<div class="erd">
+<div class="ent"><div class="en new">litigation_matters</div><div class="ef">id uuid pk<br>client_id → clients<br>matter_no text unique <i>(M-2026-0412)</i><br>lifecycle text <i>(demand|appeal|refund|…)</i><br>title, section_of_law, financial_years text[]<br>authority <i>(CGST|SGST)</i>, officer, jurisdiction<br>stage text, status text, priority text<br>owner_user_id, reviewer_user_id → app users<br>demand_tax, demand_interest, demand_penalty, demand_cess numeric<br>paid_total, pre_deposit_total numeric<br>computed_due_date, override_due_date date<br>limitation_date date, hearing_at timestamptz<br>next_action text, closed_at, closed_reason<br>created_at, updated_at</div></div>
+<div class="ent"><div class="en mod">gst_notices <i>(+ columns)</i></div><div class="ef">matter_id → litigation_matters <i>(nullable)</i><br>portal_key text <i>(ref no ‖ case id ‖ hash)</i><br>first_seen_at, last_seen_at timestamptz<br>portal_hash text <i>(change detection)</i><br>is_new bool, deleted_at timestamptz <i>(soft delete)</i><br>assign_to_user_id uuid <i>(replaces free text)</i><br>computed_due_date date<br>UNIQUE (client_id, source, portal_key)</div></div>
+<div class="ent"><div class="en new">matter_stage_history</div><div class="ef">id, matter_id<br>from_stage, to_stage text<br>changed_by uuid, changed_at<br>note text</div></div>
+<div class="ent"><div class="en new">matter_events <i>(activity log)</i></div><div class="ef">id, matter_id, notice_id<br>event_type text <i>(captured|assigned|stage|reply_logged|order|email_sent|note|document)</i><br>actor_user_id uuid <i>(null = system)</i><br>payload jsonb, created_at<br>INDEX (matter_id, created_at desc)</div></div>
+<div class="ent"><div class="en new">matter_documents</div><div class="ef">id, matter_id, notice_id<br>kind <i>(notice|reply|order|annexure|working|hearing_note|precedent)</i><br>title, storage_path <i>(private bucket, signed URLs)</i>, mime, size<br>source <i>(portal|upload)</i><br>uploaded_by, created_at</div></div>
+<div class="ent"><div class="en new">matter_hearings</div><div class="ef">id, matter_id<br>scheduled_at timestamptz, mode <i>(physical|video)</i><br>venue, officer, attended_by uuid[]<br>outcome text, adjourned bool, next_date<br>created_at</div></div>
+<div class="ent"><div class="en new">matter_payments</div><div class="ef">id, matter_id<br>kind <i>(pre_deposit|voluntary|recovery|refund_received)</i><br>drc03_arn → gst_drc03_filings.arn<br>tax, interest, penalty, cess numeric<br>paid_on date, remarks</div></div>
+<div class="ent"><div class="en new">notice_alert_rules</div><div class="ef">key text pk <i>(new_notice|due_ladder|hearing|limitation|failed_login|digest|weekly_mis|unassigned)</i><br>enabled bool, offsets_days int[]<br>recipients text[] <i>(DL + roles)</i><br>escalate_to text[], template_key<br>quiet_hours int4range, updated_by</div></div>
+<div class="ent"><div class="en new">notice_alert_log</div><div class="ef">id, rule_key, matter_id, notice_id<br>offset_days int, fired_on date<br>outbox_id → email_outbox<br>UNIQUE (rule_key, coalesce(matter_id,notice_id), offset_days, fired_on)</div></div>
+<div class="ent"><div class="en mod">email_outbox <i>(+ columns)</i></div><div class="ef">kind CHECK += 'notice_alert','digest','hearing','assignment','mis'<br>client_id → NULLABLE <i>(digests have no client)</i><br>to_emails text[], cc_emails text[], attachments jsonb<br>matter_id, notice_id uuid<br>dedupe_key text UNIQUE<br>priority smallint</div></div>
+<div class="ent"><div class="en mod">client_sync_log <i>(+ columns)</i></div><div class="ef">rows_new, rows_changed, rows_removed int<br>duration_ms int, extension_version text<br>run_id uuid <i>(groups one Sync All)</i></div></div>
+<div class="ent"><div class="en new">litigation_rules</div><div class="ef">key text pk <i>(reply_days.drc01=30, appeal_months=3, predeposit_pct.s107=10 …)</i><br>value numeric, effective_from date<br>note text</div></div>
+<div class="ent"><div class="en new">staff_notification_prefs</div><div class="ef">user_id pk, email text<br>digest bool, per_event jsonb<br>quiet_hours, updated_at</div></div>
+</div>
+
+<h3>8.2 Migration sketch (Phase 0 and Phase 3)</h3>
+<pre>-- Phase 0: stop the data loss and make counts trustworthy
+ALTER TABLE gst_notices
+  ADD COLUMN portal_key text,
+  ADD COLUMN first_seen_at timestamptz NOT NULL DEFAULT now(),
+  ADD COLUMN last_seen_at  timestamptz NOT NULL DEFAULT now(),
+  ADD COLUMN portal_hash text,
+  ADD COLUMN deleted_at timestamptz,
+  ADD COLUMN computed_due_date date;
+UPDATE gst_notices SET portal_key = coalesce(reference_number, case_id, md5(coalesce(description,'')||coalesce(issue_date::text,'')));
+CREATE UNIQUE INDEX uq_gst_notices_portal_key ON gst_notices (client_id, source, portal_key) WHERE deleted_at IS NULL;
+-- extension: POST gst_notices?on_conflict=client_id,source,portal_key  Prefer: resolution=merge-duplicates
+-- and PATCH deleted_at for keys no longer returned — never DELETE the client's rows.
+
+-- Phase 3: matter layer (all additive; a minimal matter_deadlines table arrives in Phase 1)
+CREATE TABLE litigation_matters (...);          -- see 8.1
+ALTER TABLE gst_notices ADD COLUMN matter_id uuid REFERENCES litigation_matters(id);
+CREATE TABLE matter_stage_history (...); CREATE TABLE matter_events (...);
+CREATE TABLE matter_documents (...);   CREATE TABLE matter_hearings (...);
+CREATE TABLE matter_payments (...);    CREATE TABLE litigation_rules (...);
+-- RLS on every new table: FOR ALL TO public USING (true) WITH CHECK (true)  (project rule)</pre>
+<div class="box"><h4>Back-fill plan</h4><p>A one-off script groups existing <code>gst_notices</code> rows into matters by <code>case_id</code> (the portal's ARN for case-linked rows) and, for rows without one, by <code>(client_id, financial_year, category)</code>. Staff then confirm groupings from a "Suggested matters" review page rather than editing 1,060 rows by hand. LUT and DRC-03 acknowledgements are auto-closed in the same pass.</p></div>
