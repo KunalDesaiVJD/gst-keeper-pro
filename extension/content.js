@@ -290,6 +290,12 @@
       job.periodIdx = 0;
       job.period = job.periods[0];
       job.step = 'logout';
+      // Confirmed live 2026-09-13: this counter was never reset per client —
+      // a client that genuinely exhausted all 3 auto-retries left
+      // job.captchaRetry at 3, so the VERY NEXT client in the queue would
+      // skip straight to "retries exhausted" on its own first bounce-back,
+      // even for a plain one-off CAPTCHA typo unrelated to their password.
+      delete job.captchaRetry;
       await setJob(job);
       banner('Client done — switching to the next…', '#2563eb');
       location.href = 'https://services.gst.gov.in/services/logout';
@@ -308,6 +314,17 @@
     try { await GSTKdb.logClientSync(cur.clientId, 'notices', status, message || null); } catch (e) { /* diagnostic only */ }
   }
 
+  // Unlike logSyncAttempt above, NOT gated on job.logSync — a login failure
+  // means we never even reached this client's actual pull step, for ANY job
+  // mode (Sync All, Fetch Company, a single Reports Hub pull, ...), so it's
+  // worth recording regardless of which flow triggered it. Read by Company
+  // List's Status/Status Message columns exactly like every other
+  // client_sync_log row — surfaces as a real, distinguishable failure
+  // instead of looking identical to "never synced".
+  async function logLoginFailure(job, cur, message) {
+    try { await GSTKdb.logClientSync(cur.clientId, 'login_failed', 'failed', message || null); } catch (e) { /* diagnostic only */ }
+  }
+
   async function handleLogout(job) {
     // On the logout page now — let the previous client's session fully clear, then
     // start the next client's login.
@@ -320,6 +337,7 @@
   async function handleLogin(job, cur, progress) {
     if (isLoggedIn()) {
       job.retries = 0;
+      delete job.captchaRetry;
       if (job.mode === 'returnpdf') {
         banner('Logged in — fetching the return + PDF…' + progress);
         job.step = 'efiledpdf';
@@ -496,15 +514,80 @@
       $('button[type=submit]');
     if (btn) {
       btn.click();
-      // A wrong CAPTCHA bounces back to the login page with a fresh #captcha
-      // field rather than throwing an error — reload for a new image and
-      // retry automatically (up to 3 times) instead of leaving the job stuck
-      // waiting on a field that will never fill itself again.
-      setTimeout(() => {
+      // A wrong CAPTCHA and a wrong saved password bounce back to this same
+      // page identically (login form again, fresh #captcha field) — nothing
+      // here can visually tell them apart except the portal's own error
+      // banner, so read that first rather than always assuming "just a bad
+      // CAPTCHA". Confirmed live: a WRONG PASSWORD used to retry the CAPTCHA
+      // up to 3 times (pointless — the same password fails every time),
+      // then silently stall forever on this one client, blocking every
+      // other client queued behind it in the same Sync All run with no
+      // error, no log entry, and no way to tell which client caused it.
+      setTimeout(async () => {
+        // A single fixed-delay check raced the portal's own error-banner
+        // render — confirmed live 2026-09-13: a genuine bad-password bounce
+        // sometimes read as an empty errText at exactly 2.5s (banner not
+        // painted yet), silently falling through to the CAPTCHA-retry path
+        // instead of being caught immediately. Poll a few times over ~2s
+        // instead of checking once.
+        for (let i = 0; i < 8; i++) {
+          if (/services\/login/.test(location.href)) {
+            const hasErr = $$('.alert-danger, .toast-error, .error-msg').some((el) => (el.textContent || '').trim());
+            if (hasErr) break;
+          } else if (isLoggedIn()) {
+            return; // genuinely logged in — let the normal dispatcher continue
+          }
+          await sleep(250);
+        }
+        if (!/services\/login/.test(location.href)) {
+          if (isLoggedIn()) return;
+          // Left the login page, but this doesn't look like a real logged-in
+          // portal page either (no Logout link, no /auth/ in the URL — the
+          // same isLoggedIn() signal every other step already trusts).
+          // "Bounces back to /services/login" isn't the only way a login can
+          // fail — password-expired/must-reset, an account lockout, a
+          // maintenance notice, or anything else the portal redirects to
+          // instead would all reach here too. Rather than guess which one,
+          // record enough of what's actually on screen for a human to
+          // recognize it, and move on instead of assuming success and
+          // getting stuck a step later trying to read data off a page that
+          // was never a real dashboard.
+          const heading = (($('h1,h2,h3') || {}).textContent || '').trim().slice(0, 160);
+          const reason = 'Landed on an unrecognized page after login (' + location.pathname + (heading ? ': "' + heading + '"' : '') + ') — not the login form, but no logged-in signal either.';
+          banner('Could not log in ' + cur.creds.name + ' — unexpected page after login. Moving on.' + progress, '#dc2626');
+          await logLoginFailure(job, cur, reason);
+          await advance(job);
+          return;
+        }
+        const errText = $$('.alert-danger, .toast-error, .error-msg')
+          .map((el) => (el.textContent || '').trim()).filter(Boolean)[0] || '';
+        // Same wording family the portal actually uses for a bad
+        // username/password ("Invalid Credentials", "Invalid username or
+        // password") — distinct from its CAPTCHA-specific complaints
+        // ("Invalid captcha", "Enter valid captcha").
+        const isCredentialError = /invalid.*(credential|user\s*id|username|password)|incorrect.*(user\s*id|username|password)|wrong\s*password/i.test(errText);
         const tries = Number((job && job.captchaRetry) || 0);
-        if (/services\/login/.test(location.href) && $('#captcha') && tries < 3) {
+        if (isCredentialError) {
+          banner('Login failed for ' + cur.creds.name + ' (' + (errText || 'invalid credentials') + ') — moving on.' + progress, '#dc2626');
+          await logLoginFailure(job, cur, errText || 'Invalid username or password.');
+          await advance(job);
+          return;
+        }
+        if ($('#captcha') && tries < 3) {
           job.captchaRetry = tries + 1;
-          setJob(job).finally(() => location.reload());
+          await setJob(job);
+          location.reload();
+          return;
+        }
+        // Retries exhausted with no clear credential-error text read (a
+        // portal error banner this code doesn't recognize yet, or a
+        // genuinely bad CAPTCHA loop) — give up on THIS client rather than
+        // leaving the job silently stuck here forever; the rest of the
+        // queue still deserves to run.
+        if ($('#captcha') && tries >= 3) {
+          banner('Could not log in ' + cur.creds.name + ' after 3 attempts — moving on.' + progress, '#dc2626');
+          await logLoginFailure(job, cur, errText || 'Login did not succeed after 3 automatic retries.');
+          await advance(job);
         }
       }, 2500);
     }
