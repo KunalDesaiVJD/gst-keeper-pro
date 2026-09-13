@@ -18,6 +18,11 @@
 
   globalThis.GSTKdb = {
     whoami: () => call('whoami'),
+    // Bring the calling tab to/from the foreground — see background.js's
+    // onMessage listener for why this has to be a message rather than a
+    // direct chrome.tabs.* call (content scripts don't have that API).
+    focusTab: () => call('focusTab'),
+    backgroundTab: () => call('backgroundTab'),
     getClients: () => call('getClients'),
     getClient: (id) => call('getClient', id),
     upsertFilingStatus: (rows) => call('upsertFilingStatus', rows),

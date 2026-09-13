@@ -318,6 +318,15 @@ const API = {
   // From the Filing Status login icon: log the client in and open the given
   // return's filing page (current tab's return + period). The human does the
   // CAPTCHA and the final OTP/DSC submission — we only log in + navigate.
+  //
+  // Opened in the BACKGROUND (active: false) — the user asked not to watch
+  // the automated Returns-Dashboard navigation (FY/Quarter/Month/Search/tile
+  // click) play out on screen. content.js brings it back to the foreground
+  // itself at the two points that actually need a human: right before the
+  // CAPTCHA wait in handleLogin, and right before the final "Prepare Online"
+  // click in handleFiling (see focusTab/backgroundTab below). Every other
+  // job-opened tab in this file is untouched — this is scoped to job.mode
+  // 'filing' only, not a blanket change.
   startFilingOpen: async (info) => {
     const c = await API.getClient(info.clientId);
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
@@ -326,7 +335,7 @@ const API = {
       clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
       ret: { return_type: info.return_type, period_month: info.period_month },
     };
-    const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
+    const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login', active: false });
     job.tabId = tab.id;
     await chrome.storage.local.set({ gstk_active_job: job });
     return { started: true, client: c.name, return_type: info.return_type };
@@ -662,6 +671,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.gstk) return;
   if (msg.fn === 'whoami') {
     sendResponse({ ok: true, data: { tabId: sender && sender.tab ? sender.tab.id : null } });
+    return true;
+  }
+  // Bring/send the CALLING tab to/from the foreground — content.js's own
+  // tab, identified via sender.tab.id the same way whoami() is (a content
+  // script has no chrome.tabs.* access itself; only the background worker
+  // does). Currently only called from the 'filing' job mode (see
+  // handleLogin/handleFiling in content.js) — first precedent for this
+  // pattern in the extension, kept generic in case another flow wants it
+  // later rather than being filing-specific itself.
+  if (msg.fn === 'focusTab' || msg.fn === 'backgroundTab') {
+    const tabId = sender && sender.tab ? sender.tab.id : null;
+    if (tabId == null) { sendResponse({ error: 'no sender tab' }); return true; }
+    const active = msg.fn === 'focusTab';
+    chrome.tabs.update(tabId, { active })
+      .then((tab) => (active && tab && tab.windowId != null) ? chrome.windows.update(tab.windowId, { focused: true }) : null)
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => sendResponse({ error: String(e && e.message ? e.message : e) }));
     return true;
   }
   const fn = API[msg.fn];

@@ -184,6 +184,11 @@
   if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || job.step === 'gstr1_json_pull' || job.step === 'revrclm_pull' || job.step === 'rcmliab_pull' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
+      // 'filing' jobs run on a backgrounded tab (see startFilingOpen in
+      // background.js) — this give-up banner is meaningless if nobody can
+      // see it. Every other mode's tab was already foreground, so this is
+      // scoped to 'filing' only, not a behavior change for the rest.
+      if (job.mode === 'filing') { try { await GSTKdb.focusTab(); } catch (e) { /* non-fatal */ } }
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
       // Leave a trace in the table itself (delete-then-insert, so a later
       // successful pull overwrites it) — this job's tab is usually not being
@@ -357,6 +362,13 @@
         banner('Logged in — opening the filing page…' + progress);
         job.step = 'filing';
         await setJob(job);
+        // The tab was foregrounded for the CAPTCHA step below — send it
+        // back to the background for the automated dashboard navigation
+        // (FY/Quarter/Month/Search/tile-finding in handleFiling); it comes
+        // back to the foreground right before the final "Prepare Online"
+        // click. Best-effort: a failure here just leaves the tab visible,
+        // it never blocks the actual job.
+        try { await GSTKdb.backgroundTab(); } catch (e) { /* non-fatal */ }
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
       } else if (job.mode === 'gstr1_upload') {
         banner('Logged in — opening the returns dashboard for the GSTR-1 upload…' + progress);
@@ -494,6 +506,15 @@
       return;
     }
     if (!/services\/login/.test(url)) { location.href = 'https://services.gst.gov.in/services/login'; return; }
+    // 'filing' jobs open this tab in the background (see startFilingOpen in
+    // background.js) so the automated Returns-Dashboard navigation doesn't
+    // play out on screen — but everything from here through the CAPTCHA is
+    // either shown to a human (the login form itself) or could fail in a
+    // way only a human can act on ("Login form did not load"), so bring it
+    // forward now rather than right before the CAPTCHA wait specifically.
+    // Every other job mode's tab was already foreground from creation, so
+    // this is a no-op for them either way.
+    if (job.mode === 'filing') { try { await GSTKdb.focusTab(); } catch (e) { /* non-fatal */ } }
     banner('Logging in ' + cur.creds.name + '…' + progress);
     if (!(await waitFor('#username'))) { banner('Login form did not load — reload the page.', '#dc2626'); return; }
     setVal($('#username'), cur.creds.user);
@@ -817,29 +838,41 @@
   // then on the dashboard pick FY + quarter + month, Search, and click the
   // return's "Prepare Online" so the human lands on the filing page. We DO NOT
   // submit — CAPTCHA and the final OTP/DSC submission stay with the human.
+  // This whole function runs on a BACKGROUNDED tab (see startFilingOpen in
+  // background.js) — any banner it shows on its way to failing is invisible
+  // until the tab is foregrounded again, so every exit that leaves a banner
+  // for a human to read goes through this instead of a bare banner() call.
+  // (The very first check below, a plain redirect with no banner, is the
+  // one exception — it's not a terminal state, just internal navigation.)
+  async function failFiling(job, msg, color) {
+    try { await GSTKdb.focusTab(); } catch (e) { /* non-fatal */ }
+    banner(msg, color);
+    await clearJob();
+  }
+
   async function handleFiling(job, cur, progress) {
     if (!/returns\/auth\/dashboard/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
-    if (!(await waitFor('select', 20000))) { banner('Returns dashboard did not load.', '#dc2626'); await clearJob(); return; }
+    if (!(await waitFor('select', 20000))) { await failFiling(job, 'Returns dashboard did not load.', '#dc2626'); return; }
     const MONTHS_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     const ret = job.ret || {};
     const map = filingTileFor(ret.return_type);
-    if (!map) { banner('This return type is not supported for one-click filing: ' + ret.return_type, '#dc2626'); await clearJob(); return; }
+    if (!map) { await failFiling(job, 'This return type is not supported for one-click filing: ' + ret.return_type, '#dc2626'); return; }
     const [mm, yyyy] = String(ret.period_month || '').split('/').map((n) => parseInt(n, 10));
-    if (!mm || !yyyy) { banner('Bad filing period.', '#dc2626'); await clearJob(); return; }
+    if (!mm || !yyyy) { await failFiling(job, 'Bad filing period.', '#dc2626'); return; }
     const fyStart = mm >= 4 ? yyyy : yyyy - 1;
     const fyShort = fyStart + '-' + String((fyStart + 1) % 100).padStart(2, '0');
     const monthName = MONTHS_FULL[mm - 1];
     const q = mm >= 4 ? Math.ceil((mm - 3) / 3) : 4;
 
     banner('Opening ' + map.label + ' for ' + monthName + ' ' + yyyy + '…' + progress);
-    if (!(await selectWhereOption(fyShort))) { banner('Could not set the financial year on the dashboard.', '#dc2626'); await clearJob(); return; }
+    if (!(await selectWhereOption(fyShort))) { await failFiling(job, 'Could not set the financial year on the dashboard.', '#dc2626'); return; }
     await sleep(700);
     await selectWhereOption('Quarter ' + q, { startsWith: true, timeout: 8000 });
     await sleep(700);
-    if (!(await selectWhereOption(monthName, { timeout: 12000 }))) { banner('Could not set the month on the dashboard.', '#dc2626'); await clearJob(); return; }
+    if (!(await selectWhereOption(monthName, { timeout: 12000 }))) { await failFiling(job, 'Could not set the month on the dashboard.', '#dc2626'); return; }
     await sleep(300);
     const search = $('button.srchbtn') || $$('button').find((b) => /^search$/i.test((b.textContent || '').trim()));
-    if (!search) { banner('Could not find the dashboard Search button.', '#dc2626'); await clearJob(); return; }
+    if (!search) { await failFiling(job, 'Could not find the dashboard Search button.', '#dc2626'); return; }
     search.click();
 
     // Find the return tile's filing button ("Prepare Online" for unfiled returns).
@@ -850,10 +883,14 @@
       btn = findTileButton(map.re, /prepare\s*online/i, map.excl) || findTileButton(map.re, /prepare|proceed|file\b/i, map.excl);
     }
     if (!btn) {
-      banner('Logged in — but no "Prepare Online" for ' + map.label + ' (already filed, or a different button). You are on the dashboard for ' + monthName + ' — open it yourself.', '#f59e0b');
-      await clearJob();
+      await failFiling(job, 'Logged in — but no "Prepare Online" for ' + map.label + ' (already filed, or a different button). You are on the dashboard for ' + monthName + ' — open it yourself.', '#f59e0b');
       return;
     }
+    // Back to the foreground for the actual destination — the one page this
+    // whole flow exists to reach. Foregrounded right before the click (not
+    // after) so the visible transition is the real filing page loading, not
+    // a jump-cut from an already-loaded dashboard.
+    try { await GSTKdb.focusTab(); } catch (e) { /* non-fatal */ }
     banner('Opening the ' + map.label + ' filing page — review and submit with OTP/DSC yourself.', '#16a34a');
     await clearJob(); // stop acting; a reload here won't re-trigger. The human takes over.
     btn.click();
