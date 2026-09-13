@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GST Keeper Portal Sync",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Pulls GST portal data into GST Keeper from your own browser, so the portal treats it as a normal user (no server, no firewall block).",
   "permissions": ["storage", "tabs", "downloads", "unlimitedStorage", "declarativeNetRequest"],
   "host_permissions": [
@@ -29,7 +29,7 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://gst-keeper-pro.vercel.app/*", "https://*.vercel.app/*"],
+      "matches": ["https://gst-keeper-pro.vercel.app/*", "https://*.vercel.app/*", "https://gst.vjdesai.com/*"],
       "js": ["appbridge.js"],
       "run_at": "document_idle"
     }
