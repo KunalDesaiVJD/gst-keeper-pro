@@ -3534,6 +3534,7 @@ export type Database = {
           liberal_2b_reconciliation: boolean
           mobile: string | null
           name: string
+          notices_sync_excluded: boolean
           registration_cancellation_date: string | null
           registration_date: string
           registration_type: Database["public"]["Enums"]["registration_type"]
@@ -3564,6 +3565,7 @@ export type Database = {
           liberal_2b_reconciliation?: boolean
           mobile?: string | null
           name: string
+          notices_sync_excluded?: boolean
           registration_cancellation_date?: string | null
           registration_date: string
           registration_type?: Database["public"]["Enums"]["registration_type"]
@@ -3594,6 +3596,7 @@ export type Database = {
           liberal_2b_reconciliation?: boolean
           mobile?: string | null
           name?: string
+          notices_sync_excluded?: boolean
           registration_cancellation_date?: string | null
           registration_date?: string
           registration_type?: Database["public"]["Enums"]["registration_type"]

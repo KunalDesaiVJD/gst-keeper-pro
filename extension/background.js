@@ -60,7 +60,7 @@ const del = async (table, query) => {
 };
 
 const API = {
-  getClients: () => sel('clients?select=id,name,gstin,gst_user_id,gst_password,selected_returns&order=name'),
+  getClients: () => sel('clients?select=id,name,gstin,gst_user_id,gst_password,selected_returns,notices_sync_excluded&order=name'),
   getClient: (id) => sel(`clients?id=eq.${id}&select=id,name,gstin,gst_user_id,gst_password,selected_returns&limit=1`).then((a) => a[0] || null),
   upsertFilingStatus: (rows) => post('filing_status?on_conflict=client_id,return_type,period_month', rows, 'resolution=merge-duplicates,return=minimal'),
   upsertReco: async (table, clientId, period, patchObj) => {
@@ -392,6 +392,16 @@ const API = {
   startAllClientsSectionPull: async (info) => {
     const all = await API.getClients();
     let withCreds = all.filter((c) => c.gst_user_id);
+    // "Exclude from Notices Dashboard sync" (Edit Client) — only gates the
+    // Notices Dashboard's own bulk pulls, not every bulk section pull this
+    // same function serves (e.g. Company List's "Fetch Company", mode
+    // 'taxpayerprofile', is unaffected). Applied even when info.clientIds is
+    // scoped (a hand-picked selection), as a safety net — Company List
+    // already filters its own Sync button's selection before it gets here,
+    // but Notices Dashboard's unscoped "Sync All" has no such pre-filter.
+    if (info.mode === 'notices' || info.mode === 'notices_bundle') {
+      withCreds = withCreds.filter((c) => !c.notices_sync_excluded);
+    }
     const scoped = Array.isArray(info.clientIds) && info.clientIds.length;
     if (scoped) {
       const idSet = new Set(info.clientIds);

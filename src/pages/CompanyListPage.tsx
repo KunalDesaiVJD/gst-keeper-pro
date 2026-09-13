@@ -46,6 +46,7 @@ interface ClientRow {
   gstin: string;
   gst_user_id: string | null;
   inactive_at_hand: boolean | null;
+  notices_sync_excluded: boolean | null;
 }
 
 interface SyncLogRow {
@@ -103,7 +104,7 @@ const CompanyListPage: React.FC = () => {
   const fetchAll = async () => {
     setLoading(true);
     const [clientsRes, logsRes] = await Promise.all([
-      supabase.from('clients').select('id, name, gstin, gst_user_id, inactive_at_hand').order('name'),
+      supabase.from('clients').select('id, name, gstin, gst_user_id, inactive_at_hand, notices_sync_excluded').order('name'),
       supabase.from('client_sync_log').select('id, client_id, action, status, message, created_at').order('created_at', { ascending: false }),
     ]);
     setClients((clientsRes.data || []) as ClientRow[]);
@@ -225,13 +226,21 @@ const CompanyListPage: React.FC = () => {
   const handleSync = () => {
     if (selected.size === 0) { toast.error('Select at least one company first.'); return; }
     if (!extReady) { toast.error('GST Keeper browser extension not detected. Install/enable it to sync.'); return; }
+    // "Exclude from Notices Dashboard sync" (Edit Client) only opts a client
+    // out of THIS button and the Notices Dashboard's own "Sync All" — it's
+    // deliberately narrower than the row checkbox itself, which still needs
+    // to work for Delete/Bulk Update/Fetch Company regardless. Filtered here
+    // rather than by disabling the checkbox, so one exclusion doesn't block
+    // every other bulk action on this page.
+    const clientIds = clients.filter((c) => selected.has(c.id) && !c.notices_sync_excluded).map((c) => c.id);
+    if (clientIds.length === 0) { toast.error('Every selected company is excluded from Notices Dashboard sync (see Edit Client).'); return; }
     pendingActionRef.current = 'sync';
     setSyncing(true);
     // 'notices_bundle': same mode the Notices Dashboard's own "Sync All" now
     // uses — pulls Notices & Orders, then chains through Refunds and DRC-03
     // for each selected client before moving to the next, instead of
     // stopping after Notices alone (see chainOrStop in content.js).
-    window.postMessage({ __gstkPullSectionAllClients: { mode: 'notices_bundle', clientIds: Array.from(selected) } }, '*');
+    window.postMessage({ __gstkPullSectionAllClients: { mode: 'notices_bundle', clientIds } }, '*');
   };
 
   const handleFetchCompany = () => {
@@ -359,7 +368,14 @@ const CompanyListPage: React.FC = () => {
                         <TableCell className="px-2 py-1 text-xs">
                           <Link to={`/notices-company/${c.id}`} className="text-primary hover:underline">{c.gstin}</Link>
                         </TableCell>
-                        <TableCell className="max-w-[240px] truncate px-2 py-1 text-xs" title={c.name}>{c.name}</TableCell>
+                        <TableCell className="max-w-[240px] truncate px-2 py-1 text-xs" title={c.name}>
+                          {c.name}
+                          {c.notices_sync_excluded && (
+                            <span className="ml-1.5 rounded bg-muted px-1 py-0.5 text-[10px] font-medium text-muted-foreground" title="Excluded from Notices Dashboard sync (Edit Client)">
+                              Sync off
+                            </span>
+                          )}
+                        </TableCell>
                         <TableCell className="px-2 py-1 text-xs text-muted-foreground">{c.gst_user_id || '—'}</TableCell>
                         <TableCell className="px-2 py-1 text-xs text-muted-foreground">{log ? new Date(log.created_at).toLocaleString() : '—'}</TableCell>
                         <TableCell className="px-2 py-1 text-center">
