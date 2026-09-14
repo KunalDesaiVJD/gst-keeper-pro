@@ -12,6 +12,8 @@ import type { ReportDefinition } from '@/lib/reportRegistry';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { logNoticeFieldChanges } from '@/lib/noticeEvents';
+import { processEventAlert, flushOutbox } from '@/lib/noticeAlertQueue';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -177,7 +179,7 @@ const cellToText = (v: string | number | undefined): string => {
 };
 
 export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ table, report }) => {
-  const { canEditNoticeStatus } = useAuth();
+  const { canEditNoticeStatus, user } = useAuth();
   const canEdit = canEditNoticeStatus();
 
   const [rows, setRows] = useState(table.rows);
@@ -401,13 +403,31 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
 
   const handleStatusChange = async (idx: number, newStatus: string) => {
     const rowId = rowIds?.[idx];
+    const clientId = clientIds?.[idx];
     if (!rowId || statusColIdx === -1) return;
+    const oldStatus = cellToText(rows[idx]?.[statusColIdx]);
     setSavingIdx(idx);
     const { error } = await supabase.from('gst_notices').update({ staff_status: newStatus }).eq('id', rowId);
     setSavingIdx(null);
     if (error) { toast.error('Failed to update status: ' + error.message); return; }
     patchRow(idx, statusColIdx, newStatus);
     toast.success('Status updated');
+
+    if (clientId && oldStatus !== newStatus) {
+      void logNoticeFieldChanges(
+        rowId, clientId,
+        { staff_status: oldStatus },
+        { staff_status: newStatus },
+        user?.id ?? null, user?.name ?? null,
+      ).then(async () => {
+        const { data: events } = await supabase.from('notice_events')
+          .select('*').eq('notice_id', rowId).order('created_at', { ascending: false }).limit(1);
+        if (events?.length) {
+          await processEventAlert(events[0] as never);
+          flushOutbox();
+        }
+      }).catch(() => {});
+    }
   };
 
   const toggleSelect = (idx: number) => {
@@ -496,10 +516,17 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
   const saveEdit = async () => {
     if (editingIdx === null) return;
     const rowId = rowIds?.[editingIdx];
+    const clientId = clientIds?.[editingIdx];
     if (!rowId) { setEditingIdx(null); return; }
     const amount = editForm.amountOfDemand.trim() === '' ? null : Number(editForm.amountOfDemand);
     if (amount !== null && !Number.isFinite(amount)) { toast.error('Amount of Demand must be a number.'); return; }
     setSavingEdit(true);
+
+    // Snapshot old values for event logging
+    const { data: oldRow } = await supabase.from('gst_notices')
+      .select('staff_status, assign_to, assign_to_user_id, reply_date, reply_ref_number, order_date, order_number, close_reason')
+      .eq('id', rowId).maybeSingle();
+
     const { error } = await supabase.from('gst_notices').update({
       priority: editForm.priority || null,
       reply_ref_number: editForm.replyRefNumber || null,
@@ -517,6 +544,30 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     }).eq('id', rowId);
     setSavingEdit(false);
     if (error) { toast.error('Failed to save: ' + error.message); return; }
+
+    // Log events and fire alerts (best-effort, never blocks the UI toast)
+    if (oldRow && clientId) {
+      const newFields = {
+        staff_status: oldRow.staff_status,
+        assign_to: editForm.assignTo || null,
+        assign_to_user_id: oldRow.assign_to_user_id,
+        reply_date: editForm.replyDate || null,
+        reply_ref_number: editForm.replyRefNumber || null,
+        order_date: editForm.orderDate || null,
+        order_number: editForm.orderNumber || null,
+        close_reason: editForm.closeReason || null,
+      };
+      void logNoticeFieldChanges(rowId, clientId, oldRow, newFields, user?.id ?? null, user?.name ?? null)
+        .then(async () => {
+          const { data: events } = await supabase.from('notice_events')
+            .select('*').eq('notice_id', rowId).order('created_at', { ascending: false }).limit(5);
+          if (events?.length) {
+            for (const ev of events) { await processEventAlert(ev as never); }
+            flushOutbox();
+          }
+        })
+        .catch(() => {});
+    }
 
     const idx = editingIdx;
     setRows((prev) => prev.map((r, i) => {

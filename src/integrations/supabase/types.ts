@@ -3799,13 +3799,15 @@ export type Database = {
       email_outbox: {
         Row: {
           body: string
-          client_id: string
+          client_id: string | null
           created_at: string
           created_by: string | null
+          dedupe_key: string | null
           error: string | null
           filing_status_id: string | null
           id: string
           kind: string
+          notice_id: string | null
           period_month: string | null
           reminder_step: number | null
           render_vars: Json | null
@@ -3818,13 +3820,15 @@ export type Database = {
         }
         Insert: {
           body: string
-          client_id: string
+          client_id?: string | null
           created_at?: string
           created_by?: string | null
           error?: string | null
           filing_status_id?: string | null
+          dedupe_key?: string | null
           id?: string
           kind: string
+          notice_id?: string | null
           period_month?: string | null
           reminder_step?: number | null
           render_vars?: Json | null
@@ -3837,13 +3841,15 @@ export type Database = {
         }
         Update: {
           body?: string
-          client_id?: string
+          client_id?: string | null
           created_at?: string
           created_by?: string | null
+          dedupe_key?: string | null
           error?: string | null
           filing_status_id?: string | null
           id?: string
           kind?: string
+          notice_id?: string | null
           period_month?: string | null
           reminder_step?: number | null
           render_vars?: Json | null
@@ -4538,6 +4544,7 @@ export type Database = {
         Row: {
           amount_of_demand: number | null
           assign_to: string | null
+          assign_to_user_id: string | null
           case_id: string | null
           client_id: string
           created_at: string
@@ -4574,6 +4581,7 @@ export type Database = {
         Insert: {
           amount_of_demand?: number | null
           assign_to?: string | null
+          assign_to_user_id?: string | null
           case_id?: string | null
           client_id: string
           created_at?: string
@@ -4610,6 +4618,7 @@ export type Database = {
         Update: {
           amount_of_demand?: number | null
           assign_to?: string | null
+          assign_to_user_id?: string | null
           case_id?: string | null
           client_id?: string
           created_at?: string
@@ -5941,6 +5950,186 @@ export type Database = {
         }
         Relationships: []
       }
+      matter_deadlines: {
+        Row: {
+          id: string
+          notice_id: string
+          client_id: string
+          deadline_type: string
+          deadline_date: string
+          statutory_basis: string | null
+          source: string
+          is_met: boolean
+          met_at: string | null
+          met_by: string | null
+          notes: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          notice_id: string
+          client_id: string
+          deadline_type: string
+          deadline_date: string
+          statutory_basis?: string | null
+          source?: string
+          is_met?: boolean
+          met_at?: string | null
+          met_by?: string | null
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          notice_id?: string
+          client_id?: string
+          deadline_type?: string
+          deadline_date?: string
+          statutory_basis?: string | null
+          source?: string
+          is_met?: boolean
+          met_at?: string | null
+          met_by?: string | null
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      notice_alert_log: {
+        Row: {
+          id: string
+          rule_id: string | null
+          notice_id: string | null
+          client_id: string | null
+          event_id: string | null
+          email_outbox_id: string | null
+          recipient_email: string | null
+          status: string
+          suppress_reason: string | null
+          dedupe_key: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          rule_id?: string | null
+          notice_id?: string | null
+          client_id?: string | null
+          event_id?: string | null
+          email_outbox_id?: string | null
+          recipient_email?: string | null
+          status?: string
+          suppress_reason?: string | null
+          dedupe_key?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          rule_id?: string | null
+          notice_id?: string | null
+          client_id?: string | null
+          event_id?: string | null
+          email_outbox_id?: string | null
+          recipient_email?: string | null
+          status?: string
+          suppress_reason?: string | null
+          dedupe_key?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      notice_alert_rules: {
+        Row: {
+          id: string
+          alert_key: string
+          name: string
+          description: string | null
+          event_type: string | null
+          schedule: string | null
+          template_key: string
+          recipient: string
+          is_active: boolean
+          priority: string
+          quiet_hours: boolean
+          max_repeats: number | null
+          cooldown_hrs: number | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          alert_key: string
+          name: string
+          description?: string | null
+          event_type?: string | null
+          schedule?: string | null
+          template_key: string
+          recipient?: string
+          is_active?: boolean
+          priority?: string
+          quiet_hours?: boolean
+          max_repeats?: number | null
+          cooldown_hrs?: number | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          alert_key?: string
+          name?: string
+          description?: string | null
+          event_type?: string | null
+          schedule?: string | null
+          template_key?: string
+          recipient?: string
+          is_active?: boolean
+          priority?: string
+          quiet_hours?: boolean
+          max_repeats?: number | null
+          cooldown_hrs?: number | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      notice_events: {
+        Row: {
+          id: string
+          notice_id: string
+          client_id: string
+          event_type: string
+          old_value: Json | null
+          new_value: Json | null
+          actor_id: string | null
+          actor_name: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          notice_id: string
+          client_id: string
+          event_type: string
+          old_value?: Json | null
+          new_value?: Json | null
+          actor_id?: string | null
+          actor_name?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          notice_id?: string
+          client_id?: string
+          event_type?: string
+          old_value?: Json | null
+          new_value?: Json | null
+          actor_id?: string | null
+          actor_name?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
       password_reset_requests: {
         Row: {
           id: string
@@ -6699,6 +6888,36 @@ export type Database = {
           return_type?: Database["public"]["Enums"]["return_type"]
           updated_at?: string
           updated_by?: string | null
+        }
+        Relationships: []
+      }
+      staff_notification_prefs: {
+        Row: {
+          id: string
+          user_id: string
+          channel: string
+          alert_kind: string
+          enabled: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          channel?: string
+          alert_kind: string
+          enabled?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          channel?: string
+          alert_kind?: string
+          enabled?: boolean
+          created_at?: string
+          updated_at?: string
         }
         Relationships: []
       }

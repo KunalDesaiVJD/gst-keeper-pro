@@ -1,9 +1,11 @@
 import { supabase } from '@/integrations/supabase/client';
+import { logNoticeEvent } from '@/lib/noticeEvents';
 
 interface CandidateRow {
   id: number;
   case_id: string;
   notice_type: string | null;
+  client_id: string;
 }
 
 interface FolderItem {
@@ -26,7 +28,7 @@ export async function runAutoClose(): Promise<{ closed: number; errors: string[]
 
   const { data: candidates, error: candErr } = await supabase
     .from('gst_notices')
-    .select('id, case_id, notice_type')
+    .select('id, case_id, notice_type, client_id')
     .is('staff_status', null)
     .is('deleted_at', null)
     .not('case_id', 'is', null)
@@ -54,6 +56,7 @@ export async function runAutoClose(): Promise<{ closed: number; errors: string[]
     s.add(norm);
   });
 
+  const candidateMap = new Map((candidates as CandidateRow[]).map((c) => [c.id, c]));
   const toClose: { id: number; reason: string }[] = [];
 
   for (const row of candidates as CandidateRow[]) {
@@ -94,8 +97,23 @@ export async function runAutoClose(): Promise<{ closed: number; errors: string[]
         .in('id', ids)
         .is('staff_status', null);
 
-      if (upErr) errors.push(upErr.message);
-      else closed += count || ids.length;
+      if (upErr) { errors.push(upErr.message); }
+      else {
+        closed += count || ids.length;
+        for (const id of ids) {
+          const cand = candidateMap.get(id);
+          if (cand) {
+            void logNoticeEvent({
+              noticeId: String(id),
+              clientId: cand.client_id,
+              eventType: 'closed',
+              oldValue: { staff_status: null },
+              newValue: { staff_status: 'Closed', close_reason: reason },
+              actorName: 'Auto-close sweep',
+            }).catch(() => {});
+          }
+        }
+      }
     }
   }
 

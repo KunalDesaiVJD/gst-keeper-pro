@@ -3,14 +3,16 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { prettyPeriod } from '@/lib/gstReminders';
+import { runScheduledAlerts, flushOutbox } from '@/lib/noticeAlertQueue';
 import EmailTemplatesEditor from '@/components/reminders/EmailTemplatesEditor';
 import ReturnReminderScheduleCard from '@/components/reminders/ReturnReminderScheduleCard';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { BellRing, Send, RefreshCw, Loader2, Mail, Clock, CheckCircle2, XCircle, Ban } from 'lucide-react';
+import { BellRing, Send, RefreshCw, Loader2, Mail, Clock, CheckCircle2, XCircle, Ban, AlertTriangle, Shield } from 'lucide-react';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 type OutboxStatus = 'pending' | 'sent' | 'failed' | 'skipped' | 'cancelled';
@@ -19,7 +21,7 @@ interface OutboxRow {
   id: string;
   client_id: string;
   to_email: string;
-  kind: 'reminder' | 'confirmation';
+  kind: 'reminder' | 'confirmation' | 'notice_alert';
   return_type: string;
   period_month: string | null;
   subject: string;
@@ -28,6 +30,19 @@ interface OutboxRow {
   reminder_step: number | null;
   created_at: string;
   sent_at: string | null;
+  notice_id: string | null;
+}
+
+interface AlertRuleRow {
+  id: string;
+  alert_key: string;
+  name: string;
+  description: string | null;
+  event_type: string | null;
+  schedule: string | null;
+  recipient: string;
+  is_active: boolean;
+  priority: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -78,19 +93,23 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
   const [sending, setSending] = useState(false);
   const [period, setPeriod] = useState(selectedMonth);
   const [filter, setFilter] = useState<FilterKey>('all');
+  const [alertRules, setAlertRules] = useState<AlertRuleRow[]>([]);
+  const [runningAlerts, setRunningAlerts] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [{ data: outbox }, { data: clients }] = await Promise.all([
+    const [{ data: outbox }, { data: clients }, { data: rules }] = await Promise.all([
       supabase
         .from('email_outbox')
-        .select('id, client_id, to_email, kind, return_type, period_month, subject, status, error, reminder_step, created_at, sent_at')
+        .select('id, client_id, to_email, kind, return_type, period_month, subject, status, error, reminder_step, created_at, sent_at, notice_id')
         .order('created_at', { ascending: false })
         .limit(400),
       supabase.from('clients').select('id, name'),
+      supabase.from('notice_alert_rules').select('id, alert_key, name, description, event_type, schedule, recipient, is_active, priority').order('alert_key'),
     ]);
     setRows((outbox ?? []) as OutboxRow[]);
     setNames(Object.fromEntries((clients ?? []).map((c) => [c.id as string, c.name as string])));
+    setAlertRules((rules ?? []) as AlertRuleRow[]);
     setLoading(false);
   }, []);
 
@@ -250,6 +269,8 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
                         <td className="py-2.5 pr-3 whitespace-nowrap">
                           {r.kind === 'confirmation' ? (
                             <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" /> Confirmation</span>
+                          ) : r.kind === 'notice_alert' ? (
+                            <span className="inline-flex items-center gap-1 text-violet-700"><AlertTriangle className="h-3.5 w-3.5" /> Notice Alert</span>
                           ) : (
                             <span className="inline-flex items-center gap-1 text-amber-700">
                               <BellRing className="h-3.5 w-3.5" /> Reminder{r.reminder_step ? ` #${r.reminder_step}` : ''}
@@ -278,13 +299,92 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
         </CardContent>
       </Card>
 
+      {/* Notice Alerts — E1–E13 alert rules and manual trigger */}
+      <Card>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Shield className="h-4 w-4" /> Notice Alerts
+            </CardTitle>
+            <CardDescription>
+              Automatic email alerts for notice events — new notices, overdue, assignments, and more. Toggle individual rules on/off or run scheduled alerts manually.
+            </CardDescription>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={runningAlerts}
+            className="gap-1.5 self-start"
+            onClick={async () => {
+              setRunningAlerts(true);
+              try {
+                const result = await runScheduledAlerts();
+                if (result.queued > 0) {
+                  flushOutbox();
+                  toast.success(`Queued ${result.queued} notice alert${result.queued === 1 ? '' : 's'}.`);
+                } else {
+                  toast.info('No notice alerts due right now.');
+                }
+                void load();
+              } catch {
+                toast.error('Failed to run notice alerts.');
+              }
+              setRunningAlerts(false);
+            }}
+          >
+            {runningAlerts ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}
+            Run notice alerts
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {alertRules.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">No alert rules configured.</div>
+          ) : (
+            <div className="space-y-1">
+              {alertRules.map((rule) => (
+                <div key={rule.id} className="flex items-center justify-between rounded-md border px-3 py-2.5 hover:bg-muted/40">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs text-muted-foreground">{rule.alert_key.split('_')[0]}</span>
+                      <span className="text-sm font-medium">{rule.name}</span>
+                      <Badge variant="outline" className={
+                        rule.priority === 'critical' ? 'border-red-200 bg-red-50 text-red-700' :
+                        rule.priority === 'low' ? 'border-slate-200 bg-slate-50 text-slate-600' :
+                        'border-blue-200 bg-blue-50 text-blue-700'
+                      }>
+                        {rule.priority}
+                      </Badge>
+                      <Badge variant="outline" className="text-xs">{rule.recipient}</Badge>
+                    </div>
+                    {rule.description && <p className="mt-0.5 text-xs text-muted-foreground">{rule.description}</p>}
+                    <div className="mt-1 flex gap-3 text-xs text-muted-foreground">
+                      {rule.event_type && <span>Trigger: <strong>{rule.event_type}</strong></span>}
+                      {rule.schedule && <span>Schedule: <code className="rounded bg-muted px-1">{rule.schedule}</code></span>}
+                    </div>
+                  </div>
+                  <Switch
+                    checked={rule.is_active}
+                    onCheckedChange={async (checked) => {
+                      const { error } = await supabase.from('notice_alert_rules').update({ is_active: checked }).eq('id', rule.id);
+                      if (error) { toast.error('Failed to update rule'); return; }
+                      setAlertRules((prev) => prev.map((r) => r.id === rule.id ? { ...r, is_active: checked } : r));
+                      toast.success(`${rule.name} ${checked ? 'enabled' : 'disabled'}`);
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Email templates — edit the wording right here (also under Settings). */}
       <div className="pt-2">
         <h2 className="mb-1 flex items-center gap-2 text-lg font-semibold tracking-tight">
           <Mail className="h-5 w-5 text-primary" /> Email templates
         </h2>
         <p className="mb-3 text-sm text-muted-foreground">
-          Edit the wording of each reminder and confirmation. The letterhead, details box and signature are applied automatically.
+          Edit the wording of each reminder, confirmation, and notice alert. The letterhead, details box and signature are applied automatically.
         </p>
         <EmailTemplatesEditor />
       </div>

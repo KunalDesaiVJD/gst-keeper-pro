@@ -8,14 +8,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Loader2, Save, Bell, CheckCircle2 } from 'lucide-react';
+import { Loader2, Save, Bell, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { buildEmailHtml } from '@/lib/emailTemplate';
 
 interface Tpl {
   key: string;
   name: string;
-  kind: 'reminder' | 'confirmation';
+  kind: 'reminder' | 'confirmation' | 'notice_alert';
   step: number | null;
   subject: string;
   body: string;
@@ -29,6 +29,17 @@ const VARS = [
   'contact_person', 'client_name', 'gstin', 'return_type', 'period',
   'due_date', 'data_by_date', 'arn', 'filing_date',
   'staff_name', 'firm_name', 'firm_email', 'firm_phone',
+];
+const NOTICE_VARS = [
+  'contact_person', 'client_name', 'gstin', 'notice_type', 'reference_number',
+  'description', 'issue_date', 'due_date', 'days_remaining', 'priority',
+  'hearing_date', 'issued_by', 'old_status', 'new_status', 'reply_date',
+  'reply_ref_number', 'order_date', 'order_number', 'actor_name',
+  'staff_name', 'firm_name', 'firm_email',
+  'overdue_count', 'unassigned_count', 'notice_list',
+  'deadline_type', 'deadline_date', 'statutory_basis',
+  'document_list', 'next_step', 'staff_status',
+  'report_date', 'mis_content', 'anomaly_description',
 ];
 const SAMPLE: Record<string, string> = {
   contact_person: 'Rajesh Shah',
@@ -44,6 +55,33 @@ const SAMPLE: Record<string, string> = {
   firm_name: 'V. J. Desai & Co. LLP',
   firm_email: 'gst@vjdesai.com',
   firm_phone: '+91 265 000 0000',
+  notice_type: 'DRC-01',
+  reference_number: 'ZA2409000012345',
+  description: 'Show cause notice for ITC mismatch',
+  issue_date: '01 Sep 2026',
+  days_remaining: '5',
+  priority: 'High',
+  hearing_date: '15 Sep 2026',
+  issued_by: 'Deputy Commissioner',
+  old_status: 'Under Review',
+  new_status: 'Reply Drafted',
+  reply_date: '10 Sep 2026',
+  reply_ref_number: 'RPL/2026/001',
+  order_date: '',
+  order_number: '',
+  actor_name: 'Kunal Desai',
+  overdue_count: '3',
+  unassigned_count: '2',
+  notice_list: '  DRC-01 - ZA2409000012345 (Due: 15/09/2026)\n  ASMT-10 - ZB2409000067890 (Due: 12/09/2026)',
+  deadline_type: 'Appeal u/s 107',
+  deadline_date: '01 Dec 2026',
+  statutory_basis: 'Section 107(1) CGST Act',
+  document_list: '1. Purchase invoices for Q2 2025-26\n2. Bank statements',
+  next_step: 'Awaiting client documents',
+  staff_status: 'Under Review',
+  report_date: '14 Sep 2026',
+  mis_content: 'Open: 12 | Overdue: 3 | Due in 7 days: 5',
+  anomaly_description: 'Duplicate notice detected',
 };
 const renderPreview = (s: string) => s.replace(/\{\{(\w+)\}\}/g, (_m, k) => SAMPLE[k] ?? `{{${k}}}`);
 
@@ -108,6 +146,8 @@ const EmailTemplatesEditor: React.FC = () => {
 
   const reminders = templates.filter(t => t.kind === 'reminder');
   const confirmations = templates.filter(t => t.kind === 'confirmation');
+  const noticeAlerts = templates.filter(t => t.kind === 'notice_alert');
+  const activeVars = current?.kind === 'notice_alert' ? NOTICE_VARS : VARS;
 
   const listItem = (t: Tpl) => (
     <button
@@ -147,6 +187,12 @@ const EmailTemplatesEditor: React.FC = () => {
               <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><CheckCircle2 className="h-3.5 w-3.5" /> Confirmations</p>
               <div className="space-y-1.5">{confirmations.map(listItem)}</div>
             </div>
+            {noticeAlerts.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><AlertTriangle className="h-3.5 w-3.5" /> Notice Alerts</p>
+                <div className="space-y-1.5">{noticeAlerts.map(listItem)}</div>
+              </div>
+            )}
           </div>
 
           {/* Editor */}
@@ -166,7 +212,7 @@ const EmailTemplatesEditor: React.FC = () => {
               <div className="space-y-1.5">
                 <p className="text-xs text-muted-foreground">Click a variable to insert it into the body at the cursor:</p>
                 <div className="flex flex-wrap gap-1.5">
-                  {VARS.map(v => (
+                  {activeVars.map(v => (
                     <button key={v} type="button" onClick={() => insertVar(v)}>
                       <Badge variant="secondary" className="cursor-pointer hover:bg-primary/10 font-mono text-[11px]">{`{{${v}}}`}</Badge>
                     </button>
