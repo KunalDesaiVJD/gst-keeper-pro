@@ -83,3 +83,35 @@ reach the ledger) and ITC Summary row 5.1's auto-link are elected positions,
 not settled law — and were implemented without a firm sign-off conversation,
 so treat them as reversible defaults pending confirmation, not fixed rules.
 
+## Notices module
+
+Data from the GST portal's notices, refunds, and LUT cases, synced by a
+Chrome Extension (MV3, in `chrome-extension/`). The sync uses upsert +
+soft-delete (`deleted_at` timestamp) — all notice queries filter
+`deleted_at IS NULL`.
+
+**Tables:** `gst_notices` (notices + tasks), `gst_case_folder_items`
+(case-folder contents with `raw_json`). Refund status tracked in
+`refund_applications`, DRC-03 in `drc03_filings` — both have
+`client_id`, `arn`, `status`.
+
+**Shared data hook:** `src/hooks/useNoticeSet.ts` (`useNoticeSet()`)
+fetches notices, refund rows, and DRC-03 rows in parallel. Used by the
+dashboard, summary report, and GSTIN-wise count pages.
+
+**KPI tiles:** Canonical definitions in `src/utils/noticeDefinitions.ts`
+(`isOpen`, `isOverdue`, `isDueIn7`, `isNew`). A notice is "closed" if
+`staff_status` matches a closed-prefix set (Closed, Withdrawn, Dropped,
+Disposed, Deleted, Adjudged). "Overdue" requires open + no reply +
+effective due < today IST.
+
+**Auto-close & due-date sweep:** `src/lib/noticeAutoClose.ts`. Three
+auto-close patterns (CLOSURE folder, refund+ORDERS, LUT+ORDERS) set
+`staff_status='Closed'` + `close_reason='auto:*'`. Due-date sweep
+extracts the earliest date from folder items' `raw_json.sdtls.duedate`
+or `raw_json.dtscn.duedate`.
+
+**Read `docs/NOTICES_LITIGATION_POSITIONS.md` before changing auto-close
+logic, tile definitions, or due-date extraction.** The positions were
+implemented by engineering judgement, not confirmed in a firm sign-off.
+
