@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Bell, Send, LayoutDashboard, FileBarChart2, ChevronDown, ListOrdered, Building2, Briefcase } from 'lucide-react';
+import { Bell, Send, LayoutDashboard, FileBarChart2, ChevronDown, ListOrdered, Building2, Briefcase, BarChart3 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 
@@ -11,7 +11,7 @@ const NAV_LINKS = [
   { label: 'Litigation', icon: Briefcase, to: '/litigation' },
 ];
 
-const REPORT_PATHS = ['/notices-report', '/notices-gstin-wise-count'];
+const REPORT_PATHS = ['/notices-report', '/notices-gstin-wise-count', '/litigation-mis'];
 
 const navItemClass = (active: boolean) => cn(
   'flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium transition-colors',
@@ -52,6 +52,11 @@ export const NoticesTopNav: React.FC = () => {
           <DropdownMenuItem asChild>
             <Link to="/notices-gstin-wise-count" className="flex items-center gap-2 text-xs">
               <Building2 className="h-3.5 w-3.5" /> GSTIN Wise Notice Count
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Link to="/litigation-mis" className="flex items-center gap-2 text-xs">
+              <BarChart3 className="h-3.5 w-3.5" /> Litigation MIS
             </Link>
           </DropdownMenuItem>
         </DropdownMenuContent>

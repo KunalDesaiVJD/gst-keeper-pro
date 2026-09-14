@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import Sidebar, { SidebarContents } from './Sidebar';
 import QuickActionsButton from './QuickActionsButton';
 import ChatWidget from '@/components/chat/ChatWidget';
+import NotificationBell from '@/components/notices/NotificationBell';
 import { Loader2, Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
@@ -61,7 +62,13 @@ const MainLayout: React.FC = () => {
             <Menu className="h-5 w-5" />
           </Button>
           <img src={logo} alt="V. J. Desai & Co. LLP" className="h-7 w-auto object-contain" />
+          <div className="ml-auto">{isStaffRole() && <NotificationBell />}</div>
         </header>
+
+        {/* Desktop notification bell */}
+        <div className="hidden md:fixed md:top-4 md:right-4 md:z-40 md:block">
+          {isStaffRole() && <NotificationBell />}
+        </div>
 
         <main className="min-h-screen px-4 py-4 md:p-6">
           <Outlet />

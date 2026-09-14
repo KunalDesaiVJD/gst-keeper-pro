@@ -35,7 +35,11 @@ interface GstinCountRow {
   open: number;
   closed: number;
   replied: number;
+  matterCount: number;
+  exposure: number;
 }
+
+interface MatterAgg { client_id: string; count: number; demand: number; }
 
 const GstinWiseNoticeCountPage: React.FC = () => {
   const { isStaffRole } = useAuth();
@@ -43,14 +47,28 @@ const GstinWiseNoticeCountPage: React.FC = () => {
   const { rows: notices, refundRows: refunds, drc03Rows: drc03s, loading } = useNoticeSet();
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [clientsLoading, setClientsLoading] = useState(true);
+  const [matterAggs, setMatterAggs] = useState<MatterAgg[]>([]);
   const [typeFilter, setTypeFilter] = useState<TypeOfNoticesFilter>('all');
   const [search, setSearch] = useState('');
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data } = await supabase.from('clients').select('id, name, gstin').order('name');
-      if (!cancelled) { setClients((data || []) as ClientRow[]); setClientsLoading(false); }
+      const [{ data: cData }, { data: mData }] = await Promise.all([
+        supabase.from('clients').select('id, name, gstin').order('name'),
+        supabase.from('litigation_matters').select('client_id, status, demand_tax, demand_interest, demand_penalty, demand_cess'),
+      ]);
+      if (cancelled) return;
+      setClients((cData || []) as ClientRow[]);
+      const agg = new Map<string, MatterAgg>();
+      ((mData || []) as any[]).filter(m => m.status !== 'Closed').forEach(m => {
+        if (!agg.has(m.client_id)) agg.set(m.client_id, { client_id: m.client_id, count: 0, demand: 0 });
+        const e = agg.get(m.client_id)!;
+        e.count += 1;
+        e.demand += (m.demand_tax ?? 0) + (m.demand_interest ?? 0) + (m.demand_penalty ?? 0) + (m.demand_cess ?? 0);
+      });
+      setMatterAggs([...agg.values()]);
+      setClientsLoading(false);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -63,13 +81,20 @@ const GstinWiseNoticeCountPage: React.FC = () => {
     return true;
   });
 
+  const matterMap = useMemo(() => {
+    const m = new Map<string, MatterAgg>();
+    matterAggs.forEach(a => m.set(a.client_id, a));
+    return m;
+  }, [matterAggs]);
+
   const countsByClient = useMemo(() => {
     const m = new Map<string, GstinCountRow>();
     const ensure = (clientId: string) => {
       let e = m.get(clientId);
       if (!e) {
         const c = clients.find((c) => c.id === clientId);
-        e = { clientId, gstin: c?.gstin || '—', name: c?.name || '—', total: 0, open: 0, closed: 0, replied: 0 };
+        const ma = matterMap.get(clientId);
+        e = { clientId, gstin: c?.gstin || '—', name: c?.name || '—', total: 0, open: 0, closed: 0, replied: 0, matterCount: ma?.count ?? 0, exposure: ma?.demand ?? 0 };
         m.set(clientId, e);
       }
       return e;
@@ -94,8 +119,11 @@ const GstinWiseNoticeCountPage: React.FC = () => {
         if (isDrc03Closed(r.status)) e.closed += 1; else e.open += 1;
       });
     }
+    for (const [cid, ma] of matterMap) {
+      if (!m.has(cid)) ensure(cid);
+    }
     return Array.from(m.values()).sort((a, b) => b.total - a.total);
-  }, [filteredNotices, refunds, drc03s, clients, typeFilter]);
+  }, [filteredNotices, refunds, drc03s, clients, typeFilter, matterMap]);
 
   const filteredCounts = countsByClient.filter((r) => {
     const q = search.trim().toLowerCase();
@@ -103,22 +131,24 @@ const GstinWiseNoticeCountPage: React.FC = () => {
     return r.gstin.toLowerCase().includes(q) || r.name.toLowerCase().includes(q);
   });
 
+  const fmtINR = (n: number) => n > 0 ? new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(n) : '—';
+
   const grandTotal = filteredCounts.reduce(
-    (acc, r) => ({ total: acc.total + r.total, open: acc.open + r.open, closed: acc.closed + r.closed, replied: acc.replied + r.replied }),
-    { total: 0, open: 0, closed: 0, replied: 0 },
+    (acc, r) => ({ total: acc.total + r.total, open: acc.open + r.open, closed: acc.closed + r.closed, replied: acc.replied + r.replied, matters: acc.matters + r.matterCount, exposure: acc.exposure + r.exposure }),
+    { total: 0, open: 0, closed: 0, replied: 0, matters: 0, exposure: 0 },
   );
 
   const handleExport = () => {
     const table: ReportTable = {
       title: 'GSTIN Wise Notice Count',
       subtitle: `${filteredCounts.length} compan${filteredCounts.length === 1 ? 'y' : 'ies'}`,
-      headers: ['GSTIN', 'Trade Name', 'Total', 'Open', 'Closed', 'Replied'],
+      headers: ['GSTIN', 'Trade Name', 'Total', 'Open', 'Closed', 'Replied', 'Matters', 'Exposure'],
       rows: [
-        ...filteredCounts.map((r) => [r.gstin, r.name, r.total, r.open, r.closed, r.replied]),
-        ['Total', '', grandTotal.total, grandTotal.open, grandTotal.closed, grandTotal.replied],
+        ...filteredCounts.map((r) => [r.gstin, r.name, r.total, r.open, r.closed, r.replied, r.matterCount, r.exposure]),
+        ['Total', '', grandTotal.total, grandTotal.open, grandTotal.closed, grandTotal.replied, grandTotal.matters, grandTotal.exposure],
       ],
       fileNameBase: 'gstin_wise_notice_count',
-      columnWidths: [18, 28, 10, 10, 10, 10],
+      columnWidths: [18, 24, 8, 8, 8, 8, 8, 14],
     };
     renderReportToExcel(table);
   };
@@ -176,13 +206,15 @@ const GstinWiseNoticeCountPage: React.FC = () => {
                   <TableHead className="bg-muted/60 text-right text-[11px] font-semibold">Open</TableHead>
                   <TableHead className="bg-muted/60 text-right text-[11px] font-semibold">Closed</TableHead>
                   <TableHead className="bg-muted/60 text-right text-[11px] font-semibold">Replied</TableHead>
+                  <TableHead className="bg-muted/60 text-right text-[11px] font-semibold">Matters</TableHead>
+                  <TableHead className="bg-muted/60 text-right text-[11px] font-semibold">Exposure</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {(loading || clientsLoading) ? (
-                  <TableRow><TableCell colSpan={6} className="py-10 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" /></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} className="py-10 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" /></TableCell></TableRow>
                 ) : filteredCounts.length === 0 ? (
-                  <TableRow><TableCell colSpan={6} className="py-10 text-center text-xs text-muted-foreground">No companies match.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} className="py-10 text-center text-xs text-muted-foreground">No companies match.</TableCell></TableRow>
                 ) : (
                   filteredCounts.map((r) => (
                     <TableRow key={r.clientId}>
@@ -207,6 +239,13 @@ const GstinWiseNoticeCountPage: React.FC = () => {
                         {r.closed || '—'}
                       </TableCell>
                       <TableCell className="text-right text-xs tabular-nums">{r.replied || '—'}</TableCell>
+                      <TableCell
+                        className="cursor-pointer text-right text-xs tabular-nums text-primary underline-offset-2 hover:underline"
+                        onClick={() => r.matterCount > 0 ? navigate(`/litigation?client=${r.clientId}`) : undefined}
+                      >
+                        {r.matterCount || '—'}
+                      </TableCell>
+                      <TableCell className="text-right text-xs tabular-nums">{fmtINR(r.exposure)}</TableCell>
                     </TableRow>
                   ))
                 )}
@@ -219,6 +258,8 @@ const GstinWiseNoticeCountPage: React.FC = () => {
                     <TableCell className="text-right text-xs tabular-nums">{grandTotal.open}</TableCell>
                     <TableCell className="text-right text-xs tabular-nums">{grandTotal.closed}</TableCell>
                     <TableCell className="text-right text-xs tabular-nums">{grandTotal.replied}</TableCell>
+                    <TableCell className="text-right text-xs tabular-nums">{grandTotal.matters}</TableCell>
+                    <TableCell className="text-right text-xs tabular-nums">{fmtINR(grandTotal.exposure)}</TableCell>
                   </TableRow>
                 </tfoot>
               )}
