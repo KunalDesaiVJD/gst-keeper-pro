@@ -197,6 +197,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
   const [selectedIdx, setSelectedIdx] = useState<Set<number>>(new Set());
   const [bulkStatusOpen, setBulkStatusOpen] = useState(false);
   const [bulkStatus, setBulkStatus] = useState<string>('');
+  const [bulkCloseReason, setBulkCloseReason] = useState<string>('');
   const [bulkPriorityOpen, setBulkPriorityOpen] = useState(false);
   const [bulkPriority, setBulkPriority] = useState<string>('');
   const [bulkSaving, setBulkSaving] = useState(false);
@@ -432,7 +433,10 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     const ids = Array.from(selectedIdx).map((idx) => rowIds?.[idx]).filter((id): id is string => !!id);
     if (ids.length === 0) { setBulkStatusOpen(false); return; }
     setBulkSaving(true);
-    const { error } = await supabase.from('gst_notices').update({ staff_status: bulkStatus }).in('id', ids);
+    const payload: Record<string, string | null> = { staff_status: bulkStatus };
+    if (bulkStatus === 'Closed') payload.close_reason = bulkCloseReason || null;
+    else payload.close_reason = null;
+    const { error } = await supabase.from('gst_notices').update(payload).in('id', ids);
     setBulkSaving(false);
     if (error) { toast.error('Failed to update status: ' + error.message); return; }
     setRows((prev) => prev.map((r, i) => {
@@ -444,6 +448,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     toast.success(`Updated ${ids.length} record${ids.length === 1 ? '' : 's'}`);
     setBulkStatusOpen(false);
     setBulkStatus('');
+    setBulkCloseReason('');
     setSelectedIdx(new Set());
   };
 
@@ -966,7 +971,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
         </div>
       </CardContent>
 
-      <Dialog open={bulkStatusOpen} onOpenChange={(open) => { setBulkStatusOpen(open); if (!open) setBulkStatus(''); }}>
+      <Dialog open={bulkStatusOpen} onOpenChange={(open) => { setBulkStatusOpen(open); if (!open) { setBulkStatus(''); setBulkCloseReason(''); } }}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>Update Status</DialogTitle>
@@ -982,6 +987,14 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
               ))}
             </SelectContent>
           </Select>
+          {bulkStatus === 'Closed' && (
+            <Input
+              placeholder="Close reason (optional)"
+              value={bulkCloseReason}
+              onChange={(e) => setBulkCloseReason(e.target.value)}
+              className="text-xs"
+            />
+          )}
           <DialogFooter>
             <Button variant="outline" disabled={bulkSaving} onClick={() => setBulkStatusOpen(false)}>Cancel</Button>
             <Button onClick={applyBulkStatus} disabled={bulkSaving || !bulkStatus}>

@@ -4565,6 +4565,7 @@ export type Database = {
           reply_ref_number: string | null
           source: string
           staff_status: string | null
+          close_reason: string | null
           status: string | null
           submission_arn: string | null
           submission_date: string | null
@@ -4600,6 +4601,7 @@ export type Database = {
           reply_ref_number?: string | null
           source?: string
           staff_status?: string | null
+          close_reason?: string | null
           status?: string | null
           submission_arn?: string | null
           submission_date?: string | null
@@ -4635,6 +4637,7 @@ export type Database = {
           reply_ref_number?: string | null
           source?: string
           staff_status?: string | null
+          close_reason?: string | null
           status?: string | null
           submission_arn?: string | null
           submission_date?: string | null

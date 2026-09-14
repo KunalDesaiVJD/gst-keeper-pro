@@ -32,6 +32,7 @@ import BulkAddClientsDialog, { downloadClientImportTemplate } from '@/components
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
 import { computeNoticeSummary, isClosed, summaryCellHref, type SummaryCellKind } from '@/utils/noticeSummaryReport';
+import { runNoticeSweep } from '@/lib/noticeAutoClose';
 import {
   Bell, CalendarClock, History, Building2, FolderOpen, AlertTriangle, Loader2,
   UserPlus, Upload, Download, RefreshCw, RotateCcw, Pencil, ChevronLeft, ChevronRight, Search,
@@ -179,6 +180,21 @@ const NoticesDashboardPage: React.FC = () => {
     const t2 = setTimeout(ping, 1200);
     return () => { window.removeEventListener('message', onMsg); clearTimeout(t1); clearTimeout(t2); };
   }, []);
+
+  const [sweeping, setSweeping] = useState(false);
+  const handleSweep = async () => {
+    setSweeping(true);
+    const { closed, dueDatesSet, errors } = await runNoticeSweep();
+    setSweeping(false);
+    if (errors.length) toast.error('Sweep errors: ' + errors.join('; '));
+    else {
+      const parts: string[] = [];
+      if (closed > 0) parts.push(`auto-closed ${closed}`);
+      if (dueDatesSet > 0) parts.push(`set due dates on ${dueDatesSet}`);
+      if (parts.length > 0) toast.success('Sweep: ' + parts.join(', ') + '.');
+      else toast.info('Nothing to update.');
+    }
+  };
 
   const handleSyncAll = () => {
     if (!extReady) {
@@ -378,7 +394,11 @@ const NoticesDashboardPage: React.FC = () => {
                   that permission — 2026-08-26 decision: any employee should
                   be able to trigger a sync without being granted
                   client-editing rights. */}
-              <Button size="sm" variant="outline" className="ml-auto h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={handleSyncAll} disabled={syncing} title="Pulls Notices & Orders, Refund applications, and DRC-03 filings for every client with saved credentials">
+              <Button size="sm" variant="outline" className="ml-auto h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={handleSweep} disabled={sweeping} title="Auto-close notices with portal Closure/LUT Approval/Refund Order, and extract due dates from case folders">
+                {sweeping ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="mr-1.5 h-3.5 w-3.5" />}
+                Sweep
+              </Button>
+              <Button size="sm" variant="outline" className="h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={handleSyncAll} disabled={syncing} title="Pulls Notices & Orders, Refund applications, and DRC-03 filings for every client with saved credentials">
                 {syncing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
                 Sync All
               </Button>
