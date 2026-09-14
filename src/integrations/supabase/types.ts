@@ -3807,6 +3807,7 @@ export type Database = {
           filing_status_id: string | null
           id: string
           kind: string
+          matter_id: string | null
           notice_id: string | null
           period_month: string | null
           reminder_step: number | null
@@ -3828,6 +3829,7 @@ export type Database = {
           dedupe_key?: string | null
           id?: string
           kind: string
+          matter_id?: string | null
           notice_id?: string | null
           period_month?: string | null
           reminder_step?: number | null
@@ -3849,6 +3851,7 @@ export type Database = {
           filing_status_id?: string | null
           id?: string
           kind?: string
+          matter_id?: string | null
           notice_id?: string | null
           period_month?: string | null
           reminder_step?: number | null
@@ -4558,6 +4561,7 @@ export type Database = {
           issue_date: string | null
           issued_by: string | null
           last_seen_at: string
+          matter_id: string | null
           notice_type: string | null
           order_date: string | null
           order_number: string | null
@@ -4595,6 +4599,7 @@ export type Database = {
           issue_date?: string | null
           issued_by?: string | null
           last_seen_at?: string
+          matter_id?: string | null
           notice_type?: string | null
           order_date?: string | null
           order_number?: string | null
@@ -4632,6 +4637,7 @@ export type Database = {
           issue_date?: string | null
           issued_by?: string | null
           last_seen_at?: string
+          matter_id?: string | null
           notice_type?: string | null
           order_date?: string | null
           order_number?: string | null
@@ -5995,6 +6001,324 @@ export type Database = {
           notes?: string | null
           created_at?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      litigation_matters: {
+        Row: {
+          id: string
+          client_id: string
+          matter_no: string
+          lifecycle: string
+          title: string | null
+          section_of_law: string | null
+          financial_years: string[] | null
+          authority: string | null
+          officer: string | null
+          jurisdiction: string | null
+          stage: string
+          status: string
+          priority: string | null
+          owner_user_id: string | null
+          reviewer_user_id: string | null
+          demand_tax: number
+          demand_interest: number
+          demand_penalty: number
+          demand_cess: number
+          paid_total: number
+          pre_deposit_total: number
+          computed_due_date: string | null
+          override_due_date: string | null
+          limitation_date: string | null
+          hearing_at: string | null
+          next_action: string | null
+          closed_at: string | null
+          closed_reason: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          client_id: string
+          matter_no: string
+          lifecycle?: string
+          title?: string | null
+          section_of_law?: string | null
+          financial_years?: string[] | null
+          authority?: string | null
+          officer?: string | null
+          jurisdiction?: string | null
+          stage?: string
+          status?: string
+          priority?: string | null
+          owner_user_id?: string | null
+          reviewer_user_id?: string | null
+          demand_tax?: number
+          demand_interest?: number
+          demand_penalty?: number
+          demand_cess?: number
+          paid_total?: number
+          pre_deposit_total?: number
+          computed_due_date?: string | null
+          override_due_date?: string | null
+          limitation_date?: string | null
+          hearing_at?: string | null
+          next_action?: string | null
+          closed_at?: string | null
+          closed_reason?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          client_id?: string
+          matter_no?: string
+          lifecycle?: string
+          title?: string | null
+          section_of_law?: string | null
+          financial_years?: string[] | null
+          authority?: string | null
+          officer?: string | null
+          jurisdiction?: string | null
+          stage?: string
+          status?: string
+          priority?: string | null
+          owner_user_id?: string | null
+          reviewer_user_id?: string | null
+          demand_tax?: number
+          demand_interest?: number
+          demand_penalty?: number
+          demand_cess?: number
+          paid_total?: number
+          pre_deposit_total?: number
+          computed_due_date?: string | null
+          override_due_date?: string | null
+          limitation_date?: string | null
+          hearing_at?: string | null
+          next_action?: string | null
+          closed_at?: string | null
+          closed_reason?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      matter_stage_history: {
+        Row: {
+          id: string
+          matter_id: string
+          from_stage: string | null
+          to_stage: string
+          changed_by: string | null
+          changed_at: string
+          note: string | null
+        }
+        Insert: {
+          id?: string
+          matter_id: string
+          from_stage?: string | null
+          to_stage: string
+          changed_by?: string | null
+          changed_at?: string
+          note?: string | null
+        }
+        Update: {
+          id?: string
+          matter_id?: string
+          from_stage?: string | null
+          to_stage?: string
+          changed_by?: string | null
+          changed_at?: string
+          note?: string | null
+        }
+        Relationships: []
+      }
+      matter_events: {
+        Row: {
+          id: string
+          matter_id: string
+          notice_id: string | null
+          event_type: string
+          actor_user_id: string | null
+          actor_name: string | null
+          payload: Record<string, unknown> | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          matter_id: string
+          notice_id?: string | null
+          event_type: string
+          actor_user_id?: string | null
+          actor_name?: string | null
+          payload?: Record<string, unknown> | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          matter_id?: string
+          notice_id?: string | null
+          event_type?: string
+          actor_user_id?: string | null
+          actor_name?: string | null
+          payload?: Record<string, unknown> | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      matter_documents: {
+        Row: {
+          id: string
+          matter_id: string
+          notice_id: string | null
+          kind: string
+          title: string
+          storage_path: string | null
+          mime: string | null
+          size_bytes: number | null
+          source: string
+          uploaded_by: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          matter_id: string
+          notice_id?: string | null
+          kind?: string
+          title: string
+          storage_path?: string | null
+          mime?: string | null
+          size_bytes?: number | null
+          source?: string
+          uploaded_by?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          matter_id?: string
+          notice_id?: string | null
+          kind?: string
+          title?: string
+          storage_path?: string | null
+          mime?: string | null
+          size_bytes?: number | null
+          source?: string
+          uploaded_by?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      matter_hearings: {
+        Row: {
+          id: string
+          matter_id: string
+          scheduled_at: string
+          mode: string | null
+          venue: string | null
+          officer: string | null
+          attended_by: string[] | null
+          outcome: string | null
+          adjourned: boolean
+          next_date: string | null
+          notes: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          matter_id: string
+          scheduled_at: string
+          mode?: string | null
+          venue?: string | null
+          officer?: string | null
+          attended_by?: string[] | null
+          outcome?: string | null
+          adjourned?: boolean
+          next_date?: string | null
+          notes?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          matter_id?: string
+          scheduled_at?: string
+          mode?: string | null
+          venue?: string | null
+          officer?: string | null
+          attended_by?: string[] | null
+          outcome?: string | null
+          adjourned?: boolean
+          next_date?: string | null
+          notes?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      matter_payments: {
+        Row: {
+          id: string
+          matter_id: string
+          kind: string
+          drc03_arn: string | null
+          tax: number
+          interest: number
+          penalty: number
+          cess: number
+          paid_on: string | null
+          remarks: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          matter_id: string
+          kind?: string
+          drc03_arn?: string | null
+          tax?: number
+          interest?: number
+          penalty?: number
+          cess?: number
+          paid_on?: string | null
+          remarks?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          matter_id?: string
+          kind?: string
+          drc03_arn?: string | null
+          tax?: number
+          interest?: number
+          penalty?: number
+          cess?: number
+          paid_on?: string | null
+          remarks?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      litigation_rules: {
+        Row: {
+          key: string
+          value: number
+          unit: string
+          effective_from: string | null
+          note: string | null
+          created_at: string
+        }
+        Insert: {
+          key: string
+          value: number
+          unit?: string
+          effective_from?: string | null
+          note?: string | null
+          created_at?: string
+        }
+        Update: {
+          key?: string
+          value?: number
+          unit?: string
+          effective_from?: string | null
+          note?: string | null
+          created_at?: string
         }
         Relationships: []
       }

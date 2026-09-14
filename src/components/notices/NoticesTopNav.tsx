@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Bell, Send, LayoutDashboard, FileBarChart2, ChevronDown, ListOrdered, Building2 } from 'lucide-react';
+import { Bell, Send, LayoutDashboard, FileBarChart2, ChevronDown, ListOrdered, Building2, Briefcase } from 'lucide-react';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 
@@ -8,6 +8,7 @@ const NAV_LINKS = [
   { label: 'Dashboard', icon: LayoutDashboard, to: '/notices-dashboard' },
   { label: 'Notice', icon: Bell, to: '/notices-all' },
   { label: 'Submission', icon: Send, to: '/notices-all?filter=submitted' },
+  { label: 'Litigation', icon: Briefcase, to: '/litigation' },
 ];
 
 const REPORT_PATHS = ['/notices-report', '/notices-gstin-wise-count'];

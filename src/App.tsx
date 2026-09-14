@@ -52,6 +52,8 @@ import ManageEmployeesPage from "@/pages/ManageEmployeesPage";
 import UserControlPage from "@/pages/UserControlPage";
 import SettingsPage from "@/pages/SettingsPage";
 import RemindersPage from "@/pages/RemindersPage";
+import LitigationMattersPage from "@/pages/LitigationMattersPage";
+import LitigationMatterDetailPage from "@/pages/LitigationMatterDetailPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -111,6 +113,8 @@ const App = () => (
                   <Route path="/notices-gstin-wise-count" element={<GstinWiseNoticeCountPage />} />
                   <Route path="/notices-case-folder/:clientId/:caseId" element={<AdditionalNoticeFolderPage />} />
                   <Route path="/notices-all" element={<AllClientsNoticesPage />} />
+                  <Route path="/litigation" element={<LitigationMattersPage />} />
+                  <Route path="/litigation/:id" element={<LitigationMatterDetailPage />} />
                   <Route path="/refunds-all" element={<AllClientsRefundsPage />} />
                   <Route path="/drc03-all" element={<AllClientsDrc03Page />} />
                   <Route path="/manage-employees" element={<ManageEmployeesPage />} />
