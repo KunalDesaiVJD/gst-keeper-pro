@@ -7,6 +7,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { MonthProvider } from "@/contexts/MonthContext";
 import { ClientProvider } from "@/contexts/ClientContext";
 import MainLayout from "@/components/layout/MainLayout";
+import { StaffGuard } from "@/components/guards/StaffGuard";
 import LoginPage from "@/pages/LoginPage";
 import AgreementConfirmPage from "@/pages/AgreementConfirmPage";
 import DashboardPage from "@/pages/DashboardPage";
@@ -72,15 +73,15 @@ const App = () => (
                 {/* Protected Routes */}
                 <Route element={<MainLayout />}>
                   <Route path="/dashboard" element={<DashboardPage />} />
-                  <Route path="/add-client" element={<AddClientPage />} />
-                  <Route path="/edit-client/:clientId" element={<EditClientPage />} />
-                  <Route path="/clients" element={<ClientsPage />} />
+                  <Route path="/add-client" element={<StaffGuard><AddClientPage /></StaffGuard>} />
+                  <Route path="/edit-client/:clientId" element={<StaffGuard><EditClientPage /></StaffGuard>} />
+                  <Route path="/clients" element={<StaffGuard><ClientsPage /></StaffGuard>} />
                   <Route path="/2b-reconciliation" element={<TwoBReconciliationPage />} />
                   <Route path="/2b-and-rcm" element={<TwoBAndRCMPage />} />
                   <Route path="/suspended-reco" element={<SuspendedRecoPage />} />
                   <Route path="/itc-summary" element={<ITCAndReceivablePage />} />
                   <Route path="/rcm-summary" element={<RCMSummaryPage />} />
-                  <Route path="/manage-masters" element={<ManageMastersPage />} />
+                  <Route path="/manage-masters" element={<StaffGuard><ManageMastersPage /></StaffGuard>} />
                   <Route path="/filing-status" element={<FilingStatusPage />} />
                   <Route path="/reminders" element={<RemindersPage />} />
                   <Route path="/gst-running-update" element={<GSTRunningUpdatePage />} />

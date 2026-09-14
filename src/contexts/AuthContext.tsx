@@ -209,12 +209,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .maybeSingle();
           
           if (roleData) {
-            // Refresh permissions on load
-            const permissions = roleData.role !== 'client'
+            const dbRole = roleData.role as AppUser['role'];
+            const permissions = dbRole !== 'client'
               ? await fetchUserPermissions(parsedUser.id)
               : { ...DEFAULT_PERMISSIONS };
-            
-            const updatedUser = { ...parsedUser, permissions };
+
+            const updatedUser = { ...parsedUser, role: dbRole, permissions };
             setUser(updatedUser);
             localStorage.setItem(FALLBACK_AUTH_KEY, JSON.stringify(updatedUser));
             setIsLoading(false);
