@@ -133,7 +133,7 @@ const CompanyProfilePage: React.FC = () => {
       const [clientRes, profileRes, noticesRes, filingsRes, refundsRes, drc03Res] = await Promise.all([
         supabase.from('clients').select('id, name, gstin, registration_type, registration_date, email, mobile').eq('id', clientId).maybeSingle(),
         supabase.from('gst_taxpayer_profile').select('legal_name, trade_name, registration_date, principal_place_address').eq('client_id', clientId).maybeSingle(),
-        supabase.from('gst_notices').select('id, case_id, reference_number, notice_type, description, issue_date, due_date, staff_status, submission_arn, submission_date, pdf_url, pulled_at').eq('client_id', clientId).eq('source', 'notices').order('issue_date', { ascending: false }),
+        supabase.from('gst_notices').select('id, case_id, reference_number, notice_type, description, issue_date, due_date, staff_status, submission_arn, submission_date, pdf_url, pulled_at').eq('client_id', clientId).eq('source', 'notices').is('deleted_at', null).order('issue_date', { ascending: false }),
         // gst_filed_returns holds the actual as-filed-on-portal date (pulled
         // straight from the portal's own GSTR-1/3B JSON APIs) — filing_status
         // is this app's own internal prep/compliance tracker (a manually-set
@@ -149,8 +149,8 @@ const CompanyProfilePage: React.FC = () => {
         // (keyed by its ARN, e.g. "a refund was filed on 18/08/2026").
         // Notice Alert shows both as separate timeline rows for the same
         // case; this recovers the missing one.
-        supabase.from('gst_refund_applications').select('id, arn, refund_type, filed_date, status, documents, pulled_at').eq('client_id', clientId),
-        supabase.from('gst_drc03_filings').select('id, arn, cause_of_payment, filed_date, status, pdf_url, pulled_at').eq('client_id', clientId),
+        supabase.from('gst_refund_applications').select('id, arn, refund_type, filed_date, status, documents, pulled_at').eq('client_id', clientId).is('deleted_at', null),
+        supabase.from('gst_drc03_filings').select('id, arn, cause_of_payment, filed_date, status, pdf_url, pulled_at').eq('client_id', clientId).is('deleted_at', null),
       ]);
       if (!cancelled) {
         setClient((clientRes.data || null) as ClientRow | null);

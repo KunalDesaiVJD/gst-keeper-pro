@@ -76,12 +76,14 @@ const AllClientsDrc03Page: React.FC = () => {
             'taxable_value, igst_amount, cgst_amount, sgst_amount, cess_amount, interest_amount, late_fee_amount, penalty_amount, ' +
             'cash_amount, credit_amount, status, pdf_url, client_id, clients(name, gstin)',
           )
+          .is('deleted_at', null)
           .order('filed_date', { ascending: false }),
         supabase
           .from('gst_notices')
           .select('case_id, description, issue_date, staff_status, pdf_url, client_id, clients(name, gstin)')
           .eq('source', 'notices')
-          .eq('notice_type', 'Voluntary Payment'),
+          .eq('notice_type', 'Voluntary Payment')
+          .is('deleted_at', null),
       ]);
       if (!cancelled) {
         const dedicated = (data || []) as unknown as Drc03Record[];

@@ -371,8 +371,8 @@ const AdditionalNoticeFolderPage: React.FC = () => {
     (async () => {
       setLoading(true);
       const [headerRes, itemsRes] = await Promise.all([
-        supabase.from('gst_notices').select('case_id, notice_type, issue_date, staff_status, clients(name, gstin)').eq('client_id', clientId).eq('case_id', caseId).limit(1).maybeSingle(),
-        supabase.from('gst_case_folder_items').select('id, folder_section, reference_number, attachments, raw_json, pulled_at').eq('client_id', clientId).eq('case_id', caseId),
+        supabase.from('gst_notices').select('case_id, notice_type, issue_date, staff_status, clients(name, gstin)').eq('client_id', clientId).eq('case_id', caseId).is('deleted_at', null).limit(1).maybeSingle(),
+        supabase.from('gst_case_folder_items').select('id, folder_section, reference_number, attachments, raw_json, pulled_at').eq('client_id', clientId).eq('case_id', caseId).is('deleted_at', null),
       ]);
       if (!cancelled) {
         setHeader((headerRes.data || null) as unknown as NoticeHeaderRow | null);

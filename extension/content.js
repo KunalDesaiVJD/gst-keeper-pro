@@ -18,6 +18,12 @@
   // not down near where it's textually used, or it's a TDZ ReferenceError.
   const MONTH_ABBR = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
 
+  function simpleHash(s) {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36);
+  }
+
   async function waitFor(sel, ms = 20000) {
     const t = Date.now();
     while (Date.now() - t < ms) {
@@ -192,12 +198,12 @@
       if (job.step === 'liabilityledger') await writeLedgerFailureRow(GSTKdb.replaceLiabilityLedgerEntries, cur, job, 'session kept dropping (bounced to login/error page 3x) while reading the Liability Register');
       else if (job.step === 'cashledger') await writeLedgerFailureRow(GSTKdb.replaceCashLedgerEntries, cur, job, 'session kept dropping (bounced to login/error page 3x) while reading the Cash Ledger');
       else if (job.step === 'notices') {
-        try { await GSTKdb.replaceNotices(cur.clientId, [{ client_id: cur.clientId, source: 'notices', description: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Notices & Orders' }]); } catch (e2) { /* diagnostic only */ }
+        try { await GSTKdb.logClientSync(cur.clientId, 'notices', 'failed', 'PULL FAILED: session kept dropping (bounced to login/error page 3x)'); } catch (e2) { /* diagnostic only */ }
         await logSyncAttempt(job, cur, 'failed', 'Session kept dropping (bounced to login/error page 3x) while reading Notices & Orders.');
       } else if (job.step === 'refunds') {
-        try { await GSTKdb.replaceRefundApplications(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Refund applications' }]); } catch (e2) { /* diagnostic only */ }
+        try { await GSTKdb.logClientSync(cur.clientId, 'refunds', 'failed', 'PULL FAILED: session kept dropping (bounced to login/error page 3x)'); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'drc03') {
-        try { await GSTKdb.replaceDrc03Filings(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading DRC-03 filings' }]); } catch (e2) { /* diagnostic only */ }
+        try { await GSTKdb.logClientSync(cur.clientId, 'drc03', 'failed', 'PULL FAILED: session kept dropping (bounced to login/error page 3x)'); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'challans') {
         try { await GSTKdb.replaceChallans(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Challan Summary' }]); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'gstr3b_pull') {
@@ -2456,6 +2462,7 @@
   async function handleNotices(job, cur, progress) {
     if (!/\/services\/auth\/notices/.test(url)) { location.href = 'https://services.gst.gov.in/services/auth/notices'; return; }
     banner('Reading Notices & Orders…' + progress);
+    const pullTs = new Date().toISOString();
     let list = [];
     try {
       const r = await fetch('https://services.gst.gov.in/services/auth/api/get/notices', {
@@ -2468,7 +2475,6 @@
     } catch (e) {
       debugPanel(['STEP: View Notices and Orders  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
       banner('Notices & Orders: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
-      try { await GSTKdb.replaceNotices(cur.clientId, [{ client_id: cur.clientId, source: 'notices', description: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }]); } catch (e2) { /* diagnostic only */ }
       await logSyncAttempt(job, cur, 'failed', 'Could not read the portal API: ' + ((e && e.message) || 'unknown error'));
       await sleep(1500);
       await chainOrStop(job, 'notices', proceedToRefunds);
@@ -2529,12 +2535,15 @@
     // download UI — same silent, background-fetch shape as every other
     // notice type's PDF capture in this loop.
     for (const n of list) {
+      const refNo = n.noticeOrderId || null;
       const row = {
         client_id: cur.clientId, source: 'notices',
-        reference_number: n.noticeOrderId || null, notice_type: n.type || null,
+        portal_key: refNo || ('hash:' + simpleHash((n.descr || '') + '|' + (n.dtOfIssue || ''))),
+        reference_number: refNo, notice_type: n.type || null,
         description: n.descr || null, issue_date: ddmmyyyyToIso(n.dtOfIssue || ''),
         due_date: /^\d{2}\/\d{2}\/\d{4}$/.test(n.dueDate || '') ? ddmmyyyyToIso(n.dueDate) : null,
         status: n.status || null, issued_by: n.issuedBy || null, case_id: null, pdf_url: null,
+        pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null,
       };
       if (n.docId && n.applnId) {
         try {
@@ -2608,9 +2617,11 @@
       if (refId) seenRefs.add(refId);
       const row = {
         client_id: cur.clientId, source: 'notices',
+        portal_key: refId || ('case:' + (t.arn || simpleHash((t.taskDesc || '') + '|' + (t.assignmentDt || '')))),
         reference_number: refId, notice_type: titleCase(t.caseTypeName),
         description: t.taskDesc || null, issue_date: epochMsToIsoDate(t.assignmentDt),
         due_date: null, status: null, issued_by: null, case_id: t.arn || null, pdf_url: null,
+        pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null,
       };
       // Hoisted out of the try block below (was `const`, scoped only to
       // that try) so the Additional Notice Folder capture further down can
@@ -2701,26 +2712,29 @@
                     attachments.push({ label: doc.docName || doc.docttl || (doc.id + '.pdf'), url });
                   } catch (e) { /* best-effort per attachment */ }
                 }
+                const fiRef = fi.refId || (fParsed && fParsed.crn) || null;
                 folderItems.push({
                   client_id: cur.clientId,
                   case_id: t.arn,
+                  portal_key: (folder.caseFolderTypeCd || '_') + ':' + (fiRef || simpleHash(JSON.stringify(fParsed || fi.itemJson || ''))),
                   folder_section: folder.caseFolderTypeCd || null,
-                  reference_number: fi.refId || (fParsed && fParsed.crn) || null,
+                  reference_number: fiRef,
                   attachments,
                   raw_json: fParsed !== null ? fParsed : (fi.itemJson || null),
+                  pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null,
                 });
               }
             } catch (e) { /* best-effort per folder */ }
           }
           if (folderItems.length) {
-            try { await GSTKdb.replaceCaseFolderItems(cur.clientId, t.arn, folderItems); } catch (e2) { /* diagnostic only */ }
+            try { await GSTKdb.replaceCaseFolderItems(cur.clientId, t.arn, folderItems, pullTs); } catch (e2) { /* diagnostic only */ }
           }
         } catch (e) { /* best-effort, never blocks the main notices row above */ }
       }
     }
 
     try {
-      await GSTKdb.replaceNotices(cur.clientId, rows);
+      await GSTKdb.replaceNotices(cur.clientId, rows, pullTs);
 
       debugPanel([
         'STEP: View Notices and Orders  (' + location.pathname + ')',
@@ -2741,7 +2755,6 @@
     } catch (e) {
       debugPanel(['STEP: View Notices and Orders  (' + location.pathname + ')', 'DB write failed: ' + ((e && e.message) || 'unknown error')]);
       banner('Notices & Orders: read ' + rows.length + ' rows but the save failed (' + ((e && e.message) || 'unknown error') + ') — skipped.' + progress, '#dc2626');
-      try { await GSTKdb.replaceNotices(cur.clientId, [{ client_id: cur.clientId, source: 'notices', description: 'PULL FAILED: DB write error — ' + ((e && e.message) || 'unknown error') }]); } catch (e2) { /* diagnostic only */ }
       await logSyncAttempt(job, cur, 'failed', 'Read ' + rows.length + ' rows but the save failed: ' + ((e && e.message) || 'unknown error'));
     }
     await sleep(1000);
@@ -2879,6 +2892,7 @@
   async function handleRefunds(job, cur, progress) {
     if (!/litserv\/auth\/case\/search/.test(url)) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; }
     banner('Reading Refund applications…' + progress);
+    const pullTs = new Date().toISOString();
     let cases = [];
     try {
       const r = await fetch('https://services.gst.gov.in/litserv/auth/api/case/search', {
@@ -2891,7 +2905,7 @@
     } catch (e) {
       debugPanel(['STEP: Refund Applications  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
       banner('Refund applications: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
-      try { await GSTKdb.replaceRefundApplications(cur.clientId, [{ client_id: cur.clientId, arn: null, refund_type: null, source_ledger: null, filed_date: null, claimed_amount: 0, sanctioned_amount: null, status: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }]); } catch (e2) { /* diagnostic only */ }
+      try { await GSTKdb.logClientSync(cur.clientId, 'refunds', 'failed', 'PULL FAILED: ' + ((e && e.message) || 'unknown error')); } catch (e2) { /* diagnostic only */ }
       await chainOrStop(job, 'refunds', proceedToDrc03);
       return;
     }
@@ -2905,19 +2919,19 @@
       const category = itemJson.refundRsn || null;
       allRows.push({
         client_id: cur.clientId,
+        portal_key: c.arn || ('legacy:' + simpleHash(JSON.stringify(c))),
         arn: c.arn || null,
         refund_type: category,
         source_ledger: category && /\bITC\b/i.test(category) ? 'ITC' : null,
-        // caseCreationDate carries a trailing time ("31/07/2026 20:51:30") —
-        // ddmmyyyyToIso only matches a bare DD/MM/YYYY string.
         filed_date: ddmmyyyyToIso(String(c.caseCreationDate || '').split(' ')[0]),
         claimed_amount: Number(itemJson.ttlRfdAmt) || 0,
         sanctioned_amount: null,
         status: c.statusDesc || null,
+        pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null,
       });
     }
 
-    try { await GSTKdb.replaceRefundApplications(cur.clientId, allRows); } catch (e) { /* non-fatal */ }
+    try { await GSTKdb.replaceRefundApplications(cur.clientId, allRows, pullTs); } catch (e) { /* non-fatal */ }
     debugPanel([
       'STEP: Refund Applications  (' + location.pathname + ')',
       'rows read         : ' + allRows.length,
@@ -3073,13 +3087,16 @@
                   docsOk++;
                 } catch (e) { docsFail++; }
               }
+              const itemRef = item.refId || (parsed && parsed.crn) || null;
               folderItems.push({
                 client_id: cur.clientId,
                 case_id: arn,
+                portal_key: (folder.caseFolderTypeCd || '_') + ':' + (itemRef || simpleHash(JSON.stringify(parsed || item.itemJson || ''))),
                 folder_section: folder.caseFolderTypeCd || null,
-                reference_number: item.refId || (parsed && parsed.crn) || null,
+                reference_number: itemRef,
                 attachments: itemAttachments,
                 raw_json: parsed !== null ? parsed : (item.itemJson || null),
+                pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null,
               });
             }
           } catch (e) { /* best-effort per folder */ }
@@ -3090,7 +3107,7 @@
         try { await GSTKdb.patchRefundDocument(cur.clientId, arn, { documents: arnDocs }); arnsWithDocs++; } catch (e) { /* non-fatal */ }
       }
       if (folderItems.length) {
-        try { await GSTKdb.replaceCaseFolderItems(cur.clientId, arn, folderItems); casesWithFolderItems++; } catch (e) { /* non-fatal */ }
+        try { await GSTKdb.replaceCaseFolderItems(cur.clientId, arn, folderItems, pullTs); casesWithFolderItems++; } catch (e) { /* non-fatal */ }
       }
     }
 
@@ -3145,6 +3162,7 @@
   async function handleDrc03(job, cur, progress) {
     if (!/litserv\/auth\/case\/search/.test(url)) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; }
     banner('Reading DRC-03 filings…' + progress);
+    const pullTs = new Date().toISOString();
     let cases = [];
     try {
       const r = await fetch('https://services.gst.gov.in/litserv/auth/api/case/search', {
@@ -3157,7 +3175,7 @@
     } catch (e) {
       debugPanel(['STEP: DRC-03 Filings  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
       banner('DRC-03: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
-      try { await GSTKdb.replaceDrc03Filings(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }]); } catch (e2) { /* diagnostic only */ }
+      try { await GSTKdb.logClientSync(cur.clientId, 'drc03', 'failed', 'PULL FAILED: ' + ((e && e.message) || 'unknown error')); } catch (e2) { /* diagnostic only */ }
       await sleep(1500);
       await chainOrStop(job, ['drc03', 'notices_bundle'], proceedToTaxpayerProfile);
       return;
@@ -3168,6 +3186,8 @@
     for (const c of cases) {
       const row = parseDrc03Case(c, cur.clientId);
       if (!row) continue;
+      row.portal_key = row.arn || ('legacy:' + simpleHash(JSON.stringify(c)));
+      row.pulled_at = pullTs; row.last_seen_at = pullTs; row.deleted_at = null;
       // Best-effort PDF capture — one document per filing (the DRC-03 form
       // itself). A failure here must not drop the filing's own figures.
       try {
@@ -3190,7 +3210,7 @@
       rows.push(row);
     }
 
-    try { await GSTKdb.replaceDrc03Filings(cur.clientId, rows); } catch (e) { /* non-fatal */ }
+    try { await GSTKdb.replaceDrc03Filings(cur.clientId, rows, pullTs); } catch (e) { /* non-fatal */ }
     debugPanel([
       'STEP: DRC-03 Filings  (' + location.pathname + ')',
       'cases read        : ' + cases.length,

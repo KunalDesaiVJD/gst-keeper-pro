@@ -60,9 +60,9 @@ const GstinWiseNoticeCountPage: React.FC = () => {
       setLoading(true);
       const [clientsRes, noticesRes, refundsRes, drc03Res] = await Promise.all([
         supabase.from('clients').select('id, name, gstin').order('name'),
-        supabase.from('gst_notices').select('client_id, description, staff_status, reply_date').eq('source', 'notices'),
-        supabase.from('gst_refund_applications').select('client_id, status'),
-        supabase.from('gst_drc03_filings').select('client_id, status'),
+        supabase.from('gst_notices').select('client_id, description, staff_status, reply_date').eq('source', 'notices').is('deleted_at', null),
+        supabase.from('gst_refund_applications').select('client_id, status').is('deleted_at', null),
+        supabase.from('gst_drc03_filings').select('client_id, status').is('deleted_at', null),
       ]);
       if (!cancelled) {
         setClients((clientsRes.data || []) as ClientRow[]);

@@ -30,7 +30,7 @@ export const buildAdditionalNoticesAndOrdersReport = async (clientId: string): P
   const { data, error } = await supabase
     .from('gst_notices')
     .select('reference_number, notice_type, description, issue_date, due_date, status, pdf_url')
-    .eq('client_id', clientId).eq('source', 'additional_notices')
+    .eq('client_id', clientId).eq('source', 'additional_notices').is('deleted_at', null)
     .order('issue_date', { ascending: false });
   if (error) throw error;
   const rows = data || [];
@@ -64,7 +64,7 @@ export const buildViewNoticesAndOrdersReport = async (clientId: string): Promise
       'staff_status, priority, reply_ref_number, reply_date, order_number, order_date, submission_arn, submission_date, ' +
       'amount_of_demand, remarks, issued_by, financial_year, assign_to, pdf_url',
     )
-    .eq('client_id', clientId).eq('source', 'notices')
+    .eq('client_id', clientId).eq('source', 'notices').is('deleted_at', null)
     .order('issue_date', { ascending: false });
   if (error) throw error;
   const rows = data || [];
@@ -132,7 +132,7 @@ export const buildRefundFiledOnPortalReport = async (clientId: string): Promise<
   const { data, error } = await supabase
     .from('gst_refund_applications')
     .select(REFUND_SELECT)
-    .eq('client_id', clientId)
+    .eq('client_id', clientId).is('deleted_at', null)
     .order('filed_date', { ascending: false });
   if (error) throw error;
   const rows = data || [];
@@ -162,7 +162,7 @@ const buildRefundByLedgerReport = async (clientId: string, ledger: 'ITC' | 'Cash
   const { data, error } = await supabase
     .from('gst_refund_applications')
     .select(REFUND_SELECT)
-    .eq('client_id', clientId).eq('source_ledger', ledger)
+    .eq('client_id', clientId).eq('source_ledger', ledger).is('deleted_at', null)
     .order('filed_date', { ascending: false });
   if (error) throw error;
   const rows = data || [];
@@ -226,7 +226,7 @@ export const buildDrc03FiledOnPortalReport = async (clientId: string): Promise<R
   const { data, error } = await supabase
     .from('gst_drc03_filings')
     .select(DRC03_FULL_SELECT)
-    .eq('client_id', clientId)
+    .eq('client_id', clientId).is('deleted_at', null)
     .order('filed_date', { ascending: false });
   if (error) throw error;
   const rows = data || [];
@@ -259,7 +259,7 @@ const buildDrc03VoluntaryPaymentReport = async (clientId: string, head: 'cash' |
   const { data, error } = await supabase
     .from('gst_drc03_filings')
     .select(DRC03_FULL_SELECT)
-    .eq('client_id', clientId).gt(column, 0)
+    .eq('client_id', clientId).gt(column, 0).is('deleted_at', null)
     .order('filed_date', { ascending: false });
   if (error) throw error;
   const rows = data || [];

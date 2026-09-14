@@ -49,9 +49,9 @@ const NoticeSummaryReportPage: React.FC = () => {
     (async () => {
       setLoading(true);
       const [noticesData, refundRes, drc03Res] = await Promise.all([
-        fetchAllRows<NoticeRow>('gst_notices', 'notice_type, description, staff_status, reply_date, case_id', (q) => q.eq('source', 'notices')),
-        supabase.from('gst_refund_applications').select('arn, status'),
-        supabase.from('gst_drc03_filings').select('arn, status'),
+        fetchAllRows<NoticeRow>('gst_notices', 'notice_type, description, staff_status, reply_date, case_id', (q) => q.eq('source', 'notices').is('deleted_at', null)),
+        supabase.from('gst_refund_applications').select('arn, status').is('deleted_at', null),
+        supabase.from('gst_drc03_filings').select('arn, status').is('deleted_at', null),
       ]);
       if (!cancelled) {
         setRows(noticesData);

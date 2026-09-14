@@ -61,12 +61,14 @@ const AllClientsRefundsPage: React.FC = () => {
         supabase
           .from('gst_refund_applications')
           .select('arn, refund_type, filed_date, claimed_amount, sanctioned_amount, status, documents, client_id, clients(name, gstin)')
+          .is('deleted_at', null)
           .order('filed_date', { ascending: false }),
         supabase
           .from('gst_notices')
           .select('case_id, description, issue_date, staff_status, pdf_url, client_id, clients(name, gstin)')
           .eq('source', 'notices')
-          .eq('notice_type', 'Refunds'),
+          .eq('notice_type', 'Refunds')
+          .is('deleted_at', null),
       ]);
       if (!cancelled) {
         const dedicated = (data || []) as unknown as RefundRecord[];

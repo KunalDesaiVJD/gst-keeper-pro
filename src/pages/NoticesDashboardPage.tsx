@@ -146,7 +146,7 @@ const NoticesDashboardPage: React.FC = () => {
       const data = await fetchAllRows<NoticeRow>(
         'gst_notices',
         'client_id, notice_type, description, staff_status, priority, issue_date, due_date, reply_date, pulled_at, case_id',
-        (q) => q.eq('source', 'notices'),
+        (q) => q.eq('source', 'notices').is('deleted_at', null),
       );
       if (!cancelled) {
         setRows(data);
@@ -160,8 +160,8 @@ const NoticesDashboardPage: React.FC = () => {
     let cancelled = false;
     (async () => {
       const [refundRes, drc03Res] = await Promise.all([
-        supabase.from('gst_refund_applications').select('arn, status'),
-        supabase.from('gst_drc03_filings').select('arn, status'),
+        supabase.from('gst_refund_applications').select('arn, status').is('deleted_at', null),
+        supabase.from('gst_drc03_filings').select('arn, status').is('deleted_at', null),
       ]);
       if (!cancelled) {
         setRefundRows((refundRes.data || []) as StatusRow[]);

@@ -58,6 +58,15 @@ const del = async (table, query) => {
   if (!r.ok) throw new Error('DELETE ' + table + ' -> ' + r.status);
   return true;
 };
+const upsert = async (table, conflictCols, rows) => {
+  const r = await fetch(base + table + '?on_conflict=' + conflictCols, {
+    method: 'POST',
+    headers: { ...H, Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify(rows),
+  });
+  if (!r.ok) throw new Error('UPSERT ' + table + ' -> ' + r.status + ' ' + (await r.text()).slice(0, 120));
+  return true;
+};
 
 const API = {
   getClients: () => sel('clients?select=id,name,gstin,gst_user_id,gst_password,selected_returns&order=name'),
@@ -96,19 +105,33 @@ const API = {
     return rows.length ? post('gst_cash_ledger_entries', rows) : true;
   },
 
-  // View Notices and Orders. Not period-scoped (the report reads full
-  // history), so this is a delete-all-then-insert per client, not per
-  // period, fed by the 'notices' job step in content.js.
-  replaceNotices: async (clientId, rows) => {
-    await del('gst_notices', `client_id=eq.${clientId}`);
-    return rows.length ? post('gst_notices', rows) : true;
+  // View Notices and Orders — upsert on (client_id, source, portal_key).
+  // Staff workflow columns (staff_status, priority, reply_*, etc.) are NOT
+  // in the request body so PostgREST's merge-duplicates preserves them.
+  // Rows the portal no longer returns are soft-deleted (deleted_at set)
+  // rather than hard-deleted, so staff notes survive even if the portal
+  // drops a notice temporarily.
+  replaceNotices: async (clientId, rows, pullTs) => {
+    if (rows.length > 0) {
+      await upsert('gst_notices', 'client_id,source,portal_key', rows);
+    }
+    await patch(
+      `gst_notices?client_id=eq.${clientId}&source=eq.notices&deleted_at=is.null&last_seen_at=lt.${enc(pullTs)}`,
+      { deleted_at: pullTs }
+    );
+    return true;
   },
 
-  // Refund applications (Track Application Status). Also not period-scoped —
-  // delete-all-then-insert per client, fed by the 'refunds' job step.
-  replaceRefundApplications: async (clientId, rows) => {
-    await del('gst_refund_applications', `client_id=eq.${clientId}`);
-    return rows.length ? post('gst_refund_applications', rows) : true;
+  // Refund applications — upsert on (client_id, portal_key).
+  replaceRefundApplications: async (clientId, rows, pullTs) => {
+    if (rows.length > 0) {
+      await upsert('gst_refund_applications', 'client_id,portal_key', rows);
+    }
+    await patch(
+      `gst_refund_applications?client_id=eq.${clientId}&deleted_at=is.null&last_seen_at=lt.${enc(pullTs)}`,
+      { deleted_at: pullTs }
+    );
+    return true;
   },
 
   // Best-effort document capture (application/query-memo/order PDFs) writes
@@ -121,11 +144,16 @@ const API = {
   patchRefundDocument: async (clientId, arn, patchObj) =>
     patch(`gst_refund_applications?client_id=eq.${clientId}&arn=eq.${enc(arn)}`, patchObj),
 
-  // DRC-03 voluntary payments. Also not period-scoped — delete-all-then-
-  // insert per client, fed by the 'drc03' job step.
-  replaceDrc03Filings: async (clientId, rows) => {
-    await del('gst_drc03_filings', `client_id=eq.${clientId}`);
-    return rows.length ? post('gst_drc03_filings', rows) : true;
+  // DRC-03 voluntary payments — upsert on (client_id, portal_key).
+  replaceDrc03Filings: async (clientId, rows, pullTs) => {
+    if (rows.length > 0) {
+      await upsert('gst_drc03_filings', 'client_id,portal_key', rows);
+    }
+    await patch(
+      `gst_drc03_filings?client_id=eq.${clientId}&deleted_at=is.null&last_seen_at=lt.${enc(pullTs)}`,
+      { deleted_at: pullTs }
+    );
+    return true;
   },
 
   // Taxpayer profile — one row per client (client_id UNIQUE), so this is a
@@ -138,11 +166,16 @@ const API = {
   logClientSync: (clientId, action, status, message) =>
     post('client_sync_log', [{ client_id: clientId, action, status, message: message || null }]),
 
-  // Delete-then-insert per client+case, same pattern as replaceNotices — a
-  // later successful pull overwrites the previous capture for that case.
-  replaceCaseFolderItems: async (clientId, caseId, rows) => {
-    await del('gst_case_folder_items', `client_id=eq.${clientId}&case_id=eq.${enc(caseId)}`);
-    return rows.length ? post('gst_case_folder_items', rows) : true;
+  // Case folder items — upsert on (client_id, case_id, portal_key).
+  replaceCaseFolderItems: async (clientId, caseId, rows, pullTs) => {
+    if (rows.length > 0) {
+      await upsert('gst_case_folder_items', 'client_id,case_id,portal_key', rows);
+    }
+    await patch(
+      `gst_case_folder_items?client_id=eq.${clientId}&case_id=eq.${enc(caseId)}&deleted_at=is.null&last_seen_at=lt.${enc(pullTs)}`,
+      { deleted_at: pullTs }
+    );
+    return true;
   },
 
   upsertTaxpayerProfile: async (clientId, patchObj) => {

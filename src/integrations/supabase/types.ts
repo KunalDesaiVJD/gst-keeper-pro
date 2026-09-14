@@ -4013,8 +4013,12 @@ export type Database = {
           attachments: Json
           case_id: string
           client_id: string
+          deleted_at: string | null
+          first_seen_at: string
           folder_section: string | null
           id: string
+          last_seen_at: string
+          portal_key: string
           pulled_at: string
           raw_json: Json | null
           reference_number: string | null
@@ -4023,8 +4027,12 @@ export type Database = {
           attachments?: Json
           case_id: string
           client_id: string
+          deleted_at?: string | null
+          first_seen_at?: string
           folder_section?: string | null
           id?: string
+          last_seen_at?: string
+          portal_key: string
           pulled_at?: string
           raw_json?: Json | null
           reference_number?: string | null
@@ -4033,8 +4041,12 @@ export type Database = {
           attachments?: Json
           case_id?: string
           client_id?: string
+          deleted_at?: string | null
+          first_seen_at?: string
           folder_section?: string | null
           id?: string
+          last_seen_at?: string
+          portal_key?: string
           pulled_at?: string
           raw_json?: Json | null
           reference_number?: string | null
@@ -4319,16 +4331,20 @@ export type Database = {
           client_id: string
           created_at: string
           credit_amount: number | null
+          deleted_at: string | null
           filed_date: string | null
           financial_year: string | null
+          first_seen_at: string
           id: string
           igst_amount: number | null
           interest_amount: number | null
+          last_seen_at: string
           late_fee_amount: number | null
           pdf_url: string | null
           penalty_amount: number | null
           period_from: string | null
           period_to: string | null
+          portal_key: string
           pulled_at: string
           pulled_by: string | null
           section: string | null
@@ -4346,16 +4362,20 @@ export type Database = {
           client_id: string
           created_at?: string
           credit_amount?: number | null
+          deleted_at?: string | null
           filed_date?: string | null
           financial_year?: string | null
+          first_seen_at?: string
           id?: string
           igst_amount?: number | null
           interest_amount?: number | null
+          last_seen_at?: string
           late_fee_amount?: number | null
           pdf_url?: string | null
           penalty_amount?: number | null
           period_from?: string | null
           period_to?: string | null
+          portal_key: string
           pulled_at?: string
           pulled_by?: string | null
           section?: string | null
@@ -4373,16 +4393,20 @@ export type Database = {
           client_id?: string
           created_at?: string
           credit_amount?: number | null
+          deleted_at?: string | null
           filed_date?: string | null
           financial_year?: string | null
+          first_seen_at?: string
           id?: string
           igst_amount?: number | null
           interest_amount?: number | null
+          last_seen_at?: string
           late_fee_amount?: number | null
           pdf_url?: string | null
           penalty_amount?: number | null
           period_from?: string | null
           period_to?: string | null
+          portal_key?: string
           pulled_at?: string
           pulled_by?: string | null
           section?: string | null
@@ -4517,17 +4541,21 @@ export type Database = {
           case_id: string | null
           client_id: string
           created_at: string
+          deleted_at: string | null
           description: string | null
           due_date: string | null
           extended_due_date: string | null
           financial_year: string | null
+          first_seen_at: string
           id: string
           issue_date: string | null
           issued_by: string | null
+          last_seen_at: string
           notice_type: string | null
           order_date: string | null
           order_number: string | null
           pdf_url: string | null
+          portal_key: string
           priority: string | null
           pulled_at: string
           pulled_by: string | null
@@ -4548,17 +4576,21 @@ export type Database = {
           case_id?: string | null
           client_id: string
           created_at?: string
+          deleted_at?: string | null
           description?: string | null
           due_date?: string | null
           extended_due_date?: string | null
           financial_year?: string | null
+          first_seen_at?: string
           id?: string
           issue_date?: string | null
           issued_by?: string | null
+          last_seen_at?: string
           notice_type?: string | null
           order_date?: string | null
           order_number?: string | null
           pdf_url?: string | null
+          portal_key: string
           priority?: string | null
           pulled_at?: string
           pulled_by?: string | null
@@ -4579,17 +4611,21 @@ export type Database = {
           case_id?: string | null
           client_id?: string
           created_at?: string
+          deleted_at?: string | null
           description?: string | null
           due_date?: string | null
           extended_due_date?: string | null
           financial_year?: string | null
+          first_seen_at?: string
           id?: string
           issue_date?: string | null
           issued_by?: string | null
+          last_seen_at?: string
           notice_type?: string | null
           order_date?: string | null
           order_number?: string | null
           pdf_url?: string | null
+          portal_key?: string
           priority?: string | null
           pulled_at?: string
           pulled_by?: string | null
@@ -4804,9 +4840,13 @@ export type Database = {
           claimed_amount: number | null
           client_id: string
           created_at: string
+          deleted_at: string | null
           documents: Json
           filed_date: string | null
+          first_seen_at: string
           id: string
+          last_seen_at: string
+          portal_key: string
           pulled_at: string
           pulled_by: string | null
           refund_type: string | null
@@ -4820,9 +4860,13 @@ export type Database = {
           claimed_amount?: number | null
           client_id: string
           created_at?: string
+          deleted_at?: string | null
           documents?: Json
           filed_date?: string | null
+          first_seen_at?: string
           id?: string
+          last_seen_at?: string
+          portal_key: string
           pulled_at?: string
           pulled_by?: string | null
           refund_type?: string | null
@@ -4836,9 +4880,13 @@ export type Database = {
           claimed_amount?: number | null
           client_id?: string
           created_at?: string
+          deleted_at?: string | null
           documents?: Json
           filed_date?: string | null
+          first_seen_at?: string
           id?: string
+          last_seen_at?: string
+          portal_key?: string
           pulled_at?: string
           pulled_by?: string | null
           refund_type?: string | null
