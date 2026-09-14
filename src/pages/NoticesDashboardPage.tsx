@@ -36,6 +36,15 @@ import {
   UserPlus, Upload, Download, RefreshCw, RotateCcw, Pencil, ChevronLeft, ChevronRight, Search,
 } from 'lucide-react';
 
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
 interface NoticeRow {
   client_id: string;
   notice_type: string | null;
@@ -201,7 +210,12 @@ const NoticesDashboardPage: React.FC = () => {
     const onMsg = (e: MessageEvent) => {
       const d: any = e.data;
       if (!d || typeof d !== 'object') return;
-      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkExtensionReady) {
+        setExtReady(true);
+        if (d.version && compareVersions(d.version, '0.3.0') < 0) {
+          toast.error('Extension v' + d.version + ' is outdated. Please update to v0.3.0+ for reliable sync.');
+        }
+      }
       if (d.__gstkPullSectionAllClientsResult) {
         setSyncing(false);
         if (d.__gstkPullSectionAllClientsResult.ok) {

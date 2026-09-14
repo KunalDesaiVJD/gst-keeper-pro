@@ -8,11 +8,16 @@
 //     background worker, which opens the portal and pulls that one return's
 //     ARN + PDF and marks it Filed.
 
+const EXT_VERSION = chrome.runtime.getManifest().version;
+const ALLOWED_ORIGINS = ['https://gst.vjdesai.com', 'https://gst-keeper-pro.vercel.app'];
+
 function announce() {
-  window.postMessage({ __gstkExtensionReady: true }, '*');
+  window.postMessage({ __gstkExtensionReady: true, version: EXT_VERSION }, '*');
 }
 
 window.addEventListener('message', (e) => {
+  if (e.source !== window) return;
+  if (!ALLOWED_ORIGINS.some((o) => e.origin === o) && !/\.vercel\.app$/.test(e.origin)) return;
   const d = e.data;
   if (!d || typeof d !== 'object') return;
 

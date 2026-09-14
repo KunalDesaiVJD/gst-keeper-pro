@@ -684,7 +684,7 @@ chrome.downloads.onCreated.addListener(async (item) => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.gstk) return;
   if (msg.fn === 'whoami') {
-    sendResponse({ ok: true, data: { tabId: sender && sender.tab ? sender.tab.id : null } });
+    sendResponse({ ok: true, data: { tabId: sender && sender.tab ? sender.tab.id : null, version: chrome.runtime.getManifest().version } });
     return true;
   }
   const fn = API[msg.fn];

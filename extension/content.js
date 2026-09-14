@@ -6,8 +6,9 @@
   const JOB_KEY = 'gstk_active_job';
   const store = chrome.storage.local;
   const getJob = async () => (await store.get(JOB_KEY))[JOB_KEY] || null;
-  const setJob = (j) => store.set({ [JOB_KEY]: j });
+  const setJob = (j) => { j.lastActivityAt = Date.now(); return store.set({ [JOB_KEY]: j }); };
   const clearJob = () => store.remove(JOB_KEY);
+  const EXT_VERSION = chrome.runtime.getManifest().version;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const $ = (s) => document.querySelector(s);
@@ -151,7 +152,10 @@
 
   // Only act in the sync tab we opened, and drop stale jobs — so the extension
   // NEVER prompts a CAPTCHA during normal portal browsing (the "harassment" bug).
-  if (job.startedAt && Date.now() - job.startedAt > 20 * 60 * 1000) { await clearJob(); return; }
+  const now = Date.now();
+  const idleMs = now - (job.lastActivityAt || job.startedAt || now);
+  const totalMs = now - (job.startedAt || now);
+  if (idleMs > 10 * 60 * 1000 || totalMs > 3 * 60 * 60 * 1000) { await clearJob(); return; }
   // Right after the extension is reloaded, any ALREADY-OPEN gst.gov.in tab's
   // content script becomes orphaned — its chrome.runtime.sendMessage calls
   // reject ("Extension context invalidated"). whoami() then resolves to null
@@ -275,7 +279,12 @@
     else if (job.step === 'done') { await clearJob(); }
   } catch (e) {
     if (e && e.message === 'cancelled') { banner('Cancelled.', '#6b7280'); await clearJob(); }
-    else banner('Error: ' + (e && e.message), '#dc2626');
+    else {
+      const reason = (e && e.message) || 'unknown error';
+      banner('Error on ' + (job.step || '?') + ': ' + reason + ' — moving on.', '#dc2626');
+      try { await GSTKdb.logClientSync(cur.clientId, job.step || 'unknown', 'failed', 'Unhandled: ' + reason + ' [ext ' + EXT_VERSION + ']'); } catch (_) {}
+      await advance(job);
+    }
   }
 
   // Move to the next period for the SAME client first (no logout — the tab
@@ -506,11 +515,25 @@
       // field rather than throwing an error — reload for a new image and
       // retry automatically (up to 3 times) instead of leaving the job stuck
       // waiting on a field that will never fill itself again.
-      setTimeout(() => {
+      setTimeout(async () => {
+        if (!/services\/login/.test(location.href)) return;
+        const errEl = document.querySelector('.alert-danger, .error-message, [role=alert]');
+        const errMsg = errEl ? errEl.textContent.trim() : '';
+        const isAuthErr = /invalid|incorrect|wrong|locked|disabled|suspended/i.test(errMsg);
+        if (isAuthErr) {
+          try { await GSTKdb.logClientSync(cur.clientId, 'login', 'failed', 'Login rejected: ' + errMsg.slice(0, 200) + ' [ext ' + EXT_VERSION + ']'); } catch (_) {}
+          banner('Login failed for ' + cur.creds.name + ': ' + errMsg.slice(0, 80) + ' — moving on.', '#dc2626');
+          await advance(job);
+          return;
+        }
         const tries = Number((job && job.captchaRetry) || 0);
-        if (/services\/login/.test(location.href) && $('#captcha') && tries < 3) {
+        if ($('#captcha') && tries < 3) {
           job.captchaRetry = tries + 1;
           setJob(job).finally(() => location.reload());
+        } else if (tries >= 3) {
+          try { await GSTKdb.logClientSync(cur.clientId, 'login', 'failed', 'CAPTCHA failed 3x — giving up [ext ' + EXT_VERSION + ']'); } catch (_) {}
+          banner('CAPTCHA failed 3 times for ' + cur.creds.name + ' — moving on.', '#dc2626');
+          await advance(job);
         }
       }, 2500);
     }
