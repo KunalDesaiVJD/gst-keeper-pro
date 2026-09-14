@@ -210,9 +210,9 @@ const NoticesDashboardPage: React.FC = () => {
     window.postMessage({ __gstkPullSectionAllClients: { mode: 'notices_bundle' } }, '*');
   };
 
-  if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
-
   useEffect(() => { if (noticeError) toast.error(noticeError); }, [noticeError]);
+
+  if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
   const filteredRows = rows.filter((r) => {
     if (typeFilter === 'registration') return isRegistrationRelated(r);
@@ -292,6 +292,11 @@ const NoticesDashboardPage: React.FC = () => {
 
   return (
     <div className="space-y-2.5 animate-fade-in">
+      {noticeError && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+          Failed to load notices: {noticeError}
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <PageHeader
           title="Notices Dashboard"

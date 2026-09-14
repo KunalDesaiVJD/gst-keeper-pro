@@ -163,11 +163,12 @@ interface EditForm {
   remarks: string;
   financialYear: string;
   assignTo: string;
+  closeReason: string;
 }
 
 const EMPTY_FORM: EditForm = {
   priority: '', replyRefNumber: '', replyDate: '', orderNumber: '', orderDate: '', submissionArn: '', submissionDate: '',
-  extendedDueDate: '', amountOfDemand: '', remarks: '', financialYear: '', assignTo: '',
+  extendedDueDate: '', amountOfDemand: '', remarks: '', financialYear: '', assignTo: '', closeReason: '',
 };
 
 const cellToText = (v: string | number | undefined): string => {
@@ -487,6 +488,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
       remarks: remarksColIdx !== -1 ? cellToText(row[remarksColIdx]) : '',
       financialYear: financialYearColIdx !== -1 ? cellToText(row[financialYearColIdx]) : '',
       assignTo: assignToColIdx !== -1 ? cellToText(row[assignToColIdx]) : '',
+      closeReason: '',
     });
     setEditingIdx(idx);
   };
@@ -511,6 +513,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
       remarks: editForm.remarks || null,
       financial_year: editForm.financialYear || null,
       assign_to: editForm.assignTo || null,
+      close_reason: editForm.closeReason || null,
     }).eq('id', rowId);
     setSavingEdit(false);
     if (error) { toast.error('Failed to save: ' + error.message); return; }
@@ -1095,6 +1098,10 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
                 <Label htmlFor="assign-to">Assign To</Label>
                 <Input id="assign-to" placeholder="Staff member" value={editForm.assignTo} onChange={(e) => setEditForm((f) => ({ ...f, assignTo: e.target.value }))} />
               </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="close-reason">Close Reason</Label>
+              <Input id="close-reason" placeholder="e.g. auto:closure, resolved, withdrawn" value={editForm.closeReason} onChange={(e) => setEditForm((f) => ({ ...f, closeReason: e.target.value }))} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="remarks">Remarks</Label>
