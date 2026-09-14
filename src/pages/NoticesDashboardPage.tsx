@@ -33,6 +33,9 @@ import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
 import { computeNoticeSummary, isClosed, summaryCellHref, type SummaryCellKind } from '@/utils/noticeSummaryReport';
 import { runNoticeSweep } from '@/lib/noticeAutoClose';
+import NoticeWorkQueue from '@/components/notices/NoticeWorkQueue';
+import NoticeActivityFeed from '@/components/notices/NoticeActivityFeed';
+import NoticeDrawer from '@/components/notices/NoticeDrawer';
 import {
   Bell, CalendarClock, History, Building2, FolderOpen, AlertTriangle, Loader2,
   UserPlus, Upload, Download, RefreshCw, RotateCcw, Pencil, ChevronLeft, ChevronRight, Search,
@@ -83,6 +86,16 @@ const NoticesDashboardPage: React.FC = () => {
   // Clicking a category row drills the whole dashboard (KPI tiles included)
   // down to just that category — click the same row again to clear it.
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+
+  // Notice drawer state — work queue and activity feed cards open it.
+  const [drawerNoticeId, setDrawerNoticeId] = useState<string | null>(null);
+  const [drawerClientId, setDrawerClientId] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const openDrawer = (noticeId: string, clientId: string) => {
+    setDrawerNoticeId(noticeId);
+    setDrawerClientId(clientId);
+    setDrawerOpen(true);
+  };
 
   // Company panel — mirrors Notice Alert's mini client list + onboarding shortcuts.
   const [miniClients, setMiniClients] = useState<MiniClient[]>([]);
@@ -505,6 +518,12 @@ const NoticesDashboardPage: React.FC = () => {
           </CardContent>
         </Card>
         </div>
+
+        {/* Work queue + Activity feed — below Company/Calendar, above the fold */}
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+          <NoticeWorkQueue onSelectNotice={openDrawer} />
+          <NoticeActivityFeed onSelectNotice={openDrawer} />
+        </div>
         </div>
 
         <Card className="flex min-h-0 flex-col xl:h-[620px] xl:w-[380px] xl:shrink-0">
@@ -647,6 +666,13 @@ const NoticesDashboardPage: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <NoticeDrawer
+        noticeId={drawerNoticeId}
+        clientId={drawerClientId}
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+      />
     </div>
   );
 };
