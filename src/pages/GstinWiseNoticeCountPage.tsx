@@ -9,6 +9,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Navigate, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { useNoticeSet } from '@/hooks/useNoticeSet';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 import { Card, CardContent } from '@/components/ui/card';
@@ -22,13 +23,6 @@ import { isRegistrationRelated as isRegistrationDescription } from '@/utils/noti
 import { renderReportToExcel, type ReportTable } from '@/utils/allClientsReports';
 import { Bell, Loader2, FileSpreadsheet, Search } from 'lucide-react';
 
-interface NoticeRow {
-  client_id: string;
-  description: string | null;
-  staff_status: string | null;
-  reply_date: string | null;
-}
-interface StatusRow { client_id: string; status: string | null; }
 interface ClientRow { id: string; name: string; gstin: string; }
 
 type TypeOfNoticesFilter = 'all' | 'registration' | 'other';
@@ -46,31 +40,17 @@ interface GstinCountRow {
 const GstinWiseNoticeCountPage: React.FC = () => {
   const { isStaffRole } = useAuth();
   const navigate = useNavigate();
+  const { rows: notices, refundRows: refunds, drc03Rows: drc03s, loading } = useNoticeSet();
   const [clients, setClients] = useState<ClientRow[]>([]);
-  const [notices, setNotices] = useState<NoticeRow[]>([]);
-  const [refunds, setRefunds] = useState<StatusRow[]>([]);
-  const [drc03s, setDrc03s] = useState<StatusRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [clientsLoading, setClientsLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<TypeOfNoticesFilter>('all');
   const [search, setSearch] = useState('');
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
-      const [clientsRes, noticesRes, refundsRes, drc03Res] = await Promise.all([
-        supabase.from('clients').select('id, name, gstin').order('name'),
-        supabase.from('gst_notices').select('client_id, description, staff_status, reply_date').eq('source', 'notices').is('deleted_at', null),
-        supabase.from('gst_refund_applications').select('client_id, status').is('deleted_at', null),
-        supabase.from('gst_drc03_filings').select('client_id, status').is('deleted_at', null),
-      ]);
-      if (!cancelled) {
-        setClients((clientsRes.data || []) as ClientRow[]);
-        setNotices((noticesRes.data || []) as NoticeRow[]);
-        setRefunds((refundsRes.data || []) as StatusRow[]);
-        setDrc03s((drc03Res.data || []) as StatusRow[]);
-        setLoading(false);
-      }
+      const { data } = await supabase.from('clients').select('id, name, gstin').order('name');
+      if (!cancelled) { setClients((data || []) as ClientRow[]); setClientsLoading(false); }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -102,11 +82,13 @@ const GstinWiseNoticeCountPage: React.FC = () => {
     });
     if (typeFilter === 'all') {
       refunds.forEach((r) => {
+        if (!r.client_id) return;
         const e = ensure(r.client_id);
         e.total += 1;
         if (isRefundClosed(r.status)) e.closed += 1; else e.open += 1;
       });
       drc03s.forEach((r) => {
+        if (!r.client_id) return;
         const e = ensure(r.client_id);
         e.total += 1;
         if (isDrc03Closed(r.status)) e.closed += 1; else e.open += 1;
@@ -197,7 +179,7 @@ const GstinWiseNoticeCountPage: React.FC = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {loading ? (
+                {(loading || clientsLoading) ? (
                   <TableRow><TableCell colSpan={6} className="py-10 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" /></TableCell></TableRow>
                 ) : filteredCounts.length === 0 ? (
                   <TableRow><TableCell colSpan={6} className="py-10 text-center text-xs text-muted-foreground">No companies match.</TableCell></TableRow>
@@ -229,7 +211,7 @@ const GstinWiseNoticeCountPage: React.FC = () => {
                   ))
                 )}
               </TableBody>
-              {!loading && filteredCounts.length > 0 && (
+              {!(loading || clientsLoading) && filteredCounts.length > 0 && (
                 <tfoot>
                   <TableRow className="bg-primary/5 font-semibold hover:bg-primary/10">
                     <TableCell colSpan={2} className="text-xs">Total</TableCell>

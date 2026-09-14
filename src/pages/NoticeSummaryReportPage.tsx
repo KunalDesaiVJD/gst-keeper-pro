@@ -6,11 +6,10 @@
 // surface. Reuses the exact same category-breakdown table already on the
 // Notices Dashboard (computeNoticeSummary) as a full page, matching Notice
 // Alert's own full-page version of the same table.
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Navigate, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
-import { fetchAllRows } from '@/lib/fetchAllRows';
+import { useNoticeSet } from '@/hooks/useNoticeSet';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 import { Card, CardContent } from '@/components/ui/card';
@@ -19,49 +18,18 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { computeNoticeSummary, summaryCellHref, type NoticeSummarySourceRow, type SummaryCellKind } from '@/utils/noticeSummaryReport';
+import { computeNoticeSummary, summaryCellHref, type SummaryCellKind } from '@/utils/noticeSummaryReport';
 import { isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
 import { renderReportToExcel, type ReportTable } from '@/utils/allClientsReports';
 import { Bell, Loader2, FileSpreadsheet } from 'lucide-react';
-
-interface NoticeRow extends NoticeSummarySourceRow {
-  description: string | null;
-}
-
-interface StatusRow {
-  arn: string | null;
-  status: string | null;
-}
 
 type TypeOfNoticesFilter = 'all' | 'registration' | 'other';
 
 const NoticeSummaryReportPage: React.FC = () => {
   const { isStaffRole } = useAuth();
   const navigate = useNavigate();
-  const [rows, setRows] = useState<NoticeRow[]>([]);
-  const [refundRows, setRefundRows] = useState<StatusRow[]>([]);
-  const [drc03Rows, setDrc03Rows] = useState<StatusRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { rows, refundRows, drc03Rows, loading } = useNoticeSet();
   const [typeFilter, setTypeFilter] = useState<TypeOfNoticesFilter>('all');
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      const [noticesData, refundRes, drc03Res] = await Promise.all([
-        fetchAllRows<NoticeRow>('gst_notices', 'notice_type, description, staff_status, reply_date, case_id', (q) => q.eq('source', 'notices').is('deleted_at', null)),
-        supabase.from('gst_refund_applications').select('arn, status').is('deleted_at', null),
-        supabase.from('gst_drc03_filings').select('arn, status').is('deleted_at', null),
-      ]);
-      if (!cancelled) {
-        setRows(noticesData);
-        setRefundRows((refundRes.data || []) as StatusRow[]);
-        setDrc03Rows((drc03Res.data || []) as StatusRow[]);
-        setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 

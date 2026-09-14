@@ -16,7 +16,8 @@ import React, { useEffect, useState } from 'react';
 import { Navigate, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { fetchAllRows } from '@/lib/fetchAllRows';
+import { useNoticeSet, type NoticeSetRow, type StatusRow as NoticeStatusRow } from '@/hooks/useNoticeSet';
+import { isOpen, isOverdue, isDueIn7, isNew } from '@/utils/noticeDefinitions';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
@@ -45,23 +46,8 @@ function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-interface NoticeRow {
-  client_id: string;
-  notice_type: string | null;
-  description: string | null;
-  staff_status: string | null;
-  priority: string | null;
-  issue_date: string | null;
-  due_date: string | null;
-  reply_date: string | null;
-  pulled_at: string;
-  case_id: string | null;
-}
-
-interface StatusRow {
-  arn: string | null;
-  status: string | null;
-}
+type NoticeRow = NoticeSetRow;
+type StatusRow = NoticeStatusRow;
 
 interface SyncLogRow {
   client_id: string;
@@ -91,8 +77,7 @@ const MONTH_NAMES = [
 const NoticesDashboardPage: React.FC = () => {
   const { isStaffRole, canAddEditClients } = useAuth();
   const navigate = useNavigate();
-  const [rows, setRows] = useState<NoticeRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { rows, refundRows, drc03Rows, loading, error: noticeError } = useNoticeSet();
   const [typeFilter, setTypeFilter] = useState<TypeOfNoticesFilter>('all');
   // Clicking a category row drills the whole dashboard (KPI tiles included)
   // down to just that category — click the same row again to clear it.
@@ -133,12 +118,6 @@ const NoticesDashboardPage: React.FC = () => {
   const [calMonth, setCalMonth] = useState(todayDate.getMonth());
   const [calYear, setCalYear] = useState(todayDate.getFullYear());
 
-  // Refund/DRC-03 rows the Notice Summary table folds in — separate tables,
-  // status-only select since only the category-row counts are needed here
-  // (the drill-down page re-fetches full detail itself).
-  const [refundRows, setRefundRows] = useState<StatusRow[]>([]);
-  const [drc03Rows, setDrc03Rows] = useState<StatusRow[]>([]);
-
   // Failed Logins tile — replaces Priority in this slot to match Notice
   // Alert's own dashboard (confirmed live 2026-09-03: Notice Alert shows
   // Failed Logins here, we showed Priority). "Failed" = the client's most
@@ -147,38 +126,6 @@ const NoticesDashboardPage: React.FC = () => {
   // for its own Status column, so the tile's count matches what you see
   // after clicking through to it.
   const [syncLogs, setSyncLogs] = useState<SyncLogRow[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      const data = await fetchAllRows<NoticeRow>(
-        'gst_notices',
-        'client_id, notice_type, description, staff_status, priority, issue_date, due_date, reply_date, pulled_at, case_id',
-        (q) => q.eq('source', 'notices').is('deleted_at', null),
-      );
-      if (!cancelled) {
-        setRows(data);
-        setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const [refundRes, drc03Res] = await Promise.all([
-        supabase.from('gst_refund_applications').select('arn, status').is('deleted_at', null),
-        supabase.from('gst_drc03_filings').select('arn, status').is('deleted_at', null),
-      ]);
-      if (!cancelled) {
-        setRefundRows((refundRes.data || []) as StatusRow[]);
-        setDrc03Rows((drc03Res.data || []) as StatusRow[]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -249,6 +196,8 @@ const NoticesDashboardPage: React.FC = () => {
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
+  useEffect(() => { if (noticeError) toast.error(noticeError); }, [noticeError]);
+
   const filteredRows = rows.filter((r) => {
     if (typeFilter === 'registration') return isRegistrationRelated(r);
     if (typeFilter === 'other') return !isRegistrationRelated(r);
@@ -258,18 +207,12 @@ const NoticesDashboardPage: React.FC = () => {
     ? filteredRows.filter((r) => classifyNoticeCategory(r) === categoryFilter)
     : filteredRows;
 
-  const now = Date.now();
-  const DAY_MS = 24 * 60 * 60 * 1000;
-  const daysAgo = (v: string | null) => (v ? (now - new Date(v).getTime()) / DAY_MS : Infinity);
-  const daysUntil = (v: string | null) => (v ? (new Date(v).getTime() - now) / DAY_MS : -Infinity);
-
   const totalNotices = displayRows.length;
-  const last15Days = displayRows.filter((r) => daysAgo(r.issue_date) <= 15).length;
-  const last24Hours = displayRows.filter((r) => daysAgo(r.pulled_at) <= 1).length;
+  const newNotices = displayRows.filter((r) => isNew(r)).length;
   const totalGstin = new Set(displayRows.map((r) => r.client_id)).size;
-  const openNotices = displayRows.filter((r) => !isClosed(r.staff_status)).length;
-  const dueSoon = displayRows.filter((r) => r.due_date && daysUntil(r.due_date) >= 0 && daysUntil(r.due_date) <= 7).length;
-  const overdue = displayRows.filter((r) => r.due_date && daysUntil(r.due_date) < 0).length;
+  const openNotices = displayRows.filter((r) => isOpen(r)).length;
+  const dueSoon = displayRows.filter((r) => isDueIn7(r)).length;
+  const overdue = displayRows.filter((r) => isOverdue(r)).length;
 
   // Latest Sync All (Notices) attempt per client — logs are already ordered
   // newest-first, so the first one seen per client_id is its latest.
@@ -292,8 +235,7 @@ const NoticesDashboardPage: React.FC = () => {
 
   const kpiCards = [
     { label: 'Total Notices', value: totalNotices, icon: <Bell className="h-8 w-8 text-primary" />, bgColor: 'bg-primary/5', to: drillParams({}) },
-    { label: 'Last 15 Days', value: last15Days, icon: <CalendarClock className="h-8 w-8 text-info" />, bgColor: 'bg-info/5', to: drillParams({ filter: 'last15' }) },
-    { label: 'Last 24 Hours', value: last24Hours, icon: <History className="h-8 w-8 text-info" />, bgColor: 'bg-info/5', to: drillParams({ filter: 'last24h' }) },
+    { label: 'New (24h)', value: newNotices, icon: <History className="h-8 w-8 text-info" />, bgColor: 'bg-info/5', to: drillParams({ filter: 'new' }) },
     { label: 'Total GSTIN', value: totalGstin, icon: <Building2 className="h-8 w-8 text-secondary-foreground" />, bgColor: 'bg-secondary/40', to: null },
     { label: 'Open Notices', value: openNotices, icon: <FolderOpen className="h-8 w-8 text-warning" />, bgColor: 'bg-warning/5', to: drillParams({ status: 'Open' }) },
     { label: '7 Days Due', value: dueSoon, icon: <CalendarClock className="h-8 w-8 text-warning" />, bgColor: 'bg-warning/5', to: drillParams({ filter: 'due7' }) },
