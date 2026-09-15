@@ -3,6 +3,7 @@ import { fetchAllRows } from '@/lib/fetchAllRows';
 import { supabase } from '@/integrations/supabase/client';
 
 export interface NoticeSetRow {
+  id: string;
   client_id: string;
   notice_type: string | null;
   description: string | null;
@@ -15,13 +16,19 @@ export interface NoticeSetRow {
   first_seen_at: string | null;
   pulled_at: string;
   case_id: string | null;
+  reference_number: string | null;
+  assign_to: string | null;
+  assign_to_user_id: string | null;
+  amount_of_demand: number | null;
+  hearing_date: string | null;
 }
 
 export interface StatusRow { client_id?: string; arn: string | null; status: string | null; }
 
 const NOTICE_SELECT =
-  'client_id, notice_type, description, staff_status, priority, issue_date, due_date, ' +
-  'extended_due_date, reply_date, first_seen_at, pulled_at, case_id';
+  'id, client_id, notice_type, description, staff_status, priority, issue_date, due_date, ' +
+  'extended_due_date, reply_date, first_seen_at, pulled_at, case_id, reference_number, ' +
+  'assign_to, assign_to_user_id, amount_of_demand, hearing_date';
 
 export function useNoticeSet() {
   const [rows, setRows] = useState<NoticeSetRow[]>([]);

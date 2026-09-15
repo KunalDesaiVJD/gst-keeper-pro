@@ -5,7 +5,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2, ClipboardList, ExternalLink, AlertTriangle, Clock, Calendar } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Loader2, ClipboardList } from 'lucide-react';
 
 interface QueueItem {
   id: string;
@@ -20,6 +21,7 @@ interface QueueItem {
   extended_due_date: string | null;
   issue_date: string | null;
   assign_to: string | null;
+  amount_of_demand: number | null;
 }
 
 function effectiveDue(item: QueueItem): string | null {
@@ -38,28 +40,34 @@ function urgencyScore(item: QueueItem): number {
   return days;
 }
 
-function dueLabel(item: QueueItem): { text: string; className: string } | null {
+function daysRemaining(item: QueueItem): number | null {
   const due = effectiveDue(item);
   if (!due) return null;
   const now = new Date();
   const utc = now.getTime() + now.getTimezoneOffset() * 60000;
   const ist = new Date(utc + 5.5 * 3600000);
   const d = new Date(due);
-  const days = Math.round((d.getTime() - ist.getTime()) / 86400000);
-  if (days < 0) return { text: `${Math.abs(days)}d overdue`, className: 'bg-destructive/10 text-destructive border-destructive/20' };
-  if (days === 0) return { text: 'Due today', className: 'bg-destructive/10 text-destructive border-destructive/20' };
-  if (days <= 3) return { text: `${days}d left`, className: 'bg-amber-100 text-amber-800 border-amber-200' };
-  if (days <= 7) return { text: `${days}d left`, className: 'bg-yellow-50 text-yellow-700 border-yellow-200' };
-  return { text: `${days}d left`, className: 'bg-slate-100 text-slate-600 border-slate-200' };
+  return Math.round((d.getTime() - ist.getTime()) / 86400000);
 }
 
-const priorityBadge = (p: string | null) => {
-  if (!p || p === '—') return null;
-  const cls = p.toLowerCase() === 'high' ? 'bg-red-50 text-red-700 border-red-200'
-    : p.toLowerCase() === 'medium' ? 'bg-amber-50 text-amber-700 border-amber-200'
-    : 'bg-slate-50 text-slate-600 border-slate-200';
-  return <Badge variant="outline" className={`text-[10px] ${cls}`}>{p}</Badge>;
-};
+function stageColor(status: string | null): string {
+  const s = (status || '').toLowerCase();
+  if (/^closed|^withdrawn|^dropped|^disposed|^deleted|^adjudged/.test(s)) return 'bg-slate-400';
+  if (/order/.test(s)) return 'bg-orange-500';
+  if (/hearing/.test(s)) return 'bg-amber-500';
+  if (/filed|submitted/.test(s)) return 'bg-emerald-500';
+  if (/partner|review/.test(s)) return 'bg-violet-500';
+  if (/reply|draft/.test(s)) return 'bg-blue-500';
+  if (/await|data|document/.test(s)) return 'bg-amber-400';
+  if (/triage|assigned|open/.test(s)) return 'bg-blue-400';
+  return 'bg-slate-300';
+}
+
+function stageLabel(status: string | null): string {
+  const s = (status || '').trim();
+  if (!s) return 'Captured';
+  return s.length > 20 ? s.slice(0, 18) + '…' : s;
+}
 
 interface Props {
   onSelectNotice?: (noticeId: string, clientId: string) => void;
@@ -76,7 +84,7 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice }) => {
     (async () => {
       const { data: notices } = await supabase
         .from('gst_notices')
-        .select('id, client_id, notice_type, reference_number, staff_status, priority, due_date, extended_due_date, issue_date, assign_to, assign_to_user_id')
+        .select('id, client_id, notice_type, reference_number, staff_status, priority, due_date, extended_due_date, issue_date, assign_to, assign_to_user_id, amount_of_demand')
         .eq('assign_to_user_id', user.id)
         .is('deleted_at', null)
         .limit(200);
@@ -128,25 +136,69 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice }) => {
         ) : items.length === 0 ? (
           <p className="py-6 text-center text-xs text-muted-foreground">No notices assigned to you right now.</p>
         ) : (
-          <div className="space-y-1.5 max-h-[280px] overflow-auto">
+          <div className="space-y-1 max-h-[320px] overflow-auto">
+            {/* Column headers */}
+            <div className="flex items-center gap-2 px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              <span className="flex-1">Notice</span>
+              <span className="w-20 text-center">Stage</span>
+              <span className="w-14 text-right">Days</span>
+              <span className="w-20 text-right">Demand</span>
+            </div>
             {items.slice(0, 20).map((item) => {
-              const due = dueLabel(item);
+              const days = daysRemaining(item);
               return (
                 <button
                   key={item.id}
                   type="button"
-                  className="flex w-full items-start gap-2 rounded-md border px-2.5 py-2 text-left transition-colors hover:bg-muted/40"
+                  className="flex w-full items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors hover:bg-muted/40"
                   onClick={() => onSelectNotice?.(item.id, item.client_id)}
                 >
+                  {/* Notice info */}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
                       <span className="truncate text-xs font-medium">{item.notice_type || 'Notice'}</span>
-                      {priorityBadge(item.priority)}
-                      {due && <Badge variant="outline" className={`text-[10px] ${due.className}`}>{due.text}</Badge>}
+                      {item.priority && item.priority !== '—' && item.priority.toLowerCase() === 'high' && (
+                        <Badge variant="outline" className="text-[9px] bg-red-50 text-red-700 border-red-200 px-1 py-0">High</Badge>
+                      )}
                     </div>
-                    <div className="mt-0.5 text-[11px] text-muted-foreground truncate">
-                      {item.client_name} · {item.reference_number || 'No ref'}
+                    <div className="mt-0.5 text-[10px] text-muted-foreground truncate">
+                      {item.client_name}
+                      {item.gstin && <span className="ml-1 font-mono">{item.gstin.slice(-4)}</span>}
                     </div>
+                  </div>
+
+                  {/* Stage */}
+                  <div className="w-20 flex items-center gap-1">
+                    <span className={cn('h-2 w-2 shrink-0 rounded-full', stageColor(item.staff_status))} />
+                    <span className="text-[10px] text-muted-foreground truncate">{stageLabel(item.staff_status)}</span>
+                  </div>
+
+                  {/* Days remaining */}
+                  <div className="w-14 text-right">
+                    {days !== null ? (
+                      <span className={cn(
+                        'text-xs font-medium tabular-nums',
+                        days < 0 ? 'text-destructive' :
+                        days <= 3 ? 'text-amber-600' :
+                        days <= 7 ? 'text-yellow-600' :
+                        'text-muted-foreground'
+                      )}>
+                        {days < 0 ? `${days}` : days === 0 ? 'Today' : `${days}`}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground">—</span>
+                    )}
+                  </div>
+
+                  {/* Demand */}
+                  <div className="w-20 text-right">
+                    {item.amount_of_demand ? (
+                      <span className="text-[10px] font-medium tabular-nums">
+                        ₹{Number(item.amount_of_demand).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground">—</span>
+                    )}
                   </div>
                 </button>
               );
