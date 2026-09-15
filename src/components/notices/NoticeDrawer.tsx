@@ -1,14 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
-import { Loader2, ExternalLink, Calendar, AlertTriangle, FileText, Clock, User, Activity, IndianRupee, MessageSquare, Check } from 'lucide-react';
+import { Loader2, ExternalLink, Calendar, AlertTriangle, FileText, Clock, User, Activity, IndianRupee, MessageSquare, Check, Briefcase } from 'lucide-react';
 import { isClosed } from '@/utils/noticeSummaryReport';
+import { createMatter } from '@/lib/litigationData';
 
 interface NoticeDetail {
   id: string;
@@ -35,6 +37,7 @@ interface NoticeDetail {
   close_reason: string | null;
   pdf_url: string | null;
   pulled_at: string | null;
+  matter_id: string | null;
 }
 
 interface EventRow {
@@ -121,12 +124,15 @@ interface Props {
 }
 
 const NoticeDrawer: React.FC<Props> = ({ noticeId, clientId, open, onOpenChange }) => {
+  const navigate = useNavigate();
   const [notice, setNotice] = useState<NoticeDetail | null>(null);
   const [clientName, setClientName] = useState('');
   const [gstin, setGstin] = useState('');
   const [events, setEvents] = useState<EventRow[]>([]);
   const [deadlines, setDeadlines] = useState<DeadlineRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [matterInfo, setMatterInfo] = useState<{ id: string; matter_no: string; title: string | null } | null>(null);
+  const [linkingMatter, setLinkingMatter] = useState(false);
 
   useEffect(() => {
     if (!noticeId || !open) return;
@@ -135,7 +141,7 @@ const NoticeDrawer: React.FC<Props> = ({ noticeId, clientId, open, onOpenChange 
     (async () => {
       const [{ data: n }, { data: evts }, { data: dls }] = await Promise.all([
         supabase.from('gst_notices')
-          .select('id, client_id, notice_type, reference_number, description, issue_date, due_date, extended_due_date, staff_status, priority, assign_to, assign_to_user_id, reply_date, reply_ref_number, order_date, order_number, hearing_date, issued_by, amount_of_demand, remarks, financial_year, close_reason, pdf_url, pulled_at')
+          .select('id, client_id, notice_type, reference_number, description, issue_date, due_date, extended_due_date, staff_status, priority, assign_to, assign_to_user_id, reply_date, reply_ref_number, order_date, order_number, hearing_date, issued_by, amount_of_demand, remarks, financial_year, close_reason, pdf_url, pulled_at, matter_id')
           .eq('id', noticeId).maybeSingle(),
         supabase.from('notice_events')
           .select('id, event_type, old_value, new_value, actor_name, created_at')
@@ -154,6 +160,12 @@ const NoticeDrawer: React.FC<Props> = ({ noticeId, clientId, open, onOpenChange 
       if (n?.client_id) {
         const { data: c } = await supabase.from('clients').select('name, gstin').eq('id', n.client_id).maybeSingle();
         if (!cancelled && c) { setClientName(c.name || ''); setGstin(c.gstin || ''); }
+      }
+      if (n?.matter_id) {
+        const { data: mt } = await supabase.from('litigation_matters').select('id, matter_no, title').eq('id', n.matter_id).maybeSingle();
+        if (!cancelled) setMatterInfo(mt as typeof matterInfo);
+      } else {
+        if (!cancelled) setMatterInfo(null);
       }
       if (!cancelled) setLoading(false);
     })();
@@ -208,6 +220,54 @@ const NoticeDrawer: React.FC<Props> = ({ noticeId, clientId, open, onOpenChange 
               )}
               {notice.close_reason && (
                 <Badge variant="outline" className="text-[10px] bg-slate-50">{notice.close_reason}</Badge>
+              )}
+            </div>
+
+            {/* Linked matter */}
+            <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+              <Briefcase className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              {matterInfo ? (
+                <div className="flex flex-1 items-center justify-between">
+                  <button
+                    type="button"
+                    className="text-xs text-primary hover:underline text-left"
+                    onClick={() => { onOpenChange(false); navigate(`/litigation/${matterInfo.id}`); }}
+                  >
+                    {matterInfo.matter_no}{matterInfo.title ? ` — ${matterInfo.title}` : ''}
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-1 items-center justify-between">
+                  <span className="text-xs text-muted-foreground">No litigation matter linked</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 text-[10px]"
+                    disabled={linkingMatter}
+                    onClick={async () => {
+                      if (!notice || !clientId) return;
+                      setLinkingMatter(true);
+                      const { data: newMatter, error } = await createMatter({
+                        client_id: clientId,
+                        lifecycle: 'demand',
+                        title: notice.notice_type || 'Notice',
+                        stage: 'Captured',
+                        priority: notice.priority || 'Medium',
+                        computed_due_date: notice.due_date,
+                      });
+                      if (error || !newMatter) {
+                        setLinkingMatter(false);
+                        return;
+                      }
+                      await supabase.from('gst_notices').update({ matter_id: newMatter.id }).eq('id', notice.id);
+                      setNotice({ ...notice, matter_id: newMatter.id });
+                      setMatterInfo({ id: newMatter.id, matter_no: newMatter.matter_no, title: newMatter.title });
+                      setLinkingMatter(false);
+                    }}
+                  >
+                    {linkingMatter ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Create Matter'}
+                  </Button>
+                </div>
               )}
             </div>
 

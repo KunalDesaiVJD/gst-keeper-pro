@@ -186,6 +186,18 @@ const LitigationMatterDetailPage: React.FC = () => {
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [closeReason, setCloseReason] = useState('');
 
+  const [outcomeDialogOpen, setOutcomeDialogOpen] = useState(false);
+  const [outcomeHearingId, setOutcomeHearingId] = useState('');
+  const [outcomeText, setOutcomeText] = useState('');
+  const [outcomeAdjourned, setOutcomeAdjourned] = useState(false);
+  const [outcomeNextDate, setOutcomeNextDate] = useState('');
+  const [outcomeNotes, setOutcomeNotes] = useState('');
+
+  const [docDialogOpen, setDocDialogOpen] = useState(false);
+  const [docTitle, setDocTitle] = useState('');
+  const [docKind, setDocKind] = useState('order');
+  const [docSource, setDocSource] = useState('manual');
+
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
@@ -393,6 +405,70 @@ const LitigationMatterDetailPage: React.FC = () => {
     setPayments((ps ?? []) as Payment[]);
   };
 
+  const handleAssignReviewer = async (userId: string) => {
+    const { error } = await supabase
+      .from('litigation_matters')
+      .update({ reviewer_user_id: userId || null, updated_at: new Date().toISOString() })
+      .eq('id', matter.id);
+    if (error) { toast.error(error.message); return; }
+    const s = staff.find((st) => st.userId === userId);
+    await logEvent('reviewer_assigned', { reviewer: s?.name || userId });
+    setMatter({ ...matter, reviewer_user_id: userId || null });
+    toast.success('Reviewer updated');
+  };
+
+  const handleRecordOutcome = async () => {
+    if (!outcomeHearingId) return;
+    setSaving(true);
+    const { error } = await supabase.from('matter_hearings')
+      .update({
+        outcome: outcomeText || null,
+        adjourned: outcomeAdjourned,
+        next_date: outcomeNextDate || null,
+        notes: outcomeNotes || null,
+      })
+      .eq('id', outcomeHearingId);
+    if (error) { toast.error(error.message); setSaving(false); return; }
+    await logEvent('hearing_outcome', { outcome: outcomeText, adjourned: outcomeAdjourned });
+    if (outcomeAdjourned && outcomeNextDate) {
+      await supabase.from('litigation_matters')
+        .update({ hearing_at: outcomeNextDate, updated_at: new Date().toISOString() })
+        .eq('id', matter.id);
+      setMatter({ ...matter, hearing_at: outcomeNextDate });
+    }
+    setOutcomeDialogOpen(false);
+    setOutcomeHearingId('');
+    setOutcomeText('');
+    setOutcomeAdjourned(false);
+    setOutcomeNextDate('');
+    setOutcomeNotes('');
+    setSaving(false);
+    toast.success('Hearing outcome recorded');
+    const { data: h } = await supabase.from('matter_hearings').select('*').eq('matter_id', matter.id).order('scheduled_at', { ascending: false });
+    setHearings((h ?? []) as Hearing[]);
+  };
+
+  const handleAddDocument = async () => {
+    if (!docTitle.trim()) return;
+    setSaving(true);
+    const { error } = await supabase.from('matter_documents').insert({
+      matter_id: matter.id,
+      kind: docKind,
+      title: docTitle.trim(),
+      source: docSource,
+    });
+    if (error) { toast.error(error.message); setSaving(false); return; }
+    await logEvent('document_added', { title: docTitle, kind: docKind });
+    setDocDialogOpen(false);
+    setDocTitle('');
+    setDocKind('order');
+    setDocSource('manual');
+    setSaving(false);
+    toast.success('Document added');
+    const { data: d } = await supabase.from('matter_documents').select('id, kind, title, source, created_at').eq('matter_id', matter.id).order('created_at', { ascending: false });
+    setDocuments((d ?? []) as MatterDoc[]);
+  };
+
   const handleDemandUpdate = async (field: string, value: string) => {
     const num = parseFloat(value) || 0;
     const { error } = await supabase
@@ -492,7 +568,17 @@ const LitigationMatterDetailPage: React.FC = () => {
             </div>
             <div>
               <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Reviewer</p>
-              <p className="text-sm">{reviewerStaff?.name || '—'}</p>
+              <Select value={matter.reviewer_user_id || ''} onValueChange={handleAssignReviewer}>
+                <SelectTrigger className="h-7 w-[160px] text-xs">
+                  <SelectValue placeholder="None" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">None</SelectItem>
+                  {staff.map((s) => (
+                    <SelectItem key={s.userId} value={s.userId}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             {matter.next_action && (
               <div>
@@ -618,6 +704,7 @@ const LitigationMatterDetailPage: React.FC = () => {
                       <TableHead className="text-[11px]">Officer</TableHead>
                       <TableHead className="text-[11px]">Outcome</TableHead>
                       <TableHead className="text-[11px]">Adjourned</TableHead>
+                      <TableHead className="text-[11px]"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -629,6 +716,23 @@ const LitigationMatterDetailPage: React.FC = () => {
                         <TableCell className="text-xs">{h.officer || '—'}</TableCell>
                         <TableCell className="text-xs">{h.outcome || '—'}</TableCell>
                         <TableCell className="text-xs">{h.adjourned ? 'Yes' : '—'}</TableCell>
+                        <TableCell>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 text-[10px]"
+                            onClick={() => {
+                              setOutcomeHearingId(h.id);
+                              setOutcomeText(h.outcome || '');
+                              setOutcomeAdjourned(h.adjourned);
+                              setOutcomeNextDate(h.next_date || '');
+                              setOutcomeNotes(h.notes || '');
+                              setOutcomeDialogOpen(true);
+                            }}
+                          >
+                            {h.outcome ? 'Edit' : 'Record Outcome'}
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -677,6 +781,12 @@ const LitigationMatterDetailPage: React.FC = () => {
 
         <TabsContent value="documents">
           <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2 pt-3 px-4">
+              <CardTitle className="text-sm">Documents</CardTitle>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setDocDialogOpen(true)}>
+                <Plus className="mr-1 h-3 w-3" /> Add Document
+              </Button>
+            </CardHeader>
             <CardContent className="p-0">
               {documents.length === 0 ? (
                 <p className="py-8 text-center text-xs text-muted-foreground">No documents attached.</p>
@@ -823,6 +933,104 @@ const LitigationMatterDetailPage: React.FC = () => {
             <Button variant="outline" onClick={() => setHearingDialogOpen(false)}>Cancel</Button>
             <Button onClick={handleAddHearing} disabled={saving || !hearingDate}>
               {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />} Schedule
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Record hearing outcome dialog */}
+      <Dialog open={outcomeDialogOpen} onOpenChange={setOutcomeDialogOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Record Hearing Outcome</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Outcome</Label>
+              <Select value={outcomeText} onValueChange={setOutcomeText}>
+                <SelectTrigger><SelectValue placeholder="Select outcome" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Adjourned">Adjourned</SelectItem>
+                  <SelectItem value="Part heard">Part Heard</SelectItem>
+                  <SelectItem value="Order reserved">Order Reserved</SelectItem>
+                  <SelectItem value="Order passed">Order Passed</SelectItem>
+                  <SelectItem value="Dismissed">Dismissed</SelectItem>
+                  <SelectItem value="Allowed">Allowed</SelectItem>
+                  <SelectItem value="Partly allowed">Partly Allowed</SelectItem>
+                  <SelectItem value="Ex-parte">Ex-Parte</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="adjourned-check"
+                checked={outcomeAdjourned}
+                onChange={(e) => setOutcomeAdjourned(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300"
+              />
+              <Label htmlFor="adjourned-check">Adjourned to next date</Label>
+            </div>
+            {outcomeAdjourned && (
+              <div>
+                <Label>Next Hearing Date</Label>
+                <Input type="datetime-local" value={outcomeNextDate} onChange={(e) => setOutcomeNextDate(e.target.value)} />
+              </div>
+            )}
+            <div>
+              <Label>Notes (optional)</Label>
+              <Textarea value={outcomeNotes} onChange={(e) => setOutcomeNotes(e.target.value)} rows={2} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOutcomeDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleRecordOutcome} disabled={saving}>
+              {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />} Save Outcome
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add document metadata dialog */}
+      <Dialog open={docDialogOpen} onOpenChange={setDocDialogOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Add Document</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Title</Label>
+              <Input value={docTitle} onChange={(e) => setDocTitle(e.target.value)} placeholder="e.g. DRC-01 Notice, Appeal Memo" />
+            </div>
+            <div>
+              <Label>Kind</Label>
+              <Select value={docKind} onValueChange={setDocKind}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="notice">Notice</SelectItem>
+                  <SelectItem value="order">Order</SelectItem>
+                  <SelectItem value="reply">Reply</SelectItem>
+                  <SelectItem value="appeal">Appeal</SelectItem>
+                  <SelectItem value="submission">Submission</SelectItem>
+                  <SelectItem value="hearing_notes">Hearing Notes</SelectItem>
+                  <SelectItem value="evidence">Evidence</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Source</Label>
+              <Select value={docSource} onValueChange={setDocSource}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="manual">Manual Upload</SelectItem>
+                  <SelectItem value="portal">GST Portal</SelectItem>
+                  <SelectItem value="client">Client</SelectItem>
+                  <SelectItem value="department">Department</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDocDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleAddDocument} disabled={saving || !docTitle.trim()}>
+              {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />} Add
             </Button>
           </DialogFooter>
         </DialogContent>

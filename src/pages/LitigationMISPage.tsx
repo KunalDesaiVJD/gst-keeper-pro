@@ -9,7 +9,9 @@ import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { BarChart3, Download, Loader2 } from 'lucide-react';
+import { BarChart3, Download, FileText, Loader2, Calendar } from 'lucide-react';
+import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
+import { exportLitigationMIS } from '@/utils/litigationPdfExport';
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer,
@@ -23,6 +25,8 @@ import * as XLSX from 'xlsx';
 interface Matter {
   id: string;
   client_id: string | null;
+  matter_no: string;
+  title: string | null;
   status: string | null;
   lifecycle: string | null;
   stage: string | null;
@@ -33,6 +37,7 @@ interface Matter {
   demand_cess: number;
   paid_total: number;
   pre_deposit_total: number;
+  hearing_at: string | null;
   created_at: string;
 }
 
@@ -228,7 +233,26 @@ function computeAnalytics(
   }
   const perStaff = Array.from(staffMap.values()).sort((a, b) => b.totalDemand - a.totalDemand);
 
-  return { exposure, byClient, byStage, byLifecycle, ageing, perStaff };
+  /* Upcoming Hearings */
+  const upcomingHearings = openMatters
+    .filter((m) => m.hearing_at && new Date(m.hearing_at) >= new Date())
+    .sort((a, b) => new Date(a.hearing_at!).getTime() - new Date(b.hearing_at!).getTime())
+    .map((m) => {
+      const c = clients.get(m.client_id ?? '');
+      const owner = m.owner_user_id ? profiles.get(m.owner_user_id) : null;
+      return {
+        matterNo: m.matter_no,
+        matterId: m.id,
+        title: m.title || m.matter_no,
+        clientName: c?.name ?? 'Unknown',
+        hearingDate: m.hearing_at!,
+        stage: m.stage ?? 'Unknown',
+        owner: owner?.first_name ?? 'Unassigned',
+        demand: demand(m),
+      };
+    });
+
+  return { exposure, byClient, byStage, byLifecycle, ageing, perStaff, upcomingHearings };
 }
 
 /* ------------------------------------------------------------------ */
@@ -279,9 +303,58 @@ function exportExcel(
     const rows = analytics.perStaff.map((r) => [r.staffName, r.count, r.totalDemand]);
     const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
     XLSX.utils.book_append_sheet(wb, ws, 'Per Staff');
+  } else if (tab === 'hearings') {
+    const header = ['Matter No', 'Title', 'Client', 'Hearing Date', 'Stage', 'Owner', 'Demand'];
+    const rows = analytics.upcomingHearings.map((r) => [r.matterNo, r.title, r.clientName, r.hearingDate, r.stage, r.owner, r.demand]);
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    XLSX.utils.book_append_sheet(wb, ws, 'Upcoming Hearings');
   }
 
   XLSX.writeFile(wb, `Litigation_MIS_${tab}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+function exportAllExcel(analytics: ReturnType<typeof computeAnalytics>) {
+  const wb = XLSX.utils.book_new();
+
+  const e = analytics.exposure;
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Metric', 'Value'],
+    ['Total Exposure', e.totalExposure], ['Paid', e.paidTotal],
+    ['Pre-Deposit', e.preDepositTotal], ['Outstanding', e.outstanding],
+    ['Open Matters', e.openCount], ['Closed Matters', e.closedCount],
+  ]), 'Exposure');
+
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Client', 'GSTIN', 'Open', 'Demand', 'Paid', 'Outstanding'],
+    ...analytics.byClient.map((r) => [r.clientName, r.gstin, r.openCount, r.totalDemand, r.paid, r.outstanding]),
+  ]), 'By Client');
+
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Stage', 'Count', 'Demand'],
+    ...analytics.byStage.map((r) => [r.stage, r.count, r.totalDemand]),
+  ]), 'By Stage');
+
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Lifecycle', 'Count', 'Demand'],
+    ...analytics.byLifecycle.map((r) => [r.lifecycle, r.count, r.totalDemand]),
+  ]), 'By Lifecycle');
+
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Bucket', 'Count', 'Demand'],
+    ...analytics.ageing.map((r) => [r.bucket, r.count, r.totalDemand]),
+  ]), 'Ageing');
+
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Staff', 'Count', 'Demand'],
+    ...analytics.perStaff.map((r) => [r.staffName, r.count, r.totalDemand]),
+  ]), 'Per Staff');
+
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Matter No', 'Title', 'Client', 'Hearing Date', 'Stage', 'Owner', 'Demand'],
+    ...analytics.upcomingHearings.map((r) => [r.matterNo, r.title, r.clientName, r.hearingDate, r.stage, r.owner, r.demand]),
+  ]), 'Hearings');
+
+  XLSX.writeFile(wb, `Litigation_MIS_Full_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 /* ------------------------------------------------------------------ */
@@ -305,9 +378,9 @@ const LitigationMISPage: React.FC = () => {
 
       const [mRes, cRes, pRes] = await Promise.all([
         supabase.from('litigation_matters').select(
-          'id, client_id, status, lifecycle, stage, owner_user_id, ' +
+          'id, client_id, matter_no, title, status, lifecycle, stage, owner_user_id, ' +
           'demand_tax, demand_interest, demand_penalty, demand_cess, ' +
-          'paid_total, pre_deposit_total, created_at',
+          'paid_total, pre_deposit_total, hearing_at, created_at',
         ),
         supabase.from('clients').select('id, name, gstin'),
         supabase.from('profiles').select('user_id, first_name'),
@@ -347,18 +420,27 @@ const LitigationMISPage: React.FC = () => {
     );
   }
 
-  const { exposure, byClient, byStage, byLifecycle, ageing, perStaff } = analytics;
+  const { exposure, byClient, byStage, byLifecycle, ageing, perStaff, upcomingHearings } = analytics;
 
   return (
     <div className="space-y-4 p-4">
+      <NoticesTopNav />
       <PageHeader
         title="Litigation MIS"
         subtitle="Management information overview of all litigation matters"
         icon={<BarChart3 className="h-5 w-5" />}
         actions={
-          <Button variant="outline" size="sm" onClick={() => exportExcel(tab, analytics)}>
-            <Download className="h-4 w-4 mr-1" /> Export Excel
-          </Button>
+          <div className="flex flex-wrap gap-1.5">
+            <Button variant="outline" size="sm" onClick={() => exportExcel(tab, analytics)}>
+              <Download className="h-4 w-4 mr-1" /> Export Tab
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => exportAllExcel(analytics)}>
+              <Download className="h-4 w-4 mr-1" /> Export All
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => exportLitigationMIS()}>
+              <FileText className="h-4 w-4 mr-1" /> PDF
+            </Button>
+          </div>
         }
       />
 
@@ -370,6 +452,7 @@ const LitigationMISPage: React.FC = () => {
           <TabsTrigger value="by-lifecycle">By Lifecycle</TabsTrigger>
           <TabsTrigger value="ageing">Ageing</TabsTrigger>
           <TabsTrigger value="per-staff">Per Staff</TabsTrigger>
+          <TabsTrigger value="hearings">Hearings ({upcomingHearings.length})</TabsTrigger>
         </TabsList>
 
         {/* ---- Exposure Summary ---- */}
@@ -595,6 +678,58 @@ const LitigationMISPage: React.FC = () => {
                       <TableCell className="text-xs text-right">{INR.format(r.totalDemand)}</TableCell>
                     </TableRow>
                   ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ---- Upcoming Hearings ---- */}
+        <TabsContent value="hearings">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Calendar className="h-4 w-4" />
+                Upcoming Hearings
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0 overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Matter</TableHead>
+                    <TableHead className="text-xs">Client</TableHead>
+                    <TableHead className="text-xs">Hearing Date</TableHead>
+                    <TableHead className="text-xs">Stage</TableHead>
+                    <TableHead className="text-xs">Owner</TableHead>
+                    <TableHead className="text-xs text-right">Demand</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {upcomingHearings.length === 0 && (
+                    <TableRow><TableCell colSpan={6} className="text-xs text-center text-muted-foreground py-6">No upcoming hearings</TableCell></TableRow>
+                  )}
+                  {upcomingHearings.map((r) => {
+                    const d = new Date(r.hearingDate);
+                    const daysAway = Math.ceil((d.getTime() - Date.now()) / 86_400_000);
+                    return (
+                      <TableRow key={r.matterId}>
+                        <TableCell className="text-xs font-medium">{r.matterNo}</TableCell>
+                        <TableCell className="text-xs">{r.clientName}</TableCell>
+                        <TableCell className="text-xs">
+                          {d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                          {daysAway <= 3 && (
+                            <span className="ml-1 text-[10px] font-medium text-red-600">
+                              ({daysAway === 0 ? 'Today' : daysAway === 1 ? 'Tomorrow' : `${daysAway}d`})
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-xs">{r.stage}</TableCell>
+                        <TableCell className="text-xs">{r.owner}</TableCell>
+                        <TableCell className="text-xs text-right">{INR.format(r.demand)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </CardContent>

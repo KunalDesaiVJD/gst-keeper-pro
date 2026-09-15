@@ -306,7 +306,7 @@ function TopExposureTable({
 
     return Array.from(agg.entries())
       .map(([id, v]) => ({ id, ...v }))
-      .sort((a, b) => b.exposure - a.exposure)
+      .sort((a, b) => b.exposure - a.exposure || b.openCount - a.openCount)
       .slice(0, 5);
   }, [notices, clients]);
 

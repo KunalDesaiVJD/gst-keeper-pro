@@ -15,6 +15,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Briefcase, Plus, Loader2, AlertTriangle, Calendar, User, Filter } from 'lucide-react';
+import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 
 interface Matter {
   id: string;
@@ -221,6 +222,7 @@ const LitigationMattersPage: React.FC = () => {
 
   return (
     <div className="space-y-4">
+      <NoticesTopNav />
       <PageHeader
         title="Litigation Matters"
         icon={<Briefcase className="h-5 w-5" />}

@@ -41,7 +41,8 @@ export interface CategoryRow {
   placeholder?: boolean;
 }
 
-export const isClosed = (s: string | null) => (s || '').trim().toLowerCase() === 'closed';
+const CLOSED_RE = /^(closed|withdrawn|dropped|disposed|deleted|adjudged)/i;
+export const isClosed = (s: string | null) => CLOSED_RE.test((s || '').trim());
 
 // Refund status strings observed from the real portal pull (see
 // noticeRefundDrc03Reports.ts) — "filed"/"deficiency memo" are still pending

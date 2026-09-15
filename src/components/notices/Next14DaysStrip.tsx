@@ -14,6 +14,7 @@ export interface DeadlineItem {
 interface Next14DaysStripProps {
   items: DeadlineItem[];
   onClickItem?: (item: DeadlineItem) => void;
+  onClickDate?: (dateISO: string) => void;
   loading?: boolean;
 }
 
@@ -45,9 +46,14 @@ const legendLabels: Record<DeadlineItem['type'], string> = {
   other: 'Other',
 };
 
+function todayIST(): Date {
+  const iso = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  return new Date(iso + 'T00:00:00');
+}
+
 function generateDays(count: number): Date[] {
   const days: Date[] = [];
-  const today = new Date();
+  const today = todayIST();
   for (let i = 0; i < count; i++) {
     const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
     days.push(d);
@@ -63,7 +69,7 @@ function formatDateKey(d: Date): string {
 }
 
 function isToday(d: Date): boolean {
-  const now = new Date();
+  const now = todayIST();
   return (
     d.getFullYear() === now.getFullYear() &&
     d.getMonth() === now.getMonth() &&
@@ -76,7 +82,7 @@ function isWeekend(d: Date): boolean {
   return day === 0 || day === 6;
 }
 
-export default function Next14DaysStrip({ items, onClickItem, loading }: Next14DaysStripProps) {
+export default function Next14DaysStrip({ items, onClickItem, onClickDate, loading }: Next14DaysStripProps) {
   const days = useMemo(() => generateDays(14), []);
 
   const grouped = useMemo(() => {
@@ -111,7 +117,8 @@ export default function Next14DaysStrip({ items, onClickItem, loading }: Next14D
 
   function renderWeek(weekDays: Date[]) {
     return (
-      <div className="grid grid-cols-7 gap-1">
+      <div className="overflow-x-auto">
+      <div className="grid grid-cols-7 gap-1 min-w-[420px]">
         {weekDays.map((d) => {
           const key = formatDateKey(d);
           const dayItems = grouped[key] || [];
@@ -130,7 +137,10 @@ export default function Next14DaysStrip({ items, onClickItem, loading }: Next14D
               )}
             >
               {/* Day header */}
-              <div className="text-center mb-0.5">
+              <div
+                className={cn('text-center mb-0.5', onClickDate && 'cursor-pointer hover:bg-muted/60 rounded')}
+                onClick={onClickDate ? () => onClickDate(key) : undefined}
+              >
                 <div
                   className={cn(
                     'text-[10px] font-medium leading-tight',
@@ -171,6 +181,7 @@ export default function Next14DaysStrip({ items, onClickItem, loading }: Next14D
             </div>
           );
         })}
+      </div>
       </div>
     );
   }

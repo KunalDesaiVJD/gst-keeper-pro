@@ -18,6 +18,8 @@ const SHELL: Record<string, ShellMeta> = {
   reminder_final: { accent: '#dc2626', pill: { text: 'Urgent &middot; Final Reminder', bg: '#fee2e2', fg: '#b91c1c' }, box: { bg: '#fef2f2', border: '#fecaca', label: '#7f1d1d' } },
   confirmation: { accent: '#16a34a', pill: { text: '&#10003; Filed Successfully', bg: '#dcfce7', fg: '#166534' }, box: { bg: '#f0fdf4', border: '#bbf7d0', label: '#15803d' } },
   confirmation_nil: { accent: '#16a34a', pill: { text: '&#10003; Nil Return Filed', bg: '#dcfce7', fg: '#166534' }, box: { bg: '#f0fdf4', border: '#bbf7d0', label: '#15803d' } },
+  notice_alert: { accent: '#7c3aed', pill: { text: 'Notice Alert', bg: '#ede9fe', fg: '#5b21b6' }, box: { bg: '#faf5ff', border: '#ddd6fe', label: '#6b21a8' } },
+  notice_alert_critical: { accent: '#dc2626', pill: { text: 'Urgent &middot; Notice Alert', bg: '#fee2e2', fg: '#b91c1c' }, box: { bg: '#fef2f2', border: '#fecaca', label: '#7f1d1d' } },
 };
 
 export function buildEmailHtml(opts: { key: string; kind: string; message: string; vars: EmailVars }): string {
@@ -26,13 +28,22 @@ export function buildEmailHtml(opts: { key: string; kind: string; message: strin
   const g = (k: string) => (vars[k] ?? '').toString().trim();
 
   const rows: Array<[string, string]> = [['GSTIN', g('gstin')]];
-  rows.push(['Return', key === 'confirmation_nil' ? `NIL ${g('return_type')}`.trim() : g('return_type')]);
-  rows.push(['Period', g('period')]);
-  if (kind === 'confirmation') {
-    rows.push(['ARN', g('arn')]);
-    rows.push(['Filed on', g('filing_date')]);
+  if (kind === 'notice_alert') {
+    rows.push(['Type', g('notice_type')]);
+    rows.push(['Reference', g('reference_number')]);
+    if (g('due_date')) rows.push(['Due Date', g('due_date')]);
+    if (g('days_remaining')) rows.push(['Days Remaining', g('days_remaining')]);
+    if (g('hearing_date')) rows.push(['Hearing Date', g('hearing_date')]);
+    if (g('priority')) rows.push(['Priority', g('priority')]);
   } else {
-    rows.push(['Filing due', g('due_date')]);
+    rows.push(['Return', key === 'confirmation_nil' ? `NIL ${g('return_type')}`.trim() : g('return_type')]);
+    rows.push(['Period', g('period')]);
+    if (kind === 'confirmation') {
+      rows.push(['ARN', g('arn')]);
+      rows.push(['Filed on', g('filing_date')]);
+    } else {
+      rows.push(['Filing due', g('due_date')]);
+    }
   }
   const dueColor = key === 'reminder_final' ? '#dc2626' : '#b45309';
   const detailRows = rows

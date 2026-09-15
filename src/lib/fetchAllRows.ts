@@ -20,7 +20,8 @@ export async function fetchAllRows<T>(
   for (;;) {
     const query: any = build(supabase.from(table).select(select) as any);
     const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
-    if (error || !data) break;
+    if (error) throw new Error(`fetchAllRows(${table}) page ${from}: ${error.message}`);
+    if (!data) break;
     all.push(...(data as T[]));
     if (data.length < PAGE_SIZE) break;
     from += PAGE_SIZE;
