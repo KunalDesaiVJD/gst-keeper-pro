@@ -79,6 +79,19 @@ async function isDuplicate(key: string): Promise<boolean> {
   return (data?.length ?? 0) > 0;
 }
 
+async function isCoolingDown(ruleId: string, noticeId: string, cooldownHrs: number | null): Promise<boolean> {
+  if (!cooldownHrs) return false;
+  const cutoff = new Date(Date.now() - cooldownHrs * 3600000).toISOString();
+  const { data } = await supabase
+    .from('notice_alert_log')
+    .select('id')
+    .eq('rule_id', ruleId)
+    .eq('notice_id', noticeId)
+    .gte('created_at', cutoff)
+    .limit(1);
+  return (data?.length ?? 0) > 0;
+}
+
 async function getClient(clientId: string) {
   const { data } = await supabase
     .from('clients')
@@ -241,6 +254,8 @@ export async function processEventAlert(event: NoticeEvent): Promise<number> {
   let queued = 0;
 
   for (const rule of rules) {
+    if (await isCoolingDown(rule.id, event.notice_id, rule.cooldown_hrs)) continue;
+
     const vars = buildNoticeVars(notice as NoticeRow, client);
     if (event.old_value && typeof event.old_value === 'object') {
       vars.old_status = String((event.old_value as Record<string, unknown>).staff_status ?? '');
@@ -370,6 +385,66 @@ export async function runScheduledAlerts(): Promise<{ queued: number; errors: st
     for (const r of recipients) {
       const sent = await enqueueAlert({
         ruleId: rule.id, noticeId: n.id, clientId: n.client_id,
+        toEmail: r.email, templateKey: rule.template_key,
+        vars: { ...vars, staff_name: r.name }, dedupe: dk + ':' + r.email,
+      });
+      if (sent) queued++;
+    }
+  }
+
+  // E4: hearing reminder (hearing_date within 3 days)
+  const hearingSoon = open.filter((n) => {
+    if (!n.hearing_date) return false;
+    const d = daysBetween(today, new Date(n.hearing_date));
+    return d >= 0 && d <= 3;
+  });
+  for (const n of hearingSoon) {
+    const dk = dedupeKey('E4_hearing', n.id, today.toISOString().slice(0, 10));
+    if (await isDuplicate(dk)) continue;
+    if (await isCoolingDown('', n.id, 24)) continue;
+    const client = await getClient(n.client_id);
+    if (!client) continue;
+    const vars = buildNoticeVars(n as NoticeRow, client);
+    const { data: rule } = await supabase.from('notice_alert_rules').select('id, template_key, recipient').eq('alert_key', 'E4_hearing').maybeSingle();
+    if (!rule) continue;
+    const recipients = await resolveRecipients(rule.recipient || 'assignee', n as NoticeRow);
+    for (const r of recipients) {
+      const sent = await enqueueAlert({
+        ruleId: rule.id, noticeId: n.id, clientId: n.client_id,
+        toEmail: r.email, templateKey: rule.template_key,
+        vars: { ...vars, staff_name: r.name }, dedupe: dk + ':' + r.email,
+      });
+      if (sent) queued++;
+    }
+  }
+
+  // E5: limitation period (matter_deadlines approaching in 30/15/7 days)
+  const { data: deadlines } = await supabase
+    .from('matter_deadlines')
+    .select('id, notice_id, deadline_type, deadline_date, statutory_basis, is_met')
+    .eq('is_met', false);
+  const limitThresholds = [30, 15, 7];
+  for (const dl of (deadlines ?? [])) {
+    if (!dl.deadline_date) continue;
+    const d = daysBetween(today, new Date(dl.deadline_date));
+    if (!limitThresholds.includes(d)) continue;
+    const dk = dedupeKey('E5_limitation', dl.id, `${d}d:${today.toISOString().slice(0, 10)}`);
+    if (await isDuplicate(dk)) continue;
+    const notice = openNotices?.find((n) => n.id === dl.notice_id);
+    if (!notice) continue;
+    const client = await getClient(notice.client_id);
+    if (!client) continue;
+    const vars = buildNoticeVars(notice as NoticeRow, client);
+    vars.deadline_type = dl.deadline_type || '';
+    vars.deadline_date = dl.deadline_date || '';
+    vars.statutory_basis = dl.statutory_basis || '';
+    vars.days_remaining = String(d);
+    const { data: rule } = await supabase.from('notice_alert_rules').select('id, template_key').eq('alert_key', 'E5_limitation').maybeSingle();
+    if (!rule) continue;
+    const partners = await getPartnerEmails();
+    for (const r of partners) {
+      const sent = await enqueueAlert({
+        ruleId: rule.id, noticeId: dl.notice_id, clientId: notice.client_id,
         toEmail: r.email, templateKey: rule.template_key,
         vars: { ...vars, staff_name: r.name }, dedupe: dk + ':' + r.email,
       });
