@@ -176,7 +176,14 @@ const NoticesDashboardPage: React.FC = () => {
     ? rows.filter((r) => classifyNoticeCategory(r) === categoryFilter)
     : rows;
 
-  const totalNotices = displayRows.length;
+  // Category summary (computed before KPI tiles so grandTotal is available)
+  const { categoryRows, grandTotal } = computeNoticeSummary(rows, refundRows, drc03Rows);
+
+  // KPI tiles: when unfiltered, use grandTotal (deduplicates Refund/DRC-03 ARNs);
+  // when filtered to a category, use that category's row from the summary.
+  const totalNotices = categoryFilter
+    ? (categoryRows.find((r) => r.type === categoryFilter)?.total ?? displayRows.length)
+    : grandTotal.total;
   const openNotices = displayRows.filter((r) => isOpen(r)).length;
   const overdue = displayRows.filter((r) => isOverdue(r)).length;
   const dueSoon = displayRows.filter((r) => isDueIn7(r)).length;
@@ -236,9 +243,6 @@ const NoticesDashboardPage: React.FC = () => {
     });
     return items;
   }, [rows, clients]);
-
-  // Category summary
-  const { categoryRows, grandTotal } = computeNoticeSummary(rows, refundRows, drc03Rows);
 
   // Ageing panel data
   const ageingNotices = useMemo(() =>

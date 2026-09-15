@@ -46,9 +46,14 @@ const legendLabels: Record<DeadlineItem['type'], string> = {
   other: 'Other',
 };
 
+function todayIST(): Date {
+  const iso = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  return new Date(iso + 'T00:00:00');
+}
+
 function generateDays(count: number): Date[] {
   const days: Date[] = [];
-  const today = new Date();
+  const today = todayIST();
   for (let i = 0; i < count; i++) {
     const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
     days.push(d);
@@ -64,7 +69,7 @@ function formatDateKey(d: Date): string {
 }
 
 function isToday(d: Date): boolean {
-  const now = new Date();
+  const now = todayIST();
   return (
     d.getFullYear() === now.getFullYear() &&
     d.getMonth() === now.getMonth() &&
@@ -112,7 +117,8 @@ export default function Next14DaysStrip({ items, onClickItem, onClickDate, loadi
 
   function renderWeek(weekDays: Date[]) {
     return (
-      <div className="grid grid-cols-7 gap-1">
+      <div className="overflow-x-auto">
+      <div className="grid grid-cols-7 gap-1 min-w-[420px]">
         {weekDays.map((d) => {
           const key = formatDateKey(d);
           const dayItems = grouped[key] || [];
@@ -175,6 +181,7 @@ export default function Next14DaysStrip({ items, onClickItem, onClickDate, loadi
             </div>
           );
         })}
+      </div>
       </div>
     );
   }

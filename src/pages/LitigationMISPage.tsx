@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { BarChart3, Download, Loader2 } from 'lucide-react';
+import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer,
@@ -351,6 +352,7 @@ const LitigationMISPage: React.FC = () => {
 
   return (
     <div className="space-y-4 p-4">
+      <NoticesTopNav />
       <PageHeader
         title="Litigation MIS"
         subtitle="Management information overview of all litigation matters"

@@ -18,6 +18,7 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@
 import { NoticeWorkflowListView } from '@/components/reports/views/NoticeWorkflowListView';
 import { EvidenceEventListView } from '@/components/reports/views/EvidenceEventListView';
 import { AddNoticeDialog } from '@/components/notices/AddNoticeDialog';
+import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 import type { ReportTable } from '@/utils/allClientsReports';
 import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
 import { isClosed } from '@/utils/noticeSummaryReport';
@@ -254,6 +255,8 @@ const AllClientsNoticesPage: React.FC = () => {
         <ChevronRight className="h-3 w-3" />
         <span>Notices and Orders</span>
       </div>
+
+      <NoticesTopNav />
 
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="icon" className="h-8 w-8" asChild>

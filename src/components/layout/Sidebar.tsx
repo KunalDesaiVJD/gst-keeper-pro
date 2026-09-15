@@ -198,6 +198,12 @@ const NAV_GROUPS: NavGroup[] = [
 
 const GROUPED_PATHS = new Set(NAV_GROUPS.flatMap((g) => g.paths));
 
+const NOTICES_PATHS = [
+  '/notices-dashboard', '/notices-all', '/notices-report',
+  '/notices-gstin-wise-count', '/refunds-all', '/drc03-all',
+  '/litigation', '/litigation-mis',
+];
+
 const getRoleLabel = (role: string) => {
   switch (role) {
     case 'superadmin': return 'Super Admin';
@@ -371,7 +377,12 @@ export const SidebarContents: React.FC<{
               key={item.path}
               to={item.path}
               onClick={onNavigate}
-              className={navLinkClasses}
+              className={({ isActive }) => {
+                const active = item.path === '/notices-dashboard'
+                  ? isActive || NOTICES_PATHS.some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`))
+                  : isActive;
+                return navLinkClasses({ isActive: active });
+              }}
             >
               {item.icon}
               <span>{item.label}</span>
@@ -414,6 +425,7 @@ export const SidebarContents: React.FC<{
 const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize }) => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const navItems = useSidebarNavItems();
 
   const handleLogout = () => {
@@ -447,15 +459,18 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
               <TooltipTrigger asChild>
                 <NavLink
                   to={item.path}
-                  className={({ isActive }) =>
-                    cn(
+                  className={({ isActive }) => {
+                    const active = item.path === '/notices-dashboard'
+                      ? isActive || NOTICES_PATHS.some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`))
+                      : isActive;
+                    return cn(
                       'relative flex items-center justify-center p-2 rounded-lg transition-all duration-200',
                       'before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2 before:w-1 before:rounded-r-full before:transition-all',
-                      isActive
+                      active
                         ? 'bg-sidebar-accent text-sidebar-accent-foreground before:h-6 before:bg-accent'
                         : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground before:h-0'
-                    )
-                  }
+                    );
+                  }}
                   aria-label={item.label}
                 >
                   {item.icon}

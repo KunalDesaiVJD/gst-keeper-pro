@@ -25,11 +25,15 @@ export const NoticesTopNav: React.FC = () => {
   const isReportActive = REPORT_PATHS.includes(pathname);
 
   return (
-    <nav className="flex items-center gap-1 rounded-md border bg-muted/30 p-1">
+    <nav className="flex flex-wrap items-center gap-1 rounded-md border bg-muted/30 p-1">
       {NAV_LINKS.map((item) => {
         const active = item.to.includes('?')
           ? fullPath === item.to
-          : pathname === item.to && !search;
+          : item.to === '/notices-all'
+            ? pathname === '/notices-all' && search !== '?filter=submitted'
+            : item.to === '/litigation'
+              ? pathname.startsWith('/litigation')
+              : pathname === item.to;
         return (
           <Link key={item.label} to={item.to} className={navItemClass(active)}>
             <item.icon className="h-3.5 w-3.5" />
