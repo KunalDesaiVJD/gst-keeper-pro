@@ -23,7 +23,7 @@ import AgeingExposurePanel from '@/components/notices/AgeingExposurePanel';
 import Next14DaysStrip, { type DeadlineItem } from '@/components/notices/Next14DaysStrip';
 import SyncHealthCard from '@/components/notices/SyncHealthCard';
 import {
-  Bell, Loader2, RefreshCw, RotateCcw, Search,
+  Bell, Loader2, RefreshCw, RotateCcw, Search, Plus, Mail,
 } from 'lucide-react';
 
 function compareVersions(a: string, b: string): number {
@@ -201,6 +201,30 @@ const NoticesDashboardPage: React.FC = () => {
 
   const newWithDemand = newRows.filter((r) => r.amount_of_demand && r.amount_of_demand > 0).length;
   const unassignedCount = displayRows.filter((r) => isOpen(r) && !r.assign_to_user_id).length;
+  const needClosingCount = displayRows.filter((r) => isOpen(r) && !r.due_date && !r.staff_status).length;
+
+  const dueSoonBreakdown = useMemo(() => {
+    const due7Rows = displayRows.filter((r) => isDueIn7(r));
+    return {
+      replies: due7Rows.filter((r) => !/appeal|hearing/i.test(r.staff_status ?? '')).length,
+      appeals: due7Rows.filter((r) => /appeal/i.test(r.staff_status ?? '')).length,
+      hearings: due7Rows.filter((r) => /hearing/i.test(r.staff_status ?? '')).length,
+    };
+  }, [displayRows]);
+
+  const nextDeadline = useMemo(() => {
+    const today = todayISOString();
+    const upcoming = displayRows
+      .filter((r) => isDueIn7(r))
+      .map((r) => ({ ...r, _due: r.extended_due_date || r.due_date || '' }))
+      .filter((r) => r._due >= today)
+      .sort((a, b) => a._due.localeCompare(b._due));
+    const first = upcoming[0];
+    if (!first) return '';
+    const clientName = clients.find((c) => c.id === first.client_id)?.name || '';
+    const dueDate = new Date(first._due).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' });
+    return `Next: ${clientName} · ${first.notice_type || 'Notice'} · ${dueDate}`;
+  }, [displayRows, clients]);
 
   // Sync health
   const latestLogByClient = new Map<string, SyncLogRow>();
@@ -301,9 +325,13 @@ const NoticesDashboardPage: React.FC = () => {
             <span className="sm:hidden">Search</span>
             <kbd className="ml-2 hidden rounded border bg-muted px-1 py-0.5 text-[9px] font-mono sm:inline">⌘K</kbd>
           </button>
-          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleSweep} disabled={sweeping}>
-            {sweeping ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="mr-1.5 h-3.5 w-3.5" />}
-            Sweep
+          <Button size="sm" variant="outline" className="h-8 text-xs">
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+            Add Notice
+          </Button>
+          <Button size="sm" variant="outline" className="h-8 text-xs">
+            <Mail className="mr-1.5 h-3.5 w-3.5" />
+            Send digest
           </Button>
           <Button size="sm" className="h-8 text-xs" onClick={handleSyncAll} disabled={syncing}>
             {syncing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
@@ -315,13 +343,21 @@ const NoticesDashboardPage: React.FC = () => {
       {/* ── Tabs + filters ─────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <NoticesTopNav />
+        <div className="flex flex-wrap gap-1.5">
+          <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">Type: All notices ▾</span>
+          <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">FY: All ▾</span>
+          <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">Owner: Everyone ▾</span>
+          <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">Officer: All ▾</span>
+        </div>
       </div>
 
       {/* ── Zone 1: Needs-attention strip ─────────────────────────────────── */}
       <NeedsAttentionStrip
         overdue={overdue}
-        total={totalNotices}
+        total={openNotices}
         dueSoon={dueSoon}
+        dueSoonBreakdown={dueSoonBreakdown}
+        nextDeadline={nextDeadline}
         newCount={newNotices}
         newGstinCount={newGstins}
         newWithDemand={newWithDemand}
@@ -330,6 +366,7 @@ const NoticesDashboardPage: React.FC = () => {
         exposureCount={openWithDemand.length}
         demandAtRisk={demandAtRisk}
         oldestOverdueDays={oldestOverdueDays}
+        needClosingCount={needClosingCount}
         loading={loading}
         onClickOverdue={() => navigate('/notices-all?filter=overdue')}
         onClickDueSoon={() => navigate('/notices-all?filter=due7')}
@@ -340,7 +377,7 @@ const NoticesDashboardPage: React.FC = () => {
       {/* ── Zone 2: Work queue (left 2/3) | Ageing & exposure (right 1/3) ── */}
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
         <div className="xl:col-span-2">
-          <NoticeWorkQueue onSelectNotice={openDrawer} />
+          <NoticeWorkQueue onSelectNotice={openDrawer} onSweep={handleSweep} />
         </div>
         <div>
           <AgeingExposurePanel

@@ -20,6 +20,7 @@ interface NeedsAttentionStripProps {
   preDepositPaid?: number;
   oldestOverdueDays?: number;
   demandAtRisk?: number;
+  needClosingCount?: number;
   loading?: boolean;
   onClickOverdue?: () => void;
   onClickDueSoon?: () => void;
@@ -51,6 +52,7 @@ function NeedsAttentionStrip({
   preDepositPaid,
   oldestOverdueDays,
   demandAtRisk,
+  needClosingCount,
   loading = false,
   onClickOverdue,
   onClickDueSoon,
@@ -92,7 +94,7 @@ function NeedsAttentionStrip({
           <p className="text-3xl font-bold tabular-nums leading-none">
             {overdue}
             <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-              of {total} total
+              of {total} open{needClosingCount ? ` · ${needClosingCount} need closing` : ''}
             </span>
           </p>
           <div className="flex items-center justify-between text-[11px] text-muted-foreground">
