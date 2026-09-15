@@ -20,7 +20,6 @@ export interface NoticeSetRow {
   assign_to: string | null;
   assign_to_user_id: string | null;
   amount_of_demand: number | null;
-  hearing_date: string | null;
 }
 
 export interface StatusRow { client_id?: string; arn: string | null; status: string | null; }
@@ -28,7 +27,7 @@ export interface StatusRow { client_id?: string; arn: string | null; status: str
 const NOTICE_SELECT =
   'id, client_id, notice_type, description, staff_status, priority, issue_date, due_date, ' +
   'extended_due_date, reply_date, first_seen_at, pulled_at, case_id, reference_number, ' +
-  'assign_to, assign_to_user_id, amount_of_demand, hearing_date';
+  'assign_to, assign_to_user_id, amount_of_demand';
 
 export function useNoticeSet() {
   const [rows, setRows] = useState<NoticeSetRow[]>([]);
