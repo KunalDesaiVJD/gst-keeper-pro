@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
-import { Loader2, ClipboardList, Download } from 'lucide-react';
+import { Loader2, Download } from 'lucide-react';
 
 interface QueueItem {
   id: string;
@@ -152,9 +152,7 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep }) => {
     <Card>
       <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
         <div>
-          <h2 className="flex items-center gap-1.5 text-sm font-semibold">
-            <ClipboardList className="h-4 w-4" /> Work queue — what needs action
-          </h2>
+          <h2 className="text-sm font-semibold">Work queue — what needs action</h2>
           <p className="text-[11px] text-muted-foreground">
             Sorted by statutory deadline. Click a row to open the notice drawer; select rows for bulk actions.
           </p>
@@ -207,15 +205,15 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep }) => {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="bg-muted/60 w-[26px]"></TableHead>
-                  <TableHead className="bg-muted/60 text-[10px] font-semibold uppercase">Client</TableHead>
-                  <TableHead className="bg-muted/60 text-[10px] font-semibold uppercase">Notice / Matter</TableHead>
-                  <TableHead className="bg-muted/60 text-[10px] font-semibold uppercase">Stage</TableHead>
-                  <TableHead className="bg-muted/60 text-[10px] font-semibold uppercase">Due</TableHead>
-                  <TableHead className="bg-muted/60 text-right text-[10px] font-semibold uppercase">Days</TableHead>
-                  <TableHead className="bg-muted/60 text-right text-[10px] font-semibold uppercase">Demand ₹</TableHead>
-                  <TableHead className="bg-muted/60 text-center text-[10px] font-semibold uppercase">Owner</TableHead>
-                  <TableHead className="bg-muted/60 text-[10px] font-semibold uppercase"></TableHead>
+                  <TableHead className="bg-muted w-[26px]"></TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Client</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Notice / Matter</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Stage</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Due</TableHead>
+                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Days</TableHead>
+                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Demand ₹</TableHead>
+                  <TableHead className="bg-muted text-center text-[10px] font-semibold uppercase">Owner</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

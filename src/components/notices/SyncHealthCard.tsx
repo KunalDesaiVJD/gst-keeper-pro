@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
-import { RefreshCw } from 'lucide-react';
 
 interface SyncHealthCardProps {
   lastSync: string | null;
@@ -164,10 +163,7 @@ export default function SyncHealthCard({
     <Card>
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div>
-          <h2 className="flex items-center gap-1.5 text-sm font-semibold">
-            <RefreshCw className="h-3.5 w-3.5 text-muted-foreground" />
-            Sync &amp; alerts
-          </h2>
+          <h2 className="text-sm font-semibold">Sync &amp; alerts</h2>
           <p className="text-[11px] text-muted-foreground">Portal pulls, failed logins, emails sent</p>
         </div>
         {isHealthy && (
@@ -191,7 +187,7 @@ export default function SyncHealthCard({
           {rows.map((row) => (
             <div key={row.label} className="flex items-center justify-between gap-4">
               <span className="text-xs text-muted-foreground">{row.label}</span>
-              <span className="shrink-0 text-xs font-semibold">{row.value}</span>
+              <span className="shrink-0 text-xs font-bold tabular-nums">{row.value}</span>
             </div>
           ))}
         </div>

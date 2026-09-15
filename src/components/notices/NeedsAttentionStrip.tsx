@@ -91,10 +91,10 @@ function NeedsAttentionStrip({
               </span>
             )}
           </div>
-          <p className="text-3xl font-bold tabular-nums leading-none">
+          <p className="font-heading text-[30px] font-bold tabular-nums leading-none">
             {overdue}
-            <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-              of {total} open{needClosingCount ? ` · ${needClosingCount} need closing` : ''}
+            <span className="ml-1.5 font-sans text-xs font-medium text-muted-foreground">
+              of {total} overdue{needClosingCount ? ` · ${needClosingCount} need closing` : ''}
             </span>
           </p>
           <div className="flex items-center justify-between text-[11px] text-muted-foreground">
@@ -121,10 +121,10 @@ function NeedsAttentionStrip({
               This week
             </span>
           </div>
-          <p className="text-3xl font-bold tabular-nums leading-none">
+          <p className="font-heading text-[30px] font-bold tabular-nums leading-none">
             {dueSoon}
             {dueSoonBreakdown && (
-              <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+              <span className="ml-1.5 font-sans text-xs font-medium text-muted-foreground">
                 {dueSoonBreakdown.replies} replies · {dueSoonBreakdown.appeals} appeals · {dueSoonBreakdown.hearings} hearings
               </span>
             )}
@@ -152,9 +152,9 @@ function NeedsAttentionStrip({
               </span>
             )}
           </div>
-          <p className="text-3xl font-bold tabular-nums leading-none">
+          <p className="font-heading text-[30px] font-bold tabular-nums leading-none">
             {newCount}
-            <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+            <span className="ml-1.5 font-sans text-xs font-medium text-muted-foreground">
               from {newGstinCount} GSTINs{newWithDemand ? ` · ${newWithDemand} with demand` : ''}
             </span>
           </p>
@@ -167,7 +167,7 @@ function NeedsAttentionStrip({
 
       {/* Exposure under dispute */}
       <Card
-        className="border-l-4 border-l-slate-800 dark:border-l-slate-300 cursor-pointer transition-shadow hover:shadow-md"
+        className="border-l-4 border-l-primary cursor-pointer transition-shadow hover:shadow-md"
         onClick={onClickExposure}
       >
         <CardContent className="p-3.5 space-y-1.5">
@@ -179,14 +179,14 @@ function NeedsAttentionStrip({
               {exposureCount} matters
             </span>
           </div>
-          <p className="text-3xl font-bold tabular-nums leading-none">
+          <p className="font-heading text-[30px] font-bold tabular-nums leading-none">
             {formatINR(exposureAmount)}
-          </p>
-          <div className="text-[11px] text-muted-foreground">
             {exposureTax != null && (
-              <span>tax {formatINR(exposureTax)} · int {formatINR(exposureInterest ?? 0)} · pen {formatINR(exposurePenalty ?? 0)}</span>
+              <span className="ml-1.5 font-sans text-xs font-medium text-muted-foreground">
+                tax {formatINR(exposureTax)} · interest {formatINR(exposureInterest ?? 0)} · penalty {formatINR(exposurePenalty ?? 0)}
+              </span>
             )}
-          </div>
+          </p>
           <div className="flex items-center justify-between text-[11px] text-muted-foreground">
             <span>{preDepositPaid ? `Pre-deposit ${formatINR(preDepositPaid)}` : ''}</span>
             <span className="font-semibold text-primary">Exposure report →</span>

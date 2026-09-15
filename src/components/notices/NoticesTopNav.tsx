@@ -1,22 +1,22 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Bell, Send, LayoutDashboard, FileBarChart2, ChevronDown, ListOrdered, Building2, Briefcase, BarChart3 } from 'lucide-react';
+import { ListOrdered, Building2, BarChart3 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 
 const NAV_LINKS = [
-  { label: 'Dashboard', icon: LayoutDashboard, to: '/notices-dashboard' },
-  { label: 'Work Queue', icon: ListOrdered, to: '/notices-all' },
-  { label: 'Matters', icon: Bell, to: '/notices-all?filter=submitted' },
-  { label: 'Hearings', icon: Briefcase, to: '/litigation' },
-  { label: 'Clients', icon: Building2, to: '/notices-gstin-wise-count' },
+  { label: 'Dashboard', to: '/notices-dashboard' },
+  { label: 'Work Queue', to: '/notices-all' },
+  { label: 'Matters', to: '/notices-all?filter=submitted' },
+  { label: 'Hearings', to: '/litigation' },
+  { label: 'Clients', to: '/notices-gstin-wise-count' },
 ];
 
 const REPORT_PATHS = ['/notices-report', '/notices-gstin-wise-count', '/litigation-mis'];
 
 const navItemClass = (active: boolean) => cn(
-  'flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium transition-colors',
-  active ? 'border border-primary/40 bg-background text-primary' : 'text-muted-foreground hover:bg-background hover:text-foreground',
+  'whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+  active ? 'bg-primary text-primary-foreground font-semibold' : 'text-muted-foreground hover:text-foreground',
 );
 
 export const NoticesTopNav: React.FC = () => {
@@ -26,7 +26,7 @@ export const NoticesTopNav: React.FC = () => {
   const isReportActive = REPORT_PATHS.includes(pathname);
 
   return (
-    <nav className="flex flex-wrap items-center gap-1 rounded-md border bg-muted/30 p-1">
+    <nav className="inline-flex items-center gap-0.5 rounded-lg border bg-background p-[3px]">
       {NAV_LINKS.map((item) => {
         const active = item.to.includes('?')
           ? fullPath === item.to
@@ -37,16 +37,13 @@ export const NoticesTopNav: React.FC = () => {
               : pathname === item.to;
         return (
           <Link key={item.label} to={item.to} className={navItemClass(active)}>
-            <item.icon className="h-3.5 w-3.5" />
             {item.label}
           </Link>
         );
       })}
       <DropdownMenu>
         <DropdownMenuTrigger className={cn(navItemClass(isReportActive), 'outline-none')}>
-          <FileBarChart2 className="h-3.5 w-3.5" />
-          Report
-          <ChevronDown className="h-3 w-3" />
+          Reports ▾
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start">
           <DropdownMenuItem asChild>

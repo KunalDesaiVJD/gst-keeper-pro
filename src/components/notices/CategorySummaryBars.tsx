@@ -64,7 +64,7 @@ export default function CategorySummaryBars({
             )}
             onClick={() => onCategoryClick?.(cat.type)}
           >
-            <span className="w-[100px] shrink-0 truncate text-xs font-medium">
+            <span className="w-[120px] shrink-0 truncate text-xs font-medium">
               {cat.type}
             </span>
 
