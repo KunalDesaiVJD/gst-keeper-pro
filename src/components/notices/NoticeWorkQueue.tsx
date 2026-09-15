@@ -156,7 +156,7 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep }) => {
             <ClipboardList className="h-4 w-4" /> Work queue — what needs action
           </h2>
           <p className="text-[11px] text-muted-foreground">
-            Sorted by statutory deadline. Click a row to open the notice drawer.
+            Sorted by statutory deadline. Click a row to open the notice drawer; select rows for bulk actions.
           </p>
         </div>
         <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">

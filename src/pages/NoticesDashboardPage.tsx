@@ -351,11 +351,6 @@ const NoticesDashboardPage: React.FC = () => {
         </div>
       </div>
 
-      {/* ── Tabs + filters ─────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <NoticesTopNav />
-      </div>
-
       {/* ── Zone 1: Needs-attention strip ─────────────────────────────────── */}
       <NeedsAttentionStrip
         overdue={overdue}
