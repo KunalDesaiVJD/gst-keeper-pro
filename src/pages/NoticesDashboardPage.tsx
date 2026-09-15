@@ -225,15 +225,6 @@ const NoticesDashboardPage: React.FC = () => {
           clientId: r.client_id,
         });
       }
-      if (r.hearing_date && r.hearing_date >= today && r.hearing_date <= end && isOpen(r)) {
-        items.push({
-          date: r.hearing_date,
-          type: 'hearing',
-          label: clientMap.get(r.client_id) || 'Hearing',
-          noticeId: r.id,
-          clientId: r.client_id,
-        });
-      }
       if (r.issue_date && r.issue_date >= today && r.issue_date <= end) {
         items.push({
           date: r.issue_date,
