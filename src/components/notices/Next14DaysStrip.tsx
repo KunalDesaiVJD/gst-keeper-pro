@@ -14,6 +14,7 @@ export interface DeadlineItem {
 interface Next14DaysStripProps {
   items: DeadlineItem[];
   onClickItem?: (item: DeadlineItem) => void;
+  onClickDate?: (dateISO: string) => void;
   loading?: boolean;
 }
 
@@ -76,7 +77,7 @@ function isWeekend(d: Date): boolean {
   return day === 0 || day === 6;
 }
 
-export default function Next14DaysStrip({ items, onClickItem, loading }: Next14DaysStripProps) {
+export default function Next14DaysStrip({ items, onClickItem, onClickDate, loading }: Next14DaysStripProps) {
   const days = useMemo(() => generateDays(14), []);
 
   const grouped = useMemo(() => {
@@ -130,7 +131,10 @@ export default function Next14DaysStrip({ items, onClickItem, loading }: Next14D
               )}
             >
               {/* Day header */}
-              <div className="text-center mb-0.5">
+              <div
+                className={cn('text-center mb-0.5', onClickDate && 'cursor-pointer hover:bg-muted/60 rounded')}
+                onClick={onClickDate ? () => onClickDate(key) : undefined}
+              >
                 <div
                   className={cn(
                     'text-[10px] font-medium leading-tight',

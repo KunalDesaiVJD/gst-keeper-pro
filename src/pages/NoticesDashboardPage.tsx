@@ -406,6 +406,7 @@ const NoticesDashboardPage: React.FC = () => {
             onClickItem={(item) => {
               if (item.noticeId && item.clientId) openDrawer(item.noticeId, item.clientId);
             }}
+            onClickDate={(dateISO) => navigate(`/notices-all?due_date=${dateISO}`)}
             loading={loading}
           />
         </div>
