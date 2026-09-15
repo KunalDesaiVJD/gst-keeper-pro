@@ -103,7 +103,12 @@ const CompanyListPage: React.FC = () => {
   const fetchAll = async () => {
     setLoading(true);
     const [clientsRes, logsRes] = await Promise.all([
-      supabase.from('clients').select('id, name, gstin, gst_user_id, inactive_at_hand').order('name'),
+      // This page is entirely scoped to Notices Dashboard work (Sync/Fetch
+      // Company, Total Downloaded/Pending, etc.) — a client opted out via
+      // "Exclude from Notices Dashboard sync" shouldn't appear here at all,
+      // not just be unselectable. The general client registry (/clients)
+      // is untouched, so nothing about managing that client is lost.
+      supabase.from('clients').select('id, name, gstin, gst_user_id, inactive_at_hand').eq('notices_sync_excluded', false).order('name'),
       supabase.from('client_sync_log').select('id, client_id, action, status, message, created_at').order('created_at', { ascending: false }),
     ]);
     setClients((clientsRes.data || []) as ClientRow[]);
@@ -225,13 +230,17 @@ const CompanyListPage: React.FC = () => {
   const handleSync = () => {
     if (selected.size === 0) { toast.error('Select at least one company first.'); return; }
     if (!extReady) { toast.error('GST Keeper browser extension not detected. Install/enable it to sync.'); return; }
+    // Clients with "Exclude from Notices Dashboard sync" set (Edit Client)
+    // never load onto this page at all (see fetchAll's query), so `selected`
+    // can't contain one — no filtering needed here.
+    const clientIds = Array.from(selected);
     pendingActionRef.current = 'sync';
     setSyncing(true);
     // 'notices_bundle': same mode the Notices Dashboard's own "Sync All" now
     // uses — pulls Notices & Orders, then chains through Refunds and DRC-03
     // for each selected client before moving to the next, instead of
     // stopping after Notices alone (see chainOrStop in content.js).
-    window.postMessage({ __gstkPullSectionAllClients: { mode: 'notices_bundle', clientIds: Array.from(selected) } }, '*');
+    window.postMessage({ __gstkPullSectionAllClients: { mode: 'notices_bundle', clientIds } }, '*');
   };
 
   const handleFetchCompany = () => {

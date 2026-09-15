@@ -194,6 +194,11 @@
   if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || job.step === 'gstr1_json_pull' || job.step === 'revrclm_pull' || job.step === 'rcmliab_pull' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
+      // 'filing' jobs run on a backgrounded tab (see startFilingOpen in
+      // background.js) — this give-up banner is meaningless if nobody can
+      // see it. Every other mode's tab was already foreground, so this is
+      // scoped to 'filing' only, not a behavior change for the rest.
+      if (job.mode === 'filing') { try { await GSTKdb.focusTab(); } catch (e) { /* non-fatal */ } }
       banner('Session kept dropping for ' + cur.creds.name + ' — moving on.', '#dc2626');
       // Leave a trace in the table itself (delete-then-insert, so a later
       // successful pull overwrites it) — this job's tab is usually not being
@@ -305,6 +310,12 @@
       job.periodIdx = 0;
       job.period = job.periods[0];
       job.step = 'logout';
+      // Confirmed live 2026-09-13: this counter was never reset per client —
+      // a client that genuinely exhausted all 3 auto-retries left
+      // job.captchaRetry at 3, so the VERY NEXT client in the queue would
+      // skip straight to "retries exhausted" on its own first bounce-back,
+      // even for a plain one-off CAPTCHA typo unrelated to their password.
+      delete job.captchaRetry;
       await setJob(job);
       banner('Client done — switching to the next…', '#2563eb');
       location.href = 'https://services.gst.gov.in/services/logout';
@@ -323,6 +334,17 @@
     try { await GSTKdb.logClientSync(cur.clientId, 'notices', status, message || null); } catch (e) { /* diagnostic only */ }
   }
 
+  // Unlike logSyncAttempt above, NOT gated on job.logSync — a login failure
+  // means we never even reached this client's actual pull step, for ANY job
+  // mode (Sync All, Fetch Company, a single Reports Hub pull, ...), so it's
+  // worth recording regardless of which flow triggered it. Read by Company
+  // List's Status/Status Message columns exactly like every other
+  // client_sync_log row — surfaces as a real, distinguishable failure
+  // instead of looking identical to "never synced".
+  async function logLoginFailure(job, cur, message) {
+    try { await GSTKdb.logClientSync(cur.clientId, 'login_failed', 'failed', message || null); } catch (e) { /* diagnostic only */ }
+  }
+
   async function handleLogout(job) {
     // On the logout page now — let the previous client's session fully clear, then
     // start the next client's login.
@@ -335,6 +357,7 @@
   async function handleLogin(job, cur, progress) {
     if (isLoggedIn()) {
       job.retries = 0;
+      delete job.captchaRetry;
       if (job.mode === 'returnpdf') {
         banner('Logged in — fetching the return + PDF…' + progress);
         job.step = 'efiledpdf';
@@ -354,6 +377,13 @@
         banner('Logged in — opening the filing page…' + progress);
         job.step = 'filing';
         await setJob(job);
+        // The tab was foregrounded for the CAPTCHA step below — send it
+        // back to the background for the automated dashboard navigation
+        // (FY/Quarter/Month/Search/tile-finding in handleFiling); it comes
+        // back to the foreground right before the final "Prepare Online"
+        // click. Best-effort: a failure here just leaves the tab visible,
+        // it never blocks the actual job.
+        try { await GSTKdb.backgroundTab(); } catch (e) { /* non-fatal */ }
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
       } else if (job.mode === 'gstr1_upload') {
         banner('Logged in — opening the returns dashboard for the GSTR-1 upload…' + progress);
@@ -491,6 +521,15 @@
       return;
     }
     if (!/services\/login/.test(url)) { location.href = 'https://services.gst.gov.in/services/login'; return; }
+    // 'filing' jobs open this tab in the background (see startFilingOpen in
+    // background.js) so the automated Returns-Dashboard navigation doesn't
+    // play out on screen — but everything from here through the CAPTCHA is
+    // either shown to a human (the login form itself) or could fail in a
+    // way only a human can act on ("Login form did not load"), so bring it
+    // forward now rather than right before the CAPTCHA wait specifically.
+    // Every other job mode's tab was already foreground from creation, so
+    // this is a no-op for them either way.
+    if (job.mode === 'filing') { try { await GSTKdb.focusTab(); } catch (e) { /* non-fatal */ } }
     banner('Logging in ' + cur.creds.name + '…' + progress);
     if (!(await waitFor('#username'))) { banner('Login form did not load — reload the page.', '#dc2626'); return; }
     setVal($('#username'), cur.creds.user);
@@ -511,28 +550,59 @@
       $('button[type=submit]');
     if (btn) {
       btn.click();
-      // A wrong CAPTCHA bounces back to the login page with a fresh #captcha
-      // field rather than throwing an error — reload for a new image and
-      // retry automatically (up to 3 times) instead of leaving the job stuck
-      // waiting on a field that will never fill itself again.
+      // A wrong CAPTCHA and a wrong saved password bounce back to this same
+      // page identically (login form again, fresh #captcha field) — nothing
+      // here can visually tell them apart except the portal's own error
+      // banner, so read that first rather than always assuming "just a bad
+      // CAPTCHA". Confirmed live: a WRONG PASSWORD used to retry the CAPTCHA
+      // up to 3 times (pointless — the same password fails every time),
+      // then silently stall forever on this one client, blocking every
+      // other client queued behind it in the same Sync All run with no
+      // error, no log entry, and no way to tell which client caused it.
       setTimeout(async () => {
-        if (!/services\/login/.test(location.href)) return;
-        const errEl = document.querySelector('.alert-danger, .error-message, [role=alert]');
-        const errMsg = errEl ? errEl.textContent.trim() : '';
-        const isAuthErr = /invalid|incorrect|wrong|locked|disabled|suspended/i.test(errMsg);
-        if (isAuthErr) {
-          try { await GSTKdb.logClientSync(cur.clientId, 'login', 'failed', 'Login rejected: ' + errMsg.slice(0, 200) + ' [ext ' + EXT_VERSION + ']'); } catch (_) {}
-          banner('Login failed for ' + cur.creds.name + ': ' + errMsg.slice(0, 80) + ' — moving on.', '#dc2626');
+        // A single fixed-delay check raced the portal's own error-banner
+        // render — confirmed live 2026-09-13: a genuine bad-password bounce
+        // sometimes read as an empty errText at exactly 2.5s (banner not
+        // painted yet), silently falling through to the CAPTCHA-retry path
+        // instead of being caught immediately. Poll a few times over ~2s
+        // instead of checking once.
+        for (let i = 0; i < 8; i++) {
+          if (/services\/login/.test(location.href)) {
+            const hasErr = $$('.alert-danger, .toast-error, .error-msg').some((el) => (el.textContent || '').trim());
+            if (hasErr) break;
+          } else if (isLoggedIn()) {
+            return; // genuinely logged in — let the normal dispatcher continue
+          }
+          await sleep(250);
+        }
+        if (!/services\/login/.test(location.href)) {
+          if (isLoggedIn()) return;
+          const heading = (($('h1,h2,h3') || {}).textContent || '').trim().slice(0, 160);
+          const reason = 'Landed on an unrecognized page after login (' + location.pathname + (heading ? ': "' + heading + '"' : '') + ') — not the login form, but no logged-in signal either.';
+          banner('Could not log in ' + cur.creds.name + ' — unexpected page after login. Moving on.' + progress, '#dc2626');
+          await logLoginFailure(job, cur, reason);
           await advance(job);
           return;
         }
+        const errText = $$('.alert-danger, .toast-error, .error-msg')
+          .map((el) => (el.textContent || '').trim()).filter(Boolean)[0] || '';
+        const isCredentialError = /invalid.*(credential|user\s*id|username|password)|incorrect.*(user\s*id|username|password)|wrong\s*password/i.test(errText);
         const tries = Number((job && job.captchaRetry) || 0);
+        if (isCredentialError) {
+          banner('Login failed for ' + cur.creds.name + ' (' + (errText || 'invalid credentials') + ') — moving on.' + progress, '#dc2626');
+          await logLoginFailure(job, cur, errText || 'Invalid username or password.');
+          await advance(job);
+          return;
+        }
         if ($('#captcha') && tries < 3) {
           job.captchaRetry = tries + 1;
-          setJob(job).finally(() => location.reload());
-        } else if (tries >= 3) {
-          try { await GSTKdb.logClientSync(cur.clientId, 'login', 'failed', 'CAPTCHA failed 3x — giving up [ext ' + EXT_VERSION + ']'); } catch (_) {}
-          banner('CAPTCHA failed 3 times for ' + cur.creds.name + ' — moving on.', '#dc2626');
+          await setJob(job);
+          location.reload();
+          return;
+        }
+        if ($('#captcha') && tries >= 3) {
+          banner('Could not log in ' + cur.creds.name + ' after 3 attempts — moving on.' + progress, '#dc2626');
+          await logLoginFailure(job, cur, errText || 'Login did not succeed after 3 automatic retries.');
           await advance(job);
         }
       }, 2500);
@@ -763,29 +833,41 @@
   // then on the dashboard pick FY + quarter + month, Search, and click the
   // return's "Prepare Online" so the human lands on the filing page. We DO NOT
   // submit — CAPTCHA and the final OTP/DSC submission stay with the human.
+  // This whole function runs on a BACKGROUNDED tab (see startFilingOpen in
+  // background.js) — any banner it shows on its way to failing is invisible
+  // until the tab is foregrounded again, so every exit that leaves a banner
+  // for a human to read goes through this instead of a bare banner() call.
+  // (The very first check below, a plain redirect with no banner, is the
+  // one exception — it's not a terminal state, just internal navigation.)
+  async function failFiling(job, msg, color) {
+    try { await GSTKdb.focusTab(); } catch (e) { /* non-fatal */ }
+    banner(msg, color);
+    await clearJob();
+  }
+
   async function handleFiling(job, cur, progress) {
     if (!/returns\/auth\/dashboard/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
-    if (!(await waitFor('select', 20000))) { banner('Returns dashboard did not load.', '#dc2626'); await clearJob(); return; }
+    if (!(await waitFor('select', 20000))) { await failFiling(job, 'Returns dashboard did not load.', '#dc2626'); return; }
     const MONTHS_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     const ret = job.ret || {};
     const map = filingTileFor(ret.return_type);
-    if (!map) { banner('This return type is not supported for one-click filing: ' + ret.return_type, '#dc2626'); await clearJob(); return; }
+    if (!map) { await failFiling(job, 'This return type is not supported for one-click filing: ' + ret.return_type, '#dc2626'); return; }
     const [mm, yyyy] = String(ret.period_month || '').split('/').map((n) => parseInt(n, 10));
-    if (!mm || !yyyy) { banner('Bad filing period.', '#dc2626'); await clearJob(); return; }
+    if (!mm || !yyyy) { await failFiling(job, 'Bad filing period.', '#dc2626'); return; }
     const fyStart = mm >= 4 ? yyyy : yyyy - 1;
     const fyShort = fyStart + '-' + String((fyStart + 1) % 100).padStart(2, '0');
     const monthName = MONTHS_FULL[mm - 1];
     const q = mm >= 4 ? Math.ceil((mm - 3) / 3) : 4;
 
     banner('Opening ' + map.label + ' for ' + monthName + ' ' + yyyy + '…' + progress);
-    if (!(await selectWhereOption(fyShort))) { banner('Could not set the financial year on the dashboard.', '#dc2626'); await clearJob(); return; }
+    if (!(await selectWhereOption(fyShort))) { await failFiling(job, 'Could not set the financial year on the dashboard.', '#dc2626'); return; }
     await sleep(700);
     await selectWhereOption('Quarter ' + q, { startsWith: true, timeout: 8000 });
     await sleep(700);
-    if (!(await selectWhereOption(monthName, { timeout: 12000 }))) { banner('Could not set the month on the dashboard.', '#dc2626'); await clearJob(); return; }
+    if (!(await selectWhereOption(monthName, { timeout: 12000 }))) { await failFiling(job, 'Could not set the month on the dashboard.', '#dc2626'); return; }
     await sleep(300);
     const search = $('button.srchbtn') || $$('button').find((b) => /^search$/i.test((b.textContent || '').trim()));
-    if (!search) { banner('Could not find the dashboard Search button.', '#dc2626'); await clearJob(); return; }
+    if (!search) { await failFiling(job, 'Could not find the dashboard Search button.', '#dc2626'); return; }
     search.click();
 
     // Find the return tile's filing button ("Prepare Online" for unfiled returns).
@@ -796,10 +878,14 @@
       btn = findTileButton(map.re, /prepare\s*online/i, map.excl) || findTileButton(map.re, /prepare|proceed|file\b/i, map.excl);
     }
     if (!btn) {
-      banner('Logged in — but no "Prepare Online" for ' + map.label + ' (already filed, or a different button). You are on the dashboard for ' + monthName + ' — open it yourself.', '#f59e0b');
-      await clearJob();
+      await failFiling(job, 'Logged in — but no "Prepare Online" for ' + map.label + ' (already filed, or a different button). You are on the dashboard for ' + monthName + ' — open it yourself.', '#f59e0b');
       return;
     }
+    // Back to the foreground for the actual destination — the one page this
+    // whole flow exists to reach. Foregrounded right before the click (not
+    // after) so the visible transition is the real filing page loading, not
+    // a jump-cut from an already-loaded dashboard.
+    try { await GSTKdb.focusTab(); } catch (e) { /* non-fatal */ }
     banner('Opening the ' + map.label + ' filing page — review and submit with OTP/DSC yourself.', '#16a34a');
     await clearJob(); // stop acting; a reload here won't re-trigger. The human takes over.
     btn.click();

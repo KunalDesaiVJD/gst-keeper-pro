@@ -68,6 +68,7 @@ const EditClientPage: React.FC = () => {
     cancellationDate: '',
     registrationCancellationDate: '',
     inactiveAtHand: false,
+    noticesSyncExcluded: false,
     liberal2BReconciliation: false,
     defaultTargetDate: '',
     otherTargetDate: '',
@@ -126,6 +127,7 @@ const EditClientPage: React.FC = () => {
         cancellationDate: (data as any).cancellation_date || '',
         registrationCancellationDate: (data as any).registration_cancellation_date || '',
         inactiveAtHand: !!(data as any).inactive_at_hand,
+        noticesSyncExcluded: !!(data as any).notices_sync_excluded,
         liberal2BReconciliation: !!(data as any).liberal_2b_reconciliation,
         defaultTargetDate: defaultTarget,
         otherTargetDate: otherTarget,
@@ -311,6 +313,7 @@ const EditClientPage: React.FC = () => {
           cancellation_date: formData.cancellationDate || null,
           registration_cancellation_date: formData.registrationCancellationDate || null,
           inactive_at_hand: formData.inactiveAtHand,
+          notices_sync_excluded: formData.noticesSyncExcluded,
           liberal_2b_reconciliation: formData.liberal2BReconciliation,
           gst_user_id: formData.gstUserId || null,
           gst_password: formData.gstPassword || null,
@@ -845,6 +848,29 @@ const EditClientPage: React.FC = () => {
                     <span className="text-sm font-normal block">Mark client as inactive at hand</span>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       When ticked, this client will not appear in Filing Status. Untick to restore visibility.
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Notices Dashboard</Label>
+                <label
+                  htmlFor="noticesSyncExcluded"
+                  className={`flex items-start gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                    formData.noticesSyncExcluded ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                  }`}
+                >
+                  <Checkbox
+                    id="noticesSyncExcluded"
+                    checked={formData.noticesSyncExcluded}
+                    onCheckedChange={(v) => setFormData(prev => ({ ...prev, noticesSyncExcluded: v === true }))}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <span className="text-sm font-normal block">Exclude from Notices Dashboard sync</span>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      When ticked, this client is skipped by Notices Dashboard's "Sync All" and hidden from the Company List's notices sync selection. Untick to include it again.
                     </p>
                   </div>
                 </label>
