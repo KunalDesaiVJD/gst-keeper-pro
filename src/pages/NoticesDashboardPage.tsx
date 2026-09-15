@@ -286,7 +286,7 @@ const NoticesDashboardPage: React.FC = () => {
     : null;
 
   return (
-    <div className="space-y-3 animate-fade-in">
+    <div className="space-y-4 animate-fade-in">
       {noticeError && (
         <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
           Failed to load notices: {noticeError}
@@ -296,13 +296,13 @@ const NoticesDashboardPage: React.FC = () => {
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="flex items-center gap-2.5 text-xl font-bold">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-              <Bell className="h-4 w-4 text-primary-foreground" />
+          <h1 className="flex items-center gap-2.5 text-[22px] font-bold">
+            <span className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] bg-primary">
+              <Bell className="h-[18px] w-[18px] text-primary-foreground" />
             </span>
             Notices &amp; Litigation
           </h1>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <div className="mt-1 flex flex-wrap items-center gap-3.5 text-xs text-muted-foreground">
             {lastSyncTimeStr && (
               <>
                 <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
@@ -344,10 +344,10 @@ const NoticesDashboardPage: React.FC = () => {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <NoticesTopNav />
         <div className="flex flex-wrap gap-1.5">
-          <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">Type: All notices ▾</span>
-          <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">FY: All ▾</span>
-          <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">Owner: Everyone ▾</span>
-          <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">Officer: All ▾</span>
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[10.5px] font-semibold text-muted-foreground">Type: All notices ▾</span>
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[10.5px] font-semibold text-muted-foreground">FY: All ▾</span>
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[10.5px] font-semibold text-muted-foreground">Owner: Everyone ▾</span>
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[10.5px] font-semibold text-muted-foreground">Officer: All ▾</span>
         </div>
       </div>
 
@@ -375,8 +375,8 @@ const NoticesDashboardPage: React.FC = () => {
       />
 
       {/* ── Zone 2: Work queue (left 2/3) | Ageing & exposure (right 1/3) ── */}
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
-        <div className="xl:col-span-2">
+      <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-[2fr_1fr]">
+        <div>
           <NoticeWorkQueue onSelectNotice={openDrawer} onSweep={handleSweep} />
         </div>
         <div>
@@ -389,7 +389,7 @@ const NoticesDashboardPage: React.FC = () => {
       </div>
 
       {/* ── Zone 3: Category summary | 14 days | Sync health ──────────────── */}
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-[1.2fr_1fr_1fr]">
         {/* Category Summary Bars */}
         <CategorySummaryBars
           categories={categoryRows}

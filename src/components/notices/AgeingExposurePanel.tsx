@@ -58,10 +58,10 @@ interface Bucket {
 
 const BUCKETS: Bucket[] = [
   { label: 'Not yet due', color: 'bg-emerald-500', test: (d) => d === null || d <= 0 },
-  { label: '1–7 days late', color: 'bg-yellow-500', test: (d) => d !== null && d >= 1 && d <= 7 },
-  { label: '8–30 days late', color: 'bg-amber-500', test: (d) => d !== null && d >= 8 && d <= 30 },
+  { label: '1–7 days late', color: 'bg-amber-400', test: (d) => d !== null && d >= 1 && d <= 7 },
+  { label: '8–30 days late', color: 'bg-orange-500', test: (d) => d !== null && d >= 8 && d <= 30 },
   { label: '31–90 days late', color: 'bg-red-500', test: (d) => d !== null && d >= 31 && d <= 90 },
-  { label: '90+ days late', color: 'bg-rose-900', test: (d) => d !== null && d > 90 },
+  { label: '90+ days late', color: 'bg-red-800', test: (d) => d !== null && d > 90 },
 ];
 
 const DOMAIN_STAGE_COLORS: Record<string, string> = {
@@ -113,7 +113,7 @@ function AgeingBuckets({ notices }: { notices: NoticeForAgeing[] }) {
     <div className="space-y-1.5">
       {counts.map((b) => (
         <div key={b.label} className="flex items-center gap-2.5">
-          <span className="w-[110px] shrink-0 text-xs font-medium">{b.label}</span>
+          <span className="w-[120px] shrink-0 text-xs font-medium">{b.label}</span>
           <div className="flex-1 h-2 rounded-full bg-muted/40 overflow-hidden">
             <div
               className={cn('h-full rounded-full', b.color, 'transition-all')}
@@ -178,7 +178,7 @@ function ExposureDonut({ notices }: { notices: NoticeForAgeing[] }) {
           )}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          <span className="text-sm font-bold leading-tight">
+          <span className="font-heading text-sm font-bold leading-tight">
             {total > 0 ? formatAmount(total) : '₹ 0'}
           </span>
           <span className="text-[10px] text-muted-foreground">under dispute</span>
@@ -192,7 +192,7 @@ function ExposureDonut({ notices }: { notices: NoticeForAgeing[] }) {
               <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
               <span className="truncate">{seg.label}</span>
             </span>
-            <span className="shrink-0 font-semibold tabular-nums">{formatAmount(seg.value)}</span>
+            <span className="shrink-0 font-bold tabular-nums">{formatAmount(seg.value)}</span>
           </div>
         ))}
         {segments.length === 0 && (
