@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 import { classifyNoticeCategory } from '@/utils/noticeCategoryClassifier';
-import { computeNoticeSummary } from '@/utils/noticeSummaryReport';
+import { computeNoticeSummary, summaryCellHref, type SummaryCellKind } from '@/utils/noticeSummaryReport';
 import { runNoticeSweep } from '@/lib/noticeAutoClose';
 import NoticeWorkQueue from '@/components/notices/NoticeWorkQueue';
 import NoticeActivityFeed from '@/components/notices/NoticeActivityFeed';
@@ -23,7 +23,6 @@ import NeedsAttentionStrip from '@/components/notices/NeedsAttentionStrip';
 import AgeingExposurePanel from '@/components/notices/AgeingExposurePanel';
 import Next14DaysStrip, { type DeadlineItem } from '@/components/notices/Next14DaysStrip';
 import SyncHealthCard from '@/components/notices/SyncHealthCard';
-import CategorySummaryBars from '@/components/notices/CategorySummaryBars';
 import {
   Bell, Building2, Loader2, RefreshCw, RotateCcw, Search,
 } from 'lucide-react';
@@ -314,14 +313,92 @@ const NoticesDashboardPage: React.FC = () => {
             <NoticeActivityFeed onSelectNotice={openDrawer} />
           </div>
 
-          {/* Category summary with bars */}
-          <CategorySummaryBars
-            categories={categoryRows}
-            grandTotal={grandTotal}
-            onCategoryClick={(cat) => setCategoryFilter((prev) => prev === cat ? null : cat)}
-            activeCategory={categoryFilter}
-            loading={loading}
-          />
+          {/* Notice Summary table */}
+          <Card>
+            <CardHeader className="pb-2 pt-3">
+              <CardTitle className="text-sm">Notice Summary</CardTitle>
+              <CardDescription className="text-[11px]">
+                Click a row to drill the tiles into just that category
+                {categoryFilter && (
+                  <>
+                    {' '}·{' '}
+                    <button
+                      type="button"
+                      className="font-medium text-primary underline-offset-2 hover:underline"
+                      onClick={() => setCategoryFilter(null)}
+                    >
+                      clear "{categoryFilter}"
+                    </button>
+                  </>
+                )}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pb-3">
+              {loading ? (
+                <div className="flex items-center justify-center py-10 text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                </div>
+              ) : categoryRows.length === 0 ? (
+                <p className="py-10 text-center text-sm text-muted-foreground">No notices on record yet.</p>
+              ) : (
+                <div className="overflow-auto rounded-md border">
+                  <Table>
+                    <TableHeader className="sticky top-0 z-10 bg-background">
+                      <TableRow>
+                        <TableHead className="bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">Remarks</TableHead>
+                        <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Total</TableHead>
+                        <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Open</TableHead>
+                        <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Closed</TableHead>
+                        <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Replied</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {categoryRows.map((r) => {
+                        const cell = (kind: SummaryCellKind, value: number) => {
+                          const href = summaryCellHref(r, kind);
+                          return (
+                            <TableCell
+                              key={kind}
+                              className={cn(
+                                'px-2 py-1 text-right text-[11px] tabular-nums',
+                                href && 'cursor-pointer text-primary underline-offset-2 hover:underline',
+                              )}
+                              onClick={href ? (e) => { e.stopPropagation(); navigate(href); } : undefined}
+                            >
+                              {value || '—'}
+                            </TableCell>
+                          );
+                        };
+                        return (
+                          <TableRow
+                            key={r.type}
+                            className={cn(
+                              !r.placeholder && 'cursor-pointer',
+                              categoryFilter === r.type && 'bg-primary/10 hover:bg-primary/15',
+                            )}
+                            onClick={r.placeholder ? undefined : () => (r.to ? navigate(r.to) : setCategoryFilter((prev) => (prev === r.type ? null : r.type)))}
+                          >
+                            <TableCell className={cn('px-2 py-1 text-[11px] font-medium', r.placeholder ? 'text-muted-foreground' : 'text-primary')}>{r.type}</TableCell>
+                            {cell('total', r.total)}
+                            {cell('open', r.open)}
+                            {cell('closed', r.closed)}
+                            {cell('replied', r.replied)}
+                          </TableRow>
+                        );
+                      })}
+                      <TableRow className="bg-primary/5 font-semibold hover:bg-primary/10">
+                        <TableCell className="px-2 py-1 text-[11px]">Total</TableCell>
+                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.total}</TableCell>
+                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.open}</TableCell>
+                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.closed}</TableCell>
+                        <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.replied}</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Next 14 days strip */}
           <Next14DaysStrip
