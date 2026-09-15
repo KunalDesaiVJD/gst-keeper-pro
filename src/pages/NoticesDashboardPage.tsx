@@ -111,7 +111,7 @@ const NoticesDashboardPage: React.FC = () => {
   const openSearchCompany = () => {
     setSearchCompanyOpen(true);
     if (searchCompanyClients.length === 0) {
-      supabase.from('clients').select('id, name, gstin').order('name').then(({ data }) => {
+      supabase.from('clients').select('id, name, gstin').eq('notices_sync_excluded', false).order('name').then(({ data }) => {
         setSearchCompanyClients((data || []) as MiniClient[]);
       });
     }
@@ -160,6 +160,7 @@ const NoticesDashboardPage: React.FC = () => {
       const { data } = await supabase
         .from('clients')
         .select('id, name, gstin')
+        .eq('notices_sync_excluded', false)
         .order('created_at', { ascending: false })
         .limit(5);
       if (!cancelled) setMiniClients((data || []) as MiniClient[]);
