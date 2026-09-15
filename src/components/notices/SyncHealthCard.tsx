@@ -201,6 +201,32 @@ export default function SyncHealthCard({
           <span>Next scheduled unattended sync: 06:00 IST</span>
           <span className="shrink-0 font-semibold text-primary">Sync log →</span>
         </div>
+        {isHealthy && (
+          <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
+            Healthy
+          </span>
+        )}
+        {needsAttention && (
+          <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-400">
+            Attention
+          </span>
+        )}
+        {!extensionReady && (
+          <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-bold text-destructive">
+            Offline
+          </span>
+        )}
+      </div>
+      <CardContent className="pt-3 pb-3">
+        <div className="space-y-2">
+          {rows.map((row) => (
+            <div key={row.label} className="flex items-center justify-between gap-4">
+              <span className="text-xs text-muted-foreground">{row.label}</span>
+              <span className="shrink-0 text-xs font-semibold">{row.value}</span>
+            </div>
+          ))}
+        </div>
+        <ActivityFeed />
       </CardContent>
     </Card>
   );
