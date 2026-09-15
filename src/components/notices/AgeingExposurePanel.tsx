@@ -1,18 +1,7 @@
 import React, { useMemo } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Table,
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
-} from '@/components/ui/table';
+import { Card, CardContent } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
 import { Loader2 } from 'lucide-react';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 export interface NoticeForAgeing {
   id: string;
@@ -34,10 +23,6 @@ export interface AgeingExposurePanelProps {
   loading?: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 const CLOSED_RE = /^(closed|withdrawn|dropped|disposed|deleted|adjudged)/i;
 
 function isOpen(n: NoticeForAgeing): boolean {
@@ -52,97 +37,66 @@ function effectiveDue(n: NoticeForAgeing): string | null {
   return n.extended_due_date || n.due_date || null;
 }
 
-/** Positive = overdue by that many days; negative/zero = not yet due. */
 function ageingDays(n: NoticeForAgeing, today: string): number | null {
   const due = effectiveDue(n);
   if (!due) return null;
-  const diff =
-    new Date(today).getTime() - new Date(due).getTime();
+  const diff = new Date(today).getTime() - new Date(due).getTime();
   return Math.floor(diff / (1000 * 60 * 60 * 24));
 }
 
 function formatAmount(v: number): string {
-  if (v >= 1e7) return `₹${(v / 1e7).toFixed(1)} cr`;
-  if (v >= 1e5) return `₹${(v / 1e5).toFixed(1)} L`;
-  return `₹${v.toLocaleString('en-IN')}`;
+  if (v >= 1e7) return `₹ ${(v / 1e7).toFixed(1)} cr`;
+  if (v >= 1e5) return `₹ ${(v / 1e5).toFixed(1)} L`;
+  return `₹ ${v.toLocaleString('en-IN')}`;
 }
-
-// ---------------------------------------------------------------------------
-// Ageing bucket definitions
-// ---------------------------------------------------------------------------
 
 interface Bucket {
   label: string;
   color: string;
-  bg: string;
   test: (days: number | null) => boolean;
 }
 
 const BUCKETS: Bucket[] = [
-  {
-    label: 'Not Due',
-    color: 'bg-emerald-500',
-    bg: 'bg-emerald-100 dark:bg-emerald-900/30',
-    test: (d) => d === null || d <= 0,
-  },
-  {
-    label: '1-7 days',
-    color: 'bg-yellow-500',
-    bg: 'bg-yellow-100 dark:bg-yellow-900/30',
-    test: (d) => d !== null && d >= 1 && d <= 7,
-  },
-  {
-    label: '8-30 days',
-    color: 'bg-amber-500',
-    bg: 'bg-amber-100 dark:bg-amber-900/30',
-    test: (d) => d !== null && d >= 8 && d <= 30,
-  },
-  {
-    label: '31-90 days',
-    color: 'bg-red-500',
-    bg: 'bg-red-100 dark:bg-red-900/30',
-    test: (d) => d !== null && d >= 31 && d <= 90,
-  },
-  {
-    label: '90+ days',
-    color: 'bg-rose-900',
-    bg: 'bg-rose-100 dark:bg-rose-900/30',
-    test: (d) => d !== null && d > 90,
-  },
+  { label: 'Not yet due', color: 'bg-emerald-500', test: (d) => d === null || d <= 0 },
+  { label: '1–7 days late', color: 'bg-yellow-500', test: (d) => d !== null && d >= 1 && d <= 7 },
+  { label: '8–30 days late', color: 'bg-amber-500', test: (d) => d !== null && d >= 8 && d <= 30 },
+  { label: '31–90 days late', color: 'bg-red-500', test: (d) => d !== null && d >= 31 && d <= 90 },
+  { label: '90+ days late', color: 'bg-rose-900', test: (d) => d !== null && d > 90 },
 ];
 
-// ---------------------------------------------------------------------------
-// Exposure donut stage definitions
-// ---------------------------------------------------------------------------
+const DOMAIN_STAGE_COLORS: Record<string, string> = {
+  'SCN / reply stage': '#f59e0b',
+  'First appeal (s.107)': '#1e3a5f',
+  'Recovery / attachment': '#ef4444',
+  'Rectification / other': '#10b981',
+};
 
-interface Stage {
-  label: string;
-  color: string; // SVG stroke color
-  match: RegExp;
-}
-
-const STAGES: Stage[] = [
-  { label: 'Captured', color: '#9ca3af', match: /^captured/i },
-  { label: 'Reply drafting', color: '#3b82f6', match: /^reply/i },
-  { label: 'Partner review', color: '#8b5cf6', match: /^partner/i },
-  { label: 'Filed/submitted', color: '#10b981', match: /^(filed|submitted)/i },
-  { label: 'Hearing', color: '#f59e0b', match: /^hearing/i },
-  { label: 'Order received', color: '#f97316', match: /^order/i },
-  { label: 'Appeal', color: '#ef4444', match: /^appeal/i },
-  { label: 'Closed', color: '#64748b', match: CLOSED_RE },
+const DOMAIN_STAGE_ORDER = [
+  'SCN / reply stage',
+  'First appeal (s.107)',
+  'Recovery / attachment',
+  'Rectification / other',
 ];
 
-function stageOf(status: string | null): string {
+function domainStageOf(status: string | null): string {
   const s = (status ?? '').trim();
-  for (const st of STAGES) {
-    if (st.match.test(s)) return st.label;
-  }
-  return 'Captured'; // fallback for null / unrecognised
+  if (/^appeal/i.test(s)) return 'First appeal (s.107)';
+  if (/^(order|recovery|attachment|enforcement)/i.test(s)) return 'Recovery / attachment';
+  if (/^rectif/i.test(s)) return 'Rectification / other';
+  return 'SCN / reply stage';
 }
 
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
+function tableStageInfo(status: string | null): { label: string; color: string } {
+  const s = (status ?? '').trim().toLowerCase();
+  if (/appeal/.test(s)) return { label: 'Appeal', color: '#ef4444' };
+  if (/recovery|attachment/.test(s)) return { label: 'Recovery', color: '#ef4444' };
+  if (/order/.test(s)) return { label: 'Order', color: '#f97316' };
+  if (/hearing/.test(s)) return { label: 'Hearing', color: '#1e3a5f' };
+  if (/reply|draft/.test(s)) return { label: 'SCN reply', color: '#f59e0b' };
+  if (/await|data|document/.test(s)) return { label: 'Awaiting data', color: '#0ea5e9' };
+  if (/filed|submitted/.test(s)) return { label: 'Filed', color: '#10b981' };
+  return { label: 'Captured', color: '#9ca3af' };
+}
 
 function AgeingBuckets({ notices }: { notices: NoticeForAgeing[] }) {
   const today = todayIST();
@@ -156,28 +110,21 @@ function AgeingBuckets({ notices }: { notices: NoticeForAgeing[] }) {
   const max = Math.max(1, ...counts.map((c) => c.count));
 
   return (
-    <div className="space-y-2">
-      <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-        Ageing Buckets
-      </h3>
-      <div className="space-y-1.5">
-        {counts.map((b) => (
-          <div key={b.label} className="flex items-center gap-2">
-            <span className="w-20 shrink-0 text-xs text-right font-medium">
-              {b.label}
-            </span>
-            <div className="flex-1 h-5 rounded bg-muted/40 overflow-hidden">
-              <div
-                className={`h-full rounded ${b.color} transition-all`}
-                style={{ width: `${(b.count / max) * 100}%` }}
-              />
-            </div>
-            <span className="w-8 text-xs font-semibold text-right tabular-nums">
-              {b.count}
-            </span>
+    <div className="space-y-1.5">
+      {counts.map((b) => (
+        <div key={b.label} className="flex items-center gap-2.5">
+          <span className="w-[110px] shrink-0 text-xs font-medium">{b.label}</span>
+          <div className="flex-1 h-2 rounded-full bg-muted/40 overflow-hidden">
+            <div
+              className={cn('h-full rounded-full', b.color, 'transition-all')}
+              style={{ width: `${(b.count / max) * 100}%` }}
+            />
           </div>
-        ))}
-      </div>
+          <span className="w-9 text-xs font-medium text-right tabular-nums text-muted-foreground">
+            {b.count}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -185,182 +132,125 @@ function AgeingBuckets({ notices }: { notices: NoticeForAgeing[] }) {
 function ExposureDonut({ notices }: { notices: NoticeForAgeing[] }) {
   const segments = useMemo(() => {
     const map = new Map<string, number>();
-    for (const n of notices) {
-      const stage = stageOf(n.staff_status);
+    for (const n of notices.filter(isOpen)) {
+      const stage = domainStageOf(n.staff_status);
       map.set(stage, (map.get(stage) ?? 0) + (n.amount_of_demand ?? 0));
     }
-    return STAGES.map((s) => ({
-      label: s.label,
-      color: s.color,
-      value: map.get(s.label) ?? 0,
-    })).filter((s) => s.value > 0);
+    return DOMAIN_STAGE_ORDER
+      .map((label) => ({
+        label,
+        color: DOMAIN_STAGE_COLORS[label],
+        value: map.get(label) ?? 0,
+      }))
+      .filter((s) => s.value > 0);
   }, [notices]);
 
   const total = segments.reduce((a, s) => a + s.value, 0);
 
-  // SVG donut via stroke-dasharray
   const radius = 60;
   const circumference = 2 * Math.PI * radius;
   let offset = 0;
 
   return (
-    <div className="space-y-2">
-      <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-        Exposure by Stage
-      </h3>
-      <div className="flex items-center gap-4">
-        <div className="relative shrink-0">
-          <svg
-            width="160"
-            height="160"
-            viewBox="0 0 160 160"
-            className="block"
-          >
-            {segments.length === 0 ? (
-              <circle
-                cx="80"
-                cy="80"
-                r={radius}
-                fill="none"
-                stroke="currentColor"
-                className="text-muted/30"
-                strokeWidth="20"
-              />
-            ) : (
-              segments.map((seg) => {
-                const pct = seg.value / total;
-                const dashLen = pct * circumference;
-                const el = (
-                  <circle
-                    key={seg.label}
-                    cx="80"
-                    cy="80"
-                    r={radius}
-                    fill="none"
-                    stroke={seg.color}
-                    strokeWidth="20"
-                    strokeDasharray={`${dashLen} ${circumference - dashLen}`}
-                    strokeDashoffset={-offset}
-                    transform="rotate(-90 80 80)"
-                    className="transition-all"
-                  />
-                );
-                offset += dashLen;
-                return el;
-              })
-            )}
-          </svg>
-          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-            <span className="text-base font-bold leading-tight">
-              {total > 0 ? formatAmount(total) : '₹0'}
-            </span>
-            <span className="text-[10px] text-muted-foreground">Total</span>
-          </div>
-        </div>
-
-        {/* Legend with amounts */}
-        <div className="flex flex-col gap-1.5 min-w-0 flex-1">
-          {segments.map((seg) => (
-            <div key={seg.label} className="flex items-center justify-between gap-2 text-xs">
-              <span className="flex items-center gap-1.5 min-w-0">
-                <span
-                  className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-                  style={{ backgroundColor: seg.color }}
+    <div className="flex items-center gap-4">
+      <div className="relative shrink-0">
+        <svg width="120" height="120" viewBox="0 0 160 160" className="block">
+          {segments.length === 0 ? (
+            <circle cx="80" cy="80" r={radius} fill="none" stroke="currentColor" className="text-muted/30" strokeWidth="20" />
+          ) : (
+            segments.map((seg) => {
+              const pct = seg.value / total;
+              const dashLen = pct * circumference;
+              const el = (
+                <circle
+                  key={seg.label}
+                  cx="80" cy="80" r={radius}
+                  fill="none" stroke={seg.color} strokeWidth="20"
+                  strokeDasharray={`${dashLen} ${circumference - dashLen}`}
+                  strokeDashoffset={-offset}
+                  transform="rotate(-90 80 80)"
+                  className="transition-all"
                 />
-                <span className="truncate">{seg.label}</span>
-              </span>
-              <span className="shrink-0 font-semibold tabular-nums">{formatAmount(seg.value)}</span>
-            </div>
-          ))}
-          {segments.length === 0 && (
-            <span className="text-xs text-muted-foreground">No data</span>
+              );
+              offset += dashLen;
+              return el;
+            })
           )}
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          <span className="text-sm font-bold leading-tight">
+            {total > 0 ? formatAmount(total) : '₹ 0'}
+          </span>
+          <span className="text-[10px] text-muted-foreground">under dispute</span>
         </div>
+      </div>
+
+      <div className="flex flex-col gap-1.5 min-w-0 flex-1">
+        {segments.map((seg) => (
+          <div key={seg.label} className="flex items-center justify-between gap-2 text-xs">
+            <span className="flex items-center gap-1.5 min-w-0">
+              <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
+              <span className="truncate">{seg.label}</span>
+            </span>
+            <span className="shrink-0 font-semibold tabular-nums">{formatAmount(seg.value)}</span>
+          </div>
+        ))}
+        {segments.length === 0 && (
+          <span className="text-xs text-muted-foreground">No exposure data</span>
+        )}
       </div>
     </div>
   );
 }
 
-function TopExposureTable({
-  notices,
-  clients,
-}: {
-  notices: NoticeForAgeing[];
-  clients: ClientInfo[];
-}) {
+function TopExposureTable({ notices, clients }: { notices: NoticeForAgeing[]; clients: ClientInfo[] }) {
   const rows = useMemo(() => {
     const clientMap = new Map(clients.map((c) => [c.id, c.name]));
-    const agg = new Map<
-      string,
-      { name: string; openCount: number; exposure: number }
-    >();
+    const agg = new Map<string, { name: string; exposure: number; dominantStatus: string | null; dominantAmount: number }>();
 
     for (const n of notices) {
       if (!isOpen(n)) continue;
-      const entry = agg.get(n.client_id) ?? {
-        name: clientMap.get(n.client_id) ?? n.client_id,
-        openCount: 0,
-        exposure: 0,
-      };
-      entry.openCount += 1;
+      const entry = agg.get(n.client_id) ?? { name: clientMap.get(n.client_id) ?? n.client_id, exposure: 0, dominantStatus: null, dominantAmount: 0 };
       entry.exposure += n.amount_of_demand ?? 0;
+      if ((n.amount_of_demand ?? 0) > entry.dominantAmount) {
+        entry.dominantAmount = n.amount_of_demand ?? 0;
+        entry.dominantStatus = n.staff_status;
+      }
       agg.set(n.client_id, entry);
     }
 
     return Array.from(agg.entries())
       .map(([id, v]) => ({ id, ...v }))
-      .sort((a, b) => b.exposure - a.exposure || b.openCount - a.openCount)
+      .sort((a, b) => b.exposure - a.exposure)
       .slice(0, 5);
   }, [notices, clients]);
 
+  if (rows.length === 0) {
+    return <p className="text-xs text-muted-foreground">No open notices with demand.</p>;
+  }
+
   return (
-    <div className="space-y-2">
-      <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-        Top 5 Exposure by Client
-      </h3>
-      {rows.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No open notices.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="text-xs">Client Name</TableHead>
-                <TableHead className="text-xs text-right">Open Notices</TableHead>
-                <TableHead className="text-xs text-right">Exposure</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell className="text-sm font-medium truncate max-w-[180px]">
-                    {r.name}
-                  </TableCell>
-                  <TableCell className="text-sm text-right tabular-nums">
-                    {r.openCount}
-                  </TableCell>
-                  <TableCell className="text-sm text-right tabular-nums">
-                    {formatAmount(r.exposure)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
+    <div className="space-y-1">
+      {rows.map((r) => {
+        const stage = tableStageInfo(r.dominantStatus);
+        return (
+          <div key={r.id} className="flex items-center gap-2 py-1">
+            <span className="flex-1 min-w-0 text-xs font-semibold truncate">{r.name}</span>
+            <span className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-medium">
+              <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: stage.color }} />
+              {stage.label}
+            </span>
+            <span className="shrink-0 w-[90px] text-right text-xs tabular-nums font-medium">
+              {r.exposure > 0 ? r.exposure.toLocaleString('en-IN') : '—'}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main panel
-// ---------------------------------------------------------------------------
-
-export default function AgeingExposurePanel({
-  notices,
-  clients,
-  loading,
-}: AgeingExposurePanelProps) {
+export default function AgeingExposurePanel({ notices, clients, loading }: AgeingExposurePanelProps) {
   if (loading) {
     return (
       <Card>
@@ -373,15 +263,33 @@ export default function AgeingExposurePanel({
 
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base">
-          Ageing &amp; Exposure Analysis
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-6">
+      <div className="flex items-center justify-between border-b px-4 py-3">
+        <div>
+          <h2 className="text-sm font-semibold">Ageing &amp; exposure</h2>
+          <p className="text-[11px] text-muted-foreground">Open notices by days past due · demand by stage</p>
+        </div>
+        <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
+          Open only
+        </span>
+      </div>
+      <CardContent className="pt-3 pb-3 space-y-0">
         <AgeingBuckets notices={notices} />
+
+        <div className="my-3 border-t" />
+
         <ExposureDonut notices={notices} />
+
+        <div className="my-3 border-t" />
+
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+          Top exposure by client
+        </div>
         <TopExposureTable notices={notices} clients={clients} />
+
+        <div className="flex items-center justify-between pt-3 text-[11px] text-muted-foreground">
+          <span className="truncate"></span>
+          <span className="shrink-0 font-semibold text-primary">By client →</span>
+        </div>
       </CardContent>
     </Card>
   );

@@ -1,12 +1,12 @@
 import { useMemo } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
-import { Loader2, CalendarDays } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 export interface DeadlineItem {
   date: string; // YYYY-MM-DD
   type: 'reply_due' | 'hearing' | 'appeal_limitation' | 'issued' | 'other';
-  label: string; // short label like "DRC-01" or client name
+  label: string;
   noticeId?: string;
   clientId?: string;
 }
@@ -20,30 +20,26 @@ interface Next14DaysStripProps {
 
 const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-const MAX_VISIBLE_CHIPS = 3;
-
-const chipStyles: Record<DeadlineItem['type'], string> = {
-  reply_due: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
-  hearing: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
-  appeal_limitation: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
-  issued: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
-  other: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+const chipColor: Record<DeadlineItem['type'], string> = {
+  appeal_limitation: 'bg-destructive/15 text-destructive font-bold',
+  reply_due: 'bg-amber-500/15 text-amber-700 dark:text-amber-400 font-bold',
+  issued: 'bg-blue-500/15 text-blue-700 dark:text-blue-400 font-bold',
+  hearing: 'bg-primary/15 text-primary font-bold',
+  other: 'bg-muted text-muted-foreground font-bold',
 };
 
-const legendDotStyles: Record<DeadlineItem['type'], string> = {
-  reply_due: 'bg-red-500',
-  hearing: 'bg-amber-500',
-  appeal_limitation: 'bg-purple-500',
+const legendDotColor: Record<string, string> = {
+  appeal_limitation: 'bg-destructive',
+  reply_due: 'bg-amber-500',
   issued: 'bg-blue-500',
-  other: 'bg-gray-400',
+  hearing: 'bg-primary',
 };
 
-const legendLabels: Record<DeadlineItem['type'], string> = {
-  reply_due: 'Reply Due',
-  hearing: 'Hearing',
-  appeal_limitation: 'Appeal Limitation',
+const legendLabels: Record<string, string> = {
+  appeal_limitation: 'Appeal limitation',
+  reply_due: 'Reply due',
   issued: 'Issued',
-  other: 'Other',
+  hearing: 'Hearing',
 };
 
 function todayIST(): Date {
@@ -70,16 +66,7 @@ function formatDateKey(d: Date): string {
 
 function isToday(d: Date): boolean {
   const now = todayIST();
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  );
-}
-
-function isWeekend(d: Date): boolean {
-  const day = d.getDay();
-  return day === 0 || day === 6;
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
 }
 
 export default function Next14DaysStrip({ items, onClickItem, onClickDate, loading }: Next14DaysStripProps) {
@@ -94,22 +81,23 @@ export default function Next14DaysStrip({ items, onClickItem, onClickDate, loadi
     return map;
   }, [items]);
 
+  // Find the spotlight item: first appeal_limitation, or first item overall
+  const spotlightItem = useMemo(() => {
+    const sorted = [...items].sort((a, b) => a.date.localeCompare(b.date));
+    return sorted.find((i) => i.type === 'appeal_limitation') || sorted[0] || null;
+  }, [items]);
+
   const week1 = days.slice(0, 7);
   const week2 = days.slice(7, 14);
 
   if (loading) {
     return (
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <CalendarDays className="h-4 w-4" />
-            Next 14 Days
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          </div>
+        <div className="border-b px-4 py-3">
+          <h2 className="text-sm font-semibold">Next 14 days</h2>
+        </div>
+        <CardContent className="flex items-center justify-center py-8">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         </CardContent>
       </Card>
     );
@@ -117,97 +105,89 @@ export default function Next14DaysStrip({ items, onClickItem, onClickDate, loadi
 
   function renderWeek(weekDays: Date[]) {
     return (
-      <div className="overflow-x-auto">
-      <div className="grid grid-cols-7 gap-1 min-w-[420px]">
+      <div className="grid grid-cols-7 gap-1.5">
         {weekDays.map((d) => {
           const key = formatDateKey(d);
           const dayItems = grouped[key] || [];
-          const visible = dayItems.slice(0, MAX_VISIBLE_CHIPS);
-          const overflow = dayItems.length - MAX_VISIBLE_CHIPS;
           const today = isToday(d);
-          const weekend = isWeekend(d);
+
+          // Group by type and count
+          const typeCounts = new Map<string, number>();
+          dayItems.forEach((item) => {
+            typeCounts.set(item.type, (typeCounts.get(item.type) || 0) + 1);
+          });
 
           return (
             <div
               key={key}
               className={cn(
-                'rounded-md border p-1 min-h-[60px] flex flex-col',
-                today && 'ring-2 ring-primary ring-offset-1 ring-offset-background',
-                weekend && 'bg-muted/50'
+                'rounded-lg border p-1.5 min-h-[64px] flex flex-col items-center text-center',
+                today && 'border-primary shadow-[inset_0_0_0_1px] shadow-primary',
+                onClickDate && 'cursor-pointer hover:bg-muted/40',
               )}
+              onClick={onClickDate ? () => onClickDate(key) : undefined}
             >
-              {/* Day header */}
-              <div
-                className={cn('text-center mb-0.5', onClickDate && 'cursor-pointer hover:bg-muted/60 rounded')}
-                onClick={onClickDate ? () => onClickDate(key) : undefined}
-              >
-                <div
-                  className={cn(
-                    'text-[10px] font-medium leading-tight',
-                    today && 'text-primary font-semibold'
-                  )}
-                >
-                  {d.getDate()}
-                </div>
-                <div className="text-[9px] text-muted-foreground leading-tight">
-                  {WEEKDAY_ABBR[d.getDay()]}
-                </div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground leading-tight">
+                {WEEKDAY_ABBR[d.getDay()]}
+              </div>
+              <div className={cn('text-sm font-semibold leading-tight', today && 'text-primary')}>
+                {d.getDate()}
               </div>
 
-              {/* Chips */}
-              <div className="flex flex-col gap-0.5 flex-1">
-                {visible.map((item, idx) => (
-                  <button
-                    key={`${item.noticeId ?? item.label}-${idx}`}
-                    type="button"
-                    onClick={() => onClickItem?.(item)}
-                    className={cn(
-                      'rounded-full px-1 py-px text-[8px] leading-tight font-medium truncate text-left',
-                      'hover:opacity-80 transition-opacity',
-                      chipStyles[item.type],
-                      !onClickItem && 'cursor-default'
-                    )}
-                    title={item.label}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-                {overflow > 0 && (
-                  <span className="text-[8px] text-muted-foreground text-center leading-tight">
-                    +{overflow} more
-                  </span>
-                )}
-              </div>
+              {/* Count-based chips */}
+              {typeCounts.size > 0 && (
+                <div className="mt-1 flex flex-wrap gap-0.5 justify-center">
+                  {Array.from(typeCounts.entries()).map(([type, count]) => (
+                    <span
+                      key={type}
+                      className={cn('rounded-full px-1.5 py-px text-[9px]', chipColor[type as DeadlineItem['type']] || chipColor.other)}
+                    >
+                      {type === 'hearing' ? 'PH' : count}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
-      </div>
       </div>
     );
   }
 
   return (
     <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2">
-          <CalendarDays className="h-4 w-4" />
-          Next 14 Days
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-1">
+      <div className="flex items-center justify-between border-b px-4 py-3">
+        <div>
+          <h2 className="text-sm font-semibold">Next 14 days</h2>
+          <p className="text-[11px] text-muted-foreground">Statutory due dates &amp; hearings</p>
+        </div>
+        <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
+          <span className="rounded-md bg-background px-2.5 py-1 text-[11px] font-medium shadow-sm">2 weeks</span>
+          <span className="rounded-md px-2.5 py-1 text-[11px] font-medium text-muted-foreground">Month</span>
+        </div>
+      </div>
+      <CardContent className="space-y-1.5 pt-3 pb-3">
         {renderWeek(week1)}
         {renderWeek(week2)}
 
         {/* Legend */}
-        <div className="flex flex-wrap gap-x-3 gap-y-1 pt-2">
-          {(Object.keys(legendLabels) as DeadlineItem['type'][]).map((type) => (
-            <div key={type} className="flex items-center gap-1">
-              <span
-                className={cn('inline-block h-2 w-2 rounded-full', legendDotStyles[type])}
-              />
-              <span className="text-[10px] text-muted-foreground">{legendLabels[type]}</span>
+        <div className="flex flex-wrap gap-3 pt-2">
+          {Object.entries(legendLabels).map(([type, label]) => (
+            <div key={type} className="flex items-center gap-1.5">
+              <span className={cn('inline-block h-2.5 w-2.5 rounded-sm', legendDotColor[type])} />
+              <span className="text-[10px] text-muted-foreground">{label}</span>
             </div>
           ))}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between pt-1 text-[11px] text-muted-foreground">
+          <span className="truncate">
+            {spotlightItem
+              ? `${new Date(spotlightItem.date).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}: ${spotlightItem.label}`
+              : ''}
+          </span>
+          <span className="shrink-0 font-semibold text-primary">Full calendar →</span>
         </div>
       </CardContent>
     </Card>

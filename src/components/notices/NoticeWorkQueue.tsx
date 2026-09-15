@@ -80,14 +80,15 @@ function formatDemand(n: number | null): string {
   return n.toLocaleString('en-IN', { maximumFractionDigits: 0 });
 }
 
-type TabKey = 'team' | 'mine' | 'unassigned';
+type TabKey = 'team' | 'mine' | 'unassigned' | 'hearings';
 const CLOSED_RE = /^(closed|withdrawn|dropped|disposed|deleted|adjudged)/i;
 
 interface Props {
   onSelectNotice?: (noticeId: string, clientId: string) => void;
+  onSweep?: () => void;
 }
 
-const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice }) => {
+const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep }) => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [allItems, setAllItems] = useState<QueueItem[]>([]);
@@ -134,6 +135,7 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice }) => {
   const items = useMemo(() => {
     if (tab === 'mine') return allItems.filter((i) => i.assign_to_user_id === user?.id);
     if (tab === 'unassigned') return allItems.filter((i) => !i.assign_to_user_id);
+    if (tab === 'hearings') return allItems.filter((i) => /hearing/i.test(i.staff_status ?? ''));
     return allItems;
   }, [allItems, tab, user?.id]);
 
@@ -141,6 +143,7 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice }) => {
     team: allItems.length,
     mine: allItems.filter((i) => i.assign_to_user_id === user?.id).length,
     unassigned: allItems.filter((i) => !i.assign_to_user_id).length,
+    hearings: allItems.filter((i) => /hearing/i.test(i.staff_status ?? '')).length,
   }), [allItems, user?.id]);
 
   const staleCount = allItems.filter((i) => !effectiveDue(i) && !i.staff_status).length;
@@ -157,7 +160,7 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice }) => {
           </p>
         </div>
         <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
-          {(['team', 'mine', 'unassigned'] as TabKey[]).map((t) => (
+          {(['team', 'mine', 'unassigned', 'hearings'] as TabKey[]).map((t) => (
             <button
               key={t}
               type="button"
@@ -169,18 +172,25 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice }) => {
               )}
               onClick={() => setTab(t)}
             >
-              {t === 'team' ? 'Team' : t === 'mine' ? 'Mine' : 'Unassigned'} · {counts[t]}
+              {t === 'team' ? 'Team' : t === 'mine' ? 'Mine' : t === 'unassigned' ? 'Unassigned' : 'Hearings'} · {counts[t]}
             </button>
           ))}
         </div>
       </div>
       <CardContent className="pb-3 pt-2">
-        <div className="mb-2 flex items-center gap-2">
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          <Button size="sm" variant="ghost" className="h-7 text-[11px] text-muted-foreground">
+            ☐ Select all
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-[11px]">Assign ▾</Button>
+          <Button size="sm" variant="outline" className="h-7 text-[11px]">Set priority ▾</Button>
+          <Button size="sm" variant="outline" className="h-7 text-[11px]">Change stage ▾</Button>
+          <Button size="sm" variant="outline" className="h-7 text-[11px]">✉ Email GST team</Button>
           <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => navigate('/notices-all?filter=mine')}>
             <Download className="mr-1 h-3 w-3" /> Export
           </Button>
-          <span className="ml-auto text-[11px] text-muted-foreground">
-            Open · Due ≤ 30d
+          <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
+            Filters: Open · Due ≤ 30d
           </span>
         </div>
 
@@ -197,6 +207,7 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice }) => {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="bg-muted/60 w-[26px]"></TableHead>
                   <TableHead className="bg-muted/60 text-[10px] font-semibold uppercase">Client</TableHead>
                   <TableHead className="bg-muted/60 text-[10px] font-semibold uppercase">Notice / Matter</TableHead>
                   <TableHead className="bg-muted/60 text-[10px] font-semibold uppercase">Stage</TableHead>
@@ -216,6 +227,9 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice }) => {
                       className="cursor-pointer hover:bg-muted/40"
                       onClick={() => onSelectNotice?.(item.id, item.client_id)}
                     >
+                      <TableCell className="w-[26px] px-2" onClick={(e) => e.stopPropagation()}>
+                        <span className="inline-block h-3.5 w-3.5 rounded-sm border-[1.5px] border-slate-400" />
+                      </TableCell>
                       <TableCell className="max-w-[180px]">
                         <span className="block text-xs font-semibold truncate">{item.client_name}</span>
                         <span className="block text-[10px] font-mono text-muted-foreground">{item.gstin || '—'}</span>
@@ -290,10 +304,14 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice }) => {
             <span>
               Showing {Math.min(items.length, 15)} of {items.length}
               {staleCount > 0 && (
-                <> · {staleCount} open rows have no due date or stage</>
+                <> · {staleCount} open rows have no due date or stage —{' '}
+                  <button type="button" className="font-semibold text-primary hover:underline" onClick={(e) => { e.stopPropagation(); onSweep?.(); }}>
+                    run the closing sweep
+                  </button>
+                </>
               )}
             </span>
-            <Link to="/notices-all" className="font-semibold text-primary hover:underline">
+            <Link to="/notices-all" className="shrink-0 font-semibold text-primary hover:underline">
               View full work queue →
             </Link>
           </div>

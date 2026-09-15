@@ -6,9 +6,10 @@ import { cn } from '@/lib/utils';
 
 const NAV_LINKS = [
   { label: 'Dashboard', icon: LayoutDashboard, to: '/notices-dashboard' },
-  { label: 'Notice', icon: Bell, to: '/notices-all' },
-  { label: 'Submission', icon: Send, to: '/notices-all?filter=submitted' },
-  { label: 'Litigation', icon: Briefcase, to: '/litigation' },
+  { label: 'Work Queue', icon: ListOrdered, to: '/notices-all' },
+  { label: 'Matters', icon: Bell, to: '/notices-all?filter=submitted' },
+  { label: 'Hearings', icon: Briefcase, to: '/litigation' },
+  { label: 'Clients', icon: Building2, to: '/notices-gstin-wise-count' },
 ];
 
 const REPORT_PATHS = ['/notices-report', '/notices-gstin-wise-count', '/litigation-mis'];

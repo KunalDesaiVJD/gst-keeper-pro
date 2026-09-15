@@ -147,6 +147,10 @@ export default function SyncHealthCard({
       value: `${newNotices24h} · ${changedRows24h}`,
     },
     {
+      label: 'Emails sent today (digest + alerts)',
+      value: '0',
+    },
+    {
       label: 'Extension',
       value: extensionReady && extensionVersion ? (
         <span>v{extensionVersion} · connected</span>
@@ -192,6 +196,11 @@ export default function SyncHealthCard({
           ))}
         </div>
         <ActivityFeed />
+
+        <div className="mt-3 flex items-center justify-between text-[11px] text-muted-foreground">
+          <span>Next scheduled unattended sync: 06:00 IST</span>
+          <span className="shrink-0 font-semibold text-primary">Sync log →</span>
+        </div>
       </CardContent>
     </Card>
   );
