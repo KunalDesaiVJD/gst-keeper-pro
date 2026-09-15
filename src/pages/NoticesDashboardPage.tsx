@@ -1,44 +1,31 @@
-// NoticesDashboardPage — the firm-wide counterpart to the per-client "View
-// Notice and Orders" report: one query across every client's gst_notices
-// rows, summarized as KPI tiles + a category breakdown table (Total/Open/
-// Closed/Replied per notice type), matching the portfolio-wide dashboard
-// pattern the user pointed to (Notice Alert's GST Dashboard). The KPI tiles
-// stay scoped to what gst_notices holds (Notices/Orders, LUT, DRC-03
-// voluntary payment) — but the Notice Summary table below also folds in
-// Refund and DRC-03 rows from their own tables (gst_refund_applications,
-// gst_drc03_filings), since we already capture that data even though the
-// tiles don't count it. The remaining Notice Alert categories (Appeal,
-// ASMT 10, Audit, Enforcement, Recovery, Non filers, TRAN 1, Anti evasion,
-// Demand, Ewaybill, AAR, Registration) have no portal capture in this app
-// yet — each needs its own reverse-engineering pass against the live GST
-// portal, scoped separately per the user's 2026-08-24 decision.
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { Navigate, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { useNoticeSet, type NoticeSetRow, type StatusRow as NoticeStatusRow } from '@/hooks/useNoticeSet';
+import { useNoticeSet, type NoticeSetRow } from '@/hooks/useNoticeSet';
 import { isOpen, isOverdue, isDueIn7, isNew } from '@/utils/noticeDefinitions';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
-import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import BulkAddClientsDialog, { downloadClientImportTemplate } from '@/components/clients/BulkAddClientsDialog';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
-import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
-import { computeNoticeSummary, isClosed, summaryCellHref, type SummaryCellKind } from '@/utils/noticeSummaryReport';
+import { classifyNoticeCategory } from '@/utils/noticeCategoryClassifier';
+import { computeNoticeSummary } from '@/utils/noticeSummaryReport';
 import { runNoticeSweep } from '@/lib/noticeAutoClose';
 import NoticeWorkQueue from '@/components/notices/NoticeWorkQueue';
 import NoticeActivityFeed from '@/components/notices/NoticeActivityFeed';
 import NoticeDrawer from '@/components/notices/NoticeDrawer';
+import NeedsAttentionStrip from '@/components/notices/NeedsAttentionStrip';
+import AgeingExposurePanel from '@/components/notices/AgeingExposurePanel';
+import Next14DaysStrip, { type DeadlineItem } from '@/components/notices/Next14DaysStrip';
+import SyncHealthCard from '@/components/notices/SyncHealthCard';
+import CategorySummaryBars from '@/components/notices/CategorySummaryBars';
 import {
-  Bell, CalendarClock, History, Building2, FolderOpen, AlertTriangle, Loader2,
-  UserPlus, Upload, Download, RefreshCw, RotateCcw, Pencil, ChevronLeft, ChevronRight, Search,
+  Bell, Building2, Loader2, RefreshCw, RotateCcw, Search,
 } from 'lucide-react';
 
 function compareVersions(a: string, b: string): number {
@@ -50,22 +37,11 @@ function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-type NoticeRow = NoticeSetRow;
-type StatusRow = NoticeStatusRow;
-
 interface SyncLogRow {
   client_id: string;
   status: 'success' | 'failed';
   created_at: string;
 }
-
-// "Registration" isn't its own notice_type in this schema — it shows up as a
-// Registration Certificate/Rejection/SCN description under the "Order" or
-// "Notice" type instead (see noticeRefundDrc03Reports.ts's Notices builder).
-// So this filter matches on description text, the same way the underlying
-// data actually distinguishes a registration-related notice from any other.
-type TypeOfNoticesFilter = 'all' | 'registration' | 'other';
-const isRegistrationRelated = (r: NoticeRow) => isRegistrationDescription(r.description);
 
 interface MiniClient {
   id: string;
@@ -73,21 +49,16 @@ interface MiniClient {
   gstin: string | null;
 }
 
-const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
+function todayISOString(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+}
 
 const NoticesDashboardPage: React.FC = () => {
-  const { isStaffRole, canAddEditClients } = useAuth();
+  const { isStaffRole } = useAuth();
   const navigate = useNavigate();
   const { rows, refundRows, drc03Rows, loading, error: noticeError } = useNoticeSet();
-  const [typeFilter, setTypeFilter] = useState<TypeOfNoticesFilter>('all');
-  // Clicking a category row drills the whole dashboard (KPI tiles included)
-  // down to just that category — click the same row again to clear it.
-  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
 
-  // Notice drawer state — work queue and activity feed cards open it.
+  // Notice drawer state
   const [drawerNoticeId, setDrawerNoticeId] = useState<string | null>(null);
   const [drawerClientId, setDrawerClientId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -97,14 +68,10 @@ const NoticesDashboardPage: React.FC = () => {
     setDrawerOpen(true);
   };
 
-  // Company panel — mirrors Notice Alert's mini client list + onboarding shortcuts.
-  const [miniClients, setMiniClients] = useState<MiniClient[]>([]);
-  const canManageClients = canAddEditClients();
+  // Category drill-down filter
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
 
-  // The top-right "Company" button — confirmed live against Notice Alert
-  // (2026-08-26): it opens a lightweight "Search Company" picker, NOT the
-  // full Company List page. That page (/notices-company-list) is what their
-  // "View All" link opens instead — this app had those two swapped.
+  // Search Company dialog
   const [searchCompanyOpen, setSearchCompanyOpen] = useState(false);
   const [searchCompanyClients, setSearchCompanyClients] = useState<MiniClient[]>([]);
   const [companySearch, setCompanySearch] = useState('');
@@ -122,47 +89,28 @@ const NoticesDashboardPage: React.FC = () => {
     return c.name.toLowerCase().includes(q) || (c.gstin || '').toLowerCase().includes(q);
   });
 
-  // Extension handshake for "Sync All", same ping/pong pattern ReportsPage uses
-  // for its per-client "Pull" buttons.
+  // Extension handshake
   const [extReady, setExtReady] = useState(false);
+  const [extVersion, setExtVersion] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
 
-  // Calendar widget — month currently shown, defaults to the current month.
-  const todayDate = new Date();
-  const [calMonth, setCalMonth] = useState(todayDate.getMonth());
-  const [calYear, setCalYear] = useState(todayDate.getFullYear());
-
-  // Failed Logins tile — replaces Priority in this slot to match Notice
-  // Alert's own dashboard (confirmed live 2026-09-03: Notice Alert shows
-  // Failed Logins here, we showed Priority). "Failed" = the client's most
-  // RECENT Sync All (Notices) attempt failed — same definition and same
-  // latest-log-per-client computation the Company List page already uses
-  // for its own Status column, so the tile's count matches what you see
-  // after clicking through to it.
+  // Sync logs for health card
   const [syncLogs, setSyncLogs] = useState<SyncLogRow[]>([]);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const { data } = await supabase
-        .from('client_sync_log')
-        .select('client_id, status, created_at')
-        .eq('action', 'notices')
-        .order('created_at', { ascending: false });
-      if (!cancelled) setSyncLogs((data || []) as SyncLogRow[]);
-    })();
-    return () => { cancelled = true; };
-  }, []);
+  // Client list for ageing panel
+  const [clients, setClients] = useState<MiniClient[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data } = await supabase
-        .from('clients')
-        .select('id, name, gstin')
-        .order('created_at', { ascending: false })
-        .limit(5);
-      if (!cancelled) setMiniClients((data || []) as MiniClient[]);
+      const [logRes, clientRes] = await Promise.all([
+        supabase.from('client_sync_log').select('client_id, status, created_at').eq('action', 'notices').order('created_at', { ascending: false }),
+        supabase.from('clients').select('id, name, gstin').eq('notices_sync_excluded', false).order('name'),
+      ]);
+      if (!cancelled) {
+        setSyncLogs((logRes.data || []) as SyncLogRow[]);
+        setClients((clientRes.data || []) as MiniClient[]);
+      }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -173,6 +121,7 @@ const NoticesDashboardPage: React.FC = () => {
       if (!d || typeof d !== 'object') return;
       if (d.__gstkExtensionReady) {
         setExtReady(true);
+        setExtVersion(d.version || null);
         if (d.version && compareVersions(d.version, '0.3.0') < 0) {
           toast.error('Extension v' + d.version + ' is outdated. Please update to v0.3.0+ for reliable sync.');
         }
@@ -215,11 +164,6 @@ const NoticesDashboardPage: React.FC = () => {
       return;
     }
     setSyncing(true);
-    // 'notices_bundle': same per-client Notices pull as before, but the
-    // extension now also chains through Refunds and DRC-03 for that same
-    // client before moving to the next one (see chainOrStop in content.js) —
-    // one CAPTCHA per client still covers all three, since it's the same
-    // logged-in session throughout.
     window.postMessage({ __gstkPullSectionAllClients: { mode: 'notices_bundle' } }, '*');
   };
 
@@ -227,399 +171,200 @@ const NoticesDashboardPage: React.FC = () => {
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
-  const filteredRows = rows.filter((r) => {
-    if (typeFilter === 'registration') return isRegistrationRelated(r);
-    if (typeFilter === 'other') return !isRegistrationRelated(r);
-    return true;
-  });
+  // ── Derived data ──────────────────────────────────────────────────────────
+
   const displayRows = categoryFilter
-    ? filteredRows.filter((r) => classifyNoticeCategory(r) === categoryFilter)
-    : filteredRows;
+    ? rows.filter((r) => classifyNoticeCategory(r) === categoryFilter)
+    : rows;
 
   const totalNotices = displayRows.length;
-  const newNotices = displayRows.filter((r) => isNew(r)).length;
-  const totalGstin = new Set(displayRows.map((r) => r.client_id)).size;
   const openNotices = displayRows.filter((r) => isOpen(r)).length;
-  const dueSoon = displayRows.filter((r) => isDueIn7(r)).length;
   const overdue = displayRows.filter((r) => isOverdue(r)).length;
+  const dueSoon = displayRows.filter((r) => isDueIn7(r)).length;
+  const newNotices = displayRows.filter((r) => isNew(r)).length;
+  const newGstins = new Set(displayRows.filter((r) => isNew(r)).map((r) => r.client_id)).size;
 
-  // Latest Sync All (Notices) attempt per client — logs are already ordered
-  // newest-first, so the first one seen per client_id is its latest.
+  // Exposure: sum of amount_of_demand for open notices
+  const openWithDemand = displayRows.filter((r) => isOpen(r) && r.amount_of_demand && r.amount_of_demand > 0);
+  const exposureAmount = openWithDemand.reduce((sum, r) => sum + (r.amount_of_demand || 0), 0);
+
+  // Sync health metrics
   const latestLogByClient = new Map<string, SyncLogRow>();
   syncLogs.forEach((l) => { if (!latestLogByClient.has(l.client_id)) latestLogByClient.set(l.client_id, l); });
   const failedLoginsCount = Array.from(latestLogByClient.values()).filter((l) => l.status === 'failed').length;
+  const now24h = Date.now() - 24 * 60 * 60 * 1000;
+  const clientsSynced24h = new Set(syncLogs.filter((l) => l.status === 'success' && new Date(l.created_at).getTime() > now24h).map((l) => l.client_id)).size;
+  const lastSuccessSync = syncLogs.find((l) => l.status === 'success');
+  const newNotices24h = rows.filter((r) => r.first_seen_at && new Date(r.first_seen_at).getTime() > now24h).length;
+  const changedRows24h = rows.filter((r) => {
+    if (!r.pulled_at) return false;
+    const pulledTime = new Date(r.pulled_at).getTime();
+    if (pulledTime <= now24h) return false;
+    if (!r.issue_date) return false;
+    const issueTime = new Date(r.issue_date).getTime();
+    return issueTime < now24h;
+  }).length;
 
-  // Every tile except Total GSTIN drills into the firm-wide notice list,
-  // carrying the current Type Of Notices / category selections along so the
-  // drilled-down list stays consistent with what's on screen — matching
-  // Notice Alert's own tile-click behavior (confirmed live: each tile
-  // navigates to "Notices and Orders" pre-filtered).
-  const drillParams = (extra: Record<string, string>) => {
-    const p = new URLSearchParams(extra);
-    if (typeFilter !== 'all') p.set('type', typeFilter);
-    if (categoryFilter) p.set('category', categoryFilter);
-    const qs = p.toString();
-    return qs ? `/notices-all?${qs}` : '/notices-all';
-  };
+  // Next 14 days deadline items
+  const deadlineItems = useMemo<DeadlineItem[]>(() => {
+    const today = todayISOString();
+    const in14 = new Date(today);
+    in14.setDate(in14.getDate() + 14);
+    const end = in14.toISOString().slice(0, 10);
+    const items: DeadlineItem[] = [];
+    const clientMap = new Map(clients.map((c) => [c.id, c.name]));
 
-  const kpiCards = [
-    { label: 'Total Notices', value: totalNotices, icon: <Bell className="h-8 w-8 text-primary" />, bgColor: 'bg-primary/5', to: drillParams({}) },
-    { label: 'New (24h)', value: newNotices, icon: <History className="h-8 w-8 text-info" />, bgColor: 'bg-info/5', to: drillParams({ filter: 'new' }) },
-    { label: 'Total GSTIN', value: totalGstin, icon: <Building2 className="h-8 w-8 text-secondary-foreground" />, bgColor: 'bg-secondary/40', to: null },
-    { label: 'Open Notices', value: openNotices, icon: <FolderOpen className="h-8 w-8 text-warning" />, bgColor: 'bg-warning/5', to: drillParams({ status: 'Open' }) },
-    { label: '7 Days Due', value: dueSoon, icon: <CalendarClock className="h-8 w-8 text-warning" />, bgColor: 'bg-warning/5', to: drillParams({ filter: 'due7' }) },
-    { label: 'Over Due', value: overdue, icon: <AlertTriangle className="h-8 w-8 text-destructive" />, bgColor: 'bg-destructive/5', to: drillParams({ filter: 'overdue' }) },
-    { label: 'Failed Logins', value: failedLoginsCount, icon: <RotateCcw className="h-8 w-8 text-destructive" />, bgColor: 'bg-destructive/5', to: '/notices-company-list?status=failed' },
-  ];
-
-  const { categoryRows, grandTotal } = computeNoticeSummary(filteredRows, refundRows, drc03Rows);
-
-  // Calendar widget: which days in the shown month have an issue date, a due
-  // date, or both, across every notice (not filtered — the calendar is a
-  // firm-wide date map, matching Notice Alert's always-unfiltered widget).
-  const dayMarkers = new Map<number, { issue: boolean; due: boolean }>();
-  rows.forEach((r) => {
-    [{ v: r.issue_date, key: 'issue' as const }, { v: r.due_date, key: 'due' as const }].forEach(({ v, key }) => {
-      if (!v) return;
-      const d = new Date(v);
-      if (d.getFullYear() !== calYear || d.getMonth() !== calMonth) return;
-      const entry = dayMarkers.get(d.getDate()) || { issue: false, due: false };
-      entry[key] = true;
-      dayMarkers.set(d.getDate(), entry);
+    rows.forEach((r) => {
+      const due = r.extended_due_date || r.due_date;
+      if (due && due >= today && due <= end && isOpen(r)) {
+        items.push({
+          date: due,
+          type: 'reply_due',
+          label: r.notice_type || 'Notice',
+          noticeId: r.id,
+          clientId: r.client_id,
+        });
+      }
+      if (r.hearing_date && r.hearing_date >= today && r.hearing_date <= end && isOpen(r)) {
+        items.push({
+          date: r.hearing_date,
+          type: 'hearing',
+          label: clientMap.get(r.client_id) || 'Hearing',
+          noticeId: r.id,
+          clientId: r.client_id,
+        });
+      }
+      if (r.issue_date && r.issue_date >= today && r.issue_date <= end) {
+        items.push({
+          date: r.issue_date,
+          type: 'issued',
+          label: r.notice_type || 'Issued',
+          noticeId: r.id,
+          clientId: r.client_id,
+        });
+      }
     });
-  });
-  const firstOfMonth = new Date(calYear, calMonth, 1);
-  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
-  const leadingBlanks = firstOfMonth.getDay();
-  const calendarCells: (number | null)[] = [
-    ...Array.from({ length: leadingBlanks }, () => null),
-    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
-  ];
-  const isCurrentMonth = calYear === todayDate.getFullYear() && calMonth === todayDate.getMonth();
-  const goPrevMonth = () => {
-    if (calMonth === 0) { setCalMonth(11); setCalYear((y) => y - 1); } else { setCalMonth((m) => m - 1); }
-  };
-  const goNextMonth = () => {
-    if (calMonth === 11) { setCalMonth(0); setCalYear((y) => y + 1); } else { setCalMonth((m) => m + 1); }
-  };
+    return items;
+  }, [rows, clients]);
+
+  // Category summary
+  const { categoryRows, grandTotal } = computeNoticeSummary(rows, refundRows, drc03Rows);
+
+  // Ageing panel data
+  const ageingNotices = useMemo(() =>
+    rows.map((r) => ({
+      id: r.id,
+      client_id: r.client_id,
+      staff_status: r.staff_status,
+      due_date: r.due_date,
+      extended_due_date: r.extended_due_date,
+      amount_of_demand: r.amount_of_demand,
+    })),
+  [rows]);
+
+  const ageingClients = useMemo(() =>
+    clients.map((c) => ({ id: c.id, name: c.name })),
+  [clients]);
 
   return (
-    <div className="space-y-2.5 animate-fade-in">
+    <div className="space-y-4 animate-fade-in">
       {noticeError && (
         <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
           Failed to load notices: {noticeError}
         </div>
       )}
+
+      {/* ── Header bar ────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <PageHeader
           title="Notices Dashboard"
           icon={<Bell className="h-5 w-5" />}
           embedded
         />
-        <NoticesTopNav />
-      </div>
-
-      <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <Label htmlFor="type-of-notices" className="text-xs text-muted-foreground">Type Of Notices</Label>
-          <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as TypeOfNoticesFilter)}>
-            <SelectTrigger id="type-of-notices" className="h-8 w-[200px] text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All</SelectItem>
-              <SelectItem value="registration">Registration</SelectItem>
-              <SelectItem value="other">Other than Registration</SelectItem>
-            </SelectContent>
-          </Select>
+          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={openSearchCompany}>
+            <Search className="mr-1.5 h-3.5 w-3.5" /> Search Company
+          </Button>
+          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleSweep} disabled={sweeping}>
+            {sweeping ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="mr-1.5 h-3.5 w-3.5" />}
+            Sweep
+          </Button>
+          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleSyncAll} disabled={syncing}>
+            {syncing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+            Sync All
+          </Button>
+          <NoticesTopNav />
         </div>
-        {/* Matches Notice Alert's top-right "Company" button exactly: a
-            lightweight search picker, not the full Company List page (that's
-            "View All" below, on the Company panel). */}
-        <Button size="sm" variant="outline" className="h-8 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={openSearchCompany}>
-          <Building2 className="mr-1.5 h-3.5 w-3.5" /> Company
-        </Button>
       </div>
 
-      {/*
-        Layout matches Notice Alert: left column stacks KPI tiles on top of
-        Company + Calendar (side by side); Notice Summary is a single tall
-        card on the right next to both. It gets an explicit fixed height
-        (not items-stretch) — with an auto-height flex/grid row, align-items:
-        stretch sizes the ROW to the tallest item's own natural content
-        height first (here, the Notice Summary table's full un-scrolled row
-        count, ~850px), then stretches every OTHER column up to match that —
-        the opposite of what's wanted, and it still leaves dead space below
-        the now-taller Company/Calendar column. A fixed height plus
-        overflow-auto (matching Notice Alert's own scrollbar, visible in
-        their screenshot too) sidesteps that entirely.
-      */}
-      <div className="flex flex-col gap-2.5 xl:flex-row xl:items-start">
-        <div className="flex flex-1 flex-col gap-2.5 min-w-0">
-        <div className="grid grid-cols-2 gap-2.5 content-start sm:grid-cols-4">
-          {kpiCards.map((card) => {
-            const body = (
-              <CardContent className="p-3">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground">{card.label}</p>
-                    <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">
-                      {loading ? <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /> : card.value}
-                    </p>
-                  </div>
-                  <div className={`rounded-full p-1.5 ${card.bgColor}`}>{card.icon}</div>
-                </div>
-              </CardContent>
-            );
-            return card.to ? (
-              <Link key={card.label} to={card.to}>
-                <Card className="border transition-colors hover:border-primary/40 hover:bg-muted/30">{body}</Card>
-              </Link>
-            ) : (
-              <Card key={card.label} className="border">{body}</Card>
-            );
-          })}
+      {/* ── Zone 1: Needs-attention strip ─────────────────────────────────── */}
+      <NeedsAttentionStrip
+        overdue={overdue}
+        total={totalNotices}
+        dueSoon={dueSoon}
+        newCount={newNotices}
+        newGstinCount={newGstins}
+        exposureAmount={exposureAmount}
+        exposureCount={openWithDemand.length}
+        loading={loading}
+        onClickOverdue={() => navigate('/notices-all?filter=overdue')}
+        onClickDueSoon={() => navigate('/notices-all?filter=due7')}
+        onClickNew={() => navigate('/notices-all?filter=new')}
+        onClickExposure={() => navigate('/notices-all?status=Open')}
+      />
+
+      {/* ── Zone 2: Main content — left (work queue + categories + 14-day) | right (ageing + sync) */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        {/* Left column: 2/3 width */}
+        <div className="space-y-4 xl:col-span-2">
+          {/* Work queue + Activity feed side by side */}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <NoticeWorkQueue onSelectNotice={openDrawer} />
+            <NoticeActivityFeed onSelectNotice={openDrawer} />
+          </div>
+
+          {/* Category summary with bars */}
+          <CategorySummaryBars
+            categories={categoryRows}
+            grandTotal={grandTotal}
+            onCategoryClick={(cat) => setCategoryFilter((prev) => prev === cat ? null : cat)}
+            activeCategory={categoryFilter}
+            loading={loading}
+          />
+
+          {/* Next 14 days strip */}
+          <Next14DaysStrip
+            items={deadlineItems}
+            onClickItem={(item) => {
+              if (item.noticeId && item.clientId) openDrawer(item.noticeId, item.clientId);
+            }}
+            loading={loading}
+          />
         </div>
 
-        {/* Company (left) + Calendar (right) */}
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-        <Card className="flex min-h-0 flex-col sm:col-span-2">
-          <CardHeader className="shrink-0 pb-2 pt-3">
-            <CardTitle className="text-sm">Company</CardTitle>
-            <CardDescription className="text-[11px]">Onboard clients and pull the latest notices for everyone at once.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex min-h-0 flex-1 flex-col gap-2 pb-3">
-            <div className="flex flex-wrap items-center gap-1.5">
-              {canManageClients && (
-                <>
-                  <Button size="sm" variant="outline" className="h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={() => navigate('/add-client')}>
-                    <UserPlus className="mr-1.5 h-3.5 w-3.5" /> Add Company
-                  </Button>
-                  <BulkAddClientsDialog
-                    triggerLabel="Import Company"
-                    triggerClassName="h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary"
-                    onSuccess={() => window.location.reload()}
-                  />
-                  <Button size="sm" variant="outline" className="h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={downloadClientImportTemplate}>
-                    <Download className="mr-1.5 h-3.5 w-3.5" /> Download Template
-                  </Button>
-                </>
-              )}
-              {/* Unlike Add/Import/Download Template (locked behind the
-                  add_edit_clients permission — they touch client master
-                  data), Sync All only pulls Notices/Refunds/DRC-03 from the
-                  portal, so it's open to every staff member regardless of
-                  that permission — 2026-08-26 decision: any employee should
-                  be able to trigger a sync without being granted
-                  client-editing rights. */}
-              <Button size="sm" variant="outline" className="ml-auto h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={handleSweep} disabled={sweeping} title="Auto-close notices with portal Closure/LUT Approval/Refund Order, and extract due dates from case folders">
-                {sweeping ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="mr-1.5 h-3.5 w-3.5" />}
-                Sweep
-              </Button>
-              <Button size="sm" variant="outline" className="h-7 border-primary/40 text-xs text-primary hover:bg-primary/5 hover:text-primary" onClick={handleSyncAll} disabled={syncing} title="Pulls Notices & Orders, Refund applications, and DRC-03 filings for every client with saved credentials">
-                {syncing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
-                Sync All
-              </Button>
-            </div>
-            {!extReady && (
-              <p className="text-[11px] text-muted-foreground">Extension not detected — install/enable the GST Keeper extension to use Sync All.</p>
-            )}
-            <div className="min-h-0 flex-1 overflow-auto rounded-md border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-8 bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">#</TableHead>
-                    <TableHead className="w-[150px] bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">GSTIN</TableHead>
-                    <TableHead className="w-auto bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">Trade Name</TableHead>
-                    <TableHead className="w-10 bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">{canManageClients && 'Action'}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {miniClients.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={4} className="py-6 text-center text-xs text-muted-foreground">
-                        No companies yet.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    miniClients.map((c, idx) => (
-                      <TableRow key={c.id}>
-                        <TableCell className="px-2 py-1 text-xs text-muted-foreground">{idx + 1}</TableCell>
-                        <TableCell className="w-[150px] px-2 py-1 text-xs">
-                          {c.gstin ? (
-                            <Link to={`/notices-company/${c.id}`} className="text-primary hover:underline">{c.gstin}</Link>
-                          ) : '—'}
-                        </TableCell>
-                        <TableCell className="max-w-0 truncate px-2 py-1 text-xs" title={c.name}>{c.name}</TableCell>
-                        <TableCell className="px-2 py-1 text-right">
-                          {canManageClients && (
-                            <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => navigate(`/edit-client/${c.id}`)}>
-                              <Pencil className="h-3 w-3" />
-                            </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-            <div className="shrink-0 text-right">
-              <Link to="/notices-company-list" className="text-[11px] font-medium text-primary hover:underline">View All</Link>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Right column: 1/3 width */}
+        <div className="space-y-4">
+          {/* Ageing & Exposure panel */}
+          <AgeingExposurePanel
+            notices={ageingNotices}
+            clients={ageingClients}
+            loading={loading}
+          />
 
-        <Card className="flex min-h-0 flex-col">
-          <CardHeader className="shrink-0 pb-2 pt-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm">{MONTH_NAMES[calMonth]} {calYear}</CardTitle>
-              <div className="flex gap-1">
-                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={goPrevMonth}><ChevronLeft className="h-3.5 w-3.5" /></Button>
-                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={goNextMonth}><ChevronRight className="h-3.5 w-3.5" /></Button>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="min-h-0 flex-1 overflow-auto pb-3">
-            <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-medium text-muted-foreground">
-              {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => <div key={i}>{d}</div>)}
-            </div>
-            <div className="mt-1 grid grid-cols-7 gap-1">
-              {calendarCells.map((day, i) => {
-                if (day === null) return <div key={i} />;
-                const marker = dayMarkers.get(day);
-                const isToday = isCurrentMonth && day === todayDate.getDate();
-                const bg = marker?.issue && marker?.due ? 'bg-warning/20 text-warning-foreground'
-                  : marker?.due ? 'bg-destructive/15 text-destructive'
-                  : marker?.issue ? 'bg-info/15 text-info'
-                  : '';
-                const iso = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                return (
-                  <button
-                    type="button"
-                    key={i}
-                    onClick={() => navigate(drillParams({ date: iso }))}
-                    className={cn(
-                      'flex h-6 items-center justify-center rounded text-[11px] transition-colors hover:bg-primary/10 hover:text-primary',
-                      bg,
-                      isToday && 'ring-1 ring-primary font-semibold',
-                    )}
-                  >
-                    {day}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
-              <div className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-info/40" /> Issue date</div>
-              <div className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-destructive/40" /> Due date</div>
-              <div className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-warning/40" /> Both</div>
-            </div>
-          </CardContent>
-        </Card>
+          {/* Sync Health card */}
+          <SyncHealthCard
+            lastSync={lastSuccessSync?.created_at || null}
+            clientsSynced24h={clientsSynced24h}
+            failedLogins={failedLoginsCount}
+            newNotices24h={newNotices24h}
+            changedRows24h={changedRows24h}
+            extensionVersion={extVersion}
+            extensionReady={extReady}
+          />
         </div>
-
-        {/* Work queue + Activity feed — below Company/Calendar, above the fold */}
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-          <NoticeWorkQueue onSelectNotice={openDrawer} />
-          <NoticeActivityFeed onSelectNotice={openDrawer} />
-        </div>
-        </div>
-
-        <Card className="flex min-h-0 flex-col xl:h-[620px] xl:w-[380px] xl:shrink-0">
-          <CardHeader className="shrink-0 pb-2 pt-3">
-            <CardTitle className="text-sm">Notice Summary</CardTitle>
-            <CardDescription className="text-[11px]">
-              Click a row to drill the tiles into just that category
-              {categoryFilter && (
-                <>
-                  {' '}·{' '}
-                  <button
-                    type="button"
-                    className="font-medium text-primary underline-offset-2 hover:underline"
-                    onClick={() => setCategoryFilter(null)}
-                  >
-                    clear "{categoryFilter}"
-                  </button>
-                </>
-              )}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex min-h-0 flex-1 flex-col pb-3">
-            {loading ? (
-              <div className="flex items-center justify-center py-10 text-muted-foreground">
-                <Loader2 className="h-5 w-5 animate-spin" />
-              </div>
-            ) : categoryRows.length === 0 ? (
-              <p className="py-10 text-center text-sm text-muted-foreground">No notices on record yet.</p>
-            ) : (
-              // The Card above has a fixed height, so this just fills it and
-              // scrolls — same as Notice Alert's own scrollbar.
-              <div className="min-h-0 flex-1 overflow-auto rounded-md border">
-                <Table>
-                  <TableHeader className="sticky top-0 z-10 bg-background">
-                    <TableRow>
-                      <TableHead className="bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">Remarks</TableHead>
-                      <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Total</TableHead>
-                      <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Open</TableHead>
-                      <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Closed</TableHead>
-                      <TableHead className="bg-muted/60 px-2 py-1.5 text-right text-[11px] font-semibold">Replied</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {categoryRows.map((r) => {
-                      // Remarks label click keeps the existing local-drill behaviour
-                      // (filters the KPI tiles above to this category); each
-                      // Total/Open/Closed/Replied cell is its own hyperlink to the
-                      // correspondingly filtered firm-wide list, per Notice Alert.
-                      const cell = (kind: SummaryCellKind, value: number) => {
-                        const href = summaryCellHref(r, kind);
-                        return (
-                          <TableCell
-                            className={cn(
-                              'px-2 py-1 text-right text-[11px] tabular-nums',
-                              href && 'cursor-pointer text-primary underline-offset-2 hover:underline',
-                            )}
-                            onClick={href ? (e) => { e.stopPropagation(); navigate(href); } : undefined}
-                          >
-                            {value || '—'}
-                          </TableCell>
-                        );
-                      };
-                      return (
-                        <TableRow
-                          key={r.type}
-                          className={cn(
-                            !r.placeholder && 'cursor-pointer',
-                            categoryFilter === r.type && 'bg-primary/10 hover:bg-primary/15',
-                          )}
-                          onClick={r.placeholder ? undefined : () => (r.to ? navigate(r.to) : setCategoryFilter((prev) => (prev === r.type ? null : r.type)))}
-                        >
-                          <TableCell className={cn('px-2 py-1 text-[11px] font-medium', r.placeholder ? 'text-muted-foreground' : 'text-primary')}>{r.type}</TableCell>
-                          {cell('total', r.total)}
-                          {cell('open', r.open)}
-                          {cell('closed', r.closed)}
-                          {cell('replied', r.replied)}
-                        </TableRow>
-                      );
-                    })}
-                    <TableRow className="bg-primary/5 font-semibold hover:bg-primary/10">
-                      <TableCell className="px-2 py-1 text-[11px]">Total</TableCell>
-                      <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.total}</TableCell>
-                      <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.open}</TableCell>
-                      <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.closed}</TableCell>
-                      <TableCell className="px-2 py-1 text-right text-[11px] tabular-nums">{grandTotal.replied}</TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
       </div>
 
-      {/* "Company" button's picker — search-only, matches Notice Alert's own
-          "Search Company" modal (no bulk actions here, that's /notices-company-list). */}
+      {/* ── Search Company dialog ─────────────────────────────────────────── */}
       <Dialog open={searchCompanyOpen} onOpenChange={setSearchCompanyOpen}>
         <DialogContent className="max-w-xl">
           <DialogHeader>
