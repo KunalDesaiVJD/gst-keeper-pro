@@ -126,7 +126,7 @@ const AllClientsNoticesPage: React.FC = () => {
         'id, client_id, reference_number, case_id, notice_type, description, issue_date, due_date, extended_due_date, ' +
         'staff_status, priority, reply_ref_number, reply_date, order_number, order_date, submission_arn, submission_date, ' +
         'amount_of_demand, remarks, issued_by, financial_year, assign_to, pdf_url, pulled_at, clients(name, gstin)',
-        (q) => q.eq('source', 'notices').is('deleted_at', null),
+        (q) => q.eq('source', 'notices').is('deleted_at', null).order('id'),
       ),
       supabase.from('gst_refund_applications').select('arn, refund_type, filed_date, status, documents, client_id, clients(name, gstin)').is('deleted_at', null),
       supabase.from('gst_drc03_filings').select('arn, cause_of_payment, filed_date, status, pdf_url, client_id, clients(name, gstin)').is('deleted_at', null),

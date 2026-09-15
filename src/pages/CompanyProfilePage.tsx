@@ -24,6 +24,7 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 import { cn } from '@/lib/utils';
 import { isoDateToDMY } from '@/utils/formatDate';
+import { isClosed } from '@/utils/noticeSummaryReport';
 import {
   Bell, CalendarClock, History, FolderOpen, AlertTriangle, Loader2, Pencil,
   ArrowLeft, FileText, Eye,
@@ -98,7 +99,6 @@ interface FilingRow {
   filed_date: string | null;
 }
 
-const isClosed = (s: string | null) => (s || '').trim().toLowerCase() === 'closed';
 
 // Indian financial year (April-March) for an MM/YYYY period string.
 const financialYearFor = (periodMonth: string) => {
