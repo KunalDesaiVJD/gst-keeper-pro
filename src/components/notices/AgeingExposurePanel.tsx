@@ -258,15 +258,18 @@ function ExposureDonut({ notices }: { notices: NoticeForAgeing[] }) {
           </div>
         </div>
 
-        {/* Legend */}
-        <div className="flex flex-col gap-1 min-w-0">
+        {/* Legend with amounts */}
+        <div className="flex flex-col gap-1.5 min-w-0 flex-1">
           {segments.map((seg) => (
-            <div key={seg.label} className="flex items-center gap-1.5 text-xs">
-              <span
-                className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-                style={{ backgroundColor: seg.color }}
-              />
-              <span className="truncate">{seg.label}</span>
+            <div key={seg.label} className="flex items-center justify-between gap-2 text-xs">
+              <span className="flex items-center gap-1.5 min-w-0">
+                <span
+                  className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+                  style={{ backgroundColor: seg.color }}
+                />
+                <span className="truncate">{seg.label}</span>
+              </span>
+              <span className="shrink-0 font-semibold tabular-nums">{formatAmount(seg.value)}</span>
             </div>
           ))}
           {segments.length === 0 && (
