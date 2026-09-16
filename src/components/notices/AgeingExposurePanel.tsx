@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { Loader2 } from 'lucide-react';
@@ -54,14 +55,15 @@ interface Bucket {
   label: string;
   color: string;
   test: (days: number | null) => boolean;
+  href: string;
 }
 
 const BUCKETS: Bucket[] = [
-  { label: 'Not yet due', color: 'bg-emerald-500', test: (d) => d === null || d <= 0 },
-  { label: '1–7 days late', color: 'bg-amber-400', test: (d) => d !== null && d >= 1 && d <= 7 },
-  { label: '8–30 days late', color: 'bg-orange-500', test: (d) => d !== null && d >= 8 && d <= 30 },
-  { label: '31–90 days late', color: 'bg-red-500', test: (d) => d !== null && d >= 31 && d <= 90 },
-  { label: '90+ days late', color: 'bg-red-800', test: (d) => d !== null && d > 90 },
+  { label: 'Not yet due', color: 'bg-emerald-500', test: (d) => d === null || d <= 0, href: '/notices-all?status=Open' },
+  { label: '1–7 days late', color: 'bg-amber-400', test: (d) => d !== null && d >= 1 && d <= 7, href: '/notices-all?filter=overdue' },
+  { label: '8–30 days late', color: 'bg-orange-500', test: (d) => d !== null && d >= 8 && d <= 30, href: '/notices-all?filter=overdue' },
+  { label: '31–90 days late', color: 'bg-red-500', test: (d) => d !== null && d >= 31 && d <= 90, href: '/notices-all?filter=overdue' },
+  { label: '90+ days late', color: 'bg-red-800', test: (d) => d !== null && d > 90, href: '/notices-all?filter=overdue' },
 ];
 
 const DOMAIN_STAGE_COLORS: Record<string, string> = {
@@ -112,7 +114,11 @@ function AgeingBuckets({ notices }: { notices: NoticeForAgeing[] }) {
   return (
     <div className="space-y-1.5">
       {counts.map((b) => (
-        <div key={b.label} className="flex items-center gap-2.5">
+        <Link
+          key={b.label}
+          to={b.href}
+          className="flex items-center gap-2.5 rounded-md px-1 -mx-1 py-0.5 hover:bg-muted/50"
+        >
           <span className="w-[120px] shrink-0 text-xs font-medium">{b.label}</span>
           <div className="flex-1 h-2 rounded-full bg-muted/40 overflow-hidden">
             <div
@@ -123,7 +129,7 @@ function AgeingBuckets({ notices }: { notices: NoticeForAgeing[] }) {
           <span className="w-9 text-xs font-medium text-right tabular-nums text-muted-foreground">
             {b.count}
           </span>
-        </div>
+        </Link>
       ))}
     </div>
   );
@@ -234,7 +240,11 @@ function TopExposureTable({ notices, clients }: { notices: NoticeForAgeing[]; cl
       {rows.map((r) => {
         const stage = tableStageInfo(r.dominantStatus);
         return (
-          <div key={r.id} className="flex items-center gap-2 py-1">
+          <Link
+            key={r.id}
+            to={`/notices-company/${r.id}`}
+            className="flex items-center gap-2 rounded-md px-1 -mx-1 py-1 hover:bg-muted/50"
+          >
             <span className="flex-1 min-w-0 text-xs font-semibold truncate">{r.name}</span>
             <span className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-medium">
               <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: stage.color }} />
@@ -243,7 +253,7 @@ function TopExposureTable({ notices, clients }: { notices: NoticeForAgeing[]; cl
             <span className="shrink-0 w-[90px] text-right text-xs tabular-nums font-medium">
               {r.exposure > 0 ? r.exposure.toLocaleString('en-IN') : '—'}
             </span>
-          </div>
+          </Link>
         );
       })}
     </div>
@@ -288,7 +298,9 @@ export default function AgeingExposurePanel({ notices, clients, loading }: Agein
 
         <div className="flex items-center justify-between pt-3 text-[11px] text-muted-foreground">
           <span className="truncate"></span>
-          <span className="shrink-0 font-semibold text-primary">By client →</span>
+          <Link to="/notices-gstin-wise-count" className="shrink-0 font-semibold text-primary hover:underline">
+            By client →
+          </Link>
         </div>
       </CardContent>
     </Card>

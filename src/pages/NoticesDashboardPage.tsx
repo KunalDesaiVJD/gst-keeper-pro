@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Select, SelectTrigger, SelectContent, SelectItem } from '@/components/ui/select';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -15,6 +16,8 @@ import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 import { classifyNoticeCategory } from '@/utils/noticeCategoryClassifier';
 import { computeNoticeSummary, summaryCellHref, type SummaryCellKind } from '@/utils/noticeSummaryReport';
 import { runNoticeSweep } from '@/lib/noticeAutoClose';
+import { runScheduledAlerts, flushOutbox } from '@/lib/noticeAlertQueue';
+import { AddNoticeDialog } from '@/components/notices/AddNoticeDialog';
 import NoticeWorkQueue from '@/components/notices/NoticeWorkQueue';
 import CategorySummaryBars from '@/components/notices/CategorySummaryBars';
 import NoticeDrawer from '@/components/notices/NoticeDrawer';
@@ -23,7 +26,7 @@ import AgeingExposurePanel from '@/components/notices/AgeingExposurePanel';
 import Next14DaysStrip, { type DeadlineItem } from '@/components/notices/Next14DaysStrip';
 import SyncHealthCard from '@/components/notices/SyncHealthCard';
 import {
-  Bell, Loader2, RefreshCw, RotateCcw, Search, Plus, Mail,
+  Bell, Loader2, RefreshCw, Search, Mail,
 } from 'lucide-react';
 
 function compareVersions(a: string, b: string): number {
@@ -51,10 +54,47 @@ function todayISOString(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 }
 
+interface FilterPillProps {
+  label: string;
+  allLabel: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+  extraOptions?: { value: string; label: string }[];
+}
+
+const FilterPill: React.FC<FilterPillProps> = ({ label, allLabel, value, onChange, options, extraOptions }) => {
+  const active = value !== 'all';
+  const shown = value === 'all'
+    ? allLabel
+    : extraOptions?.find((o) => o.value === value)?.label ?? value;
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger
+        className={cn(
+          'h-auto gap-1 rounded-full border-0 px-2 py-0.5 text-[10.5px] font-semibold focus:ring-1',
+          active ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground',
+        )}
+      >
+        <span className="truncate">{label}: {shown}</span>
+      </SelectTrigger>
+      <SelectContent className="max-h-72">
+        <SelectItem value="all" className="text-xs">{allLabel}</SelectItem>
+        {extraOptions?.map((o) => (
+          <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>
+        ))}
+        {options.map((o) => (
+          <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+};
+
 const NoticesDashboardPage: React.FC = () => {
   const { isStaffRole } = useAuth();
   const navigate = useNavigate();
-  const { rows, refundRows, drc03Rows, loading, error: noticeError } = useNoticeSet();
+  const { rows, refundRows, drc03Rows, loading, error: noticeError, refetch } = useNoticeSet();
 
   const [drawerNoticeId, setDrawerNoticeId] = useState<string | null>(null);
   const [drawerClientId, setDrawerClientId] = useState<string | null>(null);
@@ -66,6 +106,10 @@ const NoticesDashboardPage: React.FC = () => {
   };
 
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [fyFilter, setFyFilter] = useState('all');
+  const [ownerFilter, setOwnerFilter] = useState('all');
+  const [officerFilter, setOfficerFilter] = useState('all');
 
   const [searchCompanyOpen, setSearchCompanyOpen] = useState(false);
   const [searchCompanyClients, setSearchCompanyClients] = useState<MiniClient[]>([]);
@@ -148,6 +192,24 @@ const NoticesDashboardPage: React.FC = () => {
     }
   };
 
+  const [sendingDigest, setSendingDigest] = useState(false);
+  const handleSendDigest = async () => {
+    setSendingDigest(true);
+    try {
+      const { queued, errors } = await runScheduledAlerts();
+      if (errors.length) toast.error('Digest errors: ' + errors.join('; '));
+      else if (queued > 0) {
+        flushOutbox();
+        toast.success(`Queued ${queued} notice alert${queued === 1 ? '' : 's'}.`);
+      } else {
+        toast.info('No notice alerts due right now.');
+      }
+    } catch {
+      toast.error('Failed to run notice alerts.');
+    }
+    setSendingDigest(false);
+  };
+
   const handleSyncAll = () => {
     if (!extReady) {
       toast.error('GST Keeper browser extension not detected. Install/enable it to use Sync All.');
@@ -163,9 +225,33 @@ const NoticesDashboardPage: React.FC = () => {
 
   // ── Derived data ──────────────────────────────────────────────────────────
 
-  const displayRows = categoryFilter
-    ? rows.filter((r) => classifyNoticeCategory(r) === categoryFilter)
-    : rows;
+  // Options come from the loaded rows themselves, so a filter can never offer a
+  // value that would produce an empty board.
+  const distinct = (pick: (r: NoticeSetRow) => string | null) =>
+    Array.from(new Set(rows.map(pick).filter((v): v is string => !!v && v.trim() !== ''))).sort();
+  const typeOptions = distinct((r) => r.notice_type);
+  const fyOptions = distinct((r) => r.financial_year);
+  const ownerOptions = distinct((r) => r.assign_to);
+  const officerOptions = distinct((r) => r.issued_by);
+
+  const displayRows = rows.filter((r) => {
+    if (categoryFilter && classifyNoticeCategory(r) !== categoryFilter) return false;
+    if (typeFilter !== 'all' && r.notice_type !== typeFilter) return false;
+    if (fyFilter !== 'all' && r.financial_year !== fyFilter) return false;
+    if (ownerFilter !== 'all') {
+      if (ownerFilter === '__unassigned') { if (r.assign_to_user_id) return false; }
+      else if (r.assign_to !== ownerFilter) return false;
+    }
+    if (officerFilter !== 'all' && r.issued_by !== officerFilter) return false;
+    return true;
+  });
+
+  const activeFilterCount = [typeFilter, fyFilter, ownerFilter, officerFilter].filter((v) => v !== 'all').length
+    + (categoryFilter ? 1 : 0);
+  const clearFilters = () => {
+    setTypeFilter('all'); setFyFilter('all'); setOwnerFilter('all');
+    setOfficerFilter('all'); setCategoryFilter(null);
+  };
 
   const { categoryRows, grandTotal } = computeNoticeSummary(rows, refundRows, drc03Rows);
 
@@ -242,15 +328,16 @@ const NoticesDashboardPage: React.FC = () => {
     return new Date(r.issue_date).getTime() < now24h;
   }).length;
 
-  // Next 14 days
+  // Deadline strip window — 35 days so the strip's own "Month" toggle has data
+  // to show; it renders only the range it is currently set to.
   const deadlineItems = useMemo<DeadlineItem[]>(() => {
     const today = todayISOString();
-    const in14 = new Date(today);
-    in14.setDate(in14.getDate() + 14);
-    const end = in14.toISOString().slice(0, 10);
+    const horizon = new Date(today);
+    horizon.setDate(horizon.getDate() + 35);
+    const end = horizon.toISOString().slice(0, 10);
     const items: DeadlineItem[] = [];
 
-    rows.forEach((r) => {
+    displayRows.forEach((r) => {
       const due = r.extended_due_date || r.due_date;
       if (due && due >= today && due <= end && isOpen(r)) {
         items.push({ date: due, type: 'reply_due', label: r.notice_type || 'Notice', noticeId: r.id, clientId: r.client_id });
@@ -260,11 +347,11 @@ const NoticesDashboardPage: React.FC = () => {
       }
     });
     return items;
-  }, [rows]);
+  }, [displayRows]);
 
   // Ageing panel data
   const ageingNotices = useMemo(() =>
-    rows.map((r) => ({
+    displayRows.map((r) => ({
       id: r.id,
       client_id: r.client_id,
       staff_status: r.staff_status,
@@ -272,7 +359,7 @@ const NoticesDashboardPage: React.FC = () => {
       extended_due_date: r.extended_due_date,
       amount_of_demand: r.amount_of_demand,
     })),
-  [rows]);
+  [displayRows]);
 
   const ageingClients = useMemo(() =>
     clients.map((c) => ({ id: c.id, name: c.name })),
@@ -325,12 +412,9 @@ const NoticesDashboardPage: React.FC = () => {
             <span className="sm:hidden">Search</span>
             <kbd className="ml-2 hidden rounded border bg-muted px-1 py-0.5 text-[9px] font-mono sm:inline">⌘K</kbd>
           </button>
-          <Button size="sm" variant="outline" className="h-8 text-xs">
-            <Plus className="mr-1.5 h-3.5 w-3.5" />
-            Add Notice
-          </Button>
-          <Button size="sm" variant="outline" className="h-8 text-xs">
-            <Mail className="mr-1.5 h-3.5 w-3.5" />
+          <AddNoticeDialog onSuccess={refetch} />
+          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleSendDigest} disabled={sendingDigest}>
+            {sendingDigest ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Mail className="mr-1.5 h-3.5 w-3.5" />}
             Send digest
           </Button>
           <Button size="sm" className="h-8 text-xs" onClick={handleSyncAll} disabled={syncing}>
@@ -343,11 +427,23 @@ const NoticesDashboardPage: React.FC = () => {
       {/* ── Tabs + filters ─────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <NoticesTopNav />
-        <div className="flex flex-wrap gap-1.5">
-          <span className="rounded-full bg-muted px-2 py-0.5 text-[10.5px] font-semibold text-muted-foreground">Type: All notices ▾</span>
-          <span className="rounded-full bg-muted px-2 py-0.5 text-[10.5px] font-semibold text-muted-foreground">FY: All ▾</span>
-          <span className="rounded-full bg-muted px-2 py-0.5 text-[10.5px] font-semibold text-muted-foreground">Owner: Everyone ▾</span>
-          <span className="rounded-full bg-muted px-2 py-0.5 text-[10.5px] font-semibold text-muted-foreground">Officer: All ▾</span>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <FilterPill label="Type" allLabel="All notices" value={typeFilter} onChange={setTypeFilter} options={typeOptions} />
+          <FilterPill label="FY" allLabel="All" value={fyFilter} onChange={setFyFilter} options={fyOptions} />
+          <FilterPill
+            label="Owner" allLabel="Everyone" value={ownerFilter} onChange={setOwnerFilter}
+            options={ownerOptions} extraOptions={[{ value: '__unassigned', label: 'Unassigned' }]}
+          />
+          <FilterPill label="Officer" allLabel="All" value={officerFilter} onChange={setOfficerFilter} options={officerOptions} />
+          {activeFilterCount > 0 && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="rounded-full bg-primary/10 px-2 py-0.5 text-[10.5px] font-semibold text-primary hover:bg-primary/20"
+            >
+              Clear {activeFilterCount} filter{activeFilterCount === 1 ? '' : 's'} ✕
+            </button>
+          )}
         </div>
       </div>
 
@@ -377,7 +473,7 @@ const NoticesDashboardPage: React.FC = () => {
       {/* ── Zone 2: Work queue (left 2/3) | Ageing & exposure (right 1/3) ── */}
       <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-[2fr_1fr]">
         <div>
-          <NoticeWorkQueue onSelectNotice={openDrawer} onSweep={handleSweep} />
+          <NoticeWorkQueue onSelectNotice={openDrawer} onSweep={handleSweep} sweeping={sweeping} />
         </div>
         <div>
           <AgeingExposurePanel
@@ -405,7 +501,7 @@ const NoticesDashboardPage: React.FC = () => {
           onClickItem={(item) => {
             if (item.noticeId && item.clientId) openDrawer(item.noticeId, item.clientId);
           }}
-          onClickDate={(dateISO) => navigate(`/notices-all?due_date=${dateISO}`)}
+          onClickDate={(dateISO) => navigate(`/notices-all?date=${dateISO}`)}
           loading={loading}
         />
 

@@ -1,4 +1,5 @@
-import { useMemo } from 'react';
+import { Fragment, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { Loader2 } from 'lucide-react';
@@ -70,7 +71,13 @@ function isToday(d: Date): boolean {
 }
 
 export default function Next14DaysStrip({ items, onClickItem, onClickDate, loading }: Next14DaysStripProps) {
-  const days = useMemo(() => generateDays(14), []);
+  const [range, setRange] = useState<'2w' | 'month'>('2w');
+  const days = useMemo(() => generateDays(range === 'month' ? 35 : 14), [range]);
+  const weeks = useMemo(() => {
+    const out: Date[][] = [];
+    for (let i = 0; i < days.length; i += 7) out.push(days.slice(i, i + 7));
+    return out;
+  }, [days]);
 
   const grouped = useMemo(() => {
     const map: Record<string, DeadlineItem[]> = {};
@@ -86,9 +93,6 @@ export default function Next14DaysStrip({ items, onClickItem, onClickDate, loadi
     const sorted = [...items].sort((a, b) => a.date.localeCompare(b.date));
     return sorted.find((i) => i.type === 'appeal_limitation') || sorted[0] || null;
   }, [items]);
-
-  const week1 = days.slice(0, 7);
-  const week2 = days.slice(7, 14);
 
   if (loading) {
     return (
@@ -137,14 +141,38 @@ export default function Next14DaysStrip({ items, onClickItem, onClickDate, loadi
               {/* Count-based chips */}
               {typeCounts.size > 0 && (
                 <div className="mt-1 flex flex-wrap gap-0.5 justify-center">
-                  {Array.from(typeCounts.entries()).map(([type, count]) => (
-                    <span
-                      key={type}
-                      className={cn('rounded-full px-1.5 py-px text-[9px]', chipColor[type as DeadlineItem['type']] || chipColor.other)}
-                    >
-                      {type === 'hearing' ? 'PH' : count}
-                    </span>
-                  ))}
+                  {Array.from(typeCounts.entries()).map(([type, count]) => {
+                    // A chip standing for exactly one notice opens that notice
+                    // directly; an aggregated chip has no single target, so it
+                    // falls through to the day's own drill-down.
+                    const only = count === 1
+                      ? dayItems.find((i) => i.type === type && i.noticeId && i.clientId)
+                      : undefined;
+                    const chipAction = only && onClickItem
+                      ? () => onClickItem(only)
+                      : onClickDate
+                        ? () => onClickDate(key)
+                        : undefined;
+                    return (
+                      <span
+                        key={type}
+                        role={chipAction ? 'button' : undefined}
+                        tabIndex={chipAction ? 0 : undefined}
+                        title={only ? only.label : undefined}
+                        className={cn(
+                          'rounded-full px-1.5 py-px text-[9px]',
+                          chipColor[type as DeadlineItem['type']] || chipColor.other,
+                          chipAction && 'cursor-pointer hover:ring-1 hover:ring-current',
+                        )}
+                        onClick={chipAction ? (e) => { e.stopPropagation(); chipAction(); } : undefined}
+                        onKeyDown={chipAction ? (e) => {
+                          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); chipAction(); }
+                        } : undefined}
+                      >
+                        {type === 'hearing' ? 'PH' : count}
+                      </span>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -158,17 +186,27 @@ export default function Next14DaysStrip({ items, onClickItem, onClickDate, loadi
     <Card>
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div>
-          <h2 className="text-sm font-semibold">Next 14 days</h2>
+          <h2 className="text-sm font-semibold">Next {range === 'month' ? 35 : 14} days</h2>
           <p className="text-[11px] text-muted-foreground">Statutory due dates &amp; hearings</p>
         </div>
         <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
-          <span className="rounded-md bg-background px-2.5 py-1 text-[11px] font-medium shadow-sm">2 weeks</span>
-          <span className="rounded-md px-2.5 py-1 text-[11px] font-medium text-muted-foreground">Month</span>
+          {([['2w', '2 weeks'], ['month', 'Month']] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              className={cn(
+                'rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors',
+                range === key ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground',
+              )}
+              onClick={() => setRange(key)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
       <CardContent className="space-y-1.5 pt-3 pb-3">
-        {renderWeek(week1)}
-        {renderWeek(week2)}
+        {weeks.map((w, i) => <Fragment key={i}>{renderWeek(w)}</Fragment>)}
 
         {/* Legend */}
         <div className="flex flex-wrap gap-3 pt-2">
@@ -182,12 +220,21 @@ export default function Next14DaysStrip({ items, onClickItem, onClickDate, loadi
 
         {/* Footer */}
         <div className="flex items-center justify-between pt-1 text-[11px] text-muted-foreground">
-          <span className="truncate">
-            {spotlightItem
-              ? `${new Date(spotlightItem.date).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}: ${spotlightItem.label}`
-              : ''}
-          </span>
-          <span className="shrink-0 font-semibold text-primary">Full calendar →</span>
+          {spotlightItem ? (
+            <button
+              type="button"
+              className="truncate text-left hover:text-foreground hover:underline"
+              onClick={() => {
+                if (spotlightItem.noticeId && spotlightItem.clientId && onClickItem) onClickItem(spotlightItem);
+                else onClickDate?.(spotlightItem.date);
+              }}
+            >
+              {new Date(spotlightItem.date).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}: {spotlightItem.label}
+            </button>
+          ) : <span />}
+          <Link to="/notices-all?filter=due7" className="shrink-0 font-semibold text-primary hover:underline">
+            Full calendar →
+          </Link>
         </div>
       </CardContent>
     </Card>
