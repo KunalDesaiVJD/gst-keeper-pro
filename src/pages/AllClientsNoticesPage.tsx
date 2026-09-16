@@ -7,23 +7,22 @@
 // tile was clicked (see NoticesDashboardPage's kpiCards `to` field) —
 // matches Notice Alert's own tile-to-filtered-list behavior.
 import React, { useEffect, useMemo, useState } from 'react';
-import { Navigate, useSearchParams, Link } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchAllRows } from '@/lib/fetchAllRows';
-import { PageHeader } from '@/components/layout/PageHeader';
-import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { NoticeWorkflowListView } from '@/components/reports/views/NoticeWorkflowListView';
 import { EvidenceEventListView } from '@/components/reports/views/EvidenceEventListView';
 import { AddNoticeDialog } from '@/components/notices/AddNoticeDialog';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
+import NoticesPageHeader from '@/components/notices/NoticesPageHeader';
+import FilterPill from '@/components/notices/FilterPill';
+import { cn } from '@/lib/utils';
 import type { ReportTable } from '@/utils/allClientsReports';
 import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
 import { isClosed } from '@/utils/noticeSummaryReport';
 import { isoDateToDMY } from '@/utils/formatDate';
-import { Bell, ArrowLeft, Loader2, ChevronRight, Layers } from 'lucide-react';
+import { Bell, Loader2, Layers } from 'lucide-react';
 
 interface RefundRecord {
   arn: string | null;
@@ -261,55 +260,49 @@ const AllClientsNoticesPage: React.FC = () => {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      <div className="flex items-center gap-1 text-xs text-muted-foreground">
-        <Link to="/notices-dashboard" className="hover:text-foreground hover:underline">Notices Dashboard</Link>
-        <ChevronRight className="h-3 w-3" />
-        <span>Notices and Orders</span>
+      <NoticesPageHeader
+        title="Notices — All Clients"
+        icon={Bell}
+        subtitle="Every client's notices and orders, filtered from the dashboard tile you clicked."
+        actions={canEditNoticeStatus() ? <AddNoticeDialog onSuccess={fetchAll} /> : undefined}
+      />
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <NoticesTopNav />
+        <FilterPill
+          label="Type"
+          allLabel="All notices"
+          value={typeParam || 'all'}
+          onChange={setTypeOfNoticesParam}
+          options={[]}
+          extraOptions={[
+            { value: 'registration', label: 'Registration' },
+            { value: 'other', label: 'Other than Registration' },
+          ]}
+        />
       </div>
 
-      <NoticesTopNav />
-
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
-          <Link to="/notices-dashboard"><ArrowLeft className="h-4 w-4" /></Link>
-        </Button>
-        <PageHeader title="Notices — All Clients" subtitle="Every client's notices and orders, filtered from the dashboard tile you clicked." icon={<Bell className="h-6 w-6" />} />
-      </div>
-
-      <div className="flex items-center gap-2">
-        <Label htmlFor="type-of-notices" className="text-xs text-muted-foreground">Types Of Notices</Label>
-        <Select value={typeParam || 'all'} onValueChange={setTypeOfNoticesParam}>
-          <SelectTrigger id="type-of-notices" className="h-8 w-[200px] text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All</SelectItem>
-            <SelectItem value="registration">Registration</SelectItem>
-            <SelectItem value="other">Other than Registration</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex w-fit rounded-md border bg-muted/30 p-1">
-          <Button
-            size="sm"
-            variant={activeTab === 'notices' ? 'default' : 'ghost'}
-            className="h-8"
-            onClick={() => setActiveTab('notices')}
-          >
-            Notices & Orders
-          </Button>
-          <Button
-            size="sm"
-            variant={activeTab === 'merged' ? 'default' : 'ghost'}
-            className="h-8"
-            onClick={() => setActiveTab('merged')}
-          >
-            Merged Notices
-          </Button>
-        </div>
-        {canEditNoticeStatus() && <AddNoticeDialog onSuccess={fetchAll} />}
+      <div className="flex w-fit items-center gap-0.5 rounded-lg bg-muted p-0.5">
+        <button
+          type="button"
+          className={cn(
+            'rounded-md px-3 py-1 text-[11px] font-medium transition-colors',
+            activeTab === 'notices' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground',
+          )}
+          onClick={() => setActiveTab('notices')}
+        >
+          Notices & Orders
+        </button>
+        <button
+          type="button"
+          className={cn(
+            'rounded-md px-3 py-1 text-[11px] font-medium transition-colors',
+            activeTab === 'merged' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground',
+          )}
+          onClick={() => setActiveTab('merged')}
+        >
+          Merged Notices
+        </button>
       </div>
 
       {loading ? (

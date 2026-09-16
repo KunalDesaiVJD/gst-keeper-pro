@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { ListOrdered, Building2, BarChart3 } from 'lucide-react';
+import { ListOrdered, Building2, BarChart3, ListChecks } from 'lucide-react';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 
@@ -15,7 +15,7 @@ const NAV_LINKS = [
 // Only the two report-only destinations. /notices-gstin-wise-count is
 // deliberately absent: the "Clients" tab owns it, and listing it here lit both
 // tabs at once.
-const REPORT_PATHS = ['/notices-report', '/litigation-mis'];
+const REPORT_PATHS = ['/notices-report', '/litigation-mis', '/notices-company-list'];
 
 const navItemClass = (active: boolean) => cn(
   'whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
@@ -67,6 +67,11 @@ export const NoticesTopNav: React.FC = () => {
           <DropdownMenuItem asChild>
             <Link to="/litigation-mis" className="flex items-center gap-2 text-xs">
               <BarChart3 className="h-3.5 w-3.5" /> Litigation MIS
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Link to="/notices-company-list" className="flex items-center gap-2 text-xs">
+              <ListChecks className="h-3.5 w-3.5" /> Company List &amp; sync log
             </Link>
           </DropdownMenuItem>
         </DropdownMenuContent>

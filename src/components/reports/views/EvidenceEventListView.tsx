@@ -9,7 +9,8 @@ import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
+import NoticesCardHeader from '@/components/notices/NoticesCardHeader';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -132,7 +133,6 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
-  const Icon = report.icon || FileText;
 
   const headers = table.headers;
   const evidenceColIdx = useMemo(() => headers.findIndex((h) => EVIDENCE_HEADER_RE.test(h)), [headers]);
@@ -236,14 +236,8 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
   if (table.rows.length === 0) {
     return (
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Icon className="h-4 w-4 text-muted-foreground" />
-            {table.title}
-          </CardTitle>
-          <CardDescription>{table.subtitle}</CardDescription>
-        </CardHeader>
-        <CardContent>
+        <NoticesCardHeader title={table.title} description={table.subtitle} />
+        <CardContent className="pt-3 pb-3">
           <div className="flex flex-col items-center justify-center gap-2 py-14 text-center text-muted-foreground">
             <Inbox className="h-7 w-7" />
             <p className="text-sm">No {report.title.toLowerCase()} records on file.</p>
@@ -255,15 +249,9 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
 
   return (
     <Card>
-      <CardHeader className="gap-1.5">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Icon className="h-4 w-4 text-muted-foreground" />
-          {table.title}
-        </CardTitle>
-        <CardDescription>{table.subtitle}</CardDescription>
-      </CardHeader>
+      <NoticesCardHeader title={table.title} description={table.subtitle} />
 
-      <CardContent className="space-y-4">
+      <CardContent className="pt-3 pb-3 space-y-4">
         {/* Summary strip — readable at a glance before scrolling the table */}
         <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2.5">
           <span className="text-xs text-muted-foreground">

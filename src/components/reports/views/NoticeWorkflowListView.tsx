@@ -14,7 +14,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { logNoticeFieldChanges } from '@/lib/noticeEvents';
 import { processEventAlert, flushOutbox } from '@/lib/noticeAlertQueue';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
+import NoticesCardHeader from '@/components/notices/NoticesCardHeader';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -209,7 +210,6 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
   // elsewhere in the app.
   const [extReady, setExtReady] = useState(false);
   const [openingIdx, setOpeningIdx] = useState<number | null>(null);
-  const Icon = report.icon || FileText;
 
   useEffect(() => { setRows(table.rows); }, [table]);
 
@@ -250,6 +250,15 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     setOpeningIdx(idx);
     window.postMessage({ __gstkOpenNotice: { clientId, referenceNumber } }, '*');
   };
+  // Firm-wide lists prepend a GSTIN column; rendered monospaced so the
+  // 15-character ids line up down the page.
+  const gstinColIdx = useMemo(() => headers.findIndex((h) => /^gstin$/i.test(h.trim())), [headers]);
+  // Every "… Date" column (Issue/Due/Extended Due/Reply/Order/Submission)
+  // gets tabular figures so the dd/mm/yyyy values align column-wise.
+  const dateCellCols = useMemo(
+    () => new Set(headers.map((h, i) => (/date$/i.test(h.trim()) ? i : -1)).filter((i) => i !== -1)),
+    [headers],
+  );
   const evidenceColIdx = useMemo(() => headers.findIndex((h) => EVIDENCE_HEADER_RE.test(h)), [headers]);
   const statusColIdx = useMemo(() => headers.findIndex((h) => STATUS_HEADER_RE.test(h.trim())), [headers]);
   const typeColIdx = useMemo(() => headers.findIndex((h) => TYPE_HEADER_RE.test(h.trim())), [headers]);
@@ -594,14 +603,8 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
   if (rows.length === 0) {
     return (
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Icon className="h-4 w-4 text-muted-foreground" />
-            {table.title}
-          </CardTitle>
-          <CardDescription>{table.subtitle}</CardDescription>
-        </CardHeader>
-        <CardContent>
+        <NoticesCardHeader title={table.title} description={table.subtitle} />
+        <CardContent className="pt-3 pb-3 space-y-3">
           <div className="flex flex-col items-center justify-center gap-2 py-14 text-center text-muted-foreground">
             <Inbox className="h-7 w-7" />
             <p className="text-sm">No {report.title.toLowerCase()} records on file.</p>
@@ -613,15 +616,9 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
 
   return (
     <Card>
-      <CardHeader className="gap-1.5">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Icon className="h-4 w-4 text-muted-foreground" />
-          {table.title}
-        </CardTitle>
-        <CardDescription>{table.subtitle}</CardDescription>
-      </CardHeader>
+      <NoticesCardHeader title={table.title} description={table.subtitle} />
 
-      <CardContent className="space-y-4">
+      <CardContent className="pt-3 pb-3 space-y-3">
         {/* Summary strip — readable at a glance before scrolling the table */}
         <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2.5">
           <span className="text-xs text-muted-foreground">
@@ -663,13 +660,13 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search reference no., description, date…"
-              className="h-8 pl-8 text-sm"
+              className="h-7 pl-8 text-[11px]"
             />
           </div>
 
           {typeColIdx !== -1 && typeOptions.length > 0 && (
             <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="h-8 w-[130px] text-xs">
+              <SelectTrigger className="h-7 w-[130px] text-[11px]">
                 <SelectValue placeholder="Type" />
               </SelectTrigger>
               <SelectContent>
@@ -683,7 +680,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
 
           {statusColIdx !== -1 && statusOptions.length > 0 && (
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="h-8 w-[150px] text-xs">
+              <SelectTrigger className="h-7 w-[150px] text-[11px]">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
@@ -697,7 +694,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
 
           {priorityColIdx !== -1 && (
             <Select value={priorityFilter} onValueChange={setPriorityFilter}>
-              <SelectTrigger className="h-8 w-[150px] text-xs">
+              <SelectTrigger className="h-7 w-[150px] text-[11px]">
                 <SelectValue placeholder="Priority Status" />
               </SelectTrigger>
               <SelectContent>
@@ -710,7 +707,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
           )}
 
           <Select value={dateFilter} onValueChange={(v) => setDateFilter(v as DateFilter)}>
-            <SelectTrigger className="h-8 w-[160px] text-xs">
+            <SelectTrigger className="h-7 w-[160px] text-[11px]">
               <SelectValue placeholder="Filter" />
             </SelectTrigger>
             <SelectContent>
@@ -743,7 +740,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
                 <span className="text-xs text-muted-foreground">{selectedIdx.size} selected</span>
               )}
               <Button
-                variant="outline" size="sm" className="h-8"
+                variant="outline" size="sm" className="h-7 text-[11px]"
                 disabled={selectedIdx.size === 0}
                 title={selectedIdx.size === 0 ? 'Select one or more rows first' : undefined}
                 onClick={() => setBulkStatusOpen(true)}
@@ -752,7 +749,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
               </Button>
               {priorityColIdx !== -1 && (
                 <Button
-                  variant="outline" size="sm" className="h-8"
+                  variant="outline" size="sm" className="h-7 text-[11px]"
                   disabled={selectedIdx.size === 0}
                   title={selectedIdx.size === 0 ? 'Select one or more rows first' : undefined}
                   onClick={() => setBulkPriorityOpen(true)}
@@ -764,13 +761,13 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
           )}
 
           {evidenceColIdx !== -1 && (
-            <Button variant="outline" size="sm" onClick={handleDownloadAll} className="h-8">
+            <Button variant="outline" size="sm" onClick={handleDownloadAll} className="h-7 text-[11px]">
               <DownloadCloud className="mr-1.5 h-3.5 w-3.5" />
               Download all visible PDFs
             </Button>
           )}
 
-          <Button variant="outline" size="sm" className="h-8" onClick={() => renderReportToExcel(table)}>
+          <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => renderReportToExcel(table)}>
             <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" />
             Export to Excel
           </Button>
@@ -781,7 +778,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
             <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
                 {canEdit && (
-                  <TableHead className="w-10 bg-muted/60 px-3 py-2">
+                  <TableHead className="w-10 bg-muted px-3 py-2">
                     <Checkbox
                       checked={pagedRows.length > 0 && pagedRows.every(({ idx }) => selectedIdx.has(idx))}
                       onCheckedChange={(checked) => toggleSelectAllOnPage(checked === true)}
@@ -793,7 +790,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
                   <TableHead
                     key={i}
                     className={cn(
-                      'whitespace-nowrap bg-muted/60 px-3 py-2 text-xs font-semibold',
+                      'whitespace-nowrap bg-muted px-3 py-2 text-[10px] font-semibold uppercase',
                       (i === evidenceColIdx || i === priorityColIdx) && 'text-center',
                       h === 'Amount of Demand' && 'text-right',
                     )}
@@ -802,7 +799,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
                   </TableHead>
                 ))}
                 {canEdit && (
-                  <TableHead className="whitespace-nowrap bg-muted/60 px-3 py-2 text-center text-xs font-semibold">
+                  <TableHead className="whitespace-nowrap bg-muted px-3 py-2 text-center text-[10px] font-semibold uppercase">
                     Actions
                   </TableHead>
                 )}
@@ -924,6 +921,15 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
                       }
                     }
 
+                    // GSTIN column: monospaced, muted — an identifier, not content.
+                    if (ci === gstinColIdx && String(cell ?? '').trim() && !isSentinel(cell)) {
+                      return (
+                        <TableCell key={ci} className="whitespace-nowrap px-3 py-1.5 font-mono text-[10px] text-muted-foreground">
+                          {formatCell(cell)}
+                        </TableCell>
+                      );
+                    }
+
                     // Generic URL fallback.
                     if (isUrl(cell)) {
                       return (
@@ -954,6 +960,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
                           headers[ci] === 'Description' && 'max-w-[280px]',
                           headers[ci] !== 'Description' && 'whitespace-nowrap',
                           headers[ci] === 'Amount of Demand' && 'text-right tabular-nums',
+                          dateCellCols.has(ci) && 'tabular-nums',
                         )}
                       >
                         {formatCell(cell)}
@@ -1016,7 +1023,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
             </Select>
           </div>
           <div className="flex items-center gap-2">
-            <span>
+            <span className="tabular-nums">
               {visibleRows.length === 0 ? '0' : `${page * rowsPerPage + 1}-${Math.min(visibleRows.length, (page + 1) * rowsPerPage)}`} of {visibleRows.length}
             </span>
             <Button size="icon" variant="ghost" className="h-6 w-6" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}><ChevronLeft className="h-3.5 w-3.5" /></Button>

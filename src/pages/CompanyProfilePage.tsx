@@ -15,20 +15,18 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useParams, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { PageHeader } from '@/components/layout/PageHeader';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
+import NoticesPageHeader from '@/components/notices/NoticesPageHeader';
+import NoticesCardHeader from '@/components/notices/NoticesCardHeader';
+import FilterPill from '@/components/notices/FilterPill';
 import { cn } from '@/lib/utils';
 import { isoDateToDMY } from '@/utils/formatDate';
 import { isClosed } from '@/utils/noticeSummaryReport';
-import {
-  Bell, CalendarClock, History, FolderOpen, AlertTriangle, Loader2, Pencil,
-  ArrowLeft, FileText, Eye,
-} from 'lucide-react';
+import { Building2, Loader2, Pencil, FileText, Eye } from 'lucide-react';
 
 interface ClientRow {
   id: string;
@@ -233,13 +231,17 @@ const CompanyProfilePage: React.FC = () => {
   const dueSoon = filteredNotices.filter((n) => n.due_date && daysUntil(n.due_date) >= 0 && daysUntil(n.due_date) <= 7).length;
   const overdue = filteredNotices.filter((n) => n.due_date && daysUntil(n.due_date) < 0).length;
 
+  // Each tile opens the same list filtered the way the tile counts — the
+  // query-string filters AllClientsNoticesPage already parses (last15,
+  // last24h, due7, overdue, status=Open), so the number on the tile and the
+  // rows behind it always come from the same rule.
   const kpiCards = [
-    { label: 'Total Notices', value: totalNotices, icon: <Bell className="h-7 w-7 text-primary" />, bgColor: 'bg-primary/5' },
-    { label: 'Last 15 Days', value: last15Days, icon: <CalendarClock className="h-7 w-7 text-info" />, bgColor: 'bg-info/5' },
-    { label: 'Last 24 Hours', value: last24Hours, icon: <History className="h-7 w-7 text-info" />, bgColor: 'bg-info/5' },
-    { label: 'Open Notices', value: openNotices, icon: <FolderOpen className="h-7 w-7 text-warning" />, bgColor: 'bg-warning/5' },
-    { label: '7 Days Due', value: dueSoon, icon: <CalendarClock className="h-7 w-7 text-warning" />, bgColor: 'bg-warning/5' },
-    { label: 'Over Due', value: overdue, icon: <AlertTriangle className="h-7 w-7 text-destructive" />, bgColor: 'bg-destructive/5' },
+    { label: 'Over Due', value: overdue, accent: 'border-l-destructive', context: `of ${totalNotices}`, cta: 'Open queue →', href: `/notices-all?client=${clientId}&filter=overdue` },
+    { label: '7 Days Due', value: dueSoon, accent: 'border-l-amber-500', context: 'this week', cta: 'View due →', href: `/notices-all?client=${clientId}&filter=due7` },
+    { label: 'Last 24 Hours', value: last24Hours, accent: 'border-l-blue-500', context: 'newly synced', cta: 'View new →', href: `/notices-all?client=${clientId}&filter=last24h` },
+    { label: 'Last 15 Days', value: last15Days, accent: 'border-l-primary', context: 'recent', cta: 'View recent →', href: `/notices-all?client=${clientId}&filter=last15` },
+    { label: 'Open Notices', value: openNotices, accent: 'border-l-primary', context: `of ${totalNotices}`, cta: 'View open →', href: `/notices-all?client=${clientId}&status=Open` },
+    { label: 'Total Notices', value: totalNotices, accent: 'border-l-primary', context: 'on record', cta: 'View all →', href: `/notices-all?client=${clientId}` },
   ];
 
   const submissions = filteredNotices.filter((n) => n.submission_arn || n.submission_date);
@@ -263,51 +265,55 @@ const CompanyProfilePage: React.FC = () => {
   const tradeName = profile?.trade_name || client?.name || '—';
 
   return (
-    <div className="space-y-2.5 animate-fade-in">
+    <div className="space-y-4 animate-fade-in">
+      <NoticesPageHeader
+        title={tradeName}
+        icon={Building2}
+        subtitle={
+          <>
+            <span className="flex items-center gap-1.5">
+              <Link to="/notices-dashboard" className="text-primary hover:underline">GST Dashboard</Link>
+              <span>›</span>
+              <span>Company Dashboard</span>
+            </span>
+            {client && <span className="text-[10px] font-mono">{client.gstin}</span>}
+            {client && <span>{client.registration_type}</span>}
+          </>
+        }
+      />
+
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <PageHeader title="Notices Dashboard" icon={<Bell className="h-5 w-5" />} embedded />
         <NoticesTopNav />
+        {!loading && client && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <FilterPill
+              label="Type"
+              allLabel="All notices"
+              value={typeFilter}
+              onChange={setTypeFilter}
+              options={noticeTypes}
+            />
+          </div>
+        )}
       </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-        <div className="flex items-center gap-1.5">
-          <Link to="/notices-dashboard" className="text-primary hover:underline">GST Dashboard</Link>
-          <span>›</span>
-          <span>Company Dashboard</span>
-        </div>
-        {client && <div className="font-medium text-foreground">{client.gstin} | {tradeName}</div>}
-      </div>
-
-      {!loading && client && (
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">Types Of Notices</span>
-          <Select value={typeFilter} onValueChange={setTypeFilter}>
-            <SelectTrigger className="h-8 w-[220px] text-xs"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All</SelectItem>
-              {noticeTypes.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
       ) : !client ? (
         <p className="py-16 text-center text-sm text-muted-foreground">Company not found.</p>
       ) : (
-        <div className="flex flex-col gap-2.5 xl:flex-row xl:items-start">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
           {/* Company Profile */}
           <Card className="xl:w-[280px] xl:shrink-0">
-            <CardHeader className="flex flex-row items-center justify-between pb-2 pt-3">
-              <CardTitle className="text-sm">Company Profile</CardTitle>
-              {canAddEditClients() && (
-                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => navigate(`/edit-client/${client.id}`)} title="Edit Client">
+            <NoticesCardHeader
+              title="Company Profile"
+              badge={canAddEditClients() ? (
+                <Button size="icon" variant="ghost" className="h-6 w-6 shrink-0" onClick={() => navigate(`/edit-client/${client.id}`)} title="Edit Client">
                   <Pencil className="h-3.5 w-3.5" />
                 </Button>
-              )}
-            </CardHeader>
-            <CardContent className="space-y-3 pb-4 text-xs">
+              ) : undefined}
+            />
+            <CardContent className="space-y-3 pt-3 pb-4 text-xs">
               <div>
                 <p className="text-muted-foreground">Legal Name</p>
                 <p className="font-medium">{legalName}</p>
@@ -318,7 +324,7 @@ const CompanyProfilePage: React.FC = () => {
               </div>
               <div>
                 <p className="text-muted-foreground">GSTIN</p>
-                <p className="font-medium">{client.gstin}</p>
+                <p className="text-[10px] font-mono text-muted-foreground">{client.gstin}</p>
               </div>
               <div>
                 <p className="text-muted-foreground">Taxpayer Type</p>
@@ -343,18 +349,26 @@ const CompanyProfilePage: React.FC = () => {
             </CardContent>
           </Card>
 
-          <div className="flex min-w-0 flex-1 flex-col gap-2.5">
+          <div className="flex min-w-0 flex-1 flex-col gap-4">
             {/* KPI tiles */}
-            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-6">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
               {kpiCards.map((card) => (
-                <Card key={card.label} className="border">
-                  <CardContent className="p-3">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground">{card.label}</p>
-                        <p className="mt-1 text-xl font-bold tabular-nums text-foreground">{card.value}</p>
-                      </div>
-                      <div className={`rounded-full p-1.5 ${card.bgColor}`}>{card.icon}</div>
+                <Card
+                  key={card.label}
+                  className={cn('border-l-4 cursor-pointer transition-shadow hover:shadow-md', card.accent)}
+                  onClick={() => navigate(card.href)}
+                >
+                  <CardContent className="p-3.5 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{card.label}</span>
+                    </div>
+                    <p className="font-heading text-[30px] font-bold tabular-nums leading-none">
+                      {card.value}
+                      <span className="ml-1.5 font-sans text-xs font-medium text-muted-foreground">{card.context}</span>
+                    </p>
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                      <span />
+                      <span className="font-semibold text-primary">{card.cta}</span>
                     </div>
                   </CardContent>
                 </Card>
@@ -362,10 +376,10 @@ const CompanyProfilePage: React.FC = () => {
             </div>
 
             {/* Notices & Orders + View Submission */}
-            <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               <Card>
-                <CardHeader className="pb-2 pt-3"><CardTitle className="text-sm">Notices & Orders</CardTitle></CardHeader>
-                <CardContent className="space-y-2 pb-3">
+                <NoticesCardHeader title="Notices & Orders" badge={filteredNotices.length} />
+                <CardContent className="space-y-2 pt-3 pb-3">
                   {filteredNotices.slice(0, 5).map((n, i) => (
                     <div key={n.id} className="flex items-start gap-2 border-b pb-2 text-xs last:border-0 last:pb-0">
                       <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">{i + 1}</span>
@@ -383,13 +397,13 @@ const CompanyProfilePage: React.FC = () => {
                     </div>
                   ))}
                   {filteredNotices.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">No notices on record.</p>}
-                  <Link to={`/notices-all?client=${client.id}`} className="block text-right text-[11px] font-medium text-primary hover:underline">View All</Link>
+                  <Link to={`/notices-all?client=${client.id}`} className="block text-right text-[11px] font-semibold text-primary hover:underline">View All</Link>
                 </CardContent>
               </Card>
 
               <Card>
-                <CardHeader className="pb-2 pt-3"><CardTitle className="text-sm">View Submission</CardTitle></CardHeader>
-                <CardContent className="space-y-2 pb-3">
+                <NoticesCardHeader title="View Submission" badge={submissions.length} />
+                <CardContent className="space-y-2 pt-3 pb-3">
                   {submissions.slice(0, 5).map((n, i) => (
                     <div key={n.id} className="flex items-start gap-2 border-b pb-2 text-xs last:border-0 last:pb-0">
                       <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">{i + 1}</span>
@@ -400,23 +414,23 @@ const CompanyProfilePage: React.FC = () => {
                     </div>
                   ))}
                   {submissions.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">No submissions on record.</p>}
-                  <Link to={`/notices-all?client=${client.id}&filter=submitted`} className="block text-right text-[11px] font-medium text-primary hover:underline">View All</Link>
+                  <Link to={`/notices-all?client=${client.id}&filter=submitted`} className="block text-right text-[11px] font-semibold text-primary hover:underline">View All</Link>
                 </CardContent>
               </Card>
             </div>
 
             {/* Track Return Status */}
             <Card>
-              <CardHeader className="pb-2 pt-3"><CardTitle className="text-sm">Track Return Status</CardTitle></CardHeader>
-              <CardContent className="pb-3">
+              <NoticesCardHeader title="Track Return Status" description="Filing dates as recorded on the GST portal." />
+              <CardContent className="pt-3 pb-3">
                 <div className="overflow-auto rounded-md border">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="bg-muted/60 text-[11px]">Financial Year</TableHead>
-                        <TableHead className="bg-muted/60 text-[11px]">Period</TableHead>
-                        <TableHead className="bg-muted/60 text-[11px]">GSTR-1 Filing Date</TableHead>
-                        <TableHead className="bg-muted/60 text-[11px]">GSTR-3B Filing Date</TableHead>
+                        <TableHead className="bg-muted text-[10px] font-semibold uppercase">Financial Year</TableHead>
+                        <TableHead className="bg-muted text-[10px] font-semibold uppercase">Period</TableHead>
+                        <TableHead className="bg-muted text-[10px] font-semibold uppercase">GSTR-1 Filing Date</TableHead>
+                        <TableHead className="bg-muted text-[10px] font-semibold uppercase">GSTR-3B Filing Date</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -425,10 +439,10 @@ const CompanyProfilePage: React.FC = () => {
                       ) : (
                         filingsByPeriod.slice(0, 12).map((f) => (
                           <TableRow key={f.period}>
-                            <TableCell className="text-xs">{f.fy}</TableCell>
-                            <TableCell className="text-xs">{monthLabel(f.period)}</TableCell>
-                            <TableCell className="text-xs">{f.gstr1 || '—'}</TableCell>
-                            <TableCell className="text-xs">{f.gstr3b || '—'}</TableCell>
+                            <TableCell className="text-xs tabular-nums">{f.fy}</TableCell>
+                            <TableCell className="text-xs tabular-nums">{monthLabel(f.period)}</TableCell>
+                            <TableCell className="text-xs tabular-nums">{f.gstr1 || '—'}</TableCell>
+                            <TableCell className="text-xs tabular-nums">{f.gstr3b || '—'}</TableCell>
                           </TableRow>
                         ))
                       )}
@@ -448,11 +462,23 @@ const CompanyProfilePage: React.FC = () => {
               rendering bug) — there's no real data source behind them to
               port, only the panel shells themselves.
             */}
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
-              <Card><CardHeader className="pb-2 pt-3"><CardTitle className="text-sm">Business Owners</CardTitle></CardHeader><CardContent className="pb-4" /></Card>
-              <Card><CardHeader className="pb-2 pt-3"><CardTitle className="text-sm">HSN / SAC</CardTitle></CardHeader><CardContent className="pb-4" /></Card>
-              <Card><CardHeader className="pb-2 pt-3"><CardTitle className="text-sm">Return Periodicity</CardTitle></CardHeader><CardContent className="pb-4" /></Card>
-              <Card><CardHeader className="pb-2 pt-3"><CardTitle className="text-sm">Business Activities</CardTitle></CardHeader><CardContent className="pb-4" /></Card>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <Card>
+                <NoticesCardHeader title="Business Owners" />
+                <CardContent className="pt-3 pb-4"><p className="text-xs text-muted-foreground">Not captured by the portal sync.</p></CardContent>
+              </Card>
+              <Card>
+                <NoticesCardHeader title="HSN / SAC" />
+                <CardContent className="pt-3 pb-4"><p className="text-xs text-muted-foreground">Not captured by the portal sync.</p></CardContent>
+              </Card>
+              <Card>
+                <NoticesCardHeader title="Return Periodicity" />
+                <CardContent className="pt-3 pb-4"><p className="text-xs text-muted-foreground">Not captured by the portal sync.</p></CardContent>
+              </Card>
+              <Card>
+                <NoticesCardHeader title="Business Activities" />
+                <CardContent className="pt-3 pb-4"><p className="text-xs text-muted-foreground">Not captured by the portal sync.</p></CardContent>
+              </Card>
             </div>
           </div>
         </div>

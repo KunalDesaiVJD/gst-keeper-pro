@@ -22,7 +22,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
@@ -35,9 +34,12 @@ import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
+import NoticesPageHeader from '@/components/notices/NoticesPageHeader';
+import NoticesCardHeader from '@/components/notices/NoticesCardHeader';
+import FilterPill from '@/components/notices/FilterPill';
 import {
-  Bell, Building2, ChevronLeft, ChevronRight, Loader2, Search, Trash2, History,
-  RefreshCw, Upload, DownloadCloud, Pencil, CheckCircle2, XCircle, MinusCircle,
+  Building2, ChevronLeft, ChevronRight, Loader2, Search, Trash2, History,
+  RefreshCw, Upload, DownloadCloud, Pencil, CheckCircle2, XCircle,
 } from 'lucide-react';
 
 interface ClientRow {
@@ -255,80 +257,80 @@ const CompanyListPage: React.FC = () => {
   const clientNameById = useMemo(() => new Map(clients.map((c) => [c.id, c.name])), [clients]);
 
   return (
-    <div className="space-y-2.5 animate-fade-in">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <PageHeader title="Notices Dashboard" icon={<Bell className="h-5 w-5" />} embedded />
-        <NoticesTopNav />
-      </div>
+    <div className="space-y-4 animate-fade-in">
+      <NoticesPageHeader
+        title="Company List"
+        icon={Building2}
+        subtitle={
+          <>
+            <span>Total Downloaded: <span className="font-semibold text-foreground tabular-nums">{totalDownloaded}</span></span>
+            <span>Total Pending: <span className="font-semibold text-foreground tabular-nums">{totalPending}</span></span>
+          </>
+        }
+        actions={
+          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={fetchAll} title="Refresh">
+            <RefreshCw className="h-3.5 w-3.5" />
+          </Button>
+        }
+      />
 
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Link to="/notices-dashboard" className="text-primary hover:underline">GST Dashboard</Link>
-        <span>›</span>
-        <span>Company List</span>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <NoticesTopNav />
+        <div className="flex flex-wrap items-center gap-1.5">
+          <FilterPill
+            label="Active/InActive"
+            allLabel="All"
+            value={activeFilter}
+            onChange={(v) => setActiveFilter(v as typeof activeFilter)}
+            options={[]}
+            extraOptions={[
+              { value: 'active', label: 'Active' },
+              { value: 'inactive', label: 'Inactive' },
+            ]}
+          />
+          <FilterPill
+            label="Status"
+            allLabel="All"
+            value={statusFilter}
+            onChange={(v) => setStatusFilter(v as typeof statusFilter)}
+            options={[]}
+            extraOptions={[
+              { value: 'success', label: 'Success' },
+              { value: 'failed', label: 'Failed' },
+              { value: 'never', label: 'Never synced' },
+            ]}
+          />
+        </div>
       </div>
 
       <Card>
-        <CardContent className="space-y-3 pt-4">
-          <h2 className="text-base font-semibold">View Company List</h2>
-
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Active/InActive</label>
-              <Select value={activeFilter} onValueChange={(v) => setActiveFilter(v as typeof activeFilter)}>
-                <SelectTrigger className="h-8 w-[150px] text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="inactive">Inactive</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Status</label>
-              <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}>
-                <SelectTrigger className="h-8 w-[150px] text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="success">Success</SelectItem>
-                  <SelectItem value="failed">Failed</SelectItem>
-                  <SelectItem value="never">Never synced</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="relative w-[240px] space-y-1">
-              <label className="text-xs text-muted-foreground">Search</label>
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Name, GSTIN, or User ID" className="h-8 pl-8 text-xs" />
-              </div>
-            </div>
-          </div>
-
+        <NoticesCardHeader title="Companies" badge={filtered.length} />
+        <CardContent className="pt-3 pb-3 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              Total Downloaded: <span className="font-semibold text-foreground">{totalDownloaded}</span>, Total Pending: <span className="font-semibold text-foreground">{totalPending}</span>
-              <Button size="icon" variant="ghost" className="h-6 w-6" onClick={fetchAll} title="Refresh"><RefreshCw className="h-3.5 w-3.5" /></Button>
+            <div className="relative w-[240px]">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Name, GSTIN, or User ID" className="h-7 pl-8 text-[11px]" />
             </div>
             <div className="flex flex-wrap gap-1.5">
               {canDeleteClients() && (
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleDeleteSelected}>
+                <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={handleDeleteSelected}>
                   <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete Company
                 </Button>
               )}
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setSyncLogOpen(true)}>
+              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => setSyncLogOpen(true)}>
                 <History className="mr-1.5 h-3.5 w-3.5" /> Sync Log
               </Button>
               {canAddEditClients() && (
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setBulkUpdateOpen(true)}>
+                <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => setBulkUpdateOpen(true)}>
                   <Pencil className="mr-1.5 h-3.5 w-3.5" /> Bulk Update
                 </Button>
               )}
-              {canAddEditClients() && <BulkAddClientsDialog triggerLabel="Import" triggerClassName="h-7 text-xs" onSuccess={fetchAll} />}
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleFetchCompany} disabled={fetching}>
+              {canAddEditClients() && <BulkAddClientsDialog triggerLabel="Import" triggerClassName="h-7 text-[11px]" onSuccess={fetchAll} />}
+              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={handleFetchCompany} disabled={fetching}>
                 {fetching ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <DownloadCloud className="mr-1.5 h-3.5 w-3.5" />}
                 Fetch Company
               </Button>
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleSync} disabled={syncing}>
+              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={handleSync} disabled={syncing}>
                 {syncing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1.5 h-3.5 w-3.5" />}
                 Sync
               </Button>
@@ -339,19 +341,19 @@ const CompanyListPage: React.FC = () => {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-8 bg-muted/60 px-2 py-1.5">
+                  <TableHead className="w-8 bg-muted px-2 py-1.5">
                     <Checkbox
                       checked={pageRows.length > 0 && pageRows.every((c) => selected.has(c.id))}
                       onCheckedChange={(checked) => toggleSelectAllVisible(checked === true)}
                     />
                   </TableHead>
-                  <TableHead className="bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">GSTIN</TableHead>
-                  <TableHead className="bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">Trade Name</TableHead>
-                  <TableHead className="bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">User Name</TableHead>
-                  <TableHead className="bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">Last Download Date</TableHead>
-                  <TableHead className="bg-muted/60 px-2 py-1.5 text-center text-[11px] font-semibold">Status</TableHead>
-                  <TableHead className="bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">Status Message</TableHead>
-                  <TableHead className="bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">Action</TableHead>
+                  <TableHead className="bg-muted px-2 py-1.5 text-[10px] font-semibold uppercase">GSTIN</TableHead>
+                  <TableHead className="bg-muted px-2 py-1.5 text-[10px] font-semibold uppercase">Trade Name</TableHead>
+                  <TableHead className="bg-muted px-2 py-1.5 text-[10px] font-semibold uppercase">User Name</TableHead>
+                  <TableHead className="bg-muted px-2 py-1.5 text-[10px] font-semibold uppercase">Last Download Date</TableHead>
+                  <TableHead className="bg-muted px-2 py-1.5 text-center text-[10px] font-semibold uppercase">Status</TableHead>
+                  <TableHead className="bg-muted px-2 py-1.5 text-[10px] font-semibold uppercase">Status Message</TableHead>
+                  <TableHead className="bg-muted px-2 py-1.5 text-[10px] font-semibold uppercase">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -365,18 +367,26 @@ const CompanyListPage: React.FC = () => {
                     return (
                       <TableRow key={c.id}>
                         <TableCell className="px-2 py-1"><Checkbox checked={selected.has(c.id)} onCheckedChange={() => toggleSelect(c.id)} /></TableCell>
-                        <TableCell className="px-2 py-1 text-xs">
-                          <Link to={`/notices-company/${c.id}`} className="text-primary hover:underline">{c.gstin}</Link>
+                        <TableCell className="px-2 py-1">
+                          <Link to={`/notices-company/${c.id}`} className="font-mono text-[10px] text-primary hover:underline">{c.gstin}</Link>
                         </TableCell>
-                        <TableCell className="max-w-[240px] truncate px-2 py-1 text-xs" title={c.name}>{c.name}</TableCell>
-                        <TableCell className="px-2 py-1 text-xs text-muted-foreground">{c.gst_user_id || '—'}</TableCell>
-                        <TableCell className="px-2 py-1 text-xs text-muted-foreground">{log ? new Date(log.created_at).toLocaleString() : '—'}</TableCell>
-                        <TableCell className="px-2 py-1 text-center">
-                          {!log ? <MinusCircle className="mx-auto h-4 w-4 text-muted-foreground/40" />
-                            : log.status === 'success' ? <CheckCircle2 className="mx-auto h-4 w-4 text-success" />
-                            : <XCircle className="mx-auto h-4 w-4 text-destructive" />}
+                        <TableCell className="max-w-[240px] truncate px-2 py-1 text-[11px]" title={c.name}>{c.name}</TableCell>
+                        <TableCell className="px-2 py-1 text-[11px] text-muted-foreground">{c.gst_user_id || '—'}</TableCell>
+                        <TableCell className="px-2 py-1 text-[11px] tabular-nums text-muted-foreground">{log ? new Date(log.created_at).toLocaleString() : '—'}</TableCell>
+                        <TableCell
+                          className="px-2 py-1 text-center"
+                          title={!log ? 'Never synced' : log.status === 'success' ? 'Success' : 'Failed'}
+                        >
+                          <span className="inline-flex items-center gap-1.5 text-[11px]">
+                            <span
+                              className={cn(
+                                'inline-block h-2 w-2 rounded-sm',
+                                !log ? 'bg-muted-foreground/40' : log.status === 'success' ? 'bg-success' : 'bg-destructive',
+                              )}
+                            />
+                          </span>
                         </TableCell>
-                        <TableCell className="max-w-[260px] truncate px-2 py-1 text-xs text-muted-foreground" title={log?.message || ''}>{log?.message || 'Not synced yet'}</TableCell>
+                        <TableCell className="max-w-[260px] truncate px-2 py-1 text-[11px] text-muted-foreground" title={log?.message || ''}>{log?.message || 'Not synced yet'}</TableCell>
                         <TableCell className="px-2 py-1">
                           <div className="flex items-center gap-0.5">
                             {canAddEditClients() && (
@@ -406,7 +416,7 @@ const CompanyListPage: React.FC = () => {
               </Select>
             </div>
             <div className="flex items-center gap-2">
-              <span>{filtered.length === 0 ? '0' : `${page * rowsPerPage + 1}-${Math.min(filtered.length, (page + 1) * rowsPerPage)}`} of {filtered.length}</span>
+              <span className="tabular-nums">{filtered.length === 0 ? '0' : `${page * rowsPerPage + 1}-${Math.min(filtered.length, (page + 1) * rowsPerPage)}`} of {filtered.length}</span>
               <Button size="icon" variant="ghost" className="h-6 w-6" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}><ChevronLeft className="h-3.5 w-3.5" /></Button>
               <Button size="icon" variant="ghost" className="h-6 w-6" disabled={page >= pageCount - 1} onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}><ChevronRight className="h-3.5 w-3.5" /></Button>
             </div>
@@ -450,10 +460,10 @@ const CompanyListPage: React.FC = () => {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="text-xs">Company</TableHead>
-                  <TableHead className="text-xs">Status</TableHead>
-                  <TableHead className="text-xs">Message</TableHead>
-                  <TableHead className="text-xs">Date</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Company</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Status</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Message</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Date</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -462,15 +472,15 @@ const CompanyListPage: React.FC = () => {
                 ) : (
                   selectedLogs.map((l) => (
                     <TableRow key={l.id}>
-                      <TableCell className="text-xs">{clientNameById.get(l.client_id) || '—'}</TableCell>
-                      <TableCell className="text-xs">
+                      <TableCell className="text-[11px]">{clientNameById.get(l.client_id) || '—'}</TableCell>
+                      <TableCell className="text-[11px]">
                         <span className={cn('inline-flex items-center gap-1', l.status === 'success' ? 'text-success' : 'text-destructive')}>
                           {l.status === 'success' ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
                           {l.status === 'success' ? 'Success' : 'Failed'}
                         </span>
                       </TableCell>
-                      <TableCell className="max-w-[280px] truncate text-xs text-muted-foreground" title={l.message || ''}>{l.message || '—'}</TableCell>
-                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{new Date(l.created_at).toLocaleString()}</TableCell>
+                      <TableCell className="max-w-[280px] truncate text-[11px] text-muted-foreground" title={l.message || ''}>{l.message || '—'}</TableCell>
+                      <TableCell className="whitespace-nowrap text-[11px] tabular-nums text-muted-foreground">{new Date(l.created_at).toLocaleString()}</TableCell>
                     </TableRow>
                   ))
                 )}
