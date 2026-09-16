@@ -94,6 +94,7 @@ interface Client {
   assigned_accountant: string | null;
   registration_type: string;
   regular_sub_type?: string | null;
+  builder_itc_type?: string | null;
   selected_returns: string[] | null;
   registration_date: string;
   cancellation_date?: string | null;
@@ -358,7 +359,7 @@ const FilingStatusPage: React.FC = () => {
   const fetchClients = useCallback(async () => {
     const { data, error } = await supabase
       .from('clients')
-      .select('id, name, gstin, mobile, email, assigned_accountant, registration_type, regular_sub_type, selected_returns, registration_date, cancellation_date, registration_cancellation_date, inactive_at_hand, target_date_group1, target_date_group2')
+      .select('id, name, gstin, mobile, email, assigned_accountant, registration_type, regular_sub_type, builder_itc_type, selected_returns, registration_date, cancellation_date, registration_cancellation_date, inactive_at_hand, target_date_group1, target_date_group2')
       .order('name');
     
     if (error) {
@@ -865,63 +866,84 @@ const FilingStatusPage: React.FC = () => {
         }
       }
 
-      // Check Suspended Reco difference: if difference is not zero, cannot file GSTR-3B
-      try {
-        // Fetch suspended_reco data
-        const { data: suspendedData } = await supabase
-          .from('suspended_reco')
-          .select('*')
-          .eq('client_id', record.client_id)
-          .eq('period_month', selectedMonth)
-          .maybeSingle();
+      // Check Suspended Reco difference: if difference is not zero, cannot file GSTR-3B.
+      //
+      // Skipped entirely for a NO-ITC promoter (clients.builder_itc_type =
+      // 'NO_ITC'). Suspended Reco exists to prove that credit reversed under
+      // Rule 37A / s.16(2)(c) and still sitting in the portal's suspended
+      // balance matches the reversals the books are carrying, because that
+      // credit is eventually going to be reclaimed. A promoter who elected the
+      // 1%/5% no-ITC scheme never reclaims any of it: ITC Summary pins Total 4B
+      // to Total 4A for these clients precisely so Net ITC (4C) is 0 by
+      // construction, whatever the reversal rows say. The two sides therefore
+      // have no reason to converge, the difference is permanently non-zero
+      // through no error of the staff's, and the gate just blocks filing
+      // forever (reported 2026-09-16 on KRISHNA INFRA-NO ITC: a fixed
+      // -Rs 82,076.88 that nothing on the page could clear).
+      //
+      // Gated on the flag, never on the client's name. 10 clients carry
+      // "NO ITC" in their name without the flag set — see
+      // docs/2B_RECONCILIATION_FLOW.md §8.
+      const isNoItcBuilder = client?.builder_itc_type === 'NO_ITC';
+
+      if (!isNoItcBuilder) {
+        try {
+          // Fetch suspended_reco data
+          const { data: suspendedData } = await supabase
+            .from('suspended_reco')
+            .select('*')
+            .eq('client_id', record.client_id)
+            .eq('period_month', selectedMonth)
+            .maybeSingle();
         
-        // Fetch books data from bills_not_in_2b
-        // RULE: Include rows where Reclaim is blank AND Reversal is NOT blank
-        const { data: booksData } = await supabase
-          .from('bills_not_in_2b')
-          .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
-          .eq('client_id', record.client_id)
-          .eq('period_month', selectedMonth);
+          // Fetch books data from bills_not_in_2b
+          // RULE: Include rows where Reclaim is blank AND Reversal is NOT blank
+          const { data: booksData } = await supabase
+            .from('bills_not_in_2b')
+            .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
+            .eq('client_id', record.client_id)
+            .eq('period_month', selectedMonth);
         
-        if (suspendedData || (booksData && booksData.length > 0)) {
-          // New formula: Opening Balance + Current Total - Books
-          const openingCgst = Number((suspendedData as any)?.opening_cgst) || 0;
-          const openingSgst = Number((suspendedData as any)?.opening_sgst) || 0;
-          const openingIgst = Number((suspendedData as any)?.opening_igst) || 0;
-          const portalCgst = Number(suspendedData?.portal_cgst) || 0;
-          const portalSgst = Number(suspendedData?.portal_sgst) || 0;
-          const portalIgst = Number(suspendedData?.portal_igst) || 0;
-          const portalTotal = (openingCgst + openingSgst + openingIgst) + (portalCgst + portalSgst + portalIgst);
+          if (suspendedData || (booksData && booksData.length > 0)) {
+            // New formula: Opening Balance + Current Total - Books
+            const openingCgst = Number((suspendedData as any)?.opening_cgst) || 0;
+            const openingSgst = Number((suspendedData as any)?.opening_sgst) || 0;
+            const openingIgst = Number((suspendedData as any)?.opening_igst) || 0;
+            const portalCgst = Number(suspendedData?.portal_cgst) || 0;
+            const portalSgst = Number(suspendedData?.portal_sgst) || 0;
+            const portalIgst = Number(suspendedData?.portal_igst) || 0;
+            const portalTotal = (openingCgst + openingSgst + openingIgst) + (portalCgst + portalSgst + portalIgst);
           
-          // Filter books data: Include rows where Reclaim is blank AND Reversal is NOT blank
-          const filteredBooksData = (booksData || []).filter(row => {
-            const reversalBlank = row.reversal_month === null || row.reversal_month === '';
-            const reclaimBlank = row.reclaim_month === null || row.reclaim_month === '';
-            return reclaimBlank && !reversalBlank;
-          });
+            // Filter books data: Include rows where Reclaim is blank AND Reversal is NOT blank
+            const filteredBooksData = (booksData || []).filter(row => {
+              const reversalBlank = row.reversal_month === null || row.reversal_month === '';
+              const reclaimBlank = row.reclaim_month === null || row.reclaim_month === '';
+              return reclaimBlank && !reversalBlank;
+            });
           
-          const booksTotals = filteredBooksData.reduce((acc, row) => ({
-            cgst: acc.cgst + (Number(row.input_cgst) || 0),
-            sgst: acc.sgst + (Number(row.input_sgst) || 0),
-            igst: acc.igst + (Number(row.input_igst) || 0),
-          }), { cgst: 0, sgst: 0, igst: 0 });
+            const booksTotals = filteredBooksData.reduce((acc, row) => ({
+              cgst: acc.cgst + (Number(row.input_cgst) || 0),
+              sgst: acc.sgst + (Number(row.input_sgst) || 0),
+              igst: acc.igst + (Number(row.input_igst) || 0),
+            }), { cgst: 0, sgst: 0, igst: 0 });
           
-          const booksTotal = booksTotals.cgst + booksTotals.sgst + booksTotals.igst;
-          // Round to 2 decimal places to handle floating-point precision issues
-          let difference = Math.round((portalTotal - booksTotal) * 100) / 100;
-          // Normalize -0 to 0
-          if (difference === 0 || Object.is(difference, -0)) difference = 0;
+            const booksTotal = booksTotals.cgst + booksTotals.sgst + booksTotals.igst;
+            // Round to 2 decimal places to handle floating-point precision issues
+            let difference = Math.round((portalTotal - booksTotal) * 100) / 100;
+            // Normalize -0 to 0
+            if (difference === 0 || Object.is(difference, -0)) difference = 0;
           
-          // Allow differences up to 20 for rounding errors
-          if (Math.abs(difference) > 20) {
-            const displayDiff = difference === 0 ? '0' : difference.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-            toast.error(`Cannot file ${record.return_type}: Suspended Reconciliation difference must be within ₹20. Current difference: ${displayDiff}`);
-            return;
+            // Allow differences up to 20 for rounding errors
+            if (Math.abs(difference) > 20) {
+              const displayDiff = difference === 0 ? '0' : difference.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+              toast.error(`Cannot file ${record.return_type}: Suspended Reconciliation difference must be within ₹20. Current difference: ${displayDiff}`);
+              return;
+            }
           }
+        } catch (error: any) {
+          console.error('Error checking suspended reco:', error);
+          // Continue with filing if there's an error fetching suspended reco data
         }
-      } catch (error: any) {
-        console.error('Error checking suspended reco:', error);
-        // Continue with filing if there's an error fetching suspended reco data
       }
     }
 
