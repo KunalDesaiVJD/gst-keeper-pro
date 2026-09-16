@@ -65,7 +65,11 @@ export default function CategorySummaryBars({
           </span>
         )}
       </div>
-      <CardContent className="space-y-1.5 pt-3 pb-3">
+      <CardContent className="pt-3 pb-3">
+        {/* Unbounded, ~20 categories made this card several hundred pixels
+            taller than the two beside it, which stretch to match and end in a
+            large blank. Scroll the list instead. */}
+        <div className="max-h-[300px] space-y-1.5 overflow-y-auto pr-1">
         {visibleCategories.map((cat) => (
           <div
             key={cat.type}
@@ -130,6 +134,7 @@ export default function CategorySummaryBars({
             <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground">0</span>
           </div>
         ))}
+        </div>
 
         {/* Footer: legend + empty categories */}
         <div className="flex items-center justify-between pt-2">
