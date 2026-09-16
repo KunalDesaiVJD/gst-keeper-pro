@@ -868,8 +868,11 @@ const FilingStatusPage: React.FC = () => {
 
       // Check Suspended Reco difference: if difference is not zero, cannot file GSTR-3B.
       //
-      // Skipped entirely for a NO-ITC promoter (clients.builder_itc_type =
-      // 'NO_ITC'). Suspended Reco exists to prove that credit reversed under
+      // Skipped entirely for a NO-ITC *builder* — a promoter, i.e.
+      // regular_sub_type = 'Builder' AND builder_itc_type = 'NO_ITC'. Both
+      // halves are required: the waiver is about the promoter scheme, not
+      // about a client having no ITC for any other reason.
+      // Suspended Reco exists to prove that credit reversed under
       // Rule 37A / s.16(2)(c) and still sitting in the portal's suspended
       // balance matches the reversals the books are carrying, because that
       // credit is eventually going to be reclaimed. A promoter who elected the
@@ -881,10 +884,20 @@ const FilingStatusPage: React.FC = () => {
       // forever (reported 2026-09-16 on KRISHNA INFRA-NO ITC: a fixed
       // -Rs 82,076.88 that nothing on the page could clear).
       //
-      // Gated on the flag, never on the client's name. 10 clients carry
-      // "NO ITC" in their name without the flag set — see
-      // docs/2B_RECONCILIATION_FLOW.md §8.
-      const isNoItcBuilder = client?.builder_itc_type === 'NO_ITC';
+      // Gated on the two flags, never on the client's name. 10 ordinary
+      // (regular_sub_type = 'Normal') clients carry "NO ITC" in their name —
+      // they are NOT promoters and do not get this waiver, whatever they are
+      // called. See docs/2B_RECONCILIATION_FLOW.md §8.
+      //
+      // Checking the sub-type as well as the ITC type is belt-and-braces
+      // today: Edit Client already nulls builder_itc_type whenever the
+      // sub-type isn't 'Builder', so every client currently carrying an ITC
+      // type is a Builder. It matters if a flag is ever left stale by a path
+      // that doesn't go through that form — a direct DB edit, an import, a
+      // future screen — at which point a non-promoter would silently inherit
+      // a filing-gate bypass.
+      const isNoItcBuilder =
+        client?.regular_sub_type === 'Builder' && client?.builder_itc_type === 'NO_ITC';
 
       if (!isNoItcBuilder) {
         try {

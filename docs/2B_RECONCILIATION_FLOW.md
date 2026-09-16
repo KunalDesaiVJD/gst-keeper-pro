@@ -416,29 +416,43 @@ against. The two have no reason to converge, so the difference is permanently
 non-zero through no error of the staff's, and the gate blocks filing forever.
 
 **Change**: `handleStatusChange` in `FilingStatusPage.tsx` skips the Suspended
-Reco difference check entirely when the client's `builder_itc_type` is
-`'NO_ITC'`. Every other pre-filing check still applies — GSTR-1 filed for the
-period, the previous period's GSTR-3B filed (§7), ARN format and uniqueness,
-the advance set-off gate, and the builder FSI/BU confirmations. Only this one
-check is waived, and only for these clients.
+Reco difference check entirely when the client is `regular_sub_type =
+'Builder'` **and** `builder_itc_type = 'NO_ITC'`. Every other pre-filing check
+still applies — GSTR-1 filed for the period, the previous period's GSTR-3B
+filed (§7), ARN format and uniqueness, the advance set-off gate, and the
+builder FSI/BU confirmations. Only this one check is waived, and only for
+these clients.
 
-**Gated on the flag, never on the name.** `clients.builder_itc_type =
-'NO_ITC'` is set on **18 clients**. The `-NO ITC` naming convention does *not*
-track it:
+**Builders only — not any client that happens to have no ITC.** The waiver is
+about the *promoter* scheme under Notification 3/2019-CTR: a promoter who
+elected 1%/5% forgoes ITC as a condition of the rate, which is why 4C is
+pinned to zero and why the reconciliation can never close. An ordinary
+registered person with no ITC in a given month is a completely different
+situation — their suspended balance is still expected to reconcile, and a
+non-zero difference there is a real finding, not a structural artefact. So
+both flags are required, and the sub-type check is not redundant: Edit Client
+nulls `builder_itc_type` whenever the sub-type isn't `'Builder'`, but a flag
+left stale by a direct DB edit, an import, or a future screen would otherwise
+hand a non-promoter a filing-gate bypass.
 
-- **10 clients have "NO ITC" in the name but the flag unset**, all of them
-  also `regular_sub_type = 'Normal'` rather than `'Builder'`: ATC LOGISTICS,
-  CLEAR QUANT TECHONLOGIES, GAMARA INFRASPACE, MTR HOTEL & RESORTS, SHARVA
-  INFRATECH, SKYLARK CORPORATION, STATE EXAMINATION BOARD, SUKIRTI DEVELOPERS,
-  SUNRISE LOGISTICS - GUJ, SWASTIK BUILDCON. **These do not get the
-  exemption.** Several are plainly promoters by name (GAMARA INFRASPACE,
-  SHARVA INFRATECH, SUKIRTI DEVELOPERS, SWASTIK BUILDCON, SKYLARK
-  CORPORATION) and are probably mis-configured client masters — but that is a
-  data decision for the firm, not something to infer from a name suffix in
-  code. Fix is one edit per client in Edit Client: set Builder sub-type and
-  ITC type = NO ITC.
-- **1 client has the flag without the name**: UKASUKH DEVELOPERS. It gets the
-  exemption, correctly.
+**Gated on the flags, never on the name.** `builder_itc_type = 'NO_ITC'` is
+set on **18 clients**, all of them `Builder` (all 25 clients carrying any ITC
+type are Builders). The `-NO ITC` naming convention does *not* track it:
+
+- **10 clients have "NO ITC" in the name but are `regular_sub_type =
+  'Normal'` with the flag unset**: ATC LOGISTICS, CLEAR QUANT TECHONLOGIES,
+  GAMARA INFRASPACE, MTR HOTEL & RESORTS, SHARVA INFRATECH, SKYLARK
+  CORPORATION, STATE EXAMINATION BOARD, SUKIRTI DEVELOPERS, SUNRISE
+  LOGISTICS - GUJ, SWASTIK BUILDCON. **These do not get the exemption** —
+  they are not promoters as far as the client master is concerned, whatever
+  the name says. Several read like promoters (GAMARA INFRASPACE, SHARVA
+  INFRATECH, SUKIRTI DEVELOPERS, SWASTIK BUILDCON, SKYLARK CORPORATION) and
+  may be mis-configured, but reclassifying a client as a Builder on the
+  1%/5% scheme is a data decision for the firm, not something to infer from
+  a name suffix in code. Fix is one edit per client in Edit Client: set
+  Builder sub-type and ITC type = NO ITC.
+- **1 client has the flag without the name**: UKASUKH DEVELOPERS. It is a
+  `Builder` with `NO_ITC`, so it gets the exemption, correctly.
 
 Matching on the name instead would have been both over- and under-inclusive,
 and would silently change which clients can bypass a filing gate every time
