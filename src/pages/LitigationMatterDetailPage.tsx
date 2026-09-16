@@ -2,14 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { Navigate, useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { PageHeader } from '@/components/layout/PageHeader';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { NoticesPageHeader } from '@/components/notices/NoticesPageHeader';
+import { NoticesCardHeader } from '@/components/notices/NoticesCardHeader';
+import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Separator } from '@/components/ui/separator';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
@@ -134,17 +134,27 @@ function fmtRelative(iso: string): string {
   return fmtDate(iso);
 }
 
-function stageBadgeClass(stage: string): string {
-  const s = stage.toLowerCase();
-  if (s.startsWith('captured') || s.startsWith('triage')) return 'bg-blue-50 text-blue-700 border-blue-200';
-  if (s.includes('awaiting') || s.includes('drafting')) return 'bg-amber-50 text-amber-700 border-amber-200';
-  if (s.includes('partner')) return 'bg-violet-50 text-violet-700 border-violet-200';
-  if (s.includes('filed') || s.includes('submitted')) return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-  if (s.includes('hearing')) return 'bg-orange-50 text-orange-700 border-orange-200';
-  if (s.includes('order')) return 'bg-red-50 text-red-700 border-red-200';
-  if (s.includes('appeal')) return 'bg-purple-50 text-purple-700 border-purple-200';
-  if (s.includes('closed')) return 'bg-slate-100 text-slate-600 border-slate-200';
-  return 'bg-slate-50 text-slate-600 border-slate-200';
+// Stage colour dot, matching NoticeWorkQueue — the tinted badge palette this
+// replaced was light-mode-only and off this module's scale.
+function stageDotClass(stage: string): string {
+  const s = (stage || '').toLowerCase();
+  if (s.startsWith('captured') || s.startsWith('triage')) return 'bg-blue-400';
+  if (s.includes('awaiting')) return 'bg-amber-400';
+  if (s.includes('drafting')) return 'bg-blue-500';
+  if (s.includes('partner')) return 'bg-violet-500';
+  if (s.includes('filed') || s.includes('submitted')) return 'bg-emerald-500';
+  if (s.includes('hearing')) return 'bg-amber-500';
+  if (s.includes('order')) return 'bg-orange-500';
+  if (s.includes('appeal')) return 'bg-red-500';
+  if (s.includes('closed')) return 'bg-slate-400';
+  return 'bg-slate-300';
+}
+
+function priorityChipClass(p: string): string {
+  const s = (p || '').toLowerCase();
+  if (s === 'high') return 'bg-destructive/10 text-destructive';
+  if (s === 'medium') return 'bg-amber-500/10 text-amber-700 dark:text-amber-400';
+  return 'bg-muted text-muted-foreground';
 }
 
 const LitigationMatterDetailPage: React.FC = () => {
@@ -480,48 +490,61 @@ const LitigationMatterDetailPage: React.FC = () => {
   };
 
   return (
-    <div className="space-y-3 animate-fade-in">
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate('/litigation')}>
-          <ArrowLeft className="h-4 w-4" />
+    <div className="space-y-4 animate-fade-in">
+      <NoticesPageHeader
+        title={matter.matter_no}
+        icon={Briefcase}
+        subtitle={
+          <>
+            <Link to={`/notices-company/${matter.client_id}`} className="font-medium text-primary hover:underline">
+              {clientName || 'Client'}
+            </Link>
+            {clientGstin && <span className="font-mono text-[10px]">{clientGstin}</span>}
+            <span className="inline-flex items-center gap-1.5">
+              <span className={cn('inline-block h-2 w-2 rounded-sm shrink-0', stageDotClass(matter.stage))} />
+              {matter.stage}
+            </span>
+          </>
+        }
+      />
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <NoticesTopNav />
+        <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => navigate('/litigation')}>
+          <ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> All matters
         </Button>
-        <PageHeader
-          title={matter.matter_no}
-          icon={<Briefcase className="h-5 w-5" />}
-          embedded
-        />
       </div>
 
       {/* Header card */}
       <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="space-y-1">
-              <h2 className="text-lg font-semibold">{matter.title || matter.matter_no}</h2>
-              <p className="text-sm text-muted-foreground">
-                <Link to={`/notices-company/${matter.client_id}`} className="text-primary hover:underline">{clientName}</Link>
-                {clientGstin && <span className="ml-1.5 font-mono text-xs">({clientGstin})</span>}
-              </p>
-              {matter.section_of_law && <p className="text-xs text-muted-foreground">{matter.section_of_law}</p>}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              <Badge variant="outline" className={stageBadgeClass(matter.stage)}>{matter.stage}</Badge>
-              <Badge variant="outline" className="capitalize">{matter.lifecycle}</Badge>
+        <NoticesCardHeader
+          title={matter.title || matter.matter_no}
+          description={
+            <>
+              <Link to={`/notices-company/${matter.client_id}`} className="text-primary hover:underline">{clientName}</Link>
+              {clientGstin && <span className="ml-1.5 font-mono">({clientGstin})</span>}
+              {matter.section_of_law && <span className="ml-1.5">· {matter.section_of_law}</span>}
+            </>
+          }
+          badge={
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+              <span className="rounded-full bg-muted px-1.5 py-0 text-[9px] font-bold capitalize text-muted-foreground">
+                {matter.lifecycle}
+              </span>
               {matter.priority && (
-                <Badge variant="outline" className={
-                  matter.priority.toLowerCase() === 'high' ? 'bg-red-50 text-red-700 border-red-200' :
-                  matter.priority.toLowerCase() === 'medium' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-                  'bg-slate-50 text-slate-600 border-slate-200'
-                }>{matter.priority}</Badge>
+                <span className={cn('rounded-full px-1.5 py-0 text-[9px] font-bold', priorityChipClass(matter.priority))}>
+                  {matter.priority}
+                </span>
               )}
               {matter.status === 'Closed' && (
-                <Badge variant="outline" className="bg-slate-100 text-slate-600">Closed: {matter.closed_reason}</Badge>
+                <span className="rounded-full bg-muted px-1.5 py-0 text-[9px] font-bold text-muted-foreground">
+                  Closed: {matter.closed_reason}
+                </span>
               )}
             </div>
-          </div>
-
-          <Separator className="my-3" />
-
+          }
+        />
+        <CardContent className="pt-3 pb-3">
           <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
             <div>
               <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Due Date</p>
@@ -619,23 +642,28 @@ const LitigationMatterDetailPage: React.FC = () => {
           { label: 'Penalty', value: matter.demand_penalty, field: 'demand_penalty' },
           { label: 'Cess', value: matter.demand_cess, field: 'demand_cess' },
         ].map((d) => (
-          <Card key={d.field}>
-            <CardContent className="p-3">
-              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Demand {d.label}</p>
+          <Card key={d.field} className="border-l-4 border-l-primary transition-shadow hover:shadow-md">
+            <CardContent className="p-3.5 space-y-1.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Demand {d.label}</span>
               <Input
                 type="number"
-                className="mt-1 h-7 text-sm font-semibold tabular-nums"
+                className="h-7 text-sm font-semibold tabular-nums"
                 defaultValue={d.value || ''}
                 onBlur={(e) => handleDemandUpdate(d.field, e.target.value)}
               />
             </CardContent>
           </Card>
         ))}
-        <Card className={cn(outstanding > 0 ? 'border-destructive/30 bg-destructive/5' : 'border-emerald-200 bg-emerald-50')}>
-          <CardContent className="p-3">
-            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Outstanding</p>
-            <p className="mt-1 text-lg font-bold tabular-nums">{fmtMoney(outstanding)}</p>
-            <p className="text-[10px] text-muted-foreground">Paid: {fmtMoney(matter.paid_total)} / Pre-deposit: {fmtMoney(matter.pre_deposit_total)}</p>
+        <Card className={cn(
+          'border-l-4 transition-shadow hover:shadow-md',
+          outstanding > 0 ? 'border-l-destructive bg-destructive/5' : 'border-l-emerald-500 bg-emerald-500/10',
+        )}>
+          <CardContent className="p-3.5 space-y-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Outstanding</span>
+            <p className="font-heading text-[30px] font-bold tabular-nums leading-none">{fmtMoney(outstanding)}</p>
+            <div className="text-[11px] text-muted-foreground">
+              Paid: {fmtMoney(matter.paid_total)} / Pre-deposit: {fmtMoney(matter.pre_deposit_total)}
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -656,23 +684,23 @@ const LitigationMatterDetailPage: React.FC = () => {
               {notices.length === 0 ? (
                 <p className="py-8 text-center text-xs text-muted-foreground">No notices linked to this matter.</p>
               ) : (
-                <Table>
+                <Table containerClassName="overflow-auto rounded-md border">
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-[11px]">Type</TableHead>
-                      <TableHead className="text-[11px]">Reference</TableHead>
-                      <TableHead className="text-[11px]">Description</TableHead>
-                      <TableHead className="text-[11px]">Issue Date</TableHead>
-                      <TableHead className="text-[11px]">Due Date</TableHead>
-                      <TableHead className="text-[11px]">Status</TableHead>
-                      <TableHead className="text-right text-[11px]">Demand</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Type</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Reference</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Description</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Issue Date</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Due Date</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Status</TableHead>
+                      <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Demand</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {notices.map((n) => (
                       <TableRow key={n.id}>
                         <TableCell className="text-xs">{n.notice_type || '—'}</TableCell>
-                        <TableCell className="text-xs font-mono">{n.reference_number || '—'}</TableCell>
+                        <TableCell className="font-mono text-[10px] text-muted-foreground">{n.reference_number || '—'}</TableCell>
                         <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground">{n.description || '—'}</TableCell>
                         <TableCell className="text-xs">{fmtDate(n.issue_date)}</TableCell>
                         <TableCell className="text-xs">{fmtDate(n.due_date)}</TableCell>
@@ -695,16 +723,16 @@ const LitigationMatterDetailPage: React.FC = () => {
               {hearings.length === 0 ? (
                 <p className="py-8 text-center text-xs text-muted-foreground">No hearings scheduled.</p>
               ) : (
-                <Table>
+                <Table containerClassName="overflow-auto rounded-md border">
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-[11px]">Date</TableHead>
-                      <TableHead className="text-[11px]">Mode</TableHead>
-                      <TableHead className="text-[11px]">Venue</TableHead>
-                      <TableHead className="text-[11px]">Officer</TableHead>
-                      <TableHead className="text-[11px]">Outcome</TableHead>
-                      <TableHead className="text-[11px]">Adjourned</TableHead>
-                      <TableHead className="text-[11px]"></TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Date</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Mode</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Venue</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Officer</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Outcome</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Adjourned</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -748,16 +776,16 @@ const LitigationMatterDetailPage: React.FC = () => {
               {payments.length === 0 ? (
                 <p className="py-8 text-center text-xs text-muted-foreground">No payments recorded.</p>
               ) : (
-                <Table>
+                <Table containerClassName="overflow-auto rounded-md border">
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-[11px]">Kind</TableHead>
-                      <TableHead className="text-right text-[11px]">Tax</TableHead>
-                      <TableHead className="text-right text-[11px]">Interest</TableHead>
-                      <TableHead className="text-right text-[11px]">Penalty</TableHead>
-                      <TableHead className="text-right text-[11px]">Cess</TableHead>
-                      <TableHead className="text-[11px]">Paid On</TableHead>
-                      <TableHead className="text-[11px]">Remarks</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Kind</TableHead>
+                      <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Tax</TableHead>
+                      <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Interest</TableHead>
+                      <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Penalty</TableHead>
+                      <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Cess</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Paid On</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Remarks</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -781,23 +809,25 @@ const LitigationMatterDetailPage: React.FC = () => {
 
         <TabsContent value="documents">
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2 pt-3 px-4">
-              <CardTitle className="text-sm">Documents</CardTitle>
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setDocDialogOpen(true)}>
-                <Plus className="mr-1 h-3 w-3" /> Add Document
-              </Button>
-            </CardHeader>
+            <NoticesCardHeader
+              title="Documents"
+              badge={
+                <Button size="sm" variant="outline" className="h-7 shrink-0 text-xs" onClick={() => setDocDialogOpen(true)}>
+                  <Plus className="mr-1 h-3 w-3" /> Add Document
+                </Button>
+              }
+            />
             <CardContent className="p-0">
               {documents.length === 0 ? (
                 <p className="py-8 text-center text-xs text-muted-foreground">No documents attached.</p>
               ) : (
-                <Table>
+                <Table containerClassName="overflow-auto rounded-md border">
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-[11px]">Title</TableHead>
-                      <TableHead className="text-[11px]">Kind</TableHead>
-                      <TableHead className="text-[11px]">Source</TableHead>
-                      <TableHead className="text-[11px]">Added</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Title</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Kind</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Source</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Added</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
