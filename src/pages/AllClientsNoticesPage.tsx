@@ -70,6 +70,7 @@ interface NoticeRecord {
   assign_to: string | null;
   pdf_url: string | null;
   pulled_at: string;
+  first_seen_at: string | null;
   clients: { name: string | null; gstin: string | null } | null;
 }
 
@@ -84,6 +85,7 @@ const FILTER_LABELS: Record<string, string> = {
   priority: 'flagged priority',
   submitted: 'with a submission logged',
   replied: 'with a reply logged',
+  new: 'first seen in the last 24 hours',
 };
 
 const AllClientsNoticesPage: React.FC = () => {
@@ -106,6 +108,10 @@ const AllClientsNoticesPage: React.FC = () => {
   // From a Company Profile page's "View All" links — scopes the firm-wide
   // list down to just that one client's notices.
   const clientParam = params.get('client') || '';
+  // Deep-link to one notice — from the dashboard drawer's "Open in list" and
+  // from the notification bell, both of which know a notice id but not which
+  // page of the list it falls on.
+  const noticeIdParam = params.get('noticeId') || '';
   // "Notices & Orders" (editable, gst_notices only) vs "Merged Notices"
   // (Notice Alert's own second tab — every source combined into one
   // chronological, read-only list; confirmed live it's not a flat re-listing
@@ -126,7 +132,7 @@ const AllClientsNoticesPage: React.FC = () => {
         'gst_notices',
         'id, client_id, reference_number, case_id, notice_type, description, issue_date, due_date, extended_due_date, ' +
         'staff_status, priority, reply_ref_number, reply_date, order_number, order_date, submission_arn, submission_date, ' +
-        'amount_of_demand, remarks, issued_by, financial_year, assign_to, pdf_url, pulled_at, clients(name, gstin)',
+        'amount_of_demand, remarks, issued_by, financial_year, assign_to, pdf_url, pulled_at, first_seen_at, clients(name, gstin)',
         (q) => q.eq('source', 'notices').is('deleted_at', null).order('id'),
       ),
       supabase.from('gst_refund_applications').select('arn, refund_type, filed_date, status, documents, client_id, clients(name, gstin)').is('deleted_at', null),
@@ -175,10 +181,15 @@ const AllClientsNoticesPage: React.FC = () => {
     if (filter === 'priority') list = list.filter((r) => r.priority);
     if (filter === 'submitted') list = list.filter((r) => !!r.submission_date || !!r.submission_arn);
     if (filter === 'replied') list = list.filter((r) => !!r.reply_date);
+    // Mirrors isNew() in utils/noticeDefinitions — the dashboard's "New since
+    // last sync" tile drills down here, so both must read first_seen_at, not
+    // pulled_at (which every row gets refreshed on every sync).
+    if (filter === 'new') list = list.filter((r) => daysAgo(r.first_seen_at) <= 1);
     if (dateParam) list = list.filter((r) => (r.issue_date || '').slice(0, 10) === dateParam || (r.due_date || '').slice(0, 10) === dateParam);
     if (clientParam) list = list.filter((r) => r.client_id === clientParam);
+    if (noticeIdParam) list = list.filter((r) => r.id === noticeIdParam);
     return list;
-  }, [records, typeParam, category, status, filter, dateParam, clientParam]);
+  }, [records, typeParam, category, status, filter, dateParam, clientParam, noticeIdParam]);
 
   const table: ReportTable = {
     title: 'Notices — All Clients',

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 
 interface SyncHealthCardProps {
@@ -136,7 +136,9 @@ export default function SyncHealthCard({
     {
       label: 'Failed logins (latest attempt)',
       value: failedLogins > 0 ? (
-        <span className="text-destructive font-semibold">{failedLogins} · fix →</span>
+        <Link to="/notices-company-list" className="font-semibold text-destructive hover:underline">
+          {failedLogins} · fix →
+        </Link>
       ) : (
         <span>0</span>
       ),
@@ -195,7 +197,9 @@ export default function SyncHealthCard({
 
         <div className="mt-3 flex items-center justify-between text-[11px] text-muted-foreground">
           <span>Next scheduled unattended sync: 06:00 IST</span>
-          <span className="shrink-0 font-semibold text-primary">Sync log →</span>
+          <Link to="/notices-company-list" className="shrink-0 font-semibold text-primary hover:underline">
+            Sync log →
+          </Link>
         </div>
       </CardContent>
     </Card>

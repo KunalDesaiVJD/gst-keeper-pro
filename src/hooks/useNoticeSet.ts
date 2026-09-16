@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -20,6 +20,8 @@ export interface NoticeSetRow {
   assign_to: string | null;
   assign_to_user_id: string | null;
   amount_of_demand: number | null;
+  financial_year: string | null;
+  issued_by: string | null;
 }
 
 export interface StatusRow { client_id?: string; arn: string | null; status: string | null; }
@@ -27,7 +29,7 @@ export interface StatusRow { client_id?: string; arn: string | null; status: str
 const NOTICE_SELECT =
   'id, client_id, notice_type, description, staff_status, priority, issue_date, due_date, ' +
   'extended_due_date, reply_date, first_seen_at, pulled_at, case_id, reference_number, ' +
-  'assign_to, assign_to_user_id, amount_of_demand';
+  'assign_to, assign_to_user_id, amount_of_demand, financial_year, issued_by';
 
 export function useNoticeSet() {
   const [rows, setRows] = useState<NoticeSetRow[]>([]);
@@ -35,6 +37,8 @@ export function useNoticeSet() {
   const [drc03Rows, setDrc03Rows] = useState<StatusRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const refetch = useCallback(() => setReloadKey((k) => k + 1), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -63,7 +67,7 @@ export function useNoticeSet() {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadKey]);
 
-  return { rows, refundRows, drc03Rows, loading, error };
+  return { rows, refundRows, drc03Rows, loading, error, refetch };
 }
