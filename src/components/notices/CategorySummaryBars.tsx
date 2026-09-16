@@ -1,16 +1,9 @@
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { summaryCellHref, type CategoryRow } from '@/utils/noticeSummaryReport';
 import { Loader2 } from 'lucide-react';
-
-interface CategoryRow {
-  type: string;
-  total: number;
-  open: number;
-  closed: number;
-  replied: number;
-  placeholder?: boolean;
-  to?: string;
-}
 
 interface CategorySummaryBarsProps {
   categories: CategoryRow[];
@@ -27,6 +20,8 @@ export default function CategorySummaryBars({
   activeCategory,
   loading,
 }: CategorySummaryBarsProps) {
+  const [showEmpty, setShowEmpty] = useState(false);
+
   if (loading) {
     return (
       <Card>
@@ -41,20 +36,40 @@ export default function CategorySummaryBars({
   }
 
   const visibleCategories = categories.filter((c) => !c.placeholder);
-  const emptyCount = categories.filter((c) => c.placeholder).length;
+  const emptyCategories = categories.filter((c) => c.placeholder);
 
   return (
     <Card>
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div>
           <h2 className="text-sm font-semibold">Notice summary by category</h2>
-          <p className="text-[11px] text-muted-foreground">Open · Replied · Closed — click a bar to filter</p>
+          <p className="text-[11px] text-muted-foreground">
+            Click a row to filter this dashboard · click its count to open the list
+          </p>
         </div>
-        <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
-          {grandTotal.total.toLocaleString('en-IN')} total
-        </span>
+        {/* Filtering scopes the tiles and panels above, which are usually
+            scrolled out of view — so the state is echoed here, where the
+            click happened. */}
+        {activeCategory ? (
+          <button
+            type="button"
+            onClick={() => onCategoryClick?.(activeCategory)}
+            className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary hover:bg-primary/20"
+            title="Clear this filter"
+          >
+            Filtering: {activeCategory} ✕
+          </button>
+        ) : (
+          <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
+            {grandTotal.total.toLocaleString('en-IN')} total
+          </span>
+        )}
       </div>
-      <CardContent className="space-y-1.5 pt-3 pb-3">
+      <CardContent className="pt-3 pb-3">
+        {/* Unbounded, ~20 categories made this card several hundred pixels
+            taller than the two beside it, which stretch to match and end in a
+            large blank. Scroll the list instead. */}
+        <div className="max-h-[300px] space-y-1.5 overflow-y-auto pr-1">
         {visibleCategories.map((cat) => (
           <div
             key={cat.type}
@@ -93,11 +108,33 @@ export default function CategorySummaryBars({
               <div className="flex h-2 flex-1 overflow-hidden rounded-full bg-muted/40" />
             )}
 
-            <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-              {cat.total}
-            </span>
+            {/* The row itself filters this dashboard; the count opens the
+                matching list, so a category is both a lens and a way out. */}
+            {summaryCellHref(cat, 'total') ? (
+              <Link
+                to={summaryCellHref(cat, 'total')!}
+                onClick={(e) => e.stopPropagation()}
+                className="w-10 shrink-0 text-right text-xs font-semibold tabular-nums text-primary hover:underline"
+                title={`Open the ${cat.type} list`}
+              >
+                {cat.total}
+              </Link>
+            ) : (
+              <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                {cat.total}
+              </span>
+            )}
           </div>
         ))}
+
+        {showEmpty && emptyCategories.map((cat) => (
+          <div key={cat.type} className="flex items-center gap-2 rounded-md px-1 py-0.5 opacity-60">
+            <span className="w-[120px] shrink-0 truncate text-xs font-medium">{cat.type}</span>
+            <div className="h-2 flex-1 rounded-full bg-muted/40" />
+            <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground">0</span>
+          </div>
+        ))}
+        </div>
 
         {/* Footer: legend + empty categories */}
         <div className="flex items-center justify-between pt-2">
@@ -115,10 +152,14 @@ export default function CategorySummaryBars({
               <span className="text-[10px] text-muted-foreground">Closed</span>
             </div>
           </div>
-          {emptyCount > 0 && (
-            <span className="text-[11px] font-semibold text-primary">
-              + {emptyCount} categories with no data
-            </span>
+          {emptyCategories.length > 0 && (
+            <button
+              type="button"
+              className="text-[11px] font-semibold text-primary hover:underline"
+              onClick={() => setShowEmpty((v) => !v)}
+            >
+              {showEmpty ? 'Hide' : '+'} {emptyCategories.length} categories with no data
+            </button>
           )}
         </div>
       </CardContent>

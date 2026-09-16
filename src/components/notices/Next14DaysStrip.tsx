@@ -208,6 +208,17 @@ export default function Next14DaysStrip({ items, onClickItem, onClickDate, loadi
       <CardContent className="space-y-1.5 pt-3 pb-3">
         {weeks.map((w, i) => <Fragment key={i}>{renderWeek(w)}</Fragment>)}
 
+        {/* A grid of empty boxes reads as broken. Say why it is empty, and
+            point at where the work actually is. */}
+        {items.length === 0 && (
+          <p className="pt-1 text-[11px] text-muted-foreground">
+            Nothing falls due in this window.{' '}
+            <Link to="/notices-all?filter=overdue" className="font-semibold text-primary hover:underline">
+              See overdue notices →
+            </Link>
+          </p>
+        )}
+
         {/* Legend */}
         <div className="flex flex-wrap gap-3 pt-2">
           {Object.entries(legendLabels).map(([type, label]) => (
@@ -232,8 +243,10 @@ export default function Next14DaysStrip({ items, onClickItem, onClickDate, loadi
               {new Date(spotlightItem.date).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}: {spotlightItem.label}
             </button>
           ) : <span />}
-          <Link to="/notices-all?filter=due7" className="shrink-0 font-semibold text-primary hover:underline">
-            Full calendar →
+          {/* "Full calendar" promised a view that does not exist, and pointed
+              at a due-in-7-days filter that is empty whenever this strip is. */}
+          <Link to="/notices-all" className="shrink-0 font-semibold text-primary hover:underline">
+            All deadlines →
           </Link>
         </div>
       </CardContent>

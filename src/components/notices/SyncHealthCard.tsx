@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { RefreshCw } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 
 interface SyncHealthCardProps {
@@ -131,7 +133,11 @@ export default function SyncHealthCard({
     },
     {
       label: 'Clients synced / with credentials',
-      value: `${clientsSynced24h}${totalClientsWithCreds ? ` / ${totalClientsWithCreds}` : ''}`,
+      value: (
+        <Link to="/notices-company-list" className="hover:text-primary hover:underline">
+          {clientsSynced24h}{totalClientsWithCreds ? ` / ${totalClientsWithCreds}` : ''}
+        </Link>
+      ),
     },
     {
       label: 'Failed logins (latest attempt)',
@@ -193,6 +199,15 @@ export default function SyncHealthCard({
             </div>
           ))}
         </div>
+        {/* The dashboard's own Sync All covers every credentialed client with
+            no selection. Syncing one company, or a chosen few, is the Company
+            List's job — which the redesign left with no entry point here. */}
+        <Button asChild size="sm" variant="outline" className="mt-3 h-7 w-full text-[11px]">
+          <Link to="/notices-company-list">
+            <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Sync one or more clients
+          </Link>
+        </Button>
+
         <ActivityFeed />
 
         <div className="mt-3 flex items-center justify-between text-[11px] text-muted-foreground">
