@@ -27,6 +27,20 @@ import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDial
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
 import { markFiledForPeriod } from '@/lib/advanceSetoffOverrides';
 
+// Previous MM/YYYY period. Kept next to the carry-forward logic it guards:
+// the 2B chain is strictly month-by-month, so "the period before this one" has
+// to mean the same thing here as it does in carryForwardToNextMonth().
+const previousPeriodMonth = (periodMonth: string): string => {
+  const [month, year] = periodMonth.split('/');
+  let prevMonth = parseInt(month) - 1;
+  let prevYear = parseInt(year);
+  if (prevMonth < 1) {
+    prevMonth = 12;
+    prevYear--;
+  }
+  return `${String(prevMonth).padStart(2, '0')}/${prevYear}`;
+};
+
 // Normalize an accountant name by stripping the trailing "/<number>" reference
 // (e.g. "PUNITBHAI/16" / "PAVANBHAI /66" / "PRIYA,MUKESHBHAI/ 28") so the same
 // person isn't counted as multiple accountants in the filter.
@@ -80,6 +94,7 @@ interface Client {
   assigned_accountant: string | null;
   registration_type: string;
   regular_sub_type?: string | null;
+  builder_itc_type?: string | null;
   selected_returns: string[] | null;
   registration_date: string;
   cancellation_date?: string | null;
@@ -237,18 +252,22 @@ const FilingStatusPage: React.FC = () => {
 
       // CARRY FORWARD BILLS NOT IN 2B
       // Carry forward ALL records regardless of reclaim_month status
-      // This ensures totals match between months
-      if (billsNotIn2B && billsNotIn2B.length > 0) {
-        // Delete existing CF records in next month first to avoid duplicates
-        // This ensures we always sync the latest state from current month
-        const { error: delete2BError } = await supabase
-          .from('bills_not_in_2b')
-          .delete()
-          .eq('client_id', clientId)
-          .eq('period_month', nextPeriod)
-          .eq('is_carried_forward', true);
-        if (delete2BError) throw delete2BError;
+      // This ensures totals match between months.
+      // The delete runs unconditionally, OUTSIDE the "source month has rows"
+      // check: if this period's last pending item was cleared, next period's
+      // carried-forward copy of it has to go too. Guarding the delete behind
+      // `length > 0` (as this did originally) left that copy stranded there
+      // forever, and the DB trigger — which deletes unconditionally — then
+      // disagreed with this function about the result.
+      const { error: delete2BError } = await supabase
+        .from('bills_not_in_2b')
+        .delete()
+        .eq('client_id', clientId)
+        .eq('period_month', nextPeriod)
+        .eq('is_carried_forward', true);
+      if (delete2BError) throw delete2BError;
 
+      if (billsNotIn2B && billsNotIn2B.length > 0) {
         // Now insert ALL records from current month as CF records in next month
         const records2B = billsNotIn2B.map(b => ({
           client_id: b.client_id,
@@ -275,17 +294,16 @@ const FilingStatusPage: React.FC = () => {
       // CARRY FORWARD BILLS NOT IN BOOKS
       // Carry forward ALL records regardless of book_entry_month or bill_in_2b_month status
       // This matches user requirement to carry forward everything to next month
-      if (billsNotInBooks && billsNotInBooks.length > 0) {
-        // Delete existing CF records in next month first to avoid duplicates
-        // This ensures we always sync the latest state from current month
-        const { error: deleteBooksError } = await supabase
-          .from('bills_not_in_books')
-          .delete()
-          .eq('client_id', clientId)
-          .eq('period_month', nextPeriod)
-          .eq('is_carried_forward', true);
-        if (deleteBooksError) throw deleteBooksError;
+      // Same unconditional delete as the 2B side above.
+      const { error: deleteBooksError } = await supabase
+        .from('bills_not_in_books')
+        .delete()
+        .eq('client_id', clientId)
+        .eq('period_month', nextPeriod)
+        .eq('is_carried_forward', true);
+      if (deleteBooksError) throw deleteBooksError;
 
+      if (billsNotInBooks && billsNotInBooks.length > 0) {
         // Now insert ALL records from current month as CF records in next month
         const recordsBooks = billsNotInBooks.map(b => ({
           client_id: b.client_id,
@@ -341,7 +359,7 @@ const FilingStatusPage: React.FC = () => {
   const fetchClients = useCallback(async () => {
     const { data, error } = await supabase
       .from('clients')
-      .select('id, name, gstin, mobile, email, assigned_accountant, registration_type, regular_sub_type, selected_returns, registration_date, cancellation_date, registration_cancellation_date, inactive_at_hand, target_date_group1, target_date_group2')
+      .select('id, name, gstin, mobile, email, assigned_accountant, registration_type, regular_sub_type, builder_itc_type, selected_returns, registration_date, cancellation_date, registration_cancellation_date, inactive_at_hand, target_date_group1, target_date_group2')
       .order('name');
     
     if (error) {
@@ -806,63 +824,139 @@ const FilingStatusPage: React.FC = () => {
         return;
       }
 
-      // Check Suspended Reco difference: if difference is not zero, cannot file GSTR-3B
-      try {
-        // Fetch suspended_reco data
-        const { data: suspendedData } = await supabase
-          .from('suspended_reco')
-          .select('*')
+      // Previous period's GSTR-3B must be filed first.
+      //
+      // This is what actually protects the 2B carry-forward chain. Pending 2B
+      // items only reach period N+1 because marking period N Filed physically
+      // copies them there; nothing ever fires for a period that is skipped.
+      // Filing Jul-2026 while Jun-2026 sat at "Prepared Pending" therefore
+      // carried only July's own rows into August, and everything older was
+      // gone for good — Jul-2026 had no copy of it to pass on. Three clients
+      // lost their backlog that way before this check existed
+      // (docs/2B_RECONCILIATION_FLOW.md §7).
+      //
+      // Only plain monthly GSTR-3B is checked: GSTR-3B (Q) is quarterly, so
+      // "the previous period" is the previous quarter-end, not last month, and
+      // the carry-forward trigger doesn't cover quarterly filings anyway.
+      if (record.return_type === 'GSTR-3B') {
+        const prevPeriod = previousPeriodMonth(record.period_month || selectedMonth);
+        const { data: prevRecord } = await supabase
+          .from('filing_status')
+          .select('status')
           .eq('client_id', record.client_id)
-          .eq('period_month', selectedMonth)
+          .eq('period_month', prevPeriod)
+          .eq('return_type', 'GSTR-3B')
           .maybeSingle();
-        
-        // Fetch books data from bills_not_in_2b
-        // RULE: Include rows where Reclaim is blank AND Reversal is NOT blank
-        const { data: booksData } = await supabase
-          .from('bills_not_in_2b')
-          .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
-          .eq('client_id', record.client_id)
-          .eq('period_month', selectedMonth);
-        
-        if (suspendedData || (booksData && booksData.length > 0)) {
-          // New formula: Opening Balance + Current Total - Books
-          const openingCgst = Number((suspendedData as any)?.opening_cgst) || 0;
-          const openingSgst = Number((suspendedData as any)?.opening_sgst) || 0;
-          const openingIgst = Number((suspendedData as any)?.opening_igst) || 0;
-          const portalCgst = Number(suspendedData?.portal_cgst) || 0;
-          const portalSgst = Number(suspendedData?.portal_sgst) || 0;
-          const portalIgst = Number(suspendedData?.portal_igst) || 0;
-          const portalTotal = (openingCgst + openingSgst + openingIgst) + (portalCgst + portalSgst + portalIgst);
-          
-          // Filter books data: Include rows where Reclaim is blank AND Reversal is NOT blank
-          const filteredBooksData = (booksData || []).filter(row => {
-            const reversalBlank = row.reversal_month === null || row.reversal_month === '';
-            const reclaimBlank = row.reclaim_month === null || row.reclaim_month === '';
-            return reclaimBlank && !reversalBlank;
-          });
-          
-          const booksTotals = filteredBooksData.reduce((acc, row) => ({
-            cgst: acc.cgst + (Number(row.input_cgst) || 0),
-            sgst: acc.sgst + (Number(row.input_sgst) || 0),
-            igst: acc.igst + (Number(row.input_igst) || 0),
-          }), { cgst: 0, sgst: 0, igst: 0 });
-          
-          const booksTotal = booksTotals.cgst + booksTotals.sgst + booksTotals.igst;
-          // Round to 2 decimal places to handle floating-point precision issues
-          let difference = Math.round((portalTotal - booksTotal) * 100) / 100;
-          // Normalize -0 to 0
-          if (difference === 0 || Object.is(difference, -0)) difference = 0;
-          
-          // Allow differences up to 20 for rounding errors
-          if (Math.abs(difference) > 20) {
-            const displayDiff = difference === 0 ? '0' : difference.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-            toast.error(`Cannot file ${record.return_type}: Suspended Reconciliation difference must be within ₹20. Current difference: ${displayDiff}`);
+
+        // No row at all means this period predates the client's first period
+        // in the app (or the previous month was a different scheme) — nothing
+        // to chain from, so nothing to block.
+        if (prevRecord && prevRecord.status !== 'Filed') {
+          const msg = `Cannot file GSTR-3B for ${record.period_month}: ${prevPeriod} is still "${filingStatusDisplayLabel(prevRecord.status as FilingStatusType)}". Filing out of order drops every pending 2B item older than ${record.period_month} from the carry-forward.`;
+          // A GST Manager / Superadmin can still go ahead — a client genuinely
+          // migrated mid-year, or filed the earlier month outside this app,
+          // shouldn't be permanently stuck. They are told exactly what it
+          // costs, and the Re-run carry forward button on the earlier period
+          // puts the backlog back afterwards.
+          if (!canUnlockSheets()) {
+            toast.error(msg);
             return;
           }
+          if (!window.confirm(`${msg}\n\nFile anyway?`)) return;
         }
-      } catch (error: any) {
-        console.error('Error checking suspended reco:', error);
-        // Continue with filing if there's an error fetching suspended reco data
+      }
+
+      // Check Suspended Reco difference: if difference is not zero, cannot file GSTR-3B.
+      //
+      // Skipped entirely for a NO-ITC *builder* — a promoter, i.e.
+      // regular_sub_type = 'Builder' AND builder_itc_type = 'NO_ITC'. Both
+      // halves are required: the waiver is about the promoter scheme, not
+      // about a client having no ITC for any other reason.
+      // Suspended Reco exists to prove that credit reversed under
+      // Rule 37A / s.16(2)(c) and still sitting in the portal's suspended
+      // balance matches the reversals the books are carrying, because that
+      // credit is eventually going to be reclaimed. A promoter who elected the
+      // 1%/5% no-ITC scheme never reclaims any of it: ITC Summary pins Total 4B
+      // to Total 4A for these clients precisely so Net ITC (4C) is 0 by
+      // construction, whatever the reversal rows say. The two sides therefore
+      // have no reason to converge, the difference is permanently non-zero
+      // through no error of the staff's, and the gate just blocks filing
+      // forever (reported 2026-09-16 on KRISHNA INFRA-NO ITC: a fixed
+      // -Rs 82,076.88 that nothing on the page could clear).
+      //
+      // Gated on the two flags, never on the client's name. 10 ordinary
+      // (regular_sub_type = 'Normal') clients carry "NO ITC" in their name —
+      // they are NOT promoters and do not get this waiver, whatever they are
+      // called. See docs/2B_RECONCILIATION_FLOW.md §8.
+      //
+      // Checking the sub-type as well as the ITC type is belt-and-braces
+      // today: Edit Client already nulls builder_itc_type whenever the
+      // sub-type isn't 'Builder', so every client currently carrying an ITC
+      // type is a Builder. It matters if a flag is ever left stale by a path
+      // that doesn't go through that form — a direct DB edit, an import, a
+      // future screen — at which point a non-promoter would silently inherit
+      // a filing-gate bypass.
+      const isNoItcBuilder =
+        client?.regular_sub_type === 'Builder' && client?.builder_itc_type === 'NO_ITC';
+
+      if (!isNoItcBuilder) {
+        try {
+          // Fetch suspended_reco data
+          const { data: suspendedData } = await supabase
+            .from('suspended_reco')
+            .select('*')
+            .eq('client_id', record.client_id)
+            .eq('period_month', selectedMonth)
+            .maybeSingle();
+        
+          // Fetch books data from bills_not_in_2b
+          // RULE: Include rows where Reclaim is blank AND Reversal is NOT blank
+          const { data: booksData } = await supabase
+            .from('bills_not_in_2b')
+            .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
+            .eq('client_id', record.client_id)
+            .eq('period_month', selectedMonth);
+        
+          if (suspendedData || (booksData && booksData.length > 0)) {
+            // New formula: Opening Balance + Current Total - Books
+            const openingCgst = Number((suspendedData as any)?.opening_cgst) || 0;
+            const openingSgst = Number((suspendedData as any)?.opening_sgst) || 0;
+            const openingIgst = Number((suspendedData as any)?.opening_igst) || 0;
+            const portalCgst = Number(suspendedData?.portal_cgst) || 0;
+            const portalSgst = Number(suspendedData?.portal_sgst) || 0;
+            const portalIgst = Number(suspendedData?.portal_igst) || 0;
+            const portalTotal = (openingCgst + openingSgst + openingIgst) + (portalCgst + portalSgst + portalIgst);
+          
+            // Filter books data: Include rows where Reclaim is blank AND Reversal is NOT blank
+            const filteredBooksData = (booksData || []).filter(row => {
+              const reversalBlank = row.reversal_month === null || row.reversal_month === '';
+              const reclaimBlank = row.reclaim_month === null || row.reclaim_month === '';
+              return reclaimBlank && !reversalBlank;
+            });
+          
+            const booksTotals = filteredBooksData.reduce((acc, row) => ({
+              cgst: acc.cgst + (Number(row.input_cgst) || 0),
+              sgst: acc.sgst + (Number(row.input_sgst) || 0),
+              igst: acc.igst + (Number(row.input_igst) || 0),
+            }), { cgst: 0, sgst: 0, igst: 0 });
+          
+            const booksTotal = booksTotals.cgst + booksTotals.sgst + booksTotals.igst;
+            // Round to 2 decimal places to handle floating-point precision issues
+            let difference = Math.round((portalTotal - booksTotal) * 100) / 100;
+            // Normalize -0 to 0
+            if (difference === 0 || Object.is(difference, -0)) difference = 0;
+          
+            // Allow differences up to 20 for rounding errors
+            if (Math.abs(difference) > 20) {
+              const displayDiff = difference === 0 ? '0' : difference.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+              toast.error(`Cannot file ${record.return_type}: Suspended Reconciliation difference must be within ₹20. Current difference: ${displayDiff}`);
+              return;
+            }
+          }
+        } catch (error: any) {
+          console.error('Error checking suspended reco:', error);
+          // Continue with filing if there's an error fetching suspended reco data
+        }
       }
     }
 
@@ -1071,16 +1165,6 @@ const FilingStatusPage: React.FC = () => {
       // When unlocking, unlock ALL related sheets and change status to 'Prepared Pending'
       // This affects: Filing Status (GSTR-3B/GSTR-3B (Q)), 2B Reconciliation, ITC Summary, RCM Summary
       
-      // Calculate next month for deleting carried forward records
-      const [month, year] = record.period_month.split('/');
-      let nextMonth = parseInt(month) + 1;
-      let nextYear = parseInt(year);
-      if (nextMonth > 12) {
-        nextMonth = 1;
-        nextYear++;
-      }
-      const nextPeriod = `${String(nextMonth).padStart(2, '0')}/${nextYear}`;
-      
       // Change status back to 'Prepared Pending' and unlock for GSTR-3B/GSTR-3B (Q)
       const { error } = await supabase
         .from('filing_status')
@@ -1126,23 +1210,20 @@ const FilingStatusPage: React.FC = () => {
         .eq('client_id', record.client_id)
         .eq('month', record.period_month);
       
-      // DELETE CARRIED FORWARD RECORDS FROM NEXT MONTH
-      // This allows the system to re-create them when GSTR-3B is filed again with updated data
-      await supabase
-        .from('bills_not_in_2b')
-        .delete()
-        .eq('client_id', record.client_id)
-        .eq('period_month', nextPeriod)
-        .eq('is_carried_forward', true);
+      // Next period's carried-forward rows are deliberately LEFT IN PLACE.
+      //
+      // This used to delete them, on the reasoning that re-filing would
+      // re-create them from updated data. It does — but only if the period is
+      // ever re-filed. Unlocking Jun-2026 and then simply not re-filing it
+      // wiped Jul-2026's entire backlog, and once Jul-2026 was itself filed it
+      // carried only its own rows into Aug-2026, so every pending item older
+      // than July vanished for good (docs/2B_RECONCILIATION_FLOW.md §7).
+      // Keeping them costs nothing: both carry-forward paths (the
+      // auto_lock_on_filed trigger and carryForwardToNextMonth above) delete
+      // every carried-forward row in the destination period before inserting,
+      // so a re-file still produces exactly the right set.
       
-      await supabase
-        .from('bills_not_in_books')
-        .delete()
-        .eq('client_id', record.client_id)
-        .eq('period_month', nextPeriod)
-        .eq('is_carried_forward', true);
-      
-      toast.success('All sheets unlocked. GSTR-3B status changed to Prepared Pending. Carried forward records cleared from next month.');
+      toast.success('All sheets unlocked. GSTR-3B status changed to Prepared Pending. Next month\'s carried-forward items were left untouched.');
       fetchFilingRecords();
     } catch (error: any) {
       toast.error('Failed to unlock: ' + error.message);
@@ -1655,7 +1736,12 @@ const FilingStatusPage: React.FC = () => {
                         </PopoverContent>
                       </Popover>
                     )}
-                    {(returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)') && record.status === 'Filed' && (
+                    {/* Not gated on status === 'Filed'. The case that most needs
+                        this button is precisely the one where the period was
+                        never filed, so its pending items never carried into the
+                        next period — gating it on Filed left staff with no way
+                        out of exactly the breakage it exists to repair. */}
+                    {(returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)') && (
                       <button
                         type="button"
                         className="shrink-0 disabled:opacity-50"
