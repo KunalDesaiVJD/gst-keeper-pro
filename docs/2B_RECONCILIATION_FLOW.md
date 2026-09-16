@@ -286,3 +286,111 @@ closes a gap chain of any depth in one statement. Applied directly (went
 through the tool-permission gate this time, unlike the plain multi-statement
 version). Verified: the dry-run audit query is back to `would_insert_2b=0`,
 `would_insert_books=0` across every client.
+
+## §7. Carry-forward incident (2026-09-16) — filing out of order
+
+Reported as "Amber Gum's Jun-2026 and Jul-2026 items yet to be reclaimed
+aren't carried forward into Aug-2026". Different cause from §6, same
+symptom, and this one is a design flaw rather than a dropped network call.
+
+**Root cause.** Carry-forward is an *event-sourced copy chain*. Pending 2B
+items exist in period N+1 only because the "mark GSTR-3B Filed" event on
+period N physically copied them there — `auto_lock_on_filed()` in the DB,
+plus `carryForwardToNextMonth()` in `FilingStatusPage.tsx`. Nothing ever
+fires for a period that is never filed. And Filing Status had **no guard
+requiring the previous period's GSTR-3B to be filed** — the only
+prerequisite was GSTR-1 for the *same* period. So filing out of order was
+an ordinary click.
+
+Once period N is skipped and N+1 is filed, N+1 copies forward only what N+1
+itself contains. Everything older than N is gone from N+1 onward,
+permanently — there is no copy left to pass on. It does not self-heal, and
+it compounds silently every month after.
+
+Amber Gum's timeline: Jun-2026 GSTR-3B was left at "Prepared Pending"; on
+2026-08-20 Jul-2026 was marked Filed, which carried July's own 2 rows into
+Aug-2026 and nothing else. June's 6 rows — 3 still awaiting reclaim, going
+back to a Jan-2026 reversal — never reached July, so August could never
+show them.
+
+**Three clients were affected** (found by scanning every client for a
+period holding ledger rows whose next period has zero carried-forward rows,
+where that next period's GSTR-3B is already Filed):
+
+| Client | Break | Lost |
+|---|---|---|
+| AMBER GUM INDUSTRIES | Jun-2026 unfiled, Jul-2026 filed 2026-08-20 | 6 rows, 3 pending (₹2,190.20 tax) |
+| NAVRATNA S G HIGHWAY PROPERTIES | Dec-2025 unfiled, Jan-2026 filed 2026-03-28 | 61 `bills_not_in_books` rows |
+| SHIVON INFRA- NO ITC | Jun-2026 unfiled, Jul-2026 filed 2026-08-20 | 1 row, already reclaimed — no ITC at stake |
+
+**NAVRATNA's Dec-2025 bucket is partly mis-keyed, and was deliberately only
+half-repaired.** It holds 61 `bills_not_in_books` rows dated
+Apr-2025..Dec-2025 (the genuine backlog) *plus* 22 books rows and all 4
+`bills_not_in_2b` rows dated **Apr-2026**, reversal month "Apr 26" — the
+same invoices already sitting correctly in the Apr-2026 period, evidently
+keyed in with the month selector left on Dec-2025. Carrying those forward
+would have injected a phantom duplicate of ₹1,90,395 of reversal into every
+period from Jan-2026 to Aug-2026. The repair therefore stops at 2025-12-31
+for this client, and **its 2B side needed no repair at all** — nothing was
+lost there, only mis-filed. Cleaning up the mis-keyed Dec-2025 rows is a
+data decision left to the firm.
+
+**Data repair**:
+`supabase/migrations/20260916120000_repair_broken_carry_forward_chains.sql`.
+Its `repair_carry_forward_chain()` is additive and *per row*: for each hop it
+inserts only the rows the destination period is missing, multiset-matched on
+invoice identity (date, supplier, invoice no, GSTIN, taxable value, three tax
+amounts) and deliberately **ignoring** `reclaim_month` / `book_entry_month` /
+`bill_in_2b_month`, so a row staff have since marked reclaimed downstream is
+recognised as already carried rather than duplicated or reset. Nothing is
+deleted or updated, and re-running inserts zero.
+
+That per-row matching is the point of difference from §6's backfills, whose
+guard was "only insert where this client+period+table has *zero*
+carried-forward rows". That guard is why NAVRATNA's Feb-2026 got its 35 rows
+back in August while Mar-2026 — which already had carried-forward rows of its
+own — was skipped, leaving Mar-2026 short by the same 35. A half-repaired
+chain, still visible in the data a month later. Verified after applying:
+every period's carried-forward count now equals the previous period's total
+row count, for all three clients, and the repaired rows read back through the
+anon key (not just the management API, which bypasses RLS).
+
+**Code changes**, all in `src/pages/FilingStatusPage.tsx`:
+
+1. **Previous period's GSTR-3B must be filed first.** The actual fix. Blocks
+   marking GSTR-3B Filed when the prior month's GSTR-3B exists and isn't
+   Filed. No row for the prior month means the client simply has no earlier
+   period here, so nothing is blocked. Monthly `GSTR-3B` only — for
+   `GSTR-3B (Q)` "the previous period" is the previous quarter-end, and the
+   carry-forward trigger doesn't cover quarterly filings anyway (§6).
+   **Manager override:** a GST Manager / Superadmin can confirm past it, so a
+   client that genuinely migrated mid-year isn't permanently stuck; the
+   message names what it costs.
+2. **Un-filing no longer deletes next period's carried-forward rows.** It did,
+   on the reasoning that re-filing re-creates them — true only if the period
+   is ever re-filed. Unlocking Jun-2026 and not re-filing it wiped Jul-2026's
+   backlog outright. Keeping them costs nothing: both carry-forward paths
+   delete every carried-forward row in the destination before inserting, so a
+   re-file still produces exactly the right set.
+3. **"Re-run carry forward" is no longer gated on `status === 'Filed'`.** The
+   case that most needs it is the period that was never filed — gating it on
+   Filed left staff with no way out of exactly the breakage it exists to
+   repair.
+4. **`carryForwardToNextMonth()` now deletes unconditionally**, outside the
+   "source month has rows" check. Guarding the delete behind `length > 0` left
+   a stale copy stranded in the next period when a period's last pending item
+   was cleared — and disagreed with the DB trigger, which always deletes.
+
+**Left alone deliberately:** four client+periods carry one or two fewer rows
+than their source month (VISHVAS POLYPACK Aug-2025, ELENZA CALLISTA Dec-2025,
+RAYWINGS SERVICES Mar-2026, SALIENT INFRATECH Apr-2026). That signature fits
+a superadmin deleting a carried-forward row on purpose — a supported action
+on the 2B Reconciliation page — and a blind repair would undo it.
+
+**Not done: the underlying design.** Carry-forward is still a chain of
+physical copies triggered by a filing event, so it still depends on every
+month being filed, in order, through this app. The durable fix is to *derive*
+the pending backlog at read time from origin rows across all prior periods
+instead of copying it forward, which would make the chain unbreakable by any
+filing order. That touches 2B Reconciliation, ITC Summary, Suspended Reco and
+the filing gate, so it is deliberately out of scope here.

@@ -27,6 +27,20 @@ import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDial
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
 import { markFiledForPeriod } from '@/lib/advanceSetoffOverrides';
 
+// Previous MM/YYYY period. Kept next to the carry-forward logic it guards:
+// the 2B chain is strictly month-by-month, so "the period before this one" has
+// to mean the same thing here as it does in carryForwardToNextMonth().
+const previousPeriodMonth = (periodMonth: string): string => {
+  const [month, year] = periodMonth.split('/');
+  let prevMonth = parseInt(month) - 1;
+  let prevYear = parseInt(year);
+  if (prevMonth < 1) {
+    prevMonth = 12;
+    prevYear--;
+  }
+  return `${String(prevMonth).padStart(2, '0')}/${prevYear}`;
+};
+
 // Normalize an accountant name by stripping the trailing "/<number>" reference
 // (e.g. "PUNITBHAI/16" / "PAVANBHAI /66" / "PRIYA,MUKESHBHAI/ 28") so the same
 // person isn't counted as multiple accountants in the filter.
@@ -237,18 +251,22 @@ const FilingStatusPage: React.FC = () => {
 
       // CARRY FORWARD BILLS NOT IN 2B
       // Carry forward ALL records regardless of reclaim_month status
-      // This ensures totals match between months
-      if (billsNotIn2B && billsNotIn2B.length > 0) {
-        // Delete existing CF records in next month first to avoid duplicates
-        // This ensures we always sync the latest state from current month
-        const { error: delete2BError } = await supabase
-          .from('bills_not_in_2b')
-          .delete()
-          .eq('client_id', clientId)
-          .eq('period_month', nextPeriod)
-          .eq('is_carried_forward', true);
-        if (delete2BError) throw delete2BError;
+      // This ensures totals match between months.
+      // The delete runs unconditionally, OUTSIDE the "source month has rows"
+      // check: if this period's last pending item was cleared, next period's
+      // carried-forward copy of it has to go too. Guarding the delete behind
+      // `length > 0` (as this did originally) left that copy stranded there
+      // forever, and the DB trigger — which deletes unconditionally — then
+      // disagreed with this function about the result.
+      const { error: delete2BError } = await supabase
+        .from('bills_not_in_2b')
+        .delete()
+        .eq('client_id', clientId)
+        .eq('period_month', nextPeriod)
+        .eq('is_carried_forward', true);
+      if (delete2BError) throw delete2BError;
 
+      if (billsNotIn2B && billsNotIn2B.length > 0) {
         // Now insert ALL records from current month as CF records in next month
         const records2B = billsNotIn2B.map(b => ({
           client_id: b.client_id,
@@ -275,17 +293,16 @@ const FilingStatusPage: React.FC = () => {
       // CARRY FORWARD BILLS NOT IN BOOKS
       // Carry forward ALL records regardless of book_entry_month or bill_in_2b_month status
       // This matches user requirement to carry forward everything to next month
-      if (billsNotInBooks && billsNotInBooks.length > 0) {
-        // Delete existing CF records in next month first to avoid duplicates
-        // This ensures we always sync the latest state from current month
-        const { error: deleteBooksError } = await supabase
-          .from('bills_not_in_books')
-          .delete()
-          .eq('client_id', clientId)
-          .eq('period_month', nextPeriod)
-          .eq('is_carried_forward', true);
-        if (deleteBooksError) throw deleteBooksError;
+      // Same unconditional delete as the 2B side above.
+      const { error: deleteBooksError } = await supabase
+        .from('bills_not_in_books')
+        .delete()
+        .eq('client_id', clientId)
+        .eq('period_month', nextPeriod)
+        .eq('is_carried_forward', true);
+      if (deleteBooksError) throw deleteBooksError;
 
+      if (billsNotInBooks && billsNotInBooks.length > 0) {
         // Now insert ALL records from current month as CF records in next month
         const recordsBooks = billsNotInBooks.map(b => ({
           client_id: b.client_id,
@@ -806,6 +823,48 @@ const FilingStatusPage: React.FC = () => {
         return;
       }
 
+      // Previous period's GSTR-3B must be filed first.
+      //
+      // This is what actually protects the 2B carry-forward chain. Pending 2B
+      // items only reach period N+1 because marking period N Filed physically
+      // copies them there; nothing ever fires for a period that is skipped.
+      // Filing Jul-2026 while Jun-2026 sat at "Prepared Pending" therefore
+      // carried only July's own rows into August, and everything older was
+      // gone for good — Jul-2026 had no copy of it to pass on. Three clients
+      // lost their backlog that way before this check existed
+      // (docs/2B_RECONCILIATION_FLOW.md §7).
+      //
+      // Only plain monthly GSTR-3B is checked: GSTR-3B (Q) is quarterly, so
+      // "the previous period" is the previous quarter-end, not last month, and
+      // the carry-forward trigger doesn't cover quarterly filings anyway.
+      if (record.return_type === 'GSTR-3B') {
+        const prevPeriod = previousPeriodMonth(record.period_month || selectedMonth);
+        const { data: prevRecord } = await supabase
+          .from('filing_status')
+          .select('status')
+          .eq('client_id', record.client_id)
+          .eq('period_month', prevPeriod)
+          .eq('return_type', 'GSTR-3B')
+          .maybeSingle();
+
+        // No row at all means this period predates the client's first period
+        // in the app (or the previous month was a different scheme) — nothing
+        // to chain from, so nothing to block.
+        if (prevRecord && prevRecord.status !== 'Filed') {
+          const msg = `Cannot file GSTR-3B for ${record.period_month}: ${prevPeriod} is still "${filingStatusDisplayLabel(prevRecord.status as FilingStatusType)}". Filing out of order drops every pending 2B item older than ${record.period_month} from the carry-forward.`;
+          // A GST Manager / Superadmin can still go ahead — a client genuinely
+          // migrated mid-year, or filed the earlier month outside this app,
+          // shouldn't be permanently stuck. They are told exactly what it
+          // costs, and the Re-run carry forward button on the earlier period
+          // puts the backlog back afterwards.
+          if (!canUnlockSheets()) {
+            toast.error(msg);
+            return;
+          }
+          if (!window.confirm(`${msg}\n\nFile anyway?`)) return;
+        }
+      }
+
       // Check Suspended Reco difference: if difference is not zero, cannot file GSTR-3B
       try {
         // Fetch suspended_reco data
@@ -1071,16 +1130,6 @@ const FilingStatusPage: React.FC = () => {
       // When unlocking, unlock ALL related sheets and change status to 'Prepared Pending'
       // This affects: Filing Status (GSTR-3B/GSTR-3B (Q)), 2B Reconciliation, ITC Summary, RCM Summary
       
-      // Calculate next month for deleting carried forward records
-      const [month, year] = record.period_month.split('/');
-      let nextMonth = parseInt(month) + 1;
-      let nextYear = parseInt(year);
-      if (nextMonth > 12) {
-        nextMonth = 1;
-        nextYear++;
-      }
-      const nextPeriod = `${String(nextMonth).padStart(2, '0')}/${nextYear}`;
-      
       // Change status back to 'Prepared Pending' and unlock for GSTR-3B/GSTR-3B (Q)
       const { error } = await supabase
         .from('filing_status')
@@ -1126,23 +1175,20 @@ const FilingStatusPage: React.FC = () => {
         .eq('client_id', record.client_id)
         .eq('month', record.period_month);
       
-      // DELETE CARRIED FORWARD RECORDS FROM NEXT MONTH
-      // This allows the system to re-create them when GSTR-3B is filed again with updated data
-      await supabase
-        .from('bills_not_in_2b')
-        .delete()
-        .eq('client_id', record.client_id)
-        .eq('period_month', nextPeriod)
-        .eq('is_carried_forward', true);
+      // Next period's carried-forward rows are deliberately LEFT IN PLACE.
+      //
+      // This used to delete them, on the reasoning that re-filing would
+      // re-create them from updated data. It does — but only if the period is
+      // ever re-filed. Unlocking Jun-2026 and then simply not re-filing it
+      // wiped Jul-2026's entire backlog, and once Jul-2026 was itself filed it
+      // carried only its own rows into Aug-2026, so every pending item older
+      // than July vanished for good (docs/2B_RECONCILIATION_FLOW.md §7).
+      // Keeping them costs nothing: both carry-forward paths (the
+      // auto_lock_on_filed trigger and carryForwardToNextMonth above) delete
+      // every carried-forward row in the destination period before inserting,
+      // so a re-file still produces exactly the right set.
       
-      await supabase
-        .from('bills_not_in_books')
-        .delete()
-        .eq('client_id', record.client_id)
-        .eq('period_month', nextPeriod)
-        .eq('is_carried_forward', true);
-      
-      toast.success('All sheets unlocked. GSTR-3B status changed to Prepared Pending. Carried forward records cleared from next month.');
+      toast.success('All sheets unlocked. GSTR-3B status changed to Prepared Pending. Next month\'s carried-forward items were left untouched.');
       fetchFilingRecords();
     } catch (error: any) {
       toast.error('Failed to unlock: ' + error.message);
@@ -1655,7 +1701,12 @@ const FilingStatusPage: React.FC = () => {
                         </PopoverContent>
                       </Popover>
                     )}
-                    {(returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)') && record.status === 'Filed' && (
+                    {/* Not gated on status === 'Filed'. The case that most needs
+                        this button is precisely the one where the period was
+                        never filed, so its pending items never carried into the
+                        next period — gating it on Filed left staff with no way
+                        out of exactly the breakage it exists to repair. */}
+                    {(returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)') && (
                       <button
                         type="button"
                         className="shrink-0 disabled:opacity-50"
