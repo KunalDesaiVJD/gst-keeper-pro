@@ -18,12 +18,13 @@ import React, { useEffect, useState } from 'react';
 import { Navigate, Link, useParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { PageHeader } from '@/components/layout/PageHeader';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import NoticesPageHeader from '@/components/notices/NoticesPageHeader';
+import NoticesCardHeader from '@/components/notices/NoticesCardHeader';
+import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { Bell, Loader2, FileText, ArrowLeft } from 'lucide-react';
+import { FolderOpen, Loader2, FileText, ArrowLeft } from 'lucide-react';
 
 interface NoticeHeaderRow {
   case_id: string | null;
@@ -440,45 +441,57 @@ const AdditionalNoticeFolderPage: React.FC = () => {
   const displayStatus = header?.staff_status || (hasClosureItem || (isRefundCase && hasOrderItem) ? 'Closed' : 'Open');
 
   return (
-    <div className="space-y-2.5 animate-fade-in">
+    <div className="space-y-4 animate-fade-in">
+      <NoticesPageHeader
+        title={isRefundCase ? 'Refund Notice Folder' : 'Additional Notice Folder'}
+        icon={FolderOpen}
+        subtitle={
+          <>
+            <span className="flex items-center gap-1.5">
+              <Link to="/notices-dashboard" className="text-primary hover:underline">GST Dashboard</Link>
+              <span>›</span>
+              <Link to={`/notices-all?client=${clientId}`} className="text-primary hover:underline">Notices and Orders</Link>
+            </span>
+            {header?.clients?.gstin && (
+              <span className="text-[10px] font-mono">{header.clients.gstin}</span>
+            )}
+          </>
+        }
+      />
+
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <PageHeader title="Notices Dashboard" icon={<Bell className="h-5 w-5" />} embedded />
         <NoticesTopNav />
       </div>
 
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Link to="/notices-dashboard" className="text-primary hover:underline">GST Dashboard</Link>
-        <span>›</span>
-        <Link to="/notices-all" className="text-primary hover:underline">Notices and Orders</Link>
-        <span>›</span>
-        <span>Notice Folder</span>
-      </div>
-
       <Card>
-        <CardHeader className="pb-2 pt-4">
-          <CardTitle className="text-base">{isRefundCase ? 'Refund Notice Folder' : 'Additional Notice Folder'}</CardTitle>
-        </CardHeader>
-        <CardContent className="pb-4">
+        <NoticesCardHeader
+          title="Case folder"
+          description="Every intimation, notice, reply and order the portal holds for this case."
+          badge={displayStatus.toUpperCase()}
+        />
+        <CardContent className="pt-3 pb-4">
           {loading ? (
             <div className="flex items-center justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
           ) : (
             <>
               <div className="grid grid-cols-2 gap-3 rounded-md border p-3 text-xs sm:grid-cols-4">
                 <div>
-                  <p className="text-muted-foreground">Case ID</p>
-                  <p className="font-medium">{caseId}</p>
+                  <p className="text-[11px] text-muted-foreground">Case ID</p>
+                  <p className="font-medium tabular-nums">{caseId}</p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground">GSTIN/UIN/Temporary ID</p>
-                  <p className="font-medium">{header?.clients?.gstin || '—'}</p>
+                  <p className="text-[11px] text-muted-foreground">GSTIN/UIN/Temporary ID</p>
+                  <p className="text-[10px] font-mono text-muted-foreground">{header?.clients?.gstin || '—'}</p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground">Date Of Application/Case Creation</p>
-                  <p className="font-medium">{applicationDate}</p>
+                  <p className="text-[11px] text-muted-foreground">Date Of Application/Case Creation</p>
+                  <p className="font-medium tabular-nums">{applicationDate}</p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground">Status</p>
-                  <p className="font-semibold">{displayStatus.toUpperCase()}</p>
+                  <p className="text-[11px] text-muted-foreground">Status</p>
+                  <span className="inline-block rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
+                    {displayStatus.toUpperCase()}
+                  </span>
                 </div>
               </div>
 
@@ -488,15 +501,15 @@ const AdditionalNoticeFolderPage: React.FC = () => {
                   const columns = SECTION_COLUMNS[section];
                   return (
                     <div key={section} className="overflow-x-auto rounded-md border">
-                      <div className="bg-muted/60 px-3 py-1.5 text-xs font-semibold">{section}</div>
+                      <div className="bg-muted px-3 py-1.5 text-[10px] font-semibold uppercase">{section}</div>
                       {sectionItems.length === 0 ? (
                         <p className="py-4 text-center text-xs text-muted-foreground">There are no records to display</p>
                       ) : columns ? (
                         <Table>
                           <TableHeader>
                             <TableRow>
-                              {columns.map((c) => <TableHead key={c.label} className="whitespace-nowrap text-[11px]">{c.label}</TableHead>)}
-                              <TableHead className="text-[11px]">Attachments</TableHead>
+                              {columns.map((c) => <TableHead key={c.label} className="whitespace-nowrap bg-muted text-[10px] font-semibold uppercase">{c.label}</TableHead>)}
+                              <TableHead className="bg-muted text-[10px] font-semibold uppercase">Attachments</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -528,9 +541,9 @@ const AdditionalNoticeFolderPage: React.FC = () => {
                         <Table>
                           <TableHeader>
                             <TableRow>
-                              <TableHead className="text-[11px]">Reference Number</TableHead>
-                              <TableHead className="text-[11px]">Details</TableHead>
-                              <TableHead className="text-[11px]">Attachments</TableHead>
+                              <TableHead className="bg-muted text-[10px] font-semibold uppercase">Reference Number</TableHead>
+                              <TableHead className="bg-muted text-[10px] font-semibold uppercase">Details</TableHead>
+                              <TableHead className="bg-muted text-[10px] font-semibold uppercase">Attachments</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -572,25 +585,25 @@ const AdditionalNoticeFolderPage: React.FC = () => {
 
                 {isRefundCase && (
                   <div className="overflow-x-auto rounded-md border">
-                    <div className="bg-muted/60 px-3 py-1.5 text-xs font-semibold">AUDIT HISTORY</div>
+                    <div className="bg-muted px-3 py-1.5 text-[10px] font-semibold uppercase">AUDIT HISTORY</div>
                     {auditHistory.length === 0 ? (
                       <p className="py-4 text-center text-xs text-muted-foreground">There are no records to display</p>
                     ) : (
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead className="text-[11px]">Date</TableHead>
-                            <TableHead className="text-[11px]">Action</TableHead>
-                            <TableHead className="text-[11px]">Reference No</TableHead>
-                            <TableHead className="text-[11px]">Action By</TableHead>
+                            <TableHead className="bg-muted text-[10px] font-semibold uppercase">Date</TableHead>
+                            <TableHead className="bg-muted text-[10px] font-semibold uppercase">Action</TableHead>
+                            <TableHead className="bg-muted text-[10px] font-semibold uppercase">Reference No</TableHead>
+                            <TableHead className="bg-muted text-[10px] font-semibold uppercase">Action By</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {auditHistory.map((e, i) => (
                             <TableRow key={i}>
-                              <TableCell className="align-top whitespace-nowrap text-xs">{e.date || '—'}</TableCell>
+                              <TableCell className="align-top whitespace-nowrap text-xs tabular-nums">{e.date || '—'}</TableCell>
                               <TableCell className="align-top text-xs">{e.action}</TableCell>
-                              <TableCell className="align-top whitespace-nowrap text-xs">{e.reference}</TableCell>
+                              <TableCell className="align-top whitespace-nowrap text-xs tabular-nums">{e.reference}</TableCell>
                               <TableCell className="align-top whitespace-nowrap text-xs">{e.actionBy}</TableCell>
                             </TableRow>
                           ))}
@@ -602,8 +615,8 @@ const AdditionalNoticeFolderPage: React.FC = () => {
               </div>
 
               <div className="mt-3 flex justify-end">
-                <Button variant="outline" size="sm" asChild>
-                  <Link to="/notices-all"><ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Back to List</Link>
+                <Button variant="outline" size="sm" className="h-7 text-[11px]" asChild>
+                  <Link to={`/notices-all?client=${clientId}`}><ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Back to List</Link>
                 </Button>
               </div>
             </>

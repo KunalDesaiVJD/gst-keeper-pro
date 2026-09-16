@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { PageHeader } from '@/components/layout/PageHeader';
+import { NoticesPageHeader } from '@/components/notices/NoticesPageHeader';
+import { NoticesCardHeader } from '@/components/notices/NoticesCardHeader';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from '@/components/ui/table';
@@ -423,58 +424,70 @@ const LitigationMISPage: React.FC = () => {
   const { exposure, byClient, byStage, byLifecycle, ageing, perStaff, upcomingHearings } = analytics;
 
   return (
-    <div className="space-y-4 p-4">
-      <NoticesTopNav />
-      <PageHeader
+    <div className="space-y-4 animate-fade-in">
+      <NoticesPageHeader
         title="Litigation MIS"
+        icon={BarChart3}
         subtitle="Management information overview of all litigation matters"
-        icon={<BarChart3 className="h-5 w-5" />}
         actions={
-          <div className="flex flex-wrap gap-1.5">
-            <Button variant="outline" size="sm" onClick={() => exportExcel(tab, analytics)}>
-              <Download className="h-4 w-4 mr-1" /> Export Tab
+          <>
+            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => exportExcel(tab, analytics)}>
+              <Download className="mr-1.5 h-3.5 w-3.5" /> Export Tab
             </Button>
-            <Button variant="outline" size="sm" onClick={() => exportAllExcel(analytics)}>
-              <Download className="h-4 w-4 mr-1" /> Export All
+            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => exportAllExcel(analytics)}>
+              <Download className="mr-1.5 h-3.5 w-3.5" /> Export All
             </Button>
-            <Button variant="outline" size="sm" onClick={() => exportLitigationMIS()}>
-              <FileText className="h-4 w-4 mr-1" /> PDF
+            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => exportLitigationMIS()}>
+              <FileText className="mr-1.5 h-3.5 w-3.5" /> PDF
             </Button>
-          </div>
+          </>
         }
       />
 
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <NoticesTopNav />
+      </div>
+
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="flex flex-wrap h-auto gap-1">
-          <TabsTrigger value="exposure">Exposure</TabsTrigger>
-          <TabsTrigger value="by-client">By Client</TabsTrigger>
-          <TabsTrigger value="by-stage">By Stage</TabsTrigger>
-          <TabsTrigger value="by-lifecycle">By Lifecycle</TabsTrigger>
-          <TabsTrigger value="ageing">Ageing</TabsTrigger>
-          <TabsTrigger value="per-staff">Per Staff</TabsTrigger>
-          <TabsTrigger value="hearings">Hearings ({upcomingHearings.length})</TabsTrigger>
+        <TabsList className="flex h-auto flex-wrap items-center gap-0.5 rounded-lg bg-muted p-0.5">
+          {[
+            ['exposure', 'Exposure'],
+            ['by-client', 'By Client'],
+            ['by-stage', 'By Stage'],
+            ['by-lifecycle', 'By Lifecycle'],
+            ['ageing', 'Ageing'],
+            ['per-staff', 'Per Staff'],
+            ['hearings', `Hearings (${upcomingHearings.length})`],
+          ].map(([value, label]) => (
+            <TabsTrigger
+              key={value}
+              value={value}
+              className="rounded-md px-3 py-1 text-[11px] font-medium data-[state=active]:bg-background data-[state=active]:shadow-sm"
+            >
+              {label}
+            </TabsTrigger>
+          ))}
         </TabsList>
 
         {/* ---- Exposure Summary ---- */}
         <TabsContent value="exposure">
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             {([
-              ['Total Exposure', exposure.totalExposure, 'text-foreground'],
-              ['Paid', exposure.paidTotal, 'text-green-600'],
-              ['Pre-Deposit', exposure.preDepositTotal, 'text-blue-600'],
-              ['Outstanding', exposure.outstanding, 'text-red-600'],
-              ['Open Matters', exposure.openCount, 'text-foreground'],
-              ['Closed Matters', exposure.closedCount, 'text-muted-foreground'],
-            ] as [string, number, string][]).map(([label, value, cls]) => (
-              <Card key={label}>
-                <CardHeader className="pb-1 pt-3 px-3">
-                  <CardTitle className="text-xs font-medium text-muted-foreground">{label}</CardTitle>
-                </CardHeader>
-                <CardContent className="px-3 pb-3">
-                  <p className={`text-lg font-semibold ${cls}`}>
-                    {typeof value === 'number' && label !== 'Open Matters' && label !== 'Closed Matters'
-                      ? INR.format(value)
-                      : value}
+              ['Outstanding', exposure.outstanding, 'border-l-destructive', true],
+              ['Total Exposure', exposure.totalExposure, 'border-l-primary', true],
+              ['Pre-Deposit', exposure.preDepositTotal, 'border-l-blue-500', true],
+              ['Paid', exposure.paidTotal, 'border-l-emerald-500', true],
+              ['Open Matters', exposure.openCount, 'border-l-primary', false],
+              ['Closed Matters', exposure.closedCount, 'border-l-muted', false],
+            ] as [string, number, string, boolean][]).map(([label, value, border, isMoney]) => (
+              <Card key={label} className={`border-l-4 ${border} transition-shadow hover:shadow-md`}>
+                <CardContent className="p-3.5 space-y-1.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+                  <p className="font-heading text-[30px] font-bold tabular-nums leading-none">
+                    {isMoney ? INR.format(value) : value}
+                    {!isMoney && (
+                      <span className="ml-1.5 font-sans text-xs font-medium text-muted-foreground">matters</span>
+                    )}
                   </p>
                 </CardContent>
               </Card>
@@ -485,16 +498,17 @@ const LitigationMISPage: React.FC = () => {
         {/* ---- By Client ---- */}
         <TabsContent value="by-client">
           <Card>
-            <CardContent className="p-0 overflow-x-auto">
-              <Table>
+            <NoticesCardHeader title="By Client" badge={byClient.length} />
+            <CardContent className="p-0">
+              <Table containerClassName="overflow-auto rounded-md border">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-xs">Client</TableHead>
-                    <TableHead className="text-xs">GSTIN</TableHead>
-                    <TableHead className="text-xs text-right">Open</TableHead>
-                    <TableHead className="text-xs text-right">Total Demand</TableHead>
-                    <TableHead className="text-xs text-right">Paid</TableHead>
-                    <TableHead className="text-xs text-right">Outstanding</TableHead>
+                    <TableHead className="bg-muted text-[10px] font-semibold uppercase">Client</TableHead>
+                    <TableHead className="bg-muted text-[10px] font-semibold uppercase">GSTIN</TableHead>
+                    <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Open</TableHead>
+                    <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Total Demand</TableHead>
+                    <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Paid</TableHead>
+                    <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Outstanding</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -503,12 +517,16 @@ const LitigationMISPage: React.FC = () => {
                   )}
                   {byClient.map((r) => (
                     <TableRow key={r.clientId}>
-                      <TableCell className="text-xs">{r.clientName}</TableCell>
-                      <TableCell className="text-xs font-mono">{r.gstin}</TableCell>
-                      <TableCell className="text-xs text-right">{r.openCount}</TableCell>
-                      <TableCell className="text-xs text-right">{INR.format(r.totalDemand)}</TableCell>
-                      <TableCell className="text-xs text-right">{INR.format(r.paid)}</TableCell>
-                      <TableCell className="text-xs text-right font-medium">{INR.format(r.outstanding)}</TableCell>
+                      <TableCell className="text-xs">
+                        <Link to={`/notices-company/${r.clientId}`} className="font-medium text-primary hover:underline">
+                          {r.clientName}
+                        </Link>
+                      </TableCell>
+                      <TableCell className="font-mono text-[10px] text-muted-foreground">{r.gstin}</TableCell>
+                      <TableCell className="text-xs text-right tabular-nums">{r.openCount}</TableCell>
+                      <TableCell className="text-xs text-right tabular-nums">{INR.format(r.totalDemand)}</TableCell>
+                      <TableCell className="text-xs text-right tabular-nums">{INR.format(r.paid)}</TableCell>
+                      <TableCell className="text-xs text-right font-medium tabular-nums">{INR.format(r.outstanding)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -521,14 +539,14 @@ const LitigationMISPage: React.FC = () => {
         <TabsContent value="by-stage">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">Stage Breakdown</CardTitle></CardHeader>
-              <CardContent className="p-0 overflow-x-auto">
-                <Table>
+              <NoticesCardHeader title="Stage Breakdown" badge={byStage.length} />
+              <CardContent className="p-0">
+                <Table containerClassName="overflow-auto rounded-md border">
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-xs">Stage</TableHead>
-                      <TableHead className="text-xs text-right">Open</TableHead>
-                      <TableHead className="text-xs text-right">Total Demand</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Stage</TableHead>
+                      <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Open</TableHead>
+                      <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Total Demand</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -538,8 +556,8 @@ const LitigationMISPage: React.FC = () => {
                     {byStage.map((r) => (
                       <TableRow key={r.stage}>
                         <TableCell className="text-xs">{r.stage}</TableCell>
-                        <TableCell className="text-xs text-right">{r.count}</TableCell>
-                        <TableCell className="text-xs text-right">{INR.format(r.totalDemand)}</TableCell>
+                        <TableCell className="text-xs text-right tabular-nums">{r.count}</TableCell>
+                        <TableCell className="text-xs text-right tabular-nums">{INR.format(r.totalDemand)}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -548,7 +566,7 @@ const LitigationMISPage: React.FC = () => {
             </Card>
 
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">Stage Distribution</CardTitle></CardHeader>
+              <NoticesCardHeader title="Stage Distribution" />
               <CardContent className="flex justify-center">
                 {byStage.length > 0 ? (
                   <ResponsiveContainer width="100%" height={280}>
@@ -582,13 +600,14 @@ const LitigationMISPage: React.FC = () => {
         {/* ---- By Lifecycle ---- */}
         <TabsContent value="by-lifecycle">
           <Card>
-            <CardContent className="p-0 overflow-x-auto">
-              <Table>
+            <NoticesCardHeader title="By Lifecycle" badge={byLifecycle.length} />
+            <CardContent className="p-0">
+              <Table containerClassName="overflow-auto rounded-md border">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-xs">Lifecycle</TableHead>
-                    <TableHead className="text-xs text-right">Open</TableHead>
-                    <TableHead className="text-xs text-right">Total Demand</TableHead>
+                    <TableHead className="bg-muted text-[10px] font-semibold uppercase">Lifecycle</TableHead>
+                    <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Open</TableHead>
+                    <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Total Demand</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -598,8 +617,8 @@ const LitigationMISPage: React.FC = () => {
                   {byLifecycle.map((r) => (
                     <TableRow key={r.lifecycle}>
                       <TableCell className="text-xs capitalize">{r.lifecycle}</TableCell>
-                      <TableCell className="text-xs text-right">{r.count}</TableCell>
-                      <TableCell className="text-xs text-right">{INR.format(r.totalDemand)}</TableCell>
+                      <TableCell className="text-xs text-right tabular-nums">{r.count}</TableCell>
+                      <TableCell className="text-xs text-right tabular-nums">{INR.format(r.totalDemand)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -612,22 +631,22 @@ const LitigationMISPage: React.FC = () => {
         <TabsContent value="ageing">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">Ageing Buckets</CardTitle></CardHeader>
-              <CardContent className="p-0 overflow-x-auto">
-                <Table>
+              <NoticesCardHeader title="Ageing Buckets" badge={ageing.length} />
+              <CardContent className="p-0">
+                <Table containerClassName="overflow-auto rounded-md border">
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-xs">Bucket</TableHead>
-                      <TableHead className="text-xs text-right">Count</TableHead>
-                      <TableHead className="text-xs text-right">Total Demand</TableHead>
+                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Bucket</TableHead>
+                      <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Count</TableHead>
+                      <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Total Demand</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {ageing.map((r) => (
                       <TableRow key={r.bucket}>
                         <TableCell className="text-xs">{r.bucket}</TableCell>
-                        <TableCell className="text-xs text-right">{r.count}</TableCell>
-                        <TableCell className="text-xs text-right">{INR.format(r.totalDemand)}</TableCell>
+                        <TableCell className="text-xs text-right tabular-nums">{r.count}</TableCell>
+                        <TableCell className="text-xs text-right tabular-nums">{INR.format(r.totalDemand)}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -636,7 +655,7 @@ const LitigationMISPage: React.FC = () => {
             </Card>
 
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">Ageing Chart</CardTitle></CardHeader>
+              <NoticesCardHeader title="Ageing Chart" />
               <CardContent>
                 <ResponsiveContainer width="100%" height={280}>
                   <BarChart data={ageing}>
@@ -658,13 +677,14 @@ const LitigationMISPage: React.FC = () => {
         {/* ---- Per Staff ---- */}
         <TabsContent value="per-staff">
           <Card>
-            <CardContent className="p-0 overflow-x-auto">
-              <Table>
+            <NoticesCardHeader title="Per Staff" badge={perStaff.length} />
+            <CardContent className="p-0">
+              <Table containerClassName="overflow-auto rounded-md border">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-xs">Staff</TableHead>
-                    <TableHead className="text-xs text-right">Open Matters</TableHead>
-                    <TableHead className="text-xs text-right">Total Demand</TableHead>
+                    <TableHead className="bg-muted text-[10px] font-semibold uppercase">Staff</TableHead>
+                    <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Open Matters</TableHead>
+                    <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Total Demand</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -674,8 +694,8 @@ const LitigationMISPage: React.FC = () => {
                   {perStaff.map((r) => (
                     <TableRow key={r.staffName}>
                       <TableCell className="text-xs">{r.staffName}</TableCell>
-                      <TableCell className="text-xs text-right">{r.count}</TableCell>
-                      <TableCell className="text-xs text-right">{INR.format(r.totalDemand)}</TableCell>
+                      <TableCell className="text-xs text-right tabular-nums">{r.count}</TableCell>
+                      <TableCell className="text-xs text-right tabular-nums">{INR.format(r.totalDemand)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -687,22 +707,25 @@ const LitigationMISPage: React.FC = () => {
         {/* ---- Upcoming Hearings ---- */}
         <TabsContent value="hearings">
           <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Calendar className="h-4 w-4" />
-                Upcoming Hearings
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-0 overflow-x-auto">
-              <Table>
+            <NoticesCardHeader
+              title="Upcoming Hearings"
+              description={
+                <span className="inline-flex items-center gap-1">
+                  <Calendar className="h-3 w-3" /> Open matters with a scheduled hearing
+                </span>
+              }
+              badge={upcomingHearings.length}
+            />
+            <CardContent className="p-0">
+              <Table containerClassName="overflow-auto rounded-md border">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-xs">Matter</TableHead>
-                    <TableHead className="text-xs">Client</TableHead>
-                    <TableHead className="text-xs">Hearing Date</TableHead>
-                    <TableHead className="text-xs">Stage</TableHead>
-                    <TableHead className="text-xs">Owner</TableHead>
-                    <TableHead className="text-xs text-right">Demand</TableHead>
+                    <TableHead className="bg-muted text-[10px] font-semibold uppercase">Matter</TableHead>
+                    <TableHead className="bg-muted text-[10px] font-semibold uppercase">Client</TableHead>
+                    <TableHead className="bg-muted text-[10px] font-semibold uppercase">Hearing Date</TableHead>
+                    <TableHead className="bg-muted text-[10px] font-semibold uppercase">Stage</TableHead>
+                    <TableHead className="bg-muted text-[10px] font-semibold uppercase">Owner</TableHead>
+                    <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Demand</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -714,19 +737,23 @@ const LitigationMISPage: React.FC = () => {
                     const daysAway = Math.ceil((d.getTime() - Date.now()) / 86_400_000);
                     return (
                       <TableRow key={r.matterId}>
-                        <TableCell className="text-xs font-medium">{r.matterNo}</TableCell>
+                        <TableCell className="text-xs font-medium">
+                          <Link to={`/litigation/${r.matterId}`} className="text-[11px] font-semibold text-primary hover:underline">
+                            {r.matterNo}
+                          </Link>
+                        </TableCell>
                         <TableCell className="text-xs">{r.clientName}</TableCell>
-                        <TableCell className="text-xs">
+                        <TableCell className="text-xs tabular-nums">
                           {d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                           {daysAway <= 3 && (
-                            <span className="ml-1 text-[10px] font-medium text-red-600">
-                              ({daysAway === 0 ? 'Today' : daysAway === 1 ? 'Tomorrow' : `${daysAway}d`})
+                            <span className="ml-1 rounded-full bg-destructive/10 px-1.5 py-0 text-[9px] font-bold text-destructive">
+                              {daysAway === 0 ? 'Today' : daysAway === 1 ? 'Tomorrow' : `${daysAway}d`}
                             </span>
                           )}
                         </TableCell>
                         <TableCell className="text-xs">{r.stage}</TableCell>
                         <TableCell className="text-xs">{r.owner}</TableCell>
-                        <TableCell className="text-xs text-right">{INR.format(r.demand)}</TableCell>
+                        <TableCell className="text-xs text-right tabular-nums">{INR.format(r.demand)}</TableCell>
                       </TableRow>
                     );
                   })}

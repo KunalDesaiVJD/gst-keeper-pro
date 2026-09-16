@@ -1,20 +1,20 @@
 import React, { useEffect, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { PageHeader } from '@/components/layout/PageHeader';
+import { NoticesPageHeader } from '@/components/notices/NoticesPageHeader';
+import { NoticesCardHeader } from '@/components/notices/NoticesCardHeader';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { Briefcase, Plus, Loader2, AlertTriangle, Calendar, User, Filter } from 'lucide-react';
+import { Briefcase, Plus, Loader2, AlertTriangle, Calendar, User, Filter, X } from 'lucide-react';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 
 interface Matter {
@@ -68,37 +68,39 @@ const num = (v: unknown): number => { const n = Number(v); return Number.isFinit
 const formatINR = (amount: number): string =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
 
-const stageBadgeClass = (stage: string | null): string => {
+// Stage indicator: a colour dot + label, matching NoticeWorkQueue, rather than
+// a tinted shadcn Badge with hard-coded light-mode-only palette classes.
+const stageDotClass = (stage: string | null): string => {
   switch (stage) {
     case 'Captured':
     case 'Triage':
-      return 'bg-blue-100 text-blue-800 border-blue-200';
+      return 'bg-blue-400';
     case 'Awaiting client data':
+      return 'bg-amber-400';
     case 'Reply drafting':
-      return 'bg-amber-100 text-amber-800 border-amber-200';
+      return 'bg-blue-500';
     case 'Partner review':
-      return 'bg-violet-100 text-violet-800 border-violet-200';
+      return 'bg-violet-500';
     case 'Filed/submitted':
-      return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+      return 'bg-emerald-500';
     case 'Hearing':
-      return 'bg-orange-100 text-orange-800 border-orange-200';
+      return 'bg-amber-500';
     case 'Order received':
-      return 'bg-red-100 text-red-800 border-red-200';
+      return 'bg-orange-500';
     case 'Appeal decision':
     case 'Appeal filed':
-      return 'bg-purple-100 text-purple-800 border-purple-200';
+      return 'bg-red-500';
     case 'Closed':
-      return 'bg-slate-100 text-slate-700 border-slate-200';
+      return 'bg-slate-400';
     default:
-      return 'bg-muted text-muted-foreground';
+      return 'bg-slate-300';
   }
 };
 
-const priorityBadgeClass = (p: string | null): string => {
+const priorityChipClass = (p: string | null): string => {
   switch (p) {
-    case 'High': return 'bg-red-100 text-red-800 border-red-200';
-    case 'Medium': return 'bg-amber-100 text-amber-800 border-amber-200';
-    case 'Low': return 'bg-slate-100 text-slate-700 border-slate-200';
+    case 'High': return 'bg-destructive/10 text-destructive';
+    case 'Medium': return 'bg-amber-500/10 text-amber-700 dark:text-amber-400';
     default: return 'bg-muted text-muted-foreground';
   }
 };
@@ -119,6 +121,7 @@ const isWithin7Days = (dateStr: string | null): boolean => {
 const LitigationMattersPage: React.FC = () => {
   const { isStaffRole, user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [matters, setMatters] = useState<Matter[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -131,6 +134,9 @@ const LitigationMattersPage: React.FC = () => {
   const [stageFilter, setStageFilter] = useState('all');
   const [clientSearch, setClientSearch] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('all');
+  // GstinWiseNoticeCountPage links here as /litigation?client=<uuid>; the text
+  // search above cannot hold a uuid, so the deep link gets its own filter.
+  const [clientIdFilter, setClientIdFilter] = useState<string>(() => searchParams.get('client') || '');
 
   // Create dialog
   const [showCreate, setShowCreate] = useState(false);
@@ -170,6 +176,7 @@ const LitigationMattersPage: React.FC = () => {
   const profileMap = new Map(profiles.map(p => [p.user_id, p.first_name || 'Staff']));
 
   const filtered = matters.filter(m => {
+    if (clientIdFilter && m.client_id !== clientIdFilter) return false;
     if (statusFilter === 'open' && m.stage === 'Closed') return false;
     if (statusFilter === 'closed' && m.stage !== 'Closed') return false;
     if (lifecycleFilter !== 'all' && m.lifecycle !== lifecycleFilter) return false;
@@ -220,18 +227,47 @@ const LitigationMattersPage: React.FC = () => {
     }
   };
 
+  const clearClientIdFilter = () => {
+    setClientIdFilter('');
+    const next = new URLSearchParams(searchParams);
+    next.delete('client');
+    setSearchParams(next, { replace: true });
+  };
+
+  const focusedClient = clientIdFilter ? clientMap.get(clientIdFilter) : undefined;
+
   return (
-    <div className="space-y-4">
-      <NoticesTopNav />
-      <PageHeader
+    <div className="space-y-4 animate-fade-in">
+      <NoticesPageHeader
         title="Litigation Matters"
-        icon={<Briefcase className="h-5 w-5" />}
+        icon={Briefcase}
+        subtitle={
+          <>
+            <span>{filtered.length} of {matters.length} matters</span>
+            {clientIdFilter && (
+              <span className="inline-flex items-center gap-1">
+                <span>Client: {focusedClient?.name || 'selected client'}</span>
+                <button
+                  type="button"
+                  onClick={clearClientIdFilter}
+                  className="inline-flex items-center rounded-full bg-muted px-1.5 py-0 text-[10px] font-semibold text-muted-foreground hover:text-foreground"
+                >
+                  <X className="mr-0.5 h-3 w-3" /> Clear
+                </button>
+              </span>
+            )}
+          </>
+        }
         actions={
-          <Button size="sm" onClick={() => setShowCreate(true)}>
-            <Plus className="h-4 w-4 mr-1" /> Create Matter
+          <Button size="sm" className="h-8 text-xs" onClick={() => setShowCreate(true)}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" /> Create Matter
           </Button>
         }
       />
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <NoticesTopNav />
+      </div>
 
       {/* Filter bar */}
       <Card>
@@ -310,6 +346,7 @@ const LitigationMattersPage: React.FC = () => {
 
       {/* Table */}
       <Card>
+        <NoticesCardHeader title="Matters" badge={filtered.length} />
         <CardContent className="p-0">
           {loading ? (
             <div className="flex items-center justify-center py-16">
@@ -321,17 +358,17 @@ const LitigationMattersPage: React.FC = () => {
               <p className="text-sm">No litigation matters found</p>
             </div>
           ) : (
-            <Table containerClassName="max-h-[calc(100vh-320px)]">
-              <TableHeader className="sticky top-0 bg-background z-10">
+            <Table containerClassName="max-h-[calc(100vh-320px)] overflow-auto rounded-md border">
+              <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
-                  <TableHead className="text-xs">Matter No</TableHead>
-                  <TableHead className="text-xs">Client</TableHead>
-                  <TableHead className="text-xs">Lifecycle</TableHead>
-                  <TableHead className="text-xs">Stage</TableHead>
-                  <TableHead className="text-xs">Priority</TableHead>
-                  <TableHead className="text-xs">Due Date</TableHead>
-                  <TableHead className="text-xs text-right">Demand</TableHead>
-                  <TableHead className="text-xs">Owner</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Matter No</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Client</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Lifecycle</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Stage</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Priority</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Due Date</TableHead>
+                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Demand</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Owner</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -349,29 +386,40 @@ const LitigationMattersPage: React.FC = () => {
                     >
                       <TableCell className="text-xs font-medium">{m.matter_no || '---'}</TableCell>
                       <TableCell className="text-xs">
-                        <div>{cl?.name || '---'}</div>
-                        {cl?.gstin && <div className="text-[10px] text-muted-foreground">{cl.gstin}</div>}
+                        {cl ? (
+                          <Link
+                            to={`/notices-company/${cl.id}`}
+                            onClick={e => e.stopPropagation()}
+                            className="font-medium text-primary hover:underline"
+                          >
+                            {cl.name || '---'}
+                          </Link>
+                        ) : (
+                          <div>---</div>
+                        )}
+                        {cl?.gstin && <div className="font-mono text-[10px] text-muted-foreground">{cl.gstin}</div>}
                       </TableCell>
                       <TableCell className="text-xs capitalize">{(m.lifecycle || '---').replace(/_/g, ' ')}</TableCell>
                       <TableCell className="text-xs">
                         {m.stage ? (
-                          <Badge variant="outline" className={cn('text-[10px] font-medium', stageBadgeClass(m.stage))}>
+                          <span className="inline-flex items-center gap-1.5 text-[11px]">
+                            <span className={cn('inline-block h-2 w-2 rounded-sm shrink-0', stageDotClass(m.stage))} />
                             {m.stage}
-                          </Badge>
+                          </span>
                         ) : '---'}
                       </TableCell>
                       <TableCell className="text-xs">
                         {m.priority ? (
-                          <Badge variant="outline" className={cn('text-[10px] font-medium', priorityBadgeClass(m.priority))}>
+                          <span className={cn('rounded-full px-1.5 py-0 text-[9px] font-bold', priorityChipClass(m.priority))}>
                             {m.priority}
-                          </Badge>
+                          </span>
                         ) : '---'}
                       </TableCell>
-                      <TableCell className="text-xs">
+                      <TableCell className="text-xs tabular-nums">
                         {effectiveDue ? (
                           <span className={cn(
-                            isOverdue(effectiveDue) && 'text-red-600 font-medium',
-                            !isOverdue(effectiveDue) && isWithin7Days(effectiveDue) && 'text-amber-600 font-medium',
+                            isOverdue(effectiveDue) && 'font-medium text-destructive',
+                            !isOverdue(effectiveDue) && isWithin7Days(effectiveDue) && 'font-medium text-amber-600',
                           )}>
                             {new Date(effectiveDue).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                           </span>

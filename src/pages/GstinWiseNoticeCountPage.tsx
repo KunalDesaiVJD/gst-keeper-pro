@@ -10,18 +10,19 @@ import { Navigate, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useNoticeSet } from '@/hooks/useNoticeSet';
-import { PageHeader } from '@/components/layout/PageHeader';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
+import NoticesPageHeader from '@/components/notices/NoticesPageHeader';
+import NoticesCardHeader from '@/components/notices/NoticesCardHeader';
+import FilterPill from '@/components/notices/FilterPill';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { isClosed, isRefundClosed, isDrc03Closed } from '@/utils/noticeSummaryReport';
 import { isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
 import { renderReportToExcel, type ReportTable } from '@/utils/allClientsReports';
-import { Bell, Loader2, FileSpreadsheet, Search } from 'lucide-react';
+import { Building2, Loader2, FileSpreadsheet, Search } from 'lucide-react';
 
 interface ClientRow { id: string; name: string; gstin: string; }
 
@@ -154,60 +155,67 @@ const GstinWiseNoticeCountPage: React.FC = () => {
   };
 
   return (
-    <div className="space-y-2.5 animate-fade-in">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <PageHeader title="Notices Dashboard" icon={<Bell className="h-5 w-5" />} embedded />
-        <NoticesTopNav />
-      </div>
+    <div className="space-y-4 animate-fade-in">
+      <NoticesPageHeader
+        title="GSTIN-wise Notice Count"
+        icon={Building2}
+        subtitle={
+          <>
+            <span className="flex items-center gap-1.5">
+              <Link to="/notices-dashboard" className="text-primary hover:underline">GST Dashboard</Link>
+              <span>›</span>
+              <span>GSTIN Wise Notice Count</span>
+            </span>
+            <span>{filteredCounts.length} companies · {grandTotal.total} notices</span>
+          </>
+        }
+        actions={
+          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleExport}>
+            <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" /> Export to Excel
+          </Button>
+        }
+      />
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Link to="/notices-dashboard" className="text-primary hover:underline">GST Dashboard</Link>
-          <span>›</span>
-          <span>GSTIN Wise Notice Count</span>
+        <NoticesTopNav />
+        <div className="flex flex-wrap items-center gap-1.5">
+          <FilterPill
+            label="Type"
+            allLabel="All notices"
+            value={typeFilter}
+            onChange={(v) => setTypeFilter(v as TypeOfNoticesFilter)}
+            options={[]}
+            extraOptions={[
+              { value: 'registration', label: 'Registration' },
+              { value: 'other', label: 'Other than Registration' },
+            ]}
+          />
         </div>
       </div>
 
       <Card>
-        <CardContent className="space-y-3 pt-4">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div className="flex flex-wrap items-end gap-3">
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Types Of Notices</Label>
-                <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as TypeOfNoticesFilter)}>
-                  <SelectTrigger className="h-8 w-[200px] text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All</SelectItem>
-                    <SelectItem value="registration">Registration</SelectItem>
-                    <SelectItem value="other">Other than Registration</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="relative w-[240px] space-y-1">
-                <Label className="text-xs text-muted-foreground">Search</Label>
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                  <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="GSTIN or Trade Name" className="h-8 pl-8 text-xs" />
-                </div>
-              </div>
+        <NoticesCardHeader title="Notices by GSTIN" badge={filteredCounts.length} />
+        <CardContent className="space-y-3 pt-3 pb-3">
+          <div className="relative w-[240px] space-y-1">
+            <Label className="text-[11px] text-muted-foreground">Search</Label>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="GSTIN or Trade Name" className="h-8 pl-8 text-xs" />
             </div>
-            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleExport}>
-              <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" /> Export to Excel
-            </Button>
           </div>
 
           <div className="overflow-auto rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="bg-muted/60 text-[11px] font-semibold">GSTIN</TableHead>
-                  <TableHead className="bg-muted/60 text-[11px] font-semibold">Trade Name</TableHead>
-                  <TableHead className="bg-muted/60 text-right text-[11px] font-semibold">Total</TableHead>
-                  <TableHead className="bg-muted/60 text-right text-[11px] font-semibold">Open</TableHead>
-                  <TableHead className="bg-muted/60 text-right text-[11px] font-semibold">Closed</TableHead>
-                  <TableHead className="bg-muted/60 text-right text-[11px] font-semibold">Replied</TableHead>
-                  <TableHead className="bg-muted/60 text-right text-[11px] font-semibold">Matters</TableHead>
-                  <TableHead className="bg-muted/60 text-right text-[11px] font-semibold">Exposure</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">GSTIN</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Trade Name</TableHead>
+                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Total</TableHead>
+                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Open</TableHead>
+                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Closed</TableHead>
+                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Replied</TableHead>
+                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Matters</TableHead>
+                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Exposure</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -218,7 +226,11 @@ const GstinWiseNoticeCountPage: React.FC = () => {
                 ) : (
                   filteredCounts.map((r) => (
                     <TableRow key={r.clientId}>
-                      <TableCell className="text-xs">{r.gstin}</TableCell>
+                      <TableCell className="text-[10px] font-mono text-muted-foreground">
+                        <Link to={`/notices-company/${r.clientId}`} className="hover:text-primary hover:underline">
+                          {r.gstin}
+                        </Link>
+                      </TableCell>
                       <TableCell className="max-w-[240px] truncate text-xs" title={r.name}>{r.name}</TableCell>
                       <TableCell
                         className="cursor-pointer text-right text-xs tabular-nums text-primary underline-offset-2 hover:underline"
@@ -245,7 +257,7 @@ const GstinWiseNoticeCountPage: React.FC = () => {
                       >
                         {r.matterCount || '—'}
                       </TableCell>
-                      <TableCell className="text-right text-xs tabular-nums">{fmtINR(r.exposure)}</TableCell>
+                      <TableCell className="text-right text-xs tabular-nums text-primary">{fmtINR(r.exposure)}</TableCell>
                     </TableRow>
                   ))
                 )}
@@ -259,7 +271,7 @@ const GstinWiseNoticeCountPage: React.FC = () => {
                     <TableCell className="text-right text-xs tabular-nums">{grandTotal.closed}</TableCell>
                     <TableCell className="text-right text-xs tabular-nums">{grandTotal.replied}</TableCell>
                     <TableCell className="text-right text-xs tabular-nums">{grandTotal.matters}</TableCell>
-                    <TableCell className="text-right text-xs tabular-nums">{fmtINR(grandTotal.exposure)}</TableCell>
+                    <TableCell className="text-right text-xs tabular-nums text-primary">{fmtINR(grandTotal.exposure)}</TableCell>
                   </TableRow>
                 </tfoot>
               )}

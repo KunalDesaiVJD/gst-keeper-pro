@@ -8,11 +8,12 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Select, SelectTrigger, SelectContent, SelectItem } from '@/components/ui/select';
+import FilterPill from '@/components/notices/FilterPill';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
+import NoticesPageHeader from '@/components/notices/NoticesPageHeader';
 import { classifyNoticeCategory } from '@/utils/noticeCategoryClassifier';
 import { computeNoticeSummary, summaryCellHref, type SummaryCellKind } from '@/utils/noticeSummaryReport';
 import { runNoticeSweep } from '@/lib/noticeAutoClose';
@@ -54,42 +55,6 @@ function todayISOString(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 }
 
-interface FilterPillProps {
-  label: string;
-  allLabel: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: string[];
-  extraOptions?: { value: string; label: string }[];
-}
-
-const FilterPill: React.FC<FilterPillProps> = ({ label, allLabel, value, onChange, options, extraOptions }) => {
-  const active = value !== 'all';
-  const shown = value === 'all'
-    ? allLabel
-    : extraOptions?.find((o) => o.value === value)?.label ?? value;
-  return (
-    <Select value={value} onValueChange={onChange}>
-      <SelectTrigger
-        className={cn(
-          'h-auto gap-1 rounded-full border-0 px-2 py-0.5 text-[10.5px] font-semibold focus:ring-1',
-          active ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground',
-        )}
-      >
-        <span className="truncate">{label}: {shown}</span>
-      </SelectTrigger>
-      <SelectContent className="max-h-72">
-        <SelectItem value="all" className="text-xs">{allLabel}</SelectItem>
-        {extraOptions?.map((o) => (
-          <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>
-        ))}
-        {options.map((o) => (
-          <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-};
 
 const NoticesDashboardPage: React.FC = () => {
   const { isStaffRole } = useAuth();
@@ -381,15 +346,11 @@ const NoticesDashboardPage: React.FC = () => {
       )}
 
       {/* ── Header ────────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="flex items-center gap-2.5 text-[22px] font-bold">
-            <span className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] bg-primary">
-              <Bell className="h-[18px] w-[18px] text-primary-foreground" />
-            </span>
-            Notices &amp; Litigation
-          </h1>
-          <div className="mt-1 flex flex-wrap items-center gap-3.5 text-xs text-muted-foreground">
+      <NoticesPageHeader
+        title="Notices & Litigation"
+        icon={Bell}
+        subtitle={
+          <>
             {lastSyncTimeStr && (
               <>
                 <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
@@ -397,32 +358,36 @@ const NoticesDashboardPage: React.FC = () => {
               </>
             )}
             {failedLoginsCount > 0 && (
-              <span className="font-semibold text-destructive">{failedLoginsCount} logins failed</span>
+              <Link to="/notices-company-list?status=failed" className="font-semibold text-destructive hover:underline">
+                {failedLoginsCount} logins failed
+              </Link>
             )}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            className="flex items-center gap-2 rounded-lg border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40"
-            onClick={openSearchCompany}
-          >
-            <Search className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Search GSTIN, trade name, ARN…</span>
-            <span className="sm:hidden">Search</span>
-            <kbd className="ml-2 hidden rounded border bg-muted px-1 py-0.5 text-[9px] font-mono sm:inline">⌘K</kbd>
-          </button>
-          <AddNoticeDialog onSuccess={refetch} />
-          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleSendDigest} disabled={sendingDigest}>
-            {sendingDigest ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Mail className="mr-1.5 h-3.5 w-3.5" />}
-            Send digest
-          </Button>
-          <Button size="sm" className="h-8 text-xs" onClick={handleSyncAll} disabled={syncing}>
-            {syncing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
-            Sync All
-          </Button>
-        </div>
-      </div>
+          </>
+        }
+        actions={
+          <>
+            <button
+              type="button"
+              className="flex items-center gap-2 rounded-lg border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40"
+              onClick={openSearchCompany}
+            >
+              <Search className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Search GSTIN, trade name, ARN…</span>
+              <span className="sm:hidden">Search</span>
+              <kbd className="ml-2 hidden rounded border bg-muted px-1 py-0.5 text-[9px] font-mono sm:inline">⌘K</kbd>
+            </button>
+            <AddNoticeDialog onSuccess={refetch} />
+            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleSendDigest} disabled={sendingDigest}>
+              {sendingDigest ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Mail className="mr-1.5 h-3.5 w-3.5" />}
+              Send digest
+            </Button>
+            <Button size="sm" className="h-8 text-xs" onClick={handleSyncAll} disabled={syncing}>
+              {syncing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+              Sync All
+            </Button>
+          </>
+        }
+      />
 
       {/* ── Tabs + filters ─────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-2">

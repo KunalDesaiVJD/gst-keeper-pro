@@ -10,18 +10,18 @@ import React, { useState } from 'react';
 import { Navigate, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNoticeSet } from '@/hooks/useNoticeSet';
-import { PageHeader } from '@/components/layout/PageHeader';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
+import NoticesPageHeader from '@/components/notices/NoticesPageHeader';
+import NoticesCardHeader from '@/components/notices/NoticesCardHeader';
+import FilterPill from '@/components/notices/FilterPill';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
-import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { computeNoticeSummary, summaryCellHref, type SummaryCellKind } from '@/utils/noticeSummaryReport';
 import { isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
 import { renderReportToExcel, type ReportTable } from '@/utils/allClientsReports';
-import { Bell, Loader2, FileSpreadsheet } from 'lucide-react';
+import { ListOrdered, Loader2, FileSpreadsheet } from 'lucide-react';
 
 type TypeOfNoticesFilter = 'all' | 'registration' | 'other';
 
@@ -56,48 +56,57 @@ const NoticeSummaryReportPage: React.FC = () => {
   };
 
   return (
-    <div className="space-y-2.5 animate-fade-in">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <PageHeader title="Notices Dashboard" icon={<Bell className="h-5 w-5" />} embedded />
-        <NoticesTopNav />
-      </div>
+    <div className="space-y-4 animate-fade-in">
+      <NoticesPageHeader
+        title="Notice Summary"
+        icon={ListOrdered}
+        subtitle={
+          <span className="flex items-center gap-1.5">
+            <Link to="/notices-dashboard" className="text-primary hover:underline">GST Dashboard</Link>
+            <span>›</span>
+            <span>Notice Summary</span>
+          </span>
+        }
+        actions={
+          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleExport}>
+            <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" /> Export to Excel
+          </Button>
+        }
+      />
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Link to="/notices-dashboard" className="text-primary hover:underline">GST Dashboard</Link>
-          <span>›</span>
-          <span>Notice Summary</span>
+        <NoticesTopNav />
+        <div className="flex flex-wrap items-center gap-1.5">
+          <FilterPill
+            label="Type"
+            allLabel="All notices"
+            value={typeFilter}
+            onChange={(v) => setTypeFilter(v as TypeOfNoticesFilter)}
+            options={[]}
+            extraOptions={[
+              { value: 'registration', label: 'Registration' },
+              { value: 'other', label: 'Other than Registration' },
+            ]}
+          />
         </div>
       </div>
 
       <Card>
-        <CardContent className="space-y-3 pt-4">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Types Of Notices</Label>
-              <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as TypeOfNoticesFilter)}>
-                <SelectTrigger className="h-8 w-[200px] text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="registration">Registration</SelectItem>
-                  <SelectItem value="other">Other than Registration</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleExport}>
-              <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" /> Export to Excel
-            </Button>
-          </div>
-
+        <NoticesCardHeader
+          title="Notices by category"
+          description="Total, open, closed and replied counts for every notice category."
+          badge={categoryRows.length}
+        />
+        <CardContent className="pt-3 pb-3">
           <div className="overflow-auto rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="bg-muted/60 text-[11px] font-semibold">Special Remarks</TableHead>
-                  <TableHead className="bg-muted/60 text-right text-[11px] font-semibold">Total</TableHead>
-                  <TableHead className="bg-muted/60 text-right text-[11px] font-semibold">Open</TableHead>
-                  <TableHead className="bg-muted/60 text-right text-[11px] font-semibold">Closed</TableHead>
-                  <TableHead className="bg-muted/60 text-right text-[11px] font-semibold">Replied</TableHead>
+                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Special Remarks</TableHead>
+                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Total</TableHead>
+                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Open</TableHead>
+                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Closed</TableHead>
+                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Replied</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
