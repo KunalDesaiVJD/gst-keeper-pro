@@ -374,14 +374,25 @@ const API = {
     return { started: true, client: c.name, return_type: info.return_type };
   },
 
-  // From a reco page "Pull" button: log the client in and pull the ledger opening
-  // balances (credit ledger -> GST Receivable Reco, reversal ledger -> Suspended
-  // Reco). No mode -> the default ledger sync. Human does the CAPTCHA.
+  // From a reco page "Pull" button (GST Receivable Reco or Suspended Reco —
+  // same button, same message, both pages): log the client in and pull the
+  // ledger opening balances (credit ledger -> GST Receivable Reco, reversal
+  // ledger -> Suspended Reco). Human does the CAPTCHA.
+  //
+  // mode: 'ledgers' stops the job right after the reversal ledger
+  // (handleReversal's own chainOrStop) instead of falling through to
+  // Liability Ledger, Cash Ledger, Notices, Refunds, DRC-03, Taxpayer
+  // Profile, Challans, ... — the "no mode set" behavior this job used to
+  // have, which is really the full comprehensive sync, not something
+  // either reco page's own Pull button ever meant to trigger. Confirmed
+  // with the user 2026-09-16: they use both pages' Pull buttons together
+  // and only want the two ledgers each pull already covers, not a silent
+  // full-client sync as a side effect.
   startLedgerPull: async (info) => {
     const c = await API.getClient(info.clientId);
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
     const job = {
-      period: info.period_month, idx: 0, step: 'login', startedAt: Date.now(),
+      mode: 'ledgers', period: info.period_month, idx: 0, step: 'login', startedAt: Date.now(),
       clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });

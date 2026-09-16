@@ -2356,7 +2356,7 @@
   async function handleReversal(job, cur, progress) {
     if (!/revreclaimdetledger/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/ledger/revreclaimdetledger'; return; }
     banner('Reading ITC-reversal ledger opening…' + progress);
-    if (!(await waitFor('input', 20000))) { banner('Reversal ledger form did not load — moving on.' + progress, '#f59e0b'); await proceedToLiabilityLedger(job); return; }
+    if (!(await waitFor('input', 20000))) { banner('Reversal ledger form did not load — moving on.' + progress, '#f59e0b'); await chainOrStop(job, 'ledgers', proceedToLiabilityLedger); return; }
     const per = await loadLedgerPeriod(job.period);
     if (!per.ok) {
       debugPanel([
@@ -2368,7 +2368,7 @@
       ]);
       banner('Reversal ledger: could not load ' + per.from + ' – ' + per.to + ' (' + per.why + '). Nothing saved — see the diagnostic box.', '#dc2626');
       await sleep(4000);
-      await proceedToLiabilityLedger(job);
+      await chainOrStop(job, 'ledgers', proceedToLiabilityLedger);
       return;
     }
     // Suspended Reco takes the CLOSING balance of the month's range (the balance
@@ -2393,7 +2393,11 @@
     } else {
       banner('No reversal opening-balance row found.' + progress, '#f59e0b');
     }
-    await proceedToLiabilityLedger(job);
+    // mode 'ledgers' (the reco pages' own Pull button) stops right here —
+    // credit ledger + reversal ledger is exactly what it's for. No mode
+    // (the true comprehensive sync) falls through to Liability/Cash Ledger,
+    // Notices, Refunds, DRC-03, ... as before.
+    await chainOrStop(job, 'ledgers', proceedToLiabilityLedger);
   }
 
   // Best-effort diagnostic breadcrumb for the two new ledger pulls: on any
