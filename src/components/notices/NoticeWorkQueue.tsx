@@ -53,7 +53,9 @@ const STAGE_OPTIONS = [
 
 const PRIORITY_TIERS = ['Low', 'Medium', 'High'];
 
-const ROW_LIMIT = 15;
+// The table shows ten rows (max-h-[620px] below, ~62px each) and scrolls for
+// the rest, rather than growing the page to fit every row.
+const ROW_LIMIT = 50;
 
 function effectiveDue(item: QueueItem): string | null {
   return item.extended_due_date || item.due_date;
@@ -69,13 +71,11 @@ function daysRemaining(item: QueueItem): number | null {
   return Math.round((d.getTime() - ist.getTime()) / 86400000);
 }
 
-function urgencyScore(item: QueueItem): number {
-  const due = effectiveDue(item);
-  if (!due) return 999;
-  const now = new Date();
-  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-  const ist = new Date(utc + 5.5 * 3600000);
-  return Math.round((new Date(due).getTime() - ist.getTime()) / 86400000);
+// Newest first. Sorting by deadline surfaced notices from 2017 at the top of
+// a queue where nothing is upcoming, so the first screen was always the least
+// current work.
+function recencyKey(item: QueueItem): string {
+  return item.issue_date || effectiveDue(item) || '';
 }
 
 function stageColor(status: string | null): string {
@@ -177,7 +177,7 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep, sweeping })
             owner_initials: n.assign_to_user_id ? (profileMap.get(n.assign_to_user_id) || '?') : null,
           } as QueueItem;
         })
-        .sort((a, b) => urgencyScore(a) - urgencyScore(b));
+        .sort((a, b) => recencyKey(b).localeCompare(recencyKey(a)));
 
       if (!cancelled) { setAllItems(queue); setProfiles(opts); setLoading(false); }
     })();
@@ -330,7 +330,7 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep, sweeping })
         <div>
           <h2 className="text-sm font-semibold">Work queue — what needs action</h2>
           <p className="text-[11px] text-muted-foreground">
-            Sorted by statutory deadline. Click a row to open the notice drawer; select rows for bulk actions.
+            Newest first. Click a row to open the notice drawer; select rows for bulk actions.
           </p>
         </div>
         <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
@@ -406,9 +406,10 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep, sweeping })
             No open notices in this view.
           </p>
         ) : (
-          <div className="overflow-auto rounded-md border">
-            <Table>
-              <TableHeader>
+          // The scroll constraint goes on the Table's own container — wrapping
+          // it in a second overflow-auto div silently breaks sticky headers.
+          <Table containerClassName="max-h-[620px] overflow-auto rounded-md border">
+            <TableHeader className="sticky top-0 z-10">
                 <TableRow>
                   <TableHead className="bg-muted w-[26px]">
                     <Checkbox
@@ -510,7 +511,6 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep, sweeping })
                 })}
               </TableBody>
             </Table>
-          </div>
         )}
 
         {!loading && items.length > 0 && (
