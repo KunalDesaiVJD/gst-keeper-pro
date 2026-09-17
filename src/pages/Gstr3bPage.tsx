@@ -30,7 +30,7 @@ import { computeGstReceivableRecoDiff } from '@/lib/gstReceivableRecoCalc';
 import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
 
-interface Client { id: string; name: string; gstin: string; regular_sub_type?: string | null; registration_type?: string | null }
+interface Client { id: string; name: string; gstin: string; regular_sub_type?: string | null; builder_itc_type?: string | null; registration_type?: string | null }
 
 interface Gstr3bPushVersion {
   id: string;
@@ -252,7 +252,7 @@ const Gstr3bPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    supabase.from('clients').select('id, name, gstin, regular_sub_type, registration_type').order('name').then(({ data }) => setClients((data || []) as Client[]));
+    supabase.from('clients').select('id, name, gstin, regular_sub_type, builder_itc_type, registration_type').order('name').then(({ data }) => setClients((data || []) as Client[]));
   }, []);
 
   const selectedClientData = clients.find((c) => c.id === selectedClient);
@@ -278,8 +278,11 @@ const Gstr3bPage: React.FC = () => {
   // their own live "DIFFERENCE" figure (opening + portal − books, Rs.10
   // tolerance applied). Neither is otherwise surfaced here, so a client could
   // get pushed to the portal with an unresolved balance mismatch and nobody
-  // would know until someone happened to open those pages. Advisory only —
-  // matches the existing "Review before filing" flags, doesn't block Push.
+  // would know until someone happened to open those pages. A non-zero
+  // difference DOES block Push (see hasRecoDiff below) — the comment here used
+  // to say "advisory only, doesn't block Push", which had not been true since
+  // the disabled= binding was added and sent people looking in the wrong place
+  // when the button wouldn't press.
   const [recoCheck, setRecoCheck] = useState<{ suspended: RecoDiffResult | null; receivable: RecoDiffResult | null }>({ suspended: null, receivable: null });
   const [recoCheckLoading, setRecoCheckLoading] = useState(false);
 
@@ -302,10 +305,31 @@ const Gstr3bPage: React.FC = () => {
 
   useEffect(() => { checkReconciliation(); }, [checkReconciliation]);
 
-  const hasRecoDiff = !!(
-    (recoCheck.suspended && recoCheck.suspended.total !== 0) ||
-    (recoCheck.receivable && recoCheck.receivable.total !== 0)
-  );
+  // A NO-ITC promoter's Suspended Reco can never tie out, so it must not hold
+  // up the push. Credit reversed under Rule 37A / s.16(2)(c) sits in the
+  // portal's suspended balance until it is reclaimed; a promoter who elected
+  // the 1%/5% scheme under Notification 3/2019-CTR never reclaims any of it
+  // (ITC Summary pins Total 4B to Total 4A for these clients precisely so Net
+  // ITC is 0 by construction). The books side accumulates reversals with no
+  // portal-side balance to match them against, so the difference is
+  // permanently non-zero through no error of the staff's and the Push button
+  // stays disabled forever — reported on KRISHNA INFRA-NO ITC for Aug-2026, a
+  // fixed -Rs 82,076.88 that nothing on the Suspended Reco page could clear.
+  //
+  // Same waiver, same two flags as the Filing Status gate — see
+  // docs/2B_RECONCILIATION_FLOW.md §8. Builder AND NO_ITC: the waiver is about
+  // the promoter scheme, not about a client having no ITC for some other
+  // reason. The GST Receivable Reco half is NOT waived: its own calculation
+  // already handles NO_ITC (gstReceivableRecoCalc.ts nets Total 4B against
+  // Total 4A for these clients), so a difference there is a real finding and
+  // still blocks.
+  const isNoItcBuilder =
+    selectedClientData?.regular_sub_type === 'Builder'
+    && selectedClientData?.builder_itc_type === 'NO_ITC';
+  const suspendedBlocks = !isNoItcBuilder && !!recoCheck.suspended && recoCheck.suspended.total !== 0;
+  const receivableBlocks = !!recoCheck.receivable && recoCheck.receivable.total !== 0;
+
+  const hasRecoDiff = suspendedBlocks || receivableBlocks;
 
   const s = result?.summary;
 
@@ -523,31 +547,28 @@ const Gstr3bPage: React.FC = () => {
       {/* Reconciliation difference — Suspended Reco and/or GST Receivable Reco
           don't tie out for this client/period. Advisory, not a block: staff
           should look before filing, but the push itself isn't held up. */}
-      {!recoCheckLoading && selectedClient && selectedMonth && (
-        (recoCheck.suspended && recoCheck.suspended.total !== 0) ||
-        (recoCheck.receivable && recoCheck.receivable.total !== 0)
-      ) && (
+      {!recoCheckLoading && selectedClient && selectedMonth && hasRecoDiff && (
         <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
           <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-destructive" />
           <div className="flex-1 space-y-1">
             <p className="font-medium">Reconciliation difference found — Push to GST Portal is locked</p>
-            {recoCheck.suspended && recoCheck.suspended.total !== 0 && (
+            {suspendedBlocks && (
               <p>
-                <span className="font-medium">Suspended Reco</span> difference: ₹{inr(recoCheck.suspended.total)} (2B and RCM → Suspended Reco).
+                <span className="font-medium">Suspended Reco</span> difference: ₹{inr(recoCheck.suspended!.total)} (2B and RCM → Suspended Reco).
               </p>
             )}
-            {recoCheck.receivable && recoCheck.receivable.total !== 0 && (
+            {receivableBlocks && (
               <p>
-                <span className="font-medium">GST Receivable Reco</span> difference: ₹{inr(recoCheck.receivable.total)}.
+                <span className="font-medium">GST Receivable Reco</span> difference: ₹{inr(recoCheck.receivable!.total)}.
               </p>
             )}
             <p className="text-xs text-foreground/70">Resolve the difference on the relevant page to unlock the push.</p>
           </div>
           <div className="flex flex-col gap-1.5 shrink-0">
-            {recoCheck.suspended && recoCheck.suspended.total !== 0 && (
+            {suspendedBlocks && (
               <Button variant="outline" size="sm" onClick={() => navigate('/2b-and-rcm')}>Suspended Reco</Button>
             )}
-            {recoCheck.receivable && recoCheck.receivable.total !== 0 && (
+            {receivableBlocks && (
               <Button variant="outline" size="sm" onClick={() => navigate('/itc-summary')}>GST Receivable Reco</Button>
             )}
           </div>

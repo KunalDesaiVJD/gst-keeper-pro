@@ -457,3 +457,31 @@ type are Builders). The `-NO ITC` naming convention does *not* track it:
 Matching on the name instead would have been both over- and under-inclusive,
 and would silently change which clients can bypass a filing gate every time
 somebody renames one.
+
+### There are TWO gates, not one
+
+The Suspended Reco difference is enforced in two independent places, and the
+first fix only covered one of them:
+
+| Where | Form | Threshold | File |
+|---|---|---|---|
+| Marking GSTR-3B **Filed** | `toast.error` on click | \|diff\| > ₹20 | `FilingStatusPage.tsx`, `handleStatusChange` |
+| **Push to GST Portal** | Button `disabled`, hard-blocked | diff ≠ 0 | `Gstr3bPage.tsx`, `hasRecoDiff` |
+
+The Push gate is the stricter of the two (any non-zero difference, not just
+over ₹20) and the more visible: the button simply cannot be pressed, with a
+red "Reconciliation difference found — Push to GST Portal is locked" banner
+above it. Both now carry the same `Builder` + `NO_ITC` waiver.
+
+**Only the Suspended Reco half of the Push gate is waived.** The other half,
+GST Receivable Reco, still blocks: `gstReceivableRecoCalc.ts` already handles
+NO-ITC clients in its own calculation (netting Total 4B against Total 4A the
+way ITC Summary does), so a difference there is a real finding rather than a
+structural artefact.
+
+The banner now derives from the same `suspendedBlocks` / `receivableBlocks`
+flags as the button, so it can no longer announce a lock that isn't in force.
+A stale comment above `recoCheck` claiming the check was "advisory only,
+doesn't block Push" was corrected at the same time — it had been untrue since
+the `disabled=` binding was added, and it sends anyone debugging a stuck Push
+button to the wrong place.
