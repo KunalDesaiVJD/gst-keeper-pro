@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FilingStatusRecord, filingStatusDisplayLabel } from '@/types';
+import { FilingStatusRecord, filingStatusDisplayLabel, isPendingFilingStatus } from '@/types';
 import { drawFirmLogo } from '@/utils/reportTheme';
 
 export const exportFilingStatusToPDF = (
@@ -80,7 +80,7 @@ export const exportFilingStatusToPDF = (
 
   // Summary - Updated for new status types
   const filed = records.filter(r => r.status === 'Filed').length;
-  const pending = records.filter(r => r.status === 'Prepared' || r.status === 'Prepared Pending' || r.status === 'Data Pending' || r.status === 'Data Received' || r.status === 'Mismatch in Data').length;
+  const pending = records.filter(r => isPendingFilingStatus(r.status)).length;
   
   const finalY = (doc as any).lastAutoTable.finalY || 42;
   doc.setFontSize(10);

@@ -7846,6 +7846,15 @@ export type Database = {
         Returns: boolean
       }
       is_staff: { Args: { _user_id: string }; Returns: boolean }
+      mark_filing_pushed: {
+        Args: {
+          p_actor?: string | null
+          p_client_id: string
+          p_period_month: string
+          p_return_type: string
+        }
+        Returns: string
+      }
       reset_client_password: {
         Args: { new_password: string; target_client_id: string }
         Returns: boolean
@@ -7866,6 +7875,7 @@ export type Database = {
         | "Prepared Pending"
         | "Data Received"
         | "Not to File"
+        | "Pushed"
       registration_type:
         | "Regular"
         | "Composition"
@@ -8024,6 +8034,7 @@ export const Constants = {
         "Prepared Pending",
         "Data Received",
         "Not to File",
+        "Pushed",
       ],
       registration_type: [
         "Regular",

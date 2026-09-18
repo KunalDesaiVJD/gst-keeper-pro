@@ -1,4 +1,4 @@
-import { User, Client, FilingStatusRecord, DashboardMetrics, BillNotIn2B } from '@/types';
+import { User, Client, FilingStatusRecord, DashboardMetrics, BillNotIn2B, isPendingFilingStatus } from '@/types';
 
 // Note: Staff users are now managed in Supabase database (profiles + user_roles tables)
 // This mock data is kept only for backward compatibility with client login
@@ -223,7 +223,7 @@ export const calculateDashboardMetrics = (month?: string): DashboardMetrics => {
   const monthFilings = mockFilingStatus.filter(f => f.month === currentMonth);
   
   const pendingFilings = monthFilings.filter(
-    f => f.status === 'Prepared' || f.status === 'Prepared Pending' || f.status === 'Data Pending' || f.status === 'Data Received' || f.status === 'Mismatch in Data'
+    f => isPendingFilingStatus(f.status)
   ).length;
   
   const filedThisMonth = monthFilings.filter(

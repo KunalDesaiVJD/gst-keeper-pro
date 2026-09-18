@@ -29,6 +29,7 @@ import type { RecoDiffResult } from '@/lib/suspendedRecoCalc';
 import { computeGstReceivableRecoDiff } from '@/lib/gstReceivableRecoCalc';
 import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
+import { markFilingPushed } from '@/lib/markFilingPushed';
 
 interface Client { id: string; name: string; gstin: string; regular_sub_type?: string | null; builder_itc_type?: string | null; registration_type?: string | null }
 
@@ -165,6 +166,20 @@ const Gstr3bPage: React.FC = () => {
           toast.success(r.summary || 'GSTR-3B form filled.');
           setPushResult({ ok: true, summary: r.summary || 'GSTR-3B form filled.', skipped: r.skipped });
           recordPushVersion({ status: 'ok', summary: r.summary || 'GSTR-3B form filled.', filledCount: r.filled, skipped: r.skipped });
+          // The push landed, so the filing status becomes 'Pushed' — the one
+          // status no one can select by hand. Failing to record it must not
+          // look like the push itself failed, so it only warns.
+          if (selectedClient && selectedMonth) {
+            markFilingPushed({
+              clientId: selectedClient,
+              returnType: 'GSTR-3B',
+              periodMonth: selectedMonth,
+              actorId: user?.id ?? null,
+            }).then((res) => {
+              if (res.ok) setFilingStatus(res.status);
+              else toast.warning('Pushed, but the filing status could not be updated: ' + res.error);
+            });
+          }
         } else {
           const msg = r.error || r.summary || 'GSTR-3B push failed.';
           toast.error(msg);
@@ -183,7 +198,7 @@ const Gstr3bPage: React.FC = () => {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, [recordPushVersion]);
+  }, [recordPushVersion, selectedClient, selectedMonth, user?.id]);
 
   useEffect(() => { setPushResult(null); }, [selectedClient, selectedMonth]);
 

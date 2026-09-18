@@ -15,6 +15,7 @@ export type FilingStatusType =
   | 'Data Received'
   | 'Mismatch in Data'
   | 'Not Verified' // Legacy - kept for backwards compatibility
+  | 'Pushed'
   | 'Filed';
 
 // 'Prepared Pending' is displayed as "Not to File" everywhere a status is
@@ -23,6 +24,34 @@ export type FilingStatusType =
 // against), only the label changed. Every other status displays as itself.
 export const filingStatusDisplayLabel = (status: FilingStatusType | string): string =>
   status === 'Prepared Pending' ? 'Not to File' : status;
+
+// Statuses nobody may set by hand. 'Pushed' is evidence that this app pushed
+// the return's data to the GST portal and the portal accepted it — it means
+// something only because a system event put it there, so the dropdown offers
+// it disabled and the `mark_filing_pushed` RPC is the only way in. A database
+// trigger rejects every other write that moves a row into it; the UI rules
+// here are the courtesy layer, not the enforcement.
+export const SYSTEM_ONLY_FILING_STATUSES: readonly FilingStatusType[] = ['Pushed'];
+
+export const isSystemOnlyFilingStatus = (status: FilingStatusType | string): boolean =>
+  SYSTEM_ONLY_FILING_STATUSES.includes(status as FilingStatusType);
+
+// Every status that is not 'Filed' — i.e. a return still awaiting filing.
+// 'Pushed' belongs here: pushing data to the portal is not filing it. The
+// portal still needs Confirm / Offset Liability / File and the signatory's
+// EVC or DSC, none of which this app can do.
+export const PENDING_FILING_STATUSES: readonly FilingStatusType[] = [
+  'Prepared',
+  'Prepared Pending',
+  'Data Pending',
+  'Data Received',
+  'Mismatch in Data',
+  'Not Verified',
+  'Pushed',
+];
+
+export const isPendingFilingStatus = (status: FilingStatusType | string): boolean =>
+  PENDING_FILING_STATUSES.includes(status as FilingStatusType);
 
 // User interface
 export interface User {
