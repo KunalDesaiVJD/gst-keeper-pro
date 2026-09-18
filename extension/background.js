@@ -601,7 +601,7 @@ const API = {
   saveGstr1UploadResult: async ({ rowId, status, summary, errors, actorId, actionType }) => {
     // Pull client_id + period_month back from gstr1_data — we need them for
     // the versions insert but the content script only knows the row id.
-    const rows = await sel(`gstr1_data?id=eq.${rowId}&select=client_id,period_month&limit=1`);
+    const rows = await sel(`gstr1_data?id=eq.${rowId}&select=client_id,period_month,raw_json&limit=1`);
     const row = rows && rows[0];
 
     await patch(`gstr1_data?id=eq.${rowId}`, {
@@ -624,6 +624,9 @@ const API = {
           status: status || null,
           summary: summary || null,
           errors: errors || null,
+          // Snapshot of the JSON as uploaded, so Version History can diff two
+          // attempts down to the individual invoice and figure.
+          payload: row.raw_json || null,
         }]);
       } catch (e) {
         // Don't fail the whole write if the versions table isn't there yet

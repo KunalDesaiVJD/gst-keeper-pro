@@ -38,6 +38,8 @@ import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { isBuilderGenerated as isBuilderSourced, stripInternalFields } from '@/utils/builderGstr1';
 import { markFilingPushed } from '@/lib/markFilingPushed';
+import { diffGstr1, summariseDiff } from '@/utils/gstReturnDiff';
+import ReturnDiffTable from '@/components/dialogs/ReturnDiffTable';
 import Gstr1ManualEntryPanel from '@/components/gstr1/Gstr1ManualEntryPanel';
 import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
@@ -118,6 +120,7 @@ interface UploadVersion {
   status: string | null;
   summary: string | null;
   errors: UploadErrorRow[] | null;
+  payload: unknown | null;
 }
 
 interface GSTR1Record {
@@ -233,6 +236,7 @@ const GSTR1DataPage: React.FC = () => {
   // Upload history (versions) + per-version error dialog.
   const [versions, setVersions] = useState<UploadVersion[]>([]);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
+  const [expandedDiffId, setExpandedDiffId] = useState<string | null>(null);
   const [expandedVersionId, setExpandedVersionId] = useState<string | null>(null);
 
   // Filing status for this (client, period, GSTR-1). Once 'Filed', all edits
@@ -501,12 +505,31 @@ const GSTR1DataPage: React.FC = () => {
 
   // One-liner used by every mutation path (import, upload result received,
   // manual error-report import) to record what happened, by whom, when.
+  // Only the expanded version is diffed. A GSTR-1 payload can run to thousands
+  // of invoices, and diffing every row of the history on every render of this
+  // dialog would stall it for a large client.
+  const expandedDiff = useMemo(() => {
+    if (!expandedDiffId) return null;
+    const idx = versions.findIndex((x) => x.id === expandedDiffId);
+    if (idx < 0) return null;
+    const cur = versions[idx];
+    const prev = versions[idx + 1];
+    if (!cur?.payload || !prev?.payload) return null;
+    return { cur, prev, rows: diffGstr1(prev.payload, cur.payload) };
+  }, [expandedDiffId, versions]);
+
   const recordVersion = useCallback(async (v: {
     action_type: 'IMPORT' | 'UPLOAD' | 'REFRESH_ERRORS';
     file_name?: string | null;
     status?: string | null;
     summary?: string | null;
     errors?: UploadErrorRow[] | null;
+    /**
+     * The GSTR-1 JSON as it stands after this action. Passed explicitly rather
+     * than read from `gstr1Data` because callers update the row first and this
+     * closure would still be holding the pre-update copy.
+     */
+    payload?: unknown;
   }) => {
     if (!selectedClient || !selectedMonth) return;
     const periodMonthKey = mmYyyyToShort(selectedMonth);
@@ -519,6 +542,7 @@ const GSTR1DataPage: React.FC = () => {
       status: v.status ?? null,
       summary: v.summary ?? null,
       errors: (v.errors as any) ?? null,
+      payload: (v.payload as any) ?? null,
     });
     fetchVersions();
   }, [selectedClient, selectedMonth, user?.id, fetchVersions]);
@@ -701,6 +725,7 @@ const GSTR1DataPage: React.FC = () => {
         file_name: file.name,
         status: 'imported',
         summary: `Imported ${file.name}`,
+        payload: json,
       });
     } catch (err: any) {
       toast.error('Failed to import: ' + (err?.message || 'Unknown error'));
@@ -931,6 +956,9 @@ const GSTR1DataPage: React.FC = () => {
         status,
         summary,
         errors: rows,
+        // The return's data is untouched by an error-report fetch — carrying
+        // the current JSON keeps the diff chain unbroken across this entry.
+        payload: gstr1Data.raw_json,
       });
       toast.success(summary);
     } catch (err: any) {
@@ -1339,7 +1367,7 @@ const GSTR1DataPage: React.FC = () => {
       if (error) throw error;
       toast.success('HSN summary updated.');
       await fetchGSTR1Data();
-      await recordVersion({ action_type: 'IMPORT', status: 'edited', summary: 'Edited HSN summary (Table 12) before upload' });
+      await recordVersion({ action_type: 'IMPORT', status: 'edited', summary: 'Edited HSN summary (Table 12) before upload', payload: newJson });
       setHsnEditMode(false);
       setHsnEditRows([]);
     } catch (err: any) {
@@ -1408,7 +1436,7 @@ const GSTR1DataPage: React.FC = () => {
       if (error) throw error;
       toast.success('Documents Issued updated.');
       await fetchGSTR1Data();
-      await recordVersion({ action_type: 'IMPORT', status: 'edited', summary: 'Edited Documents Issued (Table 13) before upload' });
+      await recordVersion({ action_type: 'IMPORT', status: 'edited', summary: 'Edited Documents Issued (Table 13) before upload', payload: newJson });
       setDocEditMode(false);
       setDocEditRows([]);
     } catch (err: any) {
@@ -3066,8 +3094,9 @@ const GSTR1DataPage: React.FC = () => {
           <DialogHeader>
             <DialogTitle>GSTR-1 upload history — {selectedClientName || '—'} · {mmYyyyToShort(selectedMonth)}</DialogTitle>
             <DialogDescription>
-              Every Import, Portal Upload and Error Report fetch for this return. Click "Errors" on a row
-              that captured per-invoice validation reasons to see the list for that specific attempt.
+              Every Import, Portal Upload and Error Report fetch for this return. "Changes" compares a
+              version against the one before it, down to the individual invoice and figure, so a wrong
+              number can be traced to the version that introduced it and the person who made it.
             </DialogDescription>
           </DialogHeader>
           <div className="max-h-[65vh] overflow-auto rounded-md border">
@@ -3081,10 +3110,11 @@ const GSTR1DataPage: React.FC = () => {
                   <TableHead>Status</TableHead>
                   <TableHead>Summary</TableHead>
                   <TableHead className="w-24">Errors</TableHead>
+                  <TableHead className="w-32">Changes</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {versions.map((v) => (
+                {versions.map((v, idx) => (
                   <React.Fragment key={v.id}>
                     <TableRow>
                       <TableCell className="font-mono">v{v.version_number}</TableCell>
@@ -3127,10 +3157,53 @@ const GSTR1DataPage: React.FC = () => {
                           <span className="text-muted-foreground text-xs">—</span>
                         )}
                       </TableCell>
+                      <TableCell>
+                        {v.payload && versions[idx + 1]?.payload ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => setExpandedDiffId(expandedDiffId === v.id ? null : v.id)}
+                            title={`Compare against v${versions[idx + 1].version_number}`}
+                          >
+                            {expandedDiffId === v.id
+                              ? 'Hide'
+                              : `vs v${versions[idx + 1].version_number}`}
+                          </Button>
+                        ) : (
+                          <span
+                            className="text-muted-foreground text-xs"
+                            title={v.payload ? 'Nothing earlier to compare against' : 'This action predates change tracking'}
+                          >
+                            {v.payload ? 'First version' : '—'}
+                          </span>
+                        )}
+                      </TableCell>
                     </TableRow>
+                    {expandedDiffId === v.id && (
+                      <TableRow>
+                        <TableCell colSpan={8} className="bg-muted/40 p-3">
+                          {expandedDiff ? (
+                            <>
+                              <p className="text-xs text-muted-foreground mb-2">
+                                What <span className="font-mono">v{expandedDiff.cur.version_number}</span> ({expandedDiff.cur.actor_name || '—'}) changed
+                                against <span className="font-mono">v{expandedDiff.prev.version_number}</span> ({expandedDiff.prev.actor_name || '—'})
+                                {expandedDiff.rows.length > 0 && <> — {summariseDiff(expandedDiff.rows)}</>}.
+                              </p>
+                              <ReturnDiffTable
+                                rows={expandedDiff.rows}
+                                againstLabel={`v${expandedDiff.prev.version_number}`}
+                              />
+                            </>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">Nothing to compare for this version.</p>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    )}
                     {expandedVersionId === v.id && v.errors && v.errors.length > 0 && (
                       <TableRow>
-                        <TableCell colSpan={7} className="bg-muted/40 p-3">
+                        <TableCell colSpan={8} className="bg-muted/40 p-3">
                           <div className="rounded border bg-background">
                             <Table>
                               <TableHeader>
