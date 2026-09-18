@@ -5256,6 +5256,7 @@ export type Database = {
           file_name: string | null
           id: string
           period_month: string
+          payload: Json | null
           status: string | null
           summary: string | null
           version_number: number
@@ -5269,6 +5270,7 @@ export type Database = {
           file_name?: string | null
           id?: string
           period_month: string
+          payload: Json | null
           status?: string | null
           summary?: string | null
           version_number: number
@@ -5282,6 +5284,7 @@ export type Database = {
           file_name?: string | null
           id?: string
           period_month?: string
+          payload?: Json | null
           status?: string | null
           summary?: string | null
           version_number?: number
@@ -5464,6 +5467,7 @@ export type Database = {
           filled_count: number | null
           id: string
           period_month: string
+          payload: Json | null
           skipped: Json | null
           status: string | null
           summary: string | null
@@ -5476,6 +5480,7 @@ export type Database = {
           filled_count?: number | null
           id?: string
           period_month: string
+          payload: Json | null
           skipped?: Json | null
           status?: string | null
           summary?: string | null
@@ -5488,6 +5493,7 @@ export type Database = {
           filled_count?: number | null
           id?: string
           period_month?: string
+          payload?: Json | null
           skipped?: Json | null
           status?: string | null
           summary?: string | null

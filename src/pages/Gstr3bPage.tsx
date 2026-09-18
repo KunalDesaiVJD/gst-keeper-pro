@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -30,6 +30,8 @@ import { computeGstReceivableRecoDiff } from '@/lib/gstReceivableRecoCalc';
 import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
 import { markFilingPushed } from '@/lib/markFilingPushed';
+import { diffGstr3b, summariseDiff } from '@/utils/gstReturnDiff';
+import ReturnDiffTable from '@/components/dialogs/ReturnDiffTable';
 
 interface Client { id: string; name: string; gstin: string; regular_sub_type?: string | null; builder_itc_type?: string | null; registration_type?: string | null }
 
@@ -43,6 +45,7 @@ interface Gstr3bPushVersion {
   summary: string | null;
   filled_count: number | null;
   skipped: string[] | null;
+  payload: unknown | null;
 }
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -112,12 +115,17 @@ const Gstr3bPage: React.FC = () => {
   const [extReady, setExtReady] = useState(false);
   const [isPushing, setIsPushing] = useState(false);
   const [pushResult, setPushResult] = useState<{ ok: boolean; summary: string; skipped?: string[] } | null>(null);
+  // What the last push actually sent. A ref (not state) because the portal's
+  // reply arrives on a window message whose handler must read the payload as it
+  // was at push time, without re-rendering to get at it.
+  const pushedPayloadRef = useRef<unknown>(null);
 
   // Push audit trail — one row per "Push to GST Portal" attempt, mirroring
   // GSTR-1's gstr1_upload_versions (see GSTR1DataPage.tsx / that migration).
   const [versions, setVersions] = useState<Gstr3bPushVersion[]>([]);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [expandedVersionId, setExpandedVersionId] = useState<string | null>(null);
+  const [expandedDiffId, setExpandedDiffId] = useState<string | null>(null);
 
   const fetchVersions = useCallback(async () => {
     if (!selectedClient || !selectedMonth) { setVersions([]); return; }
@@ -150,6 +158,11 @@ const Gstr3bPage: React.FC = () => {
       summary: v.summary,
       filled_count: v.filledCount ?? null,
       skipped: (v.skipped as any) ?? null,
+      // The exact JSON this attempt pushed, so any two versions can be diffed
+      // later to show which figure changed and who changed it. Captured at the
+      // moment of the push, not re-derived — a re-derivation would reflect
+      // today's data, which is precisely what the audit trail must not do.
+      payload: (pushedPayloadRef.current as any) ?? null,
     });
     fetchVersions();
   }, [selectedClient, selectedMonth, user?.id, fetchVersions]);
@@ -416,6 +429,7 @@ const Gstr3bPage: React.FC = () => {
 
     setIsPushing(true);
     setPushResult(null);
+    pushedPayloadRef.current = result.json;
     window.postMessage(
       {
         __gstkPushGstr3b: {
@@ -790,7 +804,8 @@ const Gstr3bPage: React.FC = () => {
           <DialogHeader>
             <DialogTitle>GSTR-3B push history — {selectedClientName || '—'} · {toShort(selectedMonth)}</DialogTitle>
             <DialogDescription>
-              Every "Push to GST Portal" attempt for this return, with what got filled and what didn't.
+              Every "Push to GST Portal" attempt for this return, with what got filled, what didn't,
+              and which figures changed since the previous attempt.
             </DialogDescription>
           </DialogHeader>
           <div className="max-h-[65vh] overflow-auto rounded-md border">
@@ -803,11 +818,17 @@ const Gstr3bPage: React.FC = () => {
                   <TableHead>Status</TableHead>
                   <TableHead>Summary</TableHead>
                   <TableHead className="w-24">Skipped</TableHead>
+                  <TableHead className="w-28">Changes</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {versions.map((v) => {
+                {versions.map((v, idx) => {
                   const severity: PushSeverity = v.status === 'ok' ? pushSeverity(v.skipped) : 'critical';
+                  // versions are ordered newest first, so the version this one
+                  // is compared against is the next entry in the list.
+                  const prev = versions[idx + 1];
+                  const canDiff = !!v.payload && !!prev?.payload;
+                  const diffRows = canDiff ? diffGstr3b(prev.payload, v.payload) : [];
                   const statusClass = v.status === 'ok'
                     ? (severity === 'ok' ? 'text-success' : severity === 'warning' ? 'text-warning' : 'text-destructive')
                     : v.status === 'failed' ? 'text-destructive' : 'text-muted-foreground';
@@ -843,13 +864,41 @@ const Gstr3bPage: React.FC = () => {
                           <span className="text-muted-foreground text-xs">—</span>
                         )}
                       </TableCell>
+                      <TableCell>
+                        {canDiff ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className={`h-7 text-xs ${diffRows.length > 0 ? 'text-warning hover:text-warning' : ''}`}
+                            onClick={() => setExpandedDiffId(expandedDiffId === v.id ? null : v.id)}
+                            title={`Compare this push against v${prev.version_number}`}
+                          >
+                            {expandedDiffId === v.id ? 'Hide' : summariseDiff(diffRows)}
+                          </Button>
+                        ) : (
+                          <span className="text-muted-foreground text-xs" title={v.payload ? 'Nothing earlier to compare against' : 'This push predates change tracking'}>
+                            {v.payload ? 'First push' : '—'}
+                          </span>
+                        )}
+                      </TableCell>
                     </TableRow>
                     {expandedVersionId === v.id && v.skipped && v.skipped.length > 0 && (
                       <TableRow>
-                        <TableCell colSpan={6} className="bg-muted/40 p-3">
+                        <TableCell colSpan={7} className="bg-muted/40 p-3">
                           <ul className="text-xs list-disc pl-4 space-y-0.5">
                             {v.skipped.map((s, i) => <li key={i}>{s}</li>)}
                           </ul>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {expandedDiffId === v.id && canDiff && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="bg-muted/40 p-3">
+                          <p className="text-xs text-muted-foreground mb-2">
+                            What <span className="font-mono">v{v.version_number}</span> ({v.actor_name || '—'}) changed
+                            against <span className="font-mono">v{prev.version_number}</span> ({prev.actor_name || '—'}).
+                          </p>
+                          <ReturnDiffTable rows={diffRows} againstLabel={`v${prev.version_number}`} />
                         </TableCell>
                       </TableRow>
                     )}
@@ -858,7 +907,7 @@ const Gstr3bPage: React.FC = () => {
                 })}
                 {versions.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center text-muted-foreground py-6">
+                    <TableCell colSpan={7} className="text-center text-muted-foreground py-6">
                       No pushes recorded yet for this return.
                     </TableCell>
                   </TableRow>
