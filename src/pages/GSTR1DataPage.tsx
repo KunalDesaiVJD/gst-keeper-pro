@@ -37,6 +37,7 @@ import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { isBuilderGenerated as isBuilderSourced, stripInternalFields } from '@/utils/builderGstr1';
+import { markFilingPushed } from '@/lib/markFilingPushed';
 import Gstr1ManualEntryPanel from '@/components/gstr1/Gstr1ManualEntryPanel';
 import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
@@ -567,6 +568,21 @@ const GSTR1DataPage: React.FC = () => {
             toast.success(summary);
           }
           setUploadResult({ ok: !isPartial, message: summary, errors: realErrors });
+          // Only a clean upload counts as 'Pushed'. A partial one means GSTN
+          // rejected some invoices, so the portal does NOT hold this return's
+          // data — calling that "Pushed" would overstate what happened and
+          // hide that the staffer still has errors to fix and re-upload.
+          if (!isPartial && selectedClient && selectedMonth) {
+            markFilingPushed({
+              clientId: selectedClient,
+              returnType: 'GSTR-1',
+              periodMonth: selectedMonth,
+              actorId: user?.id ?? null,
+            }).then((res) => {
+              if (!res.ok) toast.warning('Uploaded, but the filing status could not be updated: ' + res.error);
+              fetchFilingStatus();
+            });
+          }
         } else {
           const msg = r.error || 'Portal upload failed.';
           toast.error('Upload failed: ' + msg);
@@ -586,7 +602,7 @@ const GSTR1DataPage: React.FC = () => {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, [fetchGSTR1Data, fetchVersions]);
+  }, [fetchGSTR1Data, fetchVersions, fetchFilingStatus, selectedClient, selectedMonth, user?.id]);
 
   // Opens the persistent hidden <input type="file"> below. Using a stable ref
   // (instead of a dynamically-created input with an onchange closure) means

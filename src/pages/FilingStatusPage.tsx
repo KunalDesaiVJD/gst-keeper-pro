@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Download, FileText, Lock, Unlock, Search, Filter, ChevronDown, Info, Upload, Eye, Trash2, LogIn, AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
-import { FilingStatusType, ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth, RegistrationType, RETURN_TYPES_BY_REGISTRATION, filingStatusDisplayLabel } from '@/types';
+import { FilingStatusType, ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth, RegistrationType, RETURN_TYPES_BY_REGISTRATION, filingStatusDisplayLabel, isSystemOnlyFilingStatus, PENDING_FILING_STATUSES } from '@/types';
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -41,6 +41,9 @@ const normalizeAccountant = (raw: string | null | undefined): string => {
 const filingStatusAccent = (status: string): string => {
   switch (status) {
     case 'Filed': return 'border-l-4 border-l-success bg-success/5';
+    // Pushed sits one step short of Filed — close enough to read as progress,
+    // distinct enough that nobody mistakes it for a filed return.
+    case 'Pushed': return 'border-l-4 border-l-primary bg-primary/5';
     case 'Mismatch in Data': return 'border-l-4 border-l-destructive bg-destructive/5';
     case 'Data Pending':
     case 'Prepared Pending': return 'border-l-4 border-l-warning bg-warning/5';
@@ -146,7 +149,7 @@ const FilingStatusPage: React.FC = () => {
     if (filterParam === 'late') {
       setLateFilingsFilter(true);
     } else if (filterParam === 'pending') {
-      setSelectedStatuses(['Prepared', 'Data Pending', 'Mismatch in Data', 'Not Verified', 'Prepared Pending', 'Data Received']);
+      setSelectedStatuses([...PENDING_FILING_STATUSES]);
     } else if (filterParam === 'filed') {
       setSelectedStatuses(['Filed']);
     } else if (filterParam === 'target_due_today') {
@@ -161,7 +164,7 @@ const FilingStatusPage: React.FC = () => {
         setSelectedTargetDates([parseInt(targetDateParam)]);
       }
       // Show all non-filed statuses
-      setSelectedStatuses(['Prepared', 'Data Pending', 'Mismatch in Data', 'Not Verified', 'Prepared Pending', 'Data Received']);
+      setSelectedStatuses([...PENDING_FILING_STATUSES]);
     }
     
     // Initialize month from context
@@ -670,7 +673,16 @@ const FilingStatusPage: React.FC = () => {
 
   const handleStatusChange = async (record: FilingRecord, newStatus: FilingStatusType, localArn?: string) => {
     const isNewRecord = record.id.startsWith('temp-');
-    
+
+    // 'Pushed' is evidence that this app pushed the return to the GST portal
+    // and the portal took it. Nobody types that in — it is set by the
+    // mark_filing_pushed RPC and a database trigger rejects every other route.
+    // The dropdown already disables it; this catches any other caller.
+    if (isSystemOnlyFilingStatus(newStatus)) {
+      toast.error('"Pushed" is set automatically when a push to the GST portal succeeds. It cannot be selected by hand.');
+      return;
+    }
+
     // Check if user is allowed to change from Filed status
     const wasFiledBefore = record.status === 'Filed';
     if (wasFiledBefore && newStatus !== 'Filed') {
@@ -1235,7 +1247,7 @@ const FilingStatusPage: React.FC = () => {
   };
 
   // All available statuses
-  const allStatuses: FilingStatusType[] = ['Prepared', 'Prepared Pending', 'Data Pending', 'Data Received', 'Mismatch in Data', 'Filed'];
+  const allStatuses: FilingStatusType[] = ['Prepared', 'Prepared Pending', 'Data Pending', 'Data Received', 'Mismatch in Data', 'Pushed', 'Filed'];
 
   // Get unique target dates for filter dropdown
   const getUniqueTargetDates = (): number[] => {
@@ -1637,6 +1649,18 @@ const FilingStatusPage: React.FC = () => {
                         <SelectItem value="Data Pending">Data Pending</SelectItem>
                         <SelectItem value="Data Received">Data Received</SelectItem>
                         <SelectItem value="Mismatch in Data">Mismatch in Data</SelectItem>
+                        {/* Set only by a successful push to the GST portal, never by hand.
+                            Rendered (disabled) rather than omitted so the trigger can still
+                            display it when a row IS 'Pushed' — Radix reads the label off the
+                            matching item — and so the category is visible in the list. The
+                            database trigger is what actually enforces this. */}
+                        <SelectItem
+                          value="Pushed"
+                          disabled
+                          title="Set automatically when a push to the GST portal succeeds — it cannot be chosen by hand."
+                        >
+                          Pushed
+                        </SelectItem>
                         <SelectItem value="Filed">Filed</SelectItem>
                       </SelectContent>
                     </Select>
