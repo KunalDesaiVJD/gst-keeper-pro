@@ -147,14 +147,20 @@ export async function computeSuspendedRecoDiff(clientId: string, periodMonth: st
     booksCgst = totals.cgst; booksSgst = totals.sgst; booksIgst = totals.igst;
   }
 
-  const openingTotal = openingCgst + openingSgst + openingIgst;
-  const portalTotal = portalCgst + portalSgst + portalIgst;
-  const booksTotal = booksCgst + booksSgst + booksIgst;
+  const diffCgst = applyTolerance(normalizeZero(openingCgst + portalCgst - booksCgst));
+  const diffSgst = applyTolerance(normalizeZero(openingSgst + portalSgst - booksSgst));
+  const diffIgst = applyTolerance(normalizeZero(openingIgst + portalIgst - booksIgst));
 
   return {
-    cgst: applyTolerance(normalizeZero(openingCgst + portalCgst - booksCgst)),
-    sgst: applyTolerance(normalizeZero(openingSgst + portalSgst - booksSgst)),
-    igst: applyTolerance(normalizeZero(openingIgst + portalIgst - booksIgst)),
-    total: applyTolerance(normalizeZero(openingTotal + portalTotal - booksTotal)),
+    cgst: diffCgst,
+    sgst: diffSgst,
+    igst: diffIgst,
+    // Derived from the three column diffs above (each already put through the
+    // same ₹10 tolerance) rather than re-tolerancing the raw opening+portal-books
+    // total on its own — otherwise three individually-forgiven sub-₹10 gaps could
+    // stack into a combined raw gap over ₹10 and report a "difference" here even
+    // though the Suspended Reco page itself shows every column at 0. Must stay
+    // identical to SuspendedRecoPage.tsx's diffTotal formula.
+    total: normalizeZero(diffCgst + diffSgst + diffIgst),
   };
 }
