@@ -2,15 +2,32 @@ import React, { useMemo, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { CheckCircle2, AlertTriangle, Inbox } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, XCircle, Inbox } from 'lucide-react';
 
 // Reclaiming ITC that was previously reversed (because the invoice wasn't in
 // 2B at the time) requires evidence it's actually back — the same invoice
 // reappearing in a later GSTR-2B. This dialog makes staff pick which specific
 // invoice on the OTHER side matches, and blocks confirming unless every head
-// (taxable value, IGST, CGST, SGST) is an exact match — so the same credit
-// can never be counted twice (once as fresh ITC, once as a reclaim) and never
-// reclaimed against evidence that doesn't actually support it.
+// (taxable value, IGST, CGST, SGST) agrees — so the same credit can never be
+// counted twice (once as fresh ITC, once as a reclaim) and never reclaimed
+// against evidence that doesn't actually support it.
+//
+// "Agrees" allows up to Rs.2 per head. The match used to be exact to the
+// paisa, which sounds safe but wasn't workable: the supplier's GSTR-1 and the
+// firm's books round independently — per-line vs per-invoice rounding, and the
+// portal's own half-up rounding on each head — so the same invoice routinely
+// comes back a rupee or two out. An exact test left staff unable to reclaim
+// credit that was plainly, visibly the same invoice, with no way forward but
+// Expense out (writing off real credit) or editing the books to fit.
+//
+// Rs.2 per head is deliberately small enough that it can only absorb rounding:
+// it is a fixed rupee amount, not a percentage, so it does not widen with the
+// invoice — a Rs.50 lakh invoice gets the same Rs.2 latitude as a Rs.500 one,
+// and any genuine difference in rate, quantity or value clears it by orders of
+// magnitude. Each head is tested on its own, so the slack cannot be pooled
+// into a larger total. The UI still distinguishes an exact match from one
+// leaning on the tolerance, and shows the actual difference, so nobody
+// confirms a rounding allowance without seeing it.
 
 export interface ReclaimInvoiceLite {
   id: string;
@@ -41,10 +58,33 @@ const isoToDisplay = (iso: string | null) => {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
 };
 
-const exactlyMatches = (a: ReclaimInvoiceLite, b: ReclaimInvoiceLite) => {
-  const eq = (x: number, y: number) => Math.abs((x || 0) - (y || 0)) < 0.01;
-  return eq(a.taxableValue, b.taxableValue) && eq(a.igst, b.igst) && eq(a.cgst, b.cgst) && eq(a.sgst, b.sgst);
+// Rs.2 per head, inclusive. See the note at the top of the file for why this
+// is a flat rupee figure rather than a percentage.
+export const RECLAIM_ROUNDING_TOLERANCE = 2;
+
+// Below this the two figures are the same number, just floating-point noise
+// apart — that is an exact match, not a use of the tolerance.
+const EXACT_EPSILON = 0.01;
+
+type MatchVerdict = 'exact' | 'rounding' | 'mismatch';
+
+const headDeltas = (a: ReclaimInvoiceLite, b: ReclaimInvoiceLite): number[] => [
+  Math.abs((a.taxableValue || 0) - (b.taxableValue || 0)),
+  Math.abs((a.igst || 0) - (b.igst || 0)),
+  Math.abs((a.cgst || 0) - (b.cgst || 0)),
+  Math.abs((a.sgst || 0) - (b.sgst || 0)),
+];
+
+const verdictFor = (a: ReclaimInvoiceLite, b: ReclaimInvoiceLite): MatchVerdict => {
+  const deltas = headDeltas(a, b);
+  if (deltas.every((d) => d < EXACT_EPSILON)) return 'exact';
+  // Each head stands on its own — the slack is never pooled across heads.
+  if (deltas.every((d) => d <= RECLAIM_ROUNDING_TOLERANCE + 1e-9)) return 'rounding';
+  return 'mismatch';
 };
+
+const largestDelta = (a: ReclaimInvoiceLite, b: ReclaimInvoiceLite): number =>
+  Math.max(...headDeltas(a, b));
 
 const ReclaimMatchDialog: React.FC<Props> = ({
   open, onOpenChange, anchorLabel, anchor, candidates, candidateLabel, onConfirm,
@@ -53,7 +93,8 @@ const ReclaimMatchDialog: React.FC<Props> = ({
   const [confirming, setConfirming] = useState(false);
 
   const selected = useMemo(() => candidates.find((c) => c.id === selectedId) || null, [candidates, selectedId]);
-  const matches = selected && anchor ? exactlyMatches(anchor, selected) : false;
+  const verdict: MatchVerdict | null = selected && anchor ? verdictFor(anchor, selected) : null;
+  const matches = verdict === 'exact' || verdict === 'rounding';
 
   const handleClose = (next: boolean) => {
     if (!next) setSelectedId(null);
@@ -78,7 +119,8 @@ const ReclaimMatchDialog: React.FC<Props> = ({
         <DialogHeader>
           <DialogTitle>Link &amp; Reclaim</DialogTitle>
           <DialogDescription>
-            Pick the {candidateLabel} this invoice matches. Reclaim only posts when every amount matches exactly.
+            Pick the {candidateLabel} this invoice matches. Every amount must agree, within
+            ₹{RECLAIM_ROUNDING_TOLERANCE} per head for rounding.
           </DialogDescription>
         </DialogHeader>
 
@@ -113,7 +155,8 @@ const ReclaimMatchDialog: React.FC<Props> = ({
               <tbody>
                 {candidates.map((c) => {
                   const isSelected = c.id === selectedId;
-                  const doesMatch = anchor ? exactlyMatches(anchor, c) : false;
+                  const rowVerdict = anchor ? verdictFor(anchor, c) : 'mismatch';
+                  const rowDelta = anchor ? largestDelta(anchor, c) : 0;
                   return (
                     <tr
                       key={c.id}
@@ -130,9 +173,21 @@ const ReclaimMatchDialog: React.FC<Props> = ({
                       <td className="border border-border p-2 text-right tabular-nums">{num(c.cgst)}</td>
                       <td className="border border-border p-2 text-right tabular-nums">{num(c.sgst)}</td>
                       <td className="border border-border p-2 text-center">
-                        {doesMatch
-                          ? <CheckCircle2 className="h-4 w-4 text-success inline" />
-                          : <AlertTriangle className="h-4 w-4 text-warning inline" />}
+                        {rowVerdict === 'exact' && (
+                          <CheckCircle2 className="h-4 w-4 text-success inline" aria-label="Exact match" />
+                        )}
+                        {rowVerdict === 'rounding' && (
+                          <AlertTriangle
+                            className="h-4 w-4 text-warning inline"
+                            aria-label={`Within rounding tolerance — off by ₹${num(rowDelta)}`}
+                          />
+                        )}
+                        {rowVerdict === 'mismatch' && (
+                          <XCircle
+                            className="h-4 w-4 text-destructive inline"
+                            aria-label={`Does not match — off by ₹${num(rowDelta)}`}
+                          />
+                        )}
                       </td>
                     </tr>
                   );
@@ -142,10 +197,19 @@ const ReclaimMatchDialog: React.FC<Props> = ({
           )}
         </ScrollArea>
 
-        {selected && !matches && (
+        {selected && anchor && verdict === 'rounding' && (
           <p className="text-xs text-warning flex items-center gap-1">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-            Amounts don't match exactly — this can't be confirmed as a reclaim of the same invoice.
+            Off by ₹{num(largestDelta(anchor, selected))} at most — within the ₹{RECLAIM_ROUNDING_TOLERANCE}
+            {' '}rounding tolerance, so this can be confirmed.
+          </p>
+        )}
+
+        {selected && anchor && verdict === 'mismatch' && (
+          <p className="text-xs text-destructive flex items-center gap-1">
+            <XCircle className="h-3.5 w-3.5 shrink-0" />
+            Off by ₹{num(largestDelta(anchor, selected))} — more than the ₹{RECLAIM_ROUNDING_TOLERANCE} allowed
+            {' '}for rounding, so this can't be confirmed as a reclaim of the same invoice.
           </p>
         )}
 
