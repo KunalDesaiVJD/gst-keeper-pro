@@ -71,8 +71,8 @@ staff decision to make there.
 evidences it's actually back in 2B — reclaim is never a self-certified
 monthly pick. Two entry points, same matching dialog
 (`ReclaimMatchDialog.tsx`), same rule — the pending item and the candidate
-2B doc must match **exactly** on taxable value, IGST, CGST and SGST before
-Confirm is enabled:
+2B doc must agree on taxable value, IGST, CGST and SGST, **within ₹2 per
+head**, before Confirm is enabled:
 
 - **From a freshly imported 2B doc** — classify it **RECLAIM** instead of
   MATCHED. This is the important correctness point: if the same invoice were
@@ -91,6 +91,36 @@ cleared) so the pending item goes back to "awaiting reclaim" rather than
 silently staying marked reclaimed against a doc that no longer says so —
 `handleDocActionChange` and `applyBulk` both do this before writing the new
 action.
+
+**The ₹2 rounding tolerance (added 2026-09-19).** This was an exact match to
+the paisa until the firm asked for it to be relaxed. Exact sounds like the
+safe default, but it isn't workable: the supplier's GSTR-1 and the firm's
+books round independently — per-line versus per-invoice, and the portal
+applies its own half-up rounding to each head — so the same invoice routinely
+returns a rupee or two out. Staff were left unable to reclaim credit that was
+visibly the same invoice, with only two ways out, both bad: **Expense out**
+(writing off real, recoverable credit) or editing the books to fit the
+portal.
+
+The tolerance is deliberately narrow, and the shape matters as much as the
+number:
+
+- **A flat ₹2, not a percentage.** It does not widen with the invoice — a
+  ₹50 lakh invoice gets exactly the same ₹2 of latitude as a ₹500 one. Any
+  genuine difference in rate, quantity or value clears it by orders of
+  magnitude, so the tolerance can only ever absorb rounding.
+- **Per head, never pooled.** Taxable value, IGST, CGST and SGST are each
+  tested on their own, so four heads cannot contribute ₹2 apiece into an ₹8
+  aggregate difference.
+- **Exact and tolerated matches stay visually distinct.** The dialog shows a
+  green tick for an exact match, an amber warning for one leaning on the
+  tolerance (with the actual rupee difference), and a red cross for anything
+  beyond it. Staff always see when they are spending the allowance.
+
+`ReclaimMatchDialog.tsx` is the only gate on this — `handleReclaimConfirm` in
+`Import2BTab.tsx` just writes the link and re-validates nothing, so the
+constant `RECLAIM_ROUNDING_TOLERANCE` in that file is the single place the
+number lives.
 
 Marking an item **Expense out** instead (no matching invoice — the credit is
 being written off, not reclaimed) is a direct action in Pending Items; it
