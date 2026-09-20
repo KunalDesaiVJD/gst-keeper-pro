@@ -535,15 +535,47 @@
     setVal($('#username'), cur.creds.user);
     setVal($('#user_pass'), cur.creds.pass);
     await waitFor('#imgCaptcha', 8000);
-    // No more custom popup — wait for the CAPTCHA to be typed straight into
-    // the portal's own native #captcha field, then submit ourselves. Matches
-    // the exact live-testing flow used throughout the refund-sync investigation
-    // (typing directly into the portal's own box, not an extension overlay).
-    const t = Date.now();
-    while (Date.now() - t < 60000) {
-      const cap = $('#captcha');
-      if (cap && String(cap.value).trim().length > 0) break;
-      await sleep(200);
+    // No custom popup — the CAPTCHA is typed straight into the portal's own
+    // native #captcha field. The field has no maxlength/expected-length we
+    // can read (confirmed live: only a numeric-only ng-pattern), so "is it
+    // done yet" can't be answered by length. Instead we tell a HUMAN typing
+    // it from an AUTOMATED fill (an OCR result, or any other script setting
+    // .value in one shot) by how the value changes: a real keystroke grows
+    // the value by exactly one character at a time, while a programmatic
+    // fill jumps the value by more than one character in a single 'input'
+    // event (the field also blocks a real clipboard paste via
+    // data-ng-paste, so a multi-character jump can only mean a script wrote
+    // it, never a person). Only an automated jump auto-submits; a human
+    // typing one character at a time is left alone entirely — they press
+    // Enter or click Login themselves, same as using the portal directly.
+    // This replaces the old "click the instant the box is non-empty" logic,
+    // which fired on literally the first keystroke and submitted a
+    // guaranteed-wrong, half-typed CAPTCHA.
+    const cap = $('#captcha');
+    let autoFilled = false;
+    if (cap) {
+      autoFilled = await new Promise((resolve) => {
+        let prevLen = (cap.value || '').length;
+        const onInput = () => {
+          const newLen = (cap.value || '').length;
+          const delta = newLen - prevLen;
+          prevLen = newLen;
+          if (delta > 1 && newLen > 0) {
+            cap.removeEventListener('input', onInput);
+            clearTimeout(giveUp);
+            resolve(true);
+          }
+          // A one-character-at-a-time change (typing or backspacing) never
+          // resolves here — the human submits manually, and this promise
+          // is left to time out below.
+        };
+        cap.addEventListener('input', onInput);
+        const giveUp = setTimeout(() => { cap.removeEventListener('input', onInput); resolve(false); }, 60000);
+      });
+    }
+    if (!autoFilled) {
+      banner('Type the CAPTCHA and press Login yourself — auto-submit only kicks in for a scripted/OCR fill.' + progress, '#2563eb');
+      return; // Human takes it from here; their own click navigates the page and re-runs this script.
     }
     const btn =
       $$('button').find((b) => /login/i.test(b.textContent || '') && /btn-primary/.test(b.className || '')) ||
