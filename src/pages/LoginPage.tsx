@@ -50,7 +50,7 @@ const LoginPage: React.FC = () => {
   };
 
   const handleFirstLoginPasswordChange = async (newPassword: string) => {
-    const success = await completeFirstLogin(newPassword);
+    const success = await completeFirstLogin(newPassword, password);
     if (success) {
       setShowFirstLoginDialog(false);
       navigate('/dashboard');

@@ -80,7 +80,7 @@ interface AuthContextType {
   isLoading: boolean;
   login: (identifier: string, password: string) => Promise<{ success: boolean; isFirstLogin?: boolean }>;
   logout: () => Promise<void>;
-  completeFirstLogin: (newPassword: string) => Promise<boolean>;
+  completeFirstLogin: (newPassword: string, oldPassword: string) => Promise<boolean>;
   isStaffRole: () => boolean;
   canManageEmployees: () => boolean;
   canUnlockSheets: () => boolean;
@@ -141,7 +141,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<AppUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [pendingFirstLogin, setPendingFirstLogin] = useState<{ userId: string; firstName: string } | null>(null);
+  const [pendingFirstLogin, setPendingFirstLogin] = useState<{ userId: string; firstName: string; oldPassword: string } | null>(null);
 
   const fetchUserData = useCallback(async (authUserId: string, email: string): Promise<AppUser | null> => {
     try {
@@ -273,8 +273,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (staffData && staffData.length > 0) {
         const staff = staffData[0];
         
-        if (staff.is_first_login && password === '2026') {
-          setPendingFirstLogin({ userId: staff.user_id, firstName: staff.first_name });
+        if (staff.is_first_login) {
+          setPendingFirstLogin({ userId: staff.user_id, firstName: staff.first_name, oldPassword: password });
           toast.info('Password Change Required', {
             description: 'Please set a new password to continue.',
           });
@@ -318,8 +318,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const client = clientData[0];
           
           // Check if first login - need to change password
-          if (client.is_first_login && password === client.gstin) {
-            setPendingFirstLogin({ userId: client.client_id, firstName: client.client_name });
+          if (client.is_first_login) {
+            setPendingFirstLogin({ userId: client.client_id, firstName: client.client_name, oldPassword: password });
             toast.info('Password Change Required', {
               description: 'Please set a new password to continue.',
             });
@@ -359,7 +359,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  const completeFirstLogin = useCallback(async (newPassword: string): Promise<boolean> => {
+  const completeFirstLogin = useCallback(async (newPassword: string, oldPassword: string): Promise<boolean> => {
     if (!pendingFirstLogin) {
       return false;
     }
@@ -376,6 +376,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // This is a client - use client completion function
         const { error: clientError } = await supabase.rpc('complete_client_first_login', {
           target_client_id: pendingFirstLogin.userId,
+          old_password: oldPassword,
           new_password: newPassword
         });
 
@@ -408,6 +409,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // This is a staff user - use staff completion function
       const { error: staffError } = await supabase.rpc('complete_first_login', {
         target_user_id: pendingFirstLogin.userId,
+        old_password: oldPassword,
         new_password: newPassword
       });
 

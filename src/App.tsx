@@ -8,6 +8,7 @@ import { MonthProvider } from "@/contexts/MonthContext";
 import { ClientProvider } from "@/contexts/ClientContext";
 import MainLayout from "@/components/layout/MainLayout";
 import { StaffGuard } from "@/components/guards/StaffGuard";
+import { ErrorBoundary } from "@/components/guards/ErrorBoundary";
 import LoginPage from "@/pages/LoginPage";
 import AgreementConfirmPage from "@/pages/AgreementConfirmPage";
 import DashboardPage from "@/pages/DashboardPage";
@@ -68,11 +69,12 @@ const App = () => (
         <AuthProvider>
           <MonthProvider>
             <ClientProvider>
+              <ErrorBoundary>
               <Routes>
                 <Route path="/login" element={<LoginPage />} />
                 <Route path="/agreement-confirm/:token" element={<AgreementConfirmPage />} />
                 <Route path="/" element={<Navigate to="/login" replace />} />
-                
+
                 {/* Protected Routes */}
                 <Route element={<MainLayout />}>
                   <Route path="/dashboard" element={<DashboardPage />} />
@@ -126,6 +128,7 @@ const App = () => (
                 
                 <Route path="*" element={<NotFound />} />
               </Routes>
+              </ErrorBoundary>
             </ClientProvider>
           </MonthProvider>
         </AuthProvider>
