@@ -2,6 +2,29 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-09-22 — Fix: GSTR-3B PDF pull failed behind an auto-popup
+
+**Problem:** Pulling a filed GSTR-3B's ARN + PDF via Filing Status's Portal
+button failed with "could not capture the PDF," even though downloading the
+same PDF by hand on the portal worked fine.
+
+**Root cause:** The GST portal auto-shows a "System generated summary"
+popup (`#statustable`) every time the GSTR-3B return page loads. It sits on
+top of the real download button. The extension's download search was also a
+loose text match ("download" + "pdf"), which risked grabbing the wrong
+control — the page has a second, red "SYSTEM GENERATED GSTR-3B" button that
+downloads a different file entirely.
+
+**Fix:** `handleReturnView` in `content.js` now, for GSTR-3B specifically:
+1. Checks if the summary popup is open and closes it, waiting until it's
+   actually gone (not just clicked).
+2. Targets the exact download button by its `data-ng-click="downloadPrePdf()"`
+   attribute instead of guessing by text.
+3. Falls back to the old generic search only if that exact button isn't
+   found (e.g. an unfiled period has no such button).
+
+Confirmed live against a real filed GSTR-3B return.
+
 ## 2026-09-20 — Fix: CAPTCHA login submitted on the first keystroke
 
 **Problem:** When logging in manually (Clients → Credentials → Login, or Filing
