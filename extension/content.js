@@ -791,9 +791,39 @@
       // rather than silently pretending nothing was tried.
     }
 
-    banner('Looking for the ' + ret.return_type + ' PDF download…');
-    const t = (x) => (x.textContent || '') + ' ' + (x.getAttribute('title') || '');
     let dl = null;
+
+    // For GSTR-3B the portal auto-shows a "System generated summary" popup
+    // (#statustable) on every load of this page — confirmed live, same
+    // popup closeGstr3bModal() already handles for the Push-to-Portal flow,
+    // just never wired into this ARN/PDF-pull flow. It sits on top of the
+    // real download button, and the generic text-based search below isn't
+    // reliable here anyway: the page also has a DIFFERENT red "SYSTEM
+    // GENERATED GSTR-3B" button that downloads a different file and would
+    // happily match a loose "download"+"pdf" guess. Target the real button
+    // by its exact ng-click attribute instead, closing the popup first.
+    if (/GSTR-?3B/i.test(ret.return_type || '')) {
+      banner('Closing the system-generated-summary popup, if it\'s open…');
+      const popup = $('#statustable');
+      if (popup && getComputedStyle(popup).display === 'block') {
+        const closeBtn = popup.querySelector('button[data-dismiss="modal"]');
+        if (closeBtn) closeBtn.click();
+        const pt0 = Date.now();
+        while (Date.now() - pt0 < 5000 && getComputedStyle(popup).display === 'block') await sleep(200);
+      }
+      const blueBtn = await waitFor('button[data-ng-click="downloadPrePdf()"]', 15000);
+      if (blueBtn) {
+        blueBtn.scrollIntoView({ block: 'center' });
+        await sleep(300); // let the scroll settle before the click below
+        dl = blueBtn;
+      }
+      // If not found (e.g. an unfiled period has no such button), fall
+      // through to the generic search — it'll report honestly if that also
+      // finds nothing, rather than silently giving up here.
+    }
+
+    if (!dl) banner('Looking for the ' + ret.return_type + ' PDF download…');
+    const t = (x) => (x.textContent || '') + ' ' + (x.getAttribute('title') || '');
     const t0 = Date.now();
     while (Date.now() - t0 < 20000 && !dl) {
       // Only content controls — exclude the portal's top-nav "Downloads" menu.
