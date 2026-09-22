@@ -372,12 +372,15 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   const isPartialITC = input.builderItcType === 'PARTIAL_ITC';
   const commercialArea = input.commercialArea || 0;
   const residentialArea = input.residentialArea || 0;
-  // Keep Total 4A consistent with `itcAvail` below (which already folds in
-  // the manual 4A(5) adjustment) so the apportionment ratio isn't applied
-  // against a stale pre-adjustment total.
-  const adjustedA = (adj4A5.igst || adj4A5.cgst || adj4A5.sgst)
-    ? A.map((r) => (r.srNo === '5.1' ? { ...r, igst: r.igst + adj4A5.igst, cgst: r.cgst + adj4A5.cgst, sgst: r.sgst + adj4A5.sgst } : r))
-    : A;
+  // Keep Total 4A consistent with `itcAvail` above (which uses the live
+  // `isrc` for row (3) and folds in the manual 4A(5) adjustment) so the
+  // apportionment ratio isn't applied against a stale base.
+  const adjustedA = A.map((r) => {
+    if (r.srNo === '(3)') return { ...r, igst: isrc.igst, cgst: isrc.cgst, sgst: isrc.sgst };
+    if (r.srNo === '5.1' && (adj4A5.igst || adj4A5.cgst || adj4A5.sgst))
+      return { ...r, igst: r.igst + adj4A5.igst, cgst: r.cgst + adj4A5.cgst, sgst: r.sgst + adj4A5.sgst };
+    return r;
+  });
   const partialSplit = isPartialITC
     ? computePartialItcSplit({ section4A: adjustedA, section4B: B.map((r) => ({ ...r, particular: r.particular || '' })), commercialArea, residentialArea })
     : null;
