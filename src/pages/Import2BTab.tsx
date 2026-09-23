@@ -219,9 +219,13 @@ const Import2BTab: React.FC = () => {
   }, []);
 
   const fetchClients = useCallback(async () => {
-    const { data } = await supabase.from('clients').select('id, name, gstin').order('name');
+    let query = supabase.from('clients').select('id, name, gstin').order('name');
+    if (user && !isStaffRole()) {
+      query = query.eq('id', user.id);
+    }
+    const { data } = await query;
     setClients(data || []);
-  }, []);
+  }, [user, isStaffRole]);
 
   const fetchAll = useCallback(async () => {
     setSelected(new Set());

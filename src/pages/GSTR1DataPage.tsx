@@ -309,10 +309,14 @@ const GSTR1DataPage: React.FC = () => {
   }, [selectedMonth]);
 
   const fetchClients = useCallback(async () => {
-    const { data } = await supabase
+    let query = supabase
       .from('clients').select('id, name, gstin, regular_sub_type, registration_type, gstr1_import_mode').order('name');
+    if (user && !isStaffRole()) {
+      query = query.eq('id', user.id);
+    }
+    const { data } = await query;
     setClients((data || []) as Client[]);
-  }, []);
+  }, [user, isStaffRole]);
 
   /**
    * Promoters do not upload a GSTR-1. Their outward side is computed in the

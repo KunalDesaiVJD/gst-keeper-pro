@@ -87,27 +87,27 @@ const App = () => (
                   <Route path="/itc-summary" element={<ITCAndReceivablePage />} />
                   <Route path="/rcm-summary" element={<RCMSummaryPage />} />
                   <Route path="/manage-masters" element={<StaffGuard><ManageMastersPage /></StaffGuard>} />
-                  <Route path="/filing-status" element={<FilingStatusPage />} />
-                  <Route path="/reminders" element={<RemindersPage />} />
-                  <Route path="/gst-running-update" element={<GSTRunningUpdatePage />} />
+                  <Route path="/filing-status" element={<StaffGuard><FilingStatusPage /></StaffGuard>} />
+                  <Route path="/reminders" element={<StaffGuard><RemindersPage /></StaffGuard>} />
+                  <Route path="/gst-running-update" element={<StaffGuard><GSTRunningUpdatePage /></StaffGuard>} />
                   <Route path="/gstr1-data" element={<GSTR1DataPage />} />
-                  <Route path="/gstr3b" element={<Gstr3bPage />} />
-                  <Route path="/gstr3b-adjustments" element={<Gstr3bAdjustmentsPage />} />
-                  <Route path="/advances" element={<AdvancesPage />} />
+                  <Route path="/gstr3b" element={<StaffGuard><Gstr3bPage /></StaffGuard>} />
+                  <Route path="/gstr3b-adjustments" element={<StaffGuard><Gstr3bAdjustmentsPage /></StaffGuard>} />
+                  <Route path="/advances" element={<StaffGuard><AdvancesPage /></StaffGuard>} />
                   <Route path="/annual-return" element={<AnnualReturnPage />} />
                   {/* The workspace is the way in. The individual routes below stay
                       live so existing links and bookmarks keep working. */}
-                  <Route path="/builder" element={<BuilderWorkspacePage />} />
-                  <Route path="/builder-setup" element={<BuilderSettingsPage />} />
-                  <Route path="/builder-projects" element={<BuilderProjectsPage />} />
-                  <Route path="/builder-projects/:projectId" element={<BuilderProjectDetailPage />} />
-                  <Route path="/builder-projects/:projectId/bookings" element={<BuilderBookingsPage />} />
-                  <Route path="/builder-projects/:projectId/bu-events" element={<BuilderBuEventsPage />} />
-                  <Route path="/builder-projects/:projectId/adjustments" element={<BuilderAdjustmentsPage />} />
-                  <Route path="/builder-projects/:projectId/fsi" element={<BuilderFsiPage />} />
-                  <Route path="/builder-returns" element={<BuilderReturnsPage />} />
-                  <Route path="/builder-dastavej" element={<BuilderDastavejPage />} />
-                  <Route path="/builder-reports" element={<BuilderReportsPage />} />
+                  <Route path="/builder" element={<StaffGuard><BuilderWorkspacePage /></StaffGuard>} />
+                  <Route path="/builder-setup" element={<StaffGuard><BuilderSettingsPage /></StaffGuard>} />
+                  <Route path="/builder-projects" element={<StaffGuard><BuilderProjectsPage /></StaffGuard>} />
+                  <Route path="/builder-projects/:projectId" element={<StaffGuard><BuilderProjectDetailPage /></StaffGuard>} />
+                  <Route path="/builder-projects/:projectId/bookings" element={<StaffGuard><BuilderBookingsPage /></StaffGuard>} />
+                  <Route path="/builder-projects/:projectId/bu-events" element={<StaffGuard><BuilderBuEventsPage /></StaffGuard>} />
+                  <Route path="/builder-projects/:projectId/adjustments" element={<StaffGuard><BuilderAdjustmentsPage /></StaffGuard>} />
+                  <Route path="/builder-projects/:projectId/fsi" element={<StaffGuard><BuilderFsiPage /></StaffGuard>} />
+                  <Route path="/builder-returns" element={<StaffGuard><BuilderReturnsPage /></StaffGuard>} />
+                  <Route path="/builder-dastavej" element={<StaffGuard><BuilderDastavejPage /></StaffGuard>} />
+                  <Route path="/builder-reports" element={<StaffGuard><BuilderReportsPage /></StaffGuard>} />
                   <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/notices-dashboard" element={<NoticesDashboardPage />} />
                   <Route path="/notices-company-list" element={<CompanyListPage />} />
