@@ -372,12 +372,15 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   const isPartialITC = input.builderItcType === 'PARTIAL_ITC';
   const commercialArea = input.commercialArea || 0;
   const residentialArea = input.residentialArea || 0;
-  // Keep Total 4A consistent with `itcAvail` below (which already folds in
-  // the manual 4A(5) adjustment) so the apportionment ratio isn't applied
-  // against a stale pre-adjustment total.
-  const adjustedA = (adj4A5.igst || adj4A5.cgst || adj4A5.sgst)
-    ? A.map((r) => (r.srNo === '5.1' ? { ...r, igst: r.igst + adj4A5.igst, cgst: r.cgst + adj4A5.cgst, sgst: r.sgst + adj4A5.sgst } : r))
-    : A;
+  // Keep Total 4A consistent with `itcAvail` above (which uses the live
+  // `isrc` for row (3) and folds in the manual 4A(5) adjustment) so the
+  // apportionment ratio isn't applied against a stale base.
+  const adjustedA = A.map((r) => {
+    if (r.srNo === '(3)') return { ...r, igst: isrc.igst, cgst: isrc.cgst, sgst: isrc.sgst };
+    if (r.srNo === '5.1' && (adj4A5.igst || adj4A5.cgst || adj4A5.sgst))
+      return { ...r, igst: r.igst + adj4A5.igst, cgst: r.cgst + adj4A5.cgst, sgst: r.sgst + adj4A5.sgst };
+    return r;
+  });
   const partialSplit = isPartialITC
     ? computePartialItcSplit({ section4A: adjustedA, section4B: B.map((r) => ({ ...r, particular: r.particular || '' })), commercialArea, residentialArea })
     : null;
@@ -386,16 +389,12 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   }
 
   const adj4B1 = sumAdj('4B(1)');
-  // Partial-ITC builder clients: the full split (including the 2B-reco/
-  // 180-day reversal) is reclassified into (1) — see row1Reclassified's doc
-  // comment in builderPartialItc.ts. A promoter has no "ordinary Others" ITC
-  // bucket. No-ITC clients skip both the split AND the plain lookup — (1) is
-  // forced to equal itcAvail exactly, guaranteeing Net ITC (4C) is 0 by
-  // construction rather than by 2B reconciliation happening to classify
-  // every purchase correctly. No manual 4B(1) adjustment folds in here: an
-  // adjustment on top would push 4B(1) past itcAvail and make 4C negative,
-  // breaking the "always zero" guarantee the firm asked for. Non-builder
-  // clients fall through to the plain lookup.
+  // Partial-ITC builder clients: 4B(1) is the carpet-area Rule 42/43
+  // reversal and 4B(2) is the 2B-reco / 180-day reversal (Others), both
+  // computed by computePartialItcSplit in builderPartialItc.ts. No-ITC
+  // clients skip both the split AND the plain lookup — (1) is forced to
+  // equal itcAvail exactly, guaranteeing Net ITC (4C) is 0 by construction.
+  // Non-builder clients fall through to the plain row lookup.
   const revRul = isNoITC
     ? round3(itcAvail) // 4B(1) — locked to the whole of 4A, no exceptions
     : partialSplit
@@ -404,7 +403,7 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   const revOth = isNoITC
     ? { igst: 0, cgst: 0, sgst: 0 } // 4B(2) others — always 0 for a No-ITC builder
     : partialSplit
-    ? round3(partialSplit.row2Reclassified) // 4B(2) others — always 0 for a builder client
+    ? round3(partialSplit.row2Reclassified) // 4B(2) others — 2B-reco / 180-day reversal
     : round3(add3(row(B, '(i)'), row(B, '(ii)'), row(B, '(iii)'))); // 4B(2) others
 
   const rclmd1 = row(D, '(1)');                       // 4D(1) ITC reclaimed which was reversed under 4B(2) in an earlier period
