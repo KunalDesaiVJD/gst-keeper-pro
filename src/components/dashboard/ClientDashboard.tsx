@@ -47,11 +47,10 @@ const ClientDashboard: React.FC = () => {
 
     setIsLoading(true);
     try {
-      // Find client by matching PAN (userId) in GSTIN
       const { data: clients, error } = await supabase
         .from('clients')
-        .select('*')
-        .ilike('gstin', `%${user.userId.toUpperCase()}%`);
+        .select('id, name, gstin, registration_type, registration_date, mobile, email, selected_returns')
+        .eq('id', user.id);
 
       if (error) {
         console.error('Error fetching client:', error);

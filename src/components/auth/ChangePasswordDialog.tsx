@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 interface ChangePasswordDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onPasswordChanged: (newPassword: string) => void;
+  onPasswordChanged: (newPassword: string) => Promise<void> | void;
   isFirstLogin?: boolean;
   userName?: string;
 }
@@ -32,7 +32,7 @@ const ChangePasswordDialog: React.FC<ChangePasswordDialogProps> = ({
       return 'Password must be at least 8 characters long';
     }
     // Disallow common default passwords
-    if (password === '2026' || password.match(/^[A-Z]{2}[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[0-9A-Z]{1}[0-9A-Z]{1}$/)) {
+    if (password === '2026' || password.match(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[0-9A-Z]{1}[A-Z0-9]{1}$/)) {
       return 'Cannot use the default password or GSTIN as your new password';
     }
     return null;
@@ -73,7 +73,7 @@ const ChangePasswordDialog: React.FC<ChangePasswordDialogProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={isFirstLogin ? undefined : onOpenChange}>
-      <DialogContent className="sm:max-w-md" onPointerDownOutside={isFirstLogin ? (e) => e.preventDefault() : undefined}>
+      <DialogContent className="sm:max-w-md" onPointerDownOutside={isFirstLogin ? (e) => e.preventDefault() : undefined} onEscapeKeyDown={isFirstLogin ? (e) => e.preventDefault() : undefined}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Lock className="h-5 w-5 text-primary" />
