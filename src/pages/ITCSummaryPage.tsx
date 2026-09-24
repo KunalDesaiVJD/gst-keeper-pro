@@ -1038,12 +1038,8 @@ const ITCSummaryPage: React.FC = () => {
         sheetData.push([]);
       };
 
-      // Section 4B for a Builder client under apportionment mirrors the
-      // on-screen table's reclassification (see the "iv) Reclassified.../
-      // Less: reclassified..." rows there) instead of dumping the raw,
-      // pre-reclassification component values — otherwise this export would
-      // show (1)/(2) split a different way than the page a CA is looking at
-      // when they click Download.
+      // Section 4B for a Partial ITC builder client uses the calculated
+      // split: (1) = Rule 42/43 reversal, (2) = 2B-reco / 180-day reversal.
       const addSection4B = (rows: ITCRow[]) => {
         sheetData.push(['Section 4B - ITC Reversed']);
         const split = isReversalClient
@@ -1068,8 +1064,6 @@ const ITCSummaryPage: React.FC = () => {
           if (split && row.particular.includes('On Other reversal')) {
             const v = split.onOtherReversal;
             sheetData.push([row.srNo, row.particular, v.igst, v.cgst, v.sgst, row.reasons || '']);
-            const r = split.row2Calculated;
-            sheetData.push(['', 'iv) Reclassified from "Others" below (2B RECO / 180-day reversal)', r.igst, r.cgst, r.sgst, '']);
             continue;
           }
           if (split && row.srNo === '(2)' && row.particular === 'Others') {
@@ -1079,8 +1073,6 @@ const ITCSummaryPage: React.FC = () => {
           }
           if (split && row.particular === 'ITC Reversal for the previous months, if any.') {
             sheetData.push([row.srNo, row.particular, row.igst || 0, row.cgst || 0, row.sgst || 0, row.reasons || '']);
-            const r = split.row2Calculated;
-            sheetData.push(['', 'Less: reclassified to (1) above', -r.igst, -r.cgst, -r.sgst, '']);
             continue;
           }
           sheetData.push([row.srNo || '', row.particular || '', row.igst || 0, row.cgst || 0, row.sgst || 0, row.reasons || '']);
@@ -1592,13 +1584,9 @@ const ITCSummaryPage: React.FC = () => {
                         }
                       }
 
-                      // For Partial ITC / No-ITC: Use calculated values for auto-calculated rows
+                      // For Partial ITC: Use calculated values for auto-calculated rows
                       if (isReversalClient && partialITCCalculatedValues) {
-                        // (1) main row — reclassified: a builder client has no "ordinary
-                        // Others" ITC bucket, so (2)'s 2B-reco/180-day reversal is folded
-                        // in here too (see row1Reclassified in builderPartialItc.ts). Note
-                        // this total no longer equals i)+ii)+iii) below, which still show
-                        // the pre-reclassification apportionment math for reference.
+                        // (1) = Rule 42/43 carpet-area reversal only (main1Calculated).
                         if (row.srNo === '(1)' && row.particular.includes('Calculation of Ineligible ITC')) {
                           const vals = partialITCCalculatedValues.row1Reclassified;
                           return (
@@ -1665,13 +1653,7 @@ const ITCSummaryPage: React.FC = () => {
                         // iii) On Other reversal = -Total(4B)(2) × (Residential / Total Area) - AUTO-CALCULATED
                         if (row.particular.includes('On Other reversal')) {
                           const vals = partialITCCalculatedValues.onOtherReversal;
-                          // iv) — the reclassified-in counterpart of the "Less: reclassified
-                          // to (1)" line rendered under (2) below. Without a visible line
-                          // here, (1)'s total silently didn't equal i)+ii)+iii) shown on
-                          // screen — a real reconciliation gap, not just a documentation
-                          // note, since a CA reading this table has no way to foot it.
-                          const reclass = partialITCCalculatedValues.row2Calculated;
-                          return [
+                          return (
                             <tr key={`4b-${idx}`} className="cell-locked">
                               <td>{row.srNo}</td>
                               <td className="flex items-center gap-2">
@@ -1697,29 +1679,10 @@ const ITCSummaryPage: React.FC = () => {
                                   disabled={isLocked}
                                 />
                               </td>
-                            </tr>,
-                            <tr key={`4b-${idx}-reclass-in`} className="cell-locked bg-muted/10">
-                              <td></td>
-                              <td className="flex items-center gap-2">
-                                iv) Reclassified from "Others" below (2B RECO / 180-day reversal — no separate Others bucket for a builder)
-                                <Badge variant="outline" className="text-xs flex items-center gap-1">
-                                  <Lock className="h-3 w-3" />
-                                  Auto-calculated
-                                </Badge>
-                              </td>
-                              <td className="text-right tabular-nums">{formatNumber(reclass.igst)}</td>
-                              <td className="text-right tabular-nums">{formatNumber(reclass.cgst)}</td>
-                              <td className="text-right tabular-nums">{formatNumber(reclass.sgst)}</td>
-                              <td className="text-right font-medium tabular-nums">
-                                {formatNumber(reclass.igst + reclass.cgst + reclass.sgst)}
-                              </td>
-                              <td></td>
-                            </tr>,
-                          ];
+                            </tr>
+                          );
                         }
-                        // (2) Others row — always 0 for a builder client (reclassified into
-                        // (1) above); sub-rows below still show the raw 2B-reco/180-day
-                        // source figures for audit trail.
+                        // (2) Others = 2B-reco / 180-day reversal (row2Calculated).
                         if (row.srNo === '(2)' && row.particular === 'Others') {
                           const vals = partialITCCalculatedValues.row2Reclassified;
                           return (
@@ -1750,59 +1713,6 @@ const ITCSummaryPage: React.FC = () => {
                               </td>
                             </tr>
                           );
-                        }
-                        // Last child of (2) Others — append the "reclassified out" line so
-                        // (2)'s own visible children foot to (2)'s displayed 0, the same way
-                        // iv) above makes (1)'s children foot to (1)'s displayed total.
-                        if (row.particular === 'ITC Reversal for the previous months, if any.') {
-                          const reclass = partialITCCalculatedValues.row2Calculated;
-                          return [
-                            <tr key={`4b-${idx}`} className={row.isAutoLinked ? 'cell-locked' : ''}>
-                              <td>{row.srNo}</td>
-                              <td className="flex items-center gap-2">
-                                {row.particular}
-                                {row.isAutoLinked && (
-                                  <Badge variant="outline" className="text-xs flex items-center gap-1">
-                                    <Lock className="h-3 w-3" />
-                                    Auto-linked
-                                  </Badge>
-                                )}
-                              </td>
-                              <td className="text-right tabular-nums">{renderEditableCell('section4B', idx, row, 'igst')}</td>
-                              <td className="text-right tabular-nums">{renderEditableCell('section4B', idx, row, 'cgst')}</td>
-                              <td className="text-right tabular-nums">{renderEditableCell('section4B', idx, row, 'sgst')}</td>
-                              <td className="text-right font-medium tabular-nums">
-                                {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
-                              </td>
-                              <td>
-                                <Input
-                                  type="text"
-                                  value={row.reasons || ''}
-                                  onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
-                                  placeholder="Reason..."
-                                  className="h-8 text-sm"
-                                  disabled={isLocked}
-                                />
-                              </td>
-                            </tr>,
-                            <tr key={`4b-${idx}-reclass-out`} className="cell-locked bg-muted/10">
-                              <td></td>
-                              <td className="flex items-center gap-2">
-                                Less: reclassified to (1) above — a builder client has no separate "Others" bucket
-                                <Badge variant="outline" className="text-xs flex items-center gap-1">
-                                  <Lock className="h-3 w-3" />
-                                  Auto-calculated
-                                </Badge>
-                              </td>
-                              <td className="text-right tabular-nums">{formatNumber(-reclass.igst)}</td>
-                              <td className="text-right tabular-nums">{formatNumber(-reclass.cgst)}</td>
-                              <td className="text-right tabular-nums">{formatNumber(-reclass.sgst)}</td>
-                              <td className="text-right font-medium tabular-nums">
-                                {formatNumber(-(reclass.igst + reclass.cgst + reclass.sgst))}
-                              </td>
-                              <td></td>
-                            </tr>,
-                          ];
                         }
                       }
 
