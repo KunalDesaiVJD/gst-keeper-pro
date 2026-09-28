@@ -2,7 +2,8 @@ import React from 'react';
 import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { num } from '@/lib/gstr9/engine';
-import { FY_MONTHS, type MonthKey, type PortalMeta, type ValTax } from '@/lib/gstr9/types';
+import { applyHandEdits, type FieldEdit } from '@/lib/gstr9/portalImport';
+import { FY_MONTHS, type Formulas, type MonthKey, type ValTax } from '@/lib/gstr9/types';
 import { SheetGrid, type GridColumn } from '../grid/SheetGrid';
 import { moneyCol } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
@@ -14,6 +15,8 @@ import { monthLabel, useGoToStep } from './rcmShared';
 interface PartARow {
   id: MonthKey;
   rcm: ValTax;
+  /** "=a+b" expressions, keyed by head (the moneyCol key) — stored in PortalDoc.f by field path. */
+  f: Formulas;
 }
 
 const HEADS = ['t', 'i', 'c', 's', 'x'] as const;
@@ -21,7 +24,7 @@ type Head = (typeof HEADS)[number];
 const HEAD_LABEL: Record<Head, string> = { t: 'Value', i: 'IGST', c: 'CGST', s: 'SGST', x: 'Cess' };
 const GROUP = 'GSTR-3B 3.1(d) — inward supplies liable to reverse charge';
 
-const manualPath = (m: MonthKey, h: Head) => `months.${m}.rcm.${h}`;
+const fieldPath = (m: MonthKey, h: Head) => `months.${m}.rcm.${h}`;
 
 /**
  * PART A — AS PER GST PORTAL: 3.1(d) of the as-filed GSTR-3B, month by month
@@ -34,31 +37,32 @@ const RcmPartACard: React.FC = () => {
   const P = docs.portal;
   const W = workings.rcm;
 
-  const monthTyped = (m: MonthKey) => HEADS.some((h) => !!P.manual?.[manualPath(m, h)]);
+  const monthTyped = (m: MonthKey) => HEADS.some((h) => !!P.manual?.[fieldPath(m, h)]);
 
-  const rows: PartARow[] = FY_MONTHS.map((m) => ({
-    id: m,
-    rcm: { t: 0, i: 0, c: 0, s: 0, x: 0, ...(P.months[m]?.rcm ?? {}) },
-  }));
+  const rows: PartARow[] = FY_MONTHS.map((m) => {
+    const f: Formulas = {};
+    HEADS.forEach((h) => {
+      const fx = P.f?.[fieldPath(m, h)];
+      if (fx) f[h] = fx;
+    });
+    return { id: m, rcm: { t: 0, i: 0, c: 0, s: 0, x: 0, ...(P.months[m]?.rcm ?? {}) }, f };
+  });
 
+  // Hand edits go through applyHandEdits (shared with the Portal step): it sets the value, marks the
+  // path typed, remembers the expression and sets the month's source to "manual" if nothing was fetched.
   const onRowsChange = (next: PartARow[]) =>
     update('portal', (d) => {
-      let months = d.months;
-      let monthMeta = d.monthMeta;
-      let manual = d.manual ?? {};
-      let changed = false;
+      const edits: FieldEdit[] = [];
       for (const r of next) {
-        const cur: ValTax = { t: 0, i: 0, c: 0, s: 0, x: 0, ...(d.months[r.id]?.rcm ?? {}) };
-        const moved = HEADS.filter((h) => Math.abs(num(cur[h]) - num(r.rcm[h])) > 0.0001);
-        if (!moved.length) continue;
-        changed = true;
-        months = { ...months, [r.id]: { ...d.months[r.id], rcm: { ...cur, ...Object.fromEntries(moved.map((h) => [h, num(r.rcm[h])])) } } };
-        manual = { ...manual, ...Object.fromEntries(moved.map((h) => [manualPath(r.id, h), true as const])) };
-        if (!d.monthMeta[r.id]?.source) {
-          monthMeta = { ...monthMeta, [r.id]: { ...(d.monthMeta[r.id] ?? {}), source: 'manual' } as PortalMeta };
-        }
+        const cur = d.months[r.id]?.rcm;
+        HEADS.forEach((h) => {
+          const path = fieldPath(r.id, h);
+          const value = num(r.rcm[h]);
+          const formula = r.f?.[h] || null;
+          if (Math.abs(num(cur?.[h]) - value) > 0.0001 || (d.f?.[path] || null) !== formula) edits.push({ path, value, formula });
+        });
       }
-      return changed ? { ...d, months, monthMeta, manual } : d;
+      return edits.length ? applyHandEdits(d, edits) : d;
     });
 
   const columns: GridColumn<PartARow>[] = [
@@ -76,7 +80,7 @@ const RcmPartACard: React.FC = () => {
       moneyCol<PartARow>(h, HEAD_LABEL[h], (r) => r.rcm[h], (r, v) => ({ ...r, rcm: { ...r.rcm, [h]: v ?? 0 } }), {
         group: GROUP,
         width: h === 't' ? 130 : h === 'x' ? 96 : 118,
-        title: (r) => (P.manual?.[manualPath(r.id, h)] ? 'Typed by hand — a re-import from the portal will ask before replacing it.' : undefined),
+        title: (r) => (P.manual?.[fieldPath(r.id, h)] ? 'Typed by hand — a re-import from the portal will ask before replacing it.' : undefined),
       }),
     ),
   ];
