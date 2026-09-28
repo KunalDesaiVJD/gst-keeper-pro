@@ -100,7 +100,8 @@ class Sheet {
         const ref = XLSX.utils.encode_cell({ r, c });
         if (typeof v === 'number') {
           if (!Number.isFinite(v)) return;
-          ws[ref] = { t: 'n', v: z === GENERAL ? v : round2(v), z: z ?? MONEY };
+          // Full precision, rounded by the number format — so a column of cells adds up to its TOTAL.
+          ws[ref] = { t: 'n', v: z === GENERAL ? v : Math.abs(v) < 0.005 ? 0 : v, z: z ?? MONEY };
         } else {
           ws[ref] = { t: 's', v: String(v) };
         }
@@ -125,15 +126,22 @@ class Sheet {
 
 type Head = keyof Tax;
 
-/** The firm's sheets carry IGST/CGST/SGST only; Cess columns are added only when the working has any cess. */
-const hasCess = (w: Workings): boolean =>
-  [
-    w.sales.partA, w.purchases.totalPl, w.purchases.netItc, w.dto.totals.net, w.dto.totals.asPer3B, w.dti.totals.net,
-    w.dti.totals.asPer3B, w.dti.lye, w.rcm.partA, w.rcm.partB, w.outward.booksTotal, w.outward.portalTotal,
-    w.g9.t4.N, w.g9.t6.O, w.g9.t7I, w.g9.t8.A, w.ann3.total,
-  ].some((t) => Math.abs(t.x) > 0.004) ||
-  Object.values(w.sales.rows).some((r) => Math.abs(r.tax.x) > 0.004) ||
-  Object.values(w.purchases.rows).some((r) => Math.abs(r.tax.x) > 0.004);
+/**
+ * The firm's sheets carry IGST/CGST/SGST only; Cess columns are added only
+ * when the working has any cess — anywhere (a single D&T adjustment or a
+ * typed Table 12 figure counts), so no cess figure is silently dropped.
+ */
+const hasCess = (w: Workings): boolean => {
+  const seen = new WeakSet<object>();
+  const walk = (o: unknown, depth: number): boolean => {
+    if (!o || typeof o !== 'object' || depth > 12 || seen.has(o)) return false;
+    seen.add(o);
+    const rec = o as Record<string, unknown>;
+    if (typeof rec.x === 'number' && typeof rec.c === 'number' && Math.abs(rec.x) > 0.004) return true;
+    return Object.values(rec).some((v) => walk(v, depth + 1));
+  };
+  return walk(w, 0);
+};
 
 const HEAD_LABEL: Record<Head, string> = { i: 'IGST', c: 'CGST', s: 'SGST', x: 'CESS' };
 
@@ -221,7 +229,11 @@ function plOutputSheet({ docs, w, meta, heads, just }: Ctx): Sheet {
   s.title('PART B - NON-TAXABLE INCOME ONLY', span);
   s.blank();
   s.add('SR NO', 'PARTICULARS', 'AMOUNT', 'BIFURCATION');
-  docs.sales.partB.forEach((r, i) => s.add(sr(i + 1), r.ledger, typed(r.amount, r.f, 'amount'), NON_TAX_NATURE_LABEL[r.nature] ?? r.nature));
+  // A negative row (a credit note) is reported in 5H, whatever its nature — say so, as Part A does for 4I.
+  docs.sales.partB.forEach((r, i) => s.add(
+    sr(i + 1), r.ledger, typed(r.amount, r.f, 'amount'),
+    (Number(r.amount) || 0) < 0 && r.nature !== 'not_in_gstr9' ? 'Credit note (5H)' : NON_TAX_NATURE_LABEL[r.nature] ?? r.nature,
+  ));
   s.blank();
   s.add('TOTAL INCOME - PART B', '', w.sales.partBTotal);
   s.blank();
@@ -415,7 +427,7 @@ function gstr9OutputSheet({ w, meta, heads, just }: Ctx): Sheet {
   s.title('DIFFERENCE BETWEEN A & B (A - B)', blockW + 1);
   s.blank();
   s.add('PARTICULARS', 'TAXABLE', ...heads.map((h) => HEAD_LABEL[h]), 'JUSTIFICATION');
-  w.outward.rows.forEach((r) => s.add(outwardLabel(r), ...valCells(r.diff, heads), just(`out.${r.key}`)));
+  w.outward.rows.forEach((r) => s.add(`${outwardLabel(r)}${r.subtract ? ' (-)' : ''}`, ...valCells(r.diff, heads), just(`out.${r.key}`)));
   s.blank();
   s.add('TOTAL', ...valCells(w.outward.diffTotal, heads), just('out.total'));
   return s;

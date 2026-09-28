@@ -212,7 +212,8 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> =>
 export function mergeDefaults<T>(def: T, stored: unknown): T {
   if (stored === undefined) return def;
   if (def === null) return (stored as T) ?? def;
-  if (Array.isArray(def)) return (Array.isArray(stored) ? stored : def) as T;
+  // Row arrays from storage: drop holes / nulls so one bad save can't break the engine.
+  if (Array.isArray(def)) return (Array.isArray(stored) ? stored.filter((x) => x !== null && x !== undefined) : def) as T;
   if (isPlainObject(def)) {
     if (!isPlainObject(stored)) return def;
     const out: Record<string, unknown> = { ...stored };

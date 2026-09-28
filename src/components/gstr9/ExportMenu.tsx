@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { ChevronDown, Download, FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -31,9 +31,6 @@ const ORDER: ExportKind[] = ['excel', 'gstr9pdf', 'noticepdf'];
  */
 export const ExportMenu: React.FC<{ only?: ExportKind[]; size?: 'sm' | 'default' }> = ({ only, size = 'sm' }) => {
   const ws = useWorkspace();
-  // The latest workspace after the save completes (a save can reload the docs).
-  const latest = useRef(ws);
-  latest.current = ws;
   const [busy, setBusy] = useState<ExportKind | null>(null);
   const kinds = ORDER.filter((k) => !only || only.includes(k));
 
@@ -41,8 +38,15 @@ export const ExportMenu: React.FC<{ only?: ExportKind[]; size?: 'sm' | 'default'
     if (busy) return;
     setBusy(kind);
     try {
-      await ws.flush();
-      const { docs, workings, client, financialYear, period } = latest.current;
+      // Build the file from what the save left in the database, never from
+      // unsaved or overtaken figures on screen.
+      const r = await ws.flush();
+      if (!r.ok || !r.docs || !r.workings) {
+        toast.error(`The ${KINDS[kind].label} was not exported: your latest changes could not be saved (or someone else changed the same sheet). Check the figures and export again.`);
+        return;
+      }
+      const { docs, workings, period } = r;
+      const { client, financialYear } = ws;
       const meta = { clientName: client.name, gstin: client.gstin, financialYear };
       let file: string;
       if (kind === 'excel') {

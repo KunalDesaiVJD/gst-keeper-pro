@@ -244,7 +244,8 @@ export function gstr9FileMismatch(parsed: ParsedGstr9, clientGstin: string, fina
     const want = gstr9Fp(financialYear);
     const digits = parsed.fp.replace(/\D/g, '');
     let ok = true;
-    if (digits.length === 6) ok = digits === want;
+    // "032025" is a return period (MMYYYY); "2024-25", "202425", "2024-2025" are an FY.
+    if (/^(0[1-9]|1[0-2])\d{4}$/.test(digits)) ok = digits === want;
     else if (/^\d{4}-?\d{2}(\d{2})?$/.test(parsed.fp.trim())) ok = digits.slice(0, 4) === financialYear.slice(0, 4);
     if (!ok) {
       return `This file is for return period ${parsed.fp}, but FY ${financialYear} is period ${want.slice(0, 2)}/${want.slice(2)}. Nothing was imported.`;
@@ -258,7 +259,8 @@ export function gstr9FileMismatch(parsed: ParsedGstr9, clientGstin: string, fina
 // ---------------------------------------------------------------------------
 
 export const isPullFailed = (status: string | null | undefined): boolean => !!status && /^PULL FAILED/i.test(status.trim());
-export const isNotFiled = (status: string | null | undefined): boolean => !!status && /^NOT (FILED|FOUND|GENERATED)/i.test(status.trim());
+/** The portal's own code for an unfiled month is "NF" (what the extension stores as-is). */
+export const isNotFiled = (status: string | null | undefined): boolean => !!status && /^(NF$|NOT (FILED|FOUND|GENERATED))/i.test(status.trim());
 
 /** The row carries a GSTR-3B summary the parser can read. */
 export const has3bSummary = (r: AsFiledReturn | null | undefined): boolean => !!r && !!unwrap(r.summary, ['sup_details', 'itc_elg']);
@@ -274,7 +276,8 @@ export function gstr3bIncoming(rows: AsFiledReturn[], financialYear: string): Gs
   const byMonth = new Map<MonthKey, AsFiledReturn>();
   rows.forEach((r) => {
     const m = monthKeyForPeriod(r.period, financialYear);
-    if (m && has3bSummary(r)) byMonth.set(m, r);
+    // An unfiled month's figures (a saved draft, if the portal returns one) are not as-filed.
+    if (m && has3bSummary(r) && !isNotFiled(r.status)) byMonth.set(m, r);
   });
   const months: Partial<Record<MonthKey, PortalMonth>> = {};
   const metas: Partial<Record<MonthKey, PortalMeta>> = {};

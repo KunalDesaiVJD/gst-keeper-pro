@@ -31,6 +31,9 @@ export const fmtRate = (n: number | null | undefined): string => {
 export const parsePlain = (raw: string): number | null => {
   let s = raw.trim();
   if (!s) return null;
+  // Excel's accounting format shows zero as "-" — that is what a copy carries.
+  if (/^[-–—]$/.test(s)) return 0;
+  s = s.replace(/^[–—−]/, '-');
   let neg = false;
   if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
   s = s.replace(/[₹,\s]/g, '');
@@ -120,6 +123,44 @@ export const parseEntry = (raw: string): ParsedEntry => {
 };
 
 export const round2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;
+
+/**
+ * The HTML flavour of an Excel / Google Sheets copy, as rows × cells, using the
+ * unformatted value where the app provides one (Excel `x:num`, Sheets
+ * `data-sheets-value`) — the plain-text flavour carries the DISPLAYED text,
+ * e.g. whole rupees or "-" for zero. null when there's no table.
+ */
+export const parseClipboardHtml = (html: string): string[][] | null => {
+  if (!html || !/<table/i.test(html) || typeof DOMParser === 'undefined') return null;
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const table = doc.querySelector('table');
+    if (!table) return null;
+    const rows: string[][] = [];
+    table.querySelectorAll('tr').forEach((tr) => {
+      const cells: string[] = [];
+      tr.querySelectorAll('td, th').forEach((td) => {
+        let v: string | null = td.getAttribute('x:num');
+        if (v === '') v = null; // x:num with no value means "same as the text"
+        const sheets = td.getAttribute('data-sheets-value');
+        if (v === null && sheets) {
+          try {
+            const parsed = JSON.parse(sheets) as Record<string, unknown>;
+            if (typeof parsed['3'] === 'number') v = String(parsed['3']);
+          } catch { /* not JSON — ignore */ }
+        }
+        const text = (v ?? td.textContent ?? '').replace(/\u00a0/g, ' ').trim();
+        cells.push(text);
+        const span = Number(td.getAttribute('colspan') || 1);
+        for (let k = 1; k < span; k++) cells.push('');
+      });
+      rows.push(cells);
+    });
+    return rows.length ? rows : null;
+  } catch {
+    return null;
+  }
+};
 
 /** Parse a clipboard block from Excel / Sheets into rows × cells (TSV). */
 export const parseClipboard = (text: string): string[][] => {

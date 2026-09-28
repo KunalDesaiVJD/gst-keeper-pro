@@ -26,8 +26,10 @@ const Annexure3: React.FC = () => {
     {
       id: 'r2', no: '2', kind: 'override', value: w.rcmToPay, stored: A.a3RcmToPay,
       label: 'RCM to be paid (as per RCM sheet)',
-      hint: 'Suggested: RCM in the books (Part B) not paid on the portal (Part A), per head',
-      defaultChip: 'Suggested', resetLabel: 'Use suggested', defaultValue: w.rcmToPaySuggested,
+      hint: totalTax(w.rcmGap) > tol
+        ? `Nil unless typed. RCM in the books not paid on the portal (${rupees(totalTax(w.rcmGap))}) already sits in row 1, since the Annexure-1 payable includes the books' RCM — type here only RCM that is outside the books.`
+        : 'Nil unless typed — only RCM that is outside the books (unpaid RCM in the books already reaches row 1).',
+      defaultChip: 'Nil', resetLabel: 'Back to nil', defaultValue: w.rcmToPaySuggested,
       onChange: (v) => update('annexures', (d) => ({ ...d, a3RcmToPay: v })),
     },
     {

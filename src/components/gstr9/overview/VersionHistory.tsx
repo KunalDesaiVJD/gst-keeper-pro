@@ -112,10 +112,11 @@ export const VersionHistory: React.FC = () => {
       confirmText: 'Restore',
     });
     if (!ok) return;
-    update(e.docKey, () => normalizeDoc(e.docKey, e.data));
-    toast.success(`${name} restored to version ${e.version}.`);
+    update(e.docKey, () => normalizeDoc(e.docKey, e.data), { archive: true });
     try {
-      await flush();
+      const r = await flush();
+      if (r.ok) toast.success(`${name} restored to version ${e.version}.`);
+      else toast.error(`${name} could not be restored — someone else changed it meanwhile. Check the history and try again.`);
     } finally {
       void load(e.docKey);
     }

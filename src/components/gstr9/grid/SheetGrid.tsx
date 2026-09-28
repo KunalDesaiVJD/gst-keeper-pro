@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { fmtMoney, fmtRate, parseClipboard, parseEntry } from './money';
+import { fmtMoney, fmtRate, parseClipboard, parseClipboardHtml, parseEntry } from './money';
 
 /**
  * The spreadsheet grid every Annual Return entry surface uses.
@@ -61,6 +61,7 @@ export interface GridColumn<R> {
   title?: (row: R) => string | undefined;
   width?: number;
   align?: 'left' | 'right' | 'center';
+  /** Pin to the left while scrolling (from the sm breakpoint; on a phone the label would cover the figures). */
   sticky?: boolean;
 }
 
@@ -101,6 +102,15 @@ const matchOption = (options: GridColumn<unknown>['options'], raw: string) => {
   );
 };
 
+/**
+ * Percent columns store 18 for 18%: an entry written with "%" ("18%", "=12%+6%")
+ * is a fraction and is scaled ×100; "18" stays 18. Rounded so 28% is 28, not 28.000000000000004.
+ */
+const pctScale = (col: { type: string }, value: number | null, raw: string): number | null => {
+  if (col.type !== 'percent' || value === null || !raw.includes('%')) return value;
+  return Math.round(value * 100 * 1e6) / 1e6;
+};
+
 const isEditableCol = <R,>(col: GridColumn<R>, row: R | undefined, readOnly?: boolean) =>
   !readOnly && col.type !== 'display' && !!col.onEdit && (!row || !col.editable || col.editable(row));
 
@@ -132,21 +142,44 @@ export function SheetGrid<R>({
   const [error, setError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement | HTMLSelectElement | null>(null);
+  const gridId = useId().replace(/:/g, '');
+  const cellId = (r: number, c: number) => `g${gridId}-${r}-${c}`;
+  // Latest rows, for actions that complete later (Undo of a delete).
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
 
   const hasGroups = columns.some((c) => c.group);
   const editableColIdx = useMemo(() => columns.map((c, i) => (c.type !== 'display' && c.onEdit ? i : -1)).filter((i) => i >= 0), [columns]);
   // Columns a pasted block maps onto: editable ones plus display columns marked pasteThrough.
   const pasteColIdx = useMemo(() => columns.map((c, i) => ((c.type !== 'display' && c.onEdit) || c.pasteThrough ? i : -1)).filter((i) => i >= 0), [columns]);
 
+  // Focus the editor and put the caret at the end only when an edit STARTS —
+  // not on every keystroke (that made mid-number edits commit wrong figures).
+  const editStartKey = editing ? `${editing.pos.r}:${editing.pos.c}` : null;
   useEffect(() => {
-    if (editing && inputRef.current) {
+    if (editStartKey && inputRef.current) {
       inputRef.current.focus();
       if (inputRef.current instanceof HTMLInputElement) {
         const len = inputRef.current.value.length;
         inputRef.current.setSelectionRange(len, len);
       }
     }
-  }, [editing]);
+  }, [editStartKey]);
+
+  // Rows can shrink from outside (clear section, reload, restore): never keep a
+  // position past the end, or paste/typing would write into a row that no longer exists.
+  useEffect(() => {
+    if (active && active.r >= rows.length) setActive(rows.length ? { r: rows.length - 1, c: active.c } : null);
+    const ed = editingRef.current;
+    if (ed && ed.pos.r >= rows.length) setEditing(null);
+  }, [rows.length, active, setEditing]);
+
+  // Keep the active cell visible when moving with the keyboard.
+  useEffect(() => {
+    if (!active) return;
+    document.getElementById(cellId(active.r, active.c))?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
 
   const cellText = useCallback((row: R, col: GridColumn<R>, i: number): string => {
     const v = col.value(row, i);
@@ -173,9 +206,7 @@ export function SheetGrid<R>({
     if (col.type === 'money' || col.type === 'percent') {
       const p = parseEntry(raw);
       if (p.error) { setError(p.error); return false; }
-      let num = p.value;
-      if (col.type === 'percent' && num !== null && !raw.trim().startsWith('=') && raw.includes('%')) num = num * 100;
-      edit = { num, formula: p.formula, text: raw };
+      edit = { num: pctScale(col, p.value, raw), formula: p.formula, text: raw };
     } else if (col.type === 'select') {
       const hit = matchOption(col.options, raw);
       if (!hit && raw.trim()) { setError(`"${raw}" is not one of the choices`); return false; }
@@ -215,17 +246,26 @@ export function SheetGrid<R>({
     setEditing({ pos, draft: initial ?? editText(row, col, pos.r) });
   }, [rows, columns, readOnly, editText, setEditing]);
 
-  const commit = useCallback((advance: 'down' | 'right' | 'left' | 'none') => {
+  /** Commit the open edit; false when the entry was refused (the editor stays open). */
+  const commit = useCallback((advance: 'down' | 'right' | 'left' | 'none'): boolean => {
     const cur = editingRef.current;
-    if (!cur) return;
+    if (!cur) return true;
     const ok = applyEdit(cur.pos, cur.draft);
-    if (!ok) return;
+    if (!ok) return false;
     const pos = cur.pos;
     setEditing(null);
     const nextPos = advance === 'down' ? move(pos, 1, 0) : advance === 'right' ? nextEditable(pos, 1) : advance === 'left' ? nextEditable(pos, -1) : pos;
     setActive(nextPos);
     requestAnimationFrame(() => wrapRef.current?.focus());
+    return true;
   }, [applyEdit, move, nextEditable, setEditing]);
+
+  const firstEditable = useCallback((): Pos | null => {
+    for (let r = 0; r < rows.length; r++) {
+      for (let c = 0; c < columns.length; c++) if (isEditableCol(columns[c], rows[r], readOnly)) return { r, c };
+    }
+    return rows.length ? { r: 0, c: 0 } : null;
+  }, [rows, columns, readOnly]);
 
   const clearCell = useCallback((pos: Pos) => {
     const col = columns[pos.c];
@@ -237,13 +277,39 @@ export function SheetGrid<R>({
     // Keys from anything but the grid itself (a popover's textarea rendered in
     // a portal still bubbles through React) are not grid navigation.
     if (e.target !== e.currentTarget) return;
-    if (editing || !active) return;
+    if (editing) {
+      // An editor left open after a refused entry: Escape abandons it.
+      if (e.key === 'Escape') { e.preventDefault(); setError(null); setEditing(null); }
+      return;
+    }
+    if (!active) {
+      // Keyboard users arrive with nothing selected: start at the first editable cell.
+      const printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+      if (['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Enter', 'F2'].includes(e.key) || printable) {
+        const f = firstEditable();
+        if (!f) return;
+        e.preventDefault();
+        setActive(f);
+        // A typed character is the first character of the entry, not just a "select" key.
+        if (printable) {
+          if (columns[f.c]?.type === 'select') startEdit(f);
+          else startEdit(f, e.key);
+        }
+      }
+      return;
+    }
     const k = e.key;
     if (k === 'ArrowDown') { e.preventDefault(); setActive(move(active, 1, 0)); }
     else if (k === 'ArrowUp') { e.preventDefault(); setActive(move(active, -1, 0)); }
     else if (k === 'ArrowRight') { e.preventDefault(); setActive(move(active, 0, 1)); }
     else if (k === 'ArrowLeft') { e.preventDefault(); setActive(move(active, 0, -1)); }
-    else if (k === 'Tab') { e.preventDefault(); setActive(nextEditable(active, e.shiftKey ? -1 : 1)); }
+    else if (k === 'Tab') {
+      const n = nextEditable(active, e.shiftKey ? -1 : 1);
+      // At the first/last editable cell, let Tab move on (to the row buttons, then out).
+      if (n.r === active.r && n.c === active.c) { setActive(null); return; }
+      e.preventDefault();
+      setActive(n);
+    }
     else if (k === 'Enter' || k === 'F2') { e.preventDefault(); startEdit(active); }
     else if (k === 'Delete' || k === 'Backspace') { e.preventDefault(); clearCell(active); }
     else if (k === 'Escape') { setActive(null); }
@@ -268,19 +334,27 @@ export function SheetGrid<R>({
     const text = e.clipboardData.getData('text/plain');
     if (!text) return;
     e.preventDefault();
-    const block = parseClipboard(text);
+    // Excel / Sheets put the unrounded values in the HTML flavour ("-" zeros, whole-rupee
+    // display formats); fall back to the plain text when there's no usable table.
+    const plain = parseClipboard(text);
+    const html = parseClipboardHtml(e.clipboardData.getData('text/html'));
+    const block = html && html.length === plain.length ? html : plain;
     if (!block.length) return;
-    const start = active ?? { r: 0, c: editableColIdx[0] ?? 0 };
+    const start0 = active ?? { r: 0, c: editableColIdx[0] ?? 0 };
+    const start = { r: Math.min(start0.r, rows.length), c: start0.c };
     const startEditable = pasteColIdx.findIndex((i) => i >= start.c);
     if (startEditable < 0) return;
     const next = rows.slice();
     const errors: string[] = [];
+    let dropped = 0;
+    let applied = 0;
     block.forEach((cells, dr) => {
       const r = start.r + dr;
       if (r >= next.length) {
-        if (!newRow) return;
+        if (!newRow || r > next.length) { dropped += 1; return; }
         next.push(newRow());
       }
+      applied += 1;
       cells.forEach((raw, dc) => {
         const ci = pasteColIdx[startEditable + dc];
         if (ci === undefined) return;
@@ -292,9 +366,7 @@ export function SheetGrid<R>({
         if (col.type === 'money' || col.type === 'percent') {
           const p = parseEntry(v);
           if (p.error) { errors.push(`row ${r + 1}, ${typeof col.header === 'string' ? col.header : col.key}: ${p.error}`); return; }
-          let num = p.value;
-          if (col.type === 'percent' && num !== null && v.includes('%') && !v.startsWith('=')) num = num * 100;
-          next[r] = col.onEdit(row, { num, formula: p.formula, text: v });
+          next[r] = col.onEdit(row, { num: pctScale(col, p.value, v), formula: p.formula, text: v });
         } else if (col.type === 'select') {
           const hit = matchOption(col.options, v);
           if (hit) next[r] = col.onEdit(row, { num: null, text: hit.value });
@@ -305,17 +377,31 @@ export function SheetGrid<R>({
       });
     });
     onRowsChange(next);
-    toast.success(`Pasted ${block.length} row${block.length === 1 ? '' : 's'}.`);
+    if (applied) toast.success(`Pasted ${applied} row${applied === 1 ? '' : 's'}.`);
+    if (dropped) toast.warning(`${dropped} pasted row${dropped === 1 ? '' : 's'} did not fit — this table has a fixed number of rows. Start the paste higher up.`);
     if (errors.length) toast.warning(`${errors.length} cell${errors.length === 1 ? '' : 's'} skipped: ${errors.slice(0, 3).join('; ')}${errors.length > 3 ? '…' : ''}`);
   };
 
   const deleteRow = (index: number) => {
     if (!onRowsChange) return;
-    const before = rows;
-    const next = rows.filter((_, i) => i !== index);
-    onRowsChange(next);
+    const removed = rows[index];
+    const removedId = getRowId(removed);
+    onRowsChange(rows.filter((_, i) => i !== index));
     setActive(null);
-    toast('Row deleted', { action: { label: 'Undo', onClick: () => onRowsChange(before) } });
+    setEditing(null);
+    setError(null);
+    // Undo puts the row back into the rows as they are then (keeping later edits).
+    toast('Row deleted', {
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          const latest = rowsRef.current;
+          if (latest.some((r) => getRowId(r) === removedId)) return;
+          const at = Math.min(index, latest.length);
+          onRowsChange([...latest.slice(0, at), removed, ...latest.slice(at)]);
+        },
+      },
+    });
   };
 
   const addRow = () => {
@@ -348,6 +434,7 @@ export function SheetGrid<R>({
         ref={wrapRef}
         role="grid"
         aria-label={label}
+        aria-activedescendant={active ? cellId(active.r, active.c) : undefined}
         tabIndex={0}
         onKeyDown={onGridKeyDown}
         onPaste={onPaste}
@@ -372,7 +459,7 @@ export function SheetGrid<R>({
                 <th
                   key={col.key}
                   scope="col"
-                  className={cn('border-b border-r px-2 py-1.5 font-semibold text-muted-foreground whitespace-nowrap', alignCls(col), col.sticky && 'sticky left-0 z-10 bg-muted')}
+                  className={cn('border-b border-r px-2 py-1.5 font-semibold text-muted-foreground whitespace-nowrap', alignCls(col), col.sticky && 'z-10 bg-muted sm:sticky sm:left-0')}
                   style={col.width ? { minWidth: col.width, width: col.width } : undefined}
                 >
                   {col.header}
@@ -404,6 +491,7 @@ export function SheetGrid<R>({
                     return (
                       <td
                         key={col.key}
+                        id={cellId(r, c)}
                         role="gridcell"
                         aria-selected={isActive}
                         title={col.title?.(row)}
@@ -412,7 +500,8 @@ export function SheetGrid<R>({
                           // Ignore clicks that bubble from a portalled popover opened in this cell.
                           if (!(e.currentTarget as Node).contains(e.target as Node)) return;
                           e.preventDefault();
-                          if (editing) commit('none');
+                          // A refused entry keeps its editor: don't move away from it.
+                          if (editingRef.current && !commit('none')) { inputRef.current?.focus(); return; }
                           setActive({ r, c });
                           wrapRef.current?.focus();
                         }}
@@ -421,7 +510,7 @@ export function SheetGrid<R>({
                           'relative h-8 border-b border-r px-2 py-0 tabular-nums whitespace-nowrap',
                           alignCls(col),
                           editable ? 'bg-card cursor-cell' : 'bg-muted/40',
-                          col.sticky && 'sticky left-0 z-10',
+                          col.sticky && 'z-10 sm:sticky sm:left-0',
                           col.sticky && (editable ? 'bg-card' : 'bg-muted'),
                           cTone === 'error' && 'text-destructive font-medium',
                           cTone === 'warn' && 'bg-warning/15 font-medium text-foreground',
@@ -515,7 +604,7 @@ export function SheetGrid<R>({
                   {columns.map((col, c) => {
                     const cell = c === 0 ? f.label : f.cells[col.key];
                     return (
-                      <td key={col.key} className={cn('h-8 border-t border-r px-2 tabular-nums whitespace-nowrap', c === 0 ? 'text-left' : alignCls(col), col.sticky && 'sticky left-0 bg-inherit')}>
+                      <td key={col.key} className={cn('h-8 border-t border-r px-2 tabular-nums whitespace-nowrap', c === 0 ? 'text-left' : alignCls(col), col.sticky && 'bg-inherit sm:sticky sm:left-0')}>
                         {typeof cell === 'number' ? fmtMoney(cell) : cell}
                       </td>
                     );

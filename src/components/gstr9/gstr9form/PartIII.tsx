@@ -286,7 +286,7 @@ const Table8: React.FC = () => {
       <EntryHeading>Typed rows</EntryHeading>
       <TaxEntryGrid defs={defs} label="GSTR-9 Table 8 typed rows" />
       {dPositive && (
-        <p className={hasTax(unsplit) ? 'text-xs text-warning-foreground' : 'text-xs text-success'}>
+        <p className={hasTax(unsplit) ? 'rounded bg-warning/15 px-2 py-1 text-xs text-foreground' : 'text-xs text-success'}>
           {hasTax(unsplit) ? `8D not yet explained by 8E + 8F: ${headsText(unsplit)}.` : '8D is fully explained by 8E + 8F.'}
         </p>
       )}

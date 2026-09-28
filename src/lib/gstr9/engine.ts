@@ -413,6 +413,8 @@ export interface Workings {
     clause9: Tax;
     rcmToPay: Tax;
     rcmToPaySuggested: Tax;
+    /** Books RCM not paid on the portal — already inside clause 9 (row 1); a hint, not a default. */
+    rcmGap: Tax;
     excessItc: Tax;
     excessItcSuggested: Tax;
     other: Tax;
@@ -580,7 +582,8 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     if (ret) outwardBooks.cr_nt = addV(outwardBooks.cr_nt, negV(v));
     else outwardBooks[r.category] = addV(outwardBooks[r.category], v);
     // GSTR-9C Table 9 is rate-wise tax actually payable: net of returns, keyed by rate.
-    const rateKey = r.rate !== null && r.rate !== undefined ? String(num(r.rate)) : snapRate(implied);
+    const typedRate = r.rate !== null && r.rate !== undefined ? num(r.rate) : null;
+    const rateKey = typedRate !== null && STANDARD_RATES.includes(typedRate) ? String(typedRate) : snapRate(typedRate ?? implied);
     byRate[rateKey] = addV(byRate[rateKey] || val(), v);
   });
 
@@ -644,7 +647,14 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   });
   const partBMonths = byMonth((m) => addV(...Object.values(rcmCats).map((c) => c.months[m])));
   const rcmPartB = sumMonthsV(partBMonths); // RCM D41:G41 — POSITION: all blocks (the sheet's D28:D39 adds only two)
-  const rcmMonthlyPresent = FY_MONTHS.some((m) => monthsPresent[m] && (isNonZeroV(P.months[m].rcm) || !!P.monthMeta[m]?.source));
+  // RCM 3.1(d) is its own side: a pulled 3B counts (a filed zero is a real zero); a hand-typed
+  // month counts only if its RCM figures were typed — typing that month's output 3B doesn't.
+  const rcmMonthlyPresent = FY_MONTHS.some((m) => {
+    const src = P.monthMeta[m]?.source;
+    if (src && src !== 'manual') return true;
+    if (isNonZeroV(P.months[m].rcm)) return true;
+    return Object.keys(P.manual || {}).some((k) => k.startsWith(`months.${m}.rcm.`));
+  });
   let partASource: Workings['rcm']['partASource'] = 'none';
   let partAMonths = byMonth((m) => P.months[m].rcm);
   let rcmPartA = sumMonthsV(partAMonths);
@@ -764,8 +774,11 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const monthly4A = sumMonths(byMonth((m) => P.months[m].itc4aTotal));
   let t6ASource: Workings['g9']['t6ASource'] = 'none';
   let t6A = tax();
-  if (gstr9Present) { t6A = P.gstr9.t6A; t6ASource = 'gstr9'; }
+  // Per figure: the GSTR-9 6A when it is there (non-zero or typed), else Σ 4A of the as-filed 3B.
+  const t6AFromGstr9 = isNonZeroT(P.gstr9.t6A) || Object.keys(P.manual || {}).some((k) => k.startsWith('gstr9.t6A.'));
+  if (t6AFromGstr9) { t6A = P.gstr9.t6A; t6ASource = 'gstr9'; }
   else if (anyMonthPresent && isNonZeroT(monthly4A)) { t6A = monthly4A; t6ASource = 'monthly_3b'; }
+  else if (gstr9Present) { t6A = P.gstr9.t6A; t6ASource = 'gstr9'; }
   const t6A1 = G.t6A1 === null || G.t6A1 === undefined ? lye : tin(G.t6A1); // POSITION: defaults to Last Year Effect
   const t6A2 = subT(t6A, t6A1);
 
@@ -916,7 +929,11 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   ann2.J = subT(ann2.E, ann2.I); // D37
 
   // ------------------------------------------------------------ Annexure-3 (DRC-03)
-  const rcmToPaySuggested = maxT0(taxOf(rcmDiff)); // books RCM liability not paid on the portal
+  // Row 1 (clause 9) already compares books payable INCLUDING RCM Part B with Table 9 paid
+  // INCLUDING 3.1(d), so books RCM not paid on the portal is already in it. Row 2 is for RCM
+  // outside the books; it defaults to nil. rcmGap is shown only as a hint.
+  const rcmGap = maxT0(taxOf(rcmDiff));
+  const rcmToPaySuggested = tax();
   const rcmToPay = A.a3RcmToPay === null || A.a3RcmToPay === undefined ? rcmToPaySuggested : tin(A.a3RcmToPay);
   const excessItcSuggested = t12;
   const excessItc = A.a3ExcessItc === null || A.a3ExcessItc === undefined ? excessItcSuggested : tin(A.a3ExcessItc);
@@ -935,11 +952,13 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const t5P = GSTR9C_T5_KEYS.reduce((s, k) => s + (GSTR9C_T5_SUB.includes(k) ? -t5Rows[k] : t5Rows[k]), t5A);
   const t5Q = C.t5Q === null || C.t5Q === undefined ? totalTurnover.t : num(C.t5Q);
   const pick = (v: number | null | undefined, d: number) => (v === null || v === undefined ? d : num(v));
+  // Net of Part B credit notes: 7A (= 5P) starts from turnover that is already net of them.
+  const netNature = (k: NonTaxNature) => partBByNature[k].pos + partBByNature[k].neg;
   const t7Default = {
-    B: g5.D.t + g5.E.t + g5.F.t, // exempt + nil + non-GST
-    C: g5.A.t + g5.B.t, // zero rated without tax
-    D: g5.C.t, // recipient pays under RCM
-    D1: g5.C1.t,
+    B: netNature('exempt') + netNature('nil') + netNature('non_gst'),
+    C: netNature('export_wo') + netNature('sez_wo'),
+    D: netNature('rcm_outward'),
+    D1: netNature('ecom_95'),
     F: g4.N.t - g4.G.t - g4.G1.t + t10.t - t11.t,
   };
   const c7 = {
@@ -989,7 +1008,9 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const c9Q = C.t9Q === null || C.t9Q === undefined ? c9QDefault : tin(C.t9Q);
   const c9R = subT(c9Q, taxOf(c9P));
 
-  const c12Default = { A: taxOf(netItc), B: lye, C: t13 };
+  // POSITION: 12E is 7J, which excludes 6A1 (prior-year ITC). 12B therefore defaults to the
+  // last-year effect not already reported in 6A1 — nil when 6A1 follows the last-year effect.
+  const c12Default = { A: taxOf(netItc), B: subT(lye, t6A1), C: t13 };
   const c12A = C.t12A === null || C.t12A === undefined ? c12Default.A : tin(C.t12A);
   const c12B = C.t12B === null || C.t12B === undefined ? c12Default.B : tin(C.t12B);
   const c12C = C.t12C === null || C.t12C === undefined ? c12Default.C : tin(C.t12C);
@@ -1261,7 +1282,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     ann1: { A: ann1A, nonGst: ann1NonGst, B: ann1B, C: ann1C, D: ann1D, E: ann1E, F: ann1F, G: ann1G, payable: ann1Payable, paid: ann1Paid, payDiff: ann1PayDiff },
     ann2,
     ann3: {
-      clause9: ann1PayDiff, rcmToPay, rcmToPaySuggested, excessItc, excessItcSuggested, other: a3Other,
+      clause9: ann1PayDiff, rcmToPay, rcmToPaySuggested, rcmGap, excessItc, excessItcSuggested, other: a3Other,
       total: ann3Total, payable: ann3Payable, excessPaid: ann3Excess, alreadyPaid,
       balance: maxT0(subT(ann3Payable, alreadyPaid)),
     },

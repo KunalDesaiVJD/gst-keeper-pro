@@ -68,7 +68,7 @@ export const FigureTable: React.FC<{
     if (r.kind === 'heading') {
       return (
         <tr key={r.key} className="bg-muted/50">
-          <td colSpan={colCount} className="sticky left-0 border-b px-2 py-1.5 text-xs font-semibold">
+          <td colSpan={colCount} className="border-b px-2 py-1.5 text-xs font-semibold sm:sticky sm:left-0">
             {r.code && <span className="mr-2 font-mono text-muted-foreground">{r.code}</span>}
             {r.label}
             {r.note && <span className="ml-2 inline-flex align-middle">{r.note}</span>}
@@ -83,7 +83,7 @@ export const FigureTable: React.FC<{
         <th
           scope="row"
           className={cn(
-            'sticky left-0 z-10 border-b border-r px-2 py-1.5 text-left align-top font-normal',
+            'z-10 border-b border-r px-2 py-1.5 text-left align-top font-normal sm:sticky sm:left-0',
             rowBg,
             strong && 'font-semibold',
             inFooter && 'border-t',
@@ -131,7 +131,7 @@ export const FigureTable: React.FC<{
         <thead className="sticky top-0 z-20 bg-muted">
           {hasGroups && (
             <tr>
-              <th rowSpan={2} scope="col" className="sticky left-0 z-30 min-w-[220px] border-b border-r bg-muted px-2 py-1.5 text-left align-bottom font-semibold text-muted-foreground">
+              <th rowSpan={2} scope="col" className="z-30 min-w-[160px] sm:sticky sm:left-0 sm:min-w-[220px] border-b border-r bg-muted px-2 py-1.5 text-left align-bottom font-semibold text-muted-foreground">
                 {firstHeader}
               </th>
               {spans.map((s) => (
@@ -153,7 +153,7 @@ export const FigureTable: React.FC<{
           )}
           <tr>
             {!hasGroups && (
-              <th scope="col" className="sticky left-0 z-30 min-w-[220px] border-b border-r bg-muted px-2 py-1.5 text-left font-semibold text-muted-foreground">
+              <th scope="col" className="z-30 min-w-[160px] sm:sticky sm:left-0 sm:min-w-[220px] border-b border-r bg-muted px-2 py-1.5 text-left font-semibold text-muted-foreground">
                 {firstHeader}
               </th>
             )}

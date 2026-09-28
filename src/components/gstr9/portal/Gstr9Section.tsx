@@ -54,7 +54,17 @@ const HEADS_VT: PortalFieldCol[] = [
   { key: 's', header: 'SGST' },
   { key: 'x', header: 'Cess', width: 100 },
 ];
-const HEADS_T = HEADS_VT.slice(1);
+/**
+ * The portal's GSTR-9 screen (and the sheet's G:J / F:I blocks) run Central,
+ * State/UT, Integrated, Cess for Tables 6, 8 and 9 — so a pasted row or
+ * figures typed across in the screen's order land in the right head.
+ */
+const HEADS_T: PortalFieldCol[] = [
+  { key: 'c', header: 'Central' },
+  { key: 's', header: 'State/UT' },
+  { key: 'i', header: 'Integrated' },
+  { key: 'x', header: 'Cess', width: 100 },
+];
 
 /** GSTR-9 Table 5 key → the engine's books-side Table 5 row (PL-OUTPUT Part B). */
 const T5_BOOKS_ROW: Record<T5Key, 'A' | 'B' | 'C' | 'C1' | 'D' | 'E' | 'F' | 'H' | 'I' | 'J' | 'K'> = {
@@ -172,8 +182,10 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
       toast.error('The GST Keeper browser extension was not detected. Install/enable it to pull from the portal — or use Upload, or type the figures.');
       return;
     }
-    if (bridge.version && compareVersions(bridge.version, GSTR9_PULL_MIN_VERSION) < 0) {
-      toast.error(`Extension v${bridge.version} cannot pull GSTR-9 yet. Update it to v${GSTR9_PULL_MIN_VERSION} or later (chrome://extensions → Reload), then try again.`);
+    // An extension from before v0.3.0 announces no version and would run its
+    // default (ledger) chain for an unknown mode — block it too.
+    if (!bridge.version || compareVersions(bridge.version, GSTR9_PULL_MIN_VERSION) < 0) {
+      toast.error(`Extension ${bridge.version ? `v${bridge.version}` : '(an old version)'} cannot pull GSTR-9 yet. Update it to v${GSTR9_PULL_MIN_VERSION} or later (chrome://extensions → Reload), then try again.`);
       return;
     }
     setError(null);
@@ -279,9 +291,9 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
   const t9Cols: PortalFieldCol[] = useMemo(() => [
     { key: 'payable', header: 'Tax payable', width: 132 },
     { key: 'cash', header: 'Paid in cash', width: 124 },
-    { key: 'itcI', header: 'IGST', group: 'Paid through ITC' },
-    { key: 'itcC', header: 'CGST', group: 'Paid through ITC' },
-    { key: 'itcS', header: 'SGST', group: 'Paid through ITC' },
+    { key: 'itcC', header: 'Central', group: 'Paid through ITC' },
+    { key: 'itcS', header: 'State/UT', group: 'Paid through ITC' },
+    { key: 'itcI', header: 'Integrated', group: 'Paid through ITC' },
     { key: 'itcX', header: 'Cess', group: 'Paid through ITC', width: 100 },
   ], []);
   const t9Rows = useMemo<PortalFieldRow[]>(

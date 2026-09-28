@@ -8,7 +8,7 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
-import { normalizeDocs } from './defaults';
+import { normalizeDoc, normalizeDocs } from './defaults';
 import { gstr9Fp, periodsForFY } from './portalParser';
 import { AnnualReturnDocs, DocKey, DOC_KEYS } from './types';
 
@@ -33,6 +33,14 @@ export class DocConflictError extends Error {
   constructor(public docKey: DocKey) {
     super(`"${docKey}" was changed by someone else.`);
     this.name = 'DocConflictError';
+  }
+}
+
+/** The period's status changed since the user last saw it (someone else locked / unlocked it). */
+export class PeriodChangedError extends Error {
+  constructor(public current?: PeriodStatus | null) {
+    super(current ? `The status was changed by someone else (now "${current.replace('_', ' ')}").` : 'The status was changed by someone else.');
+    this.name = 'PeriodChangedError';
   }
 }
 
@@ -65,7 +73,23 @@ export async function loadWorkspace(clientId: string, financialYear: string): Pr
   return { docs: normalizeDocs(stored), versions, updatedAt, updatedBy };
 }
 
-/** Version-checked save. Returns the new version. */
+/** One doc as stored now (used to recover from a version conflict without touching the other docs). */
+export async function loadDoc<K extends DocKey>(clientId: string, financialYear: string, key: K): Promise<{ data: AnnualReturnDocs[K]; version: number }> {
+  const { data, error } = await supabase
+    .from('annual_return_docs')
+    .select('data, version')
+    .eq('client_id', clientId)
+    .eq('financial_year', financialYear)
+    .eq('doc_key', key)
+    .maybeSingle();
+  if (error) throw error;
+  return { data: normalizeDoc(key, data?.data), version: data?.version ?? 0 };
+}
+
+/**
+ * Version-checked save. Returns the new version. `forceHistory` archives the
+ * version being replaced even inside the history throttle window (restores).
+ */
 export async function saveDoc<K extends DocKey>(
   clientId: string,
   financialYear: string,
@@ -73,6 +97,7 @@ export async function saveDoc<K extends DocKey>(
   data: AnnualReturnDocs[K],
   expectedVersion: number,
   updatedBy: string,
+  forceHistory = false,
 ): Promise<number> {
   const { data: version, error } = await supabase.rpc('save_annual_return_doc', {
     p_client_id: clientId,
@@ -81,6 +106,7 @@ export async function saveDoc<K extends DocKey>(
     p_data: data as unknown as Json,
     p_expected_version: expectedVersion,
     p_updated_by: updatedBy,
+    p_force_history: forceHistory,
   });
   if (error) {
     if (error.message?.includes('ANNUAL_RETURN_VERSION_CONFLICT')) throw new DocConflictError(key);
@@ -101,18 +127,55 @@ export async function loadPeriod(clientId: string, financialYear: string): Promi
   return (data as AnnualReturnPeriod) || null;
 }
 
-export async function setPeriodStatus(clientId: string, financialYear: string, status: PeriodStatus, by: string): Promise<void> {
+/**
+ * Move the period from `from` (the status the user was looking at) to
+ * `status`. Conditional: if someone else changed it meanwhile — e.g. locked
+ * it while this user clicked "Mark in progress" — nothing is written and
+ * PeriodChangedError is thrown, so a stale click can never undo a lock.
+ */
+export async function setPeriodStatus(
+  clientId: string,
+  financialYear: string,
+  status: PeriodStatus,
+  by: string,
+  from: PeriodStatus,
+): Promise<void> {
   const now = new Date().toISOString();
-  const payload = {
-    client_id: clientId,
-    financial_year: financialYear,
+  const patch = {
     status,
     updated_at: now,
     locked_at: status === 'locked' ? now : null,
     locked_by: status === 'locked' ? by : null,
   };
-  const { error } = await supabase.from('annual_return_periods').upsert(payload, { onConflict: 'client_id,financial_year' });
+  const table = supabase.from('annual_return_periods');
+  if (from === 'not_started') {
+    const { data: existing, error: readError } = await table
+      .select('status')
+      .eq('client_id', clientId)
+      .eq('financial_year', financialYear)
+      .maybeSingle();
+    if (readError) throw readError;
+    if (!existing) {
+      const { error } = await supabase
+        .from('annual_return_periods')
+        .insert({ client_id: clientId, financial_year: financialYear, ...patch });
+      if (error) {
+        if (error.code === '23505') throw new PeriodChangedError();
+        throw error;
+      }
+      return;
+    }
+    if (existing.status !== 'not_started') throw new PeriodChangedError(existing.status as PeriodStatus);
+  }
+  const { data, error } = await supabase
+    .from('annual_return_periods')
+    .update(patch)
+    .eq('client_id', clientId)
+    .eq('financial_year', financialYear)
+    .eq('status', from)
+    .select('id');
   if (error) throw error;
+  if (!data || data.length === 0) throw new PeriodChangedError();
 }
 
 export interface AsFiledReturn {

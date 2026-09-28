@@ -41,6 +41,8 @@ export interface FormTable {
   head: string[];
   /** Header of the description column. */
   labelHead?: string;
+  /** Width of the first ("No.") column in mm — wider for 8-digit HSN codes. */
+  codeWidth?: number;
   rows: FormRow[];
   note?: string;
 }
@@ -295,12 +297,16 @@ export function gstr9FormTables(w: Workings): FormTable[] {
         },
         { q: 0, v: 0, c: 0, s: 0, i: 0, x: 0 },
       );
-      body.push({ code: '', label: 'Total', cells: ['', sum.q, sum.v, '', '', sum.c, sum.s, sum.i, sum.x], bold: true });
+      // Quantities only add up when every row is in the same unit.
+      const units = new Set(rows.map((r) => (r.uqc || '').trim().toUpperCase()));
+      const qtyTotal = units.size === 1 ? sum.q : null;
+      body.push({ code: '', label: 'Total', cells: [units.size === 1 ? rows[0].uqc || '' : '', qtyTotal, sum.v, '', '', sum.c, sum.s, sum.i, sum.x], bold: true });
     }
     return {
       no,
       title,
       labelHead: 'Description',
+      codeWidth: 17,
       head: ['UQC', 'Total Quantity', 'Taxable Value', 'Concessional rate?', 'Rate of Tax', 'Central Tax', 'State Tax / UT Tax', 'Integrated Tax', 'Cess'],
       rows: body.length ? body : [{ code: '', label: 'Nil', cells: ['', null, null, '', '', null, null, null, null] }],
     };
@@ -436,7 +442,7 @@ function renderTables(doc: Doc, tables: FormTable[], startY: number, opts: { sho
     const many = t.head.length > 6;
     const fontSize = many ? 6.8 : 7.3;
     const columnStyles: Record<number, { halign?: 'right' | 'left'; cellWidth?: number | 'auto' }> = {
-      0: { cellWidth: 12 },
+      0: { cellWidth: t.codeWidth ?? 12 },
       1: { cellWidth: many ? 58 : 105 },
     };
     t.head.forEach((_, i) => {

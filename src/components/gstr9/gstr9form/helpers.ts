@@ -89,7 +89,7 @@ export const fyStartYear = (fy: string): number => Number(String(fy).slice(0, 4)
 
 /** Tailwind classes for a CellTone outside the grid (FormTable cells). */
 export const toneClass = (t: CellTone): string =>
-  t === 'error' ? 'text-destructive font-medium' : t === 'ok' ? 'text-success' : t === 'muted' ? 'text-muted-foreground' : t === 'warn' ? 'text-warning-foreground' : '';
+  t === 'error' ? 'text-destructive font-medium' : t === 'ok' ? 'text-success' : t === 'muted' ? 'text-muted-foreground' : t === 'warn' ? 'bg-warning/15 text-foreground' : '';
 
 /** A single sticky "Particulars" column showing the row code and label. */
 export const particularsCol = <R extends { code: string; label: string; title?: string }>(header = 'Particulars', width = 250): GridColumn<R> => ({

@@ -85,7 +85,7 @@ export const DiffKpi: React.FC<{ lineKey: string; label: string }> = ({ lineKey,
 export const RefStrip: React.FC<{ items: Array<{ label: string; value: React.ReactNode }>; className?: string }> = ({ items, className }) => (
   <div className={cn('flex flex-wrap gap-x-4 gap-y-1 rounded-md bg-muted/50 px-3 py-2 text-xs', className)}>
     {items.map((it) => (
-      <span key={it.label} className="whitespace-nowrap">
+      <span key={it.label} className="sm:whitespace-nowrap">
         <span className="text-muted-foreground">{it.label}: </span>
         <span className="font-medium tabular-nums">{it.value}</span>
       </span>

@@ -55,7 +55,11 @@ export function moneyCol<R>(
     tone: opts.tone,
     title: opts.title,
     sticky: opts.sticky,
-    onEdit: (r: R, e: CellEdit) => withF(set(r, e.num === null ? (opts.nullable ? null : 0) : e.num), key, e.formula),
+    onEdit: (r: R, e: CellEdit) => {
+      const next = set(r, e.num === null ? (opts.nullable ? null : 0) : e.num);
+      // A cell that ends up empty (e.g. SGST back to mirroring) keeps no expression.
+      return withF(next, key, get(next) === null ? undefined : e.formula);
+    },
   };
 }
 
@@ -95,7 +99,9 @@ export function taxInCols<R>(get: (row: R) => TaxIn, set: (row: R, t: TaxIn) => 
   cols.push(moneyCol<R>(`${p}.c`, 'CGST', (r) => get(r).c, (r, v) => set(r, { ...get(r), c: v ?? 0 }), {
     group: opts.group, editable: opts.editable, tone: opts.tone ? (r) => opts.tone!(r, 'c') : undefined,
   }));
-  cols.push(moneyCol<R>(`${p}.s`, 'SGST', (r) => get(r).s, (r, v) => set(r, { ...get(r), s: v }), {
+  // SGST typed (or pasted, e.g. the sheet's `=+F` column) equal to CGST goes back to
+  // mirroring, so a later CGST correction carries through to SGST.
+  cols.push(moneyCol<R>(`${p}.s`, 'SGST', (r) => get(r).s, (r, v) => set(r, { ...get(r), s: v !== null && Math.abs(v - get(r).c) < 0.005 ? null : v }), {
     group: opts.group,
     editable: opts.editable,
     nullable: true,

@@ -1,18 +1,35 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { computeWorkings, Workings } from '@/lib/gstr9/engine';
 import { AnnualReturnDocs, DocKey, DOC_KEYS, Justification, ValTax } from '@/lib/gstr9/types';
 import {
   AnnualReturnPeriod,
   DocConflictError,
+  loadDoc,
   loadPeriod,
   loadWorkspace,
+  PeriodChangedError,
   PeriodStatus,
   saveDoc,
   setPeriodStatus,
   YearLockedError,
 } from '@/lib/gstr9/store';
+
+const DOC_LABEL: Record<DocKey, string> = {
+  sales: 'Sales', purchases: 'Purchases & ITC', duties_output: 'Duties & Taxes (output)', duties_input: 'Duties & Taxes (input)',
+  rcm: 'RCM', portal: 'Portal data', gstr9: 'GSTR-9', annexures: 'Annexures', gstr9c: 'GSTR-9C', notice: 'Notice format',
+  justifications: 'Reasons', settings: 'Settings',
+};
+
+/** What flush() hands back: whether everything saved, and the exact docs/workings that are now saved. */
+export interface FlushResult {
+  ok: boolean;
+  docs: AnnualReturnDocs | null;
+  workings: Workings | null;
+  period: AnnualReturnPeriod | null;
+}
 
 export interface WorkspaceClient {
   id: string;
@@ -30,8 +47,11 @@ export interface WorkspaceValue {
   loading: boolean;
   docs: AnnualReturnDocs;
   workings: Workings;
-  /** Apply a change to one doc; it autosaves shortly after. */
-  update: <K extends DocKey>(key: K, updater: (doc: AnnualReturnDocs[K]) => AnnualReturnDocs[K]) => void;
+  /**
+   * Apply a change to one doc; it autosaves shortly after. `archive` keeps the
+   * version being replaced in history even inside the throttle window (restores).
+   */
+  update: <K extends DocKey>(key: K, updater: (doc: AnnualReturnDocs[K]) => AnnualReturnDocs[K], opts?: { archive?: boolean }) => void;
   /** Write (or clear, with empty text) the justification for a difference line. */
   justify: (lineKey: string, text: string, diffAt: ValTax) => void;
   saveState: SaveState;
@@ -43,8 +63,12 @@ export interface WorkspaceValue {
   canUnlock: boolean;
   setStatus: (status: PeriodStatus) => Promise<void>;
   reload: () => Promise<void>;
-  /** Save everything pending now (before an export, a lock, leaving the page). */
-  flush: () => Promise<void>;
+  /**
+   * Save everything pending now (before an export, a lock, leaving the page).
+   * `ok` is false when something could not be saved or was replaced by
+   * someone else's version; `docs`/`workings` are what is saved right now.
+   */
+  flush: () => Promise<FlushResult>;
   userName: string;
 }
 
@@ -77,8 +101,19 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
   const versions = useRef<Record<DocKey, number>>(Object.fromEntries(DOC_KEYS.map((k) => [k, 0])) as Record<DocKey, number>);
   const dirty = useRef<Set<DocKey>>(new Set());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const saving = useRef<Promise<void> | null>(null);
+  const saving = useRef<Promise<boolean> | null>(null);
+  const forceHistory = useRef<Set<DocKey>>(new Set());
+  const periodRef = useRef<AnnualReturnPeriod | null>(null);
   const scope = useRef(`${client.id}|${financialYear}`);
+  const noItcBuilder = client.regular_sub_type === 'Builder' && client.builder_itc_type === 'NO_ITC';
+  const compute = useCallback(
+    (d: AnnualReturnDocs) => computeWorkings(d, { clientName: client.name, gstin: client.gstin, financialYear, noItcBuilder }),
+    [client.name, client.gstin, financialYear, noItcBuilder],
+  );
+  const applyPeriod = useCallback((p: AnnualReturnPeriod | null) => {
+    periodRef.current = p;
+    setPeriod(p);
+  }, []);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -86,61 +121,88 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
       const [ws, p] = await Promise.all([loadWorkspace(client.id, financialYear), loadPeriod(client.id, financialYear)]);
       versions.current = ws.versions;
       dirty.current.clear();
+      forceHistory.current.clear();
       docsRef.current = ws.docs;
       setDocs(ws.docs);
-      setPeriod(p);
+      applyPeriod(p);
       setSaveState('idle');
     } catch (e) {
       toast.error('Could not load the working: ' + (e instanceof Error ? e.message : String(e)));
     } finally {
       setLoading(false);
     }
-  }, [client.id, financialYear]);
+  }, [client.id, financialYear, applyPeriod]);
 
   useEffect(() => {
     scope.current = `${client.id}|${financialYear}`;
     reload();
   }, [reload, client.id, financialYear]);
 
-  const saveDirty = useCallback(async () => {
-    if (saving.current) {
-      await saving.current;
-    }
-    const run = async () => {
+  /**
+   * Save every dirty doc, one at a time. Returns true when everything is saved
+   * as the user left it. A version conflict replaces only that doc with the
+   * stored version (the other docs keep saving); a lock stops everything.
+   */
+  const saveDirty = useCallback(async (): Promise<boolean> => {
+    // Wait for any run in progress (and any that another caller started meanwhile).
+    while (saving.current) await saving.current;
+    const run = async (): Promise<boolean> => {
       const mine = scope.current;
+      let ok = true;
       while (dirty.current.size > 0 && docsRef.current && mine === scope.current) {
         const key = dirty.current.values().next().value as DocKey;
         dirty.current.delete(key);
         const data = docsRef.current[key];
+        const archive = forceHistory.current.has(key);
         setSaveState('saving');
         try {
-          const v = await saveDoc(client.id, financialYear, key, data, versions.current[key], userName);
-          if (mine !== scope.current) return;
+          const v = await saveDoc(client.id, financialYear, key, data, versions.current[key], userName, archive);
+          if (mine !== scope.current) return false;
           versions.current[key] = v;
+          forceHistory.current.delete(key);
         } catch (e) {
+          if (mine !== scope.current) return false;
           if (e instanceof DocConflictError) {
-            toast.error('Someone else changed this working while you were editing. Reloaded their version; please re-check your last change.');
-            await reload();
-            return;
+            ok = false;
+            forceHistory.current.delete(key);
+            try {
+              const fresh = await loadDoc(client.id, financialYear, key);
+              if (mine !== scope.current) return false;
+              versions.current[key] = fresh.version;
+              if (!dirty.current.has(key) && docsRef.current) {
+                const next = { ...docsRef.current, [key]: fresh.data } as AnnualReturnDocs;
+                docsRef.current = next;
+                setDocs(next);
+              }
+              toast.error(`Someone else saved "${DOC_LABEL[key]}" while you were editing. Their version is loaded — re-check your last change there. Your other changes are still being saved.`);
+            } catch (loadError) {
+              dirty.current.add(key);
+              setSaveState('error');
+              toast.error(`Could not reload "${DOC_LABEL[key]}": ${loadError instanceof Error ? loadError.message : String(loadError)}`);
+              return false;
+            }
+            continue;
           }
           if (e instanceof YearLockedError) {
-            toast.error('This year was locked by someone else. Your last change was not saved.');
+            toast.error('This year was locked by someone else, so your unsaved changes could not be saved. Showing the locked working.');
             await reload();
-            return;
+            return false;
           }
           dirty.current.add(key);
           setSaveState('error');
-          toast.error('Autosave failed — will retry on your next change. ' + (e instanceof Error ? e.message : ''));
-          return;
+          toast.error('Autosave failed — it will retry on your next change. ' + (e instanceof Error ? e.message : ''));
+          return false;
         }
       }
       if (mine === scope.current && dirty.current.size === 0) {
         setSaveState('saved');
         setLastSavedAt(new Date());
       }
+      return ok && dirty.current.size === 0;
     };
-    saving.current = run().finally(() => { saving.current = null; });
-    await saving.current;
+    const p = run().finally(() => { if (saving.current === p) saving.current = null; });
+    saving.current = p;
+    return p;
   }, [client.id, financialYear, userName, reload]);
 
   const schedule = useCallback(() => {
@@ -149,10 +211,12 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
     timer.current = setTimeout(() => { timer.current = null; saveDirty(); }, SAVE_DELAY_MS);
   }, [saveDirty]);
 
-  const flush = useCallback(async () => {
+  const flush = useCallback(async (): Promise<FlushResult> => {
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-    await saveDirty();
-  }, [saveDirty]);
+    const ok = await saveDirty();
+    const d = docsRef.current;
+    return { ok, docs: d, workings: d ? compute(d) : null, period: periodRef.current };
+  }, [saveDirty, compute]);
 
   // Save whatever is pending when switching client/FY or leaving the page.
   useEffect(() => () => { if (dirty.current.size) void saveDirty(); }, [saveDirty]);
@@ -170,12 +234,13 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
   const locked = period?.status === 'locked';
   const readOnly = locked || !isStaff;
 
-  const update = useCallback<WorkspaceValue['update']>((key, updater) => {
+  const update = useCallback<WorkspaceValue['update']>((key, updater, opts) => {
     if (readOnly || !docsRef.current) return;
     const next = { ...docsRef.current, [key]: updater(docsRef.current[key]) } as AnnualReturnDocs;
     docsRef.current = next;
     setDocs(next);
     dirty.current.add(key);
+    if (opts?.archive) forceHistory.current.add(key);
     schedule();
   }, [readOnly, schedule]);
 
@@ -188,22 +253,44 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
     });
   }, [update, userName]);
 
+  /**
+   * Change the period status from the one the user is looking at. Locking
+   * first saves everything and re-checks, on the saved figures, that no
+   * difference is open — a failed or overtaken save never locks the year.
+   */
   const setStatus = useCallback(async (status: PeriodStatus) => {
-    await flush();
-    await setPeriodStatus(client.id, financialYear, status, userName);
-    setPeriod(await loadPeriod(client.id, financialYear));
-  }, [client.id, financialYear, userName, flush]);
+    const from: PeriodStatus = periodRef.current?.status ?? 'not_started';
+    if (status === 'locked') {
+      const r = await flush();
+      if (!r.ok || !r.workings) {
+        throw new Error('your latest changes could not be saved (or were replaced by someone else\'s), so the year was not locked. Check them and try again.');
+      }
+      if (r.workings.openCount > 0) {
+        throw new Error(`${r.workings.openCount} difference${r.workings.openCount === 1 ? ' still needs' : 's still need'} a reason, so the year was not locked.`);
+      }
+    }
+    try {
+      await setPeriodStatus(client.id, financialYear, status, userName, from);
+    } catch (e) {
+      if (e instanceof PeriodChangedError) {
+        applyPeriod(await loadPeriod(client.id, financialYear));
+      }
+      throw e;
+    }
+    applyPeriod(await loadPeriod(client.id, financialYear));
+  }, [client.id, financialYear, userName, flush, applyPeriod]);
 
-  const noItcBuilder = client.regular_sub_type === 'Builder' && client.builder_itc_type === 'NO_ITC';
-  const workings = useMemo(
-    () => (docs ? computeWorkings(docs, { clientName: client.name, gstin: client.gstin, financialYear, noItcBuilder }) : null),
-    [docs, client.name, client.gstin, financialYear, noItcBuilder],
-  );
+  const workings = useMemo(() => (docs ? compute(docs) : null), [docs, compute]);
 
   if (!docs || !workings) {
     return (
-      <div className="flex items-center justify-center py-24 text-sm text-muted-foreground">
-        {loading ? 'Loading the working…' : 'Could not load the working.'}
+      <div className="flex flex-col items-center justify-center gap-3 py-24 text-sm text-muted-foreground">
+        {loading ? 'Loading the working…' : (
+          <>
+            <span>Could not load the working — check the connection and try again.</span>
+            <Button variant="outline" size="sm" onClick={() => void reload()}>Retry</Button>
+          </>
+        )}
       </div>
     );
   }

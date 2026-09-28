@@ -103,7 +103,7 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
   const monthRows = FY_MONTHS.map((m, idx) => {
     const row = byPeriod.get(periods[idx]);
     const meta: PortalMeta | undefined = portal.monthMeta[m];
-    const usable = has3bSummary(row);
+    const usable = has3bSummary(row) && !isNotFiled(row?.status);
     const applied = usable && meta?.source === 'as_filed_3b' && !newerThanApplied(row?.updatedAt, meta);
     return { m, period: periods[idx], row, meta, usable, applied, typed: typedCount(portal, `months.${m}.`) };
   });
@@ -139,7 +139,7 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
     if (timer.current) clearInterval(timer.current);
     let tries = 0;
     setPolling({ tries: 0, fresh: 0 });
-    timer.current = setInterval(async () => {
+    const run = setInterval(async () => {
       tries += 1;
       let list: AsFiledReturn[] | null = null;
       try {
@@ -147,6 +147,8 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
       } catch {
         list = null;
       }
+      // "Stop waiting" (or a new pull) while this read was in flight: drop it.
+      if (timer.current !== run) return;
       const fresh = list ? list.filter((r) => before.get(r.period) !== `${r.updatedAt ?? ''}|${r.status ?? ''}`).length : 0;
       if (list) setRows(list);
       setPolling({ tries, fresh });
@@ -161,6 +163,7 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
         }
       }
     }, POLL_MS);
+    timer.current = run;
   };
 
   const changes = useMemo<ImportChange[]>(

@@ -32,6 +32,13 @@ const fyChoices = (): string[] => {
 };
 
 const readStoredFY = (): string => {
+  // A shared link's ?fy= wins over this browser's last-used year.
+  try {
+    const fromUrl = new URLSearchParams(window.location.search).get('fy');
+    if (fromUrl && fyChoices().includes(fromUrl)) return fromUrl;
+  } catch {
+    /* no window */
+  }
   try {
     const v = localStorage.getItem(FY_STORAGE_KEY);
     if (v && fyChoices().includes(v)) return v;
@@ -72,13 +79,16 @@ const AnnualReturnPage: React.FC = () => {
     try { localStorage.setItem(FY_STORAGE_KEY, financialYear); } catch { /* storage unavailable */ }
   }, [financialYear]);
 
-  // Keep the open client in the URL so a reload or a shared link lands on the same working.
+  // Keep the open client and FY in the URL so a reload or a shared link lands on the same working.
   useEffect(() => {
-    if (!selectedClientId || params.get('client') === selectedClientId) return;
+    const wantClient = selectedClientId || null;
+    if (params.get('client') === wantClient && params.get('fy') === financialYear) return;
+    if (!wantClient) return;
     const next = new URLSearchParams(params);
-    next.set('client', selectedClientId);
+    next.set('client', wantClient);
+    next.set('fy', financialYear);
     setParams(next, { replace: true });
-  }, [selectedClientId, params, setParams]);
+  }, [selectedClientId, financialYear, params, setParams]);
 
   const client = clients.find((c) => c.id === selectedClientId) || null;
   const clientOptions = useMemo(() => clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin })), [clients]);
@@ -93,7 +103,7 @@ const AnnualReturnPage: React.FC = () => {
 
       <Card>
         <CardContent className="flex flex-wrap items-center gap-3 p-3">
-          <div className="min-w-[260px] flex-1">
+          <div className="min-w-[220px] flex-1">
             <SearchableSelect
               options={clientOptions}
               value={selectedClientId}
@@ -133,12 +143,14 @@ const AnnualReturnPage: React.FC = () => {
 
 const SaveIndicator: React.FC = () => {
   const { saveState, lastSavedAt, locked, readOnly } = useWorkspace();
-  if (locked) return <Badge variant="success" className="gap-1"><Lock className="h-3 w-3" /> Locked</Badge>;
+  // An unsaved edit outranks the lock: someone may have locked the year while
+  // this user's last change was still pending, and that change is not kept.
+  if (saveState === 'error') return <span className="inline-flex items-center gap-1 text-xs text-destructive"><AlertCircle className="h-3.5 w-3.5" /> Not saved</span>;
+  if (locked) return <span className="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-xs font-medium text-foreground"><Lock className="h-3 w-3 text-success" /> Locked</span>;
   if (readOnly) return <Badge variant="secondary">Read-only</Badge>;
   if (saveState === 'saving' || saveState === 'pending') {
     return <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</span>;
   }
-  if (saveState === 'error') return <span className="inline-flex items-center gap-1 text-xs text-destructive"><AlertCircle className="h-3.5 w-3.5" /> Not saved</span>;
   if (saveState === 'saved' && lastSavedAt) {
     return <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><Check className="h-3.5 w-3.5 text-success" /> Saved {lastSavedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>;
   }
@@ -207,7 +219,7 @@ const Workspace: React.FC = () => {
             </div>
             <h2 className="font-heading text-xl font-semibold">{idx}. {step.label}</h2>
             <p className="max-w-3xl text-sm text-muted-foreground">
-              {step.intro} <span className="whitespace-nowrap rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">Excel: {step.excel}</span>
+              {step.intro} <span className="inline-block max-w-full break-words rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] sm:whitespace-nowrap">Excel: {step.excel}</span>
             </p>
           </div>
           <SaveIndicator />

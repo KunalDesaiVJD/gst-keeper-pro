@@ -7879,6 +7879,7 @@ export type Database = {
           p_doc_key: string
           p_expected_version: number
           p_financial_year: string
+          p_force_history?: boolean
           p_updated_by: string
         }
         Returns: number

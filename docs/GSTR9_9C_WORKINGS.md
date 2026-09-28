@@ -77,7 +77,10 @@ stored doc lacks.
   `annual_return_periods`, so the lock is enforced by the database, not the
   UI. Unlocking needs superadmin / GST manager or the `unlock_sheets`
   permission.
-- Every overwritten version is kept in `annual_return_doc_history`.
+- Overwritten versions are kept in `annual_return_doc_history`: one
+  snapshot per doc per 10 minutes of autosaving, another whenever a
+  different person saves, and always the version a Version-history restore
+  replaces (`p_force_history`), so a restore can itself be undone.
 - Raw portal payloads (GSTR-9 system-computed JSON) are kept unchanged in
   `gst_filed_returns` (`return_type = 'GSTR9_CALC'`, `period_month = '03/YYYY'`),
   the same table the extension already uses for as-filed returns.
@@ -117,19 +120,20 @@ extension from the client's own login, or uploaded, or typed:
 | Figure (Excel cell) | Source | Fallback |
 |---|---|---|
 | GSTR 9-OUTPUT column B, GSTR-9 4A–4L | GSTR-9 system-computed (`returns2/auth/api/gstr9/details/calc`) `table4` | typed |
-| GSTR-9 6A | system-computed `table6.itc_3b` | Σ 4A of the as-filed GSTR-3B |
+| GSTR-9 6A | system-computed `table6.itc_3b` | Σ 4A of the as-filed GSTR-3B — whenever 6A itself is absent, even if other GSTR-9 figures are present |
 | GSTR-9 6G (ISD) | system-computed `table6.isd` | typed |
 | GSTR-9 8A | system-computed `table8.itc_2b` (`itc_2a` before FY 2023-24) | typed |
 | GSTR-9 Table 9 | system-computed `table9` | typed |
 | D&T-OUTPUT "AS PER 3B" (L:N) | as-filed GSTR-3B, 3.1(a) + 3.1(b) tax | typed |
 | D&T-INPUT "AS PER 3B" (X:Z) | as-filed GSTR-3B, 4A(1)+4A(4)+4A(5) − 4B(1) − 4B(2) | typed |
-| RCM Part A (monthly) | as-filed GSTR-3B 3.1(d) | GSTR-9 `table4.rchrg` (annual) |
+| RCM Part A (monthly) | as-filed GSTR-3B 3.1(d) | GSTR-9 `table4.rchrg` (annual), unless some month has 3.1(d) pulled or typed |
 | GSTR-9 7E (s.17(5)) | as-filed GSTR-3B 4B(1) | typed |
 | Notice "ITC used 4A(5)", "Reversed 4(B)(2)", "4(D)" | as-filed GSTR-3B | typed |
 
 "As-filed GSTR-3B" means the filed return the extension reads from the
 portal (`gst_filed_returns`, `return_type 'GSTR3B'`), never the app's
-prepared 3B. Every portal figure carries a source chip (Portal / Upload /
+prepared 3B. A month the portal reports as not filed (`NF`) is never
+imported, even if a saved draft comes back with it. Every portal figure carries a source chip (Portal / Upload /
 Typed) and can be overridden; a re-import never silently overwrites a
 typed value. The GSTR-9 pull endpoint was read from the portal's own
 `gstr9ctrl.js` but has **not yet been exercised live** — if it fails, use
@@ -163,9 +167,13 @@ screen where it applies.
 6. **Annexure-1 SGST payable uses SGST** (the sheet copies CGST, `D21=D20`).
 7. **Annexure-3 keeps the sheet's signed total**, then shows the DRC-03
    payable per head (only positive), excess paid separately, and the DRC-03
-   already paid. Rows 2 and 3 are prefilled with a suggestion (books RCM not
-   paid on the portal; Table 12) that staff can overwrite — the sheet types
-   them.
+   already paid. Row 3 is prefilled with Table 12, which staff can
+   overwrite. Row 2 (RCM to be paid) **defaults to nil**: row 1 already
+   compares the books payable *including* RCM Part B with Table 9 paid
+   *including* 3.1(d), so books RCM not paid on the portal is already in
+   it — prefilling row 2 with it would count it twice. That gap is shown
+   next to row 2 as a hint; staff type row 2 only for RCM outside the
+   books. The sheet types both rows.
 8. **Table 9 tax payable** is the portal's figure (what the portal
    pre-fills), else 4N tax, and can be overridden. The sheet mixes the two
    (IGST from the portal, CGST/SGST from 4N).
@@ -204,6 +212,13 @@ screen where it applies.
     portal's figures come from GSTR-1 and are a cross-check.
 18. **GSTR-9 Table 19** (late fee payable and paid) is carried in the
     working; the sheet has no cell for it.
+19. **GSTR-9C defaults.** Table 7B–7D1 default to the *net* Part B figure
+    of each nature (credit notes included), as filed in Table 5. Table 12B
+    (ITC booked in earlier years, claimed this year) defaults to the Last
+    Year Effect less 6A1. Table 9 groups each ledger by its stated rate
+    when that is a standard slab, else by the nearest slab to the stated
+    (or, untyped, implied) rate. Each default can be overridden on the
+    9C step.
 
 Carried over from the workbook as-is (firm positions, flagged in the UI):
 suspended-ITC reversals (incl. 180-day) are reported as 7H "other reversal"
