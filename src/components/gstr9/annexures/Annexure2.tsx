@@ -1,5 +1,5 @@
 import React from 'react';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { useWorkspace } from '../WorkspaceContext';
 import { MatrixTable, Note, SectionCard, SourceChip, type MatrixRow } from '../ui';
 import { StepLink } from './StepLink';

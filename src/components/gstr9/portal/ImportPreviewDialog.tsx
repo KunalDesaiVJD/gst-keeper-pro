@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Check, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -56,11 +56,11 @@ export const ImportPreviewDialog: React.FC<{
       paths.forEach((p) => (on ? next.add(p) : next.delete(p)));
       return next;
     });
-  // The shared Checkbox draws a tick for "indeterminate" too, so a partly ticked
-  // group shows as unticked with a tinted box instead of a misleading tick.
-  const stateOf = (paths: string[]): boolean => paths.length > 0 && paths.every((p) => picked.has(p));
-  const partial = (paths: string[]): string | undefined =>
-    !stateOf(paths) && paths.some((p) => picked.has(p)) ? 'bg-primary/20' : undefined;
+  // All, none, or some ("indeterminate": a dash, announced as partly ticked).
+  const stateOf = (paths: string[]): boolean | 'indeterminate' => {
+    const n = paths.filter((p) => picked.has(p)).length;
+    return n === 0 ? false : n === paths.length ? true : 'indeterminate';
+  };
   const allPaths = changes.map((c) => c.path);
 
   return (
@@ -99,7 +99,6 @@ export const ImportPreviewDialog: React.FC<{
                     <th className="w-9 border-b px-2 py-1.5 text-left">
                       <Checkbox
                         checked={stateOf(allPaths)}
-                        className={partial(allPaths)}
                         onCheckedChange={(v) => toggle(allPaths, v === true)}
                         aria-label="Tick every figure"
                         disabled={readOnly}
@@ -118,7 +117,7 @@ export const ImportPreviewDialog: React.FC<{
                       <React.Fragment key={g.key}>
                         <tr className="bg-muted/50">
                           <td className="border-b px-2 py-1">
-                            <Checkbox checked={stateOf(paths)} className={partial(paths)} onCheckedChange={(v) => toggle(paths, v === true)} aria-label={`Tick all of ${g.label}`} disabled={readOnly} />
+                            <Checkbox checked={stateOf(paths)} onCheckedChange={(v) => toggle(paths, v === true)} aria-label={`Tick all of ${g.label}`} disabled={readOnly} />
                           </td>
                           <td colSpan={4} className="border-b px-2 py-1 font-semibold">
                             {g.label} <span className="font-normal text-muted-foreground">· {g.rows.length}</span>
@@ -132,7 +131,7 @@ export const ImportPreviewDialog: React.FC<{
                                 <Checkbox
                                   checked={picked.has(r.path)}
                                   onCheckedChange={(v) => toggle([r.path], v === true)}
-                                  aria-label={`Apply ${r.info.label}`}
+                                  aria-label={`Apply ${g.label} — ${r.info.label}`}
                                   disabled={readOnly}
                                 />
                               </td>
@@ -142,7 +141,7 @@ export const ImportPreviewDialog: React.FC<{
                               </td>
                               <td className="border-b px-2 py-1 text-right tabular-nums">{fmtMoney(r.current)}</td>
                               <td className="border-b px-2 py-1 text-right font-medium tabular-nums">{fmtMoney(r.incoming)}</td>
-                              <td className={cn('border-b px-2 py-1 text-right tabular-nums', delta < 0 ? 'text-destructive' : 'text-muted-foreground')}>
+                              <td className={cn('border-b px-2 py-1 text-right tabular-nums', delta < 0 ? 'text-destructive-strong' : 'text-muted-foreground')}>
                                 {delta > 0 ? '+' : ''}{fmtMoney(delta)}
                               </td>
                             </tr>

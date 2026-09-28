@@ -1,5 +1,5 @@
 import React from 'react';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import type { RcmItcTable } from '@/lib/gstr9/types';
 import { MatrixTable, SectionCard, type MatrixRow } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';

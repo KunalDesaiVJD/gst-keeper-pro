@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { CheckCircle2 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -20,7 +20,7 @@ const OpenCount: React.FC<{ n: number }> = ({ n }) =>
       {n}
     </Badge>
   ) : (
-    <span className="inline-flex items-center text-success">
+    <span className="inline-flex items-center text-success-strong">
       <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
       <span className="sr-only">No open differences</span>
     </span>
@@ -74,7 +74,7 @@ const DutiesStep: React.FC = () => {
               <Switch id="dt-show-cess" checked={cess} onCheckedChange={setCessChoice} />
               <Label htmlFor="dt-show-cess" className="text-xs font-normal">
                 Show cess
-                {!cess && cessUsed && <span className="ml-1 font-medium text-destructive">(cess figures hidden)</span>}
+                {!cess && cessUsed && <span className="ml-1 font-medium text-destructive-strong">(cess figures hidden)</span>}
               </Label>
             </div>
             {tab === 'input' && (

@@ -1,11 +1,13 @@
 import React from 'react';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { cn } from '@/lib/utils';
 import { totalTax } from '@/lib/gstr9/engine';
 import type { Formulas, Tax } from '@/lib/gstr9/types';
 import { useWorkspace } from '../WorkspaceContext';
 import { MatrixTable, Note, SectionCard, SourceChip, useDiffLine, type MatrixRow } from '../ui';
 import { SheetGrid, type GridColumn } from '../grid/SheetGrid';
 import { moneyCol } from '../grid/columns';
+import { fmtMoney } from '../grid/money';
 import { HEAD_NAME, pickFormulas, putFormulas } from './taxRows';
 import { StepLink } from './StepLink';
 
@@ -27,6 +29,26 @@ interface EntryRow {
 const FIELD: Record<EntryRow['id'], 'a1NonGstIncome' | 'a1SaleReturn'> = { nongst: 'a1NonGstIncome', return: 'a1SaleReturn' };
 
 const hasTax = (r: EntryRow) => r.id === 'return';
+
+/**
+ * Payable − paid. A positive difference is tax short paid (a DRC-03
+ * liability) and is the one flagged; an excess payment is only noted. Each
+ * says which it is in words, not by colour alone.
+ */
+const PayDiff: React.FC<{ value: number; tolerance: number }> = ({ value, tolerance }) => {
+  const short = value > tolerance;
+  const excess = value < -tolerance;
+  return (
+    <span
+      className={cn('tabular-nums', short && 'font-medium text-destructive-strong', excess && 'text-muted-foreground')}
+      title={short ? 'Short paid — payable through DRC-03 (Annexure-3 row 1)' : excess ? 'Paid in excess of the books liability' : undefined}
+    >
+      {fmtMoney(value)}
+      {short && <span className="ml-1 text-[10px] font-normal">short</span>}
+      {excess && <span className="ml-1 text-[10px]">excess</span>}
+    </span>
+  );
+};
 
 const Entered: React.FC = () => <Badge variant="outline" className="text-[10px] font-normal">Typed below</Badge>;
 
@@ -68,14 +90,14 @@ const Annexure1: React.FC = () => {
       key: h,
       label: HEAD_NAME[h],
       value: { t: a.payable[h], i: a.paid[h], c: a.payDiff[h] },
-      signed: true,
+      cells: { c: <PayDiff value={a.payDiff[h]} tolerance={workings.tolerance} /> },
     })),
     {
       key: 'total',
       label: 'Total',
       value: { t: totalTax(a.payable), i: totalTax(a.paid), c: totalTax(a.payDiff) },
+      cells: { c: <PayDiff value={totalTax(a.payDiff)} tolerance={workings.tolerance} /> },
       total: true,
-      signed: true,
       diffKey: 'ann1.paid',
     },
   ];

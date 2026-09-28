@@ -4,7 +4,7 @@ import { AlertCircle, Check, ChevronLeft, ChevronRight, CloudUpload, Loader2, Lo
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { SearchableSelect } from '@/components/ui/searchable-select';
@@ -145,14 +145,14 @@ const SaveIndicator: React.FC = () => {
   const { saveState, lastSavedAt, locked, readOnly } = useWorkspace();
   // An unsaved edit outranks the lock: someone may have locked the year while
   // this user's last change was still pending, and that change is not kept.
-  if (saveState === 'error') return <span className="inline-flex items-center gap-1 text-xs text-destructive"><AlertCircle className="h-3.5 w-3.5" /> Not saved</span>;
-  if (locked) return <span className="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-xs font-medium text-foreground"><Lock className="h-3 w-3 text-success" /> Locked</span>;
+  if (saveState === 'error') return <span className="inline-flex items-center gap-1 text-xs text-destructive-strong"><AlertCircle className="h-3.5 w-3.5" /> Not saved</span>;
+  if (locked) return <span className="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-xs font-medium text-foreground"><Lock className="h-3 w-3 text-success-strong" /> Locked</span>;
   if (readOnly) return <Badge variant="secondary">Read-only</Badge>;
   if (saveState === 'saving' || saveState === 'pending') {
     return <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</span>;
   }
   if (saveState === 'saved' && lastSavedAt) {
-    return <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><Check className="h-3.5 w-3.5 text-success" /> Saved {lastSavedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>;
+    return <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><Check className="h-3.5 w-3.5 text-success-strong" /> Saved {lastSavedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>;
   }
   return <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><CloudUpload className="h-3.5 w-3.5" /> Autosave on</span>;
 };

@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo } from 'react';
 import { AlertTriangle, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import type { PurchaseRowCalc } from '@/lib/gstr9/engine';
@@ -192,7 +192,7 @@ export const PurchaseSectionGrid: React.FC<{ section: InputSection }> = ({ secti
       excelRef={meta.excelRef}
       actions={
         !readOnly && rows.length > 0 ? (
-          <Button type="button" variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" onClick={clearSection}>
+          <Button type="button" variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive-strong" onClick={clearSection}>
             <Trash2 className="mr-1 h-3.5 w-3.5" /> Clear section
           </Button>
         ) : undefined

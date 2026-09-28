@@ -32,11 +32,11 @@ export const anyValTax = (t: Partial<ValTax> | null | undefined): boolean => !!t
 /** Text classes for a CellTone, matching SheetGrid's own cell tones. */
 export const toneClass = (tone: CellTone): string =>
   tone === 'error'
-    ? 'text-destructive font-medium'
+    ? 'text-destructive-strong font-medium'
     : tone === 'warn'
       ? 'bg-warning/15 font-medium text-foreground'
       : tone === 'ok'
-        ? 'text-success'
+        ? 'text-success-strong'
         : tone === 'muted'
           ? 'text-muted-foreground'
           : '';

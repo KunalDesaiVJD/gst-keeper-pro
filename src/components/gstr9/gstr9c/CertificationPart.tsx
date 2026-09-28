@@ -83,7 +83,7 @@ const Field: React.FC<{ def: FieldDef }> = ({ def }) => {
           update('gstr9c', (d) => ({ ...d, certification: { ...d.certification, [def.key]: v } }));
         }}
       />
-      {problem && <p className="text-[11px] text-destructive">{problem}</p>}
+      {problem && <p className="text-[11px] text-destructive-strong">{problem}</p>}
     </div>
   );
 };

@@ -106,7 +106,7 @@ const PortalStep: React.FC = () => {
           label="Browser extension"
           value={
             bridge.ready ? (
-              <span className="inline-flex items-center gap-1"><ShieldCheck className="h-4 w-4 text-success" /> Connected</span>
+              <span className="inline-flex items-center gap-1"><ShieldCheck className="h-4 w-4 text-success-strong" /> Connected</span>
             ) : 'Not detected'
           }
           hint={bridge.ready ? (bridge.version ? `v${bridge.version}` : 'ready to pull') : 'needed for Pull; Upload and typing work without it'}

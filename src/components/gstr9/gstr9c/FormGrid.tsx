@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo } from 'react';
 import { RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { GridColumn, GridFooterRow, SheetGrid } from '../grid/SheetGrid';
 import { diffTone } from '../grid/columns';
 import { fmtMoney } from '../grid/money';

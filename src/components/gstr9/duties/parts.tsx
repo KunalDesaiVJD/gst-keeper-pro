@@ -18,8 +18,8 @@ export const DiffValue: React.FC<{ value: number; tolerance: number }> = ({ valu
     <span
       className={cn(
         'tabular-nums',
-        tone === 'error' && 'font-medium text-destructive',
-        tone === 'ok' && 'text-success',
+        tone === 'error' && 'font-medium text-destructive-strong',
+        tone === 'ok' && 'text-success-strong',
         tone === 'muted' && 'text-muted-foreground',
       )}
     >

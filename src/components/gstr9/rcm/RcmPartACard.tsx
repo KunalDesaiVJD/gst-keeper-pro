@@ -1,5 +1,5 @@
 import React from 'react';
-import { RefreshCw } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { num } from '@/lib/gstr9/engine';
 import { applyHandEdits, type FieldEdit } from '@/lib/gstr9/portalImport';
@@ -94,7 +94,7 @@ const RcmPartACard: React.FC = () => {
       excelRef="RCM rows 5–22 (D9:G22)"
       actions={
         <Button type="button" size="sm" variant="outline" onClick={() => goTo('portal')}>
-          <RefreshCw className="h-3.5 w-3.5" /> Fetch in Portal data
+          Go to Portal data <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
         </Button>
       }
     >

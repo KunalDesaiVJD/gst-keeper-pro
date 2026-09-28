@@ -146,7 +146,7 @@ export const VersionHistory: React.FC = () => {
       ) : loading && !entries ? (
         <p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading versions…</p>
       ) : error ? (
-        <p className="text-xs text-destructive">Could not load the history: {error}</p>
+        <p className="text-xs text-destructive-strong">Could not load the history: {error}</p>
       ) : !entries?.length ? (
         <p className="text-xs text-muted-foreground">No earlier versions of {DOC_NAME[key]} yet — one is kept each time the sheet is saved over.</p>
       ) : (

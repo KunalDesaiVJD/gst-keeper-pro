@@ -1,7 +1,7 @@
 import React from 'react';
 import { RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { totalTax } from '@/lib/gstr9/engine';
 import type { Tax, TaxIn } from '@/lib/gstr9/types';
 import { SheetGrid, type CellTone, type GridColumn, type GridFooterRow } from '../grid/SheetGrid';

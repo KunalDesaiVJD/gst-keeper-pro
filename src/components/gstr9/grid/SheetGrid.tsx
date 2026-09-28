@@ -512,9 +512,9 @@ export function SheetGrid<R>({
                           editable ? 'bg-card cursor-cell' : 'bg-muted/40',
                           col.sticky && 'z-10 sm:sticky sm:left-0',
                           col.sticky && (editable ? 'bg-card' : 'bg-muted'),
-                          cTone === 'error' && 'text-destructive font-medium',
+                          cTone === 'error' && 'text-destructive-strong font-medium',
                           cTone === 'warn' && 'bg-warning/15 font-medium text-foreground',
-                          cTone === 'ok' && 'text-success',
+                          cTone === 'ok' && 'text-success-strong',
                           cTone === 'muted' && 'text-muted-foreground',
                           isActive && !isEditing && 'outline outline-2 -outline-offset-2 outline-primary',
                         )}
@@ -578,7 +578,7 @@ export function SheetGrid<R>({
                       <button
                         type="button"
                         aria-label="Delete row"
-                        className="rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus:opacity-100"
+                        className="rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive-strong group-hover:opacity-100 focus:opacity-100"
                         onClick={() => deleteRow(r)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -617,7 +617,7 @@ export function SheetGrid<R>({
         </table>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className={cn('text-[11px]', error ? 'text-destructive' : 'text-muted-foreground')}>
+        <p className={cn('text-[11px]', error ? 'text-destructive-strong' : 'text-muted-foreground')}>
           {error ?? (readOnly
             ? 'Read-only.'
             : 'Type to enter · Enter/Tab to move · =a+b works · paste a block straight from Excel (calculated columns are skipped).')}

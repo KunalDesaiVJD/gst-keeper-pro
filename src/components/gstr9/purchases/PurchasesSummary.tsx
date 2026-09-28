@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
 import { ArrowRight } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import type { StepKey } from '@/lib/gstr9/engine';
 import type { Formulas, TaxIn } from '@/lib/gstr9/types';
 import { SheetGrid, type GridColumn } from '../grid/SheetGrid';

@@ -2,7 +2,7 @@ import React from 'react';
 import { RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { num, rcmCellTax, totalTax } from '@/lib/gstr9/engine';
 import { FY_MONTHS, type Formulas, type MonthKey, type RcmCategory, type RcmCell } from '@/lib/gstr9/types';

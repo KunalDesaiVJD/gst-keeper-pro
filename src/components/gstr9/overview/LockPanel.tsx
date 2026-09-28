@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ArrowUpRight, CheckCircle2, Loader2, Lock, LockOpen, PlayCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Note, SectionCard } from '../ui';
@@ -109,7 +109,7 @@ export const LockPanel: React.FC = () => {
             </Note>
           ) : (
             <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <CheckCircle2 className="h-3.5 w-3.5 text-success" /> Every difference is matched, within {rupeesShort(w.tolerance)} or justified.
+              <CheckCircle2 className="h-3.5 w-3.5 text-success-strong" /> Every difference is matched, within {rupeesShort(w.tolerance)} or justified.
             </p>
           )}
           <div className="flex flex-wrap gap-2">

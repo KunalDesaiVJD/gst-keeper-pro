@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Loader2, RefreshCw, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -343,7 +343,7 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
           Last saved from the portal:{' '}
           {lastRow ? <span className="text-foreground">{fmtWhen(lastRow.updatedAt) || '—'}{lastRow.status ? ` · ${lastRow.status}` : ''}</span> : 'nothing yet'}
         </span>
-        {loadError && <span className="text-destructive">Could not read the saved portal copy: {loadError}</span>}
+        {loadError && <span className="text-destructive-strong">Could not read the saved portal copy: {loadError}</span>}
       </div>
 
       {polling && (

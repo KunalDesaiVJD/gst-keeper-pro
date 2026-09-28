@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { ArrowUpRight, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { DiffLine } from '@/lib/gstr9/engine';
@@ -25,7 +25,7 @@ const hasText = (d: DiffLine) => !!d.justification?.text?.trim();
 const Amount: React.FC<{ v: number; tol: number; loud: boolean }> = ({ v, tol, loud }) => {
   const a = Math.abs(v);
   return (
-    <span className={cn('tabular-nums', a < 0.005 ? 'text-muted-foreground' : loud && a > tol ? 'font-medium text-destructive' : 'text-foreground')}>
+    <span className={cn('tabular-nums', a < 0.005 ? 'text-muted-foreground' : loud && a > tol ? 'font-medium text-destructive-strong' : 'text-foreground')}>
       {fmtMoney(v)}
     </span>
   );
@@ -81,7 +81,7 @@ export const DifferenceList: React.FC = () => {
     >
       {groups.length === 0 ? (
         <div className="flex items-center gap-2 rounded-md border border-dashed px-4 py-6 text-sm text-muted-foreground">
-          {filter === 'open' && <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />}
+          {filter === 'open' && <CheckCircle2 className="h-4 w-4 shrink-0 text-success-strong" />}
           {empty}
         </div>
       ) : (

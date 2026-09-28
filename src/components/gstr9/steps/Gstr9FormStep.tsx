@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { taxOf, totalTax } from '@/lib/gstr9/engine';
 import type { DiffLine } from '@/lib/gstr9/engine';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ExportMenu } from '../ExportMenu';
 import { fmtMoney } from '../grid/money';

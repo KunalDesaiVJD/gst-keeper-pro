@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { FY_MONTHS } from '@/lib/gstr9/types';
 import { useWorkspace } from '../WorkspaceContext';
@@ -42,7 +42,7 @@ const PortalNote: React.FC<{ what: string; missingKey: 'dto.no3b' | 'dti.no3b' }
           <span className="font-medium">As per 3B</span> is {what} of the <span className="font-medium">as-filed GSTR-3B</span> from the
           GST portal — never the app’s own GSTR-3B. <span className="tabular-nums">{parts.join(' · ')}.</span>{' '}
           <Button type="button" variant="link" className="h-auto gap-1 p-0 text-xs [&_svg]:size-3" onClick={() => goStep('portal')}>
-            <RefreshCw aria-hidden="true" /> Fetch it on the Portal data step
+            Go to Portal data to fetch it <ArrowRight aria-hidden="true" />
           </Button>
         </div>
         {missingLine && (

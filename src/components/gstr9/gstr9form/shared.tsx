@@ -1,7 +1,7 @@
 import React from 'react';
 import { ArrowUpRight, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import type { StepKey } from '@/lib/gstr9/engine';
 import type { PortalMeta, TaxIn } from '@/lib/gstr9/types';

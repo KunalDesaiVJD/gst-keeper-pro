@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { ArrowRight, ChevronDown, ChevronRight } from 'lucide-react';
+import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { maxAbs, OUTWARD_CATEGORY_LABEL, totalTax } from '@/lib/gstr9/engine';
 import type { Formulas, Gstr9ManualDoc, OutwardCategory, SalesRow, ValTax } from '@/lib/gstr9/types';
@@ -75,7 +75,7 @@ const ComparisonCard: React.FC = () => {
       code: r.table,
       label: r.subtract ? (
         <>
-          {r.label} <span className="font-mono text-destructive" title="Deducted in the total">(−)</span>
+          {r.label} <span className="font-mono text-destructive-strong" title="Deducted in the total">(−)</span>
         </>
       ) : (
         r.label
@@ -123,7 +123,7 @@ const ComparisonCard: React.FC = () => {
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             {diffKeys.has('out.portal') && <JustifyControl lineKey="out.portal" />}
             <Button size="sm" onClick={() => goTo('portal')}>
-              <RefreshCw className="mr-1 h-3.5 w-3.5" /> Open Portal data
+              Go to Portal data <ArrowRight className="ml-1 h-3.5 w-3.5" aria-hidden="true" />
             </Button>
           </div>
         </div>

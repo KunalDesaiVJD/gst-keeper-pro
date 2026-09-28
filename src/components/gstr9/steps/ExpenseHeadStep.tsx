@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { DEFAULT_HEAD, EXPENSE_HEAD_LABEL, EXPENSE_HEAD_ROW, maxAbs, resolveHead, rowTax, totalTax } from '@/lib/gstr9/engine';
 import type { ExpenseHead, InputSection, PurchaseRow, Tax, ValTax } from '@/lib/gstr9/types';

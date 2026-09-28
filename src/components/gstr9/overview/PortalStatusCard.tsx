@@ -1,5 +1,5 @@
 import React from 'react';
-import { RefreshCw } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { gstr9PortalPresent, MONTH_LABEL } from '@/lib/gstr9/engine';
@@ -25,7 +25,7 @@ export const PortalStatusCard: React.FC = () => {
       description="Straight from the client’s GST portal — never the app’s own GSTR-1/3B."
       actions={
         <Button size="sm" variant="outline" onClick={() => go('portal')}>
-          <RefreshCw className="mr-1 h-3.5 w-3.5" /> Fetch / update
+          Go to Portal data <ArrowRight className="ml-1 h-3.5 w-3.5" aria-hidden="true" />
         </Button>
       }
     >

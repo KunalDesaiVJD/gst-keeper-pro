@@ -1,7 +1,7 @@
 import React from 'react';
 import { RotateCcw, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { maxAbs, subT, totalTax } from '@/lib/gstr9/engine';
 import { newId, zIn } from '@/lib/gstr9/defaults';

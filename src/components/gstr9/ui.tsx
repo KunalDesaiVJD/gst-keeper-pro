@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, CircleDot, Info, MessageSquareText, RotateCcw } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, CircleDot, EqualApproximately, Info, MessageSquareText, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -72,13 +72,13 @@ export const KpiTile: React.FC<{ label: string; value: React.ReactNode; hint?: R
     )}
   >
     <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
-    <div className={cn('text-base font-semibold tabular-nums', tone === 'error' && 'text-destructive', tone === 'ok' && 'text-success')}>{value}</div>
+    <div className={cn('text-base font-semibold tabular-nums', tone === 'error' && 'text-destructive-strong', tone === 'ok' && 'text-success-strong')}>{value}</div>
     {hint && <div className="text-[11px] text-muted-foreground">{hint}</div>}
   </div>
 );
 
 export const Money: React.FC<{ value: number | null | undefined; className?: string; signed?: boolean }> = ({ value, className, signed }) => (
-  <span className={cn('tabular-nums', signed && value !== null && value !== undefined && value < -0.004 && 'text-destructive', className)}>
+  <span className={cn('tabular-nums', signed && value !== null && value !== undefined && value < -0.004 && 'text-destructive-strong', className)}>
     {fmtMoney(value ?? 0)}
   </span>
 );
@@ -159,11 +159,12 @@ export const JustifyControl: React.FC<{ lineKey: string; compact?: boolean; clas
   const st = diffStatus(d, workings.tolerance);
   const STATUS_LOOK: Record<DiffStatusKind, { variant: 'success' | 'secondary' | 'destructive' | 'warning' | 'info'; icon: React.ReactNode }> = {
     recheck: { variant: 'warning', icon: <RotateCcw className="h-3 w-3" /> },
-    open: { variant: 'destructive', icon: <AlertTriangle className="h-3 w-3" /> },
+    open: { variant: 'destructive', icon: <AlertTriangle className="h-3 w-3 text-destructive-strong" /> },
     justified: { variant: 'info', icon: <MessageSquareText className="h-3 w-3" /> },
     matched: { variant: 'success', icon: <CheckCircle2 className="h-3 w-3" /> },
     info: { variant: 'secondary', icon: <CircleDot className="h-3 w-3" /> },
-    within: { variant: 'secondary', icon: <CheckCircle2 className="h-3 w-3" /> },
+    // Its own shape ("≈"), so it never reads as "Matched" by colour alone.
+    within: { variant: 'secondary', icon: <EqualApproximately className="h-3 w-3" /> },
   };
   const status = { label: st.label, ...STATUS_LOOK[st.kind] };
 
@@ -177,6 +178,7 @@ export const JustifyControl: React.FC<{ lineKey: string; compact?: boolean; clas
           disabled={!canWrite && !text}
           className={cn('inline-flex items-center', className)}
           aria-label={`${d.label}: ${status.label}`}
+          title={compact ? status.label : undefined}
         >
           <Badge variant={status.variant} className={cn('gap-1 whitespace-nowrap text-[10px] font-medium', compact && 'px-1.5')}>
             {status.icon}

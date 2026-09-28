@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Check, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Progress } from '@/components/ui/progress';
 import { SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
@@ -39,7 +39,7 @@ export const StepChecklist: React.FC = () => {
                       <span
                         className={cn(
                           'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold',
-                          ok ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground',
+                          ok ? 'bg-success/15 text-success-strong' : 'bg-muted text-muted-foreground',
                         )}
                         aria-hidden
                       >
