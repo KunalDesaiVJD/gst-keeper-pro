@@ -49,6 +49,12 @@ export interface GridColumn<R> {
   placeholder?: (row: R) => number | string | null | undefined;
   /** Expression to show while editing. */
   formula?: (row: R) => string | undefined;
+  /**
+   * A display column that still takes its cell from a pasted block (the value
+   * is ignored), so a full row copied from the Excel sheet — which has its
+   * computed columns in between — lands in the right editable columns.
+   */
+  pasteThrough?: boolean;
   /** Custom renderer for display columns. */
   render?: (row: R, index: number) => React.ReactNode;
   tone?: (row: R) => CellTone;
@@ -129,6 +135,8 @@ export function SheetGrid<R>({
 
   const hasGroups = columns.some((c) => c.group);
   const editableColIdx = useMemo(() => columns.map((c, i) => (c.type !== 'display' && c.onEdit ? i : -1)).filter((i) => i >= 0), [columns]);
+  // Columns a pasted block maps onto: editable ones plus display columns marked pasteThrough.
+  const pasteColIdx = useMemo(() => columns.map((c, i) => ((c.type !== 'display' && c.onEdit) || c.pasteThrough ? i : -1)).filter((i) => i >= 0), [columns]);
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -226,6 +234,9 @@ export function SheetGrid<R>({
   }, [columns, rows, readOnly, applyEdit]);
 
   const onGridKeyDown = (e: React.KeyboardEvent) => {
+    // Keys from anything but the grid itself (a popover's textarea rendered in
+    // a portal still bubbles through React) are not grid navigation.
+    if (e.target !== e.currentTarget) return;
     if (editing || !active) return;
     const k = e.key;
     if (k === 'ArrowDown') { e.preventDefault(); setActive(move(active, 1, 0)); }
@@ -253,13 +264,14 @@ export function SheetGrid<R>({
 
   const onPaste = (e: React.ClipboardEvent) => {
     if (readOnly || !onRowsChange || editing) return;
+    if (e.target !== e.currentTarget) return;
     const text = e.clipboardData.getData('text/plain');
     if (!text) return;
     e.preventDefault();
     const block = parseClipboard(text);
     if (!block.length) return;
     const start = active ?? { r: 0, c: editableColIdx[0] ?? 0 };
-    const startEditable = editableColIdx.findIndex((i) => i >= start.c);
+    const startEditable = pasteColIdx.findIndex((i) => i >= start.c);
     if (startEditable < 0) return;
     const next = rows.slice();
     const errors: string[] = [];
@@ -270,9 +282,10 @@ export function SheetGrid<R>({
         next.push(newRow());
       }
       cells.forEach((raw, dc) => {
-        const ci = editableColIdx[startEditable + dc];
+        const ci = pasteColIdx[startEditable + dc];
         if (ci === undefined) return;
         const col = columns[ci];
+        if (col.type === 'display') return; // pasteThrough: consumes the cell, keeps the computed value
         const row = next[r];
         if (!col.onEdit || (col.editable && !col.editable(row))) return;
         const v = raw.trim();
@@ -341,7 +354,8 @@ export function SheetGrid<R>({
         className="relative overflow-auto rounded-md border bg-card outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
         style={maxHeight ? { maxHeight } : undefined}
       >
-        <table className="w-full border-collapse text-xs">
+        {/* border-separate: sticky header/footer rows paint solidly (collapsed borders let scrolled rows show through). */}
+        <table className="w-full border-separate border-spacing-0 text-xs">
           <thead className="sticky top-0 z-20 bg-muted">
             {hasGroups && (
               <tr>
@@ -395,12 +409,14 @@ export function SheetGrid<R>({
                         title={col.title?.(row)}
                         onMouseDown={(e) => {
                           if (isEditing) return;
+                          // Ignore clicks that bubble from a portalled popover opened in this cell.
+                          if (!(e.currentTarget as Node).contains(e.target as Node)) return;
                           e.preventDefault();
                           if (editing) commit('none');
                           setActive({ r, c });
                           wrapRef.current?.focus();
                         }}
-                        onDoubleClick={() => startEdit({ r, c })}
+                        onDoubleClick={(e) => { if ((e.currentTarget as Node).contains(e.target as Node)) startEdit({ r, c }); }}
                         className={cn(
                           'relative h-8 border-b border-r px-2 py-0 tabular-nums whitespace-nowrap',
                           alignCls(col),

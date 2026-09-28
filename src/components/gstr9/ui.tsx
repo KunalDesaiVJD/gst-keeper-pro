@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';
+import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type { DiffLine } from '@/lib/gstr9/engine';
 import type { PortalMeta, Tax, ValTax } from '@/lib/gstr9/types';
@@ -32,7 +33,7 @@ export const SectionCard: React.FC<{
         {(description || excelRef) && (
           <CardDescription className="text-xs">
             {description}
-            {excelRef && <span className="ml-1 whitespace-nowrap rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">Excel: {excelRef}</span>}
+            {excelRef && <span className="ml-1 break-words rounded bg-muted sm:whitespace-nowrap px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">Excel: {excelRef}</span>}
           </CardDescription>
         )}
       </div>
@@ -111,7 +112,10 @@ export const SourceChip: React.FC<{ meta?: PortalMeta | null; manual?: boolean; 
     <TooltipProvider delayDuration={200}>
       <Tooltip>
         <TooltipTrigger asChild><span>{chip}</span></TooltipTrigger>
-        <TooltipContent className="text-xs">{detail}</TooltipContent>
+        {/* Portalled so a chip inside a scrolling grid isn't clipped. */}
+        <TooltipPrimitive.Portal>
+          <TooltipContent className="text-xs">{detail}</TooltipContent>
+        </TooltipPrimitive.Portal>
       </Tooltip>
     </TooltipProvider>
   );
@@ -251,9 +255,9 @@ export const MatrixTable: React.FC<{
         <thead className="bg-muted">
           <tr>
             <th className="w-14 border-b border-r px-2 py-1.5 text-left font-semibold text-muted-foreground">No.</th>
-            <th className="border-b border-r px-2 py-1.5 text-left font-semibold text-muted-foreground">Particulars</th>
+            <th className="min-w-[15rem] border-b border-r px-2 py-1.5 text-left font-semibold text-muted-foreground">Particulars</th>
             {heads.map((h) => (
-              <th key={h} className="w-36 border-b border-r px-2 py-1.5 text-right font-semibold text-muted-foreground whitespace-nowrap">
+              <th key={h} className="min-w-[7.5rem] border-b border-r px-2 py-1.5 text-right font-semibold text-muted-foreground whitespace-nowrap">
                 {headLabels?.[h] ?? HEAD_LABEL[h]}
               </th>
             ))}

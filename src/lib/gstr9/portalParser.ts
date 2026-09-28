@@ -61,7 +61,7 @@ export interface ParsedGstr9 {
   fp: string | null;
   gstr9: PortalGstr9;
   /** Which keys were actually present, for the preview's coverage list. */
-  found: { table4: boolean; table5: boolean; t6A: boolean; t8A: boolean; table9: boolean };
+  found: { table4: boolean; table5: boolean; t6A: boolean; t6G: boolean; t8A: boolean; table9: boolean };
 }
 
 const T4_ALIASES: Record<T4Key, string[]> = {
@@ -110,7 +110,7 @@ export function parseGstr9Calc(raw: unknown, financialYear?: string): ParsedGstr
     t8A: zTax(),
     table9: emptyTable9(),
   };
-  const found = { table4: false, table5: false, t6A: false, t8A: false, table9: false };
+  const found = { table4: false, table5: false, t6A: false, t6G: false, t8A: false, table9: false };
 
   const t4 = isObj(d.table4) ? d.table4 : null;
   if (t4) {
@@ -126,7 +126,7 @@ export function parseGstr9Calc(raw: unknown, financialYear?: string): ParsedGstr
   if (t6) {
     const a = pickAlias(t6, ['itc_3b', 'itc_frm_3b']);
     if (a !== undefined) { found.t6A = true; out.t6A = ptax(a); }
-    out.t6G = ptax(t6.isd);
+    if ('isd' in t6) { found.t6G = true; out.t6G = ptax(t6.isd); }
   }
   const t8 = isObj(d.table8) ? d.table8 : null;
   if (t8) {

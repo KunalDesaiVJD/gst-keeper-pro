@@ -217,6 +217,8 @@ export interface DtiMonthCalc {
   sr180: Tax;
   rc: Tax;
   rc180: Tax;
+  /** Suspended ITC net for the month: I + L − O − R. */
+  suspNet: Tax;
   net: Tax;
   asPer3B: Tax;
   diff: Tax;
@@ -351,6 +353,10 @@ export interface Workings {
     t4Source: 'portal' | 'none';
     t5: Record<'A' | 'B' | 'C' | 'C1' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N', ValTax>;
     t5Portal: Record<string, number>;
+    /** Portal Table 5 sub-totals (5G, 5L, 5M) built from the auto-populated rows. */
+    t5PortalTotals: { G: number; L: number; M: number };
+    /** 8D not yet explained by 8E + 8F. */
+    t8Unsplit: Tax;
     t6: Record<
       | 'A' | 'A1' | 'A2'
       | 'B_ip' | 'B_cg' | 'B_is'
@@ -364,6 +370,8 @@ export interface Workings {
     t7: Record<Table7Key, Tax>;
     t7H: Array<{ id: string; description: string; tax: Tax; computed: boolean }>;
     t7I: Tax;
+    /** 7E as the as-filed GSTR-3B 4B(1) gives it — what "use as-filed 3B" reverts to. */
+    t7EPortal: Tax;
     t7J: Tax;
     t8: Record<'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'H1' | 'I' | 'J' | 'K', Tax>;
     t9: Record<Table9Head, Table9Calc>;
@@ -578,7 +586,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     const rc180 = tin(mm.suspReclaim180);
     const net = addT(subT(purchase, dn, sr, sr180), rc, rc180); // U = C − F − I − L + O + R
     const asPer3B = P.months[m].itcExclRcm;
-    return { purchase, dn, sr, sr180, rc, rc180, net, asPer3B, diff: subT(net, asPer3B) };
+    return { purchase, dn, sr, sr180, rc, rc180, suspNet: subT(addT(sr, sr180), rc, rc180), net, asPer3B, diff: subT(net, asPer3B) };
   });
   const lye = tin(DI.lastYearEffect);
   const dtiSum = (k: keyof DtiMonthCalc) => sumMonths(byMonth((m) => dtiMonths[m][k]));
@@ -590,6 +598,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     sr180: dtiSum('sr180'),
     rc: dtiSum('rc'),
     rc180: dtiSum('rc180'),
+    suspNet: dtiSum('suspNet'),
     net: addT(dtiNetMonths, lye), // U22 = SUM(U9:U21)
     asPer3B: dtiSum('asPer3B'), // X22 (X9 is blank)
     diff: tax(),
@@ -803,6 +812,11 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   t8.I = subT(t8.G, t8.H, t8.H1);
   t8.J = t8.I;
   t8.K = addT(t8.E, t8.F, t8.J);
+  const t8Unsplit = subT(t8.D, t8.E, t8.F);
+  const T5P = P.gstr9.table5;
+  const t5PG = num(T5P.zero_rtd) + num(T5P.sez) + num(T5P.rchrg) + num(T5P.ecom_14) + num(T5P.exmt) + num(T5P.nil) + num(T5P.non_gst);
+  const t5PL = num(T5P.dr_nt) + num(T5P.amd_pos) - num(T5P.cr_nt) - num(T5P.amd_neg);
+  const t5PortalTotals = { G: t5PG, L: t5PL, M: t5PG + t5PL };
 
   // ------------------------------------------------------------ Table 9
   const T9 = P.gstr9.table9;
@@ -1036,8 +1050,16 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   push('purchases.dt', 'purchases', 'Net ITC: P&L vs Duties & Taxes (PL-INPUT row 81)', withT(0, taxOf(netItc)), withT(0, dtiNet), {
     direction: 'P&L − D&T', aLabel: 'Net ITC as per P&L', bLabel: 'Duties & Taxes net',
   });
+  const missingLine = (key: string, step: StepKey, what: string, months: MonthKey[], books: Tax) => {
+    if (!months.length) return;
+    push(key, step, `${what}: GSTR-3B not fetched for ${months.map((m) => MONTH_LABEL[m]).join(', ')}`, withT(0, books), val(), {
+      direction: 'Books − 3B', aLabel: 'Books (those months)', bLabel: 'Not fetched',
+    });
+  };
+  const dtoMissing = FY_MONTHS.filter((m) => !monthsPresent[m] && isNonZeroT(dtoMonths[m].net));
+  missingLine('dto.no3b', 'duties', 'Output tax', dtoMissing, addT(...dtoMissing.map((m) => dtoMonths[m].net)));
   FY_MONTHS.forEach((m) => {
-    if (!monthsPresent[m] && !isNonZeroT(dtoMonths[m].net)) return;
+    if (!monthsPresent[m]) return;
     push(`dto.${m}`, 'duties', `Output tax ${MONTH_LABEL[m]}: books vs GSTR-3B`, withT(0, dtoMonths[m].net), withT(0, dtoMonths[m].asPer3B), {
       direction: 'Books − 3B', aLabel: 'Net sales tax (books)', bLabel: 'As per GSTR-3B',
     });
@@ -1045,8 +1067,10 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   push('dto.pl', 'duties', 'Output tax: P&L vs Duties & Taxes (annual)', withT(0, dtoAsPerPl), withT(0, dtoTotals.net), {
     direction: 'P&L − D&T', aLabel: 'As per P&L (Part A)', bLabel: 'Duties & Taxes net',
   });
+  const dtiMissing = FY_MONTHS.filter((m) => !monthsPresent[m] && isNonZeroT(dtiMonths[m].net));
+  missingLine('dti.no3b', 'duties', 'Input tax', dtiMissing, addT(...dtiMissing.map((m) => dtiMonths[m].net)));
   FY_MONTHS.forEach((m) => {
-    if (!monthsPresent[m] && !isNonZeroT(dtiMonths[m].net)) return;
+    if (!monthsPresent[m]) return;
     push(`dti.${m}`, 'duties', `Input tax ${MONTH_LABEL[m]}: books vs GSTR-3B`, withT(0, dtiMonths[m].net), withT(0, dtiMonths[m].asPer3B), {
       direction: 'Books − 3B', aLabel: 'Net purchase ITC (books)', bLabel: 'As per GSTR-3B (excl. RCM)',
     });
@@ -1074,15 +1098,23 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       direction: 'Books − Portal', aLabel: 'Part B (books)', bLabel: 'GSTR-9 4G', hasTaxable: true,
     });
   }
-  outwardRows.forEach((r) => {
+  if (!gstr9Present) {
+    if (isNonZeroV(outwardBooksTotal)) {
+      push('out.portal', 'outward', 'GSTR-9 Table 4 not fetched from the portal', outwardBooksTotal, val(), {
+        direction: 'Books − GSTR-9', aLabel: 'As per books', bLabel: 'Not fetched', hasTaxable: true,
+      });
+    }
+  } else outwardRows.forEach((r) => {
     if (!isNonZeroV(r.books) && !isNonZeroV(r.portal)) return;
     push(`out.${r.key}`, 'outward', `${r.label} (${r.table}): books vs GSTR-9`, r.books, r.portal, {
       direction: 'Books − GSTR-9', aLabel: 'As per books', bLabel: 'Auto-populated GSTR-9', hasTaxable: true,
     });
   });
-  push('out.total', 'outward', 'Total outward supplies: books vs GSTR-9', outwardBooksTotal, outwardPortalTotal, {
-    direction: 'Books − GSTR-9', aLabel: 'As per books', bLabel: 'Auto-populated GSTR-9', hasTaxable: true,
-  });
+  if (gstr9Present) {
+    push('out.total', 'outward', 'Total outward supplies: books vs GSTR-9', outwardBooksTotal, outwardPortalTotal, {
+      direction: 'Books − GSTR-9', aLabel: 'As per books', bLabel: 'Auto-populated GSTR-9', hasTaxable: true,
+    });
+  }
   push('itc.6J', 'itc', 'Table 6J: ITC availed (6I) vs 6A2', withT(0, t6.I), withT(0, t6.A2), {
     direction: '6I − 6A2', aLabel: '6I', bLabel: '6A2',
   });
@@ -1098,6 +1130,24 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   push('ann2.J', 'annexures', 'Annexure-2: excess ITC claimed / to be claimed (J)', withT(0, ann2.E), withT(0, ann2.I), {
     direction: 'E − I', aLabel: 'Total (E)', bLabel: 'Net ITC as per portal (I)',
   });
+  if (gstr9Present) {
+    // Table 5 against the portal's auto-populated Table 5 — a cross-check only (Table 5 is filed from books).
+    const t5Pairs: Array<[string, string, number, number]> = [
+      ['5A', 'Zero rated (export) without tax', g5.A.t, num(T5P.zero_rtd)],
+      ['5B', 'SEZ without tax', g5.B.t, num(T5P.sez)],
+      ['5C', 'Reverse charge (recipient pays)', g5.C.t, num(T5P.rchrg)],
+      ['5D', 'Exempted', g5.D.t, num(T5P.exmt)],
+      ['5E', 'Nil rated', g5.E.t, num(T5P.nil)],
+      ['5F', 'Non-GST supply', g5.F.t, num(T5P.non_gst)],
+      ['5H', 'Credit notes', g5.H.t, num(T5P.cr_nt)],
+    ];
+    t5Pairs.forEach(([code, label, books, portal]) => {
+      if (Math.abs(books) < 0.005 && Math.abs(portal) < 0.005) return;
+      push(`g9.t5.${code}`, 'gstr9', `Table ${code} ${label}: books vs portal`, val(books), val(portal), {
+        direction: 'Books − Portal', aLabel: 'As per books (Part B)', bLabel: 'Auto-populated Table 5', hasTaxable: true, hasTax: false, informational: true,
+      });
+    });
+  }
   push('g9.8D', 'gstr9', 'Table 8D: ITC in GSTR-2B not availed [8A − (8B + 8C)]', withT(0, t8.A), withT(0, addT(t8.B, t8.C)), {
     direction: '8A − (8B + 8C)', aLabel: '8A', bLabel: '8B + 8C',
   });
@@ -1162,8 +1212,8 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     c14: { rows: c14, qTagged, qBalancing, check: c14Check, S: c14S, T: c14T },
     g9: {
       t4: g4 as Workings['g9']['t4'], t4Source: gstr9Present ? 'portal' : 'none',
-      t5: g5, t5Portal: { ...P.gstr9.table5 },
-      t6, t6ASource, t7, t7H, t7I, t7J, t8, t9, t9Other,
+      t5: g5, t5Portal: { ...P.gstr9.table5 }, t5PortalTotals, t8Unsplit,
+      t6, t6ASource, t7, t7H, t7I, t7EPortal: monthly4B1, t7J, t8, t9, t9Other,
       t10, t11, t12, t12Source: G.t12 === null || G.t12 === undefined ? 'computed' : 'override', t13, totalTurnover,
     },
     ann1: { A: ann1A, nonGst: ann1NonGst, B: ann1B, C: ann1C, D: ann1D, E: ann1E, F: ann1F, G: ann1G, payable: ann1Payable, paid: ann1Paid, payDiff: ann1PayDiff },

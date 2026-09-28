@@ -34,6 +34,8 @@ export interface TaxIn {
   c: number;
   s: number | null;
   x: number;
+  /** Expressions typed into this cell group, keyed by head ("i", "c", "s", "x"). */
+  f?: Formulas;
 }
 
 export const FY_MONTHS = ['apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec', 'jan', 'feb', 'mar'] as const;
@@ -161,6 +163,7 @@ export interface AdjustmentRow {
   s: number | null;
   x: number;
   reason: string;
+  f?: Formulas;
 }
 
 export interface DtoMonth {
@@ -318,6 +321,8 @@ export interface PortalDoc {
    * A re-import never silently overwrites these; the preview asks first.
    */
   manual: Record<string, true>;
+  /** Expressions typed into portal cells, keyed by field path (e.g. "months.oct.outTax.i"). */
+  f?: Formulas;
 }
 
 // ---------------------------------------------------------------------------
@@ -346,6 +351,7 @@ export interface OtherReversalRow {
   c: number;
   s: number | null;
   x: number;
+  f?: Formulas;
 }
 
 export interface Gstr9ManualDoc {
@@ -400,6 +406,8 @@ export interface Gstr9ManualDoc {
   };
   t17: HsnRow[];
   t18: HsnRow[];
+  /** Table 19 — late fee payable and paid (Central / State). */
+  t19: Record<'cgst' | 'sgst', { payable: number; paid: number }>;
   /** 5I/5J/5K books-side debit notes & amendments to Table 5 (rare; default 0). */
   t5Extra: { dr_nt: number; amd_pos: number; amd_neg: number };
   /** 4F advances / 4J–4L on the books side (rare; default 0) — the books column of GSTR 9-OUTPUT. */
@@ -419,6 +427,7 @@ export interface AnnexureOtherPayment {
   c: number;
   s: number | null;
   x: number;
+  f?: Formulas;
 }
 
 export interface AnnexuresDoc {

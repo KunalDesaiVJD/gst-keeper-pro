@@ -135,6 +135,7 @@ export const emptyDocs = (): AnnualReturnDocs => ({
     t16: { compositionSupplies: 0, deemedSupply: zVal(), approvalNotReturned: zVal() },
     t17: [],
     t18: [],
+    t19: { cgst: { payable: 0, paid: 0 }, sgst: { payable: 0, paid: 0 } },
     t5Extra: { dr_nt: 0, amd_pos: 0, amd_neg: 0 },
     t4BooksExtra: { at: zVal(), dr_nt: zVal(), amd_pos: zVal(), amd_neg: zVal() },
   },
