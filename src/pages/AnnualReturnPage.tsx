@@ -51,6 +51,8 @@ const AnnualReturnPage: React.FC = () => {
   const isStaff = isStaffRole();
   const [clients, setClients] = useState<WorkspaceClient[]>([]);
   const [financialYear, setFinancialYear] = useState<string>(readStoredFY);
+  const [params, setParams] = useSearchParams();
+  const urlClient = params.get('client');
 
   useEffect(() => {
     let query = supabase.from('clients').select('id, name, gstin, regular_sub_type, builder_itc_type').order('name');
@@ -60,6 +62,8 @@ const AnnualReturnPage: React.FC = () => {
       const list = (data || []) as WorkspaceClient[];
       setClients(list);
       if (!isStaff && list.length && !selectedClientId) setSelectedClientId(list[0].id);
+      // A link / reload with ?client= opens that client's working directly.
+      else if (isStaff && urlClient && urlClient !== selectedClientId && list.some((c) => c.id === urlClient)) setSelectedClientId(urlClient);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStaff, user]);
@@ -67,6 +71,14 @@ const AnnualReturnPage: React.FC = () => {
   useEffect(() => {
     try { localStorage.setItem(FY_STORAGE_KEY, financialYear); } catch { /* storage unavailable */ }
   }, [financialYear]);
+
+  // Keep the open client in the URL so a reload or a shared link lands on the same working.
+  useEffect(() => {
+    if (!selectedClientId || params.get('client') === selectedClientId) return;
+    const next = new URLSearchParams(params);
+    next.set('client', selectedClientId);
+    setParams(next, { replace: true });
+  }, [selectedClientId, params, setParams]);
 
   const client = clients.find((c) => c.id === selectedClientId) || null;
   const clientOptions = useMemo(() => clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin })), [clients]);

@@ -15,7 +15,7 @@ import { buildSync } from 'esbuild';
 import * as XLSX from 'xlsx';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 const file = process.argv[2];
 if (!file) {
@@ -192,6 +192,9 @@ RCM_BLOCKS.forEach((b) => {
   docs.notice.itcUsed4A5 = nt(29);
   docs.notice.reversed4B2 = nt(30);
 }
+
+// DUMP_DOCS=/path/docs.json writes the typed-in docs (e.g. to seed a UI smoke test).
+if (process.env.DUMP_DOCS) writeFileSync(process.env.DUMP_DOCS, JSON.stringify(docs, null, 1));
 
 const w = engine.computeWorkings(docs, { clientName: 'fixture', gstin: '', financialYear: '2024-25', noItcBuilder: false });
 
