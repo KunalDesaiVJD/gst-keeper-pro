@@ -1025,6 +1025,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     direction: 'P&L − D&T', aLabel: 'Net ITC as per P&L', bLabel: 'Duties & Taxes net', informational: true,
   });
   FY_MONTHS.forEach((m) => {
+    if (partASource === 'gstr9') return; // only the annual 4G figure exists — compared once, by rcm.annual
     if (!isNonZeroV(partBMonths[m]) && !isNonZeroV(partAMonths[m])) return;
     push(`rcm.${m}`, 'rcm', `RCM ${MONTH_LABEL[m]}: books vs portal`, partBMonths[m], partAMonths[m], {
       direction: 'Books − Portal', aLabel: 'Part B (books)', bLabel: 'Part A (portal)', hasTaxable: true,

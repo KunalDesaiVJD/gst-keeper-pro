@@ -304,7 +304,7 @@ export const OpenDifferences: React.FC<{ step: DiffLine['step']; className?: str
   if (!open.length) return null;
   return (
     <Note tone="warn" className={className}>
-      <span className="font-medium">{open.length} difference{open.length === 1 ? '' : 's'} need a reason: </span>
+      <span className="font-medium">{open.length === 1 ? '1 difference needs a reason: ' : `${open.length} differences need a reason: `}</span>
       <span className="inline-flex flex-wrap gap-1 align-middle">
         {open.map((d) => (
           <span key={d.key} className="inline-flex items-center gap-1 rounded border bg-card px-1.5 py-0.5">

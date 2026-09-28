@@ -42,6 +42,8 @@ export interface GridColumn<R> {
   onEdit?: (row: R, edit: CellEdit) => R;
   editable?: (row: R) => boolean;
   options?: Array<{ value: string; label: string }>;
+  /** Label of the empty choice in a select column (default "—"). */
+  blankLabel?: string;
   /** Muted value shown when `value` is null (mirrors / computed defaults). */
   placeholder?: (row: R) => number | string | null | undefined;
   /** Expression to show while editing. */
@@ -397,7 +399,7 @@ export function SheetGrid<R>({
                           col.sticky && 'sticky left-0 z-10',
                           col.sticky && (editable ? 'bg-card' : 'bg-muted'),
                           cTone === 'error' && 'text-destructive font-medium',
-                          cTone === 'warn' && 'text-warning-foreground bg-warning/10',
+                          cTone === 'warn' && 'bg-warning/15 font-medium text-foreground',
                           cTone === 'ok' && 'text-success',
                           cTone === 'muted' && 'text-muted-foreground',
                           isActive && !isEditing && 'outline outline-2 -outline-offset-2 outline-primary',
@@ -425,7 +427,7 @@ export function SheetGrid<R>({
                               }}
                               onBlur={() => setEditing(null)}
                             >
-                              <option value="">—</option>
+                              <option value="">{col.blankLabel ?? '—'}</option>
                               {col.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                             </select>
                           ) : (
