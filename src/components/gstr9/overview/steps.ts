@@ -105,17 +105,8 @@ export const periodStatus = (period: AnnualReturnPeriod | null): { key: 'not_sta
 // Portal presence (as-filed 3B months)
 // ---------------------------------------------------------------------------
 
-/** A month of the as-filed GSTR-3B counts as applied when it has a source or any figure. */
-export const portalMonthApplied = (docs: AnnualReturnDocs, m: MonthKey): boolean => {
-  const pm = docs.portal.months[m];
-  return (
-    !!docs.portal.monthMeta[m]?.source ||
-    nzT(pm.outTax) || nzT(pm.itcExclRcm) || nzV(pm.rcm) || nzT(pm.itc4aTotal) ||
-    nzT(pm.itc4a5) || nzT(pm.itc4b1) || nzT(pm.itc4b2) || nzT(pm.itc4d)
-  );
-};
-
-export const monthsApplied = (docs: AnnualReturnDocs): MonthKey[] => FY_MONTHS.filter((m) => portalMonthApplied(docs, m));
+/** Months of the as-filed GSTR-3B the engine counts as present (either side). */
+export const monthsApplied = (w: Workings): MonthKey[] => FY_MONTHS.filter((m) => w.monthsPresent[m]?.any);
 
 // ---------------------------------------------------------------------------
 // Step progress
@@ -154,7 +145,7 @@ export function stepStatuses(docs: AnnualReturnDocs, w: Workings, period: Annual
   const S = docs.sales;
   const PR = docs.purchases;
   const gstr9 = gstr9PortalPresent(docs);
-  const applied = monthsApplied(docs);
+  const applied = monthsApplied(w);
   const hasSales = S.partA.length > 0;
   const hasPurch = PR.rows.length > 0;
 
@@ -194,10 +185,11 @@ export function stepStatuses(docs: AnnualReturnDocs, w: Workings, period: Annual
     const x = DI[m];
     return [x.purchase, x.debitNote, x.suspRev, x.suspRev180, x.suspReclaim, x.suspReclaim180].some((t) => nzT(tin(t)));
   });
-  const out3B = FY_MONTHS.filter((m) => nzT(docs.portal.months[m].outTax));
-  const in3B = FY_MONTHS.filter((m) => nzT(docs.portal.months[m].itcExclRcm));
-  const expOut = out3B.length ? out3B : [...FY_MONTHS];
-  const expIn = in3B.length ? in3B : [...FY_MONTHS];
+  // Expected: months whose 3B (present on that side, per the engine) has figures; all 12 while no 3B is in.
+  const expected = (side: 'out' | 'itc', has3B: (m: MonthKey) => boolean): MonthKey[] =>
+    FY_MONTHS.some((m) => w.monthsPresent[m]?.[side]) ? FY_MONTHS.filter((m) => w.monthsPresent[m]?.[side] && has3B(m)) : [...FY_MONTHS];
+  const expOut = expected('out', (m) => nzT(w.dto.months[m].asPer3B));
+  const expIn = expected('itc', (m) => nzT(w.dti.months[m].asPer3B));
   const dutiesAll = expOut.every((m) => outMonths.includes(m)) && expIn.every((m) => inMonths.includes(m));
   base.duties = {
     state: tri(dutiesAll && outMonths.length + inMonths.length > 0, outMonths.length + inMonths.length > 0),

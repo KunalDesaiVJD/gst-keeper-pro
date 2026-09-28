@@ -18,7 +18,7 @@ export type ExportKind = 'excel' | 'gstr9pdf' | 'noticepdf';
 
 const KINDS: Record<ExportKind, { label: string; hint: string; icon: React.ReactNode }> = {
   excel: { label: 'Excel working', hint: 'Every sheet of the firm’s workbook + differences', icon: <FileSpreadsheet className="h-4 w-4" /> },
-  gstr9pdf: { label: 'GSTR-9 PDF', hint: 'Form GSTR-9, Tables 4–18', icon: <FileText className="h-4 w-4" /> },
+  gstr9pdf: { label: 'GSTR-9 PDF', hint: 'Form GSTR-9, Tables 4–19', icon: <FileText className="h-4 w-4" /> },
   noticepdf: { label: 'Notice format PDF', hint: 'Outward and inward summary', icon: <FileText className="h-4 w-4" /> },
 };
 
@@ -49,7 +49,7 @@ export const ExportMenu: React.FC<{ only?: ExportKind[]; size?: 'sm' | 'default'
         const status = period?.status === 'locked' ? `Locked${period.locked_by ? ` by ${period.locked_by}` : ''}` : period?.status === 'in_progress' ? 'In progress' : 'Not started';
         file = exportWorkbook(docs, workings, { ...meta, status });
       } else if (kind === 'gstr9pdf') {
-        file = exportGstr9Pdf(workings, meta, docs);
+        file = exportGstr9Pdf(workings, meta);
       } else {
         file = exportNoticePdf(workings, meta);
       }

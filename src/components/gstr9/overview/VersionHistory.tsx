@@ -1,16 +1,16 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { History, Loader2, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { tin } from '@/lib/gstr9/engine';
-import { normalizeDoc } from '@/lib/gstr9/defaults';
+import { computeWorkings, tin } from '@/lib/gstr9/engine';
+import { emptyDocs, normalizeDoc } from '@/lib/gstr9/defaults';
 import { loadDocHistory, type DocHistoryEntry } from '@/lib/gstr9/store';
 import { DOC_KEYS, FY_MONTHS, type AnnualReturnDocs, type DocKey } from '@/lib/gstr9/types';
 import { SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { fmtWhen, nzT, portalMonthApplied, rupees } from './steps';
+import { fmtWhen, monthsApplied, nzT, rupees } from './steps';
 
 const DOC_NAME: Record<DocKey, string> = {
   sales: 'Sales (PL-OUTPUT)',
@@ -52,8 +52,9 @@ function describe(key: DocKey, raw: unknown): string {
       }
       case 'portal': {
         const p = d as AnnualReturnDocs['portal'];
-        const docs = { portal: p } as AnnualReturnDocs;
-        const n = FY_MONTHS.filter((m) => portalMonthApplied(docs, m)).length;
+        // The engine's own 3B presence, computed for that stored version alone.
+        const w = computeWorkings({ ...emptyDocs(), portal: p }, { clientName: '', gstin: '', financialYear: '', noItcBuilder: false });
+        const n = monthsApplied(w).length;
         return `GSTR-9 ${p.gstr9Meta?.source ? p.gstr9Meta.source.replace(/_/g, ' ') : 'not fetched'} · 3B ${n}/12 months`;
       }
       case 'justifications':
@@ -77,6 +78,7 @@ export const VersionHistory: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const req = useRef(0);
+  const summaries = useMemo(() => new Map((entries ?? []).map((e) => [e.id, describe(e.docKey, e.data)])), [entries]);
 
   const load = useCallback(
     async (k: DocKey) => {
@@ -164,7 +166,7 @@ export const VersionHistory: React.FC = () => {
                   <td className="border-b px-2 py-1.5 tabular-nums">v{e.version}</td>
                   <td className="border-b px-2 py-1.5">{e.updatedBy || '—'}</td>
                   <td className="border-b px-2 py-1.5 tabular-nums">{fmtWhen(e.updatedAt)}</td>
-                  <td className="border-b px-2 py-1.5 text-muted-foreground">{describe(e.docKey, e.data)}</td>
+                  <td className="border-b px-2 py-1.5 text-muted-foreground">{summaries.get(e.id)}</td>
                   {!readOnly && (
                     <td className="border-b px-2 py-1 text-right">
                       <Button size="sm" variant="outline" className="h-7" onClick={() => restore(e)}>

@@ -27,10 +27,10 @@ interface TileDef {
 
 /** The six headline checks of the working, each opening the step it comes from. */
 export const OverviewTiles: React.FC = () => {
-  const { docs, workings: w } = useWorkspace();
+  const { workings: w } = useWorkspace();
   const go = useGoToStep();
   const by = (test: (key: string) => boolean) => w.diffs.filter((d) => test(d.key));
-  const applied = monthsApplied(docs).length;
+  const applied = monthsApplied(w).length;
   const tiles: TileDef[] = [];
 
   // Turnover — books (PL-OUTPUT Part A + B) vs the audit report (D56 = report − books).

@@ -6,7 +6,7 @@ import { gstr9PortalPresent, MONTH_LABEL } from '@/lib/gstr9/engine';
 import { FY_MONTHS } from '@/lib/gstr9/types';
 import { SectionCard, SourceChip } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { fmtWhen, portalMonthApplied, rupees, sumTax, useGoToStep } from './steps';
+import { fmtWhen, monthsApplied, rupees, sumTax, useGoToStep } from './steps';
 
 const T6A_SOURCE = { gstr9: 'GSTR-9 system-computed', monthly_3b: 'Σ 4A of the as-filed 3B', none: 'not available yet' } as const;
 const RCM_SOURCE = { monthly: 'as-filed 3B 3.1(d), monthly', gstr9: 'GSTR-9 4G, annual', none: 'not available yet' } as const;
@@ -17,7 +17,7 @@ export const PortalStatusCard: React.FC = () => {
   const go = useGoToStep();
   const meta = docs.portal.gstr9Meta;
   const gstr9 = gstr9PortalPresent(docs);
-  const applied = FY_MONTHS.filter((m) => portalMonthApplied(docs, m));
+  const applied = monthsApplied(w);
 
   return (
     <SectionCard

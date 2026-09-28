@@ -1,15 +1,15 @@
 // PDF exports of the Annual Return working: the GSTR-9 form (Tables 4–18 in
 // the official layout) and the firm's Notice format. Every figure is read
-// from computeWorkings() — nothing is recomputed here. Tables 14–18 are
-// typed cells the engine does not carry, so they are read from the docs.
+// from computeWorkings() — nothing is recomputed here (Tables 14–19 are the
+// engine's pass-throughs of the typed cells).
 //
 // The table structures (gstr9FormTables / noticeTables) are shared with the
 // Excel export (exportWorkbook.ts) so the two never disagree.
 
 import type { CellHookData, RowInput } from 'jspdf-autotable';
 import { drawFooters, nowStamp, reportTable, startDoc } from '@/utils/reportTheme';
-import { rowTax, type Workings } from './engine';
-import type { AnnualReturnDocs, HsnRow, Tax, ValTax } from './types';
+import type { Workings } from './engine';
+import type { HsnRow, Tax, ValTax } from './types';
 
 export interface ExportMeta {
   clientName: string;
@@ -55,7 +55,7 @@ const onlyValue = (v: ValTax | number): FormCell[] => [typeof v === 'number' ? v
 
 const fyStart = (fy: string): number => Number(String(fy).slice(0, 4)) || 0;
 
-export function gstr9FormTables(w: Workings, docs?: AnnualReturnDocs | null): FormTable[] {
+export function gstr9FormTables(w: Workings): FormTable[] {
   const g = w.g9;
   const t4 = g.t4;
   const t5 = g.t5;
@@ -231,84 +231,93 @@ export function gstr9FormTables(w: Workings, docs?: AnnualReturnDocs | null): Fo
     ],
   });
 
-  if (docs) {
-    const G = docs.gstr9;
-    tables.push({
-      no: '14',
-      title: 'Differential tax paid on account of declaration in 10 & 11 above',
-      labelHead: 'Description',
-      head: ['Payable', 'Paid'],
-      rows: [
-        { code: '', label: 'Integrated Tax', cells: [G.t14.igst.payable, G.t14.igst.paid] },
-        { code: '', label: 'Central Tax', cells: [G.t14.cgst.payable, G.t14.cgst.paid] },
-        { code: '', label: 'State/UT Tax', cells: [G.t14.sgst.payable, G.t14.sgst.paid] },
-        { code: '', label: 'Cess', cells: [G.t14.cess.payable, G.t14.cess.paid] },
-        { code: '', label: 'Interest', cells: [G.t14.interest.payable, G.t14.interest.paid] },
-      ],
-    });
+  // Tables 14–19: typed cells, passed through by the engine.
+  tables.push({
+    no: '14',
+    title: 'Differential tax paid on account of declaration in 10 & 11 above',
+    labelHead: 'Description',
+    head: ['Payable', 'Paid'],
+    rows: [
+      { code: '', label: 'Integrated Tax', cells: [g.t14.igst.payable, g.t14.igst.paid] },
+      { code: '', label: 'Central Tax', cells: [g.t14.cgst.payable, g.t14.cgst.paid] },
+      { code: '', label: 'State/UT Tax', cells: [g.t14.sgst.payable, g.t14.sgst.paid] },
+      { code: '', label: 'Cess', cells: [g.t14.cess.payable, g.t14.cess.paid] },
+      { code: '', label: 'Interest', cells: [g.t14.interest.payable, g.t14.interest.paid] },
+    ],
+  });
 
-    const T15 = G.t15;
-    const refund = (t: Tax): FormCell[] => [...tc(t), null, null, null];
-    const demand = (d: typeof T15.demandTotal): FormCell[] => [...tc(d), d.interest, d.penalty, (d.lateFee || 0) + (d.others || 0)];
-    tables.push({
-      part: 'Pt. VI   Other information',
-      no: '15',
-      title: 'Particulars of Demands and Refunds',
-      labelHead: 'Details',
-      head: [...TAX_HEAD, 'Interest', 'Penalty', 'Late Fee / Others'],
-      rows: [
-        { code: 'A', label: 'Total Refund claimed', cells: refund(T15.refundClaimed) },
-        { code: 'B', label: 'Total Refund sanctioned', cells: refund(T15.refundSanctioned) },
-        { code: 'C', label: 'Total Refund Rejected', cells: refund(T15.refundRejected) },
-        { code: 'D', label: 'Total Refund Pending', cells: refund(T15.refundPending) },
-        { code: 'E', label: 'Total demand of taxes', cells: demand(T15.demandTotal) },
-        { code: 'F', label: 'Total taxes paid in respect of E above', cells: demand(T15.demandPaid) },
-        { code: 'G', label: 'Total demands pending out of E above', cells: demand(T15.demandPending) },
-      ],
-    });
+  const T15 = g.t15;
+  const refund = (t: Tax): FormCell[] => [...tc(t), null, null, null];
+  const demand = (d: typeof T15.demandTotal): FormCell[] => [...tc(d), d.interest, d.penalty, (d.lateFee || 0) + (d.others || 0)];
+  tables.push({
+    part: 'Pt. VI   Other information',
+    no: '15',
+    title: 'Particulars of Demands and Refunds',
+    labelHead: 'Details',
+    head: [...TAX_HEAD, 'Interest', 'Penalty', 'Late Fee / Others'],
+    rows: [
+      { code: 'A', label: 'Total Refund claimed', cells: refund(T15.refundClaimed) },
+      { code: 'B', label: 'Total Refund sanctioned', cells: refund(T15.refundSanctioned) },
+      { code: 'C', label: 'Total Refund Rejected', cells: refund(T15.refundRejected) },
+      { code: 'D', label: 'Total Refund Pending', cells: refund(T15.refundPending) },
+      { code: 'E', label: 'Total demand of taxes', cells: demand(T15.demandTotal) },
+      { code: 'F', label: 'Total taxes paid in respect of E above', cells: demand(T15.demandPaid) },
+      { code: 'G', label: 'Total demands pending out of E above', cells: demand(T15.demandPending) },
+    ],
+  });
 
-    tables.push({
-      no: '16',
-      title: 'Information on supplies received from composition taxpayers, deemed supply under section 143 and goods sent on approval basis',
-      labelHead: 'Details',
-      head: VAL_HEAD,
-      rows: [
-        { code: 'A', label: 'Supplies received from Composition taxpayers', cells: onlyValue(G.t16.compositionSupplies) },
-        { code: 'B', label: 'Deemed supply under Section 143', cells: vc(G.t16.deemedSupply) },
-        { code: 'C', label: 'Goods sent on approval basis but not returned', cells: vc(G.t16.approvalNotReturned) },
-      ],
-    });
+  tables.push({
+    no: '16',
+    title: 'Information on supplies received from composition taxpayers, deemed supply under section 143 and goods sent on approval basis',
+    labelHead: 'Details',
+    head: VAL_HEAD,
+    rows: [
+      { code: 'A', label: 'Supplies received from Composition taxpayers', cells: onlyValue(g.t16.compositionSupplies) },
+      { code: 'B', label: 'Deemed supply under Section 143', cells: vc(g.t16.deemedSupply) },
+      { code: 'C', label: 'Goods sent on approval basis but not returned', cells: vc(g.t16.approvalNotReturned) },
+    ],
+  });
 
-    const hsnTable = (no: string, title: string, rows: HsnRow[]): FormTable => {
-      const body: FormRow[] = rows.map((r) => {
-        const t = rowTax(r);
-        return {
-          code: r.hsn || '',
-          label: r.description || '',
-          cells: [r.uqc || '', r.qty, r.taxable, r.concessional ? 'Yes' : 'No', r.rate === null || r.rate === undefined ? '' : `${r.rate}%`, t.c, t.s, t.i, t.x],
-        };
-      });
-      if (body.length) {
-        const sum = rows.reduce(
-          (a, r) => {
-            const t = rowTax(r);
-            return { q: a.q + (Number(r.qty) || 0), v: a.v + (Number(r.taxable) || 0), c: a.c + t.c, s: a.s + t.s, i: a.i + t.i, x: a.x + t.x };
-          },
-          { q: 0, v: 0, c: 0, s: 0, i: 0, x: 0 },
-        );
-        body.push({ code: '', label: 'Total', cells: ['', sum.q, sum.v, '', '', sum.c, sum.s, sum.i, sum.x], bold: true });
-      }
+  const hsnTable = (no: string, title: string, rows: Array<HsnRow & { tax: Tax }>): FormTable => {
+    const body: FormRow[] = rows.map((r) => {
+      const t = r.tax;
       return {
-        no,
-        title,
-        labelHead: 'Description',
-        head: ['UQC', 'Total Quantity', 'Taxable Value', 'Concessional rate?', 'Rate of Tax', 'Central Tax', 'State Tax / UT Tax', 'Integrated Tax', 'Cess'],
-        rows: body.length ? body : [{ code: '', label: 'Nil', cells: ['', null, null, '', '', null, null, null, null] }],
+        code: r.hsn || '',
+        label: r.description || '',
+        cells: [r.uqc || '', r.qty, r.taxable, r.concessional ? 'Yes' : 'No', r.rate === null || r.rate === undefined ? '' : `${r.rate}%`, t.c, t.s, t.i, t.x],
       };
+    });
+    if (body.length) {
+      const sum = rows.reduce(
+        (a, r) => {
+          const t = r.tax;
+          return { q: a.q + (Number(r.qty) || 0), v: a.v + (Number(r.taxable) || 0), c: a.c + t.c, s: a.s + t.s, i: a.i + t.i, x: a.x + t.x };
+        },
+        { q: 0, v: 0, c: 0, s: 0, i: 0, x: 0 },
+      );
+      body.push({ code: '', label: 'Total', cells: ['', sum.q, sum.v, '', '', sum.c, sum.s, sum.i, sum.x], bold: true });
+    }
+    return {
+      no,
+      title,
+      labelHead: 'Description',
+      head: ['UQC', 'Total Quantity', 'Taxable Value', 'Concessional rate?', 'Rate of Tax', 'Central Tax', 'State Tax / UT Tax', 'Integrated Tax', 'Cess'],
+      rows: body.length ? body : [{ code: '', label: 'Nil', cells: ['', null, null, '', '', null, null, null, null] }],
     };
-    tables.push(hsnTable('17', 'HSN Wise Summary of outward supplies', G.t17));
-    tables.push(hsnTable('18', 'HSN Wise Summary of Inward supplies', G.t18));
-  }
+  };
+  tables.push(hsnTable('17', 'HSN Wise Summary of outward supplies', g.t17));
+  tables.push(hsnTable('18', 'HSN Wise Summary of Inward supplies', g.t18));
+
+  tables.push({
+    no: '19',
+    title: 'Late fee payable and paid',
+    labelHead: 'Description',
+    head: ['Payable', 'Paid'],
+    rows: [
+      { code: 'A', label: 'Central Tax', cells: [g.t19.cgst.payable, g.t19.cgst.paid] },
+      { code: 'B', label: 'State Tax', cells: [g.t19.sgst.payable, g.t19.sgst.paid] },
+    ],
+  });
 
   return tables;
 }
@@ -457,8 +466,8 @@ function renderTables(doc: Doc, tables: FormTable[], startY: number, opts: { sho
 export const exportFileName = (kind: string, meta: ExportMeta, ext: 'pdf' | 'xlsx'): string =>
   `${[kind, meta.gstin || 'NO-GSTIN', meta.financialYear].map((p) => String(p).replace(/[^A-Za-z0-9-]+/g, '_')).join('_')}.${ext}`;
 
-/** Form GSTR-9, Tables 4–18, landscape A4. Pass the docs to include the typed Tables 14–18. Returns the file name. */
-export function exportGstr9Pdf(workings: Workings, meta: ExportMeta, docs?: AnnualReturnDocs | null): string {
+/** Form GSTR-9, Tables 4–19, landscape A4. Returns the file name. */
+export function exportGstr9Pdf(workings: Workings, meta: ExportMeta): string {
   const stamp = nowStamp();
   const { doc, y } = startDoc('l', {
     title: 'Form GSTR-9 — Annual Return',
@@ -469,7 +478,7 @@ export function exportGstr9Pdf(workings: Workings, meta: ExportMeta, docs?: Annu
       { label: '3A  Legal name of the registered person', value: pdfText(meta.clientName) },
     ],
   });
-  renderTables(doc, gstr9FormTables(workings, docs), y);
+  renderTables(doc, gstr9FormTables(workings), y);
   drawFooters(doc, stamp);
   const name = exportFileName('GSTR9', meta, 'pdf');
   doc.save(name);

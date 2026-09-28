@@ -10,6 +10,7 @@
 
 import * as XLSX from 'xlsx';
 import {
+  diffStatus,
   EXPENSE_HEAD_LABEL,
   NON_TAX_NATURE_LABEL,
   OUTWARD_CATEGORY_LABEL,
@@ -24,6 +25,7 @@ import {
   type AdjustmentRow,
   type AnnualReturnDocs,
   type ExpenseHead,
+  type Formulas,
   type InputSection,
   type MonthKey,
   type Tax,
@@ -41,8 +43,14 @@ const RATE = '0.00';
 const GENERAL = 'General';
 
 type Val = string | number | null | undefined;
-interface Fmt { v: Val; z: string }
+interface Fmt { v: Val; z?: string; /** Cell comment — the "=a+b" staff typed. */ note?: string }
 type Cell = Val | Fmt;
+
+/** A typed figure, carrying the expression staff typed (if any) as a cell comment. */
+const typed = (v: number | null | undefined, f: Formulas | undefined, key: string): Cell => {
+  const expr = f?.[key];
+  return expr ? { v: v ?? 0, note: `Entered as ${expr}` } : v;
+};
 
 const sr = (n: number): Fmt => ({ v: n, z: GENERAL });
 const rate = (n: number | null | undefined): Fmt => ({ v: n ?? null, z: RATE });
@@ -87,7 +95,7 @@ class Sheet {
     let maxC = 1;
     this.rows.forEach((row, r) => {
       row.forEach((cell, c) => {
-        const { v, z } = cell !== null && typeof cell === 'object' ? cell : { v: cell, z: undefined };
+        const { v, z, note } = cell !== null && typeof cell === 'object' ? cell : { v: cell, z: undefined, note: undefined };
         if (v === null || v === undefined || v === '') return;
         const ref = XLSX.utils.encode_cell({ r, c });
         if (typeof v === 'number') {
@@ -95,6 +103,11 @@ class Sheet {
           ws[ref] = { t: 'n', v: z === GENERAL ? v : round2(v), z: z ?? MONEY };
         } else {
           ws[ref] = { t: 's', v: String(v) };
+        }
+        if (note) {
+          const comments = [{ a: 'GST Keeper', t: note }] as XLSX.Comments;
+          comments.hidden = true;
+          ws[ref].c = comments;
         }
         maxC = Math.max(maxC, c);
       });
@@ -161,6 +174,8 @@ interface Ctx {
 }
 
 const taxCells = (t: Tax, heads: Head[]): number[] => heads.map((h) => t[h]);
+/** Ledger-row tax cells; the Sales / Purchases grids remember expressions under "tax.i" … "tax.x". */
+const typedTax = (t: Tax, heads: Head[], f: Formulas | undefined): Cell[] => heads.map((h) => typed(t[h], f, `tax.${h}`));
 const valCells = (v: ValTax, heads: Head[]): number[] => [v.t, ...taxCells(v, heads)];
 
 function masterSheet({ meta, w }: Ctx): Sheet {
@@ -192,7 +207,7 @@ function plOutputSheet({ docs, w, meta, heads, just }: Ctx): Sheet {
     const c = w.sales.rows[r.id];
     const t = c?.tax ?? tin({ i: r.igst, c: r.cgst, s: r.sgst, x: r.cess });
     s.add(
-      sr(i + 1), r.ledger, r.taxable, ...taxCells(t, heads),
+      sr(i + 1), r.ledger, typed(r.taxable, r.f, 'taxable'), ...typedTax(t, heads, r.f),
       rate(c?.impliedRate), rate(r.rate),
       c?.isReturn ? 'Credit note (4I)' : OUTWARD_CATEGORY_LABEL[r.category] ?? r.category,
       r.supplyType === 'inter' ? 'Inter-state' : 'Intra-state',
@@ -206,7 +221,7 @@ function plOutputSheet({ docs, w, meta, heads, just }: Ctx): Sheet {
   s.title('PART B - NON-TAXABLE INCOME ONLY', span);
   s.blank();
   s.add('SR NO', 'PARTICULARS', 'AMOUNT', 'BIFURCATION');
-  docs.sales.partB.forEach((r, i) => s.add(sr(i + 1), r.ledger, r.amount, NON_TAX_NATURE_LABEL[r.nature] ?? r.nature));
+  docs.sales.partB.forEach((r, i) => s.add(sr(i + 1), r.ledger, typed(r.amount, r.f, 'amount'), NON_TAX_NATURE_LABEL[r.nature] ?? r.nature));
   s.blank();
   s.add('TOTAL INCOME - PART B', '', w.sales.partBTotal);
   s.blank();
@@ -240,7 +255,7 @@ function plInputSheet({ docs, w, meta, heads, just }: Ctx): Sheet {
       const t = c?.tax ?? tin({ i: r.igst, c: r.cgst, s: r.sgst, x: r.cess });
       const head = c?.head ?? resolveHead(r);
       s.add(
-        sr(i + 1), r.ledger, r.taxable, ...taxCells(t, heads),
+        sr(i + 1), r.ledger, typed(r.taxable, r.f, 'taxable'), ...typedTax(t, heads, r.f),
         rate(c?.impliedRate), rate(r.rate), EXPENSE_HEAD_LABEL[head] ?? head,
         r.supplyType === 'inter' ? 'Inter-state' : 'Intra-state',
       );
@@ -589,10 +604,10 @@ function formSheet(s: Sheet, tables: FormTable[], opts: { numberRow?: boolean } 
   });
 }
 
-function gstr9Sheet({ w, docs, meta }: Ctx): Sheet {
+function gstr9Sheet({ w, meta }: Ctx): Sheet {
   const s = new Sheet('GSTR-9', [8, 80, 18, 18, 18, 18, 18, 18, 18, 18, 18], meta.clientName);
   s.add('(Amount in ₹ in all tables)');
-  formSheet(s, gstr9FormTables(w, docs));
+  formSheet(s, gstr9FormTables(w));
   return s;
 }
 
@@ -604,15 +619,10 @@ function noticeSheet({ w, meta }: Ctx): Sheet {
   return s;
 }
 
-/** Status of a difference line, as the Review step shows it. */
-export const diffStatusLabel = (d: DiffLine, tolerance: number): string => {
-  const mag = Math.max(d.hasTax ? Math.max(Math.abs(d.diff.i), Math.abs(d.diff.c), Math.abs(d.diff.s), Math.abs(d.diff.x)) : 0, d.hasTaxable ? Math.abs(d.diff.t) : 0);
-  if (d.stale) return 'Re-check (moved since justified)';
-  if (d.open) return 'Reason needed';
-  if (d.justification?.text?.trim()) return 'Justified';
-  if (mag < 0.005) return 'Matched';
-  if (d.informational) return 'For information';
-  return `Within ₹${tolerance}`;
+/** The engine's status label; a re-check says why, since the sheet has no popover to explain it. */
+const statusText = (d: DiffLine, tolerance: number): string => {
+  const st = diffStatus(d, tolerance);
+  return st.kind === 'recheck' ? `${st.label} (moved since justified)` : st.label;
 };
 
 function differencesSheet({ w, meta }: Ctx): Sheet {
@@ -631,7 +641,7 @@ function differencesSheet({ w, meta }: Ctx): Sheet {
       d.bLabel,
       d.hasTaxable ? d.diff.t : null,
       ...(d.hasTax ? [d.diff.i, d.diff.c, d.diff.s, d.diff.x] : [null, null, null, null]),
-      diffStatusLabel(d, w.tolerance),
+      statusText(d, w.tolerance),
       j?.text?.trim() ?? '',
       j?.text?.trim() ? j.by ?? '' : '',
       j?.text?.trim() ? fmtWhen(j.at) : '',
