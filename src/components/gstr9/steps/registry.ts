@@ -49,7 +49,7 @@ export const STEPS: StepDef[] = [
   { key: 'annexures', label: 'Annexures', phase: 'Reconcile', excel: 'ANNEXURE 1–4', component: AnnexuresStep,
     intro: 'Income reco, ITC reco, DRC-03 working and the previous year’s GSTR-9 clauses.' },
   { key: 'gstr9', label: 'GSTR-9', phase: 'Returns', excel: 'GSTR-9', component: Gstr9FormStep,
-    intro: 'The form, Tables 4–18, assembled from the steps above. Only the remaining manual cells are typed here.' },
+    intro: 'The form, Tables 4–19, assembled from the steps above. Only the remaining manual cells are typed here.' },
   { key: 'gstr9c', label: 'GSTR-9C', phase: 'Returns', excel: 'GSTR-9C (official tables)', component: Gstr9cStep,
     intro: 'Reconciliation statement: turnover, taxable turnover, rate-wise tax, ITC and expense heads.' },
   { key: 'notice', label: 'Notice format', phase: 'Returns', excel: 'NOTICE FORMATE', component: NoticeStep,

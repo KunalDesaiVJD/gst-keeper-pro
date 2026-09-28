@@ -535,6 +535,17 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const tol = Math.max(0, num(docs.settings.tolerance));
   const P = docs.portal;
   const monthsPresent = byMonth((m) => portalMonthPresent(docs, m));
+  // Per side: a pulled/filed 3B counts for every figure in the month (a filed zero is a real zero);
+  // a hand-typed month only for the figures actually typed or non-zero on that side.
+  const sidePresent = (m: MonthKey, field: 'outTax' | 'itcExclRcm'): boolean => {
+    const src = P.monthMeta[m]?.source;
+    if (src && src !== 'manual') return true;
+    if (isNonZeroT(P.months[m][field])) return true;
+    const prefix = `months.${m}.${field}.`;
+    return Object.keys(P.manual || {}).some((k) => k.startsWith(prefix));
+  };
+  const outPresent = byMonth((m) => sidePresent(m, 'outTax'));
+  const itcPresent = byMonth((m) => sidePresent(m, 'itcExclRcm'));
   const anyMonthPresent = FY_MONTHS.some((m) => monthsPresent[m]);
   const gstr9Present = gstr9PortalPresent(docs);
 
@@ -1056,10 +1067,10 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       direction: 'Books − 3B', aLabel: 'Books (those months)', bLabel: 'Not fetched',
     });
   };
-  const dtoMissing = FY_MONTHS.filter((m) => !monthsPresent[m] && isNonZeroT(dtoMonths[m].net));
+  const dtoMissing = FY_MONTHS.filter((m) => !outPresent[m] && isNonZeroT(dtoMonths[m].net));
   missingLine('dto.no3b', 'duties', 'Output tax', dtoMissing, addT(...dtoMissing.map((m) => dtoMonths[m].net)));
   FY_MONTHS.forEach((m) => {
-    if (!monthsPresent[m]) return;
+    if (!outPresent[m]) return;
     push(`dto.${m}`, 'duties', `Output tax ${MONTH_LABEL[m]}: books vs GSTR-3B`, withT(0, dtoMonths[m].net), withT(0, dtoMonths[m].asPer3B), {
       direction: 'Books − 3B', aLabel: 'Net sales tax (books)', bLabel: 'As per GSTR-3B',
     });
@@ -1067,10 +1078,10 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   push('dto.pl', 'duties', 'Output tax: P&L vs Duties & Taxes (annual)', withT(0, dtoAsPerPl), withT(0, dtoTotals.net), {
     direction: 'P&L − D&T', aLabel: 'As per P&L (Part A)', bLabel: 'Duties & Taxes net',
   });
-  const dtiMissing = FY_MONTHS.filter((m) => !monthsPresent[m] && isNonZeroT(dtiMonths[m].net));
+  const dtiMissing = FY_MONTHS.filter((m) => !itcPresent[m] && isNonZeroT(dtiMonths[m].net));
   missingLine('dti.no3b', 'duties', 'Input tax', dtiMissing, addT(...dtiMissing.map((m) => dtiMonths[m].net)));
   FY_MONTHS.forEach((m) => {
-    if (!monthsPresent[m]) return;
+    if (!itcPresent[m]) return;
     push(`dti.${m}`, 'duties', `Input tax ${MONTH_LABEL[m]}: books vs GSTR-3B`, withT(0, dtiMonths[m].net), withT(0, dtiMonths[m].asPer3B), {
       direction: 'Books − 3B', aLabel: 'Net purchase ITC (books)', bLabel: 'As per GSTR-3B (excl. RCM)',
     });
