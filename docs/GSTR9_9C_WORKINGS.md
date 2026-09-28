@@ -299,5 +299,5 @@ checks the version before starting it.
 | Audit / sign-off / set-off schema | `supabase/migrations/20260929100000_annual_return_audit_signoff_payables.sql` |
 | Grid behaviour (keys, paste, `=a+b`, SGST mirror) | `components/gstr9/grid/*` |
 | Steps | `components/gstr9/steps/*` + one folder per step |
-| Exports (Excel working, GSTR-9 PDF, Notice PDF) | `exportWorkbook.ts`, `exportPdf.ts` |
+| Exports — working papers (Excel via ExcelJS, PDF via jsPDF), GSTR-9 PDF, Notice PDF | `export/papers.ts` builds one working-paper model (WP refs A1 Cover … F1 Revision history) that `export/excel.ts` and `export/pdf.ts` both render, so the two never disagree; `exportWorkbook.ts` / `exportPdf.ts` are the entry points. Every figure comes from `computeWorkings`; the paper layout keeps the firm's sheet names and row labels. ExcelJS and the renderers are lazy-loaded chunks. |
 | Acceptance test | `scripts/verify-gstr9-engine.mjs` (needs the workbook path) |

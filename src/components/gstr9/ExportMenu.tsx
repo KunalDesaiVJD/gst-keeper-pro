@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, Download, FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
+import { BookOpenCheck, ChevronDown, Download, FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -10,23 +10,25 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { exportGstr9Pdf, exportNoticePdf } from '@/lib/gstr9/exportPdf';
-import { exportWorkbook } from '@/lib/gstr9/exportWorkbook';
+import { statusText } from '@/lib/gstr9/export/model';
+import { loadFullChangeLog } from '@/lib/gstr9/store';
 import { useWorkspace } from './WorkspaceContext';
 
-export type ExportKind = 'excel' | 'gstr9pdf' | 'noticepdf';
+export type ExportKind = 'excel' | 'wppdf' | 'gstr9pdf' | 'noticepdf';
 
 const KINDS: Record<ExportKind, { label: string; hint: string; icon: React.ReactNode }> = {
-  excel: { label: 'Excel working', hint: 'Every sheet of the firm’s workbook + differences', icon: <FileSpreadsheet className="h-4 w-4" /> },
-  gstr9pdf: { label: 'GSTR-9 PDF', hint: 'Form GSTR-9, Tables 4–19', icon: <FileText className="h-4 w-4" /> },
-  noticepdf: { label: 'Notice format PDF', hint: 'Outward and inward summary', icon: <FileText className="h-4 w-4" /> },
+  excel: { label: 'Working papers — Excel', hint: 'Every sheet of the firm’s workbook as WP-referenced papers, with sign-off, payables and revision history', icon: <FileSpreadsheet className="h-4 w-4" /> },
+  wppdf: { label: 'Working papers — PDF', hint: 'The same papers, A4 landscape, with contents and page numbers', icon: <BookOpenCheck className="h-4 w-4" /> },
+  gstr9pdf: { label: 'GSTR-9 (form) — PDF', hint: 'Form GSTR-9, Tables 4–19', icon: <FileText className="h-4 w-4" /> },
+  noticepdf: { label: 'Notice format — PDF', hint: 'Outward and inward summary', icon: <FileText className="h-4 w-4" /> },
 };
 
-const ORDER: ExportKind[] = ['excel', 'gstr9pdf', 'noticepdf'];
+const ORDER: ExportKind[] = ['excel', 'wppdf', 'gstr9pdf', 'noticepdf'];
 
 /**
  * Export actions for the open working. Everything pending is saved first,
- * then the file is built from the engine's figures and downloaded.
+ * then the file is built from the engine's figures and downloaded. The
+ * builders (and ExcelJS) are loaded only when an export is asked for.
  * `only` limits the menu to some kinds; with a single kind it renders as one button.
  */
 export const ExportMenu: React.FC<{ only?: ExportKind[]; size?: 'sm' | 'default' }> = ({ only, size = 'sm' }) => {
@@ -37,29 +39,37 @@ export const ExportMenu: React.FC<{ only?: ExportKind[]; size?: 'sm' | 'default'
   const run = async (kind: ExportKind) => {
     if (busy) return;
     setBusy(kind);
+    const working = kind === 'excel' || kind === 'wppdf';
+    const progress = working ? toast.loading(`Building the ${KINDS[kind].label.toLowerCase()}…`) : undefined;
     try {
       // Build the file from what the save left in the database, never from
       // unsaved or overtaken figures on screen.
       const r = await ws.flush();
       if (!r.ok || !r.docs || !r.workings) {
-        toast.error(`The ${KINDS[kind].label} was not exported: your latest changes could not be saved (or someone else changed the same sheet). Check the figures and export again.`);
+        toast.error(`The ${KINDS[kind].label} was not exported: your latest changes could not be saved (or someone else changed the same sheet). Check the figures and export again.`, { id: progress });
         return;
       }
       const { docs, workings, period } = r;
       const { client, financialYear } = ws;
-      const meta = { clientName: client.name, gstin: client.gstin, financialYear };
+      const meta = { clientName: client.name, gstin: client.gstin, financialYear, status: statusText(period) };
       let file: string;
-      if (kind === 'excel') {
-        const status = period?.status === 'locked' ? `Locked${period.locked_by ? ` by ${period.locked_by}` : ''}` : period?.status === 'in_progress' ? 'In progress' : 'Not started';
-        file = exportWorkbook(docs, workings, { ...meta, status });
-      } else if (kind === 'gstr9pdf') {
-        file = exportGstr9Pdf(workings, meta);
+      if (working) {
+        const changeLog = await loadFullChangeLog(client.id, financialYear);
+        const input = { docs, workings, meta, period, setOffs: ws.setOffs, drc03s: ws.drc03s, changeLog };
+        if (kind === 'excel') {
+          const { exportWorkbook } = await import('@/lib/gstr9/exportWorkbook');
+          file = await exportWorkbook(input);
+        } else {
+          const { exportWorkingPapersPdf } = await import('@/lib/gstr9/exportPdf');
+          file = exportWorkingPapersPdf(input);
+        }
       } else {
-        file = exportNoticePdf(workings, meta);
+        const { exportGstr9Pdf, exportNoticePdf } = await import('@/lib/gstr9/exportPdf');
+        file = kind === 'gstr9pdf' ? exportGstr9Pdf(workings, meta) : exportNoticePdf(workings, meta);
       }
-      toast.success(`Downloaded ${file}`);
+      toast.success(`Downloaded ${file}`, { id: progress });
     } catch (e) {
-      toast.error(`Could not export the ${KINDS[kind].label}: ${e instanceof Error ? e.message : String(e)}`);
+      toast.error(`Could not export the ${KINDS[kind].label}: ${e instanceof Error ? e.message : String(e)}`, { id: progress });
     } finally {
       setBusy(null);
     }
@@ -86,7 +96,7 @@ export const ExportMenu: React.FC<{ only?: ExportKind[]; size?: 'sm' | 'default'
           <ChevronDown className="ml-1 h-3.5 w-3.5 opacity-60" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
+      <DropdownMenuContent align="end" className="w-72">
         <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Saves pending changes first</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {kinds.map((k) => (
