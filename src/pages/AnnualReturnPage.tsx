@@ -160,7 +160,7 @@ const Workspace: React.FC = () => {
   const phases = ['Collect', 'Reconcile', 'Returns', 'Finish'] as const;
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[230px_minmax(0,1fr)]">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[230px_minmax(0,1fr)]">
       {/* Step rail */}
       <nav aria-label="Annual return steps" className="lg:sticky lg:top-4 lg:self-start">
         <div className="flex gap-2 overflow-x-auto pb-1 lg:flex-col lg:gap-3 lg:overflow-visible">

@@ -409,9 +409,27 @@ export interface Workings {
   gstr9c: {
     t5: { A: number; P: number; Q: number; R: number; rows: Record<string, number> };
     t7: { A: number; B: number; C: number; D: number; D1: number; E: number; F: number; G: number };
-    t9: { rows: Record<string, RateWiseRow>; derived: Record<string, boolean>; P: RateWiseRow; Q: Tax; R: Tax };
+    t9: {
+      rows: Record<string, RateWiseRow>;
+      /** true = the row is not overridden (shows the books figure, or 0 when books have none). */
+      derived: Record<string, boolean>;
+      /** Where a rate row's figure comes from. */
+      source: Record<string, 'sales' | 'rcm' | 'sales+rcm' | 'none' | 'typed'>;
+      P: RateWiseRow;
+      Q: Tax;
+      R: Tax;
+    };
     t12: { A: Tax; B: Tax; C: Tax; D: Tax; E: Tax; F: Tax };
     t14: { rows: Record<string, ValTax>; R: ValTax; S: Tax; T: Tax };
+    /** The computed value of every "computed unless typed" 9C cell, whether or not it is overridden. */
+    defaults: {
+      t5A: number;
+      t5Q: number;
+      t7: { B: number; C: number; D: number; D1: number; F: number };
+      t9: Record<string, RateWiseRow>;
+      t9Q: Tax;
+      t12: { A: Tax; B: Tax; C: Tax };
+    };
   };
 
   notice: {
@@ -872,20 +890,28 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
 
   // ------------------------------------------------------------ GSTR-9C official tables
   const C = docs.gstr9c;
-  const t5A = C.t5A === null || C.t5A === undefined ? (auditReportTotal ?? salesTotal) : num(C.t5A);
+  const t5ADefault = auditReportTotal ?? salesTotal;
+  const t5A = C.t5A === null || C.t5A === undefined ? t5ADefault : num(C.t5A);
   const t5Rows: Record<string, number> = { A: t5A };
   GSTR9C_T5_KEYS.forEach((k) => { t5Rows[k] = num(C.t5[k]); });
   const t5P = GSTR9C_T5_KEYS.reduce((s, k) => s + (GSTR9C_T5_SUB.includes(k) ? -t5Rows[k] : t5Rows[k]), t5A);
   const t5Q = C.t5Q === null || C.t5Q === undefined ? totalTurnover.t : num(C.t5Q);
   const pick = (v: number | null | undefined, d: number) => (v === null || v === undefined ? d : num(v));
+  const t7Default = {
+    B: g5.D.t + g5.E.t + g5.F.t, // exempt + nil + non-GST
+    C: g5.A.t + g5.B.t, // zero rated without tax
+    D: g5.C.t, // recipient pays under RCM
+    D1: g5.C1.t,
+    F: g4.N.t - g4.G.t - g4.G1.t + t10.t - t11.t,
+  };
   const c7 = {
     A: t5P,
-    B: pick(C.t7.B, g5.D.t + g5.E.t + g5.F.t), // exempt + nil + non-GST
-    C: pick(C.t7.C, g5.A.t + g5.B.t), // zero rated without tax
-    D: pick(C.t7.D, g5.C.t), // recipient pays under RCM
-    D1: pick(C.t7.D1, g5.C1.t),
+    B: pick(C.t7.B, t7Default.B),
+    C: pick(C.t7.C, t7Default.C),
+    D: pick(C.t7.D, t7Default.D),
+    D1: pick(C.t7.D1, t7Default.D1),
     E: 0,
-    F: pick(C.t7F, g4.N.t - g4.G.t - g4.G1.t + t10.t - t11.t),
+    F: pick(C.t7F, t7Default.F),
     G: 0,
   };
   c7.E = c7.A - c7.B - c7.C - c7.D - c7.D1;
@@ -894,29 +920,41 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const rateKeyFor: Record<string, Gstr9cT9RateKey> = { '5': 'A', '6': 'B1', '12': 'C', '18': 'E', '28': 'G', '40': 'H1', '3': 'I', '0.25': 'J', '0.1': 'K' };
   const rcKeyFor: Record<string, Gstr9cT9RateKey> = { '5': 'B', '12': 'D', '18': 'F', '28': 'H', '40': 'H2' };
   const derivedT9: Partial<Record<Gstr9cT9RateKey, RateWiseRow>> = {};
+  const t9Source: Record<string, 'sales' | 'rcm' | 'sales+rcm' | 'none' | 'typed'> = {};
+  const markSource = (k: string, src: 'sales' | 'rcm') => {
+    const cur = t9Source[k];
+    t9Source[k] = !cur || cur === src ? src : 'sales+rcm';
+  };
   Object.entries(byRate).forEach(([rate, v]) => {
     const k = rateKeyFor[rate] ?? 'K1';
     derivedT9[k] = addV(derivedT9[k] || val(), v);
+    markSource(k, 'sales');
   });
   docs.rcm.categories.forEach((cat) => {
     const k = rcKeyFor[String(num(cat.rate))] ?? 'K1';
     derivedT9[k] = addV(derivedT9[k] || val(), rcmCats[cat.id].total);
+    markSource(k, 'rcm');
   });
   const c9rows: Record<string, RateWiseRow> = {};
   const c9derived: Record<string, boolean> = {};
+  const c9defaults: Record<string, RateWiseRow> = {};
   GSTR9C_T9_RATE_KEYS.forEach((k) => {
     const o = C.t9[k];
     c9derived[k] = o === null || o === undefined;
-    c9rows[k] = c9derived[k] ? derivedT9[k] || val() : { ...val(), ...o };
+    c9defaults[k] = derivedT9[k] || val();
+    c9rows[k] = c9derived[k] ? c9defaults[k] : { ...val(), ...o };
+    t9Source[k] = c9derived[k] ? t9Source[k] ?? 'none' : 'typed';
   });
   GSTR9C_T9_OTHER_KEYS.forEach((k) => { c9rows[k] = withT(0, C.t9Other[k] || tax()); });
   const c9P = addV(...Object.values(c9rows));
-  const c9Q = C.t9Q === null || C.t9Q === undefined ? tax(t9.igst.payable, t9.cgst.payable, t9.sgst.payable, t9.cess.payable) : tin(C.t9Q);
+  const c9QDefault = tax(t9.igst.payable, t9.cgst.payable, t9.sgst.payable, t9.cess.payable);
+  const c9Q = C.t9Q === null || C.t9Q === undefined ? c9QDefault : tin(C.t9Q);
   const c9R = subT(c9Q, taxOf(c9P));
 
-  const c12A = C.t12A === null || C.t12A === undefined ? taxOf(netItc) : tin(C.t12A);
-  const c12B = C.t12B === null || C.t12B === undefined ? lye : tin(C.t12B);
-  const c12C = C.t12C === null || C.t12C === undefined ? t13 : tin(C.t12C);
+  const c12Default = { A: taxOf(netItc), B: lye, C: t13 };
+  const c12A = C.t12A === null || C.t12A === undefined ? c12Default.A : tin(C.t12A);
+  const c12B = C.t12B === null || C.t12B === undefined ? c12Default.B : tin(C.t12B);
+  const c12C = C.t12C === null || C.t12C === undefined ? c12Default.C : tin(C.t12C);
   const c12D = subT(addT(c12A, c12B), c12C);
   const c12E = t7J;
   const c12F = subT(c12E, c12D);
@@ -1138,9 +1176,10 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     gstr9c: {
       t5: { A: t5A, P: t5P, Q: t5Q, R: t5Q - t5P, rows: t5Rows },
       t7: c7,
-      t9: { rows: c9rows, derived: c9derived, P: c9P, Q: c9Q, R: c9R },
+      t9: { rows: c9rows, derived: c9derived, source: t9Source, P: c9P, Q: c9Q, R: c9R },
       t12: { A: c12A, B: c12B, C: c12C, D: c12D, E: c12E, F: c12F },
       t14: { rows: c14, R: c14.R, S: c14S, T: c14T },
+      defaults: { t5A: t5ADefault, t5Q: totalTurnover.t, t7: t7Default, t9: c9defaults, t9Q: c9QDefault, t12: c12Default },
     },
     notice: { outward: o, inward: inw },
     diffs,

@@ -41,7 +41,8 @@ export interface GridColumn<R> {
   /** Returns the updated row. Omit for read-only columns. */
   onEdit?: (row: R, edit: CellEdit) => R;
   editable?: (row: R) => boolean;
-  options?: Array<{ value: string; label: string }>;
+  /** `aliases` also match when typing/pasting (e.g. the firm's sheet labels) but aren't listed. */
+  options?: Array<{ value: string; label: string; aliases?: string[] }>;
   /** Label of the empty choice in a select column (default "—"). */
   blankLabel?: string;
   /** Muted value shown when `value` is null (mirrors / computed defaults). */
@@ -85,6 +86,14 @@ export interface SheetGridProps<R> {
 }
 
 type Pos = { r: number; c: number };
+
+const matchOption = (options: GridColumn<unknown>['options'], raw: string) => {
+  const v = raw.trim().toLowerCase();
+  if (!v) return undefined;
+  return options?.find(
+    (o) => o.value.toLowerCase() === v || o.label.toLowerCase() === v || o.aliases?.some((a) => a.trim().toLowerCase() === v),
+  );
+};
 
 const isEditableCol = <R,>(col: GridColumn<R>, row: R | undefined, readOnly?: boolean) =>
   !readOnly && col.type !== 'display' && !!col.onEdit && (!row || !col.editable || col.editable(row));
@@ -160,7 +169,7 @@ export function SheetGrid<R>({
       if (col.type === 'percent' && num !== null && !raw.trim().startsWith('=') && raw.includes('%')) num = num * 100;
       edit = { num, formula: p.formula, text: raw };
     } else if (col.type === 'select') {
-      const hit = col.options?.find((o) => o.value === raw || o.label.toLowerCase() === raw.trim().toLowerCase());
+      const hit = matchOption(col.options, raw);
       if (!hit && raw.trim()) { setError(`"${raw}" is not one of the choices`); return false; }
       edit = { num: null, text: hit ? hit.value : '' };
     } else {
@@ -274,7 +283,7 @@ export function SheetGrid<R>({
           if (col.type === 'percent' && num !== null && v.includes('%') && !v.startsWith('=')) num = num * 100;
           next[r] = col.onEdit(row, { num, formula: p.formula, text: v });
         } else if (col.type === 'select') {
-          const hit = col.options?.find((o) => o.value === v || o.label.toLowerCase() === v.toLowerCase());
+          const hit = matchOption(col.options, v);
           if (hit) next[r] = col.onEdit(row, { num: null, text: hit.value });
           else if (v) errors.push(`row ${r + 1}: "${v}" is not a valid choice`);
         } else {
@@ -483,8 +492,8 @@ export function SheetGrid<R>({
                   className={cn(
                     'font-semibold',
                     f.tone === 'total' && 'bg-muted',
-                    f.tone === 'diff' && 'bg-warning/10',
-                    (!f.tone || f.tone === 'muted') && 'bg-muted/70 text-muted-foreground',
+                    f.tone === 'diff' && 'bg-muted text-foreground [&>td]:border-t-warning',
+                    (!f.tone || f.tone === 'muted') && 'bg-muted text-muted-foreground',
                   )}
                 >
                   {columns.map((col, c) => {

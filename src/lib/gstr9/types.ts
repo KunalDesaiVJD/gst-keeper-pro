@@ -95,6 +95,8 @@ export interface SalesDoc {
   partB: NonTaxRow[];
   /** PL-OUTPUT D54 "AS PER REPORT" — total income as per the audit report. */
   auditReportTotal: number | null;
+  /** Expressions staff typed into this doc's fixed-row grids, keyed by field path (e.g. "t9.E.c"). */
+  f?: Formulas;
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +144,8 @@ export interface PurchasesDoc {
   rows: PurchaseRow[];
   /** PL-INPUT row 75 "SUSPENDED ITC AS PER DUTIES & TAXES (OTHER ADJ)". */
   suspendedOtherAdj: TaxIn;
+  /** Expressions staff typed into this doc's fixed-row grids, keyed by field path (e.g. "t9.E.c"). */
+  f?: Formulas;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,6 +191,8 @@ export interface DutiesInputDoc {
   lastYearEffect: TaxIn;
   months: Record<MonthKey, DtiMonth>;
   adjustments: AdjustmentRow[];
+  /** Expressions staff typed into this doc's fixed-row grids, keyed by field path (e.g. "t9.E.c"). */
+  f?: Formulas;
 }
 
 // ---------------------------------------------------------------------------
@@ -398,6 +404,8 @@ export interface Gstr9ManualDoc {
   t5Extra: { dr_nt: number; amd_pos: number; amd_neg: number };
   /** 4F advances / 4J–4L on the books side (rare; default 0) — the books column of GSTR 9-OUTPUT. */
   t4BooksExtra: { at: ValTax; dr_nt: ValTax; amd_pos: ValTax; amd_neg: ValTax };
+  /** Expressions staff typed into this doc's fixed-row grids, keyed by field path (e.g. "t9.E.c"). */
+  f?: Formulas;
 }
 
 // ---------------------------------------------------------------------------
@@ -428,6 +436,8 @@ export interface AnnexuresDoc {
   a3AlreadyPaid: TaxIn;
   /** Annexure-4 — previous FY's GSTR-9 clauses 8 (8C), 10, 11, 12, 13. */
   a4: Record<'c8' | 'c10' | 'c11' | 'c12' | 'c13', TaxIn>;
+  /** Expressions staff typed into this doc's fixed-row grids, keyed by field path (e.g. "t9.E.c"). */
+  f?: Formulas;
 }
 
 // ---------------------------------------------------------------------------
@@ -502,6 +512,8 @@ export interface Gstr9cDoc {
     | 'pan',
     string
   >;
+  /** Expressions staff typed into this doc's fixed-row grids, keyed by field path (e.g. "t9.E.c"). */
+  f?: Formulas;
 }
 
 // ---------------------------------------------------------------------------
@@ -524,6 +536,8 @@ export interface NoticeDoc {
   /** 4A(5) / 4B(2) overrides — null = as-filed GSTR-3B. */
   itcUsed4A5: TaxIn | null;
   reversed4B2: TaxIn | null;
+  /** Expressions staff typed into this doc's fixed-row grids, keyed by field path (e.g. "t9.E.c"). */
+  f?: Formulas;
 }
 
 // ---------------------------------------------------------------------------
