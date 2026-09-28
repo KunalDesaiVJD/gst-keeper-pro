@@ -64,10 +64,6 @@ function buildColumns(calc: Record<string, PurchaseRowCalc>): GridColumn<Purchas
       const f = rateFlag(r, calc[r.id]);
       return f?.kind === 'nonstandard_rate' ? f.message : undefined;
     },
-    render: (r) =>
-      r.rate === null || r.rate === undefined ? null : (
-        <span className={!isStandardRate(r.rate) ? 'font-medium text-warning' : undefined}>{fmtRate(r.rate)}</span>
-      ),
   };
 
   const implied: GridColumn<PurchaseRow> = {
@@ -94,8 +90,8 @@ function buildColumns(calc: Record<string, PurchaseRowCalc>): GridColumn<Purchas
       const f = rateFlag(r, calc[r.id]);
       if (f && f.kind !== 'nonstandard_rate') {
         return (
-          <span className="inline-flex items-center gap-1 font-medium text-warning">
-            <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+          <span className="inline-flex items-center gap-1">
+            <AlertTriangle className="h-3 w-3 text-warning" aria-hidden="true" />
             {fmtRate(v)}
           </span>
         );
@@ -124,6 +120,7 @@ function buildColumns(calc: Record<string, PurchaseRowCalc>): GridColumn<Purchas
     options: HEAD_OPTIONS,
     value: (r) => r.head,
     placeholder: (r) => defaultHeadLabel(r.section),
+    blankLabel: 'Section default',
     title: (r) => (r.head === null ? 'Section default — pick a head to tag this ledger' : undefined),
     onEdit: (r, e) => ({ ...r, head: (e.text || null) as ExpenseHead | null }),
   };

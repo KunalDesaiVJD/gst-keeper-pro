@@ -2,7 +2,7 @@ import React, { useCallback, useMemo } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import type { StepKey } from '@/lib/gstr9/engine';
-import type { TaxIn } from '@/lib/gstr9/types';
+import type { Formulas, TaxIn } from '@/lib/gstr9/types';
 import { SheetGrid, type GridColumn } from '../grid/SheetGrid';
 import { taxInCols } from '../grid/columns';
 import { MatrixTable, Note, SectionCard, type MatrixRow } from '../ui';
@@ -20,7 +20,7 @@ export const StepLink: React.FC<{ onClick: () => void; children: React.ReactNode
   </button>
 );
 
-type AdjRow = { id: string; v: TaxIn };
+type AdjRow = { id: string; v: TaxIn; f?: Formulas };
 
 /**
  * PL-INPUT rows 71–81: total ITC as per the P&L, the suspended-ITC and RCM
@@ -68,7 +68,11 @@ export const PurchasesSummary: React.FC<{ onGo: (step: StepKey) => void }> = ({ 
     { key: '81', code: '81', label: 'Difference (P&L − D&T)', value: p.diffVsDt, signed: true, total: true, diffKey: 'purchases.dt' },
   ];
 
-  const adjRows = useMemo<AdjRow[]>(() => [{ id: 'r75', v: docs.purchases.suspendedOtherAdj }], [docs.purchases.suspendedOtherAdj]);
+  // The wrapper row carries the doc's formula map, so "=a+b" typed here is kept as f['suspendedOtherAdj.i'] etc.
+  const adjRows = useMemo<AdjRow[]>(
+    () => [{ id: 'r75', v: docs.purchases.suspendedOtherAdj, f: docs.purchases.f }],
+    [docs.purchases.suspendedOtherAdj, docs.purchases.f],
+  );
   const adjColumns = useMemo<GridColumn<AdjRow>[]>(
     () => [
       {
@@ -79,14 +83,14 @@ export const PurchasesSummary: React.FC<{ onGo: (step: StepKey) => void }> = ({ 
         width: 280,
         value: () => 'Suspended ITC as per Duties & Taxes (other adj.)',
       },
-      ...taxInCols<AdjRow>((r) => r.v, (r, t) => ({ ...r, v: t }), { prefix: 'adj', cess: true }),
+      ...taxInCols<AdjRow>((r) => r.v, (r, t) => ({ ...r, v: t }), { prefix: 'suspendedOtherAdj', cess: true }),
     ],
     [],
   );
   const onAdjChange = useCallback(
     (next: AdjRow[]) => {
-      const v = next[0]?.v;
-      if (v) update('purchases', (d) => ({ ...d, suspendedOtherAdj: v }));
+      const row = next[0];
+      if (row) update('purchases', (d) => ({ ...d, suspendedOtherAdj: row.v, f: row.f ?? d.f }));
     },
     [update],
   );
