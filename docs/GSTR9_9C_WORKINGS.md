@@ -191,6 +191,19 @@ screen where it applies.
     `net excess used = 7 − 6 − 8`).
 15. **Tolerance**: a difference needs a reason when any head exceeds ₹10
     (per client/FY setting). The sheet has none; the old app netted heads.
+16. **Missing portal data is one line, not a dozen.** Months with no 3B
+    figures are not compared month by month; they are listed in a single
+    "GSTR-3B not fetched for …" line per side (`dto.no3b` / `dti.no3b`).
+    Presence is per side: a pulled/filed 3B counts for the whole month (a
+    filed zero is a real zero); a hand-typed month only for the side typed.
+    Likewise, with no GSTR-9 Table 4 from the portal the outward reco shows
+    one `out.portal` line, and with only the annual GSTR-9 4G (no monthly
+    3.1(d)) RCM is compared once, annually (`rcm.annual`).
+17. **Table 5 vs the portal's Table 5** is shown for information only
+    (`g9.t5.*`): Table 5 is filed from the books (PL-OUTPUT Part B); the
+    portal's figures come from GSTR-1 and are a cross-check.
+18. **GSTR-9 Table 19** (late fee payable and paid) is carried in the
+    working; the sheet has no cell for it.
 
 Carried over from the workbook as-is (firm positions, flagged in the UI):
 suspended-ITC reversals (incl. 180-day) are reported as 7H "other reversal"
@@ -198,6 +211,9 @@ rather than 7A (Rule 37); all Part B RCM goes to 6C input services unless a
 category is set to 6D/6F; interest/FD income is Non-GST (5F).
 
 ## 7. Portal fetch (browser extension)
+
+Extension 0.3.3 or later is needed for the GSTR-9 pull; the Portal step
+checks the version before starting it.
 
 - **As-filed GSTR-3B** (12 months): the existing `gstr3b_pull` mode,
   started from the Portal step. The workspace then reads
@@ -209,3 +225,16 @@ category is set to 6D/6F; interest/FD income is Non-GST (5F).
   workspace parses it (`src/lib/gstr9/portalParser.ts`, tolerant of the
   known key aliases) and previews it before applying.
 - **Upload**: the same parser accepts the JSON saved from the portal.
+
+## 8. Where things live
+
+| Concern | Code |
+|---|---|
+| Stored shapes, defaults | `src/lib/gstr9/types.ts`, `defaults.ts` |
+| Every figure and difference line | `src/lib/gstr9/engine.ts` (`computeWorkings`, `diffStatus`) |
+| Portal JSON parsing / applying | `portalParser.ts`, `portalImport.ts` (`applyHandEdits` for any typed portal figure) |
+| Load / save / lock / history | `store.ts`, `components/gstr9/WorkspaceContext.tsx` |
+| Grid behaviour (keys, paste, `=a+b`, SGST mirror) | `components/gstr9/grid/*` |
+| Steps | `components/gstr9/steps/*` + one folder per step |
+| Exports (Excel working, GSTR-9 PDF, Notice PDF) | `exportWorkbook.ts`, `exportPdf.ts` |
+| Acceptance test | `scripts/verify-gstr9-engine.mjs` (needs the workbook path) |

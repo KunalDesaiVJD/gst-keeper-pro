@@ -115,3 +115,17 @@ or `raw_json.dtscn.duedate`.
 logic, tile definitions, or due-date extraction.** The positions were
 implemented by engineering judgement, not confirmed in a firm sign-off.
 
+
+## Annual Return module (GSTR-9 / GSTR-9C)
+
+`/annual-return` rebuilds the firm's `MASTER_PMS.xlsx` working as a guided
+step workspace. Workings are one JSONB doc per (client, FY, sheet) in
+`annual_return_docs` (version-checked saves, DB-enforced lock, history);
+every figure comes from the pure engine `src/lib/gstr9/engine.ts`.
+
+**Read `docs/GSTR9_9C_WORKINGS.md` before changing anything here.** Two
+rules are firm decisions: the workings never read the app's own GSTR-1 /
+GSTR-3B data (portal figures come only from the extension's portal pulls,
+uploads or typing), and several figures deliberately depart from the
+workbook (§6 positions). After any engine change run
+`node scripts/verify-gstr9-engine.mjs /path/to/MASTER_PMS.xlsx` (275 figures).
