@@ -6,12 +6,13 @@ import { useWorkspace } from '../WorkspaceContext';
 import DifferenceList from '../overview/DifferenceList';
 import LockPanel from '../overview/LockPanel';
 import ToleranceSetting from '../overview/ToleranceSetting';
+import RevisionHistory from '../overview/RevisionHistory';
 import VersionHistory from '../overview/VersionHistory';
 import { fmtWhen } from '../overview/steps';
 
 /**
- * Step 13 — every difference line in one list (with its reason), the lock,
- * the tolerance setting and each sheet's version history.
+ * Step 13 — every difference line in one list (with its reason), sign-off &
+ * lock, the tolerance setting, the full revision history and the snapshots.
  */
 const ReviewStep: React.FC = () => {
   const { locked, period } = useWorkspace();
@@ -25,7 +26,7 @@ const ReviewStep: React.FC = () => {
             {period?.locked_by ? ` by ${period.locked_by}` : ''}{period?.locked_at ? ` on ${fmtWhen(period.locked_at)}` : ''}. Nothing can be edited until the year is unlocked.
           </Note>
         ) : (
-          <p className="text-sm text-muted-foreground">Give every open difference a reason (or fix the figure), then lock the year.</p>
+          <p className="text-sm text-muted-foreground">Give every open difference a reason (or fix the figure), mark it ready for review; a GST manager or superadmin verifies and locks it.</p>
         )}
         <ExportMenu />
       </div>
@@ -36,6 +37,8 @@ const ReviewStep: React.FC = () => {
         <LockPanel />
         <ToleranceSetting />
       </div>
+
+      <RevisionHistory />
 
       <VersionHistory />
     </div>

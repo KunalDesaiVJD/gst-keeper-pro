@@ -14,6 +14,7 @@ import Gstr9FormStep from './Gstr9FormStep';
 import Gstr9cStep from './Gstr9cStep';
 import NoticeStep from './NoticeStep';
 import ReviewStep from './ReviewStep';
+import PayablesStep from './PayablesStep';
 
 export interface StepDef {
   key: StepKey;
@@ -55,7 +56,9 @@ export const STEPS: StepDef[] = [
   { key: 'notice', label: 'Notice format', phase: 'Returns', excel: 'NOTICE FORMATE', component: NoticeStep,
     intro: 'Outward and inward summary in the format officers ask for.' },
   { key: 'review', label: 'Review & lock', phase: 'Finish', excel: '—', component: ReviewStep,
-    intro: 'Every difference in one list. Lock the year once each one is matched or has a reason.' },
+    intro: 'Every difference in one list, the revision history, and sign-off: staff mark it ready, a GST manager or superadmin verifies and locks.' },
+  { key: 'payables', label: 'Payables & set-off', phase: 'Finish', excel: 'ANNEXURE-3 · DRC-03', component: PayablesStep,
+    intro: 'What is left payable, output-wise and input-wise, and how each part is set off — only by a DRC-03 in the system or a GSTR-3B effect with its copy.' },
 ];
 
 export const stepByKey = (key: string | null | undefined): StepDef => STEPS.find((s) => s.key === key) ?? STEPS[0];

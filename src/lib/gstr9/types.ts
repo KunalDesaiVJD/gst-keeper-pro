@@ -423,6 +423,8 @@ export interface Gstr9ManualDoc {
 export interface AnnexureOtherPayment {
   id: string;
   description: string;
+  /** Output tax or input tax credit — how the payable is disclosed (default output). */
+  side?: 'output' | 'input';
   i: number;
   c: number;
   s: number | null;
@@ -441,7 +443,11 @@ export interface AnnexuresDoc {
   a3ExcessItc: TaxIn | null;
   /** Annexure-3 row 4 "ANY OTHER PAYMENT". */
   a3Other: AnnexureOtherPayment[];
-  /** DRC-03 already paid for this FY (offset shown under the total). */
+  /**
+   * Superseded: what is paid now comes only from the set-off register
+   * (payables.ts — an imported DRC-03 or a GSTR-3B effect with its copy).
+   * Kept so older saved docs still load; not read by the engine.
+   */
   a3AlreadyPaid: TaxIn;
   /** Annexure-4 — previous FY's GSTR-9 clauses 8 (8C), 10, 11, 12, 13. */
   a4: Record<'c8' | 'c10' | 'c11' | 'c12' | 'c13', TaxIn>;
@@ -612,4 +618,6 @@ export interface WorkspaceContext {
   financialYear: string;
   /** Builder on the NO_ITC scheme — zero ITC is expected, not a gap. */
   noItcBuilder: boolean;
+  /** Live set-offs from the payable register (payables.ts); none when omitted. */
+  setOffs?: Array<{ side: 'output' | 'input'; method: 'drc03' | 'gstr3b'; tax: Tax }>;
 }

@@ -63,6 +63,7 @@ export const CarryForwardCard: React.FC = () => {
               })),
               partB: p.sales.partB.map((r) => ({ id: newId(), ledger: r.ledger, nature: r.nature, amount: 0 })),
             },
+        { action: `Copied the ledger list from FY ${prev}` },
       );
       update('purchases', (d) =>
         d.rows.length
@@ -74,6 +75,7 @@ export const CarryForwardCard: React.FC = () => {
                 taxable: 0, igst: 0, cgst: 0, sgst: null, cess: 0,
               })),
             },
+        { action: `Copied the ledger list from FY ${prev}` },
       );
       update('rcm', (d) =>
         d.categories.length
@@ -84,6 +86,7 @@ export const CarryForwardCard: React.FC = () => {
                 id: newId(), name: c.name, rate: c.rate, supplyType: c.supplyType, itcTable: c.itcTable, months: zeroMonths(),
               })),
             },
+        { action: `Copied the ledger list from FY ${prev}` },
       );
       toast.success(`Copied ${n.a + n.b + n.pr} ledgers and ${n.rcm} RCM categor${n.rcm === 1 ? 'y' : 'ies'} from FY ${prev}. Enter this year’s amounts.`);
     } catch (e) {

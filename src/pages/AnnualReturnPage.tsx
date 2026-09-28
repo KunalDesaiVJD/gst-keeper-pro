@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlertCircle, Check, ChevronLeft, ChevronRight, CloudUpload, Loader2, Lock, ScrollText } from 'lucide-react';
+import { AlertCircle, Check, ChevronLeft, ChevronRight, CloudUpload, History, Loader2, Lock, ScrollText } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -9,11 +9,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { useWorkspace, WorkspaceClient, WorkspaceProvider } from '@/components/gstr9/WorkspaceContext';
 import { STEPS, stepByKey } from '@/components/gstr9/steps/registry';
+import RevisionHistory from '@/components/gstr9/overview/RevisionHistory';
 
 const FY_STORAGE_KEY = 'gstk_annual_return_fy';
 
@@ -157,6 +159,24 @@ const SaveIndicator: React.FC = () => {
   return <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><CloudUpload className="h-3.5 w-3.5" /> Autosave on</span>;
 };
 
+/** Every change to the working — who, when, where, before and after — in a side panel, from any step. */
+const HistoryButton: React.FC = () => (
+  <Sheet>
+    <SheetTrigger asChild>
+      <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs" aria-label="Revision history">
+        <History className="h-3.5 w-3.5" /> <span className="hidden sm:inline">History</span>
+      </Button>
+    </SheetTrigger>
+    <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-2xl">
+      <SheetHeader className="mb-3">
+        <SheetTitle>Revision history</SheetTitle>
+        <SheetDescription>Recorded by the database on every autosave. It cannot be edited or deleted.</SheetDescription>
+      </SheetHeader>
+      <RevisionHistory compact />
+    </SheetContent>
+  </Sheet>
+);
+
 const Workspace: React.FC = () => {
   const { workings, client, financialYear, period } = useWorkspace();
   const [params, setParams] = useSearchParams();
@@ -222,7 +242,10 @@ const Workspace: React.FC = () => {
               {step.intro} <span className="inline-block max-w-full break-words rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] sm:whitespace-nowrap">Excel: {step.excel}</span>
             </p>
           </div>
-          <SaveIndicator />
+          <div className="flex items-center gap-2">
+            <SaveIndicator />
+            <HistoryButton />
+          </div>
         </div>
 
         <StepComponent />

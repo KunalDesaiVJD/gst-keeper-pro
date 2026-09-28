@@ -182,7 +182,7 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
       const monthMeta = { ...next.monthMeta };
       stamped.forEach((m) => { if (preview.metas[m]) monthMeta[m] = { ...preview.metas[m]! }; });
       return { ...next, monthMeta };
-    });
+    }, { action: 'Imported as-filed GSTR-3B from the portal' });
     toast.success(`As-filed GSTR-3B applied for ${stamped.length} month${stamped.length === 1 ? '' : 's'}${selected.length ? ` (${selected.length} figure${selected.length === 1 ? '' : 's'} changed)` : ''}.`);
     setPreview(null);
   };

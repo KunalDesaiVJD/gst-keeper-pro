@@ -123,7 +123,7 @@ const CertificationPart: React.FC = () => {
         const next = { ...d.certification };
         CARRY_KEYS.forEach((k) => { next[k] = src[k] ?? ''; });
         return { ...d, certification: next };
-      });
+      }, { action: `Copied from the FY ${prevFY} working` });
       toast.success(`Copied the signatory and address from FY ${prevFY}. Check the date and place.`);
     } catch (e) {
       toast.error('Could not load the previous year: ' + (e instanceof Error ? e.message : String(e)));

@@ -4,12 +4,16 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { computeWorkings, Workings } from '@/lib/gstr9/engine';
 import { AnnualReturnDocs, DocKey, DOC_KEYS, Justification, ValTax } from '@/lib/gstr9/types';
+import type { Drc03Filing, SetOff } from '@/lib/gstr9/payables';
 import {
   AnnualReturnPeriod,
   DocConflictError,
   loadDoc,
+  loadDrc03s,
   loadPeriod,
+  loadSetOffs,
   loadWorkspace,
+  markPrepared,
   PeriodChangedError,
   PeriodStatus,
   saveDoc,
@@ -51,7 +55,11 @@ export interface WorkspaceValue {
    * Apply a change to one doc; it autosaves shortly after. `archive` keeps the
    * version being replaced in history even inside the throttle window (restores).
    */
-  update: <K extends DocKey>(key: K, updater: (doc: AnnualReturnDocs[K]) => AnnualReturnDocs[K], opts?: { archive?: boolean }) => void;
+  /**
+   * Change a sheet; it autosaves. `action` labels the change in the revision
+   * log (default "Edited"); `archive` keeps the replaced version as a snapshot.
+   */
+  update: <K extends DocKey>(key: K, updater: (doc: AnnualReturnDocs[K]) => AnnualReturnDocs[K], opts?: { archive?: boolean; action?: string }) => void;
   /** Write (or clear, with empty text) the justification for a difference line. */
   justify: (lineKey: string, text: string, diffAt: ValTax) => void;
   saveState: SaveState;
@@ -60,8 +68,21 @@ export interface WorkspaceValue {
   locked: boolean;
   /** Locked, or a client login: nothing is editable. */
   readOnly: boolean;
+  /** A staff login (clients get a read-only view). Staff can record set-offs even after the lock. */
+  isStaff: boolean;
   canUnlock: boolean;
-  setStatus: (status: PeriodStatus) => Promise<void>;
+  /** Locking needs canVerify; it records the reviewer, the checklist and the note. */
+  setStatus: (status: PeriodStatus, opts?: { note?: string; checklist?: Record<string, boolean> }) => Promise<void>;
+  /** The preparer's "ready for review" (clear = withdraw). */
+  markReady: (note?: string, clear?: boolean) => Promise<void>;
+  /** GST manager or superadmin — the only roles that can verify and lock. */
+  canVerify: boolean;
+  /** The user's role as sent to the database (superadmin | gst_manager | employee | client). */
+  role: string;
+  /** The payable set-off register (removed ones included) and the client's DRC-03s from the portal. */
+  setOffs: SetOff[];
+  drc03s: Drc03Filing[];
+  reloadPayables: () => Promise<void>;
   reload: () => Promise<void>;
   /**
    * Save everything pending now (before an export, a lock, leaving the page).
@@ -96,6 +117,10 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
   const [period, setPeriod] = useState<AnnualReturnPeriod | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [setOffs, setSetOffs] = useState<SetOff[]>([]);
+  const [drc03s, setDrc03s] = useState<Drc03Filing[]>([]);
+  const role: string = user?.role ?? 'employee';
+  const canVerify = role === 'superadmin' || role === 'gst_manager';
 
   const docsRef = useRef<AnnualReturnDocs | null>(null);
   const versions = useRef<Record<DocKey, number>>(Object.fromEntries(DOC_KEYS.map((k) => [k, 0])) as Record<DocKey, number>);
@@ -103,25 +128,38 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saving = useRef<Promise<boolean> | null>(null);
   const forceHistory = useRef<Set<DocKey>>(new Set());
+  /** Revision-log labels of the changes waiting to be saved, per sheet. */
+  const pendingActions = useRef<Map<DocKey, Set<string>>>(new Map());
   const periodRef = useRef<AnnualReturnPeriod | null>(null);
   const scope = useRef(`${client.id}|${financialYear}`);
   const noItcBuilder = client.regular_sub_type === 'Builder' && client.builder_itc_type === 'NO_ITC';
+  const liveSetOffs = useMemo(() => setOffs.filter((o) => !o.deletedAt).map((o) => ({ side: o.side, method: o.method, tax: o.tax })), [setOffs]);
   const compute = useCallback(
-    (d: AnnualReturnDocs) => computeWorkings(d, { clientName: client.name, gstin: client.gstin, financialYear, noItcBuilder }),
-    [client.name, client.gstin, financialYear, noItcBuilder],
+    (d: AnnualReturnDocs) => computeWorkings(d, { clientName: client.name, gstin: client.gstin, financialYear, noItcBuilder, setOffs: liveSetOffs }),
+    [client.name, client.gstin, financialYear, noItcBuilder, liveSetOffs],
   );
   const applyPeriod = useCallback((p: AnnualReturnPeriod | null) => {
     periodRef.current = p;
     setPeriod(p);
   }, []);
 
+  /** The set-off register and DRC-03s. A failure here never blocks the working itself. */
+  const reloadPayables = useCallback(async () => {
+    const [so, drc] = await Promise.allSettled([loadSetOffs(client.id, financialYear), loadDrc03s(client.id)]);
+    if (so.status === 'fulfilled') setSetOffs(so.value);
+    else toast.error('Could not load the set-off register: ' + (so.reason instanceof Error ? so.reason.message : String(so.reason)));
+    if (drc.status === 'fulfilled') setDrc03s(drc.value);
+  }, [client.id, financialYear]);
+
   const reload = useCallback(async () => {
     setLoading(true);
+    void reloadPayables();
     try {
       const [ws, p] = await Promise.all([loadWorkspace(client.id, financialYear), loadPeriod(client.id, financialYear)]);
       versions.current = ws.versions;
       dirty.current.clear();
       forceHistory.current.clear();
+      pendingActions.current.clear();
       docsRef.current = ws.docs;
       setDocs(ws.docs);
       applyPeriod(p);
@@ -131,7 +169,7 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
     } finally {
       setLoading(false);
     }
-  }, [client.id, financialYear, applyPeriod]);
+  }, [client.id, financialYear, applyPeriod, reloadPayables]);
 
   useEffect(() => {
     scope.current = `${client.id}|${financialYear}`;
@@ -154,9 +192,12 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
         dirty.current.delete(key);
         const data = docsRef.current[key];
         const archive = forceHistory.current.has(key);
+        const labels = pendingActions.current.get(key);
+        pendingActions.current.delete(key);
+        const action = labels && labels.size ? [...labels].join(' · ') : undefined;
         setSaveState('saving');
         try {
-          const v = await saveDoc(client.id, financialYear, key, data, versions.current[key], userName, archive);
+          const v = await saveDoc(client.id, financialYear, key, data, versions.current[key], userName, archive, action);
           if (mine !== scope.current) return false;
           versions.current[key] = v;
           forceHistory.current.delete(key);
@@ -189,6 +230,7 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
             return false;
           }
           dirty.current.add(key);
+          if (labels) pendingActions.current.set(key, labels);
           setSaveState('error');
           toast.error('Autosave failed — it will retry on your next change. ' + (e instanceof Error ? e.message : ''));
           return false;
@@ -220,6 +262,21 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
 
   // Save whatever is pending when switching client/FY or leaving the page.
   useEffect(() => () => { if (dirty.current.size) void saveDirty(); }, [saveDirty]);
+  // …and at once when the tab is hidden, the window closes or the laptop sleeps, not after the autosave delay.
+  useEffect(() => {
+    const now = () => {
+      if (!dirty.current.size) return;
+      if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+      void saveDirty();
+    };
+    const onVisibility = () => { if (document.visibilityState === 'hidden') now(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', now);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', now);
+    };
+  }, [saveDirty]);
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       if (dirty.current.size > 0 || saving.current) {
@@ -241,6 +298,11 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
     setDocs(next);
     dirty.current.add(key);
     if (opts?.archive) forceHistory.current.add(key);
+    if (opts?.action) {
+      const set = pendingActions.current.get(key) ?? new Set<string>();
+      set.add(opts.action);
+      pendingActions.current.set(key, set);
+    }
     schedule();
   }, [readOnly, schedule]);
 
@@ -250,7 +312,7 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
       if (!text.trim()) delete lines[lineKey];
       else lines[lineKey] = { text, diffAt, by: userName, at: new Date().toISOString() } satisfies Justification;
       return { ...j, lines };
-    });
+    }, { action: text.trim() ? 'Reason written' : 'Reason cleared' });
   }, [update, userName]);
 
   /**
@@ -258,9 +320,11 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
    * first saves everything and re-checks, on the saved figures, that no
    * difference is open — a failed or overtaken save never locks the year.
    */
-  const setStatus = useCallback(async (status: PeriodStatus) => {
+  const setStatus = useCallback<WorkspaceValue['setStatus']>(async (status, opts) => {
     const from: PeriodStatus = periodRef.current?.status ?? 'not_started';
+    let payables: unknown;
     if (status === 'locked') {
+      if (!canVerify) throw new Error('only a GST manager or a superadmin can verify and lock the year.');
       const r = await flush();
       if (!r.ok || !r.workings) {
         throw new Error('your latest changes could not be saved (or were replaced by someone else\'s), so the year was not locked. Check them and try again.');
@@ -268,15 +332,27 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
       if (r.workings.openCount > 0) {
         throw new Error(`${r.workings.openCount} difference${r.workings.openCount === 1 ? ' still needs' : 's still need'} a reason, so the year was not locked.`);
       }
+      payables = r.workings.payables;
     }
+    // Unlocking is also open to a user with the unlock-sheets permission.
+    const sentRole = canVerify ? role : from === 'locked' && canUnlockSheets() ? 'unlock_sheets' : role;
     try {
-      await setPeriodStatus(client.id, financialYear, status, userName, from);
+      await setPeriodStatus(client.id, financialYear, { from, to: status, by: userName, role: sentRole, note: opts?.note, checklist: opts?.checklist, payables });
     } catch (e) {
       if (e instanceof PeriodChangedError) {
         applyPeriod(await loadPeriod(client.id, financialYear));
       }
       throw e;
     }
+    applyPeriod(await loadPeriod(client.id, financialYear));
+  }, [client.id, financialYear, userName, flush, applyPeriod, canVerify, role, canUnlockSheets]);
+
+  const markReady = useCallback<WorkspaceValue['markReady']>(async (note, clear = false) => {
+    if (!clear) {
+      const r = await flush();
+      if (!r.ok) throw new Error('your latest changes could not be saved, so the working was not marked ready. Check them and try again.');
+    }
+    await markPrepared(client.id, financialYear, userName, note, clear);
     applyPeriod(await loadPeriod(client.id, financialYear));
   }, [client.id, financialYear, userName, flush, applyPeriod]);
 
@@ -308,8 +384,15 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
     period,
     locked,
     readOnly,
+    isStaff,
     canUnlock: canUnlockSheets(),
     setStatus,
+    markReady,
+    canVerify,
+    role,
+    setOffs,
+    drc03s,
+    reloadPayables,
     reload,
     flush,
     userName,

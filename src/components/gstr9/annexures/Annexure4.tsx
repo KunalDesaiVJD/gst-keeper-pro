@@ -66,7 +66,7 @@ const Annexure4: React.FC = () => {
         });
         if (!ok) return;
       }
-      update('annexures', (d) => ({ ...d, a4: next }));
+      update('annexures', (d) => ({ ...d, a4: next }), { action: `Filled from the FY ${pfy} working` });
       toast.success(`Filled clauses 8, 10, 11, 12 and 13 from the FY ${pfy} working.`);
     } catch (e) {
       toast.error('Could not load last year’s working: ' + (e instanceof Error ? e.message : String(e)));

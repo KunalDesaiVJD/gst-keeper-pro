@@ -35,6 +35,7 @@ export const STEP_META: StepMeta[] = [
   { key: 'gstr9c', n: 11, label: 'GSTR-9C', phase: 'Returns' },
   { key: 'notice', n: 12, label: 'Notice format', phase: 'Returns' },
   { key: 'review', n: 13, label: 'Review & lock', phase: 'Finish' },
+  { key: 'payables', n: 14, label: 'Payables & set-off', phase: 'Finish' },
 ];
 
 export const PHASES: Phase[] = ['Collect', 'Reconcile', 'Returns', 'Finish'];
@@ -271,6 +272,18 @@ export function stepStatuses(docs: AnnualReturnDocs, w: Workings, period: Annual
     base.review = {
       state: w.openCount > 0 ? 'open' : anyData ? 'ready' : 'todo',
       detail: w.openCount > 0 ? `${w.openCount} difference${w.openCount === 1 ? '' : 's'} still need a reason` : anyData ? 'Every difference is matched, within tolerance or justified' : 'Nothing entered yet',
+    };
+  }
+
+  // 14 Payables & set-off
+  const P = w.payables.totals;
+  if (sumTax(P.payable) < 0.5) {
+    base.payables = { state: anyData ? 'done' : 'todo', detail: anyData ? 'Nothing payable' : '' };
+  } else {
+    const bal = sumTax(P.balance);
+    base.payables = {
+      state: bal < 0.5 ? 'done' : 'progress',
+      detail: bal < 0.5 ? `${rupees(sumTax(P.payable))} payable — fully set off` : `${rupees(bal)} of ${rupees(sumTax(P.payable))} still to set off`,
     };
   }
 

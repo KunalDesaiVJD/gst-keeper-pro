@@ -69,7 +69,7 @@ const AdditionalLiabilityPart: React.FC = () => {
       <RefStrip
         items={[
           { label: 'Annexure-3 payable', value: headsText(A3.payable) },
-          { label: 'DRC-03 already paid', value: headsText(A3.alreadyPaid) },
+          { label: 'Set off (DRC-03 / GSTR-3B)', value: headsText(A3.alreadyPaid) },
           { label: 'Balance to pay', value: headsText(A3.balance) },
         ]}
       />

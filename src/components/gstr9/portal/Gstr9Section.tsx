@@ -39,7 +39,7 @@ export interface PullBridge {
   ready: boolean;
   version: string | null;
   /** Posts __gstkPullSection; `onStarted` gets the extension's answer (portal tab opened or not). */
-  start: (payload: { mode: string; period_month: string; period_months: string[] }, onStarted: (ok: boolean, error?: string) => void) => void;
+  start: (payload: { mode: string; period_month?: string; period_months?: string[] }, onStarted: (ok: boolean, error?: string) => void) => void;
 }
 
 /** First extension version that knows the gstr9_pull mode (older ones would fall through to the ledger pull). */
@@ -270,7 +270,9 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
   const apply = (selected: ImportChange[]) => {
     if (!preview) return;
     const m: PortalMeta = { ...preview.meta, fetchedAt: preview.meta.fetchedAt ?? new Date().toISOString() };
-    update('portal', (d) => ({ ...clearFormulas(applyPortalImport(d, selected), selected.map((c) => c.path)), gstr9Meta: m }));
+    update('portal', (d) => ({ ...clearFormulas(applyPortalImport(d, selected), selected.map((c) => c.path)), gstr9Meta: m }), {
+      action: m.source === 'upload' ? 'Imported GSTR-9 figures from an uploaded file' : 'Imported GSTR-9 system-computed figures from the portal',
+    });
     toast.success(selected.length ? `Applied ${selected.length} GSTR-9 figure${selected.length === 1 ? '' : 's'}.` : 'Recorded where the GSTR-9 figures came from.');
     setPreview(null);
   };

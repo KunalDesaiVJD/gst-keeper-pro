@@ -156,7 +156,8 @@ export type StepKey =
   | 'gstr9'
   | 'gstr9c'
   | 'notice'
-  | 'review';
+  | 'review'
+  | 'payables';
 
 export interface DiffLine {
   /** Stable key — justifications are stored against it. */
@@ -238,6 +239,23 @@ export interface Table9Calc {
   itcX: number;
   paid: number;
   diff: number;
+}
+
+export interface PayableSideWorking {
+  /** The Annexure-3 rows that make up this side, signed. */
+  components: Array<{ key: string; label: string; value: Tax }>;
+  net: Tax;
+  /** Positive heads of net — the payable. */
+  payable: Tax;
+  /** Negative heads of net, shown positive — paid / reversed in excess; not a payable. */
+  excess: Tax;
+  setOffDrc03: Tax;
+  setOffGstr3b: Tax;
+  setOff: Tax;
+  /** MAX(payable − set off, 0). */
+  balance: Tax;
+  /** Set off beyond the payable (a head over-covered). */
+  overSetOff: Tax;
 }
 
 export interface Workings {
@@ -421,8 +439,17 @@ export interface Workings {
     total: Tax; // signed, as the Excel's D46
     payable: Tax; // MAX(total, 0) per head
     excessPaid: Tax; // MIN(total, 0) per head, shown positive
+    /** Set off so far — the payable register (DRC-03 imported / GSTR-3B effect), both sides. */
     alreadyPaid: Tax;
     balance: Tax; // MAX(payable − already paid, 0)
+  };
+
+  /**
+   * The same payables disclosed output-wise and input-wise (no netting across
+   * the two), and how much of each is set off. Heads are never netted either.
+   */
+  payables: Record<'output' | 'input', PayableSideWorking> & {
+    totals: { payable: Tax; setOff: Tax; balance: Tax };
   };
 
   gstr9c: {
@@ -941,7 +968,32 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const ann3Total = addT(ann1PayDiff, rcmToPay, excessItc, a3Other); // D46
   const ann3Payable = maxT0(ann3Total);
   const ann3Excess = negT(minT0(ann3Total));
-  const alreadyPaid = tin(A.a3AlreadyPaid);
+  // Payables, output-wise and input-wise (Annexure-3 rows by nature), and their set-offs.
+  const liveSetOffs = ctx.setOffs ?? [];
+  const setOffOf = (side: 'output' | 'input', method?: 'drc03' | 'gstr3b') =>
+    addT(...liveSetOffs.filter((o) => o.side === side && (!method || o.method === method)).map((o) => o.tax));
+  const otherOf = (side: 'output' | 'input') => addT(...A.a3Other.filter((o) => (o.side ?? 'output') === side).map((o) => tin(o)));
+  const payableSide = (side: 'output' | 'input', components: PayableSideWorking['components']): PayableSideWorking => {
+    const net = addT(...components.map((c) => c.value));
+    const payable = maxT0(net);
+    const setOffDrc03 = setOffOf(side, 'drc03');
+    const setOffGstr3b = setOffOf(side, 'gstr3b');
+    const setOff = addT(setOffDrc03, setOffGstr3b);
+    return {
+      components, net, payable, excess: negT(minT0(net)), setOffDrc03, setOffGstr3b, setOff,
+      balance: maxT0(subT(payable, setOff)), overSetOff: maxT0(subT(setOff, payable)),
+    };
+  };
+  const payOutput = payableSide('output', [
+    { key: 'clause9', label: 'Clause 9 difference — tax payable as per books less paid in GSTR-9 Table 9 (Annexure-3 row 1)', value: ann1PayDiff },
+    { key: 'rcm', label: 'RCM to be paid (Annexure-3 row 2)', value: rcmToPay },
+    { key: 'other', label: 'Other payments — output (Annexure-3 row 4)', value: otherOf('output') },
+  ]);
+  const payInput = payableSide('input', [
+    { key: 'excessItc', label: 'Excess ITC claimed as per reconciliation (Annexure-3 row 3)', value: excessItc },
+    { key: 'other', label: 'Other payments — input (Annexure-3 row 4)', value: otherOf('input') },
+  ]);
+  const alreadyPaid = addT(payOutput.setOff, payInput.setOff);
 
   // ------------------------------------------------------------ GSTR-9C official tables
   const C = docs.gstr9c;
@@ -1233,7 +1285,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
 
   const stepOpen = {
     overview: 0, portal: 0, sales: 0, purchases: 0, duties: 0, rcm: 0, outward: 0, itc: 0,
-    expense: 0, annexures: 0, gstr9: 0, gstr9c: 0, notice: 0, review: 0,
+    expense: 0, annexures: 0, gstr9: 0, gstr9c: 0, notice: 0, review: 0, payables: 0,
   } as Record<StepKey, number>;
   diffs.forEach((d) => { if (d.open) { stepOpen[d.step] += 1; stepOpen.review += 1; } });
 
@@ -1285,6 +1337,15 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       clause9: ann1PayDiff, rcmToPay, rcmToPaySuggested, rcmGap, excessItc, excessItcSuggested, other: a3Other,
       total: ann3Total, payable: ann3Payable, excessPaid: ann3Excess, alreadyPaid,
       balance: maxT0(subT(ann3Payable, alreadyPaid)),
+    },
+    payables: {
+      output: payOutput,
+      input: payInput,
+      totals: {
+        payable: addT(payOutput.payable, payInput.payable),
+        setOff: alreadyPaid,
+        balance: addT(payOutput.balance, payInput.balance),
+      },
     },
     gstr9c: {
       t5: { A: t5A, P: t5P, Q: t5Q, R: t5Q - t5P, rows: t5Rows },
