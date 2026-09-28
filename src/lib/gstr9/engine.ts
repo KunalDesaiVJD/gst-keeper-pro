@@ -11,6 +11,8 @@ import {
   AnnualReturnDocs,
   ExpenseHead,
   FY_MONTHS,
+  Gstr9ManualDoc,
+  HsnRow,
   GSTR9C_T5_KEYS,
   GSTR9C_T5_SUB,
   GSTR9C_T9_OTHER_KEYS,
@@ -382,6 +384,13 @@ export interface Workings {
     t12Source: 'computed' | 'override';
     t13: Tax;
     totalTurnover: ValTax; // 5N + 10 − 11
+    /** Tables 14–19 are typed on the GSTR-9 step; passed through so exports read everything from workings. */
+    t14: Gstr9ManualDoc['t14'];
+    t15: Gstr9ManualDoc['t15'];
+    t16: Gstr9ManualDoc['t16'];
+    t17: Array<HsnRow & { tax: Tax }>;
+    t18: Array<HsnRow & { tax: Tax }>;
+    t19: Gstr9ManualDoc['t19'];
   };
 
   ann1: {
@@ -447,6 +456,8 @@ export interface Workings {
     defaults: Record<'deemed' | 'unreturned' | 'pending' | 'prev8C' | 'ineligible4D' | 'itcUsed4A5' | 'reversed4B2', Tax>;
   };
 
+  /** Which months have 3B figures in the working: any figure, output side, ITC side. */
+  monthsPresent: Record<MonthKey, { any: boolean; out: boolean; itc: boolean }>;
   diffs: DiffLine[];
   openCount: number;
   stepOpen: Record<StepKey, number>;
@@ -1242,6 +1253,10 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       t5: g5, t5Portal: { ...P.gstr9.table5 }, t5PortalTotals, t8Unsplit,
       t6, t6ASource, t7, t7H, t7I, t7EPortal: monthly4B1, t7J, t8, t9, t9Other,
       t10, t11, t12, t12Source: G.t12 === null || G.t12 === undefined ? 'computed' : 'override', t13, totalTurnover,
+      t14: G.t14, t15: G.t15, t16: G.t16,
+      t17: (G.t17 || []).map((r) => ({ ...r, tax: rowTax(r) })),
+      t18: (G.t18 || []).map((r) => ({ ...r, tax: rowTax(r) })),
+      t19: G.t19,
     },
     ann1: { A: ann1A, nonGst: ann1NonGst, B: ann1B, C: ann1C, D: ann1D, E: ann1E, F: ann1F, G: ann1G, payable: ann1Payable, paid: ann1Paid, payDiff: ann1PayDiff },
     ann2,
@@ -1259,6 +1274,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       defaults: { t5A: t5ADefault, t5Q: totalTurnover.t, t7: t7Default, t9: c9defaults, t9Q: c9QDefault, t12: c12Default },
     },
     notice: { outward: o, inward: inw, defaults: noticeDefaults },
+    monthsPresent: byMonth((m) => ({ any: monthsPresent[m], out: outPresent[m], itc: itcPresent[m] })),
     diffs,
     openCount: stepOpen.review,
     stepOpen,
@@ -1275,6 +1291,20 @@ function snapRate(implied: number | null): string {
   let best: number | null = null;
   STANDARD_RATES.forEach((r) => { if (Math.abs(a - r) <= 0.5 && (best === null || Math.abs(a - r) < Math.abs(a - best))) best = r; });
   return best === null ? 'unknown' : String(best);
+}
+
+export type DiffStatusKind = 'recheck' | 'open' | 'justified' | 'matched' | 'info' | 'within';
+
+/** The one definition of a difference line's status, shared by the screen and the exports. */
+export function diffStatus(d: DiffLine, tolerance: number): { kind: DiffStatusKind; label: string } {
+  const text = d.justification?.text?.trim() ?? '';
+  const mag = Math.max(d.hasTax ? maxAbs(d.diff) : 0, d.hasTaxable ? Math.abs(d.diff.t) : 0);
+  if (d.stale) return { kind: 'recheck', label: 'Re-check' };
+  if (d.open) return { kind: 'open', label: 'Reason needed' };
+  if (text) return { kind: 'justified', label: 'Justified' };
+  if (mag < 0.005) return { kind: 'matched', label: 'Matched' };
+  if (d.informational) return { kind: 'info', label: 'For information' };
+  return { kind: 'within', label: `Within ₹${tolerance}` };
 }
 
 function headT(h: Table9Head, v: number): Tax {

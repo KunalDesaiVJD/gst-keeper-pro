@@ -3,7 +3,7 @@ import { History, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { gstr9PortalPresent, tax, taxOf, tin, totalTax } from '@/lib/gstr9/engine';
+import { gstr9PortalPresent, tin, totalTax } from '@/lib/gstr9/engine';
 import { loadPreviousYear } from '@/lib/gstr9/store';
 import { FY_MONTHS, type NoticeDoc, type Tax, type TaxIn } from '@/lib/gstr9/types';
 import { useWorkspace } from '../WorkspaceContext';
@@ -12,7 +12,7 @@ import type { CellTone } from '../grid/SheetGrid';
 import ExportMenu from '../ExportMenu';
 import { FixedTaxGrid, type FixedTaxRow } from '../annexures/FixedTaxGrid';
 import { StepLink } from '../annexures/StepLink';
-import { ANNEX_TAB_PARAM, hasAmount, pickFormulas, previousFY, putFormulas, rupees, toTaxIn, type Head } from '../annexures/taxRows';
+import { ANNEX_TAB_PARAM, hasAmount, previousFY, rupees, type Head } from '../annexures/taxRows';
 import { fmtDmy, itcCutoffDate } from '../notice/cutoff';
 
 /** Columns are labelled by the head they hold, in the order of the firm's sheet (§6 item 14). */
@@ -27,8 +27,7 @@ const TABLE_HEADER = (
   </>
 );
 
-type TaxOverrideKey = 'deemedSupplies' | 'unreturnedGoods' | 'pendingDemands';
-type TaxInOverrideKey = 'prevYear8C' | 'ineligible4D' | 'itcUsed4A5' | 'reversed4B2';
+type OverrideKey = 'deemedSupplies' | 'unreturnedGoods' | 'pendingDemands' | 'prevYear8C' | 'ineligible4D' | 'itcUsed4A5' | 'reversed4B2';
 
 /** Step 12 — NOTICE FORMATE: the outward / inward summary officers ask for. */
 const NoticeStep: React.FC = () => {
@@ -36,9 +35,9 @@ const NoticeStep: React.FC = () => {
   const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
   const N = docs.notice;
-  const G = docs.gstr9;
   const o = workings.notice.outward;
   const inw = workings.notice.inward;
+  const def = workings.notice.defaults;
   const tol = workings.tolerance;
   const pfy = previousFY(financialYear);
   const startYear = Number(financialYear.slice(0, 4));
@@ -50,23 +49,10 @@ const NoticeStep: React.FC = () => {
   const positiveIsBad = (_h: Head | 'total', v: number): CellTone => (v > tol ? 'error' : undefined);
 
   /**
-   * Outward 3–5: stored as Tax (no SGST mirror, no formulas on the field itself — those live in
-   * NoticeDoc.f as "deemedSupplies.c" …), null = from GSTR-9 Tables 16 / 15.
+   * Overridable rows (outward 3–5, inward 2, 4, 7, 8): the doc holds a TaxIn (SGST null while it
+   * mirrors CGST, "=a+b" expressions in its own `f`), or null = the engine's default for the row.
    */
-  const taxOverride = (key: TaxOverrideKey, table: string, defaultValue: Tax) => {
-    const cur = N[key];
-    return {
-      kind: 'override' as const,
-      stored: cur ? { ...toTaxIn(cur), f: pickFormulas(N.f, key) } : null,
-      defaultChip: `From Table ${table}`,
-      resetLabel: `Use Table ${table}`,
-      defaultValue,
-      onChange: (v: TaxIn | null) =>
-        update('notice', (d) => ({ ...d, [key]: v ? tin(v) : null, f: putFormulas(d.f, key, v?.f) })),
-    };
-  };
-  /** Inward 2, 4, 7, 8: stored as TaxIn, null = Annexure-4 / as-filed GSTR-3B. */
-  const taxInOverride = (key: TaxInOverrideKey, chip: string, reset: string, defaultValue?: Tax) => ({
+  const override = (key: OverrideKey, defaultValue: Tax, chip: string, reset: string) => ({
     kind: 'override' as const,
     stored: N[key],
     defaultChip: chip,
@@ -78,11 +64,11 @@ const NoticeStep: React.FC = () => {
   const outwardRows: FixedTaxRow[] = [
     { id: 'o1', no: '1', table: '4N', kind: 'computed', value: o.r1, label: 'Tax on taxable supplies as declared in GSTR-9' },
     { id: 'o2', no: '2', table: '10 − 11', kind: 'computed', value: o.r2, label: 'Add: net increase due to amendments (increase in amendments − decrease in amendments)' },
-    { id: 'o3', no: '3', table: '16B', value: o.r3, label: 'Add: tax on deemed supplies', ...taxOverride('deemedSupplies', '16B', taxOf(G.t16.deemedSupply)) },
-    { id: 'o4', no: '4', table: '16C', value: o.r4, label: 'Add: tax on unreturned goods', ...taxOverride('unreturnedGoods', '16C', taxOf(G.t16.approvalNotReturned)) },
+    { id: 'o3', no: '3', table: '16B', value: o.r3, label: 'Add: tax on deemed supplies', ...override('deemedSupplies', def.deemed, 'From Table 16B', 'Use Table 16B') },
+    { id: 'o4', no: '4', table: '16C', value: o.r4, label: 'Add: tax on unreturned goods', ...override('unreturnedGoods', def.unreturned, 'From Table 16C', 'Use Table 16C') },
     {
       id: 'o5', no: '5', table: '15G', value: o.r5, label: 'Pending demands',
-      ...taxOverride('pendingDemands', '15G', tax(G.t15.demandPending.i, G.t15.demandPending.c, G.t15.demandPending.s, G.t15.demandPending.x)),
+      ...override('pendingDemands', def.pending, 'From Table 15G', 'Use Table 15G'),
     },
     { id: 'o6', no: '6', kind: 'computed', value: o.r6, emphasis: true, label: 'Total output tax liability as per GSTR-9 (1 + 2 + 3 + 4 + 5)' },
     { id: 'o7', no: '7', table: '9', kind: 'computed', value: o.r7, label: 'Less: total tax paid in cash' },
@@ -104,13 +90,13 @@ const NoticeStep: React.FC = () => {
     {
       id: 'i2', no: '2', table: `8C of FY ${pfy}`, value: inw.r2,
       label: 'ITC brought forward from the previous FY to the current FY (Table 8C of the previous FY GSTR-9)',
-      ...taxInOverride('prevYear8C', 'From Annexure-4', 'Use Annexure-4', tin(docs.annexures.a4.c8)),
+      ...override('prevYear8C', def.prev8C, 'From Annexure-4', 'Use Annexure-4'),
     },
     {
       id: 'i3', no: '3', table: '8C', kind: 'computed', value: inw.r3, hint: 'Table 13 − Table 12, set on the ITC reco step',
       label: 'ITC carried forward from the present FY to the subsequent FY (Table 8C of this GSTR-9)',
     },
-    { id: 'i4', no: '4', table: '—', value: inw.r4, label: 'Ineligible ITC as per 4(D) of GSTR-3B', ...taxInOverride('ineligible4D', 'From as-filed 3B', 'Use as-filed 3B') },
+    { id: 'i4', no: '4', table: '—', value: inw.r4, label: 'Ineligible ITC as per 4(D) of GSTR-3B', ...override('ineligible4D', def.ineligible4D, 'From as-filed 3B', 'Use as-filed 3B') },
     {
       id: 'i5', no: '5', table: '—', kind: 'typed', value: inw.r5, stored: N.ineligible164,
       label: `Ineligible ITC u/s 16(4): the supplier filed returns after the cut-off date ${cutoff} (excluding RCM & POS ITC)`,
@@ -120,8 +106,8 @@ const NoticeStep: React.FC = () => {
       onChange: (v) => { if (v) setN('ineligible164', v); },
     },
     { id: 'i6', no: '6', kind: 'computed', value: inw.r6, emphasis: true, label: 'ITC available for use in the same year (1 + 2 − 3 − 4 − 5)' },
-    { id: 'i7', no: '7', table: '—', value: inw.r7, label: 'ITC used in the same year as per 4A(5) of GSTR-3B', ...taxInOverride('itcUsed4A5', 'From as-filed 3B', 'Use as-filed 3B') },
-    { id: 'i8', no: '8', table: '—', value: inw.r8, label: 'Reversed in 4(B)(2) of GSTR-3B', ...taxInOverride('reversed4B2', 'From as-filed 3B', 'Use as-filed 3B') },
+    { id: 'i7', no: '7', table: '—', value: inw.r7, label: 'ITC used in the same year as per 4A(5) of GSTR-3B', ...override('itcUsed4A5', def.itcUsed4A5, 'From as-filed 3B', 'Use as-filed 3B') },
+    { id: 'i8', no: '8', table: '—', value: inw.r8, label: 'Reversed in 4(B)(2) of GSTR-3B', ...override('reversed4B2', def.reversed4B2, 'From as-filed 3B', 'Use as-filed 3B') },
     {
       id: 'i9', no: '9', kind: 'computed', value: inw.r9, emphasis: true, tone: positiveIsBad,
       label: 'Net excess used (7 − 6 − 8)', hint: 'Above 0: ITC used in excess of what was available',

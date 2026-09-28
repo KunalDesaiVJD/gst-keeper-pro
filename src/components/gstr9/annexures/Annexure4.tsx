@@ -7,7 +7,7 @@ import { computeWorkings, taxOf, tin } from '@/lib/gstr9/engine';
 import { loadPreviousYear } from '@/lib/gstr9/store';
 import type { AnnexuresDoc } from '@/lib/gstr9/types';
 import { useWorkspace } from '../WorkspaceContext';
-import { MatrixTable, SectionCard } from '../ui';
+import { MatrixTable, SectionCard, useDiffLine } from '../ui';
 import { FixedTaxGrid, type FixedTaxRow } from './FixedTaxGrid';
 import { explicitTaxIn, hasAmount, previousFY } from './taxRows';
 
@@ -19,6 +19,8 @@ const Annexure4: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const a4 = docs.annexures.a4;
   const pfy = previousFY(financialYear);
+  // Informational difference line (previous FY Table 13 − this FY 6A1); the engine adds it only when either side is non-zero.
+  const c13Line = useDiffLine('ann4.c13');
 
   const clauses: Array<{ key: ClauseKey; no: string; label: string; hint?: string }> = [
     { key: 'c8', no: '1', label: 'Clause 8 — 8C', hint: `ITC of FY ${pfy} received in that year but availed in FY ${financialYear}. Feeds the notice format's "ITC brought forward".` },
@@ -96,12 +98,17 @@ const Annexure4: React.FC = () => {
           heads={['i', 'c', 's', 'x']}
           rows={[
             { key: 'c13', label: `Clause 13 of FY ${pfy} (above)`, value: tin(a4.c13) },
-            { key: '6A1', label: `6A1 of FY ${financialYear} — ITC of a preceding FY availed this year`, value: workings.g9.t6.A1 },
+            {
+              key: '6A1',
+              label: `6A1 of FY ${financialYear} — ITC of a preceding FY availed this year`,
+              value: workings.g9.t6.A1,
+              diffKey: c13Line ? 'ann4.c13' : undefined,
+            },
           ]}
         />
         <p className="text-[11px] text-muted-foreground">
           Last year&apos;s clause 13 is the ITC availed this year for that year, so the two usually agree; 6A1 defaults to the
-          Last Year Effect on the Duties &amp; Taxes step.
+          Last Year Effect on the Duties &amp; Taxes step. The status is for information and never blocks the lock.
         </p>
       </div>
     </SectionCard>

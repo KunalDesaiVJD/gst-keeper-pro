@@ -38,7 +38,7 @@ export interface FixedTaxRow {
   defaultChip?: string;
   /** Reset button text for an overridden row, e.g. "Use Table 16B". */
   resetLabel?: string;
-  /** Default figure, shown in the chip's tooltip once the row is typed over. */
+  /** Override rows: the engine's default for the line (typed or not) — shown while untyped, in the chip's tooltip once typed over, and the starting point when typing. */
   defaultValue?: Tax;
   onChange?: (next: TaxIn | null) => void;
   /** Bold (sub)total line. */
@@ -63,7 +63,7 @@ const cellValue = (r: FixedTaxRow, h: Head): number | null => {
 const cellPlaceholder = (r: FixedTaxRow, h: Head): number | null => {
   if (r.kind === 'computed') return null;
   const st = storedOf(r);
-  if (!st) return r.value[h];
+  if (!st) return (r.defaultValue ?? r.value)[h];
   if (h === 's' && st.s === null) return st.c;
   return null;
 };
@@ -75,7 +75,8 @@ const editRow = (r: FixedTaxRow, h: Head, v: number | null, formula: string | un
   if (!st) {
     // Clearing a cell that only shows the computed figure changes nothing.
     if (v === null) return r;
-    return { ...r, stored: setHeadFormula(setHead(toTaxIn(r.value), h, v), h, formula) };
+    // Start from the default the cell was showing (SGST keeps mirroring CGST if they were equal).
+    return { ...r, stored: setHeadFormula(setHead(toTaxIn(r.defaultValue ?? r.value), h, v), h, formula) };
   }
   return { ...r, stored: setHeadFormula(setHead(st, h, v), h, v === null ? undefined : formula) };
 };

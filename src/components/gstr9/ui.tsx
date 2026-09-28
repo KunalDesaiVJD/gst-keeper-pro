@@ -8,7 +8,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Textarea } from '@/components/ui/textarea';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import type { DiffLine } from '@/lib/gstr9/engine';
+import { diffStatus } from '@/lib/gstr9/engine';
+import type { DiffLine, DiffStatusKind } from '@/lib/gstr9/engine';
 import type { PortalMeta, Tax, ValTax } from '@/lib/gstr9/types';
 import { fmtMoney } from './grid/money';
 import { useWorkspace } from './WorkspaceContext';
@@ -155,13 +156,16 @@ export const JustifyControl: React.FC<{ lineKey: string; compact?: boolean; clas
   const text = d.justification?.text?.trim() ?? '';
   const mag = Math.max(d.hasTax ? Math.max(...(['i', 'c', 's', 'x'] as const).map((h) => Math.abs(d.diff[h]))) : 0, d.hasTaxable ? Math.abs(d.diff.t) : 0);
 
-  let status: { label: string; variant: 'success' | 'secondary' | 'destructive' | 'warning' | 'info'; icon: React.ReactNode };
-  if (d.stale) status = { label: 'Re-check', variant: 'warning', icon: <RotateCcw className="h-3 w-3" /> };
-  else if (d.open) status = { label: 'Reason needed', variant: 'destructive', icon: <AlertTriangle className="h-3 w-3" /> };
-  else if (text) status = { label: 'Justified', variant: 'info', icon: <MessageSquareText className="h-3 w-3" /> };
-  else if (mag < 0.005) status = { label: 'Matched', variant: 'success', icon: <CheckCircle2 className="h-3 w-3" /> };
-  else if (d.informational) status = { label: 'For information', variant: 'secondary', icon: <CircleDot className="h-3 w-3" /> };
-  else status = { label: `Within ₹${workings.tolerance}`, variant: 'secondary', icon: <CheckCircle2 className="h-3 w-3" /> };
+  const st = diffStatus(d, workings.tolerance);
+  const STATUS_LOOK: Record<DiffStatusKind, { variant: 'success' | 'secondary' | 'destructive' | 'warning' | 'info'; icon: React.ReactNode }> = {
+    recheck: { variant: 'warning', icon: <RotateCcw className="h-3 w-3" /> },
+    open: { variant: 'destructive', icon: <AlertTriangle className="h-3 w-3" /> },
+    justified: { variant: 'info', icon: <MessageSquareText className="h-3 w-3" /> },
+    matched: { variant: 'success', icon: <CheckCircle2 className="h-3 w-3" /> },
+    info: { variant: 'secondary', icon: <CircleDot className="h-3 w-3" /> },
+    within: { variant: 'secondary', icon: <CheckCircle2 className="h-3 w-3" /> },
+  };
+  const status = { label: st.label, ...STATUS_LOOK[st.kind] };
 
   const canWrite = !readOnly && (mag >= 0.005 || !!text);
 

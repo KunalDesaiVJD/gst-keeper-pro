@@ -14,7 +14,7 @@ const TABS = [
   { key: 'a1', title: 'Annexure-1', sub: 'Income reco', diffPrefix: 'ann1.' },
   { key: 'a2', title: 'Annexure-2', sub: 'ITC reco', diffPrefix: 'ann2.' },
   { key: 'a3', title: 'Annexure-3', sub: 'DRC-03', diffPrefix: null },
-  { key: 'a4', title: 'Annexure-4', sub: 'Previous-year GSTR-9', diffPrefix: null },
+  { key: 'a4', title: 'Annexure-4', sub: 'Previous-year GSTR-9', diffPrefix: 'ann4.' },
 ] as const;
 
 type TabKey = (typeof TABS)[number]['key'];

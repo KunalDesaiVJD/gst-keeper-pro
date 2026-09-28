@@ -11,8 +11,10 @@ export const HEAD_NAME: Record<Head, string> = { i: 'IGST', c: 'CGST', s: 'SGST 
 const same = (a: number, b: number) => Math.abs(a - b) < 0.005;
 
 /**
- * A resolved figure as a typed cell. SGST becomes `null` (mirrors CGST) when
- * it equals CGST, so a later CGST edit carries SGST along — the Excel's `=F`.
+ * A computed default as the starting point of a typed cell (when staff first
+ * type over it). SGST becomes `null` (mirrors CGST) when it equals CGST, so a
+ * later CGST edit carries SGST along — the Excel's `=F`. Not used to read
+ * stored cells: those keep their own SGST / null.
  */
 export const toTaxIn = (t: Tax): TaxIn => ({ i: t.i, c: t.c, s: same(t.s, t.c) ? null : t.s, x: t.x });
 
