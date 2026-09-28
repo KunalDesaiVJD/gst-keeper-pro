@@ -531,9 +531,9 @@ export interface Gstr9cDoc {
 
 export interface NoticeDoc {
   /** 16B deemed supplies / 16C unreturned goods / 15G pending demands — null = from GSTR-9 Tables 15/16. */
-  deemedSupplies: Tax | null;
-  unreturnedGoods: Tax | null;
-  pendingDemands: Tax | null;
+  deemedSupplies: TaxIn | null;
+  unreturnedGoods: TaxIn | null;
+  pendingDemands: TaxIn | null;
   /** Differential tax paid on amendments related to the previous FY, paid in this FY (previous FY Table 14). */
   prevYearT14: TaxIn;
   /** Previous FY's 8C brought forward — null = Annexure-4 clause 8. */

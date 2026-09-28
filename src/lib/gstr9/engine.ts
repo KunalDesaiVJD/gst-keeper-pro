@@ -443,6 +443,8 @@ export interface Workings {
   notice: {
     outward: Record<'r1' | 'r2' | 'r3' | 'r4' | 'r5' | 'r6' | 'r7' | 'r8' | 'r9' | 'r10' | 'r11', Tax>;
     inward: Record<'r1' | 'r2' | 'r3' | 'r4' | 'r5' | 'r6' | 'r7' | 'r8' | 'r9', Tax>;
+    /** What each overridable row shows when not typed (GSTR-9 Tables 15/16, Annexure-4, as-filed 3B). */
+    defaults: Record<'deemed' | 'unreturned' | 'pending' | 'prev8C' | 'ineligible4D' | 'itcUsed4A5' | 'reversed4B2', Tax>;
   };
 
   diffs: DiffLine[];
@@ -1009,6 +1011,15 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   o.r11 = addT(subT(o.r6, o.r7, o.r8, o.r9), o.r10);
 
   const inw = {} as Workings['notice']['inward'];
+  const noticeDefaults: Workings['notice']['defaults'] = {
+    deemed: t16Deemed,
+    unreturned: t16Approval,
+    pending: t15Pending,
+    prev8C: tin(A.a4.c8),
+    ineligible4D: sumMonths(byMonth((m) => P.months[m].itc4d)),
+    itcUsed4A5: sumMonths(byMonth((m) => P.months[m].itc4a5)),
+    reversed4B2: sumMonths(byMonth((m) => P.months[m].itc4b2)),
+  };
   inw.r1 = t8.A;
   inw.r2 = N.prevYear8C ? tin(N.prevYear8C) : tin(A.a4.c8);
   inw.r3 = t8.C;
@@ -1159,6 +1170,11 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       });
     });
   }
+  if (isNonZeroT(tin(A.a4.c13)) || isNonZeroT(t6A1)) {
+    push('ann4.c13', 'annexures', 'Previous FY Table 13 vs this FY 6A1', withT(0, tin(A.a4.c13)), withT(0, t6A1), {
+      direction: 'Prev 13 − 6A1', aLabel: 'Previous FY GSTR-9 Table 13', bLabel: 'This FY 6A1', informational: true,
+    });
+  }
   push('g9.8D', 'gstr9', 'Table 8D: ITC in GSTR-2B not availed [8A − (8B + 8C)]', withT(0, t8.A), withT(0, addT(t8.B, t8.C)), {
     direction: '8A − (8B + 8C)', aLabel: '8A', bLabel: '8B + 8C',
   });
@@ -1242,7 +1258,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       t14: { rows: c14, R: c14.R, S: c14S, T: c14T },
       defaults: { t5A: t5ADefault, t5Q: totalTurnover.t, t7: t7Default, t9: c9defaults, t9Q: c9QDefault, t12: c12Default },
     },
-    notice: { outward: o, inward: inw },
+    notice: { outward: o, inward: inw, defaults: noticeDefaults },
     diffs,
     openCount: stepOpen.review,
     stepOpen,
