@@ -139,6 +139,97 @@ export type Database = {
           },
         ]
       }
+      annual_return_doc_history: {
+        Row: {
+          archived_at: string
+          client_id: string
+          data: Json
+          doc_id: string
+          doc_key: string
+          financial_year: string
+          id: string
+          updated_at: string
+          updated_by: string | null
+          version: number
+        }
+        Insert: {
+          archived_at?: string
+          client_id: string
+          data: Json
+          doc_id: string
+          doc_key: string
+          financial_year: string
+          id?: string
+          updated_at: string
+          updated_by?: string | null
+          version: number
+        }
+        Update: {
+          archived_at?: string
+          client_id?: string
+          data?: Json
+          doc_id?: string
+          doc_key?: string
+          financial_year?: string
+          id?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "annual_return_doc_history_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      annual_return_docs: {
+        Row: {
+          client_id: string
+          created_at: string
+          data: Json
+          doc_key: string
+          financial_year: string
+          id: string
+          updated_at: string
+          updated_by: string | null
+          version: number
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          data?: Json
+          doc_key: string
+          financial_year: string
+          id?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          data?: Json
+          doc_key?: string
+          financial_year?: string
+          id?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "annual_return_docs_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       annual_return_periods: {
         Row: {
           client_id: string
@@ -146,6 +237,7 @@ export type Database = {
           financial_year: string
           id: string
           locked_at: string | null
+          locked_by: string | null
           notes: string | null
           prepared_by: string | null
           reviewed_by: string | null
@@ -158,6 +250,7 @@ export type Database = {
           financial_year: string
           id?: string
           locked_at?: string | null
+          locked_by?: string | null
           notes?: string | null
           prepared_by?: string | null
           reviewed_by?: string | null
@@ -170,6 +263,7 @@ export type Database = {
           financial_year?: string
           id?: string
           locked_at?: string | null
+          locked_by?: string | null
           notes?: string | null
           prepared_by?: string | null
           reviewed_by?: string | null
@@ -7778,6 +7872,18 @@ export type Database = {
       }
     }
     Functions: {
+      save_annual_return_doc: {
+        Args: {
+          p_client_id: string
+          p_data: Json
+          p_doc_key: string
+          p_expected_version: number
+          p_financial_year: string
+          p_force_history?: boolean
+          p_updated_by: string
+        }
+        Returns: number
+      }
       authenticate_client: {
         Args: { identifier: string; pass: string }
         Returns: {

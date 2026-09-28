@@ -2,6 +2,40 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-09-28 — New: GSTR-9 system-computed pull for the Annual Return (v0.3.3)
+
+**What:** a new section-pull mode, `gstr9_pull`, started from Annual Return →
+Portal data → "Pull from portal" (the app sends `__gstkPullSection` with
+`mode: 'gstr9_pull'` and `period_month: '03/YYYY'`, the FY's closing March).
+After login it opens the returns dashboard and `handleGstr9Pull` in
+`content.js`:
+1. `GET returns2/auth/api/gstr9/details/calc?ret_period=03YYYY&gstin=…` — the
+   GSTR-9 system-computed figures (Tables 4, 5, 6, 8, 9);
+2. `GET returns/auth/api/formdetails?rtn_prd=03YYYY&rtn_typ=GSTR9` — ARN,
+   filed date and status (non-fatal if it fails);
+3. saves the raw JSON unchanged to `gst_filed_returns`
+   (`return_type 'GSTR9_CALC'`, `period_month '03/YYYY'`) with `updated_at`,
+   which the app polls for, parses and shows in a preview before applying.
+
+GET only — it never calls any save / submit / compute / file endpoint.
+
+**Not yet confirmed live.** The endpoint and its parameters were taken from
+the portal's own GSTR-9 page script (`gstr9ctrl.js`, `getSumData()` →
+`ajax.get("/returns2/auth/api/gstr9/details/calc", { ret_period, gstin })`),
+not from a real pull. It still needs a live check. If the first call does not
+return `{ status: 1, data }` (HTML / 403 on a cold session), the handler opens
+`returns2/auth/annualreturn` once (flag `job.gstr9Warmed`) and retries on that
+page; a second failure is written as `status: 'PULL FAILED: …'` (with
+`updated_at`, so the app stops waiting) and the app offers Upload / typing
+instead. The session-bounce give-up path records the same failure.
+
+**Version bump:** 0.3.2 → 0.3.3. The app blocks the GSTR-9 pull on older
+versions, because an extension that doesn't know the mode would fall through
+to the default ledger pull after login.
+
+The existing `gstr3b_pull` mode is unchanged; the Annual Return page now also
+starts it for all 12 months of a financial year (`period_months`).
+
 ## 2026-09-22 — Fix: GSTR-3B PDF pull failed behind an auto-popup
 
 **Problem:** Pulling a filed GSTR-3B's ARN + PDF via Filing Status's Portal
