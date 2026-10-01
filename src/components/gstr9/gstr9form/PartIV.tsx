@@ -40,7 +40,7 @@ const OTHER_ROWS: Array<{ other: OtherKey; code: string; label: string }> = [
 ];
 const HEAD_LABEL: Record<Table9Head, string> = { igst: 'Integrated', cgst: 'Central', sgst: 'State/UT', cess: 'Cess' };
 
-const Table9: React.FC = () => {
+export const Table9: React.FC = () => {
   const { workings, docs, update, readOnly } = useWorkspace();
   const g = workings.g9;
   const tol = workings.tolerance;
@@ -188,11 +188,3 @@ const Table9: React.FC = () => {
     </SectionCard>
   );
 };
-
-const PartIV: React.FC = () => (
-  <div className="space-y-4">
-    <Table9 />
-  </div>
-);
-
-export default PartIV;

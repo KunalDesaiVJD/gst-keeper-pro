@@ -4,7 +4,7 @@ import { zIn } from '@/lib/gstr9/defaults';
 import { fmtMoney } from '../grid/money';
 import { MatrixRow, MatrixTable, Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { FORM_HEAD_LABELS, FORM_TAX_HEADS, fyStartYear, isManualPath, TAX_ORDER } from './helpers';
+import { FORM_HEAD_LABELS, FORM_MATRIX_SCROLL, FORM_TAX_HEADS, fyStartYear, isManualPath, TAX_ORDER } from './helpers';
 import { FixedRowDef } from './hooks';
 import { EntryHeading, ResetButton, RowSrc, Src, StepLink, TaxEntryGrid } from './shared';
 
@@ -22,7 +22,7 @@ const Dash = () => <span className="text-muted-foreground">—</span>;
 // Table 6 — ITC availed
 // ---------------------------------------------------------------------------
 
-const Table6: React.FC = () => {
+export const Table6: React.FC = () => {
   const { workings, docs, update } = useWorkspace();
   const g = workings.g9;
   const t6 = g.t6;
@@ -129,10 +129,11 @@ const Table6: React.FC = () => {
       excelRef="GSTR-9 rows 40–64 · GSTR 9-INPUT"
       actions={<StepLink step="itc">ITC reco</StepLink>}
     >
-      <MatrixTable rows={rows} heads={FORM_TAX_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 6" />
-      <Note>
-        6B input services is the sheet&apos;s balancing figure, so 6I ties to 6A2. Books ITC on the same ledgers: {headsText(workings.itc.inputServicesBooks)}.
-      </Note>
+      <MatrixTable rows={rows} heads={FORM_TAX_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 6" className={FORM_MATRIX_SCROLL} />
+      <p className="text-[11px] text-muted-foreground">
+        6B input services is the sheet&apos;s balancing figure, so 6I ties to 6A2. Books ITC on the same ledgers:{' '}
+        <span className="tabular-nums text-foreground">{headsText(workings.itc.inputServicesBooks)}</span>.
+      </p>
       <Note tone="position">
         6A1 defaults to the Last Year Effect (Duties &amp; Taxes), not a typed figure; RCM ITC goes to 6C input services unless an RCM category is set to 6D or 6F.
       </Note>
@@ -154,7 +155,7 @@ const Table6: React.FC = () => {
 // Table 7 — ITC reversed and ineligible (read-only; typed in ITC reco)
 // ---------------------------------------------------------------------------
 
-const Table7: React.FC = () => {
+export const Table7: React.FC = () => {
   const { workings, docs } = useWorkspace();
   const g = workings.g9;
   const t7 = g.t7;
@@ -192,7 +193,7 @@ const Table7: React.FC = () => {
       excelRef="GSTR-9 rows 66–78 · GSTR 9-INPUT rows 20–23"
       actions={<StepLink step="itc">Edit in ITC reco</StepLink>}
     >
-      <MatrixTable rows={rows} heads={FORM_TAX_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 7" />
+      <MatrixTable rows={rows} heads={FORM_TAX_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 7" className={FORM_MATRIX_SCROLL} />
       <Note tone="position">
         Suspended-ITC reversals (incl. 180-day) are reported as a 7H other reversal rather than 7A (Rule 37), as in the firm&apos;s sheet.
       </Note>
@@ -204,7 +205,7 @@ const Table7: React.FC = () => {
 // Table 8 — other ITC related information
 // ---------------------------------------------------------------------------
 
-const Table8: React.FC = () => {
+export const Table8: React.FC = () => {
   const { workings, docs, financialYear } = useWorkspace();
   const g = workings.g9;
   const t8 = g.t8;
@@ -279,7 +280,7 @@ const Table8: React.FC = () => {
         </>
       }
     >
-      <MatrixTable rows={rows} heads={FORM_TAX_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 8" />
+      <MatrixTable rows={rows} heads={FORM_TAX_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 8" className={FORM_MATRIX_SCROLL} />
       <Note tone="position">
         8B = 6(B) + 6(H), as the form reads and the portal computes; the firm&apos;s sheet sums 6(B) only. 8C = Table 13 − Table 12, as in the sheet.
       </Note>
@@ -293,13 +294,3 @@ const Table8: React.FC = () => {
     </SectionCard>
   );
 };
-
-const PartIII: React.FC = () => (
-  <div className="space-y-4">
-    <Table6 />
-    <Table7 />
-    <Table8 />
-  </div>
-);
-
-export default PartIII;

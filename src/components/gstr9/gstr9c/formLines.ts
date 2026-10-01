@@ -11,6 +11,13 @@ import { useSearchParams } from 'react-router-dom';
 import type { StepKey } from '@/lib/gstr9/engine';
 import type { Gstr9cDoc, RateWiseRow, Tax } from '@/lib/gstr9/types';
 import { fmtMoney } from '../grid/money';
+import { PIN_LAST_ROW } from '../gstr9form/helpers';
+
+/** Height a long 9C table may take before it scrolls inside itself (its header, footer and — pinned — result line stay in view). */
+export const C9_GRID_MAX_H = 'max(320px, calc(100vh - 420px))';
+
+/** The same limit for a MatrixTable (as its className): header and last (result) row pinned. */
+export const C9_MATRIX_SCROLL = `max-h-[max(320px,calc(100vh_-_420px))] overflow-y-auto [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-20 [&_thead_th]:bg-muted [&_thead_th]:shadow-[inset_0_-1px_0_hsl(var(--border))] ${PIN_LAST_ROW}`;
 
 /** One figure column of a 9C table. */
 export type FormHead = 't' | 'c' | 's' | 'i' | 'x';
@@ -144,13 +151,14 @@ export const headsText = (t: Tax): string => {
 // Hooks
 // ---------------------------------------------------------------------------
 
-/** Open another step, keeping the client (and everything else) in the URL. */
-export function useGoToStep(): (step: StepKey) => void {
+/** Open another step, keeping the client (and everything else) in the URL; `extra` sets further params (e.g. the Annexure tab). */
+export function useGoToStep(): (step: StepKey, extra?: Record<string, string>) => void {
   const [params, setParams] = useSearchParams();
   return useCallback(
-    (step: StepKey) => {
+    (step: StepKey, extra?: Record<string, string>) => {
       const next = new URLSearchParams(params);
       next.set('step', step);
+      Object.entries(extra ?? {}).forEach(([k, v]) => next.set(k, v));
       setParams(next);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     },

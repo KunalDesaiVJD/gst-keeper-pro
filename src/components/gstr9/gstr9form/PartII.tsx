@@ -5,7 +5,7 @@ import { SheetGrid } from '../grid/SheetGrid';
 import { diffTone, displayCol, moneyCol } from '../grid/columns';
 import { MatrixRow, MatrixTable, Money, Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { FORM_HEAD_LABELS, FORM_HEADS, isManualPath, particularsCol, toneClass } from './helpers';
+import { FORM_GRID_MAX_H, FORM_HEAD_LABELS, FORM_HEADS, FORM_MATRIX_SCROLL, isManualPath, particularsCol, toneClass } from './helpers';
 import { FixedRow, FixedRowDef, useFixedRows } from './hooks';
 import { EntryHeading, FormTable, FormTableCol, FormTableRow, RowSrc, Src, StepLink } from './shared';
 
@@ -33,7 +33,7 @@ const T4_ROWS: T4Row[] = [
   { code: '4N', k: 'N', total: true, label: 'Supplies and advances on which tax is to be paid (H + M) above' },
 ];
 
-const Table4: React.FC = () => {
+export const Table4: React.FC = () => {
   const { workings, docs } = useWorkspace();
   const g = workings.g9;
   const meta = docs.portal.gstr9Meta;
@@ -82,7 +82,7 @@ const Table4: React.FC = () => {
         </>
       }
     >
-      <MatrixTable rows={rows} heads={FORM_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 4" />
+      <MatrixTable rows={rows} heads={FORM_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 4" className={FORM_MATRIX_SCROLL} />
     </SectionCard>
   );
 };
@@ -135,7 +135,7 @@ const T5_EXTRA_DEFS: FixedRowDef<number>[] = T5_EXTRA.map((e) => ({
   fKey: () => `t5Extra.${e.key}`,
 }));
 
-const Table5: React.FC = () => {
+export const Table5: React.FC = () => {
   const { workings } = useWorkspace();
   const g = workings.g9;
   const tol = workings.tolerance;
@@ -215,7 +215,7 @@ const Table5: React.FC = () => {
         </>
       }
     >
-      <FormTable rows={rows} cols={cols} label="GSTR-9 Table 5" />
+      <FormTable rows={rows} cols={cols} label="GSTR-9 Table 5" maxHeight={FORM_GRID_MAX_H} />
       {!portalFetched && (
         <p className="text-xs text-muted-foreground">
           Portal Table 5 isn&apos;t fetched yet — the comparison fills in once the GSTR-9 system-computed figures are pulled on <StepLink step="portal">Portal data</StepLink>.
@@ -236,12 +236,3 @@ const Table5: React.FC = () => {
     </SectionCard>
   );
 };
-
-const PartII: React.FC = () => (
-  <div className="space-y-4">
-    <Table4 />
-    <Table5 />
-  </div>
-);
-
-export default PartII;

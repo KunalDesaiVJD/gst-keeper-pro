@@ -33,17 +33,17 @@ const AnnexuresStep: React.FC = () => {
   const openIn = (prefix: string | null) => (prefix ? workings.diffs.filter((d) => d.open && d.key.startsWith(prefix)).length : 0);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <OpenDifferences step="annexures" />
       <Tabs value={tab} onValueChange={setTab}>
-        <div className="overflow-x-auto pb-1">
-          <TabsList className="h-auto">
+        <div className="max-w-full overflow-x-auto">
+          <TabsList className="h-8 gap-0.5 p-0.5" aria-label="Annexures">
             {TABS.map((t) => {
               const open = openIn(t.diffPrefix);
               return (
-                <TabsTrigger key={t.key} value={t.key} className="gap-1.5">
+                <TabsTrigger key={t.key} value={t.key} className="h-7 gap-1.5 px-2.5 text-xs">
                   <span>{t.title}</span>
-                  <span className="hidden text-xs font-normal text-muted-foreground sm:inline">· {t.sub}</span>
+                  <span className="hidden font-normal text-muted-foreground sm:inline">· {t.sub}</span>
                   {open > 0 && (
                     <Badge variant="destructive" className="h-4 min-w-4 justify-center rounded-full px-1 text-[10px] leading-none" aria-label={`${open} open`}>
                       {open}
@@ -54,10 +54,10 @@ const AnnexuresStep: React.FC = () => {
             })}
           </TabsList>
         </div>
-        <TabsContent value="a1"><Annexure1 /></TabsContent>
-        <TabsContent value="a2"><Annexure2 /></TabsContent>
-        <TabsContent value="a3"><Annexure3 /></TabsContent>
-        <TabsContent value="a4"><Annexure4 /></TabsContent>
+        <TabsContent value="a1" className="mt-3"><Annexure1 /></TabsContent>
+        <TabsContent value="a2" className="mt-3"><Annexure2 /></TabsContent>
+        <TabsContent value="a3" className="mt-3"><Annexure3 /></TabsContent>
+        <TabsContent value="a4" className="mt-3"><Annexure4 /></TabsContent>
       </Tabs>
     </div>
   );

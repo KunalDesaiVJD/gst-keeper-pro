@@ -7,7 +7,7 @@ import { MatrixRow, MatrixTable, Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { ReasonsBox, RefStrip } from './bits';
 import { FormGrid } from './FormGrid';
-import { figs, FormLine, headsText, n0, TAX_HEADS, toTax, useGoToStep } from './formLines';
+import { C9_MATRIX_SCROLL, figs, FormLine, headsText, n0, TAX_HEADS, toTax, useGoToStep } from './formLines';
 
 const T12_LABEL = {
   A: 'ITC availed as per audited annual financial statement / books of account',
@@ -59,14 +59,19 @@ const T16_LABEL: Record<Gstr9cT16Key, string> = {
 const HEADS_9C = ['t', 'c', 's', 'i', 'x'] as const;
 const HEAD_LABELS_9C = { t: 'Value', c: 'Central tax', s: 'State/UT tax', i: 'Integrated tax', x: 'Cess' };
 
-/** Part IV — Tables 12 to 16: input tax credit. */
-const ItcPart: React.FC = () => {
+/** Shown on every ITC table of a builder on the NO_ITC scheme. */
+export const NoItcNote: React.FC = () => {
+  const { workings } = useWorkspace();
+  if (!workings.ctx.noItcBuilder) return null;
+  return <Note>This client is a builder on the NO_ITC scheme: zero ITC is expected, so the ITC differences below are for information only.</Note>;
+};
+
+/** Part IV — Tables 12 and 13: reconciliation of net ITC. */
+export const Table12Card: React.FC = () => {
   const { docs, workings } = useWorkspace();
-  const go = useGoToStep();
   const C = docs.gstr9c;
   const W = workings.gstr9c;
   const def = W.defaults;
-  const noItc = workings.ctx.noItcBuilder;
 
   const t12Lines = useMemo<FormLine[]>(() => {
     const over = (k: 'A' | 'B' | 'C'): FormLine => {
@@ -96,6 +101,28 @@ const ItcPart: React.FC = () => {
     ];
   }, [C, def.t12, W.t12]);
 
+  return (
+    <SectionCard
+      title="Table 12 · Reconciliation of net input tax credit"
+      description="Books ITC for the year against the ITC claimed in GSTR-9. A–C are computed; type over any of them if the audited figures differ."
+      excelRef="9C utility PT IV (12) · 12A ← PL-INPUT row 79"
+    >
+      <FormGrid label="GSTR-9C Table 12" lines={t12Lines} heads={TAX_HEADS} labelWidth={320} />
+      <Note tone="position">
+        12B defaults to the Last Year Effect and 12C to GSTR-9 Table 13. Table 13 is typed on the ITC reco step (with the reco’s MAX(books − 7J, 0) shown as a
+        suggestion), because the residual is often an unexplained difference rather than ITC availed next year.
+      </Note>
+      <ReasonsBox field="t13Reasons" code="13" title="Reasons for un-reconciled difference in ITC" diffKey="gstr9c.12F" />
+    </SectionCard>
+  );
+};
+
+/** Part IV — Tables 14 and 15: ITC by expense head. */
+export const Table14Card: React.FC = () => {
+  const { workings } = useWorkspace();
+  const go = useGoToStep();
+  const W = workings.gstr9c;
+
   const t14Rows = useMemo<MatrixRow[]>(() => {
     const rows: MatrixRow[] = T14_ROWS.map((r) => ({
       key: r.k,
@@ -112,6 +139,41 @@ const ItcPart: React.FC = () => {
     return rows;
   }, [W.t14]);
 
+  const qBal = workings.c14.qBalancing;
+  const qBalNonZero = [qBal.t, qBal.i, qBal.c, qBal.s, qBal.x].some((v) => Math.abs(v) >= 0.005);
+
+  return (
+    <SectionCard
+      title="Table 14 · Reconciliation of ITC declared in GSTR-9 with ITC availed on expenses"
+      description="ITC by expense head, computed from the Purchases & ITC ledgers and their 9C expense heads. Change a head on the Purchases step."
+      excelRef="GSTR 9C rows 8–30"
+      actions={
+        <Button type="button" size="sm" variant="outline" onClick={() => go('expense')}>
+          9C expense heads <ArrowRight className="ml-1 h-3.5 w-3.5" />
+        </Button>
+      }
+    >
+      <MatrixTable label="GSTR-9C Table 14" rows={t14Rows} heads={[...HEADS_9C]} headLabels={HEAD_LABELS_9C} className={C9_MATRIX_SCROLL} />
+      {qBalNonZero && (
+        <Note>
+          14Q includes a balancing figure (value {fmtMoney(qBal.t)}; {headsText(qBal)}) so that R equals books net ITC, as the sheet’s D26 does. A large
+          balancing figure usually means ledgers are missing their expense head.
+        </Note>
+      )}
+      <Note tone="position">
+        14P is the full RCM Part B (every expense block) — the sheet’s Part B taxable total adds only two of the four blocks.
+      </Note>
+      <ReasonsBox field="t15Reasons" code="15" title="Reasons for un-reconciled difference in ITC" diffKey="gstr9c.14T" />
+    </SectionCard>
+  );
+};
+
+/** Part IV — Table 16: tax payable on the un-reconciled ITC. */
+export const Table16Card: React.FC = () => {
+  const { docs, workings } = useWorkspace();
+  const C = docs.gstr9c;
+  const W = workings.gstr9c;
+
   const t16Lines = useMemo<FormLine[]>(
     () =>
       GSTR9C_T16_KEYS.map((k) => ({
@@ -127,66 +189,19 @@ const ItcPart: React.FC = () => {
     [C.t16],
   );
 
-  const qBal = workings.c14.qBalancing;
-  const qBalNonZero = [qBal.t, qBal.i, qBal.c, qBal.s, qBal.x].some((v) => Math.abs(v) >= 0.005);
-
   return (
-    <div className="space-y-4">
-      {noItc && (
-        <Note>This client is a builder on the NO_ITC scheme: zero ITC is expected, so the ITC differences below are for information only.</Note>
-      )}
-
-      <SectionCard
-        title="Table 12 · Reconciliation of net input tax credit"
-        description="Books ITC for the year against the ITC claimed in GSTR-9. A–C are computed; type over any of them if the audited figures differ."
-        excelRef="9C utility PT IV (12) · 12A ← PL-INPUT row 79"
-      >
-        <FormGrid label="GSTR-9C Table 12" lines={t12Lines} heads={TAX_HEADS} labelWidth={320} />
-        <Note tone="position">
-          12B defaults to the Last Year Effect and 12C to GSTR-9 Table 13. Table 13 is typed on the ITC reco step (with the reco’s MAX(books − 7J, 0) shown as a
-          suggestion), because the residual is often an unexplained difference rather than ITC availed next year.
-        </Note>
-        <ReasonsBox field="t13Reasons" code="13" title="Reasons for un-reconciled difference in ITC" diffKey="gstr9c.12F" />
-      </SectionCard>
-
-      <SectionCard
-        title="Table 14 · Reconciliation of ITC declared in GSTR-9 with ITC availed on expenses"
-        description="ITC by expense head, computed from the Purchases & ITC ledgers and their 9C expense heads. Change a head on the Purchases step."
-        excelRef="GSTR 9C rows 8–30"
-        actions={
-          <Button type="button" size="sm" variant="outline" onClick={() => go('expense')}>
-            9C expense heads <ArrowRight className="ml-1 h-3.5 w-3.5" />
-          </Button>
-        }
-      >
-        <MatrixTable label="GSTR-9C Table 14" rows={t14Rows} heads={[...HEADS_9C]} headLabels={HEAD_LABELS_9C} />
-        {qBalNonZero && (
-          <Note>
-            14Q includes a balancing figure (value {fmtMoney(qBal.t)}; {headsText(qBal)}) so that R equals books net ITC, as the sheet’s D26 does. A large
-            balancing figure usually means ledgers are missing their expense head.
-          </Note>
-        )}
-        <Note tone="position">
-          14P is the full RCM Part B (every expense block) — the sheet’s Part B taxable total adds only two of the four blocks.
-        </Note>
-        <ReasonsBox field="t15Reasons" code="15" title="Reasons for un-reconciled difference in ITC" diffKey="gstr9c.14T" />
-      </SectionCard>
-
-      <SectionCard
-        title="Table 16 · Tax payable on un-reconciled difference in ITC"
-        description="Due to the reasons in Tables 13 and 15. Typed."
-        excelRef="9C utility PT IV (16)"
-      >
-        <RefStrip
-          items={[
-            { label: '12F un-reconciled ITC', value: headsText(W.t12.F) },
-            { label: '14T un-reconciled ITC', value: headsText(W.t14.T) },
-          ]}
-        />
-        <FormGrid label="GSTR-9C Table 16" lines={t16Lines} heads={['t']} headLabels={{ t: 'Amount payable (₹)' }} labelWidth={220} />
-      </SectionCard>
-    </div>
+    <SectionCard
+      title="Table 16 · Tax payable on un-reconciled difference in ITC"
+      description="Due to the reasons in Tables 13 and 15. Typed."
+      excelRef="9C utility PT IV (16)"
+    >
+      <RefStrip
+        items={[
+          { label: '12F un-reconciled ITC', value: headsText(W.t12.F) },
+          { label: '14T un-reconciled ITC', value: headsText(W.t14.T) },
+        ]}
+      />
+      <FormGrid label="GSTR-9C Table 16" lines={t16Lines} heads={['t']} headLabels={{ t: 'Amount payable (₹)' }} labelWidth={220} />
+    </SectionCard>
   );
 };
-
-export default ItcPart;

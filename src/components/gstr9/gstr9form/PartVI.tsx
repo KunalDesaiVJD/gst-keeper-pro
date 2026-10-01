@@ -7,7 +7,7 @@ import { diffTone, displayCol, moneyCol, taxFooter, taxInCols } from '../grid/co
 import { fmtRate } from '../grid/money';
 import { SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { FORM_HEAD_LABELS, particularsCol } from './helpers';
+import { FORM_GRID_MAX_H, FORM_HEAD_LABELS, particularsCol } from './helpers';
 import { FixedRow, FixedRowDef, useFixedRows } from './hooks';
 
 // ---------------------------------------------------------------------------
@@ -41,7 +41,7 @@ const T15_COLS = ['c', 's', 'i', 'x', 'interest', 'penalty', 'lateFee', 'others'
 
 type T15Row = FixedRow<T15Val>;
 
-const Table15: React.FC = () => {
+export const Table15: React.FC = () => {
   const { rows, onRowsChange, readOnly } = useFixedRows<T15Val>(T15_DEFS, { cols: T15_COLS });
   const taxHeads: Array<keyof Tax> = ['c', 's', 'i', 'x'];
   const ext: Array<[ExtKey, string]> = [
@@ -104,7 +104,7 @@ const T16_DEFS: FixedRowDef<ValTax>[] = [
 
 type T16Row = FixedRow<ValTax>;
 
-const Table16: React.FC = () => {
+export const Table16: React.FC = () => {
   const heads: Array<keyof ValTax & string> = ['t', 'c', 's', 'i', 'x'];
   const { rows, onRowsChange, readOnly } = useFixedRows<ValTax>(T16_DEFS, { cols: heads });
   const valueOnly = (r: T16Row) => r.id === '16A';
@@ -151,7 +151,7 @@ const T19_DEFS: FixedRowDef<T19Val>[] = T19_ROWS.map((r) => ({
 
 type T19Row = FixedRow<T19Val>;
 
-const Table19: React.FC = () => {
+export const Table19: React.FC = () => {
   const { workings } = useWorkspace();
   const tol = workings.tolerance;
   const { rows, onRowsChange, readOnly } = useFixedRows<T19Val>(T19_DEFS, { cols: ['payable', 'paid'] });
@@ -260,7 +260,7 @@ const HsnGrid: React.FC<{ field: 't17' | 't18'; label: string }> = ({ field, lab
       canDelete
       addLabel="Add HSN"
       label={label}
-      maxHeight={520}
+      maxHeight={FORM_GRID_MAX_H}
       pasteOrder={HSN_PASTE_ORDER}
       emptyText="No HSN rows yet — paste the summary straight from Excel or the offline tool, or add a row."
       footer={[
@@ -275,24 +275,17 @@ const HsnGrid: React.FC<{ field: 't17' | 't18'; label: string }> = ({ field, lab
   );
 };
 
-const PartVI: React.FC = () => (
-  <div className="space-y-4">
-    <Table15 />
-    <Table16 />
-    <SectionCard
-      title="17 · HSN wise summary of outward supplies"
-      description="Paste in this column order: HSN, Description, UQC, Quantity, Concessional (Y/N), Rate %, Taxable value, IGST, CGST, SGST, Cess. SGST left blank mirrors CGST."
-    >
-      <HsnGrid field="t17" label="GSTR-9 Table 17 HSN outward" />
-    </SectionCard>
-    <SectionCard
-      title="18 · HSN wise summary of inward supplies"
-      description="Same column order as Table 17."
-    >
-      <HsnGrid field="t18" label="GSTR-9 Table 18 HSN inward" />
-    </SectionCard>
-    <Table19 />
-  </div>
+export const Table17: React.FC = () => (
+  <SectionCard
+    title="17 · HSN wise summary of outward supplies"
+    description="Paste in this column order: HSN, Description, UQC, Quantity, Concessional (Y/N), Rate %, Taxable value, IGST, CGST, SGST, Cess. SGST left blank mirrors CGST."
+  >
+    <HsnGrid field="t17" label="GSTR-9 Table 17 HSN outward" />
+  </SectionCard>
 );
 
-export default PartVI;
+export const Table18: React.FC = () => (
+  <SectionCard title="18 · HSN wise summary of inward supplies" description="Same column order as Table 17.">
+    <HsnGrid field="t18" label="GSTR-9 Table 18 HSN inward" />
+  </SectionCard>
+);

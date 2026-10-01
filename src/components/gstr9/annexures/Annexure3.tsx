@@ -86,6 +86,7 @@ const Annexure3: React.FC = () => {
       title="Annexure-3 — DRC-03 working"
       description="What remains to be paid through DRC-03 after the annual reconciliation."
       excelRef="ANNEXURE B39:G46"
+      actions={<StepLink step="payables" className="text-xs">Set-off register</StepLink>}
     >
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
         <KpiTile label="DRC-03 payable" value={rupees(payable)} />
@@ -94,7 +95,7 @@ const Annexure3: React.FC = () => {
         <KpiTile label="Excess paid" value={rupees(excess)} hint="not payable by DRC-03" tone={excess > tol ? 'warn' : 'neutral'} />
       </div>
 
-      <FixedTaxGrid rows={topRows} label="Annexure-3 rows 1 to 3" readOnly={readOnly} />
+      <FixedTaxGrid rows={topRows} label="Annexure-3 rows 1 to 3" readOnly={readOnly} labelWidth={380} />
       <p className="text-[11px] text-muted-foreground">
         Row 1 follows{' '}
         <StepLink step="annexures" extra={{ [ANNEX_TAB_PARAM]: 'a1' }}>Annexure-1 paid &amp; payable</StepLink>; rows 2 and 3
@@ -103,7 +104,7 @@ const Annexure3: React.FC = () => {
       </p>
 
       <div className="space-y-1.5">
-        <h4 className="text-sm font-semibold">4 · Any other payment (to be specified)</h4>
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">4 · Any other payment (to be specified)</h4>
         <SheetGrid<Other>
           rows={A.a3Other}
           columns={otherCols}
@@ -123,7 +124,7 @@ const Annexure3: React.FC = () => {
         />
       </div>
 
-      <FixedTaxGrid rows={sumRows} label="Annexure-3 total and DRC-03 balance" readOnly={readOnly} showNo={false} />
+      <FixedTaxGrid rows={sumRows} label="Annexure-3 total and DRC-03 balance" readOnly={readOnly} showNo={false} labelWidth={432} />
 
       <Note tone="position">
         The total keeps the sheet&apos;s signed sum; DRC-03 is payable only on heads that come out positive, excess paid is shown

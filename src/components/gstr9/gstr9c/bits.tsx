@@ -7,7 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { totalTax } from '@/lib/gstr9/engine';
 import type { Gstr9cDoc } from '@/lib/gstr9/types';
 import { fmtMoney } from '../grid/money';
-import { JustifyControl, KpiTile, useDiffLine } from '../ui';
+import { JustifyControl, useDiffLine } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { HEAD_ORDER, headsText } from './formLines';
 
@@ -47,7 +47,8 @@ export const ReasonsBox: React.FC<{ field: ReasonField; code: string; title: str
       <Textarea
         id={id}
         value={value}
-        rows={3}
+        rows={2}
+        className="min-h-[3.25rem]"
         disabled={readOnly}
         placeholder={readOnly ? '' : 'Reasons as they should read in the filed GSTR-9C'}
         onChange={(e) => {
@@ -59,25 +60,34 @@ export const ReasonsBox: React.FC<{ field: ReasonField; code: string; title: str
   );
 };
 
-/** A KPI tile for one 9C difference line (5R, 7G, 9R, 12F, 14T), with its justification status. */
+/**
+ * A KPI tile for one 9C difference line (5R, 7G, 9R, 12F, 14T): the
+ * difference and, beside it, its justification status / reason editor. The
+ * split by head (or the direction) is the value's tooltip.
+ */
 export const DiffKpi: React.FC<{ lineKey: string; label: string }> = ({ lineKey, label }) => {
   const d = useDiffLine(lineKey);
   if (!d) return null;
   const taxOnly = d.hasTax;
   const mag = taxOnly ? Math.max(...HEAD_ORDER.map((h) => Math.abs(d.diff[h]))) : Math.abs(d.diff.t);
   const tone = d.open ? 'error' : mag < 0.005 ? 'ok' : 'neutral';
+  const detail = taxOnly ? headsText(d.diff) : d.direction;
   return (
-    <KpiTile
-      label={label}
-      tone={tone}
-      value={fmtMoney(taxOnly ? totalTax(d.diff) : d.diff.t)}
-      hint={
-        <span className="mt-0.5 flex flex-wrap items-center justify-between gap-1">
-          <span className="truncate">{taxOnly ? headsText(d.diff) : d.direction}</span>
-          <JustifyControl lineKey={lineKey} />
+    <div
+      className={cn(
+        'min-w-0 rounded-lg border bg-card px-3 py-1.5',
+        tone === 'ok' && 'border-success/40',
+        tone === 'error' && 'border-destructive/40',
+      )}
+    >
+      <div className="truncate text-[11px] font-medium text-muted-foreground" title={label}>{label}</div>
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <span className={cn('truncate text-[15px] font-semibold leading-tight tabular-nums', tone === 'error' && 'text-destructive-strong', tone === 'ok' && 'text-success-strong')} title={detail}>
+          {fmtMoney(taxOnly ? totalTax(d.diff) : d.diff.t)}
         </span>
-      }
-    />
+        <JustifyControl lineKey={lineKey} className="shrink-0" />
+      </div>
+    </div>
   );
 };
 

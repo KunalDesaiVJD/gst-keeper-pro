@@ -146,7 +146,7 @@ const CertificationPart: React.FC = () => {
         )
       }
     >
-      <div className="max-w-3xl space-y-5">
+      <div className="grid gap-x-8 gap-y-4 xl:grid-cols-2 2xl:max-w-[1200px]">
         <fieldset className="space-y-3">
           <legend className="text-sm font-medium">Signatory</legend>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

@@ -92,7 +92,7 @@ const Annexure4: React.FC = () => {
       <FixedTaxGrid rows={rows} label={`Annexure-4: FY ${pfy} GSTR-9 clauses`} readOnly={readOnly} labelHeader="Particular" labelWidth={300} />
 
       <div className="space-y-1.5">
-        <h4 className="text-sm font-semibold">Compare with this year</h4>
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Compare with this year</h4>
         <MatrixTable
           label="Clause 13 of the previous year next to 6A1 of this year"
           heads={['i', 'c', 's', 'x']}

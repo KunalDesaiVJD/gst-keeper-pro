@@ -4,9 +4,10 @@ import { Button } from '@/components/ui/button';
 import { GSTR9C_PARTV_KEYS, Gstr9cPartVKey } from '@/lib/gstr9/types';
 import { SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
+import { ANNEX_TAB_PARAM } from '../annexures/taxRows';
 import { RefStrip } from './bits';
 import { FormGrid } from './FormGrid';
-import { columnTotals, figs, FORM_HEADS, FormLine, headsText, TAX_HEADS, toRateRow, useGoToStep } from './formLines';
+import { C9_GRID_MAX_H, columnTotals, figs, FORM_HEADS, FormLine, headsText, TAX_HEADS, toRateRow, useGoToStep } from './formLines';
 
 const PART_V_LABEL: Record<Gstr9cPartVKey, string> = {
   A: '5%',
@@ -61,7 +62,7 @@ const AdditionalLiabilityPart: React.FC = () => {
       description="What remains payable after the reconciliation — typed. The firm’s DRC-03 working (Annexure-3) is shown for reference."
       excelRef="9C utility PT V"
       actions={
-        <Button type="button" size="sm" variant="outline" onClick={() => go('annexures')}>
+        <Button type="button" size="sm" variant="outline" onClick={() => go('annexures', { [ANNEX_TAB_PARAM]: 'a3' })}>
           Annexure-3 <ArrowRight className="ml-1 h-3.5 w-3.5" />
         </Button>
       }
@@ -78,6 +79,7 @@ const AdditionalLiabilityPart: React.FC = () => {
         lines={lines}
         heads={FORM_HEADS}
         labelWidth={280}
+        maxHeight={C9_GRID_MAX_H}
         footer={[{ key: 'total', label: 'Total', tone: 'total', cells: columnTotals(lines, FORM_HEADS) }]}
       />
     </SectionCard>
