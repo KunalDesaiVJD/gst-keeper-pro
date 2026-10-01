@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { History, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { gstr9PortalPresent, tin, totalTax } from '@/lib/gstr9/engine';
 import { loadPreviousYear } from '@/lib/gstr9/store';
@@ -16,6 +16,7 @@ import { FixedTaxGrid, type FixedTaxRow } from '../annexures/FixedTaxGrid';
 import { StepLink } from '../annexures/StepLink';
 import { ANNEX_TAB_PARAM, hasAmount, previousFY, rupees, type Head } from '../annexures/taxRows';
 import { fmtDmy, itcCutoffDate } from '../notice/cutoff';
+import { StepTab, StepTabsList, TabSub } from '../reco/StepTabs';
 
 /** Columns are labelled by the head they hold, in the order of the firm's sheet (§6 item 14). */
 const HEADS: Head[] = ['c', 's', 'i', 'x'];
@@ -199,26 +200,26 @@ const NoticeStep: React.FC = () => {
           </Note>
         )}
 
-        <Tabs value={tab} onValueChange={setTab}>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="max-w-full overflow-x-auto">
-              <TabsList className="h-8 gap-0.5 p-0.5" aria-label="Notice format parts">
-                <TabsTrigger value="outward" className="h-7 gap-1.5 px-2.5 text-xs">
-                  Outward<span className="hidden font-normal text-muted-foreground sm:inline">· tax liability against tax paid</span>
-                </TabsTrigger>
-                <TabsTrigger value="inward" className="h-7 gap-1.5 px-2.5 text-xs">
-                  Inward<span className="hidden font-normal text-muted-foreground sm:inline">· ITC available against ITC used</span>
-                </TabsTrigger>
-              </TabsList>
-            </div>
-            {tab === 'outward' && !readOnly && (
+        <Tabs value={tab} onValueChange={setTab} className="space-y-2">
+          <StepTabsList
+            label="Notice format parts"
+            value={tab}
+            surface="card"
+            actions={tab === 'outward' && !readOnly ? (
               <Button size="sm" variant="outline" onClick={fillRow10} disabled={busy}>
                 {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <History className="mr-1 h-3.5 w-3.5" />}
                 Fill row 10 from FY {pfy}
               </Button>
-            )}
-          </div>
-          <TabsContent value="outward" className="mt-2.5">
+            ) : undefined}
+          >
+            <StepTab value="outward">
+              Outward <TabSub>tax liability against tax paid</TabSub>
+            </StepTab>
+            <StepTab value="inward">
+              Inward <TabSub>ITC available against ITC used</TabSub>
+            </StepTab>
+          </StepTabsList>
+          <TabsContent value="outward" className="mt-0">
             <FixedTaxGrid
               rows={outwardRows}
               label="Notice format: outward"
@@ -232,7 +233,7 @@ const NoticeStep: React.FC = () => {
               tableHeader={TABLE_HEADER}
             />
           </TabsContent>
-          <TabsContent value="inward" className="mt-2.5 space-y-1.5">
+          <TabsContent value="inward" className="mt-0 space-y-1.5">
             <FixedTaxGrid
               rows={inwardRows}
               label="Notice format: inward"

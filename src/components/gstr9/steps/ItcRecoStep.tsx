@@ -557,8 +557,8 @@ const ItcRecoStep: React.FC = () => {
   return (
     <div className="space-y-3">
       <OpenDifferences step="itc" />
-      <Tabs value={tab} onValueChange={setTab} className="space-y-3">
-        <StepTabsList label="ITC reco">
+      <Tabs value={tab} onValueChange={setTab} className="space-y-2">
+        <StepTabsList label="ITC reco" value={tab}>
           <StepTab value="working">
             ITC working — Tables 6 &amp; 7 <OpenBadge n={workings.stepOpen.itc} />
           </StepTab>

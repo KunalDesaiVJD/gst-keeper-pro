@@ -1,7 +1,7 @@
 import React from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Badge } from '@/components/gstr9/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
+import { OpenBadge, StepTab, StepTabsList, TabSub } from '../reco/StepTabs';
 import { useWorkspace } from '../WorkspaceContext';
 import { OpenDifferences } from '../ui';
 import Annexure1 from '../annexures/Annexure1';
@@ -35,29 +35,19 @@ const AnnexuresStep: React.FC = () => {
   return (
     <div className="space-y-3">
       <OpenDifferences step="annexures" />
-      <Tabs value={tab} onValueChange={setTab}>
-        <div className="max-w-full overflow-x-auto">
-          <TabsList className="h-8 gap-0.5 p-0.5" aria-label="Annexures">
-            {TABS.map((t) => {
-              const open = openIn(t.diffPrefix);
-              return (
-                <TabsTrigger key={t.key} value={t.key} className="h-7 gap-1.5 px-2.5 text-xs">
-                  <span>{t.title}</span>
-                  <span className="hidden font-normal text-muted-foreground sm:inline">· {t.sub}</span>
-                  {open > 0 && (
-                    <Badge variant="destructive" className="h-4 min-w-4 justify-center rounded-full px-1 text-[10px] leading-none" aria-label={`${open} open`}>
-                      {open}
-                    </Badge>
-                  )}
-                </TabsTrigger>
-              );
-            })}
-          </TabsList>
-        </div>
-        <TabsContent value="a1" className="mt-3"><Annexure1 /></TabsContent>
-        <TabsContent value="a2" className="mt-3"><Annexure2 /></TabsContent>
-        <TabsContent value="a3" className="mt-3"><Annexure3 /></TabsContent>
-        <TabsContent value="a4" className="mt-3"><Annexure4 /></TabsContent>
+      <Tabs value={tab} onValueChange={setTab} className="space-y-2">
+        <StepTabsList label="Annexures" value={tab}>
+          {TABS.map((t) => (
+            <StepTab key={t.key} value={t.key}>
+              {t.title} <TabSub>{t.sub}</TabSub>
+              <OpenBadge n={openIn(t.diffPrefix)} showOk={false} />
+            </StepTab>
+          ))}
+        </StepTabsList>
+        <TabsContent value="a1" className="mt-0"><Annexure1 /></TabsContent>
+        <TabsContent value="a2" className="mt-0"><Annexure2 /></TabsContent>
+        <TabsContent value="a3" className="mt-0"><Annexure3 /></TabsContent>
+        <TabsContent value="a4" className="mt-0"><Annexure4 /></TabsContent>
       </Tabs>
     </div>
   );

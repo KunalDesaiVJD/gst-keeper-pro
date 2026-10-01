@@ -36,7 +36,12 @@ count, so the working keeps the full width. Each step opens with its main
 table in the first screen: independent parts are tabs (kept in the URL, e.g.
 `?salestab=audit`, `?gstr9tab=8`, with open counts on the tabs), long tables
 scroll inside themselves with their header and totals pinned, and notes fold
-to one line. Links from the Overview, the Review list and other steps open
+to one line. Every step's row of tabs is one shared component
+(`StepTabsList`, `reco/StepTabs.tsx`): it stays pinned under the step bar
+while the step scrolls, with the controls beside it (view switches, Fill tax,
+Export), an inner row (Portal data's GSTR-9 tables, GSTR-3B parts) pins under
+it, and labels wrap onto a second line rather than scroll sideways. Switching
+tabs while pinned opens the new tab from its top. Links from the Overview, the Review list and other steps open
 the tab a figure or difference is on. Where a table shows both, the rate
 follows the taxable value (pasting from the sheet keeps the sheet's column
 order). Every entry grid behaves like the Excel sheet:

@@ -6,7 +6,7 @@ import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { addT, addV } from '@/lib/gstr9/engine';
 import { applyPortalImport, diffPortalImport, periodsForFY } from '@/lib/gstr9/portalParser';
 import type { ImportChange } from '@/lib/gstr9/portalParser';
@@ -31,6 +31,7 @@ import { FY_MONTHS } from '@/lib/gstr9/types';
 import type { MonthKey, PortalMeta, PortalMonth } from '@/lib/gstr9/types';
 import type { GridFooterRow } from '../grid/SheetGrid';
 import { Note, SectionCard, SourceChip } from '../ui';
+import { StepTab, StepTabsList, TabSub } from '../reco/StepTabs';
 import { useWorkspace } from '../WorkspaceContext';
 import type { PullBridge } from './Gstr9Section';
 import { ImportPreviewDialog } from './ImportPreviewDialog';
@@ -356,23 +357,26 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
 
       {/* Month-wise entry */}
       <Tabs value={tab} onValueChange={setTab}>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <TabsList className="h-8">
-            <TabsTrigger value="reco" className="px-2.5 py-1 text-xs">Output, ITC &amp; RCM</TabsTrigger>
-            <TabsTrigger value="other" className="px-2.5 py-1 text-xs" title="Used by GSTR-9 Table 7E, the 6A fallback and the Notice format">Other 3B figures · 4A/4B/4D</TabsTrigger>
-          </TabsList>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs font-normal text-muted-foreground" onClick={() => setDetails((o) => !o)} aria-expanded={details}>
-              <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', !details && '-rotate-90')} aria-hidden="true" />
-              {details ? 'Months: hide ARN & dates' : 'Months: show ARN & dates'}
-            </Button>
-            <div className="flex items-center gap-2">
-              <Switch id="gstr3b-cess" checked={showCess} onCheckedChange={setShowCess} />
-              <Label htmlFor="gstr3b-cess" className="text-xs font-normal text-muted-foreground">Show cess</Label>
-            </div>
-          </div>
-        </div>
-
+        <StepTabsList
+          level="inner"
+          label="As-filed GSTR-3B"
+          value={tab}
+          actions={
+            <>
+              <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs font-normal text-muted-foreground" onClick={() => setDetails((o) => !o)} aria-expanded={details}>
+                <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', !details && '-rotate-90')} aria-hidden="true" />
+                {details ? 'Months: hide ARN & dates' : 'Months: show ARN & dates'}
+              </Button>
+              <div className="flex items-center gap-2">
+                <Switch id="gstr3b-cess" checked={showCess} onCheckedChange={setShowCess} />
+                <Label htmlFor="gstr3b-cess" className="text-xs font-normal text-muted-foreground">Show cess</Label>
+              </div>
+            </>
+          }
+        >
+          <StepTab value="reco">Output, ITC &amp; RCM</StepTab>
+          <StepTab value="other" title="Used by GSTR-9 Table 7E, the 6A fallback and the Notice format">Other 3B figures <TabSub>4A/4B/4D</TabSub></StepTab>
+        </StepTabsList>
         <TabsContent value="reco" className="space-y-2">
           <PortalFieldGrid
             label="As-filed GSTR-3B by month: output tax, ITC excluding RCM, RCM"

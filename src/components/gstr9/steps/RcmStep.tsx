@@ -61,8 +61,8 @@ const RcmStep: React.FC = () => {
     <div className="space-y-3">
       <OpenDifferences step="rcm" />
       <RcmSummary />
-      <Tabs value={tab} onValueChange={setTab} className="space-y-3">
-        <StepTabsList label="RCM working">
+      <Tabs value={tab} onValueChange={setTab} className="space-y-2">
+        <StepTabsList label="RCM working" value={tab}>
           <StepTab value="compare">
             Books vs portal <OpenBadge n={workings.stepOpen.rcm} />
           </StepTab>

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AlertCircle, Check, ChevronLeft, ChevronRight, CloudUpload, History, Loader2, Lock, ScrollText } from 'lucide-react';
 import { toast } from 'sonner';
@@ -16,6 +16,7 @@ import { useWorkspace, WorkspaceClient, WorkspaceProvider } from '@/components/g
 import { STEPS, stepByKey } from '@/components/gstr9/steps/registry';
 import RevisionHistory from '@/components/gstr9/overview/RevisionHistory';
 import ExportMenu from '@/components/gstr9/ExportMenu';
+import { PAGE_ROOT_ATTR, STEPBAR_H_VAR } from '@/components/gstr9/reco/StepTabs';
 
 const FY_STORAGE_KEY = 'gstk_annual_return_fy';
 
@@ -193,10 +194,24 @@ const Workspace: React.FC = () => {
   const StepComponent = step.component;
   const phases = ['Collect', 'Reconcile', 'Returns', 'Finish'] as const;
 
+  // The step bar's height (one or two rows), so a step's tab row pins just below it.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    const bar = barRef.current;
+    if (!root || !bar) return;
+    const set = () => root.style.setProperty(STEPBAR_H_VAR, `${bar.offsetHeight}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, []);
+
   return (
-    <div className="space-y-3">
+    <div ref={rootRef} {...{ [PAGE_ROOT_ATTR]: '' }} className="space-y-3">
       {/* Step bar: pinned while scrolling, so every step is one click away and the content keeps the full width. */}
-      <div className="sticky top-0 z-30 -mx-4 border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:-mx-6 md:px-6">
+      <div ref={barRef} className="sticky top-0 z-30 -mx-4 border-b bg-background px-4 md:-mx-6 md:px-6">
         <div className="flex items-center gap-1.5 py-1.5 md:pr-12">
           <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" disabled={idx === 0} onClick={() => go(STEPS[idx - 1].key)} aria-label={idx > 0 ? `Previous: ${STEPS[idx - 1].label}` : 'Previous step'}>
             <ChevronLeft className="h-4 w-4" />
