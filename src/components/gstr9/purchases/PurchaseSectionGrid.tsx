@@ -25,8 +25,11 @@ import {
   SUPPLY_OPTIONS,
 } from './purchaseRows';
 
+/** PL-INPUT columns C–H (Head in books, Taxable value, IGST, CGST, SGST, Rate), then the rest — the paste order. */
+const PURCHASE_PASTE_ORDER = ['ledger', 'taxable', 'tax.i', 'tax.c', 'tax.s', 'rate', 'tax.x', 'supply', 'head'];
+
 /**
- * The PL-INPUT entry grid for one section. Editable columns follow the sheet
+ * The PL-INPUT entry grid for one section. Pasting follows the sheet
  * (Head in books, Taxable value, IGST, CGST, SGST, Rate) so a block copied
  * from columns C–H pastes straight in; Cess, Supply and the 9C expense head
  * come after.
@@ -126,7 +129,8 @@ function buildColumns(calc: Record<string, PurchaseRowCalc>): GridColumn<Purchas
   };
 
   // Paste order: Ledger, Taxable, IGST, CGST, SGST, Rate, Cess, Supply, Head (display columns are skipped).
-  return [ledger, taxable, ...tax, rate, implied, cess, supply, head];
+  // Rate (and its check) right after the taxable value on screen; pastes keep the sheet's order (PURCHASE_PASTE_ORDER).
+  return [ledger, taxable, rate, implied, ...tax, cess, supply, head];
 }
 
 export const PurchaseSectionGrid: React.FC<{ section: InputSection }> = ({ section }) => {
@@ -210,6 +214,7 @@ export const PurchaseSectionGrid: React.FC<{ section: InputSection }> = ({ secti
         addLabel="Add ledger"
         footer={footer}
         maxHeight={520}
+        pasteOrder={PURCHASE_PASTE_ORDER}
         emptyText={
           <span>
             No ledgers yet. Click here and paste PL-INPUT {meta.sheetRows}, columns C–H{' '}

@@ -200,6 +200,8 @@ const taxCells = (t: Tax, heads: Head[]): number[] => heads.map((h) => t[h]);
 /** Ledger-row tax cells; the Sales / Purchases grids remember expressions under "tax.i" … "tax.x". */
 const typedTax = (t: Tax, heads: Head[], f: Formulas | undefined): Cell[] => heads.map((h) => typed(t[h], f, `tax.${h}`));
 const valCells = (v: ValTax, heads: Head[]): number[] => [v.t, ...taxCells(v, heads)];
+/** Value, then the two (blank) rate columns, then the heads — rows of a table whose rates follow the taxable value. */
+const valRateCells = (v: ValTax, heads: Head[]): Array<number | null> => [v.t, null, null, ...taxCells(v, heads)];
 /** Tax cells coloured by where each head comes from. */
 const srcTax = (t: Tax, heads: Head[], s: (h: Head) => Src): Cell[] => heads.map((h) => src(t[h], s(h)));
 const headRow = (heads: Head[]): string[] => heads.map((h) => HEAD_LABEL[h]);
@@ -351,18 +353,19 @@ function plOutput(c: Ctx): WorkingPaper {
   const p = new PaperBuilder();
   p.h1('SALES BIFURCATION WORKING');
   p.h2('PART A - TAXABLE INCOME ONLY (INCLUDING ALL EXPORTS (WITH OR WITHOUT), SEZ SALES & DEEMED EXPORTS)');
-  const a = p.table([['SR NO', 'PARTICULARS', 'AMOUNT', ...headRow(heads), 'RATE OF TAX', 'RATE (STATED)', 'GSTR-9 TABLE 4', 'SUPPLY']], { freeze: true, keyCols: 2 });
+  // Rates follow the amount (stated, then the rate the tax implies), then the heads.
+  const a = p.table([['SR NO', 'PARTICULARS', 'AMOUNT', 'RATE (STATED)', 'RATE OF TAX', ...headRow(heads), 'GSTR-9 TABLE 4', 'SUPPLY']], { freeze: true, keyCols: 2 });
   docs.sales.partA.forEach((r, i) => {
     const cc = w.sales.rows[r.id];
     const t = cc?.tax ?? tin({ i: r.igst, c: r.cgst, s: r.sgst, x: r.cess });
     a.data(
-      sr(i + 1), r.ledger, typed(r.taxable, r.f, 'taxable'), ...typedTax(t, heads, r.f),
-      rate(cc?.impliedRate), rate(r.rate, 'typed'),
+      sr(i + 1), r.ledger, typed(r.taxable, r.f, 'taxable'), rate(r.rate, 'typed'), rate(cc?.impliedRate),
+      ...typedTax(t, heads, r.f),
       cc?.isReturn ? 'Credit note (4I)' : OUTWARD_CATEGORY_LABEL[r.category] ?? r.category,
       r.supplyType === 'inter' ? 'Inter-state' : 'Intra-state',
     );
   });
-  a.total(lbl('TOTAL INCOME - PART A'), ...valCells(w.sales.partA, heads));
+  a.total(lbl('TOTAL INCOME - PART A'), ...valRateCells(w.sales.partA, heads));
   p.note('NOTE : SHOW SALES RETURN OF EACH LEDGER IN A DIFFERENT ROW WITH NEGATIVE VALUES');
   p.h2('PART B - NON-TAXABLE INCOME ONLY');
   const bw = heads.length + 1;
@@ -380,7 +383,7 @@ function plOutput(c: Ctx): WorkingPaper {
   return paper(c, {
     ref: 'B1', title: 'PL-OUTPUT — Sales bifurcation', sheet: 'B1 PL-OUTPUT', phase: 'collect', master: 'PL-OUTPUT',
     source: 'Source: books P&L (sales ledgers, audit-report total) — PL-OUTPUT of MASTER_PMS',
-    widths: [8, 44, 18, ...Array(n).fill(16), 12, 12, 26, 14],
+    widths: [8, 44, 18, 12, 12, ...Array(n).fill(16), 26, 14],
   }, p);
 }
 
@@ -394,7 +397,7 @@ function plInput(c: Ctx): WorkingPaper {
   const { docs, w, meta, heads, just } = c;
   const p = new PaperBuilder();
   p.h1('PURCHASE & ITC WORKING');
-  const t = p.table([['SR NO', 'HEAD IN BOOKS', 'TAXABLE VALUE', ...headRow(heads), 'RATE', 'RATE (STATED)', 'GSTR-9C EXPENSE HEAD', 'SUPPLY']], { freeze: true, keyCols: 2 });
+  const t = p.table([['SR NO', 'HEAD IN BOOKS', 'TAXABLE VALUE', 'RATE (STATED)', 'RATE', ...headRow(heads), 'GSTR-9C EXPENSE HEAD', 'SUPPLY']], { freeze: true, keyCols: 2 });
   (['purchase', 'expense', 'capital_goods'] as InputSection[]).forEach((sec) => {
     t.band(SECTION_TITLE[sec][0]);
     docs.purchases.rows.filter((r) => r.section === sec).forEach((r, i) => {
@@ -402,26 +405,26 @@ function plInput(c: Ctx): WorkingPaper {
       const tx = cc?.tax ?? tin({ i: r.igst, c: r.cgst, s: r.sgst, x: r.cess });
       const head = cc?.head ?? resolveHead(r);
       t.data(
-        sr(i + 1), r.ledger, typed(r.taxable, r.f, 'taxable'), ...typedTax(tx, heads, r.f),
-        rate(cc?.impliedRate), rate(r.rate, 'typed'), EXPENSE_HEAD_LABEL[head] ?? head,
+        sr(i + 1), r.ledger, typed(r.taxable, r.f, 'taxable'), rate(r.rate, 'typed'), rate(cc?.impliedRate),
+        ...typedTax(tx, heads, r.f), EXPENSE_HEAD_LABEL[head] ?? head,
         r.supplyType === 'inter' ? 'Inter-state' : 'Intra-state',
       );
     });
-    t.sub(lbl(SECTION_TITLE[sec][1]), ...valCells(w.purchases.sections[sec], heads));
+    t.sub(lbl(SECTION_TITLE[sec][1]), ...valRateCells(w.purchases.sections[sec], heads));
   });
   const P = w.purchases;
-  t.total(lbl('TOTAL ITC AS PER P&L'), ...valCells(P.totalPl, heads));
-  t.data(lbl('SUSPENDED ITC AS PER DUTIES & TAXES (Dr - Cr)'), 0, ...taxCells(P.suspended, heads));
-  t.data(lbl('SUSPENDED ITC AS PER DUTIES & TAXES (OTHER ADJ)'), 0, ...srcTax(P.otherAdj, heads, () => 'typed'));
-  t.data(lbl('RCM CREDIT (RCM SHEET PART B - AS PER BOOKS)'), ...valCells(P.rcmCredit, heads));
-  t.total(lbl(`NET ITC FOR ${meta.financialYear}`), ...valCells(P.netItc, heads));
-  t.data(lbl('AS PER DUTIES & TAXES-INPUT (NET)'), null, ...taxCells(P.dtNet, heads));
-  t.sub(lbl('DIFFERENCE (P&L - D&T)'), null, ...taxCells(P.diffVsDt, heads), wide(just('purchases.dt'), 4));
+  t.total(lbl('TOTAL ITC AS PER P&L'), ...valRateCells(P.totalPl, heads));
+  t.data(lbl('SUSPENDED ITC AS PER DUTIES & TAXES (Dr - Cr)'), 0, null, null, ...taxCells(P.suspended, heads));
+  t.data(lbl('SUSPENDED ITC AS PER DUTIES & TAXES (OTHER ADJ)'), 0, null, null, ...srcTax(P.otherAdj, heads, () => 'typed'));
+  t.data(lbl('RCM CREDIT (RCM SHEET PART B - AS PER BOOKS)'), ...valRateCells(P.rcmCredit, heads));
+  t.total(lbl(`NET ITC FOR ${meta.financialYear}`), ...valRateCells(P.netItc, heads));
+  t.data(lbl('AS PER DUTIES & TAXES-INPUT (NET)'), null, null, null, ...taxCells(P.dtNet, heads));
+  t.sub(lbl('DIFFERENCE (P&L - D&T)'), null, null, null, ...taxCells(P.diffVsDt, heads), wide(just('purchases.dt'), 2));
   const n = heads.length;
   return paper(c, {
     ref: 'B2', title: 'PL-INPUT — Purchases and ITC', sheet: 'B2 PL-INPUT', phase: 'collect', master: 'PL-INPUT',
     source: 'Source: books P&L (purchase, expense and capital-goods ledgers) — PL-INPUT of MASTER_PMS',
-    widths: [8, 44, 18, ...Array(n).fill(16), 10, 12, 36, 12],
+    widths: [8, 44, 18, 12, 10, ...Array(n).fill(16), 36, 12],
   }, p);
 }
 

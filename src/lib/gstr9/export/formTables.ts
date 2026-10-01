@@ -279,7 +279,7 @@ export function gstr9FormTables(w: Workings): FormTable[] {
       return {
         code: r.hsn || '',
         label: r.description || '',
-        cells: [r.uqc || '', r.qty, r.taxable, r.concessional ? 'Yes' : 'No', r.rate === null || r.rate === undefined ? '' : `${r.rate}%`, t.c, t.s, t.i, t.x],
+        cells: [r.uqc || '', r.qty, r.taxable, r.rate === null || r.rate === undefined ? '' : `${r.rate}%`, r.concessional ? 'Yes' : 'No', t.c, t.s, t.i, t.x],
       };
     });
     if (body.length) {
@@ -300,7 +300,7 @@ export function gstr9FormTables(w: Workings): FormTable[] {
       title,
       labelHead: 'Description',
       codeWidth: 17,
-      head: ['UQC', 'Total Quantity', 'Taxable Value', 'Concessional rate?', 'Rate of Tax', 'Central Tax', 'State Tax / UT Tax', 'Integrated Tax', 'Cess'],
+      head: ['UQC', 'Total Quantity', 'Taxable Value', 'Rate of Tax', 'Concessional rate?', 'Central Tax', 'State Tax / UT Tax', 'Integrated Tax', 'Cess'],
       rows: body.length ? body : [{ code: '', label: 'Nil', cells: ['', null, null, '', '', null, null, null, null] }],
     };
   };

@@ -174,6 +174,8 @@ const Table19: React.FC = () => {
 // ---------------------------------------------------------------------------
 
 const HSN_PATTERN = /^\d{4}(\d{2}){0,2}$/;
+/** The offline tool's / sheet's column order, for pasted blocks (Rate is shown after Taxable value on screen). */
+const HSN_PASTE_ORDER = ['hsn', 'description', 'uqc', 'qty', 'concessional', 'rate', 'taxable', 'tax.i', 'tax.c', 'tax.s', 'tax.x'];
 const CONCESSIONAL = [
   { value: 'N', label: 'No' },
   { value: 'Y', label: 'Yes' },
@@ -214,15 +216,7 @@ const HsnGrid: React.FC<{ field: 't17' | 't18'; label: string }> = ({ field, lab
     { key: 'description', header: 'Description', type: 'text', width: 160, value: (r) => r.description, onEdit: (r, e) => ({ ...r, description: e.text }) },
     { key: 'uqc', header: 'UQC', type: 'text', width: 72, value: (r) => r.uqc, onEdit: (r, e) => ({ ...r, uqc: e.text.trim().toUpperCase() }) },
     moneyCol<HsnRow>('qty', 'Total quantity', (r) => r.qty, (r, v) => ({ ...r, qty: v ?? 0 }), { width: 100 }),
-    {
-      key: 'concessional',
-      header: 'Concessional',
-      type: 'select',
-      width: 96,
-      options: CONCESSIONAL,
-      value: (r) => (r.concessional ? 'Y' : 'N'),
-      onEdit: (r, e) => ({ ...r, concessional: e.text === 'Y' }),
-    },
+    moneyCol<HsnRow>('taxable', 'Taxable value', (r) => r.taxable, (r, v) => ({ ...r, taxable: v ?? 0 }), { width: 120 }),
     {
       key: 'rate',
       header: 'Rate %',
@@ -236,7 +230,15 @@ const HsnGrid: React.FC<{ field: 't17' | 't18'; label: string }> = ({ field, lab
         return ir === null ? undefined : `Implied rate ${fmtRate(ir)}${rateMismatch(r.rate, ir) ? ' — does not match the rate' : ''}`;
       },
     },
-    moneyCol<HsnRow>('taxable', 'Taxable value', (r) => r.taxable, (r, v) => ({ ...r, taxable: v ?? 0 }), { width: 120 }),
+    {
+      key: 'concessional',
+      header: 'Concessional',
+      type: 'select',
+      width: 96,
+      options: CONCESSIONAL,
+      value: (r) => (r.concessional ? 'Y' : 'N'),
+      onEdit: (r, e) => ({ ...r, concessional: e.text === 'Y' }),
+    },
     ...taxInCols<HsnRow>(
       (r) => ({ i: r.igst, c: r.cgst, s: r.sgst, x: r.cess }),
       (r, t) => ({ ...r, igst: t.i, cgst: t.c, sgst: t.s, cess: t.x }),
@@ -259,6 +261,7 @@ const HsnGrid: React.FC<{ field: 't17' | 't18'; label: string }> = ({ field, lab
       addLabel="Add HSN"
       label={label}
       maxHeight={520}
+      pasteOrder={HSN_PASTE_ORDER}
       emptyText="No HSN rows yet — paste the summary straight from Excel or the offline tool, or add a row."
       footer={[
         {

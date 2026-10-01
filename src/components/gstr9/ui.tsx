@@ -28,52 +28,82 @@ export const SectionCard: React.FC<{
   className?: string;
 }> = ({ title, description, excelRef, actions, children, className }) => (
   <Card className={className}>
-    <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0 pb-3">
-      <div className="min-w-0 space-y-1">
-        <CardTitle className="text-base">{title}</CardTitle>
+    <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-x-3 gap-y-1.5 space-y-0 px-4 pb-2 pt-3">
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <CardTitle className="text-[15px] leading-snug">{title}</CardTitle>
         {(description || excelRef) && (
-          <CardDescription className="text-xs">
+          <CardDescription className="text-xs leading-snug">
             {description}
-            {excelRef && <span className="ml-1 break-words rounded bg-muted sm:whitespace-nowrap px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">Excel: {excelRef}</span>}
+            {excelRef && <span className="ml-1 break-words rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:whitespace-nowrap">Excel: {excelRef}</span>}
           </CardDescription>
         )}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </CardHeader>
-    <CardContent className="space-y-3">{children}</CardContent>
+    <CardContent className="space-y-2.5 px-4 pb-3">{children}</CardContent>
   </Card>
 );
 
-export const Note: React.FC<{ tone?: 'info' | 'warn' | 'position'; children: React.ReactNode; className?: string }> = ({ tone = 'info', children, className }) => (
-  <div
-    className={cn(
-      'flex items-start gap-2 rounded-md border px-3 py-2 text-xs',
-      tone === 'info' && 'border-info/30 bg-info/5 text-foreground',
-      tone === 'warn' && 'border-warning/40 bg-warning/10 text-foreground',
-      tone === 'position' && 'border-primary/30 bg-primary/5 text-foreground',
-      className,
-    )}
-  >
-    {tone === 'warn' ? <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" /> : <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-info" />}
-    <div className="min-w-0">
-      {tone === 'position' && <span className="font-semibold">Firm position: </span>}
-      {children}
+/**
+ * A note beside a table. Information and firm-position notes start folded to
+ * one line (with "more" when there is more), so they don't push the figures
+ * off the screen; warnings always show in full.
+ */
+export const Note: React.FC<{ tone?: 'info' | 'warn' | 'position'; children: React.ReactNode; className?: string; open?: boolean }> = ({ tone = 'info', children, className, open: startOpen }) => {
+  const foldable = tone !== 'warn';
+  const [open, setOpen] = useState(!!startOpen || !foldable);
+  const [overflows, setOverflows] = useState(false);
+  const textRef = React.useRef<HTMLDivElement | null>(null);
+  React.useLayoutEffect(() => {
+    const el = textRef.current;
+    if (!el || !foldable) return;
+    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1);
+    measure();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, [foldable, open, children]);
+  return (
+    <div
+      className={cn(
+        'flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-xs',
+        tone === 'info' && 'border-info/30 bg-info/5 text-foreground',
+        tone === 'warn' && 'border-warning/40 bg-warning/10 text-foreground',
+        tone === 'position' && 'border-primary/30 bg-primary/5 text-foreground',
+        className,
+      )}
+    >
+      {tone === 'warn' ? <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" /> : <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-info" />}
+      <div ref={textRef} className={cn('min-w-0 flex-1', foldable && !open && 'line-clamp-1')}>
+        {tone === 'position' && <span className="font-semibold">Firm position: </span>}
+        {children}
+      </div>
+      {foldable && (overflows || open) && !startOpen && (
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="shrink-0 rounded px-1 text-[11px] font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-expanded={open}
+        >
+          {open ? 'less' : 'more'}
+        </button>
+      )}
     </div>
-  </div>
-);
+  );
+};
 
 export const KpiTile: React.FC<{ label: string; value: React.ReactNode; hint?: React.ReactNode; tone?: 'ok' | 'warn' | 'error' | 'neutral' }> = ({ label, value, hint, tone = 'neutral' }) => (
   <div
     className={cn(
-      'rounded-lg border bg-card px-3 py-2',
+      'rounded-lg border bg-card px-3 py-1.5',
       tone === 'ok' && 'border-success/40',
       tone === 'warn' && 'border-warning/50',
       tone === 'error' && 'border-destructive/40',
     )}
   >
-    <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
-    <div className={cn('text-base font-semibold tabular-nums', tone === 'error' && 'text-destructive-strong', tone === 'ok' && 'text-success-strong')}>{value}</div>
-    {hint && <div className="text-[11px] text-muted-foreground">{hint}</div>}
+    <div className="truncate text-[11px] font-medium text-muted-foreground" title={label}>{label}</div>
+    <div className={cn('text-[15px] font-semibold leading-tight tabular-nums', tone === 'error' && 'text-destructive-strong', tone === 'ok' && 'text-success-strong')}>{value}</div>
+    {hint && <div className="truncate text-[11px] leading-tight text-muted-foreground" title={typeof hint === 'string' ? hint : undefined}>{hint}</div>}
   </div>
 );
 

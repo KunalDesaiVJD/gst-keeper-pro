@@ -19,6 +19,9 @@ import {
   withAutoTax,
 } from './salesEntry';
 
+/** PL-OUTPUT's column order (Ledger, Amount, IGST, CGST, SGST, Rate …), for blocks pasted from the sheet. */
+const SALES_PASTE_ORDER = ['ledger', 'taxable', TAX_KEY.i, TAX_KEY.c, TAX_KEY.s, 'rate', TAX_KEY.x, 'supply', 'category'];
+
 /** PL-OUTPUT Part A — taxable income, one row per ledger (returns as separate negative rows). */
 const PartAGrid: React.FC = () => {
   const { docs, workings, update, readOnly } = useWorkspace();
@@ -137,7 +140,9 @@ const PartAGrid: React.FC = () => {
     };
     // Editable columns follow the firm's sheet (Particulars, Amount, IGST, SGST/CGST, Rate) so a copied block
     // pastes straight in; display columns are skipped by paste, so the implied-rate check can sit next to Rate.
-    return [ledger, taxable, igst, cgst, sgst, rate, implied, cess, supply, category, kind];
+    // Rate (and its check) right after the taxable value; a block copied from
+    // the sheet still pastes in the sheet's order (see SALES_PASTE_ORDER).
+    return [ledger, taxable, rate, implied, igst, cgst, sgst, cess, supply, category, kind];
   }, [calc]);
 
   // One footer row only: with two rows in the sticky tfoot of a scrolled grid, body text shows between them.
@@ -197,6 +202,7 @@ const PartAGrid: React.FC = () => {
         addLabel="Add ledger"
         footer={footer}
         maxHeight={560}
+        pasteOrder={SALES_PASTE_ORDER}
         emptyText={
           <div className="space-y-1 py-2">
             <div className="font-medium text-foreground">No taxable income ledgers yet.</div>
