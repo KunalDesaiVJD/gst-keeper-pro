@@ -33,6 +33,21 @@ export const CountBadge: React.FC<{ n: number; label: string }> = ({ n, label })
   </Badge>
 );
 
+/**
+ * The look every row of tabs in the module shares: a navy-tinted track that
+ * stands apart from the grey page and the white cards, the open tab filled
+ * navy (as the current step is in the step bar). Grey subtitles and counts
+ * are darkened to read on the track and turn light inside the open tab;
+ * badges keep their own white pill there (see ../badge).
+ */
+export const TAB_LIST_CLASS =
+  'h-auto max-w-full flex-wrap justify-start gap-0.5 rounded-md border border-primary/20 bg-primary/[0.08] p-0.5 text-foreground/80';
+export const TAB_TRIGGER_CLASS = cn(
+  'group/tab h-7 gap-1.5 px-2.5 text-xs font-medium hover:bg-card hover:text-foreground',
+  'data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow data-[state=active]:hover:bg-primary data-[state=active]:hover:text-primary-foreground',
+  '[&_.text-muted-foreground]:text-foreground/70 [&[data-state=active]_.text-muted-foreground]:text-primary-foreground/80 [&[data-state=active]_.text-foreground]:text-primary-foreground [&[data-state=active]_.text-success-strong]:text-primary-foreground',
+);
+
 /** The CSS variables the pinned rows read: the step bar's height (set by the page) and the step's tab row's height. */
 export const STEPBAR_H_VAR = '--ar-stepbar-h';
 const TABS_H_VAR = '--ar-tabs-h';
@@ -117,7 +132,7 @@ export const StepTabsList: React.FC<{
       data-pinned="false"
       style={{ top: pinnedTop(level) }}
       className={cn(
-        'sticky border-b border-transparent py-1 transition-colors data-[pinned=true]:border-border',
+        'sticky border-b border-transparent py-1 transition-[border-color,box-shadow] data-[pinned=true]:border-border data-[pinned=true]:shadow-sm',
         level === 'step' ? 'z-[25]' : 'z-[22]',
         surface === 'page'
           ? '-mx-4 bg-background px-4 md:-mx-6 md:px-6'
@@ -126,7 +141,7 @@ export const StepTabsList: React.FC<{
       )}
     >
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-        <TabsList className="h-auto max-w-full flex-wrap justify-start gap-0.5 p-0.5" aria-label={label}>
+        <TabsList className={TAB_LIST_CLASS} aria-label={label}>
           {children}
         </TabsList>
         {actions && <div className={cn('ml-auto flex flex-wrap items-center gap-x-4 gap-y-1.5', actionsClassName)}>{actions}</div>}
@@ -136,7 +151,7 @@ export const StepTabsList: React.FC<{
 };
 
 export const StepTab: React.FC<{ value: string; children: React.ReactNode; title?: string; className?: string }> = ({ value, children, title, className }) => (
-  <TabsTrigger value={value} className={cn('h-7 gap-1.5 px-2.5 text-xs', className)} title={title}>
+  <TabsTrigger value={value} className={cn(TAB_TRIGGER_CLASS, className)} title={title}>
     {children}
   </TabsTrigger>
 );
@@ -159,7 +174,7 @@ export function ViewSwitch<T extends string>({
   onChange: (v: T) => void;
 }) {
   return (
-    <div role="group" aria-label={label} className="inline-flex h-8 items-center rounded-md bg-muted p-0.5 text-xs">
+    <div role="group" aria-label={label} className="inline-flex h-8 items-center rounded-md border border-primary/20 bg-primary/[0.08] p-0.5 text-xs">
       {options.map((o) => (
         <button
           key={o.value}
@@ -169,7 +184,7 @@ export function ViewSwitch<T extends string>({
           onClick={() => onChange(o.value)}
           className={cn(
             'h-7 whitespace-nowrap rounded-sm px-2.5 font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-            value === o.value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+            value === o.value ? 'bg-card font-semibold text-primary shadow ring-1 ring-primary/30' : 'text-foreground/75 hover:bg-card/70 hover:text-foreground',
           )}
         >
           {o.label}

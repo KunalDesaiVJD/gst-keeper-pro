@@ -3,11 +3,12 @@ import { ArrowUpRight, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList } from '@/components/ui/tabs';
 import type { DiffLine } from '@/lib/gstr9/engine';
 import { fmtMoney } from '../grid/money';
 import { JustifyControl, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
+import { StepTab, TAB_LIST_CLASS } from '../reco/StepTabs';
 import { diffTabParams, fmtWhen, rupeesShort, STEP_META, stepMeta, useGoToStep } from './steps';
 
 type Filter = 'open' | 'all' | 'justified';
@@ -64,17 +65,17 @@ export const DifferenceList: React.FC = () => {
       description={`${counts.open} open · ${counts.justified} justified · ${counts.quiet} matched, within ${rupeesShort(w.tolerance)} or for information. Each line reads in the direction shown (e.g. Books − 3B).`}
       actions={
         <Tabs value={filter} onValueChange={(v) => setFilter(v as Filter)}>
-          <TabsList className="h-8">
-            <TabsTrigger value="open" className="h-7 gap-1 px-2.5 text-xs">
+          <TabsList className={TAB_LIST_CLASS} aria-label="Show">
+            <StepTab value="open">
               Open
               <Badge variant={counts.open ? 'destructive' : 'secondary'} className="h-4 px-1.5 text-[10px] leading-none">{counts.open}</Badge>
-            </TabsTrigger>
-            <TabsTrigger value="all" className="h-7 gap-1 px-2.5 text-xs">
+            </StepTab>
+            <StepTab value="all">
               All <span className="tabular-nums text-muted-foreground">{counts.all}</span>
-            </TabsTrigger>
-            <TabsTrigger value="justified" className="h-7 gap-1 px-2.5 text-xs">
+            </StepTab>
+            <StepTab value="justified">
               Justified <span className="tabular-nums text-muted-foreground">{counts.justified}</span>
-            </TabsTrigger>
+            </StepTab>
           </TabsList>
         </Tabs>
       }
