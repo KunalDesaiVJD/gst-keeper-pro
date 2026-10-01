@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo } from 'react';
 import type { NonTaxRow } from '@/lib/gstr9/types';
 import { useWorkspace } from '../WorkspaceContext';
-import { Note, SectionCard } from '../ui';
+import { SectionCard } from '../ui';
 import { GridColumn, GridFooterRow, SheetGrid } from '../grid/SheetGrid';
 import { moneyCol } from '../grid/columns';
 import { landsIn, NATURE_OPTIONS, natureFromOption, newNonTaxRow } from './salesEntry';
@@ -82,10 +82,6 @@ const PartBGrid: React.FC = () => {
       description="Exports and SEZ supplies without tax, exempt, nil-rated and non-GST income (interest, duty drawback, misc.)."
       excelRef="PL-OUTPUT rows 37–50"
     >
-      <Note tone="info">
-        Enter credit notes as <span className="font-medium">negative rows</span> — they go to GSTR-9 Table 5H, not the nature’s own
-        row.
-      </Note>
       <SheetGrid<NonTaxRow>
         label="PL-OUTPUT Part B — non-taxable income"
         rows={rows}
@@ -97,6 +93,7 @@ const PartBGrid: React.FC = () => {
         canDelete
         addLabel="Add ledger"
         footer={footer}
+        maxHeight="max(300px, calc(100vh - 400px))"
         emptyText={
           <div className="space-y-1 py-2">
             <div className="font-medium text-foreground">No non-taxable income ledgers.</div>
@@ -107,6 +104,10 @@ const PartBGrid: React.FC = () => {
           </div>
         }
       />
+      <p className="text-[11px] text-muted-foreground">
+        Enter credit notes as <span className="font-medium text-foreground">negative rows</span> — they go to GSTR-9 Table 5H, not the
+        nature’s own row.
+      </p>
     </SectionCard>
   );
 };

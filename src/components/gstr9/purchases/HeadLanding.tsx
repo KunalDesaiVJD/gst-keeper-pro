@@ -57,7 +57,7 @@ export const HeadLanding: React.FC<{ onGo: (step: StepKey) => void }> = ({ onGo 
   return (
     <SectionCard
       title="Where each ledger lands"
-      description="The 9C expense head of every ledger above, as it feeds GSTR-9C Table 14."
+      description="The 9C expense head of every ledger in (A)–(C), as it feeds GSTR-9C Table 14."
       excelRef="GSTR 9C rows 8–28"
       actions={
         <>

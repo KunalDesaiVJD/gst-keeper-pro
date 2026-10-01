@@ -98,7 +98,7 @@ export const PurchasesSummary: React.FC<{ onGo: (step: StepKey) => void }> = ({ 
   return (
     <SectionCard
       title="ITC as per P&L — summary"
-      description="Net ITC for the year from the ledgers above, compared with the Duties & Taxes ledgers."
+      description="Net ITC for the year from the ledgers in (A)–(C), compared with the Duties & Taxes ledgers."
       excelRef="PL-INPUT rows 71–81"
     >
       {workings.ctx.noItcBuilder && (

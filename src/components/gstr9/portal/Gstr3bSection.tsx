@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ClipboardCheck, Loader2, RefreshCw } from 'lucide-react';
+import { ChevronDown, ClipboardCheck, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/gstr9/badge';
@@ -56,6 +56,29 @@ const PortalStatus: React.FC<{ row: AsFiledReturn | undefined }> = ({ row }) => 
   return <Badge variant="info" className="text-[10px] font-medium">{s || 'Pulled'}</Badge>;
 };
 
+interface MonthRow {
+  m: MonthKey;
+  row: AsFiledReturn | undefined;
+  meta: PortalMeta | undefined;
+  usable: boolean;
+  applied: boolean;
+  typed: number;
+}
+
+/** Working-side state of one month: applied, waiting to be applied, or its own source (typed …). */
+const InWorking: React.FC<{ r: MonthRow }> = ({ r }) => (
+  <span className="inline-flex flex-wrap items-center gap-0.5">
+    {r.usable && r.applied && <Badge variant="success" className="text-[10px] font-medium">Applied</Badge>}
+    {r.usable && !r.applied && (
+      <Badge variant="warning" className="text-[10px] font-medium">
+        {r.meta?.source === 'as_filed_3b' ? 'Newer pull — not applied' : 'Not applied'}
+      </Badge>
+    )}
+    {!(r.usable && r.applied) && <SourceChip meta={r.meta} />}
+    {r.typed > 0 && <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">{r.typed} typed</Badge>}
+  </span>
+);
+
 export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
   const { client, financialYear, docs, workings, update, readOnly } = useWorkspace();
   const portal = docs.portal;
@@ -67,6 +90,7 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
   const [polling, setPolling] = useState<{ tries: number; fresh: number } | null>(null);
   const [preview, setPreview] = useState<Gstr3bImport | null>(null);
   const [tab, setTab] = useState('reco');
+  const [details, setDetails] = useState(false);
   const anyCess = FY_MONTHS.some((m) => Object.values(portal.months[m]).some((t) => Math.abs(t.x) > 0.004));
   const [showCess, setShowCess] = useState<boolean>(anyCess);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -100,7 +124,7 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
   useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
 
   const byPeriod = useMemo(() => new Map(rows.map((r) => [r.period, r])), [rows]);
-  const monthRows = FY_MONTHS.map((m, idx) => {
+  const monthRows: Array<MonthRow & { period: string }> = FY_MONTHS.map((m, idx) => {
     const row = byPeriod.get(periods[idx]);
     const meta: PortalMeta | undefined = portal.monthMeta[m];
     const usable = has3bSummary(row) && !isNotFiled(row?.status);
@@ -243,7 +267,7 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
   return (
     <SectionCard
       title="As-filed GSTR-3B (monthly)"
-      description={<>The GSTR-3B actually filed on the portal for each month of FY {financialYear}, read by the browser extension — never the app&apos;s own prepared GSTR-3B. It fills the &quot;AS PER 3B&quot; columns of Duties &amp; Taxes (output and input), RCM Part A, and the 4A/4B/4D figures used by GSTR-9 6A (fallback), 7E and the Notice format.</>}
+      description={<>The GSTR-3B as filed for each month of FY {financialYear}, read from the portal by the browser extension — never the app&apos;s own GSTR-3B.</>}
       excelRef="D&T-OUTPUT L:N · D&T-INPUT X:Z · RCM Part A D9:G20"
       actions={
         !readOnly && (
@@ -275,60 +299,77 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
         </Note>
       )}
 
-      {/* 12-month status */}
-      <div className="overflow-x-auto rounded-md border">
-        <table className="w-full border-collapse text-xs" aria-label="As-filed GSTR-3B by month">
-          <thead className="bg-muted">
-            <tr>
-              <th className="border-b border-r px-2 py-1.5 text-left font-semibold text-muted-foreground">Month</th>
-              <th className="border-b border-r px-2 py-1.5 text-left font-semibold text-muted-foreground">On the portal</th>
-              <th className="border-b border-r px-2 py-1.5 text-left font-semibold text-muted-foreground">ARN</th>
-              <th className="border-b border-r px-2 py-1.5 text-left font-semibold text-muted-foreground whitespace-nowrap">Filed on</th>
-              <th className="border-b border-r px-2 py-1.5 text-left font-semibold text-muted-foreground whitespace-nowrap">Last pulled</th>
-              <th className="border-b px-2 py-1.5 text-left font-semibold text-muted-foreground whitespace-nowrap">In the working</th>
-            </tr>
-          </thead>
-          <tbody>
+      {/* 12-month status: one compact strip; ARN and dates one click away (toggle on the row below) */}
+      <div>
+        {details ? (
+          <div className="overflow-x-auto rounded-md border">
+            <table className="w-full border-collapse text-xs" aria-label="As-filed GSTR-3B by month">
+              <thead className="bg-muted">
+                <tr>
+                  <th className="border-b border-r px-2 py-1.5 text-left font-semibold text-muted-foreground">Month</th>
+                  <th className="border-b border-r px-2 py-1.5 text-left font-semibold text-muted-foreground">On the portal</th>
+                  <th className="border-b border-r px-2 py-1.5 text-left font-semibold text-muted-foreground">ARN</th>
+                  <th className="border-b border-r px-2 py-1.5 text-left font-semibold text-muted-foreground whitespace-nowrap">Filed on</th>
+                  <th className="border-b border-r px-2 py-1.5 text-left font-semibold text-muted-foreground whitespace-nowrap">Last pulled</th>
+                  <th className="border-b px-2 py-1.5 text-left font-semibold text-muted-foreground whitespace-nowrap">In the working</th>
+                </tr>
+              </thead>
+              <tbody>
+                {monthRows.map((r) => (
+                  <tr key={r.m}>
+                    <td className="border-b border-r px-2 py-1 font-medium whitespace-nowrap">{monthTitle(r.m, financialYear)}</td>
+                    <td className="border-b border-r px-2 py-1"><PortalStatus row={r.row} /></td>
+                    <td className="border-b border-r px-2 py-1 font-mono text-[11px]">{r.row?.arn || <span className="text-muted-foreground">—</span>}</td>
+                    <td className="border-b border-r px-2 py-1 tabular-nums whitespace-nowrap">{fmtDate(r.row?.filedDate) || <span className="text-muted-foreground">—</span>}</td>
+                    <td className="border-b border-r px-2 py-1 tabular-nums whitespace-nowrap">{fmtWhen(r.row?.updatedAt) || <span className="text-muted-foreground">—</span>}</td>
+                    <td className="border-b px-2 py-1"><InWorking r={r} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <ul className="grid grid-cols-3 gap-1 sm:grid-cols-4 md:grid-cols-6 xl:grid-cols-12" aria-label="As-filed GSTR-3B by month">
             {monthRows.map((r) => (
-              <tr key={r.m}>
-                <td className="border-b border-r px-2 py-1 font-medium whitespace-nowrap">{monthTitle(r.m, financialYear)}</td>
-                <td className="border-b border-r px-2 py-1"><PortalStatus row={r.row} /></td>
-                <td className="border-b border-r px-2 py-1 font-mono text-[11px]">{r.row?.arn || <span className="text-muted-foreground">—</span>}</td>
-                <td className="border-b border-r px-2 py-1 tabular-nums whitespace-nowrap">{fmtDate(r.row?.filedDate) || <span className="text-muted-foreground">—</span>}</td>
-                <td className="border-b border-r px-2 py-1 tabular-nums whitespace-nowrap">{fmtWhen(r.row?.updatedAt) || <span className="text-muted-foreground">—</span>}</td>
-                <td className="border-b px-2 py-1">
-                  <span className="inline-flex flex-wrap items-center gap-1">
-                    {r.usable && r.applied && <Badge variant="success" className="text-[10px] font-medium">Applied</Badge>}
-                    {r.usable && !r.applied && (
-                      <Badge variant="warning" className="text-[10px] font-medium">
-                        {r.meta?.source === 'as_filed_3b' ? 'Newer pull — not applied' : 'Not applied'}
-                      </Badge>
-                    )}
-                    {!(r.usable && r.applied) && <SourceChip meta={r.meta} />}
-                    {r.typed > 0 && <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">{r.typed} typed</Badge>}
-                  </span>
-                </td>
-              </tr>
+              <li
+                key={r.m}
+                className="min-w-0 space-y-1 rounded-md border bg-card px-1.5 py-1"
+                title={[
+                  r.row?.arn && `ARN ${r.row.arn}`,
+                  r.row?.filedDate && `filed ${fmtDate(r.row.filedDate)}`,
+                  r.row?.updatedAt && `pulled ${fmtWhen(r.row.updatedAt)}`,
+                ].filter(Boolean).join(' · ') || undefined}
+              >
+                <div className="truncate text-[11px] font-semibold">{monthTitle(r.m, financialYear)}</div>
+                <div className="flex flex-wrap gap-0.5"><PortalStatus row={r.row} /></div>
+                <InWorking r={r} />
+              </li>
             ))}
-          </tbody>
-        </table>
+          </ul>
+        )}
       </div>
       {!loaded && <p className="text-[11px] text-muted-foreground">Reading what has been pulled…</p>}
 
       {workings.rcm.partASource === 'gstr9' && (
-        <Note tone="info">No month has RCM 3.1(d) yet, so RCM Part A (and GSTR-9 4G) uses the annual 4G figure from the GSTR-9 system-computed data above.</Note>
+        <Note tone="info">No month has RCM 3.1(d) yet, so RCM Part A (and GSTR-9 4G) uses the annual 4G figure from the GSTR-9 system-computed data (the GSTR-9 tab).</Note>
       )}
 
       {/* Month-wise entry */}
       <Tabs value={tab} onValueChange={setTab}>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <TabsList className="h-auto flex-wrap justify-start">
-            <TabsTrigger value="reco">Output, ITC &amp; RCM</TabsTrigger>
-            <TabsTrigger value="other">Other 3B figures</TabsTrigger>
+          <TabsList className="h-8">
+            <TabsTrigger value="reco" className="px-2.5 py-1 text-xs">Output, ITC &amp; RCM</TabsTrigger>
+            <TabsTrigger value="other" className="px-2.5 py-1 text-xs" title="Used by GSTR-9 Table 7E, the 6A fallback and the Notice format">Other 3B figures · 4A/4B/4D</TabsTrigger>
           </TabsList>
-          <div className="flex items-center gap-2">
-            <Switch id="gstr3b-cess" checked={showCess} onCheckedChange={setShowCess} />
-            <Label htmlFor="gstr3b-cess" className="text-xs font-normal text-muted-foreground">Show cess</Label>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs font-normal text-muted-foreground" onClick={() => setDetails((o) => !o)} aria-expanded={details}>
+              <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', !details && '-rotate-90')} aria-hidden="true" />
+              {details ? 'Months: hide ARN & dates' : 'Months: show ARN & dates'}
+            </Button>
+            <div className="flex items-center gap-2">
+              <Switch id="gstr3b-cess" checked={showCess} onCheckedChange={setShowCess} />
+              <Label htmlFor="gstr3b-cess" className="text-xs font-normal text-muted-foreground">Show cess</Label>
+            </div>
           </div>
         </div>
 
@@ -341,12 +382,12 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
             labelWidth={84}
             extra={sourceExtra}
             footer={recoFooter}
+            maxHeight="max(300px, calc(100vh - 470px))"
           />
           <FieldLegend fields={RECO_FIELDS} />
         </TabsContent>
 
         <TabsContent value="other" className="space-y-2">
-          <p className="text-xs text-muted-foreground">Used by GSTR-9 Table 7E, the 6A fallback and the Notice format.</p>
           <PortalFieldGrid
             label="As-filed GSTR-3B by month: 4A total, 4A(5), 4B(1), 4B(2), 4D"
             rows={otherRows}
@@ -355,11 +396,13 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
             labelWidth={84}
             extra={sourceExtra}
             footer={otherFooter}
+            maxHeight="max(300px, calc(100vh - 470px))"
           />
           <FieldLegend fields={OTHER_FIELDS} />
         </TabsContent>
       </Tabs>
       <p className="text-[11px] text-muted-foreground">
+        These fill the &quot;AS PER 3B&quot; columns of Duties &amp; Taxes (output and input), RCM Part A, and the 4A/4B/4D figures used by GSTR-9 6A (fallback), 7E and the Notice format.
         SGST is its own figure in the filed GSTR-3B, so it does not mirror CGST here. Typed figures show as &quot;typed&quot; and are never replaced by a later pull unless you tick them in the preview.
       </p>
 

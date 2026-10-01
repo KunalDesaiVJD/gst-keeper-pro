@@ -176,10 +176,6 @@ const PartAGrid: React.FC = () => {
         ) : undefined
       }
     >
-      <Note tone="info">
-        Show each ledger’s sales return in a <span className="font-medium">separate row with a negative value</span> — it is
-        reported as a credit note in GSTR-9 Table 4I.
-      </Note>
       <Note tone="position">
         Each ledger carries its GSTR-9 Table 4 bucket (B2B by default, as the sheet puts everything in B2B), so the books side of
         the outward reco is split by category. Totals are the same as the sheet’s.
@@ -201,7 +197,7 @@ const PartAGrid: React.FC = () => {
         canDelete
         addLabel="Add ledger"
         footer={footer}
-        maxHeight={560}
+        maxHeight="max(300px, calc(100vh - 470px))"
         pasteOrder={SALES_PASTE_ORDER}
         emptyText={
           <div className="space-y-1 py-2">
@@ -213,6 +209,10 @@ const PartAGrid: React.FC = () => {
           </div>
         }
       />
+      <p className="text-[11px] text-muted-foreground">
+        Show each ledger’s sales return in a <span className="font-medium text-foreground">separate row with a negative value</span> — it is
+        reported as a credit note in GSTR-9 Table 4I.
+      </p>
     </SectionCard>
   );
 };
