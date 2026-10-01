@@ -85,9 +85,10 @@ export const previousFY = (financialYear: string): string => {
 export const useGoToStep = () => {
   const [params, setParams] = useSearchParams();
   return useCallback(
-    (step: string) => {
+    (step: string, extra?: Record<string, string>) => {
       const next = new URLSearchParams(params);
       next.set('step', step);
+      Object.entries(extra ?? {}).forEach(([k, v]) => next.set(k, v));
       setParams(next);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     },

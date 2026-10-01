@@ -47,17 +47,51 @@ export type ReviewTab = 'differences' | 'signoff' | 'history' | 'snapshots';
 export const stepMeta = (key: string): StepMeta => STEP_META.find((s) => s.key === key) ?? STEP_META[0];
 
 /** Navigate to another step, keeping the rest of the URL (the open client) as it is. */
-export const useGoToStep = (): ((key: StepKey) => void) => {
+export const useGoToStep = (): ((key: StepKey, extra?: Record<string, string>) => void) => {
   const [params, setParams] = useSearchParams();
   return useCallback(
-    (key: StepKey) => {
+    (key: StepKey, extra?: Record<string, string>) => {
       const next = new URLSearchParams(params);
       next.set('step', key);
+      Object.entries(extra ?? {}).forEach(([k, v]) => next.set(k, v));
       setParams(next);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     },
     [params, setParams],
   );
+};
+
+/**
+ * The tab of its step that shows a difference line, as URL params — so a
+ * link from the Overview or Review lands on the table the difference is in,
+ * not on the step's first tab.
+ */
+export const diffTabParams = (d: { key: string; step: StepKey }): Record<string, string> => {
+  const k = d.key;
+  switch (d.step) {
+    case 'sales': return k === 'sales.audit' ? { salestab: 'audit' } : {};
+    case 'purchases': return k === 'purchases.dt' ? { purchasestab: 'summary' } : {};
+    case 'duties': return { dutiestab: k.startsWith('dti.') ? 'input' : 'output' };
+    case 'rcm': return { rcmtab: 'compare' };
+    case 'outward': return { outwardtab: 'compare' };
+    case 'itc': return { itctab: 'working' };
+    case 'expense': return { expensetab: 'table14' };
+    case 'annexures': {
+      const m = /^ann([1-4])\./.exec(k);
+      return m ? { ann: `a${m[1]}` } : {};
+    }
+    case 'gstr9':
+      if (k === 'g9.8D') return { gstr9tab: '8' };
+      if (k.startsWith('g9.t5.')) return { gstr9tab: '5' };
+      if (k.startsWith('g9.t9.')) return { gstr9tab: '9' };
+      return {};
+    case 'gstr9c': {
+      const m = /^gstr9c\.(\d+)/.exec(k);
+      return m ? { gstr9ctab: m[1] } : {};
+    }
+    default:
+      return {};
+  }
 };
 
 // ---------------------------------------------------------------------------

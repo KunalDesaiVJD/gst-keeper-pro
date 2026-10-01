@@ -12,7 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { REVIEW_CHECKLIST, ROLE_LABEL } from '@/lib/gstr9/signoff';
 import { Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { fmtWhen, periodStatus, REVIEW_TAB_PARAM, rupees, rupeesShort, stepMeta, sumTax, useGoToStep } from './steps';
+import { diffTabParams, fmtWhen, periodStatus, REVIEW_TAB_PARAM, rupees, rupeesShort, stepMeta, sumTax, useGoToStep } from './steps';
 
 const SHOW_BLOCKERS = 6;
 
@@ -158,7 +158,7 @@ export const LockPanel: React.FC = () => {
                   <li key={d.key}>
                     <button
                       type="button"
-                      onClick={() => go(d.step)}
+                      onClick={() => go(d.step, diffTabParams(d))}
                       className="inline-flex items-center gap-1 text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       <span className="text-muted-foreground">{stepMeta(d.step).label}:</span> {d.label}

@@ -8,7 +8,7 @@ import type { DiffLine } from '@/lib/gstr9/engine';
 import { fmtMoney } from '../grid/money';
 import { JustifyControl, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { fmtWhen, rupeesShort, STEP_META, stepMeta, useGoToStep } from './steps';
+import { diffTabParams, fmtWhen, rupeesShort, STEP_META, stepMeta, useGoToStep } from './steps';
 
 type Filter = 'open' | 'all' | 'justified';
 
@@ -157,7 +157,7 @@ export const DifferenceList: React.FC = () => {
                             className="h-7 w-7"
                             aria-label={`Go to ${stepMeta(d.step).label}`}
                             title={`Go to ${stepMeta(d.step).label}`}
-                            onClick={() => go(d.step)}
+                            onClick={() => go(d.step, diffTabParams(d))}
                           >
                             <ArrowUpRight className="h-3.5 w-3.5" />
                           </Button>

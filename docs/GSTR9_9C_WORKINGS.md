@@ -29,9 +29,17 @@ replaced them with a document store (§3) and no data was migrated.
 
 ## 2. The workspace (UI)
 
-`/annual-return` is a guided step workspace. The left rail follows how the
-team works; each step shows its open-difference count. Every entry grid
-behaves like the Excel sheet:
+`/annual-return` is a guided step workspace. The title, client and FY sit on
+one row; the steps are a sticky bar of chips across the top (one row on a
+1920 px screen, two on a 1366 px laptop) with each step's open-difference
+count, so the working keeps the full width. Each step opens with its main
+table in the first screen: independent parts are tabs (kept in the URL, e.g.
+`?salestab=audit`, `?gstr9tab=8`, with open counts on the tabs), long tables
+scroll inside themselves with their header and totals pinned, and notes fold
+to one line. Links from the Overview, the Review list and other steps open
+the tab a figure or difference is on. Where a table shows both, the rate
+follows the taxable value (pasting from the sheet keeps the sheet's column
+order). Every entry grid behaves like the Excel sheet:
 - keyboard entry: Enter/Tab/arrows move, typing replaces, F2 edits;
 - `=a+b` expressions are accepted and kept (shown again on edit, like Excel);
 - paste a block straight from the firm's sheet — columns are taken in the
