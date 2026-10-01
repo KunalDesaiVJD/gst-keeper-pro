@@ -23,6 +23,31 @@ export const useGoToStep = () => {
   );
 };
 
+/**
+ * The step's selected tab, kept in the search param `param`. An unknown or
+ * missing value falls back to `fallback`. Switching replaces the history
+ * entry (as the Annexures tabs do), so Back leaves the step, not the tab.
+ */
+export function useTabParam<T extends string>(param: string, keys: readonly T[], fallback: T): [T, (v: string) => void] {
+  const [params, setParams] = useSearchParams();
+  const raw = params.get(param);
+  const value = raw !== null && (keys as readonly string[]).includes(raw) ? (raw as T) : fallback;
+  const set = useCallback(
+    (v: string) => {
+      setParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set(param, v);
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [param, setParams],
+  );
+  return [value, set];
+}
+
 export const EPS = 0.004;
 export const nz = (v: number | null | undefined): boolean => Math.abs(v ?? 0) > EPS;
 export const anyTax = (t: Partial<ValTax> | Tax | null | undefined): boolean =>

@@ -53,7 +53,7 @@ const RcmFlowsCard: React.FC = () => {
   return (
     <SectionCard
       title="Where RCM flows"
-      description="Read-only — these follow from Part A and Part B above. Change the figures here, not in the forms."
+      description="Read-only — these follow from Part A and Part B. Change the figures on those tabs, not in the forms."
       excelRef="GSTR-9 F13 · GSTR-9 row 49 · ANNEXURE D12 / D43 · GSTR 9C D25"
     >
       <MatrixTable label="Where the RCM figures are reported" rows={rows} heads={['t', 'i', 'c', 's', 'x']} headLabels={{ t: 'Value' }} />

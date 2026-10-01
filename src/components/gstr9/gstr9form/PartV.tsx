@@ -38,7 +38,7 @@ const T10_DEFS: FixedRowDef<ValTax>[] = [
 
 type VRow = FixedRow<ValTax>;
 
-const Tables10to13: React.FC = () => {
+export const Tables10to13: React.FC = () => {
   const { workings } = useWorkspace();
   const g = workings.g9;
   const { rows, onRowsChange, readOnly } = useFixedRows<ValTax>(T10_DEFS, { cols: VT_ORDER });
@@ -115,7 +115,7 @@ const T14_DEFS: FixedRowDef<T14Val>[] = T14_ROWS.map((r) => ({
 
 type T14Row = FixedRow<T14Val>;
 
-const Table14: React.FC = () => {
+export const Table14: React.FC = () => {
   const { workings } = useWorkspace();
   const tol = workings.tolerance;
   const ref = workings.notice.outward.r2; // tax of Table 10 − Table 11
@@ -139,12 +139,3 @@ const Table14: React.FC = () => {
     </SectionCard>
   );
 };
-
-const PartV: React.FC = () => (
-  <div className="space-y-4">
-    <Tables10to13 />
-    <Table14 />
-  </div>
-);
-
-export default PartV;

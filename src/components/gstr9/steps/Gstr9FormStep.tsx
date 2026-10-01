@@ -1,17 +1,18 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { taxOf, totalTax } from '@/lib/gstr9/engine';
 import type { DiffLine } from '@/lib/gstr9/engine';
 import { Badge } from '@/components/gstr9/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ExportMenu } from '../ExportMenu';
 import { fmtMoney } from '../grid/money';
-import { KpiTile, Note, OpenDifferences } from '../ui';
+import { Note, OpenDifferences } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import PartII from '../gstr9form/PartII';
-import PartIII from '../gstr9form/PartIII';
-import PartIV from '../gstr9form/PartIV';
-import PartV from '../gstr9form/PartV';
-import PartVI from '../gstr9form/PartVI';
+import { Table4, Table5 } from '../gstr9form/PartII';
+import { Table6, Table7, Table8 } from '../gstr9form/PartIII';
+import { Table9 } from '../gstr9form/PartIV';
+import { Table14, Tables10to13 } from '../gstr9form/PartV';
+import { Table15, Table16, Table17, Table18, Table19 } from '../gstr9form/PartVI';
 import { StepLink } from '../gstr9form/shared';
 
 /**
@@ -19,77 +20,107 @@ import { StepLink } from '../gstr9form/shared';
  * firm's "GSTR-9" sheet). Every figure is an engine value (workings.g9);
  * only the few cells the sheet types by hand are entered here: 5I–5K, 6G
  * override, 6K–6M, 8E/8F/8H1, Table 9 payable overrides, 10, 11, 14–19.
+ *
+ * One tab per table of the form (grouped by Part), so each table opens in
+ * one screen and any table is one click away.
  */
 
-interface PartDef {
+interface TableDef {
   key: string;
-  label: string;
-  tables: string;
-  title: string;
+  /** Table number(s) as on the form. */
+  no: string;
+  name: string;
   component: React.FC;
-  /** Which of this step's difference lines are shown on the part. */
-  owns: (d: DiffLine) => boolean;
+  /** Which of this step's difference lines sit on the table. */
+  owns?: (d: DiffLine) => boolean;
+}
+
+interface PartDef {
+  part: string;
+  /** Short name shown on wide screens. */
+  short: string;
+  title: string;
+  tables: TableDef[];
 }
 
 const PARTS: PartDef[] = [
   {
-    key: 'p2',
-    label: 'Pt II',
-    tables: 'Tables 4–5',
+    part: 'II',
+    short: 'Supplies',
     title: 'Outward and inward supplies declared during the financial year',
-    component: PartII,
-    owns: (d) => d.key.startsWith('g9.t5.'),
+    tables: [
+      { key: '4', no: '4', name: 'Outward supplies on which tax is payable', component: Table4 },
+      { key: '5', no: '5', name: 'Outward supplies on which tax is not payable', component: Table5, owns: (d) => d.key.startsWith('g9.t5.') },
+    ],
   },
-  { key: 'p3', label: 'Pt III', tables: 'Tables 6–8', title: 'ITC as declared in returns filed during the financial year', component: PartIII, owns: (d) => d.key === 'g9.8D' },
-  { key: 'p4', label: 'Pt IV', tables: 'Table 9', title: 'Tax paid as declared in returns filed during the financial year', component: PartIV, owns: (d) => d.key.startsWith('g9.t9.') },
   {
-    key: 'p5',
-    label: 'Pt V',
-    tables: 'Tables 10–14',
-    title: 'Transactions for the financial year declared in returns of the next financial year',
-    component: PartV,
-    owns: () => false,
+    part: 'III',
+    short: 'ITC',
+    title: 'ITC as declared in returns filed during the financial year',
+    tables: [
+      { key: '6', no: '6', name: 'ITC availed during the financial year', component: Table6 },
+      { key: '7', no: '7', name: 'ITC reversed and ineligible ITC', component: Table7 },
+      { key: '8', no: '8', name: 'Other ITC related information', component: Table8, owns: (d) => d.key === 'g9.8D' },
+    ],
   },
-  { key: 'p6', label: 'Pt VI', tables: 'Tables 15–19', title: 'Other information', component: PartVI, owns: () => false },
+  {
+    part: 'IV',
+    short: 'Tax paid',
+    title: 'Tax paid as declared in returns filed during the financial year',
+    tables: [{ key: '9', no: '9', name: 'Tax paid', component: Table9, owns: (d) => d.key.startsWith('g9.t9.') }],
+  },
+  {
+    part: 'V',
+    short: 'Next FY',
+    title: 'Transactions for the financial year declared in returns of the next financial year',
+    tables: [
+      { key: '10', no: '10–13', name: 'Declared in the next financial year, and total turnover', component: Tables10to13 },
+      { key: '14', no: '14', name: 'Differential tax paid on account of 10 & 11', component: Table14 },
+    ],
+  },
+  {
+    part: 'VI',
+    short: 'Other',
+    title: 'Other information',
+    tables: [
+      { key: '15', no: '15', name: 'Demands and refunds', component: Table15 },
+      { key: '16', no: '16', name: 'Composition, deemed supply, goods on approval', component: Table16 },
+      { key: '17', no: '17', name: 'HSN summary of outward supplies', component: Table17 },
+      { key: '18', no: '18', name: 'HSN summary of inward supplies', component: Table18 },
+      { key: '19', no: '19', name: 'Late fee payable and paid', component: Table19 },
+    ],
+  },
 ];
 
-const TAB_STORAGE_KEY = 'gstk_gstr9_form_part';
+const TABLES = PARTS.flatMap((p) => p.tables);
 
-const readTab = (): string => {
-  try {
-    const v = sessionStorage.getItem(TAB_STORAGE_KEY);
-    if (v && PARTS.some((p) => p.key === v)) return v;
-  } catch {
-    /* storage unavailable */
-  }
-  return PARTS[0].key;
-};
+/** URL parameter that keeps the open table (the page keeps ?client= and ?step= alongside). */
+const TAB_PARAM = 'gstr9tab';
+
+const Figure: React.FC<{ label: string; value: string; hint?: string }> = ({ label, value, hint }) => (
+  <span className="whitespace-nowrap" title={hint}>
+    <span className="text-muted-foreground">{label} </span>
+    <span className="font-semibold tabular-nums text-foreground">{value}</span>
+  </span>
+);
 
 const Gstr9FormStep: React.FC = () => {
   const { workings } = useWorkspace();
   const g = workings.g9;
-  const [tab, setTab] = useState<string>(readTab);
-  const onTab = (v: string) => {
-    setTab(v);
-    try {
-      sessionStorage.setItem(TAB_STORAGE_KEY, v);
-    } catch {
-      /* storage unavailable */
-    }
+  const [params, setParams] = useSearchParams();
+  const fromUrl = params.get(TAB_PARAM);
+  const tab = TABLES.some((t) => t.key === fromUrl) ? (fromUrl as string) : TABLES[0].key;
+  const setTab = (v: string) => {
+    const next = new URLSearchParams(params);
+    next.set(TAB_PARAM, v);
+    setParams(next, { replace: true });
   };
 
   const openHere = workings.diffs.filter((d) => d.step === 'gstr9' && d.open);
   const portalFetched = g.t4Source === 'portal';
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">
-          Columns follow the form: Taxable value, Central, State/UT, Integrated, Cess. Each row shows where its figure comes from; shaded cells are computed, white cells are typed.
-        </p>
-        <ExportMenu only={['gstr9pdf']} />
-      </div>
-
+    <div className="space-y-3">
       <OpenDifferences step="gstr9" />
 
       {!portalFetched && (
@@ -99,49 +130,58 @@ const Gstr9FormStep: React.FC = () => {
         </Note>
       )}
 
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-        <KpiTile label="Total turnover (5N + 10 − 11)" value={fmtMoney(g.totalTurnover.t)} />
-        <KpiTile label="Tax on 4N" value={fmtMoney(totalTax(taxOf(g.t4.N)))} hint="All heads" />
-        <KpiTile label="Net ITC available (7J)" value={fmtMoney(totalTax(g.t7J))} hint={`Availed 6O ${fmtMoney(totalTax(g.t6.O))}`} />
-        <KpiTile
-          label="Open differences"
-          value={openHere.length}
-          hint={openHere.length ? 'Need a reason (8D, Table 9)' : 'None on this form'}
-          tone={openHere.length ? 'error' : 'ok'}
-        />
-      </div>
-
-      <Tabs value={tab} onValueChange={onTab}>
-        <div className="overflow-x-auto">
-          <TabsList className="h-auto w-max justify-start">
-            {PARTS.map((p) => {
-              const n = openHere.filter(p.owns).length;
-              return (
-                <TabsTrigger key={p.key} value={p.key} className="gap-1.5 px-3 py-1.5">
-                  <span className="font-semibold">{p.label}</span>
-                  <span className="text-xs text-muted-foreground">{p.tables}</span>
-                  {n > 0 && (
-                    <Badge variant="destructive" className="h-4 min-w-4 justify-center rounded-full px-1 text-[10px] leading-none" aria-label={`${n} open`}>
-                      {n}
-                    </Badge>
-                  )}
-                </TabsTrigger>
-              );
-            })}
-          </TabsList>
+      <Tabs value={tab} onValueChange={setTab}>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div className="max-w-full overflow-x-auto">
+            <TabsList className="h-8 gap-0.5 p-0.5" aria-label="Tables of Form GSTR-9">
+              {PARTS.map((p, pi) => (
+                <React.Fragment key={p.part}>
+                  {pi > 0 && <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />}
+                  <span aria-hidden="true" title={`Part ${p.part} — ${p.title}`} className="whitespace-nowrap px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+                    Pt {p.part}
+                    <span className="hidden font-medium normal-case tracking-normal 2xl:inline"> · {p.short}</span>
+                  </span>
+                  {p.tables.map((t) => {
+                    const n = t.owns ? openHere.filter(t.owns).length : 0;
+                    return (
+                      <TabsTrigger key={t.key} value={t.key} title={`Table ${t.no} — ${t.name}`} className="h-7 gap-1 px-2 text-xs tabular-nums">
+                        <span className="sr-only">Part {p.part}, Table </span>
+                        {t.no}
+                        {n > 0 && (
+                          <Badge variant="destructive" className="h-4 min-w-4 justify-center rounded-full px-1 text-[10px] leading-none" aria-label={`${n} open`}>
+                            {n}
+                          </Badge>
+                        )}
+                      </TabsTrigger>
+                    );
+                  })}
+                </React.Fragment>
+              ))}
+            </TabsList>
+          </div>
+          <div className="ml-auto flex items-center gap-x-4 text-xs">
+            {/* The form's headline figures, on a wide screen (each is also on its table). */}
+            <span className="hidden items-center gap-x-4 2xl:flex">
+              <Figure label="Turnover (5N + 10 − 11)" value={fmtMoney(g.totalTurnover.t)} />
+              <Figure label="Tax on 4N" value={fmtMoney(totalTax(taxOf(g.t4.N)))} hint="All heads" />
+              <Figure label="Net ITC (7J)" value={fmtMoney(totalTax(g.t7J))} hint={`Availed 6O ${fmtMoney(totalTax(g.t6.O))}`} />
+            </span>
+            <ExportMenu only={['gstr9pdf']} />
+          </div>
         </div>
-        {PARTS.map((p) => {
-          const C = p.component;
+        {TABLES.map((t) => {
+          const C = t.component;
           return (
-            <TabsContent key={p.key} value={p.key} className="mt-3 space-y-3">
-              <h3 className="font-heading text-sm font-semibold text-muted-foreground">
-                {p.label} · {p.title}
-              </h3>
+            <TabsContent key={t.key} value={t.key} className="mt-3">
               <C />
             </TabsContent>
           );
         })}
       </Tabs>
+
+      <p className="text-[11px] text-muted-foreground">
+        Columns follow the form: Taxable value, Central, State/UT, Integrated, Cess. Each row shows where its figure comes from; shaded cells are computed, white cells are typed.
+      </p>
     </div>
   );
 };

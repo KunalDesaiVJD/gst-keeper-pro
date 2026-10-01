@@ -35,24 +35,63 @@ export const STEP_META: StepMeta[] = [
   { key: 'gstr9c', n: 11, label: 'GSTR-9C', phase: 'Returns' },
   { key: 'notice', n: 12, label: 'Notice format', phase: 'Returns' },
   { key: 'review', n: 13, label: 'Review & lock', phase: 'Finish' },
+  { key: 'payables', n: 14, label: 'Payables & set-off', phase: 'Finish' },
 ];
 
 export const PHASES: Phase[] = ['Collect', 'Reconcile', 'Returns', 'Finish'];
 
+/** The Review & lock step's tabs, kept in the URL as ?reviewtab=. */
+export const REVIEW_TAB_PARAM = 'reviewtab';
+export type ReviewTab = 'differences' | 'signoff' | 'history' | 'snapshots';
+
 export const stepMeta = (key: string): StepMeta => STEP_META.find((s) => s.key === key) ?? STEP_META[0];
 
 /** Navigate to another step, keeping the rest of the URL (the open client) as it is. */
-export const useGoToStep = (): ((key: StepKey) => void) => {
+export const useGoToStep = (): ((key: StepKey, extra?: Record<string, string>) => void) => {
   const [params, setParams] = useSearchParams();
   return useCallback(
-    (key: StepKey) => {
+    (key: StepKey, extra?: Record<string, string>) => {
       const next = new URLSearchParams(params);
       next.set('step', key);
+      Object.entries(extra ?? {}).forEach(([k, v]) => next.set(k, v));
       setParams(next);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     },
     [params, setParams],
   );
+};
+
+/**
+ * The tab of its step that shows a difference line, as URL params — so a
+ * link from the Overview or Review lands on the table the difference is in,
+ * not on the step's first tab.
+ */
+export const diffTabParams = (d: { key: string; step: StepKey }): Record<string, string> => {
+  const k = d.key;
+  switch (d.step) {
+    case 'sales': return k === 'sales.audit' ? { salestab: 'audit' } : {};
+    case 'purchases': return k === 'purchases.dt' ? { purchasestab: 'summary' } : {};
+    case 'duties': return { dutiestab: k.startsWith('dti.') ? 'input' : 'output' };
+    case 'rcm': return { rcmtab: 'compare' };
+    case 'outward': return { outwardtab: 'compare' };
+    case 'itc': return { itctab: 'working' };
+    case 'expense': return { expensetab: 'table14' };
+    case 'annexures': {
+      const m = /^ann([1-4])\./.exec(k);
+      return m ? { ann: `a${m[1]}` } : {};
+    }
+    case 'gstr9':
+      if (k === 'g9.8D') return { gstr9tab: '8' };
+      if (k.startsWith('g9.t5.')) return { gstr9tab: '5' };
+      if (k.startsWith('g9.t9.')) return { gstr9tab: '9' };
+      return {};
+    case 'gstr9c': {
+      const m = /^gstr9c\.(\d+)/.exec(k);
+      return m ? { gstr9ctab: m[1] } : {};
+    }
+    default:
+      return {};
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -271,6 +310,18 @@ export function stepStatuses(docs: AnnualReturnDocs, w: Workings, period: Annual
     base.review = {
       state: w.openCount > 0 ? 'open' : anyData ? 'ready' : 'todo',
       detail: w.openCount > 0 ? `${w.openCount} difference${w.openCount === 1 ? '' : 's'} still need a reason` : anyData ? 'Every difference is matched, within tolerance or justified' : 'Nothing entered yet',
+    };
+  }
+
+  // 14 Payables & set-off
+  const P = w.payables.totals;
+  if (sumTax(P.payable) < 0.5) {
+    base.payables = { state: anyData ? 'done' : 'todo', detail: anyData ? 'Nothing payable' : '' };
+  } else {
+    const bal = sumTax(P.balance);
+    base.payables = {
+      state: bal < 0.5 ? 'done' : 'progress',
+      detail: bal < 0.5 ? `${rupees(sumTax(P.payable))} payable — fully set off` : `${rupees(bal)} of ${rupees(sumTax(P.payable))} still to set off`,
     };
   }
 

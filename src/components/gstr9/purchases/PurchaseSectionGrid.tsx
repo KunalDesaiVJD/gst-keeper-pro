@@ -1,7 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
 import { AlertTriangle, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import type { PurchaseRowCalc } from '@/lib/gstr9/engine';
@@ -9,7 +8,7 @@ import type { ExpenseHead, InputSection, PurchaseRow } from '@/lib/gstr9/types';
 import { SheetGrid, type GridColumn, type GridFooterRow } from '../grid/SheetGrid';
 import { moneyCol, taxFooter, taxInCols } from '../grid/columns';
 import { fmtRate } from '../grid/money';
-import { SectionCard } from '../ui';
+import { Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import {
   changeSupply,
@@ -25,8 +24,11 @@ import {
   SUPPLY_OPTIONS,
 } from './purchaseRows';
 
+/** PL-INPUT columns C–H (Head in books, Taxable value, IGST, CGST, SGST, Rate), then the rest — the paste order. */
+const PURCHASE_PASTE_ORDER = ['ledger', 'taxable', 'tax.i', 'tax.c', 'tax.s', 'rate', 'tax.x', 'supply', 'head'];
+
 /**
- * The PL-INPUT entry grid for one section. Editable columns follow the sheet
+ * The PL-INPUT entry grid for one section. Pasting follows the sheet
  * (Head in books, Taxable value, IGST, CGST, SGST, Rate) so a block copied
  * from columns C–H pastes straight in; Cess, Supply and the 9C expense head
  * come after.
@@ -126,7 +128,8 @@ function buildColumns(calc: Record<string, PurchaseRowCalc>): GridColumn<Purchas
   };
 
   // Paste order: Ledger, Taxable, IGST, CGST, SGST, Rate, Cess, Supply, Head (display columns are skipped).
-  return [ledger, taxable, ...tax, rate, implied, cess, supply, head];
+  // Rate (and its check) right after the taxable value on screen; pastes keep the sheet's order (PURCHASE_PASTE_ORDER).
+  return [ledger, taxable, rate, implied, ...tax, cess, supply, head];
 }
 
 export const PurchaseSectionGrid: React.FC<{ section: InputSection }> = ({ section }) => {
@@ -137,7 +140,7 @@ export const PurchaseSectionGrid: React.FC<{ section: InputSection }> = ({ secti
   const calc = workings.purchases.rows;
   const columns = useMemo(() => buildColumns(calc), [calc]);
   const total = workings.purchases.sections[section];
-  const flagged = useMemo(() => rows.filter((r) => rateFlag(r, calc[r.id])).length, [rows, calc]);
+  const flagged = useMemo(() => rows.filter((r) => rateFlag(r, calc[r.id])), [rows, calc]);
 
   const onRowsChange = useCallback(
     (next: PurchaseRow[]) => update('purchases', (d) => ({ ...d, rows: spliceSection(d.rows, section, next) })),
@@ -171,19 +174,7 @@ export const PurchaseSectionGrid: React.FC<{ section: InputSection }> = ({ secti
 
   return (
     <SectionCard
-      title={
-        <span className="inline-flex items-center gap-2">
-          {meta.title}
-          <Badge variant="secondary" className="text-[10px] font-normal">
-            {rows.length} ledger{rows.length === 1 ? '' : 's'}
-          </Badge>
-          {flagged > 0 && (
-            <Badge variant="outline" className="gap-1 border-warning/50 text-[10px] font-normal text-warning">
-              <AlertTriangle className="h-3 w-3" aria-hidden="true" /> {flagged} rate check{flagged === 1 ? '' : 's'}
-            </Badge>
-          )}
-        </span>
-      }
+      title={meta.title}
       description={
         <>
           {meta.description} Default 9C head: <span className="italic">{defaultHeadLabel(section)}</span>.
@@ -198,6 +189,22 @@ export const PurchaseSectionGrid: React.FC<{ section: InputSection }> = ({ secti
         ) : undefined
       }
     >
+      {flagged.length > 0 && (
+        <Note tone="warn">
+          <span className="font-medium">
+            {flagged.length} ledger{flagged.length === 1 ? '' : 's'} where tax is not the GST rate on the value
+          </span>{' '}
+          — usually a partial or blocked credit, or a ledger mixing rates:{' '}
+          {flagged.slice(0, 3).map((r, i) => (
+            <React.Fragment key={r.id}>
+              {i > 0 && '; '}
+              <span className="font-medium">{r.ledger || '(no name)'}</span>
+              {calc[r.id]?.impliedRate !== null && calc[r.id]?.impliedRate !== undefined && ` at ${calc[r.id]!.impliedRate}%`}
+            </React.Fragment>
+          ))}
+          {flagged.length > 3 && `; and ${flagged.length - 3} more`}. Hover the highlighted cell for detail.
+        </Note>
+      )}
       <SheetGrid<PurchaseRow>
         label={`PL-INPUT ${meta.title}`}
         rows={rows}
@@ -209,7 +216,8 @@ export const PurchaseSectionGrid: React.FC<{ section: InputSection }> = ({ secti
         canDelete
         addLabel="Add ledger"
         footer={footer}
-        maxHeight={520}
+        maxHeight="max(300px, calc(100vh - 460px))"
+        pasteOrder={PURCHASE_PASTE_ORDER}
         emptyText={
           <span>
             No ledgers yet. Click here and paste PL-INPUT {meta.sheetRows}, columns C–H{' '}
@@ -217,6 +225,10 @@ export const PurchaseSectionGrid: React.FC<{ section: InputSection }> = ({ secti
           </span>
         }
       />
+      <p className="text-[11px] text-muted-foreground">
+        Paste straight from PL-INPUT {meta.sheetRows}, columns C–H (Head in books → Rate). SGST mirrors CGST until you type over it; tax is
+        filled from the rate where a row has none.
+      </p>
     </SectionCard>
   );
 };

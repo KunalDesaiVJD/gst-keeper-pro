@@ -46,7 +46,8 @@ export const PortalFieldGrid: React.FC<{
   /** Trailing read-only column (e.g. the month's source chip). */
   extra?: { header: string; width?: number; render: (row: PortalFieldRow) => React.ReactNode };
   footer?: GridFooterRow[];
-  maxHeight?: number;
+  /** Scroll inside the grid beyond this height (px or any CSS length). */
+  maxHeight?: number | string;
 }> = ({ label, rows, cols, codeHeader, labelHeader, labelWidth = 240, mirror, extra, footer, maxHeight }) => {
   const { docs, update, readOnly } = useWorkspace();
   const portal = docs.portal;

@@ -7,7 +7,7 @@ import { Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { ReasonsBox } from './bits';
 import { FormGrid } from './FormGrid';
-import { amount, FormLine, n0, useGoToStep } from './formLines';
+import { amount, C9_GRID_MAX_H, FormLine, n0, useGoToStep } from './formLines';
 
 const T5_LABEL: Record<'A' | Gstr9cT5Key | 'P' | 'Q' | 'R', string> = {
   A: 'Turnover (including exports) as per audited financial statement',
@@ -52,8 +52,8 @@ const T7_SOURCE: Record<'B' | 'C' | 'D' | 'D1', { short: string; title: string }
   D1: { short: 'GSTR-9 5C1', title: 'GSTR-9 5C1 supplies on which the e-commerce operator pays tax u/s 9(5) (books, Sales Part B)' },
 };
 
-/** Part II — Tables 5 to 8: gross turnover and taxable turnover. */
-const TurnoverPart: React.FC = () => {
+/** Part II — Tables 5 and 6: reconciliation of gross turnover. */
+export const Table5Card: React.FC = () => {
   const { docs, workings } = useWorkspace();
   const go = useGoToStep();
   const C = docs.gstr9c;
@@ -135,6 +135,42 @@ const TurnoverPart: React.FC = () => {
     return lines;
   }, [C.t5A, C.t5, C.t5Q, def.t5A, def.t5Q, W.t5.P, W.t5.R, auditMissing]);
 
+  return (
+    <SectionCard
+      title="Table 5 · Reconciliation of gross turnover"
+      description="Audited turnover adjusted to what the annual return declares. Type the adjustments as positive amounts; the sign shown is applied."
+      excelRef="9C utility PT II (5) · 5A ← PL-OUTPUT D54"
+    >
+      {C.t5A === null && auditMissing && (
+        <Note tone="warn">
+          No audit-report total has been entered on the Sales step, so 5A uses books Part A + Part B ({fmtMoney(workings.sales.total)}).
+          <Button type="button" variant="link" size="sm" className="ml-1 h-auto p-0 text-xs" onClick={() => go('sales')}>
+            Open Sales <ArrowRight className="ml-0.5 h-3 w-3" />
+          </Button>
+        </Note>
+      )}
+      {Math.abs(notInG9Total) >= 0.005 && (
+        <Note>
+          {fmtMoney(notInG9Total)} of Part B income is tagged “Not reportable in GSTR-9”. It sits inside 5A but not in 5Q — if it is not turnover, remove it through
+          5O so it does not show up as an un-reconciled difference.
+        </Note>
+      )}
+      <FormGrid label="GSTR-9C Table 5" lines={t5Lines} heads={['t']} headLabels={{ t: 'Amount (₹)' }} maxHeight={C9_GRID_MAX_H} pinLast />
+      <Note tone="position">
+        5Q defaults to the GSTR-9 total turnover (5N + 10 − 11), where 5N is computed as 4N + 5M − 4G − 4G1 — the sheet types 5N by hand.
+      </Note>
+      <ReasonsBox field="t6Reasons" code="6" title="Reasons for un-reconciled difference in annual gross turnover" diffKey="gstr9c.5R" />
+    </SectionCard>
+  );
+};
+
+/** Part II — Tables 7 and 8: reconciliation of taxable turnover. */
+export const Table7Card: React.FC = () => {
+  const { docs, workings } = useWorkspace();
+  const C = docs.gstr9c;
+  const W = workings.gstr9c;
+  const def = W.defaults;
+
   const t7Lines = useMemo<FormLine[]>(() => {
     const over = (k: 'B' | 'C' | 'D' | 'D1'): FormLine => ({
       id: k,
@@ -174,47 +210,17 @@ const TurnoverPart: React.FC = () => {
   }, [C.t7, C.t7F, def.t7, W.t7]);
 
   return (
-    <div className="space-y-4">
-      <SectionCard
-        title="Table 5 · Reconciliation of gross turnover"
-        description="Audited turnover adjusted to what the annual return declares. Type the adjustments as positive amounts; the sign shown is applied."
-        excelRef="9C utility PT II (5) · 5A ← PL-OUTPUT D54"
-      >
-        {C.t5A === null && auditMissing && (
-          <Note tone="warn">
-            No audit-report total has been entered on the Sales step, so 5A uses books Part A + Part B ({fmtMoney(workings.sales.total)}).
-            <Button type="button" variant="link" size="sm" className="ml-1 h-auto p-0 text-xs" onClick={() => go('sales')}>
-              Open Sales <ArrowRight className="ml-0.5 h-3 w-3" />
-            </Button>
-          </Note>
-        )}
-        {Math.abs(notInG9Total) >= 0.005 && (
-          <Note>
-            {fmtMoney(notInG9Total)} of Part B income is tagged “Not reportable in GSTR-9”. It sits inside 5A but not in 5Q — if it is not turnover, remove it through
-            5O so it does not show up as an un-reconciled difference.
-          </Note>
-        )}
-        <FormGrid label="GSTR-9C Table 5" lines={t5Lines} heads={['t']} headLabels={{ t: 'Amount (₹)' }} />
-        <Note tone="position">
-          5Q defaults to the GSTR-9 total turnover (5N + 10 − 11), where 5N is computed as 4N + 5M − 4G − 4G1 — the sheet types 5N by hand.
-        </Note>
-        <ReasonsBox field="t6Reasons" code="6" title="Reasons for un-reconciled difference in annual gross turnover" diffKey="gstr9c.5R" />
-      </SectionCard>
-
-      <SectionCard
-        title="Table 7 · Reconciliation of taxable turnover"
-        description="From adjusted turnover to taxable turnover. B–D1 and F are computed from the GSTR-9 working; type over any of them if the return says otherwise."
-        excelRef="9C utility PT II (7)"
-      >
-        <FormGrid label="GSTR-9C Table 7" lines={t7Lines} heads={['t']} headLabels={{ t: 'Amount (₹)' }} />
-        <Note tone="position">
-          7B–7D1 come from GSTR-9 Table 5, which is built from the nature tagged on each Sales Part B ledger (every 5A–5F bucket), not from row positions as in
-          the sheet.
-        </Note>
-        <ReasonsBox field="t8Reasons" code="8" title="Reasons for un-reconciled difference in taxable turnover" diffKey="gstr9c.7G" />
-      </SectionCard>
-    </div>
+    <SectionCard
+      title="Table 7 · Reconciliation of taxable turnover"
+      description="From adjusted turnover to taxable turnover. B–D1 and F are computed from the GSTR-9 working; type over any of them if the return says otherwise."
+      excelRef="9C utility PT II (7)"
+    >
+      <FormGrid label="GSTR-9C Table 7" lines={t7Lines} heads={['t']} headLabels={{ t: 'Amount (₹)' }} />
+      <Note tone="position">
+        7B–7D1 come from GSTR-9 Table 5, which is built from the nature tagged on each Sales Part B ledger (every 5A–5F bucket), not from row positions as in
+        the sheet.
+      </Note>
+      <ReasonsBox field="t8Reasons" code="8" title="Reasons for un-reconciled difference in taxable turnover" diffKey="gstr9c.7G" />
+    </SectionCard>
   );
 };
-
-export default TurnoverPart;

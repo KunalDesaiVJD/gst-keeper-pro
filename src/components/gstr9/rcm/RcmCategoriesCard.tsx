@@ -71,16 +71,6 @@ const RcmCategoriesCard: React.FC = () => {
       onEdit: (r, e) => ({ ...r, name: e.text }),
     },
     {
-      key: 'rate',
-      header: 'Rate %',
-      type: 'percent',
-      width: 80,
-      value: (r) => num(r.rate),
-      onEdit: (r, e) => ({ ...r, rate: e.num ?? 0 }),
-      tone: (r) => rateTone(r.rate),
-      title: (r) => rateTitle(r.rate),
-    },
-    {
       key: 'supply',
       header: 'Supply',
       type: 'select',
@@ -99,6 +89,16 @@ const RcmCategoriesCard: React.FC = () => {
       onEdit: (r, e) => ({ ...r, itcTable: (e.text || '6C') as RcmItcTable }),
     },
     displayCol<RcmCategory>('taxable', 'Taxable (year)', (r) => workings.rcm.categories[r.id]?.total.t ?? 0, { width: 130 }),
+    {
+      key: 'rate',
+      header: 'Rate %',
+      type: 'percent',
+      width: 80,
+      value: (r) => num(r.rate),
+      onEdit: (r, e) => ({ ...r, rate: e.num ?? 0 }),
+      tone: (r) => rateTone(r.rate),
+      title: (r) => rateTitle(r.rate),
+    },
     displayCol<RcmCategory>('tax', 'Tax (year)', (r) => {
       const t = workings.rcm.categories[r.id]?.total;
       return t ? totalTax(t) : 0;
@@ -138,6 +138,8 @@ const RcmCategoriesCard: React.FC = () => {
         newRow={() => newRcmCategory()}
         canDelete
         addLabel="Add RCM expense"
+        // Rate is shown after the taxable value; a block copied from the firm's list still pastes as name, rate, supply, table.
+        pasteOrder={['name', 'rate', 'supply', 'table']}
         emptyText={empty}
         footer={
           cats.length

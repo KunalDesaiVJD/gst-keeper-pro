@@ -1,10 +1,14 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ShieldCheck } from 'lucide-react';
+import React from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { ShieldCheck, ShieldOff } from 'lucide-react';
+import { Badge } from '@/components/gstr9/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FY_MONTHS } from '@/lib/gstr9/types';
 import { fmtWhen } from '@/lib/gstr9/portalImport';
-import { KpiTile, Note, OpenDifferences } from '../ui';
+import { Note, OpenDifferences } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { Gstr9Section, PullBridge } from '../portal/Gstr9Section';
+import { Gstr9Section } from '../portal/Gstr9Section';
+import { useExtensionBridge } from '../portal/useExtensionBridge';
 import { Gstr3bSection } from '../portal/Gstr3bSection';
 
 const SOURCE_TEXT: Record<string, string> = {
@@ -14,55 +18,10 @@ const SOURCE_TEXT: Record<string, string> = {
   manual: 'Typed',
 };
 
-/**
- * The browser-extension bridge, as the other portal pages use it: ping the
- * extension (it and this page can load in either order), listen for its
- * announcement, and start a section pull with __gstkPullSection. The result
- * message only means "the portal tab opened"; each section polls
- * gst_filed_returns for the data itself.
- */
-function useExtensionBridge(clientId: string): PullBridge {
-  const [ready, setReady] = useState(false);
-  const [version, setVersion] = useState<string | null>(null);
-  const pending = useRef<((ok: boolean, error?: string) => void) | null>(null);
-
-  useEffect(() => {
-    const onMsg = (e: MessageEvent) => {
-      const d = e.data as Record<string, unknown> | null;
-      if (!d || typeof d !== 'object') return;
-      if (d.__gstkExtensionReady) {
-        setReady(true);
-        if (typeof d.version === 'string') setVersion(d.version);
-      }
-      const res = d.__gstkPullSectionResult as { ok?: boolean; error?: string } | undefined;
-      if (res) {
-        const cb = pending.current;
-        pending.current = null;
-        cb?.(!!res.ok, res.error);
-      }
-    };
-    window.addEventListener('message', onMsg);
-    const ping = () => window.postMessage({ __gstkAppReady: true }, '*');
-    ping();
-    const t1 = setTimeout(ping, 400);
-    const t2 = setTimeout(ping, 1200);
-    return () => {
-      window.removeEventListener('message', onMsg);
-      clearTimeout(t1);
-      clearTimeout(t2);
-    };
-  }, []);
-
-  const start = useCallback<PullBridge['start']>(
-    (payload, onStarted) => {
-      pending.current = onStarted;
-      window.postMessage({ __gstkPullSection: { clientId, ...payload } }, '*');
-    },
-    [clientId],
-  );
-
-  return useMemo(() => ({ ready, version, start }), [ready, version, start]);
-}
+/** URL parameter that remembers the open section (the page keeps ?client= and ?step= alongside). */
+const TAB_PARAM = 'portaltab';
+const TABS = ['gstr9', 'gstr3b'] as const;
+type TabKey = (typeof TABS)[number];
 
 /**
  * Step 1 — Portal data. Where every portal figure the workings compare
@@ -74,48 +33,82 @@ const PortalStep: React.FC = () => {
   const { client, docs } = useWorkspace();
   const bridge = useExtensionBridge(client.id);
   const portal = docs.portal;
+  const [params, setParams] = useSearchParams();
+  const fromUrl = params.get(TAB_PARAM);
+  const tab: TabKey = TABS.some((t) => t === fromUrl) ? (fromUrl as TabKey) : 'gstr9';
+  const setTab = (v: string) => {
+    const next = new URLSearchParams(params);
+    next.set(TAB_PARAM, v);
+    setParams(next, { replace: true });
+  };
 
   const g9Source = portal.gstr9Meta?.source ?? null;
   const fromPortal = FY_MONTHS.filter((m) => portal.monthMeta[m]?.source === 'as_filed_3b').length;
   const typedMonths = FY_MONTHS.filter((m) => portal.monthMeta[m]?.source === 'manual').length;
   const typed = Object.keys(portal.manual || {}).length;
 
+  const g9Fetched = g9Source === 'extension' || g9Source === 'upload';
+  const g9Title = portal.gstr9Meta?.fetchedAt ? fmtWhen(portal.gstr9Meta.fetchedAt) : 'Tables 4, 6A, 6G, 8A, 9';
+  const trigger = 'gap-1.5 px-2.5 py-1 text-xs';
+  const pill = 'h-4 rounded-full px-1.5 text-[10px] font-normal leading-none';
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <OpenDifferences step="portal" />
 
+      {/*
+        Both sections stay mounted (forceMount) and the inactive one is only hidden: each keeps its own
+        pull-polling timer and import preview, which must survive switching tabs while a pull is running.
+      */}
+      <Tabs value={tab} onValueChange={setTab}>
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div className="max-w-full overflow-x-auto">
+            <TabsList className="h-8 w-max">
+              <TabsTrigger value="gstr9" className={trigger} title={g9Title}>
+                GSTR-9 system computed
+                <Badge variant={g9Fetched ? 'success' : g9Source ? 'secondary' : 'warning'} className={pill}>
+                  {g9Source ? SOURCE_TEXT[g9Source] ?? g9Source : 'Not fetched'}
+                </Badge>
+              </TabsTrigger>
+              <TabsTrigger value="gstr3b" className={trigger} title={typedMonths ? `${typedMonths} more typed by hand` : 'Applied from the portal'}>
+                As-filed GSTR-3B
+                <Badge variant={fromPortal === 12 ? 'success' : fromPortal + typedMonths === 12 ? 'secondary' : 'warning'} className={pill}>
+                  {fromPortal}/12 from the portal{typedMonths ? ` · ${typedMonths} typed` : ''}
+                </Badge>
+              </TabsTrigger>
+            </TabsList>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+            <span title="Kept on every re-import unless ticked in the preview">
+              <span className="font-medium text-foreground tabular-nums">{typed}</span> figure{typed === 1 ? '' : 's'} typed by hand
+            </span>
+            {bridge.ready ? (
+              <span className="inline-flex items-center gap-1">
+                <ShieldCheck className="h-3.5 w-3.5 text-success-strong" aria-hidden="true" />
+                <span className="font-medium text-foreground">Extension connected</span>
+                {bridge.version ? `v${bridge.version}` : 'ready to pull'}
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1" title="The browser extension is needed for Pull; Upload and typing work without it">
+                <ShieldOff className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="font-medium text-foreground">Extension not detected</span>— needed for Pull only
+              </span>
+            )}
+          </div>
+        </div>
+
+        <TabsContent value="gstr9" forceMount className="data-[state=inactive]:hidden">
+          <Gstr9Section bridge={bridge} />
+        </TabsContent>
+        <TabsContent value="gstr3b" forceMount className="data-[state=inactive]:hidden">
+          <Gstr3bSection bridge={bridge} />
+        </TabsContent>
+      </Tabs>
+
+      {/* The step heading already says it in short; the full rule sits under the figures. */}
       <Note tone="info">
         <span className="font-semibold">Portal figures only.</span> Everything on this step comes from the GST portal — pulled by the browser extension from the client&apos;s own login, uploaded from the JSON saved on the portal, or typed from the portal screen. The app&apos;s own GSTR-1 and GSTR-3B are never used in the GSTR-9 / 9C workings, because they may differ from what was actually filed.
       </Note>
-
-      <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
-        <KpiTile
-          label="GSTR-9 system computed"
-          value={g9Source ? SOURCE_TEXT[g9Source] ?? g9Source : 'Not fetched'}
-          hint={portal.gstr9Meta?.fetchedAt ? fmtWhen(portal.gstr9Meta.fetchedAt) : 'Tables 4, 6A, 6G, 8A, 9'}
-          tone={g9Source === 'extension' || g9Source === 'upload' ? 'ok' : g9Source ? 'neutral' : 'warn'}
-        />
-        <KpiTile
-          label="As-filed GSTR-3B"
-          value={`${fromPortal}/12 months`}
-          hint={typedMonths ? `${typedMonths} more typed by hand` : 'applied from the portal'}
-          tone={fromPortal === 12 ? 'ok' : fromPortal + typedMonths === 12 ? 'neutral' : 'warn'}
-        />
-        <KpiTile label="Typed by hand" value={typed} hint="kept on every re-import unless ticked" />
-        <KpiTile
-          label="Browser extension"
-          value={
-            bridge.ready ? (
-              <span className="inline-flex items-center gap-1"><ShieldCheck className="h-4 w-4 text-success-strong" /> Connected</span>
-            ) : 'Not detected'
-          }
-          hint={bridge.ready ? (bridge.version ? `v${bridge.version}` : 'ready to pull') : 'needed for Pull; Upload and typing work without it'}
-          tone={bridge.ready ? 'ok' : 'neutral'}
-        />
-      </div>
-
-      <Gstr9Section bridge={bridge} />
-      <Gstr3bSection bridge={bridge} />
     </div>
   );
 };

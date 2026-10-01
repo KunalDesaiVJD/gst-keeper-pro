@@ -1,17 +1,17 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowRight, ChevronDown, ChevronRight } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
-import { maxAbs, OUTWARD_CATEGORY_LABEL, totalTax } from '@/lib/gstr9/engine';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
+import { OUTWARD_CATEGORY_LABEL, totalTax } from '@/lib/gstr9/engine';
 import type { Formulas, Gstr9ManualDoc, OutwardCategory, SalesRow, ValTax } from '@/lib/gstr9/types';
 import { useWorkspace } from '../WorkspaceContext';
-import { JustifyControl, KpiTile, Note, OpenDifferences, SectionCard, SourceChip } from '../ui';
+import { JustifyControl, Note, OpenDifferences, SectionCard, SourceChip } from '../ui';
 import { SheetGrid, type GridColumn } from '../grid/SheetGrid';
 import { diffTone, displayCol, moneyCol } from '../grid/columns';
-import { fmtMoney } from '../grid/money';
-import ExportMenu from '../ExportMenu';
 import { FigureTable, type FigColumn, type FigRow } from '../reco/FigureTable';
-import { anyValTax, mergePathFormulas, nz, pathFormulas, useGoToStep } from '../reco/helpers';
+import { anyValTax, mergePathFormulas, nz, pathFormulas, useGoToStep, useTabParam } from '../reco/helpers';
+import { CountBadge, OpenBadge, StepTab, StepTabsList, ViewSwitch } from '../reco/StepTabs';
 
 // Step 6 — GSTR 9-OUTPUT: (A) data as per books vs (B) data auto-populated in
 // GSTR-9 (portal system-computed Table 4), and the difference A − B with a
@@ -26,19 +26,52 @@ const SIDE_LABEL: Record<Side, string> = {
   diff: 'Difference (A − B)',
 };
 
+/**
+ * "All heads": value and every tax head for books, GSTR-9 and the
+ * difference (needs about 1700 px of table — more than a 1920 screen with the
+ * sidebar open). "Value + difference": books and GSTR-9 by value, the
+ * difference head by head — so the difference and its status stay on screen
+ * without scrolling sideways. The default follows the screen width.
+ */
+type CmpView = 'full' | 'compact';
+/** Remembered in this browser only (a per-viewer convenience). */
+const VIEW_KEY = 'gstk_ar_outward_view';
+const initialView = (): CmpView => {
+  try {
+    const v = localStorage.getItem(VIEW_KEY);
+    if (v === 'full' || v === 'compact') return v;
+    return window.matchMedia('(min-width: 2200px)').matches ? 'full' : 'compact';
+  } catch {
+    return 'compact';
+  }
+};
+
+const TABS = ['compare', 'ledgers', 'extras'] as const;
+/** The comparison and ledger grids fill the screen below the step's header area and scroll inside themselves. */
+const MAX_HEIGHT = 'max(360px, calc(100vh - 300px))';
+
 // ---------------------------------------------------------------------------
 // Books vs GSTR-9 table
 // ---------------------------------------------------------------------------
 
 const ComparisonCard: React.FC = () => {
   const { docs, workings } = useWorkspace();
+  const [view, setViewState] = useState<CmpView>(initialView);
+  const setView = (v: CmpView) => {
+    setViewState(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      /* storage unavailable — the choice lasts for this visit */
+    }
+  };
   const goTo = useGoToStep();
   const out = workings.outward;
   const tol = workings.tolerance;
   const hasPortal = workings.g9.t4Source !== 'none';
   const diffKeys = useMemo(() => new Set(workings.diffs.map((d) => d.key)), [workings.diffs]);
-  /** A justification control only for lines the engine actually pushed. */
-  const status = (key: string) => (diffKeys.has(key) ? <JustifyControl lineKey={key} /> : <span className="text-muted-foreground">—</span>);
+  /** A justification control only for lines the engine actually pushed (icon-only in the wide "All heads" layout). */
+  const status = (key: string) => (diffKeys.has(key) ? <JustifyControl lineKey={key} compact={view === 'full'} /> : <span className="text-muted-foreground">—</span>);
   const typedT4 = Object.keys(docs.portal.manual ?? {}).filter((k) => k.startsWith('gstr9.table4.')).length;
 
   const showCess = out.rows.some((r) => nz(r.books.x) || nz(r.portal.x));
@@ -50,8 +83,12 @@ const ComparisonCard: React.FC = () => {
   ];
   if (showCess) heads.push(['x', 'Cess']);
   const sides: Side[] = hasPortal ? ['books', 'portal', 'diff'] : ['books'];
+  // Compact keeps every head only on the difference side (with only books, there is nothing to compare: all heads show).
+  const compact = view === 'compact' && hasPortal;
   const columns: FigColumn[] = sides.flatMap((side) =>
-    heads.map(([h, hl]) => ({ key: `${side}.${h}`, header: hl, group: SIDE_LABEL[side], width: h === 't' ? 128 : 108 })),
+    heads
+      .filter(([h]) => !compact || side === 'diff' || h === 't')
+      .map(([h, hl]) => ({ key: `${side}.${h}`, header: hl, group: SIDE_LABEL[side], width: h === 't' ? 120 : 100 })),
   );
 
   const figures = (books: ValTax, portal: ValTax, diff: ValTax) => {
@@ -108,7 +145,17 @@ const ComparisonCard: React.FC = () => {
             GSTR-9 Table 4 <SourceChip meta={docs.portal.gstr9Meta} manual={!docs.portal.gstr9Meta?.source && typedT4 > 0} />
             {!!docs.portal.gstr9Meta?.source && typedT4 > 0 && <span title="Cells of Table 4 typed over the portal figures on the Portal data step">· {typedT4} typed</span>}
           </span>
-          <ExportMenu only={['excel']} />
+          {hasPortal && (
+            <ViewSwitch<CmpView>
+              label="Columns of the comparison"
+              value={view}
+              onChange={setView}
+              options={[
+                { value: 'compact', label: 'Value + difference', title: 'Books and GSTR-9 by value; the difference in every head' },
+                { value: 'full', label: 'All heads', title: 'Value and every tax head for books, GSTR-9 and the difference' },
+              ]}
+            />
+          )}
         </>
       }
     >
@@ -134,12 +181,15 @@ const ComparisonCard: React.FC = () => {
         rows={rows}
         footer={footer}
         withStatus={hasPortal}
-        maxHeight="70vh"
+        maxHeight={MAX_HEIGHT}
+        labelWidth={compact ? 200 : 220}
+        narrowStatus={view === 'full'}
       />
       <p className="text-[11px] text-muted-foreground">
         {hasPortal && `Difference is always Books − GSTR-9. Red: beyond the ₹${tol} tolerance on some head — give a reason in Status. `}
         Credit notes (4I) are shown as positive figures and deducted in the total.
         {!showCess && ' Cess columns are hidden (nil throughout).'}
+        {compact && ' Books and GSTR-9 tax heads: switch to All heads.'}
       </p>
     </SectionCard>
   );
@@ -200,7 +250,7 @@ const CategoriseCard: React.FC = () => {
       excelRef="PL-OUTPUT Part A → GSTR 9-OUTPUT column C"
     >
       <Note tone="position">
-        The sheet puts all of PL-OUTPUT Part A into B2B, so the B2C and SEZ rows above show differences that mean nothing. Here each ledger carries a bucket (B2B by default, as the sheet does) and negative ledgers are credit notes (4I). Tagging moves figures between rows — it never changes the total.
+        The sheet puts all of PL-OUTPUT Part A into B2B, so the B2C and SEZ rows of the comparison show differences that mean nothing. Here each ledger carries a bucket (B2B by default, as the sheet does) and negative ledgers are credit notes (4I). Tagging moves figures between rows — it never changes the total.
       </Note>
       {rows.length > 0 && (
         <div className="flex flex-wrap gap-1.5 text-[11px]">
@@ -226,7 +276,7 @@ const CategoriseCard: React.FC = () => {
         readOnly={readOnly}
         onRowsChange={(next) => update('sales', (d) => ({ ...d, partA: next }))}
         rowTone={(r) => (isReturn(r) ? 'muted' : undefined)}
-        maxHeight={420}
+        maxHeight={MAX_HEIGHT}
         emptyText={
           <span>
             No taxable income ledgers yet.{' '}
@@ -268,7 +318,6 @@ const ExtrasCard: React.FC = () => {
   const { docs, update, readOnly } = useWorkspace();
   const X = docs.gstr9.t4BooksExtra;
   const inUse = EXTRA_ROWS.filter((r) => anyValTax(X[r.id])).length;
-  const [open, setOpen] = useState(inUse > 0);
 
   const rows: ExtraRow[] = EXTRA_ROWS.map((r) => ({ ...r, v: X[r.id], f: pathFormulas(docs.gstr9.f, `${EXTRA_F_ROOT}${r.id}.`) }));
   const heads: Array<[Head, string]> = [
@@ -289,26 +338,19 @@ const ExtrasCard: React.FC = () => {
   return (
     <SectionCard
       title={
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 text-left"
-          onClick={() => setOpen((o) => !o)}
-          aria-expanded={open}
-        >
-          {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        <span className="inline-flex items-center gap-1.5">
           Books-side extras — advances, debit notes, amendments
           {inUse > 0 && (
             <Badge variant="info" className="ml-1 text-[10px] font-normal">
               {inUse} in use
             </Badge>
           )}
-        </button>
+        </span>
       }
       description="Rarely needed. Only when the books carry advances (4F), debit notes (4J) or amendments (4K/4L) that are not already in the sales ledgers."
       excelRef="GSTR-9 4F, 4J–4L (books column)"
     >
-      {open && (
-        <SheetGrid<ExtraRow>
+      <SheetGrid<ExtraRow>
           label="Books-side advances, debit notes and amendments"
           rows={rows}
           columns={columns}
@@ -324,52 +366,53 @@ const ExtrasCard: React.FC = () => {
             })
           }
         />
-      )}
     </SectionCard>
   );
 };
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Step 6 — the comparison first, the ledger buckets and the rarely used
+ * books-side extras one click away (?outwardtab=). No KPI strip: the
+ * comparison's TOTAL row carries the same three totals.
+ */
 const OutwardRecoStep: React.FC = () => {
-  const { workings } = useWorkspace();
-  const out = workings.outward;
-  const hasPortal = workings.g9.t4Source !== 'none';
-  const tol = workings.tolerance;
-  const open = workings.stepOpen.outward;
-  const diffBeyond = maxAbs(out.diffTotal, true) > tol;
+  const { docs, workings } = useWorkspace();
+  const [tab, setTab] = useTabParam('outwardtab', TABS, 'compare');
+  const ledgers = docs.sales.partA.length;
+  const extrasInUse = EXTRA_ROWS.filter((r) => anyValTax(docs.gstr9.t4BooksExtra[r.id])).length;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <OpenDifferences step="outward" />
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiTile label="(A) Books — total value" value={fmtMoney(out.booksTotal.t)} hint={`Tax ${fmtMoney(totalTax(out.booksTotal))}`} />
-        <KpiTile
-          label="(B) GSTR-9 auto-populated — total value"
-          value={hasPortal ? fmtMoney(out.portalTotal.t) : 'Not fetched'}
-          hint={hasPortal ? `Tax ${fmtMoney(totalTax(out.portalTotal))}` : 'Portal data step'}
-          tone={hasPortal ? 'neutral' : 'warn'}
-        />
-        <KpiTile
-          label="Difference (A − B) — value"
-          value={hasPortal ? fmtMoney(out.diffTotal.t) : '—'}
-          hint={
-            hasPortal
-              ? `IGST ${fmtMoney(out.diffTotal.i)} · CGST ${fmtMoney(out.diffTotal.c)} · SGST ${fmtMoney(out.diffTotal.s)}`
-              : undefined
-          }
-          tone={!hasPortal ? 'neutral' : diffBeyond ? 'error' : 'ok'}
-        />
-        <KpiTile
-          label="Lines needing a reason"
-          value={open}
-          hint={open ? 'Open Status on each red line' : 'Nothing open'}
-          tone={open ? 'error' : 'ok'}
-        />
-      </div>
-      <ComparisonCard />
-      <CategoriseCard />
-      <ExtrasCard />
+      <Tabs value={tab} onValueChange={setTab} className="space-y-3">
+        <StepTabsList label="Outward reco">
+          <StepTab value="compare">
+            Books vs GSTR-9 (Table 4) <OpenBadge n={workings.stepOpen.outward} />
+          </StepTab>
+          <StepTab value="ledgers">
+            Sales ledger buckets <CountBadge n={ledgers} label={ledgers === 1 ? 'ledger' : 'ledgers'} />
+          </StepTab>
+          <StepTab value="extras">
+            Books-side extras (4F, 4J–4L)
+            {extrasInUse > 0 && (
+              <Badge variant="info" className="h-4 px-1.5 text-[10px] font-normal leading-none">
+                {extrasInUse} in use
+              </Badge>
+            )}
+          </StepTab>
+        </StepTabsList>
+        <TabsContent value="compare" className="mt-0">
+          <ComparisonCard />
+        </TabsContent>
+        <TabsContent value="ledgers" className="mt-0">
+          <CategoriseCard />
+        </TabsContent>
+        <TabsContent value="extras" className="mt-0">
+          <ExtrasCard />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };

@@ -41,7 +41,7 @@ const PortalNote: React.FC<{ what: string; missingKey: 'dto.no3b' | 'dti.no3b' }
         <div>
           <span className="font-medium">As per 3B</span> is {what} of the <span className="font-medium">as-filed GSTR-3B</span> from the
           GST portal — never the app’s own GSTR-3B. <span className="tabular-nums">{parts.join(' · ')}.</span>{' '}
-          <Button type="button" variant="link" className="h-auto gap-1 p-0 text-xs [&_svg]:size-3" onClick={() => goStep('portal')}>
+          <Button type="button" variant="link" className="h-auto gap-1 p-0 text-xs [&_svg]:size-3" onClick={() => goStep('portal', { portaltab: 'gstr3b' })}>
             Go to Portal data to fetch it <ArrowRight aria-hidden="true" />
           </Button>
         </div>

@@ -12,6 +12,7 @@ import {
   computedCols,
   diffCells,
   diffCols,
+  footerStatusLabel,
   mirroredTaxCols,
   monthCol,
   monthRowF,
@@ -19,9 +20,8 @@ import {
   portalEdits,
   sameF,
   soft,
-  statusCell,
-  statusCol,
   withoutPrefix,
+  type DutiesView,
 } from './helpers';
 
 /** One month of DUTIES & TAXES-OUTPUT: books (typed) + the as-filed 3B (portal doc). */
@@ -38,7 +38,9 @@ interface DtoRow {
 const WHAT_3B = '3.1(a) + 3.1(b) tax';
 
 /** DUTIES & TAXES-OUTPUT — the Cr side of the output tax ledger, month by month. */
-const OutputTab: React.FC<{ cess: boolean }> = ({ cess }) => {
+const OutputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: string }> = ({ cess, view, gridMaxHeight }) => {
+  // "Books vs 3B" hides the typed Sales / Credit note groups; Input's "compact" has no Output counterpart.
+  const recon = view === 'recon';
   const { docs, workings, update, readOnly } = useWorkspace();
   const dto = workings.dto;
   const tol = workings.tolerance;
@@ -88,9 +90,13 @@ const OutputTab: React.FC<{ cess: boolean }> = ({ cess }) => {
 
   const columns = useMemo<GridColumn<DtoRow>[]>(
     () => [
-      monthCol<DtoRow>(104),
-      ...mirroredTaxCols<DtoRow>((r) => r.sales, (r, t) => ({ ...r, sales: t }), { group: 'Sales', prefix: 'sales', cess }),
-      ...mirroredTaxCols<DtoRow>((r) => r.creditNote, (r, t) => ({ ...r, creditNote: t }), { group: 'Credit note', prefix: 'creditNote', cess }),
+      monthCol<DtoRow>('dto', 104),
+      ...(recon
+        ? []
+        : [
+            ...mirroredTaxCols<DtoRow>((r) => r.sales, (r, t) => ({ ...r, sales: t }), { group: 'Sales', prefix: 'sales', cess }),
+            ...mirroredTaxCols<DtoRow>((r) => r.creditNote, (r, t) => ({ ...r, creditNote: t }), { group: 'Credit note', prefix: 'creditNote', cess }),
+          ]),
       ...computedCols<DtoRow>((r) => dto.months[r.id].net, { group: 'Net sales', prefix: 'net', cess }),
       ...portal3bCols<DtoRow>({
         field: 'outTax',
@@ -102,9 +108,8 @@ const OutputTab: React.FC<{ cess: boolean }> = ({ cess }) => {
         what: WHAT_3B,
       }),
       ...diffCols<DtoRow>((r) => dto.months[r.id].diff, { cess, tolerance: tol, group: 'Diff (Books − 3B)', hasLine: (m) => lineKeys.has(`dto.${m}`) }),
-      statusCol<DtoRow>('dto'),
     ],
-    [cess, dto, docs.portal, tol, lineKeys],
+    [recon, cess, dto, docs.portal, tol, lineKeys],
   );
 
   const footer = useMemo<GridFooterRow[]>(
@@ -133,13 +138,14 @@ const OutputTab: React.FC<{ cess: boolean }> = ({ cess }) => {
       },
       {
         key: 'plDiff',
-        label: (
-          <FooterLabel soft title="As per P&L − Net sales total (the sheet's I24:K24 'DIFF WITH REASON?')">
+        label: footerStatusLabel(
+          <FooterLabel soft title="As per P&L − Net sales total (the sheet's I24:K24 'DIFF WITH REASON?') — the annual check, P&L (PL-OUTPUT Part A) vs Duties & Taxes net">
             P&amp;L − D&amp;T
-          </FooterLabel>
+          </FooterLabel>,
+          'dto.pl',
         ),
         tone: 'total',
-        cells: { ...diffCells('net', dto.plDiff, cess, tol), ...statusCell('dto.pl') },
+        cells: diffCells('net', dto.plDiff, cess, tol),
       },
     ],
     [dto, cess, tol],
@@ -151,6 +157,12 @@ const OutputTab: React.FC<{ cess: boolean }> = ({ cess }) => {
         title="Output tax by month"
         description="Sales and credit notes from the output tax ledgers, against the as-filed GSTR-3B."
         excelRef="DUTIES & TAXES-OUTPUT B6:Q24"
+        actions={
+          <span className="inline-flex items-center gap-2 text-xs">
+            <span className="text-muted-foreground">Annual check — P&amp;L vs Duties &amp; Taxes net:</span>
+            <JustifyControl lineKey="dto.pl" />
+          </span>
+        }
       >
         <PortalNote what={WHAT_3B} missingKey="dto.no3b" />
         <SheetGrid<DtoRow>
@@ -161,21 +173,19 @@ const OutputTab: React.FC<{ cess: boolean }> = ({ cess }) => {
           onRowsChange={onRowsChange}
           readOnly={readOnly}
           footer={footer}
+          maxHeight={gridMaxHeight}
         />
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
-          <span className="inline-flex items-center gap-2">
-            <span className="text-muted-foreground">Annual check — P&amp;L (PL-OUTPUT Part A) vs Duties &amp; Taxes net:</span>
-            <JustifyControl lineKey="dto.pl" />
-          </span>
-          {!readOnly && cess && (
-            <span className="text-[11px] text-muted-foreground">
-              Cess columns are shown — the firm’s sheet has none, so hide cess before pasting whole sheet rows (C:Q).
-            </span>
-          )}
-        </div>
+        {!readOnly && (recon || cess) && (
+          <p className="text-[11px] text-muted-foreground">
+            {recon
+              ? 'Books vs 3B view: the Sales and Credit note columns are hidden — switch to All columns to enter them or to paste whole sheet rows (C:Q).'
+              : 'Cess columns are shown — the firm’s sheet has none, so hide cess before pasting whole sheet rows (C:Q).'}
+          </p>
+        )}
         <Note tone="position">
           Difference = Books − 3B, per head. A month needs a reason when any head is off by more than ₹{tol} (per-client tolerance; the
-          workbook has none — its note reads “if there is any diff, write proper justification”). Click a month’s status to write it.
+          workbook has none — its note reads “if there is any diff, write proper justification”). Click a month’s status (beside the month) to
+          write it.
         </Note>
       </SectionCard>
 

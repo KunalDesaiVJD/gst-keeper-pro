@@ -112,7 +112,7 @@ export const VersionHistory: React.FC = () => {
       confirmText: 'Restore',
     });
     if (!ok) return;
-    update(e.docKey, () => normalizeDoc(e.docKey, e.data), { archive: true });
+    update(e.docKey, () => normalizeDoc(e.docKey, e.data), { archive: true, action: `Restored version ${e.version}` });
     try {
       const r = await flush();
       if (r.ok) toast.success(`${name} restored to version ${e.version}.`);
@@ -124,8 +124,8 @@ export const VersionHistory: React.FC = () => {
 
   return (
     <SectionCard
-      title="Version history"
-      description="Every time a sheet is saved over, the earlier version is kept. Pick a sheet to see its versions."
+      title="Version snapshots"
+      description="Whole-sheet restore points: one every 10 minutes of editing, one before another person's edit, one before a restore and one at the lock. Every single change is in the Revision history tab."
       actions={
         <div className="w-60">
           <Select value={key} onValueChange={(v) => setKey(v as DocKey)}>
@@ -148,15 +148,16 @@ export const VersionHistory: React.FC = () => {
       ) : error ? (
         <p className="text-xs text-destructive-strong">Could not load the history: {error}</p>
       ) : !entries?.length ? (
-        <p className="text-xs text-muted-foreground">No earlier versions of {DOC_NAME[key]} yet — one is kept each time the sheet is saved over.</p>
+        <p className="text-xs text-muted-foreground">No snapshots of {DOC_NAME[key]} yet — one is kept every 10 minutes of editing, before another person's edit and at the lock.</p>
       ) : (
         <div className="relative overflow-x-auto rounded-md border">
-          <table className="w-full min-w-[560px] border-collapse text-xs" aria-label={`Versions of ${DOC_NAME[key]}`}>
+          <table className="w-full min-w-[680px] border-collapse text-xs" aria-label={`Versions of ${DOC_NAME[key]}`}>
             <thead className="bg-muted text-muted-foreground">
               <tr>
                 <th scope="col" className="w-20 border-b px-2 py-1.5 text-left font-semibold">Version</th>
                 <th scope="col" className="border-b px-2 py-1.5 text-left font-semibold">Saved by</th>
                 <th scope="col" className="border-b px-2 py-1.5 text-left font-semibold">Saved at</th>
+                <th scope="col" className="border-b px-2 py-1.5 text-left font-semibold">Kept because</th>
                 <th scope="col" className="border-b px-2 py-1.5 text-left font-semibold">Contents</th>
                 {!readOnly && <th scope="col" className="w-24 border-b px-2 py-1.5"><span className="sr-only">Restore</span></th>}
               </tr>
@@ -167,6 +168,7 @@ export const VersionHistory: React.FC = () => {
                   <td className="border-b px-2 py-1.5 tabular-nums">v{e.version}</td>
                   <td className="border-b px-2 py-1.5">{e.updatedBy || '—'}</td>
                   <td className="border-b px-2 py-1.5 tabular-nums">{fmtWhen(e.updatedAt)}</td>
+                  <td className="border-b px-2 py-1.5 text-muted-foreground">{e.reason || 'Earlier save'}</td>
                   <td className="border-b px-2 py-1.5 text-muted-foreground">{summaries.get(e.id)}</td>
                   {!readOnly && (
                     <td className="border-b px-2 py-1 text-right">

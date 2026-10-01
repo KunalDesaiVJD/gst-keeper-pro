@@ -2,101 +2,165 @@ import React from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Badge } from '@/components/gstr9/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ExportMenu } from '../ExportMenu';
 import { OpenDifferences } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { DiffKpi } from '../gstr9c/bits';
-import TurnoverPart from '../gstr9c/TurnoverPart';
-import TaxPaidPart from '../gstr9c/TaxPaidPart';
-import ItcPart from '../gstr9c/ItcPart';
+import { Table5Card, Table7Card } from '../gstr9c/TurnoverPart';
+import { Table11Card, Table9Card } from '../gstr9c/TaxPaidPart';
+import { NoItcNote, Table12Card, Table14Card, Table16Card } from '../gstr9c/ItcPart';
 import AdditionalLiabilityPart from '../gstr9c/AdditionalLiabilityPart';
 import CertificationPart from '../gstr9c/CertificationPart';
 
-/** Sub-tabs of the official statement, with the difference lines each one carries. */
-const PARTS = [
-  { key: 'turnover', label: 'Pt II · Turnover', tables: 'Tables 5–8', diffs: ['gstr9c.5R', 'gstr9c.7G'] },
-  { key: 'tax', label: 'Pt III · Tax paid', tables: 'Tables 9–11', diffs: ['gstr9c.9R'] },
-  { key: 'itc', label: 'Pt IV · ITC', tables: 'Tables 12–16', diffs: ['gstr9c.12F', 'gstr9c.14T'] },
-  { key: 'liability', label: 'Pt V · Additional liability', tables: 'Part V', diffs: [] as string[] },
-  { key: 'certification', label: 'Certification', tables: 'Verification', diffs: [] as string[] },
-] as const;
-type PartKey = (typeof PARTS)[number]['key'];
+interface TableDef {
+  key: string;
+  /** Trigger text: the table number, or a word for the untabled parts. */
+  text: string;
+  name: string;
+  component: React.FC;
+  /** The difference line the table carries. */
+  diff?: string;
+  itc?: boolean;
+}
 
-/** URL parameter that remembers the open sub-tab (the page keeps ?client= and ?step= alongside). */
-const TAB_PARAM = 'tab9c';
+/** The statement's tables, one tab each, grouped by Part (row keys follow GSTR_9C_Offline_Utility.xlsm v2.8). */
+const PARTS: Array<{ part: string | null; short: string; title: string; tables: TableDef[] }> = [
+  {
+    part: 'II',
+    short: 'Turnover',
+    title: 'Reconciliation of turnover declared in audited annual financial statement with turnover declared in annual return (GSTR-9)',
+    tables: [
+      { key: '5', text: '5', name: 'Reconciliation of gross turnover (with Table 6 reasons)', component: Table5Card, diff: 'gstr9c.5R' },
+      { key: '7', text: '7', name: 'Reconciliation of taxable turnover (with Table 8 reasons)', component: Table7Card, diff: 'gstr9c.7G' },
+    ],
+  },
+  {
+    part: 'III',
+    short: 'Tax paid',
+    title: 'Reconciliation of tax paid',
+    tables: [
+      { key: '9', text: '9', name: 'Rate-wise liability and amount payable (with Table 10 reasons)', component: Table9Card, diff: 'gstr9c.9R' },
+      { key: '11', text: '11', name: 'Additional amount payable but not paid', component: Table11Card },
+    ],
+  },
+  {
+    part: 'IV',
+    short: 'ITC',
+    title: 'Reconciliation of input tax credit (ITC)',
+    tables: [
+      { key: '12', text: '12', name: 'Reconciliation of net ITC (with Table 13 reasons)', component: Table12Card, diff: 'gstr9c.12F', itc: true },
+      { key: '14', text: '14', name: 'ITC declared in GSTR-9 against ITC availed on expenses (with Table 15 reasons)', component: Table14Card, diff: 'gstr9c.14T', itc: true },
+      { key: '16', text: '16', name: 'Tax payable on un-reconciled difference in ITC', component: Table16Card, itc: true },
+    ],
+  },
+  {
+    part: 'V',
+    short: '',
+    title: 'Additional liability due to non-reconciliation',
+    tables: [{ key: 'liability', text: 'Liability', name: 'Additional liability due to non-reconciliation', component: AdditionalLiabilityPart }],
+  },
+  {
+    part: null,
+    short: '',
+    title: 'Verification',
+    tables: [{ key: 'certification', text: 'Verification', name: 'Verification — signatory and address', component: CertificationPart }],
+  },
+];
+
+const TABLES = PARTS.flatMap((p) => p.tables);
+const KPI_LINES: Array<{ key: string; label: string }> = [
+  { key: 'gstr9c.5R', label: '5R · Un-reconciled turnover' },
+  { key: 'gstr9c.7G', label: '7G · Un-reconciled taxable turnover' },
+  { key: 'gstr9c.9R', label: '9R · Un-reconciled payment' },
+  { key: 'gstr9c.12F', label: '12F · Un-reconciled net ITC' },
+  { key: 'gstr9c.14T', label: '14T · Un-reconciled ITC by head' },
+];
+
+/** URL parameter that keeps the open table (the page keeps ?client= and ?step= alongside). */
+const TAB_PARAM = 'gstr9ctab';
+/** Earlier name of the parameter, still read so old links land on the same part. */
+const OLD_TAB_PARAM = 'tab9c';
+const OLD_TAB: Record<string, string> = { turnover: '5', tax: '9', itc: '12', liability: 'liability', certification: 'certification' };
 
 /**
  * Step 11 — GSTR-9C, the official reconciliation statement. Every figure is
  * prefilled from the working (engine `workings.gstr9c`); italic figures are
  * computed and can be typed over, and each un-reconciled line carries its
- * justification. Row keys follow GSTR_9C_Offline_Utility.xlsm v2.8.
+ * justification. One tab per table, so each opens in one screen.
  */
 const Gstr9cStep: React.FC = () => {
   const { workings } = useWorkspace();
   const [params, setParams] = useSearchParams();
-  const fromUrl = params.get(TAB_PARAM);
-  const tab: PartKey = PARTS.some((p) => p.key === fromUrl) ? (fromUrl as PartKey) : 'turnover';
+  const fromUrl = params.get(TAB_PARAM) ?? OLD_TAB[params.get(OLD_TAB_PARAM) ?? ''] ?? null;
+  const tab = TABLES.some((t) => t.key === fromUrl) ? (fromUrl as string) : TABLES[0].key;
   const setTab = (v: string) => {
     const next = new URLSearchParams(params);
     next.set(TAB_PARAM, v);
+    next.delete(OLD_TAB_PARAM);
     setParams(next, { replace: true });
   };
-  const openIn = (keys: readonly string[]) => workings.diffs.filter((d) => keys.includes(d.key) && d.open).length;
+  const isOpen = (key?: string) => !!key && workings.diffs.some((d) => d.key === key && d.open);
+  // The tiles carry every 9C difference line with its reason editor; the banner is only
+  // needed for an open line that has no tile.
+  const openElsewhere = workings.diffs.some((d) => d.step === 'gstr9c' && d.open && !KPI_LINES.some((k) => k.key === d.key));
+  const current = TABLES.find((t) => t.key === tab);
 
   return (
-    <div className="space-y-4">
-      <OpenDifferences step="gstr9c" />
-
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <p className="max-w-3xl text-xs text-muted-foreground">
-          Prefilled from the working — never from the app’s own GSTR-1/3B. <span className="italic">Italic</span> figures are computed: type over one to override
-          it, press Delete to restore it. Everything saves as you type.
-        </p>
-        <ExportMenu only={['excel']} />
-      </div>
+    <div className="space-y-3">
+      {openElsewhere && <OpenDifferences step="gstr9c" />}
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-        <DiffKpi lineKey="gstr9c.5R" label="5R · Un-reconciled turnover" />
-        <DiffKpi lineKey="gstr9c.7G" label="7G · Un-reconciled taxable turnover" />
-        <DiffKpi lineKey="gstr9c.9R" label="9R · Un-reconciled payment" />
-        <DiffKpi lineKey="gstr9c.12F" label="12F · Un-reconciled net ITC" />
-        <DiffKpi lineKey="gstr9c.14T" label="14T · Un-reconciled ITC by head" />
+        {KPI_LINES.map((k) => <DiffKpi key={k.key} lineKey={k.key} label={k.label} />)}
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <div className="overflow-x-auto pb-1">
-          <TabsList className="h-auto w-max">
-            {PARTS.map((p) => {
-              const open = openIn(p.diffs);
-              return (
-                <TabsTrigger key={p.key} value={p.key} className="gap-1.5" title={p.tables}>
-                  {p.label}
-                  {open > 0 && (
-                    <Badge variant="destructive" className="h-4 min-w-4 justify-center rounded-full px-1 text-[10px] leading-none" aria-label={`${open} open`}>
-                      {open}
-                    </Badge>
-                  )}
-                </TabsTrigger>
-              );
-            })}
+        <div className="max-w-full overflow-x-auto">
+          <TabsList className="h-8 gap-0.5 p-0.5" aria-label="Tables of Form GSTR-9C">
+            {PARTS.map((p, pi) => (
+              <React.Fragment key={p.title}>
+                {pi > 0 && <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />}
+                {p.part && (
+                  <span aria-hidden="true" title={`Part ${p.part} — ${p.title}`} className="whitespace-nowrap px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+                    Pt {p.part}
+                    {p.short && <span className="hidden font-medium normal-case tracking-normal 2xl:inline"> · {p.short}</span>}
+                  </span>
+                )}
+                {p.tables.map((t) => {
+                  const open = isOpen(t.diff);
+                  return (
+                    <TabsTrigger key={t.key} value={t.key} title={/^\d/.test(t.text) ? `Table ${t.text} — ${t.name}` : t.name} className="h-7 gap-1 px-2 text-xs tabular-nums">
+                      {/^\d/.test(t.text) && <span className="sr-only">{p.part ? `Part ${p.part}, ` : ''}Table </span>}
+                      {t.text}
+                      {open && (
+                        <Badge variant="destructive" className="h-4 min-w-4 justify-center rounded-full px-1 text-[10px] leading-none" aria-label="1 open">
+                          1
+                        </Badge>
+                      )}
+                    </TabsTrigger>
+                  );
+                })}
+              </React.Fragment>
+            ))}
           </TabsList>
         </div>
-        <TabsContent value="turnover" className="mt-3">
-          <TurnoverPart />
-        </TabsContent>
-        <TabsContent value="tax" className="mt-3">
-          <TaxPaidPart />
-        </TabsContent>
-        <TabsContent value="itc" className="mt-3">
-          <ItcPart />
-        </TabsContent>
-        <TabsContent value="liability" className="mt-3">
-          <AdditionalLiabilityPart />
-        </TabsContent>
-        <TabsContent value="certification" className="mt-3">
-          <CertificationPart />
-        </TabsContent>
+        {current?.itc && (
+          <div className="mt-3">
+            <NoItcNote />
+          </div>
+        )}
+        {TABLES.map((t) => {
+          const C = t.component;
+          return (
+            <TabsContent key={t.key} value={t.key} className="mt-3">
+              <C />
+            </TabsContent>
+          );
+        })}
       </Tabs>
+
+      <p className="text-[11px] text-muted-foreground">
+        Prefilled from the working — never from the app’s own GSTR-1/3B. <span className="italic">Italic</span> figures are computed: type over one to override it, press
+        Delete to restore it. Everything saves as you type.
+      </p>
     </div>
   );
 };

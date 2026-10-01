@@ -6,7 +6,6 @@ import { useConfirm } from '@/components/ui/confirm-dialog';
 import { newId } from '@/lib/gstr9/defaults';
 import { loadPreviousYear } from '@/lib/gstr9/store';
 import { FY_MONTHS, type MonthKey, type RcmCell } from '@/lib/gstr9/types';
-import { SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 
 const prevFY = (fy: string): string => {
@@ -63,6 +62,7 @@ export const CarryForwardCard: React.FC = () => {
               })),
               partB: p.sales.partB.map((r) => ({ id: newId(), ledger: r.ledger, nature: r.nature, amount: 0 })),
             },
+        { action: `Copied the ledger list from FY ${prev}` },
       );
       update('purchases', (d) =>
         d.rows.length
@@ -74,6 +74,7 @@ export const CarryForwardCard: React.FC = () => {
                 taxable: 0, igst: 0, cgst: 0, sgst: null, cess: 0,
               })),
             },
+        { action: `Copied the ledger list from FY ${prev}` },
       );
       update('rcm', (d) =>
         d.categories.length
@@ -84,6 +85,7 @@ export const CarryForwardCard: React.FC = () => {
                 id: newId(), name: c.name, rate: c.rate, supplyType: c.supplyType, itcTable: c.itcTable, months: zeroMonths(),
               })),
             },
+        { action: `Copied the ledger list from FY ${prev}` },
       );
       toast.success(`Copied ${n.a + n.b + n.pr} ledgers and ${n.rcm} RCM categor${n.rcm === 1 ? 'y' : 'ies'} from FY ${prev}. Enter this year’s amounts.`);
     } catch (e) {
@@ -94,15 +96,16 @@ export const CarryForwardCard: React.FC = () => {
   };
 
   return (
-    <SectionCard
-      title="Start from last year"
-      description={`Copy FY ${prev}’s ledger list — names and tags only, every amount at zero — so the team only types this year’s figures.`}
-    >
-      <Button size="sm" onClick={run} disabled={busy}>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2">
+      <div className="min-w-0 flex-1 text-xs">
+        <span className="text-[13px] font-semibold">Start from last year</span>
+        <span className="text-muted-foreground"> — copy FY {prev}’s ledger list (names and tags only, every amount at zero) so the team only types this year’s figures.</span>
+      </div>
+      <Button size="sm" className="h-7" onClick={run} disabled={busy}>
         {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <CopyPlus className="mr-1 h-3.5 w-3.5" />}
         Copy ledgers from FY {prev}
       </Button>
-    </SectionCard>
+    </div>
   );
 };
 

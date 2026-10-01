@@ -49,6 +49,16 @@ const Annexure3: React.FC = () => {
       value: (r) => r.description,
       onEdit: (r, e) => ({ ...r, description: e.text }),
     },
+    {
+      key: 'side', header: 'Nature', type: 'select', width: 130,
+      options: [
+        { value: 'output', label: 'Output tax', aliases: ['output', 'out', 'o'] },
+        { value: 'input', label: 'Input tax credit', aliases: ['input', 'itc', 'in', 'i'] },
+      ],
+      value: (r) => r.side ?? 'output',
+      onEdit: (r, e) => ({ ...r, side: e.text === 'input' ? 'input' : 'output' }),
+      title: () => 'Where this payment is disclosed on the Payables & set-off step',
+    },
     ...taxInCols<Other>((r) => ({ i: r.i, c: r.c, s: r.s, x: r.x }), (r, t) => ({ ...r, ...t }), { prefix: 'o', cess: true }),
     displayCol<Other>('total', 'Total', (r) => totalTax(tin(r))),
   ];
@@ -60,9 +70,8 @@ const Annexure3: React.FC = () => {
     { id: 'payable', kind: 'computed', value: w.payable, label: 'DRC-03 payable', hint: 'Heads that come out positive' },
     { id: 'excess', kind: 'computed', value: w.excessPaid, label: 'Excess paid — not payable by DRC-03', hint: 'Heads that come out negative, shown positive' },
     {
-      id: 'already', kind: 'typed', value: w.alreadyPaid, stored: A.a3AlreadyPaid,
-      label: 'Already paid by DRC-03', hint: 'DRC-03 already filed for this FY',
-      onChange: (v) => update('annexures', (d) => ({ ...d, a3AlreadyPaid: v ?? zIn() })),
+      id: 'already', kind: 'computed', value: w.alreadyPaid,
+      label: 'Set off — DRC-03 / GSTR-3B', hint: 'From the set-off register on the Payables & set-off step: a DRC-03 in the system or a GSTR-3B effect with its copy',
     },
     { id: 'balance', kind: 'computed', value: w.balance, emphasis: true, label: 'Balance to pay', tone: positive },
   ];
@@ -77,15 +86,16 @@ const Annexure3: React.FC = () => {
       title="Annexure-3 — DRC-03 working"
       description="What remains to be paid through DRC-03 after the annual reconciliation."
       excelRef="ANNEXURE B39:G46"
+      actions={<StepLink step="payables" className="text-xs">Set-off register</StepLink>}
     >
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
         <KpiTile label="DRC-03 payable" value={rupees(payable)} />
-        <KpiTile label="Already paid by DRC-03" value={rupees(already)} />
+        <KpiTile label="Set off (DRC-03 / GSTR-3B)" value={rupees(already)} />
         <KpiTile label="Balance to pay" value={rupees(balance)} tone={balance > tol ? 'error' : 'ok'} />
         <KpiTile label="Excess paid" value={rupees(excess)} hint="not payable by DRC-03" tone={excess > tol ? 'warn' : 'neutral'} />
       </div>
 
-      <FixedTaxGrid rows={topRows} label="Annexure-3 rows 1 to 3" readOnly={readOnly} />
+      <FixedTaxGrid rows={topRows} label="Annexure-3 rows 1 to 3" readOnly={readOnly} labelWidth={380} />
       <p className="text-[11px] text-muted-foreground">
         Row 1 follows{' '}
         <StepLink step="annexures" extra={{ [ANNEX_TAB_PARAM]: 'a1' }}>Annexure-1 paid &amp; payable</StepLink>; rows 2 and 3
@@ -94,14 +104,14 @@ const Annexure3: React.FC = () => {
       </p>
 
       <div className="space-y-1.5">
-        <h4 className="text-sm font-semibold">4 · Any other payment (to be specified)</h4>
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">4 · Any other payment (to be specified)</h4>
         <SheetGrid<Other>
           rows={A.a3Other}
           columns={otherCols}
           getRowId={(r) => r.id}
           onRowsChange={(rows) => update('annexures', (d) => ({ ...d, a3Other: rows }))}
           readOnly={readOnly}
-          newRow={() => ({ id: newId(), description: '', ...zIn() })}
+          newRow={() => ({ id: newId(), description: '', side: 'output', ...zIn() })}
           canDelete
           addLabel="Add payment"
           emptyText="None. Add a line for any other tax to be paid through DRC-03, with what it is for."
@@ -114,12 +124,13 @@ const Annexure3: React.FC = () => {
         />
       </div>
 
-      <FixedTaxGrid rows={sumRows} label="Annexure-3 total and DRC-03 balance" readOnly={readOnly} showNo={false} />
+      <FixedTaxGrid rows={sumRows} label="Annexure-3 total and DRC-03 balance" readOnly={readOnly} showNo={false} labelWidth={432} />
 
       <Note tone="position">
         The total keeps the sheet&apos;s signed sum; DRC-03 is payable only on heads that come out positive, excess paid is shown
-        separately, and the DRC-03 already paid is set off. Rows 2 and 3 are prefilled with a suggestion you can overwrite — the
-        sheet types them (§6 item 7).
+        separately. What is set off comes only from the{' '}
+        <StepLink step="payables">set-off register</StepLink>, where the payable is also disclosed output-wise and input-wise.
+        Row 2 defaults to nil and row 3 to Table 12 — the sheet types them (§6 item 7).
       </Note>
     </SectionCard>
   );

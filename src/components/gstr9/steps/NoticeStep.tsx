@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { History, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { gstr9PortalPresent, tin, totalTax } from '@/lib/gstr9/engine';
 import { loadPreviousYear } from '@/lib/gstr9/store';
@@ -27,6 +29,10 @@ const TABLE_HEADER = (
   </>
 );
 
+/** URL parameter that keeps the open part (outward / inward) alongside ?client= and ?step=. */
+const TAB_PARAM = 'noticetab';
+type NoticeTab = 'outward' | 'inward';
+
 type OverrideKey = 'deemedSupplies' | 'unreturnedGoods' | 'pendingDemands' | 'prevYear8C' | 'ineligible4D' | 'itcUsed4A5' | 'reversed4B2';
 
 /** Step 12 — NOTICE FORMATE: the outward / inward summary officers ask for. */
@@ -34,6 +40,7 @@ const NoticeStep: React.FC = () => {
   const { client, financialYear, docs, workings, update, readOnly } = useWorkspace();
   const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
+  const [params, setParams] = useSearchParams();
   const N = docs.notice;
   const o = workings.notice.outward;
   const inw = workings.notice.inward;
@@ -141,12 +148,20 @@ const NoticeStep: React.FC = () => {
     }
   };
 
+  const tabFromUrl = params.get(TAB_PARAM);
+  const tab: NoticeTab = tabFromUrl === 'inward' ? 'inward' : 'outward';
+  const setTab = (v: string) => {
+    const next = new URLSearchParams(params);
+    next.set(TAB_PARAM, v);
+    setParams(next, { replace: true });
+  };
+
   const netPayable = totalTax(o.r11);
   const netExcess = totalTax(inw.r9);
   const inwardFromThreeB = N.ineligible4D === null || N.itcUsed4A5 === null || N.reversed4B2 === null;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <OpenDifferences step="notice" />
       <SectionCard
         title="Notice reply format"
@@ -184,48 +199,59 @@ const NoticeStep: React.FC = () => {
           </Note>
         )}
 
-        <div className="space-y-1.5">
+        <Tabs value={tab} onValueChange={setTab}>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h4 className="text-sm font-semibold">Outward</h4>
-            {!readOnly && (
+            <div className="max-w-full overflow-x-auto">
+              <TabsList className="h-8 gap-0.5 p-0.5" aria-label="Notice format parts">
+                <TabsTrigger value="outward" className="h-7 gap-1.5 px-2.5 text-xs">
+                  Outward<span className="hidden font-normal text-muted-foreground sm:inline">· tax liability against tax paid</span>
+                </TabsTrigger>
+                <TabsTrigger value="inward" className="h-7 gap-1.5 px-2.5 text-xs">
+                  Inward<span className="hidden font-normal text-muted-foreground sm:inline">· ITC available against ITC used</span>
+                </TabsTrigger>
+              </TabsList>
+            </div>
+            {tab === 'outward' && !readOnly && (
               <Button size="sm" variant="outline" onClick={fillRow10} disabled={busy}>
                 {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <History className="mr-1 h-3.5 w-3.5" />}
                 Fill row 10 from FY {pfy}
               </Button>
             )}
           </div>
-          <FixedTaxGrid
-            rows={outwardRows}
-            label="Notice format: outward"
-            readOnly={readOnly}
-            heads={HEADS}
-            headLabels={HEAD_LABELS}
-            noHeader="S.No"
-            labelHeader="Issue"
-            showTable
-            tableHeader={TABLE_HEADER}
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <h4 className="text-sm font-semibold">Inward</h4>
-          <FixedTaxGrid
-            rows={inwardRows}
-            label="Notice format: inward"
-            readOnly={readOnly}
-            heads={HEADS}
-            headLabels={HEAD_LABELS}
-            noHeader="S.No"
-            labelHeader="Description"
-            showTable
-            tableHeader={TABLE_HEADER}
-          />
-          <p className="text-[11px] text-muted-foreground">
-            Row 2 follows clause 8 of{' '}
-            <StepLink step="annexures" extra={{ [ANNEX_TAB_PARAM]: 'a4' }}>Annexure-4</StepLink>{' '}
-            unless typed here. Section 16(4) cut-off for FY {financialYear}: <span className="font-medium text-foreground">{cutoff}</span>.
-          </p>
-        </div>
+          <TabsContent value="outward" className="mt-2.5">
+            <FixedTaxGrid
+              rows={outwardRows}
+              label="Notice format: outward"
+              readOnly={readOnly}
+              heads={HEADS}
+              headLabels={HEAD_LABELS}
+              noHeader="S.No"
+              labelHeader="Issue"
+              labelWidth={320}
+              showTable
+              tableHeader={TABLE_HEADER}
+            />
+          </TabsContent>
+          <TabsContent value="inward" className="mt-2.5 space-y-1.5">
+            <FixedTaxGrid
+              rows={inwardRows}
+              label="Notice format: inward"
+              readOnly={readOnly}
+              heads={HEADS}
+              headLabels={HEAD_LABELS}
+              noHeader="S.No"
+              labelHeader="Description"
+              labelWidth={320}
+              showTable
+              tableHeader={TABLE_HEADER}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Row 2 follows clause 8 of{' '}
+              <StepLink step="annexures" extra={{ [ANNEX_TAB_PARAM]: 'a4' }}>Annexure-4</StepLink>{' '}
+              unless typed here. Section 16(4) cut-off for FY {financialYear}: <span className="font-medium text-foreground">{cutoff}</span>.
+            </p>
+          </TabsContent>
+        </Tabs>
 
         <Note tone="position">
           Columns are labelled by the head they hold (the sheet&apos;s SGST/CGST headers were swapped and row 2 was shifted a

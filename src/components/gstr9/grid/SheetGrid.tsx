@@ -89,7 +89,15 @@ export interface SheetGridProps<R> {
   /** Accessible name for the grid. */
   label: string;
   className?: string;
-  maxHeight?: number;
+  /** Scroll inside the grid beyond this height (px or any CSS length, e.g. "calc(100vh - 260px)"); header and totals stay pinned. */
+  maxHeight?: number | string;
+  /**
+   * Column keys in the order a block pasted from the firm's Excel sheet
+   * fills them, when that differs from the order on screen (e.g. Rate is
+   * shown after Taxable value but sits after the tax columns in the sheet).
+   * Columns not listed follow in screen order.
+   */
+  pasteOrder?: string[];
 }
 
 type Pos = { r: number; c: number };
@@ -129,6 +137,7 @@ export function SheetGrid<R>({
   label,
   className,
   maxHeight,
+  pasteOrder,
 }: SheetGridProps<R>) {
   const [active, setActive] = useState<Pos | null>(null);
   const [editing, setEditingState] = useState<{ pos: Pos; draft: string } | null>(null);
@@ -151,7 +160,14 @@ export function SheetGrid<R>({
   const hasGroups = columns.some((c) => c.group);
   const editableColIdx = useMemo(() => columns.map((c, i) => (c.type !== 'display' && c.onEdit ? i : -1)).filter((i) => i >= 0), [columns]);
   // Columns a pasted block maps onto: editable ones plus display columns marked pasteThrough.
-  const pasteColIdx = useMemo(() => columns.map((c, i) => ((c.type !== 'display' && c.onEdit) || c.pasteThrough ? i : -1)).filter((i) => i >= 0), [columns]);
+  const pasteColIdx = useMemo(() => {
+    const takes = (c: GridColumn<R>) => (c.type !== 'display' && !!c.onEdit) || !!c.pasteThrough;
+    const onScreen = columns.map((c, i) => (takes(c) ? i : -1)).filter((i) => i >= 0);
+    if (!pasteOrder?.length) return onScreen;
+    const byKey = new Map(columns.map((c, i) => [c.key, i]));
+    const ordered = pasteOrder.map((k) => byKey.get(k)).filter((i): i is number => i !== undefined && takes(columns[i]));
+    return [...ordered, ...onScreen.filter((i) => !ordered.includes(i))];
+  }, [columns, pasteOrder]);
 
   // Focus the editor and put the caret at the end only when an edit STARTS —
   // not on every keystroke (that made mid-number edits commit wrong figures).
@@ -342,7 +358,9 @@ export function SheetGrid<R>({
     if (!block.length) return;
     const start0 = active ?? { r: 0, c: editableColIdx[0] ?? 0 };
     const start = { r: Math.min(start0.r, rows.length), c: start0.c };
-    const startEditable = pasteColIdx.findIndex((i) => i >= start.c);
+    // Start at the active column's place in the paste order (or the next column that takes a paste).
+    const exact = pasteColIdx.indexOf(start.c);
+    const startEditable = exact >= 0 ? exact : pasteColIdx.findIndex((i) => i >= start.c);
     if (startEditable < 0) return;
     const next = rows.slice();
     const errors: string[] = [];

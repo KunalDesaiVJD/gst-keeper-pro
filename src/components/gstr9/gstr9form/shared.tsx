@@ -8,7 +8,7 @@ import type { PortalMeta, TaxIn } from '@/lib/gstr9/types';
 import { SheetGrid } from '../grid/SheetGrid';
 import { JustifyControl, SourceChip } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { particularsCol, STEP_LABEL, taxInF, withTaxInF } from './helpers';
+import { particularsCol, PIN_LAST_ROW, STEP_LABEL, taxInF, withTaxInF } from './helpers';
 import { FixedRowDef, TaxInRow, taxInFormCols, useFixedRows, useGoStep } from './hooks';
 
 // ---------------------------------------------------------------------------
@@ -159,7 +159,20 @@ export interface FormTableRow {
   diffKey?: string;
 }
 
-export function FormTable<R extends FormTableRow>({ rows, cols, label, className }: { rows: R[]; cols: FormTableCol<R>[]; label: string; className?: string }) {
+export function FormTable<R extends FormTableRow>({
+  rows,
+  cols,
+  label,
+  className,
+  maxHeight,
+}: {
+  rows: R[];
+  cols: FormTableCol<R>[];
+  label: string;
+  className?: string;
+  /** Scroll inside the table beyond this height (any CSS length); the header stays pinned. */
+  maxHeight?: string;
+}) {
   const groups: Array<{ label: string; span: number }> = [];
   cols.forEach((c) => {
     const g = c.group ?? '';
@@ -170,9 +183,9 @@ export function FormTable<R extends FormTableRow>({ rows, cols, label, className
   const hasGroups = cols.some((c) => c.group);
   const hasStatus = rows.some((r) => r.diffKey);
   return (
-    <div className={cn('overflow-x-auto rounded-md border', className)}>
-      <table className="w-full border-collapse text-xs" aria-label={label}>
-        <thead className="bg-muted">
+    <div className={cn('overflow-x-auto rounded-md border', maxHeight && cn('overflow-y-auto', PIN_LAST_ROW), className)} style={maxHeight ? { maxHeight } : undefined}>
+      <table className="w-full border-separate border-spacing-0 text-xs" aria-label={label}>
+        <thead className="sticky top-0 z-10 bg-muted">
           {hasGroups && (
             <tr>
               <th colSpan={2} className="border-b border-r" />

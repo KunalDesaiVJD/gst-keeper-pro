@@ -29,9 +29,17 @@ replaced them with a document store (§3) and no data was migrated.
 
 ## 2. The workspace (UI)
 
-`/annual-return` is a guided step workspace. The left rail follows how the
-team works; each step shows its open-difference count. Every entry grid
-behaves like the Excel sheet:
+`/annual-return` is a guided step workspace. The title, client and FY sit on
+one row; the steps are a sticky bar of chips across the top (one row on a
+1920 px screen, two on a 1366 px laptop) with each step's open-difference
+count, so the working keeps the full width. Each step opens with its main
+table in the first screen: independent parts are tabs (kept in the URL, e.g.
+`?salestab=audit`, `?gstr9tab=8`, with open counts on the tabs), long tables
+scroll inside themselves with their header and totals pinned, and notes fold
+to one line. Links from the Overview, the Review list and other steps open
+the tab a figure or difference is on. Where a table shows both, the rate
+follows the taxable value (pasting from the sheet keeps the sheet's column
+order). Every entry grid behaves like the Excel sheet:
 - keyboard entry: Enter/Tab/arrows move, typing replaces, F2 edits;
 - `=a+b` expressions are accepted and kept (shown again on edit, like Excel);
 - paste a block straight from the firm's sheet — columns are taken in the
@@ -58,7 +66,8 @@ behaves like the Excel sheet:
 | 10 | GSTR-9 | GSTR-9 | 6K–6M, 8E/8F/8H1, Table 9 overrides, 10, 11, 14–18 |
 | 11 | GSTR-9C | (official tables 5–16, Part V) | adjustments, reasons, certification |
 | 12 | Notice format | NOTICE FORMATE | 16B/16C/15G, 16(4), prior-year cells |
-| 13 | Review & lock | — | every open difference, lock/unlock |
+| 13 | Review & lock | — | every open difference, sign-off (ready for review → verify & lock), revision history, snapshots |
+| 14 | Payables & set-off | ANNEXURE-3 · DRC-03 | output-/input-wise payable, set-off register (DRC-03 / GSTR-3B with evidence) |
 
 ## 3. Storage
 
@@ -75,17 +84,60 @@ stored doc lacks.
   workspace reloads instead of overwriting it.
 - A trigger rejects any write to a doc while the FY is **locked** in
   `annual_return_periods`, so the lock is enforced by the database, not the
-  UI. Unlocking needs superadmin / GST manager or the `unlock_sheets`
-  permission.
-- Overwritten versions are kept in `annual_return_doc_history`: one
-  snapshot per doc per 10 minutes of autosaving, another whenever a
-  different person saves, and always the version a Version-history restore
-  replaces (`p_force_history`), so a restore can itself be undone.
+  UI. The period is select-only for the app; status changes go through
+  `set_annual_return_status` (stale transitions refused). **Locking needs a
+  GST manager or superadmin** who ticks the review checklist
+  (`src/lib/gstr9/signoff.ts`); the reviewer, role, checklist, note and the
+  payables at the lock are stored on the period. Staff mark the working
+  "ready for review" first (`mark_annual_return_prepared`). Unlocking needs
+  superadmin / GST manager or the `unlock_sheets` permission and clears the
+  sign-off (the log keeps it). The role is the one the app sends — the app
+  has no auth session, so the database checks the declared role, as every
+  permission in this app is checked.
+- **Every change is logged** in `annual_return_change_log` by an AFTER
+  trigger on `annual_return_docs` — one row per changed figure: sheet, path
+  inside it (list rows matched by id, with the row's ledger/description as
+  it was), old and new value, who, when, and an action label the save RPC
+  passes (`p_action`: "Imported as-filed GSTR-3B from the portal",
+  "Restored version 12", "Copied the ledger list from FY …"; default
+  "Edited"). Status changes, sign-offs and set-offs are logged too. The log
+  is select-only for the app; only the SECURITY DEFINER trigger/RPCs write
+  it. `src/lib/gstr9/audit.ts` turns a path into words ("Part A (taxable) ›
+  “Sales @18%” › Taxable value"). Autosave runs 0.7 s after a change and at
+  once when the tab is hidden or closed.
+- Whole-sheet **snapshots** (restore points) are kept in
+  `annual_return_doc_history` (select-only), each with a reason: one per doc
+  per 10 minutes of autosaving, one before a different person's edit, one
+  before a restore (`p_force_history`) and one of every sheet at the lock.
 - Raw portal payloads (GSTR-9 system-computed JSON) are kept unchanged in
   `gst_filed_returns` (`return_type = 'GSTR9_CALC'`, `period_month = '03/YYYY'`),
   the same table the extension already uses for as-filed returns.
-- RLS is `FOR ALL TO public USING (true) WITH CHECK (true)`, as everywhere
-  in this app (CLAUDE.md).
+- RLS is `FOR ALL TO public USING (true) WITH CHECK (true)` on the working
+  docs, as everywhere in this app (CLAUDE.md). The audit records — change
+  log, snapshots, period, set-offs — are `FOR SELECT TO public` and written
+  only by SECURITY DEFINER functions, so the app cannot rewrite them.
+
+### Payables and set-off
+
+Once the working is complete, what Annexure-3 leaves payable is disclosed
+**output-wise** (clause 9 difference, RCM to be paid, other output payments)
+and **input-wise** (excess ITC claimed, other input payments), per head —
+nothing is netted across heads or across the two sides
+(`Workings.payables`). A payable is set off only against evidence in the
+system (`annual_return_payable_setoffs`, CHECK constraints):
+- a **DRC-03 imported into the system** — one synced from the portal by the
+  extension (`gst_drc03_filings`, "Sync DRC-03s from the portal"), which
+  cannot be used for more than it paid per head, or one imported by
+  uploading its copy with ARN and date; or
+- an **effect given in a GSTR-3B** — its return period, filing date, the
+  table it went into, and the filed GSTR-3B's copy (mandatory).
+
+Copies go to the `annual-return-evidence` bucket, which is upload- and
+read-only (a copy on record cannot be replaced or deleted). Set-offs are
+**not** blocked by the lock (DRC-03s are usually paid after filing);
+removing one needs a reason and keeps it in the register, struck through.
+Annexure-3's "already paid" is now this register's total; the old typed
+`a3AlreadyPaid` field is no longer read.
 
 ## 4. Engine map (sheet → code)
 
@@ -249,7 +301,11 @@ checks the version before starting it.
 | Every figure and difference line | `src/lib/gstr9/engine.ts` (`computeWorkings`, `diffStatus`) |
 | Portal JSON parsing / applying | `portalParser.ts`, `portalImport.ts` (`applyHandEdits` for any typed portal figure) |
 | Load / save / lock / history | `store.ts`, `components/gstr9/WorkspaceContext.tsx` |
+| Revision log in words | `audit.ts`, `components/gstr9/overview/RevisionHistory.tsx` |
+| Sign-off checklist / roles | `signoff.ts`, `components/gstr9/overview/LockPanel.tsx` |
+| Payables & set-off | `payables.ts`, `components/gstr9/payables/*`, `steps/PayablesStep.tsx` |
+| Audit / sign-off / set-off schema | `supabase/migrations/20260929100000_annual_return_audit_signoff_payables.sql` |
 | Grid behaviour (keys, paste, `=a+b`, SGST mirror) | `components/gstr9/grid/*` |
 | Steps | `components/gstr9/steps/*` + one folder per step |
-| Exports (Excel working, GSTR-9 PDF, Notice PDF) | `exportWorkbook.ts`, `exportPdf.ts` |
+| Exports — working papers (Excel via ExcelJS, PDF via jsPDF), GSTR-9 PDF, Notice PDF | `export/papers.ts` builds one working-paper model (WP refs A1 Cover … F1 Revision history) that `export/excel.ts` and `export/pdf.ts` both render, so the two never disagree; `exportWorkbook.ts` / `exportPdf.ts` are the entry points. Every figure comes from `computeWorkings`; the paper layout keeps the firm's sheet names and row labels. ExcelJS and the renderers are lazy-loaded chunks. |
 | Acceptance test | `scripts/verify-gstr9-engine.mjs` (needs the workbook path) |

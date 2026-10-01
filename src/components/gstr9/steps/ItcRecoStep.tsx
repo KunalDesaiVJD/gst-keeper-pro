@@ -3,15 +3,17 @@ import { RotateCcw, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { maxAbs, subT, totalTax } from '@/lib/gstr9/engine';
 import { newId, zIn } from '@/lib/gstr9/defaults';
-import type { Gstr9ManualDoc, OtherReversalRow, Tax, TaxIn } from '@/lib/gstr9/types';
+import type { Gstr9ManualDoc, OtherReversalRow, Tax, TaxIn, ValTax } from '@/lib/gstr9/types';
 import { useWorkspace } from '../WorkspaceContext';
-import { MatrixTable, type MatrixRow, Note, OpenDifferences, SectionCard, SourceChip } from '../ui';
+import { HEAD_LABEL, JustifyControl, Note, OpenDifferences, SectionCard, SourceChip, type MatrixHead } from '../ui';
 import { SheetGrid, type GridColumn } from '../grid/SheetGrid';
 import { taxFooter, taxInCols } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
-import ExportMenu from '../ExportMenu';
+import { FigureTable, type FigColumn, type FigRow } from '../reco/FigureTable';
+import { OpenBadge, StepTab, StepTabsList } from '../reco/StepTabs';
 import {
   anyTax,
   DESC_MAX,
@@ -22,6 +24,7 @@ import {
   overrideTaxCols,
   taxToIn,
   useGoToStep,
+  useTabParam,
   withFormulas,
   type OverrideRow,
 } from '../reco/helpers';
@@ -44,6 +47,44 @@ const SmallBadge: React.FC<{ variant?: 'secondary' | 'info' | 'warning' | 'outli
 // ---------------------------------------------------------------------------
 // Main working (GSTR 9-INPUT)
 // ---------------------------------------------------------------------------
+
+const WORKING_HEADS: MatrixHead[] = ['t', 'i', 'c', 's', 'x'];
+const WORKING_COLUMNS: FigColumn[] = WORKING_HEADS.map((h) => ({ key: h, header: HEAD_LABEL[h], width: h === 't' ? 128 : h === 'x' ? 96 : 118 }));
+
+/** One line of the working, in the shape MatrixTable used to take (heading / total / indent / signed / diffKey). */
+interface WorkingLine {
+  key: string;
+  code?: React.ReactNode;
+  label: React.ReactNode;
+  value?: Partial<ValTax> | Tax | null;
+  heading?: boolean;
+  total?: boolean;
+  indent?: boolean;
+  note?: React.ReactNode;
+  diffKey?: string;
+  /** Negative figures shown red (differences). */
+  signed?: boolean;
+}
+
+const toFigRow = (r: WorkingLine): FigRow => {
+  if (r.heading) return { key: r.key, code: r.code, label: r.label, kind: 'heading' };
+  const v = (r.value ?? {}) as Partial<Record<MatrixHead, number>>;
+  const values = Object.fromEntries(WORKING_HEADS.map((h) => [h, v[h]]));
+  const tones = r.signed ? Object.fromEntries(WORKING_HEADS.map((h) => [h, (v[h] ?? 0) < -0.004 ? ('error' as const) : undefined])) : undefined;
+  return {
+    key: r.key,
+    code: r.code,
+    label: r.label,
+    note: r.note,
+    values,
+    tones,
+    kind: r.total ? 'total' : r.indent ? 'sub' : 'row',
+    status: r.diffKey ? <JustifyControl lineKey={r.diffKey} /> : undefined,
+  };
+};
+
+/** The ITC working (about 25 lines) fills the screen below the tabs and scrolls inside itself, header pinned. */
+const WORKING_MAX_HEIGHT = 'max(360px, calc(100vh - 300px))';
 
 const WorkingCard: React.FC = () => {
   const { docs, workings } = useWorkspace();
@@ -80,11 +121,11 @@ const WorkingCard: React.FC = () => {
 
   // Only lines the engine actually pushed get a justification control.
   const hasLine = (key: string) => workings.diffs.some((d) => d.key === key);
-  const optional: MatrixRow[] = [];
+  const optional: WorkingLine[] = [];
   if (anyTax(I.isd)) optional.push({ key: 'isd', code: '6G', label: 'ITC received from ISD', value: I.isd });
   if (anyTax(I.t6N)) optional.push({ key: 't6N', code: '6N', label: 'TRAN-1 / TRAN-2 / ITC-01, 02, 02A (6K–6M)', value: I.t6N });
 
-  const rows: MatrixRow[] = [
+  const rows: WorkingLine[] = [
     { key: 'h6', heading: true, code: '6', label: 'ITC availed — GSTR-9 Table 6' },
     { key: 'inputs', code: '6B', label: 'Inputs', value: I.inputs, note: <SmallBadge variant="outline">9C row A</SmallBadge> },
     {
@@ -131,12 +172,18 @@ const WorkingCard: React.FC = () => {
       title="ITC working for GSTR-9"
       description="Table 6 built from the books, tied to 6A2; Table 7 reversals; and the gap to the books that goes to Tables 12 and 13."
       excelRef="GSTR 9-INPUT B7:H28"
-      actions={<ExportMenu only={['excel']} />}
     >
       {workings.ctx.noItcBuilder && (
         <Note>This client is a builder on the no-ITC scheme — nil ITC is expected, and ITC differences are for information only.</Note>
       )}
-      <MatrixTable label="GSTR 9-INPUT: ITC working for GSTR-9" rows={rows} heads={['t', 'i', 'c', 's', 'x']} />
+      <FigureTable
+        label="GSTR 9-INPUT: ITC working for GSTR-9"
+        firstHeader="Particulars"
+        columns={WORKING_COLUMNS}
+        rows={rows.map(toFigRow)}
+        maxHeight={WORKING_MAX_HEIGHT}
+        labelWidth={300}
+      />
       <div className="grid gap-2 lg:grid-cols-2">
         <Note tone="position">
           “As per book” is the Duties &amp; Taxes net <strong>after</strong> the last-year effect (D&amp;T-INPUT U26), not U24 as the sheet reads, and 6A1 defaults to the last-year effect. 7J is current-year ITC, so the book figure must be too; the sheet’s two agree only while the last-year effect is nil.
@@ -496,14 +543,45 @@ const NextYearCard: React.FC = () => {
 
 // ---------------------------------------------------------------------------
 
-const ItcRecoStep: React.FC = () => (
-  <div className="space-y-4">
-    <OpenDifferences step="itc" />
-    <WorkingCard />
-    <T6A1Card />
-    <Table7Card />
-    <NextYearCard />
-  </div>
-);
+const TABS = ['working', 'table7', 'next'] as const;
+
+/**
+ * Step 7 — the working (Tables 6 and 7 against 6A2 and the books) first; the
+ * Table 7 entries and the 6A1 / 12 / 13 entries one click away (?itctab=).
+ * Every difference line of the step sits in the working, so its open count
+ * is on that tab.
+ */
+const ItcRecoStep: React.FC = () => {
+  const { workings } = useWorkspace();
+  const [tab, setTab] = useTabParam('itctab', TABS, 'working');
+  return (
+    <div className="space-y-3">
+      <OpenDifferences step="itc" />
+      <Tabs value={tab} onValueChange={setTab} className="space-y-3">
+        <StepTabsList label="ITC reco">
+          <StepTab value="working">
+            ITC working — Tables 6 &amp; 7 <OpenBadge n={workings.stepOpen.itc} />
+          </StepTab>
+          <StepTab value="table7" title="7A to 7H, typed rule by rule">
+            Table 7 entries
+          </StepTab>
+          <StepTab value="next" title="6A1, Tables 12 and 13, and 8C">
+            6A1 · Tables 12 &amp; 13
+          </StepTab>
+        </StepTabsList>
+        <TabsContent value="working" className="mt-0">
+          <WorkingCard />
+        </TabsContent>
+        <TabsContent value="table7" className="mt-0">
+          <Table7Card />
+        </TabsContent>
+        <TabsContent value="next" className="mt-0 space-y-3">
+          <T6A1Card />
+          <NextYearCard />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+};
 
 export default ItcRecoStep;

@@ -19,6 +19,23 @@ export const FORM_HEAD_LABELS: Record<MatrixHead, string> = {
 };
 export const TAX_ORDER: Array<keyof Tax> = ['c', 's', 'i', 'x'];
 
+/**
+ * Height a long table of the form may take before it scrolls inside itself:
+ * the screen below the step bar, the table tabs and the card header, so the
+ * table (and its sticky header / total) stays in one screen.
+ */
+export const FORM_GRID_MAX_H = 'max(320px, calc(100vh - 400px))';
+
+/** Pins a table's last (total) row to the bottom of its scroll box. */
+export const PIN_LAST_ROW =
+  '[&_tbody_tr:last-child_td]:sticky [&_tbody_tr:last-child_td]:bottom-0 [&_tbody_tr:last-child_td]:z-[15] [&_tbody_tr:last-child_td]:bg-muted [&_tbody_tr:last-child_td]:shadow-[inset_0_1px_0_hsl(var(--border))]';
+
+/**
+ * The same limit for a MatrixTable (passed as its className): the wrapper
+ * scrolls, the header row and the last (total) row stay pinned.
+ */
+export const FORM_MATRIX_SCROLL = `max-h-[max(320px,calc(100vh_-_400px))] overflow-y-auto [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-20 [&_thead_th]:bg-muted [&_thead_th]:shadow-[inset_0_-1px_0_hsl(var(--border))] ${PIN_LAST_ROW}`;
+
 
 export const STEP_LABEL: Partial<Record<StepKey, string>> = {
   portal: 'Portal data',

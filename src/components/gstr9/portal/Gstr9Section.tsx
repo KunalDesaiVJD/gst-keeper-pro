@@ -1,10 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, Loader2, RefreshCw, Upload } from 'lucide-react';
+import { Loader2, RefreshCw, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { T4_ROWS } from '@/lib/gstr9/engine';
 import { applyPortalImport, diffPortalImport, parseGstr9Calc, ParsedGstr9 } from '@/lib/gstr9/portalParser';
@@ -26,6 +25,7 @@ import {
   T5_ROWS,
   T9_ROWS,
   timeOf,
+  typedCount,
 } from '@/lib/gstr9/portalImport';
 import { AsFiledReturn, loadGstr9Calc, saveUploadedGstr9Calc } from '@/lib/gstr9/store';
 import type { PortalDoc, PortalMeta, T5Key } from '@/lib/gstr9/types';
@@ -39,7 +39,7 @@ export interface PullBridge {
   ready: boolean;
   version: string | null;
   /** Posts __gstkPullSection; `onStarted` gets the extension's answer (portal tab opened or not). */
-  start: (payload: { mode: string; period_month: string; period_months: string[] }, onStarted: (ok: boolean, error?: string) => void) => void;
+  start: (payload: { mode: string; period_month?: string; period_months?: string[] }, onStarted: (ok: boolean, error?: string) => void) => void;
 }
 
 /** First extension version that knows the gstr9_pull mode (older ones would fall through to the ledger pull). */
@@ -97,8 +97,8 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
   const [busy, setBusy] = useState(false);
   const [polling, setPolling] = useState<{ tries: number } | null>(null);
   const [preview, setPreview] = useState<PreviewState | null>(null);
-  const [manualOpen, setManualOpen] = useState<boolean>(() => !meta?.source || meta.source === 'manual');
-  const [tab, setTab] = useState('t4');
+  // Fetched figures open on what the working uses; typed (or nothing yet) opens straight on Table 4 to type into.
+  const [tab, setTab] = useState<string>(() => (!meta?.source || meta.source === 'manual' ? 't4' : 'used'));
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -270,7 +270,9 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
   const apply = (selected: ImportChange[]) => {
     if (!preview) return;
     const m: PortalMeta = { ...preview.meta, fetchedAt: preview.meta.fetchedAt ?? new Date().toISOString() };
-    update('portal', (d) => ({ ...clearFormulas(applyPortalImport(d, selected), selected.map((c) => c.path)), gstr9Meta: m }));
+    update('portal', (d) => ({ ...clearFormulas(applyPortalImport(d, selected), selected.map((c) => c.path)), gstr9Meta: m }), {
+      action: m.source === 'upload' ? 'Imported GSTR-9 figures from an uploaded file' : 'Imported GSTR-9 system-computed figures from the portal',
+    });
     toast.success(selected.length ? `Applied ${selected.length} GSTR-9 figure${selected.length === 1 ? '' : 's'}.` : 'Recorded where the GSTR-9 figures came from.');
     setPreview(null);
   };
@@ -305,6 +307,11 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
     })),
     [t9Cols],
   );
+  const typedT4 = typedCount(portal, 'gstr9.table4.');
+  const typedT5 = typedCount(portal, 'gstr9.table5.');
+  const typedItc = ITC_ROWS(financialYear).reduce((n, r) => n + typedCount(portal, `gstr9.${r.key}.`), 0);
+  const typedT9 = typedCount(portal, 'gstr9.table9.');
+  const trig = 'gap-1.5 px-2.5 py-1 text-xs';
   const typedIn = (row: PortalFieldRow) => Object.values(row.paths).filter((p) => p && portal.manual[p]).length;
   const typedExtra = { header: 'Source', width: 84, render: (row: PortalFieldRow) => <TypedBadge n={typedIn(row)} /> };
 
@@ -315,7 +322,7 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
   return (
     <SectionCard
       title={<span className="inline-flex flex-wrap items-center gap-2">GSTR-9 — system computed (annual) <SourceChip meta={meta} /></span>}
-      description={<>The figures the portal auto-populates in GSTR-9 for FY {financialYear} (return period {period}). They fill GSTR 9-OUTPUT column B (Table 4), 6A, 6G, 8A and Table 9; Table 5 is kept to cross-check the books.</>}
+      description={<>The figures the portal auto-populates in GSTR-9 for FY {financialYear} (return period {period}).</>}
       excelRef="GSTR 9-OUTPUT I9:L15 · GSTR-9 6A, 8A, Table 9 (AUTO POPULATE FROM 9)"
       actions={
         !readOnly && (
@@ -372,144 +379,148 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
         </Note>
       )}
 
-      {/* What the working uses */}
-      <MatrixTable
-        label="GSTR-9 portal figures used by the working"
-        heads={['t', 'i', 'c', 's', 'x']}
-        headLabels={{ t: 'Value', s: 'SGST' }}
-        rows={[
-          { key: 't4', code: '4', label: 'Outward supplies as auto-populated (excl. 4G), net of credit notes', value: workings.outward.portalTotal, note: flowNote('→ Outward reco') },
-          {
-            key: 't4g', code: '4G', label: 'Reverse charge (portal)', value: g.table4.rchrg,
-            note: flowNote(workings.rcm.partASource === 'gstr9' ? '→ RCM Part A (no monthly 3B yet)' : '→ fallback only; 4G uses 3.1(d) month-wise'),
-          },
-          {
-            key: 't6a', code: '6A', label: 'ITC availed through GSTR-3B', value: g.t6A,
-            note: flowNote(workings.g9.t6ASource === 'gstr9' ? '→ GSTR-9 6A' : workings.g9.t6ASource === 'monthly_3b' ? 'not in use — 6A is Σ 4A of the as-filed 3B' : '→ GSTR-9 6A'),
-          },
-          { key: 't6g', code: '6G', label: 'ITC received from ISD', value: g.t6G, note: flowNote('→ 6G unless typed in the GSTR-9 step') },
-          { key: 't8a', code: '8A', label: ITC_ROWS(financialYear)[2].label, value: g.t8A, note: flowNote('→ 8A / 8D') },
-          {
-            key: 't9p', code: '9', label: 'Tax payable (portal)',
-            value: { i: g.table9.igst.payable, c: g.table9.cgst.payable, s: g.table9.sgst.payable, x: g.table9.cess.payable },
-            note: flowNote('→ Table 9 payable'),
-          },
-          {
-            key: 't9paid', code: '9', label: 'Total tax paid (cash + ITC)',
-            value: { i: t9.igst.paid, c: t9.cgst.paid, s: t9.sgst.paid, x: t9.cess.paid },
-            note: flowNote('→ Table 9, Annexure-1'),
-          },
-        ]}
-      />
-
       <Note tone="warn">
         The GSTR-9 pull reads the portal&apos;s own system-computed endpoint (the one its GSTR-9 page uses); it has not been exercised live yet. If it fails, Upload the JSON saved from the portal, or type the figures from the portal screen.
       </Note>
 
-      {/* Manual fallback */}
-      <Collapsible open={manualOpen} onOpenChange={setManualOpen}>
-        <CollapsibleTrigger asChild>
-          <Button variant="ghost" size="sm" className="-ml-2 gap-1">
-            <ChevronDown className={cn('h-4 w-4 transition-transform', !manualOpen && '-rotate-90')} />
-            Enter or correct by hand
-          </Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent className="space-y-3 pt-2">
-          <div className="text-xs text-muted-foreground">
-            Type the figures from the portal&apos;s GSTR-9 screen. A typed figure shows as <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">typed</Badge> and a later pull or upload never replaces it unless you tick it in the preview.
-          </div>
-          <Tabs value={tab} onValueChange={setTab}>
-            <TabsList className="h-auto flex-wrap justify-start">
-              <TabsTrigger value="t4">Table 4</TabsTrigger>
-              <TabsTrigger value="t5">Table 5</TabsTrigger>
-              <TabsTrigger value="itc">6A · 6G · 8A</TabsTrigger>
-              <TabsTrigger value="t9">Table 9</TabsTrigger>
+      {/* What the working uses, and the tables to type or correct by hand */}
+      <Tabs value={tab} onValueChange={setTab}>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <div className="max-w-full overflow-x-auto">
+            <TabsList className="h-8 w-max">
+              <TabsTrigger value="used" className={trig}>Used in the working</TabsTrigger>
+              <TabsTrigger value="t4" className={trig}>Table 4 <TypedBadge n={typedT4} /></TabsTrigger>
+              <TabsTrigger value="t5" className={trig}>Table 5 <TypedBadge n={typedT5} /></TabsTrigger>
+              <TabsTrigger value="itc" className={trig}>6A · 6G · 8A <TypedBadge n={typedItc} /></TabsTrigger>
+              <TabsTrigger value="t9" className={trig}>Table 9 <TypedBadge n={typedT9} /></TabsTrigger>
             </TabsList>
+          </div>
+          <span className="text-[11px] text-muted-foreground">Tables 4 – 9: enter or correct by hand</span>
+        </div>
 
-            <TabsContent value="t4" className="space-y-2">
-              <PortalFieldGrid
-                label="GSTR-9 Table 4 as auto-populated"
-                rows={t4Rows}
-                cols={HEADS_VT}
-                codeHeader="Table"
-                labelHeader="Nature of supplies"
-                labelWidth={260}
-                mirror={{ c: 'c', s: 's' }}
-                extra={typedExtra}
-                footer={[{
-                  key: 'total',
-                  label: 'Total',
-                  tone: 'total',
-                  cells: {
-                    _label: 'Excl. 4G, credit notes and 4L deducted (GSTR 9-OUTPUT I17)',
-                    t: workings.outward.portalTotal.t, i: workings.outward.portalTotal.i, c: workings.outward.portalTotal.c,
-                    s: workings.outward.portalTotal.s, x: workings.outward.portalTotal.x,
-                  },
-                }]}
-              />
-              <Note tone="info">
-                SGST follows CGST while the two are equal (the sheet&apos;s <span className="font-mono">=K</span> cells) — type SGST to set it on its own. 4G here is the portal&apos;s annual figure: GSTR-9 4G itself is RCM Part A (3.1(d) of the as-filed GSTR-3B, month by month), and this figure is used only when no month is applied.
-              </Note>
-            </TabsContent>
+        <TabsContent value="used" className="space-y-2">
+          <MatrixTable
+            label="GSTR-9 portal figures used by the working"
+            heads={['t', 'i', 'c', 's', 'x']}
+            headLabels={{ t: 'Value', s: 'SGST' }}
+            rows={[
+              { key: 't4', code: '4', label: 'Outward supplies as auto-populated (excl. 4G), net of credit notes', value: workings.outward.portalTotal, note: flowNote('→ Outward reco') },
+              {
+                key: 't4g', code: '4G', label: 'Reverse charge (portal)', value: g.table4.rchrg,
+                note: flowNote(workings.rcm.partASource === 'gstr9' ? '→ RCM Part A (no monthly 3B yet)' : '→ fallback only; 4G uses 3.1(d) month-wise'),
+              },
+              {
+                key: 't6a', code: '6A', label: 'ITC availed through GSTR-3B', value: g.t6A,
+                note: flowNote(workings.g9.t6ASource === 'gstr9' ? '→ GSTR-9 6A' : workings.g9.t6ASource === 'monthly_3b' ? 'not in use — 6A is Σ 4A of the as-filed 3B' : '→ GSTR-9 6A'),
+              },
+              { key: 't6g', code: '6G', label: 'ITC received from ISD', value: g.t6G, note: flowNote('→ 6G unless typed in the GSTR-9 step') },
+              { key: 't8a', code: '8A', label: ITC_ROWS(financialYear)[2].label, value: g.t8A, note: flowNote('→ 8A / 8D') },
+              {
+                key: 't9p', code: '9', label: 'Tax payable (portal)',
+                value: { i: g.table9.igst.payable, c: g.table9.cgst.payable, s: g.table9.sgst.payable, x: g.table9.cess.payable },
+                note: flowNote('→ Table 9 payable'),
+              },
+              {
+                key: 't9paid', code: '9', label: 'Total tax paid (cash + ITC)',
+                value: { i: t9.igst.paid, c: t9.cgst.paid, s: t9.sgst.paid, x: t9.cess.paid },
+                note: flowNote('→ Table 9, Annexure-1'),
+              },
+            ]}
+          />
+          <p className="text-[11px] text-muted-foreground">
+            They fill GSTR 9-OUTPUT column B (Table 4), 6A, 6G, 8A and Table 9; Table 5 is kept to cross-check the books.
+          </p>
+        </TabsContent>
 
-            <TabsContent value="t5" className="space-y-2">
-              <PortalFieldGrid
-                label="GSTR-9 Table 5 as auto-populated"
-                rows={t5Rows}
-                cols={[{ key: 't', header: 'Portal value', width: 140 }]}
-                codeHeader="Table"
-                labelHeader="Nature of supplies"
-                labelWidth={320}
-                extra={{
-                  header: 'Books (Part B)',
-                  width: 140,
-                  render: (row) => <Money value={workings.g9.t5[T5_BOOKS_ROW[row.id as T5Key]].t} className="block text-right" />,
-                }}
-              />
-              <p className="text-[11px] text-muted-foreground">Table 5 is not compared line by line in the sheet; it is kept here so the books side (Sales step, Part B) can be checked against what the portal shows.</p>
-            </TabsContent>
+        <TabsContent value="t4" className="space-y-2">
+          <PortalFieldGrid
+            label="GSTR-9 Table 4 as auto-populated"
+            rows={t4Rows}
+            cols={HEADS_VT}
+            codeHeader="Table"
+            labelHeader="Nature of supplies"
+            labelWidth={260}
+            mirror={{ c: 'c', s: 's' }}
+            extra={typedExtra}
+            maxHeight="max(300px, calc(100vh - 520px))"
+            footer={[{
+              key: 'total',
+              label: 'Total',
+              tone: 'total',
+              cells: {
+                _label: 'Excl. 4G, credit notes and 4L deducted (GSTR 9-OUTPUT I17)',
+                t: workings.outward.portalTotal.t, i: workings.outward.portalTotal.i, c: workings.outward.portalTotal.c,
+                s: workings.outward.portalTotal.s, x: workings.outward.portalTotal.x,
+              },
+            }]}
+          />
+          <Note tone="info">
+            SGST follows CGST while the two are equal (the sheet&apos;s <span className="font-mono">=K</span> cells) — type SGST to set it on its own. 4G here is the portal&apos;s annual figure: GSTR-9 4G itself is RCM Part A (3.1(d) of the as-filed GSTR-3B, month by month), and this figure is used only when no month is applied.
+          </Note>
+        </TabsContent>
 
-            <TabsContent value="itc" className="space-y-2">
-              <PortalFieldGrid
-                label="GSTR-9 ITC figures from the portal"
-                rows={itcRows}
-                cols={HEADS_T}
-                codeHeader="Table"
-                labelHeader="Details"
-                labelWidth={300}
-                mirror={{ c: 'c', s: 's' }}
-                extra={typedExtra}
-              />
-              <p className="text-[11px] text-muted-foreground">
-                When no GSTR-9 data is here at all, 6A falls back to Σ 4A of the as-filed GSTR-3B (below). 8A is GSTR-2B from FY 2023-24 (GSTR-2A before).
-              </p>
-            </TabsContent>
+        <TabsContent value="t5" className="space-y-2">
+          <PortalFieldGrid
+            label="GSTR-9 Table 5 as auto-populated"
+            rows={t5Rows}
+            cols={[{ key: 't', header: 'Portal value', width: 140 }]}
+            codeHeader="Table"
+            labelHeader="Nature of supplies"
+            labelWidth={320}
+            maxHeight="max(300px, calc(100vh - 520px))"
+            extra={{
+              header: 'Books (Part B)',
+              width: 140,
+              render: (row) => <Money value={workings.g9.t5[T5_BOOKS_ROW[row.id as T5Key]].t} className="block text-right" />,
+            }}
+          />
+          <p className="text-[11px] text-muted-foreground">Table 5 is not compared line by line in the sheet; it is kept here so the books side (Sales step, Part B) can be checked against what the portal shows.</p>
+        </TabsContent>
 
-            <TabsContent value="t9" className="space-y-2">
-              <PortalFieldGrid
-                label="GSTR-9 Table 9 from the portal"
-                rows={t9Rows}
-                cols={t9Cols}
-                codeHeader="No."
-                labelHeader="Description"
-                labelWidth={150}
-                extra={{
-                  header: 'Total paid',
-                  width: 132,
-                  render: (row) => {
-                    const k = row.id as keyof typeof t9;
-                    const v = k in t9 ? t9[k].paid : workings.g9.t9Other[row.id as keyof typeof workings.g9.t9Other]?.cash;
-                    return <Money value={v} className="block text-right font-medium" />;
-                  },
-                }}
-              />
-              <Note tone="position">
-                GSTR-9 Table 9 tax payable is this portal figure (what the portal pre-fills), else the 4N tax, and can be overridden in the GSTR-9 step. The sheet mixes the two (IGST from the portal, CGST/SGST from 4N).
-              </Note>
-            </TabsContent>
-          </Tabs>
-        </CollapsibleContent>
-      </Collapsible>
+        <TabsContent value="itc" className="space-y-2">
+          <PortalFieldGrid
+            label="GSTR-9 ITC figures from the portal"
+            rows={itcRows}
+            cols={HEADS_T}
+            codeHeader="Table"
+            labelHeader="Details"
+            labelWidth={300}
+            mirror={{ c: 'c', s: 's' }}
+            extra={typedExtra}
+          />
+          <p className="text-[11px] text-muted-foreground">
+            When no GSTR-9 data is here at all, 6A falls back to Σ 4A of the as-filed GSTR-3B (the As-filed GSTR-3B tab). 8A is GSTR-2B from FY 2023-24 (GSTR-2A before).
+          </p>
+        </TabsContent>
+
+        <TabsContent value="t9" className="space-y-2">
+          <PortalFieldGrid
+            label="GSTR-9 Table 9 from the portal"
+            rows={t9Rows}
+            cols={t9Cols}
+            codeHeader="No."
+            labelHeader="Description"
+            labelWidth={150}
+            extra={{
+              header: 'Total paid',
+              width: 132,
+              render: (row) => {
+                const k = row.id as keyof typeof t9;
+                const v = k in t9 ? t9[k].paid : workings.g9.t9Other[row.id as keyof typeof workings.g9.t9Other]?.cash;
+                return <Money value={v} className="block text-right font-medium" />;
+              },
+            }}
+          />
+          <Note tone="position">
+            GSTR-9 Table 9 tax payable is this portal figure (what the portal pre-fills), else the 4N tax, and can be overridden in the GSTR-9 step. The sheet mixes the two (IGST from the portal, CGST/SGST from 4N).
+          </Note>
+        </TabsContent>
+      </Tabs>
+      {tab !== 'used' && (
+        <div className="text-[11px] text-muted-foreground">
+          Type the figures from the portal&apos;s GSTR-9 screen. A typed figure shows as <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">typed</Badge> and a later pull or upload never replaces it unless you tick it in the preview.
+        </div>
+      )}
 
       <ImportPreviewDialog
         open={!!preview}

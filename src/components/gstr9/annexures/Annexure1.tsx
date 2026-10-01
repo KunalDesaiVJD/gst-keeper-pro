@@ -119,7 +119,7 @@ const Annexure1: React.FC = () => {
   ];
   const entryCols: GridColumn<EntryRow>[] = [
     {
-      key: 'label', header: 'Line', type: 'display', align: 'left', width: 320,
+      key: 'label', header: 'Line', type: 'display', align: 'left', width: 440,
       value: (r) => r.label,
       render: (r) => (
         <div className="whitespace-normal py-1 leading-snug">
@@ -156,7 +156,7 @@ const Annexure1: React.FC = () => {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <SectionCard
         title="Annexure-1 — Income reconciliation"
         description="Income as per books (P/L and RCM) against the GSTR-9 the portal auto-calculates."
@@ -176,11 +176,12 @@ const Annexure1: React.FC = () => {
           heads={['t', 'i', 'c', 's', 'x']}
           headLabels={{ t: 'Amount' }}
           label="Annexure-1 income reconciliation"
-          className="[&_td:nth-child(2)]:min-w-[15rem]"
+          // Figure columns as wide as their figures, so each label and its source fit on one line.
+          className="[&_td:nth-child(2)]:min-w-[15rem] [&_th:nth-child(n+3)]:min-w-[6.5rem]"
         />
 
         <div className="space-y-1.5">
-          <h4 className="text-sm font-semibold">Lines you enter</h4>
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Lines you enter</h4>
           <SheetGrid<EntryRow>
             rows={entryRows}
             columns={entryCols}
@@ -208,21 +209,24 @@ const Annexure1: React.FC = () => {
             <StepLink step="portal">Portal data</StepLink>
           </Note>
         )}
-        <MatrixTable
-          rows={paidRows}
-          heads={['t', 'i', 'c']}
-          headLabels={{ t: 'Payable (books, E)', i: 'Paid (GSTR-9 Table 9)', c: 'Difference' }}
-          label="Annexure-1 paid and payable"
-        />
-        <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
-          <div className="mb-0.5 font-semibold text-muted-foreground">Reason for the difference (sheet note G19)</div>
-          {paidReason ? (
-            <p className="whitespace-pre-wrap">{paidReason}</p>
-          ) : (
-            <p className="text-muted-foreground">
-              Not written yet — use the status button on the Total line, e.g. &quot;export liability for October paid twice, under 3.1(a) and 3.1(b)&quot;.
-            </p>
-          )}
+        <div className="grid gap-2.5 xl:grid-cols-[minmax(0,1fr)_15rem] 2xl:grid-cols-[minmax(0,1fr)_24rem]">
+          <MatrixTable
+            rows={paidRows}
+            heads={['t', 'i', 'c']}
+            headLabels={{ t: 'Payable (books, E)', i: 'Paid (GSTR-9 Table 9)', c: 'Difference' }}
+            label="Annexure-1 paid and payable"
+            className="[&_th:nth-child(2)]:min-w-[8rem] [&_th:nth-child(n+3)]:min-w-[6.5rem]"
+          />
+          <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
+            <div className="mb-0.5 font-semibold text-muted-foreground">Reason for the difference (sheet note G19)</div>
+            {paidReason ? (
+              <p className="whitespace-pre-wrap">{paidReason}</p>
+            ) : (
+              <p className="text-muted-foreground">
+                Not written yet — use the status button on the Total line, e.g. &quot;export liability for October paid twice, under 3.1(a) and 3.1(b)&quot;.
+              </p>
+            )}
+          </div>
         </div>
         <Note tone="position">SGST payable is taken from the SGST head; the sheet copied CGST (D21 = D20) (§6 item 6).</Note>
       </SectionCard>

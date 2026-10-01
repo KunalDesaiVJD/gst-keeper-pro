@@ -123,7 +123,7 @@ const CertificationPart: React.FC = () => {
         const next = { ...d.certification };
         CARRY_KEYS.forEach((k) => { next[k] = src[k] ?? ''; });
         return { ...d, certification: next };
-      });
+      }, { action: `Copied from the FY ${prevFY} working` });
       toast.success(`Copied the signatory and address from FY ${prevFY}. Check the date and place.`);
     } catch (e) {
       toast.error('Could not load the previous year: ' + (e instanceof Error ? e.message : String(e)));
@@ -146,7 +146,7 @@ const CertificationPart: React.FC = () => {
         )
       }
     >
-      <div className="max-w-3xl space-y-5">
+      <div className="grid gap-x-8 gap-y-4 xl:grid-cols-2 2xl:max-w-[1200px]">
         <fieldset className="space-y-3">
           <legend className="text-sm font-medium">Signatory</legend>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

@@ -121,7 +121,11 @@ implemented by engineering judgement, not confirmed in a firm sign-off.
 `/annual-return` rebuilds the firm's `MASTER_PMS.xlsx` working as a guided
 step workspace. Workings are one JSONB doc per (client, FY, sheet) in
 `annual_return_docs` (version-checked saves, DB-enforced lock, history);
-every figure comes from the pure engine `src/lib/gstr9/engine.ts`.
+every figure comes from the pure engine `src/lib/gstr9/engine.ts`. Every
+saved change is logged per figure by a DB trigger (`annual_return_change_log`,
+select-only); only a GST manager / superadmin can verify & lock; payables are
+set off only via an imported DRC-03 or a GSTR-3B effect with its copy
+(`annual_return_payable_setoffs`, not blocked by the lock).
 
 **Read `docs/GSTR9_9C_WORKINGS.md` before changing anything here.** Two
 rules are firm decisions: the workings never read the app's own GSTR-1 /

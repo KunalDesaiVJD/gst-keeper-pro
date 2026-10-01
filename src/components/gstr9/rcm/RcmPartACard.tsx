@@ -9,7 +9,7 @@ import { moneyCol } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
 import { Note, SectionCard, SourceChip } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { monthLabel, useGoToStep } from './rcmShared';
+import { monthLabel, RCM_GRID_MAX_HEIGHT, useGoToStep } from './rcmShared';
 
 /** One month of 3.1(d) of the as-filed GSTR-3B. */
 interface PartARow {
@@ -93,7 +93,7 @@ const RcmPartACard: React.FC = () => {
       description="3.1(d) of the as-filed GSTR-3B for each month, fetched from the portal in Portal data. Correct a month here only if the fetch is wrong or missing."
       excelRef="RCM rows 5–22 (D9:G22)"
       actions={
-        <Button type="button" size="sm" variant="outline" onClick={() => goTo('portal')}>
+        <Button type="button" size="sm" variant="outline" onClick={() => goTo('portal', { portaltab: 'gstr3b' })}>
           Go to Portal data <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
         </Button>
       }
@@ -102,7 +102,7 @@ const RcmPartACard: React.FC = () => {
         <Note>
           Only the annual GSTR-9 Table 4G figure is available — no month-wise GSTR-3B has been pulled yet, so RCM is compared for the year as a
           whole: value {fmtMoney(W.partA.t)} · IGST {fmtMoney(W.partA.i)} · CGST {fmtMoney(W.partA.c)} · SGST {fmtMoney(W.partA.s)}.{' '}
-          <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => goTo('portal')}>
+          <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => goTo('portal', { portaltab: 'gstr3b' })}>
             Fetch the GSTR-3B in Portal data
           </Button>{' '}
           to compare month by month (typing any month below does the same).
@@ -111,7 +111,7 @@ const RcmPartACard: React.FC = () => {
       {W.partASource === 'none' && (
         <Note tone="warn">
           No RCM figure from the portal yet. Fetch the as-filed GSTR-3B (or the GSTR-9 system-computed figures) in{' '}
-          <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => goTo('portal')}>
+          <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => goTo('portal', { portaltab: 'gstr3b' })}>
             Portal data
           </Button>
           , or type 3.1(d) month by month below.
@@ -124,6 +124,7 @@ const RcmPartACard: React.FC = () => {
         getRowId={(r) => r.id}
         onRowsChange={onRowsChange}
         readOnly={readOnly}
+        maxHeight={RCM_GRID_MAX_HEIGHT}
         footer={[
           {
             key: 'total',

@@ -24,8 +24,8 @@ export const PortalStatusCard: React.FC = () => {
       title="Portal data"
       description="Straight from the client’s GST portal — never the app’s own GSTR-1/3B."
       actions={
-        <Button size="sm" variant="outline" onClick={() => go('portal')}>
-          Go to Portal data <ArrowRight className="ml-1 h-3.5 w-3.5" aria-hidden="true" />
+        <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => go('portal')} aria-label="Go to Portal data">
+          Open <ArrowRight className="ml-1 h-3.5 w-3.5" aria-hidden="true" />
         </Button>
       }
     >

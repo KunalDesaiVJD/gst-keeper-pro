@@ -9,6 +9,7 @@ import { JustifyControl } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import type { Formulas, Gstr9cDoc } from '@/lib/gstr9/types';
 import { editLine, Figures, FORM_HEAD_LABEL, FormHead, FormLine, fPath, fPaths, lineValue } from './formLines';
+import { PIN_LAST_ROW } from '../gstr9form/helpers';
 
 /**
  * Keeps clicks, keys and pastes inside a cell widget (the justification
@@ -83,7 +84,11 @@ export const FormGrid: React.FC<{
   headLabels?: Partial<Record<FormHead, string>>;
   footer?: GridFooterRow[];
   labelWidth?: number;
-}> = ({ label, lines, heads, headLabels, footer, labelWidth = 360 }) => {
+  /** Scroll inside the grid beyond this height (any CSS length). */
+  maxHeight?: string;
+  /** Keep the last line (the result, e.g. 5R) pinned at the bottom of the scroll box. */
+  pinLast?: boolean;
+}> = ({ label, lines, heads, headLabels, footer, labelWidth = 360, maxHeight, pinLast }) => {
   const { update, readOnly, workings, docs } = useWorkspace();
   const tol = workings.tolerance;
   const showStatus = lines.some((l) => l.mode === 'override' || !!l.diffKey || !!l.source);
@@ -224,6 +229,8 @@ export const FormGrid: React.FC<{
       onRowsChange={onRowsChange}
       readOnly={readOnly}
       footer={footer}
+      maxHeight={maxHeight}
+      className={pinLast && maxHeight ? PIN_LAST_ROW : undefined}
     />
   );
 };
