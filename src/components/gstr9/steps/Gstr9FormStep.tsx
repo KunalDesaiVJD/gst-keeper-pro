@@ -149,7 +149,7 @@ const Gstr9FormStep: React.FC = () => {
           {PARTS.map((p, pi) => (
             <React.Fragment key={p.part}>
               {pi > 0 && <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />}
-              <span aria-hidden="true" title={`Part ${p.part} — ${p.title}`} className="whitespace-nowrap px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+              <span aria-hidden="true" title={`Part ${p.part} — ${p.title}`} className="whitespace-nowrap px-1 text-[10px] font-semibold uppercase tracking-wide text-foreground/60">
                 Pt {p.part}
                 <span className="hidden font-medium normal-case tracking-normal xl:inline"> · {p.short}</span>
               </span>

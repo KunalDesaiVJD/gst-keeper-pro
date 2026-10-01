@@ -11,11 +11,15 @@ import { cn } from '@/lib/utils';
  * border, so it stays legible on the navy active step in the step rail too.
  * Other variants pass through unchanged.
  */
+// Inside the open (navy) tab of a tab row, a tinted pill would sink into the
+// navy: it turns card-coloured, keeping its tone border, and keeps dark text.
+const ON_OPEN_TAB = 'group-data-[state=active]/tab:bg-card group-data-[state=active]/tab:!text-foreground';
+
 const TONE: Partial<Record<NonNullable<BadgeProps['variant']>, string>> = {
-  success: 'border-success/50 bg-success/15 text-foreground hover:bg-success/15',
-  warning: 'border-warning/60 bg-warning/20 text-foreground hover:bg-warning/20',
-  info: 'border-info/50 bg-info/15 text-foreground hover:bg-info/15',
-  destructive: 'border-destructive bg-card text-foreground hover:bg-card',
+  success: `border-success/50 bg-success/15 text-foreground hover:bg-success/15 ${ON_OPEN_TAB}`,
+  warning: `border-warning/60 bg-warning/20 text-foreground hover:bg-warning/20 ${ON_OPEN_TAB}`,
+  info: `border-info/50 bg-info/15 text-foreground hover:bg-info/15 ${ON_OPEN_TAB}`,
+  destructive: `border-destructive bg-card text-foreground hover:bg-card ${ON_OPEN_TAB}`,
 };
 
 export function Badge({ variant, className, ...props }: BadgeProps) {
