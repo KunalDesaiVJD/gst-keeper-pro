@@ -2,7 +2,7 @@ import React from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Lock } from 'lucide-react';
 import { Badge } from '@/components/gstr9/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { useWorkspace } from '../WorkspaceContext';
 import DifferenceList from '../overview/DifferenceList';
 import LockPanel from '../overview/LockPanel';
@@ -10,6 +10,7 @@ import ToleranceSetting from '../overview/ToleranceSetting';
 import RevisionHistory from '../overview/RevisionHistory';
 import VersionHistory from '../overview/VersionHistory';
 import { fmtWhen, periodStatus, REVIEW_TAB_PARAM, type ReviewTab } from '../overview/steps';
+import { StepTab, StepTabsList } from '../reco/StepTabs';
 
 const TABS: ReviewTab[] = ['differences', 'signoff', 'history', 'snapshots'];
 
@@ -32,32 +33,15 @@ const ReviewStep: React.FC = () => {
   const status = periodStatus(period);
   const ready = !locked && !!period?.prepared_by_name;
   const lockBadge = ready ? { label: 'Ready for review', tone: 'info' as const } : { label: status.label, tone: status.tone };
-  const trigger = 'h-7 gap-1.5 px-2.5 text-xs';
 
   return (
-    <Tabs value={tab} onValueChange={setTab} className="space-y-3">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <div className="max-w-full overflow-x-auto">
-          <TabsList className="h-8">
-            <TabsTrigger value="differences" className={trigger}>
-              Differences
-              <Badge variant={w.openCount ? 'destructive' : 'secondary'} className="h-4 px-1.5 text-[10px] leading-none">
-                {w.openCount} open
-              </Badge>
-            </TabsTrigger>
-            <TabsTrigger value="signoff" className={trigger}>
-              Sign-off &amp; lock
-              <Badge variant={lockBadge.tone} className="h-4 gap-1 px-1.5 text-[10px] leading-none">
-                {status.key === 'locked' && <Lock className="h-2.5 w-2.5" aria-hidden />}
-                {lockBadge.label}
-              </Badge>
-            </TabsTrigger>
-            <TabsTrigger value="history" className={trigger}>Revision history</TabsTrigger>
-            <TabsTrigger value="snapshots" className={trigger}>Version snapshots</TabsTrigger>
-          </TabsList>
-        </div>
-        {locked ? (
-          <p className="flex min-w-[16rem] flex-1 items-center gap-1 text-xs text-muted-foreground">
+    <Tabs value={tab} onValueChange={setTab} className="space-y-2">
+      <StepTabsList
+        label="Review & lock"
+        value={tab}
+        actionsClassName="ml-0 min-w-[16rem] flex-1 basis-0"
+        actions={locked ? (
+          <p className="flex items-center gap-1 text-xs text-muted-foreground">
             <Lock className="h-3 w-3 shrink-0" aria-hidden />
             <span>
               <span className="font-medium text-foreground">Locked</span>
@@ -65,11 +49,27 @@ const ReviewStep: React.FC = () => {
             </span>
           </p>
         ) : (
-          <p className="min-w-[16rem] flex-1 text-[11px] leading-snug text-muted-foreground">
+          <p className="text-[11px] leading-snug text-muted-foreground">
             Give every open difference a reason (or fix the figure), mark it ready for review; a GST manager or superadmin verifies and locks it.
           </p>
         )}
-      </div>
+      >
+        <StepTab value="differences">
+          Differences
+          <Badge variant={w.openCount ? 'destructive' : 'secondary'} className="h-4 px-1.5 text-[10px] leading-none">
+            {w.openCount} open
+          </Badge>
+        </StepTab>
+        <StepTab value="signoff">
+          Sign-off &amp; lock
+          <Badge variant={lockBadge.tone} className="h-4 gap-1 px-1.5 text-[10px] leading-none">
+            {status.key === 'locked' && <Lock className="h-2.5 w-2.5" aria-hidden />}
+            {lockBadge.label}
+          </Badge>
+        </StepTab>
+        <StepTab value="history">Revision history</StepTab>
+        <StepTab value="snapshots">Version snapshots</StepTab>
+      </StepTabsList>
 
       <TabsContent value="differences" className="mt-0">
         <DifferenceList />

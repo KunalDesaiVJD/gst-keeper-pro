@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { T4_ROWS } from '@/lib/gstr9/engine';
 import { applyPortalImport, diffPortalImport, parseGstr9Calc, ParsedGstr9 } from '@/lib/gstr9/portalParser';
 import type { ImportChange } from '@/lib/gstr9/portalParser';
@@ -30,6 +30,7 @@ import {
 import { AsFiledReturn, loadGstr9Calc, saveUploadedGstr9Calc } from '@/lib/gstr9/store';
 import type { PortalDoc, PortalMeta, T5Key } from '@/lib/gstr9/types';
 import { MatrixTable, Money, Note, SectionCard, SourceChip } from '../ui';
+import { StepTab, StepTabsList } from '../reco/StepTabs';
 import { useWorkspace } from '../WorkspaceContext';
 import { ImportPreviewDialog } from './ImportPreviewDialog';
 import { PortalFieldCol, PortalFieldGrid, PortalFieldRow } from './PortalFieldGrid';
@@ -311,7 +312,6 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
   const typedT5 = typedCount(portal, 'gstr9.table5.');
   const typedItc = ITC_ROWS(financialYear).reduce((n, r) => n + typedCount(portal, `gstr9.${r.key}.`), 0);
   const typedT9 = typedCount(portal, 'gstr9.table9.');
-  const trig = 'gap-1.5 px-2.5 py-1 text-xs';
   const typedIn = (row: PortalFieldRow) => Object.values(row.paths).filter((p) => p && portal.manual[p]).length;
   const typedExtra = { header: 'Source', width: 84, render: (row: PortalFieldRow) => <TypedBadge n={typedIn(row)} /> };
 
@@ -385,18 +385,18 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
 
       {/* What the working uses, and the tables to type or correct by hand */}
       <Tabs value={tab} onValueChange={setTab}>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <div className="max-w-full overflow-x-auto">
-            <TabsList className="h-8 w-max">
-              <TabsTrigger value="used" className={trig}>Used in the working</TabsTrigger>
-              <TabsTrigger value="t4" className={trig}>Table 4 <TypedBadge n={typedT4} /></TabsTrigger>
-              <TabsTrigger value="t5" className={trig}>Table 5 <TypedBadge n={typedT5} /></TabsTrigger>
-              <TabsTrigger value="itc" className={trig}>6A · 6G · 8A <TypedBadge n={typedItc} /></TabsTrigger>
-              <TabsTrigger value="t9" className={trig}>Table 9 <TypedBadge n={typedT9} /></TabsTrigger>
-            </TabsList>
-          </div>
-          <span className="text-[11px] text-muted-foreground">Tables 4 – 9: enter or correct by hand</span>
-        </div>
+        <StepTabsList
+          level="inner"
+          label="GSTR-9 system computed"
+          value={tab}
+          actions={<span className="text-[11px] text-muted-foreground">Tables 4 – 9: enter or correct by hand</span>}
+        >
+          <StepTab value="used">Used in the working</StepTab>
+          <StepTab value="t4">Table 4 <TypedBadge n={typedT4} /></StepTab>
+          <StepTab value="t5">Table 5 <TypedBadge n={typedT5} /></StepTab>
+          <StepTab value="itc">6A · 6G · 8A <TypedBadge n={typedItc} /></StepTab>
+          <StepTab value="t9">Table 9 <TypedBadge n={typedT9} /></StepTab>
+        </StepTabsList>
 
         <TabsContent value="used" className="space-y-2">
           <MatrixTable

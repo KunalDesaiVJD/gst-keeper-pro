@@ -88,32 +88,35 @@ const DutiesStep: React.FC = () => {
     <div className="space-y-3">
       <DutiesOpenStrip />
 
-      <Tabs value={tab} onValueChange={setTab} className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <StepTabsList label="Duties & Taxes ledger">
-            <StepTab value="output">
-              Output (Cr side) <OpenBadge n={outOpen} />
-            </StepTab>
-            <StepTab value="input">
-              Input (Dr side, excl. RCM) <OpenBadge n={inOpen} />
-            </StepTab>
-          </StepTabsList>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <ViewSwitch<DutiesView>
-              label="Columns shown in the month table"
-              value={tab === 'output' ? outView : view}
-              options={VIEW_OPTIONS[tab]}
-              onChange={setView}
-            />
-            <div className="flex items-center gap-2">
-              <Switch id="dt-show-cess" checked={cess} onCheckedChange={setCessChoice} />
-              <Label htmlFor="dt-show-cess" className="text-xs font-normal">
-                Show cess
-                {!cess && cessUsed && <span className="ml-1 font-medium text-destructive-strong">(cess figures hidden)</span>}
-              </Label>
-            </div>
-          </div>
-        </div>
+      <Tabs value={tab} onValueChange={setTab} className="space-y-2">
+        <StepTabsList
+          label="Duties & Taxes ledger"
+          value={tab}
+          actions={
+            <>
+              <ViewSwitch<DutiesView>
+                label="Columns shown in the month table"
+                value={tab === 'output' ? outView : view}
+                options={VIEW_OPTIONS[tab]}
+                onChange={setView}
+              />
+              <div className="flex items-center gap-2">
+                <Switch id="dt-show-cess" checked={cess} onCheckedChange={setCessChoice} />
+                <Label htmlFor="dt-show-cess" className="text-xs font-normal">
+                  Show cess
+                  {!cess && cessUsed && <span className="ml-1 font-medium text-destructive-strong">(cess figures hidden)</span>}
+                </Label>
+              </div>
+            </>
+          }
+        >
+          <StepTab value="output">
+            Output (Cr side) <OpenBadge n={outOpen} />
+          </StepTab>
+          <StepTab value="input">
+            Input (Dr side, excl. RCM) <OpenBadge n={inOpen} />
+          </StepTab>
+        </StepTabsList>
 
         <TabsContent value="output" className="mt-0 space-y-3">
           <OutputTab cess={cess} view={outView} gridMaxHeight={GRID_MAX_HEIGHT.output} />

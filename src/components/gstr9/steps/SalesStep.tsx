@@ -2,7 +2,8 @@ import React from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ClipboardPaste } from 'lucide-react';
 import { Badge } from '@/components/gstr9/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
+import { StepTab, StepTabsList } from '../reco/StepTabs';
 import { useWorkspace } from '../WorkspaceContext';
 import { KpiTile, OpenDifferences, useDiffLine } from '../ui';
 import { fmtMoney } from '../grid/money';
@@ -101,7 +102,6 @@ const SalesStep: React.FC = () => {
   const empty = docs.sales.partA.length === 0 && docs.sales.partB.length === 0 && docs.sales.auditReportTotal === null;
   const mismatches = docs.sales.partA.filter((r) => s.rows[r.id]?.rateMismatch).length;
 
-  const trigger = 'gap-1.5 px-2.5 py-1 text-xs';
 
   return (
     <div className="space-y-3">
@@ -110,9 +110,8 @@ const SalesStep: React.FC = () => {
       {empty ? <EmptyExplainer /> : <SalesKpis />}
 
       <Tabs value={tab} onValueChange={setTab}>
-        <div className="overflow-x-auto">
-          <TabsList className="h-8 w-max">
-            <TabsTrigger value="a" className={trigger}>
+        <StepTabsList label="Sales" value={tab}>
+            <StepTab value="a">
               Part A · Taxable
               <Count n={docs.sales.partA.length} label={plural(docs.sales.partA.length, 'ledger')} />
               {mismatches > 0 && (
@@ -121,12 +120,12 @@ const SalesStep: React.FC = () => {
                   {plural(mismatches, 'rate check')}
                 </span>
               )}
-            </TabsTrigger>
-            <TabsTrigger value="b" className={trigger}>
+            </StepTab>
+            <StepTab value="b">
               Part B · Non-taxable
               <Count n={docs.sales.partB.length} label={plural(docs.sales.partB.length, 'ledger')} />
-            </TabsTrigger>
-            <TabsTrigger value="audit" className={trigger}>
+            </StepTab>
+            <StepTab value="audit">
               Audit report
               {auditLine?.open ? (
                 <Badge variant="destructive" className="h-4 rounded-full px-1.5 text-[10px] font-medium leading-none">
@@ -135,12 +134,11 @@ const SalesStep: React.FC = () => {
               ) : s.auditReportTotal === null ? (
                 <span className="text-[10px] font-normal text-muted-foreground">not entered</span>
               ) : null}
-            </TabsTrigger>
-            <TabsTrigger value="t5" className={trigger}>
+            </StepTab>
+            <StepTab value="t5">
               GSTR-9 Table 5
-            </TabsTrigger>
-          </TabsList>
-        </div>
+            </StepTab>
+        </StepTabsList>
 
         <TabsContent value="a">
           <PartAGrid />

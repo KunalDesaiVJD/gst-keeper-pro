@@ -207,8 +207,8 @@ const ExpenseHeadStep: React.FC = () => {
         />
       </div>
 
-      <Tabs value={tab} onValueChange={setTab} className="space-y-3">
-        <StepTabsList label="9C expense heads">
+      <Tabs value={tab} onValueChange={setTab} className="space-y-2">
+        <StepTabsList label="9C expense heads" value={tab}>
           <StepTab value="table14">
             ITC by expense head — Table 14
             {(balancingFlag || checkFlag) && (

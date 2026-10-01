@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { ExternalLink, HandCoins, Lock } from 'lucide-react';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { drc03Available, drc03MatchesFY, SIDE_LABEL, type PayableSide } from '@/lib/gstr9/payables';
 import type { Tax } from '@/lib/gstr9/types';
 import { fmtMoney } from '../grid/money';
@@ -13,6 +13,7 @@ import { fmtWhen, rupees, sumTax, useGoToStep } from '../overview/steps';
 import PayableDisclosure from '../payables/PayableDisclosure';
 import SetOffDialog from '../payables/SetOffDialog';
 import SetOffRegister from '../payables/SetOffRegister';
+import { StepTab, StepTabsList, TabSub } from '../reco/StepTabs';
 
 const HEADS: Array<[keyof Tax, string]> = [['i', 'IGST'], ['c', 'CGST'], ['s', 'SGST'], ['x', 'Cess']];
 
@@ -48,7 +49,6 @@ const PayablesStep: React.FC = () => {
     setParams(next, { replace: true });
   };
   const activeSetOffs = setOffs.filter((o) => !o.deletedAt).length;
-  const trigger = 'h-7 gap-1.5 px-2.5 text-xs';
   const count = (n: number) => <span className="tabular-nums text-muted-foreground">{n}</span>;
 
   return (
@@ -83,14 +83,12 @@ const PayablesStep: React.FC = () => {
         )}
       </div>
 
-      <Tabs value={tab} onValueChange={setTab} className="space-y-3">
-        <div className="max-w-full overflow-x-auto">
-          <TabsList className="h-8">
-            <TabsTrigger value="disclosure" className={trigger}>Disclosure <span className="font-normal text-muted-foreground">· output &amp; input</span></TabsTrigger>
-            <TabsTrigger value="register" className={trigger}>Set-off register {count(activeSetOffs)}</TabsTrigger>
-            <TabsTrigger value="drc03" className={trigger}>DRC-03s for FY {financialYear} {count(fyDrc03s.length)}</TabsTrigger>
-          </TabsList>
-        </div>
+      <Tabs value={tab} onValueChange={setTab} className="space-y-2">
+        <StepTabsList label="Payables & set-off" value={tab}>
+          <StepTab value="disclosure">Disclosure <TabSub>output &amp; input</TabSub></StepTab>
+          <StepTab value="register">Set-off register {count(activeSetOffs)}</StepTab>
+          <StepTab value="drc03">DRC-03s for FY {financialYear} {count(fyDrc03s.length)}</StepTab>
+        </StepTabsList>
 
         <TabsContent value="disclosure" className="mt-0 space-y-2">
           {/* Side by side on a wide screen; each table keeps its own horizontal scroll. */}

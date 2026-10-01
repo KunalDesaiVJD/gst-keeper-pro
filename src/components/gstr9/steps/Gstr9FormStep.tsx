@@ -2,8 +2,7 @@ import React from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { taxOf, totalTax } from '@/lib/gstr9/engine';
 import type { DiffLine } from '@/lib/gstr9/engine';
-import { Badge } from '@/components/gstr9/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { ExportMenu } from '../ExportMenu';
 import { fmtMoney } from '../grid/money';
 import { Note, OpenDifferences } from '../ui';
@@ -14,6 +13,7 @@ import { Table9 } from '../gstr9form/PartIV';
 import { Table14, Tables10to13 } from '../gstr9form/PartV';
 import { Table15, Table16, Table17, Table18, Table19 } from '../gstr9form/PartVI';
 import { StepLink } from '../gstr9form/shared';
+import { OpenBadge, StepTab, StepTabsList } from '../reco/StepTabs';
 
 /**
  * Step 10 — Form GSTR-9, Tables 4–19, assembled from the workings (the
@@ -130,49 +130,43 @@ const Gstr9FormStep: React.FC = () => {
         </Note>
       )}
 
-      <Tabs value={tab} onValueChange={setTab}>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <div className="max-w-full overflow-x-auto">
-            <TabsList className="h-8 gap-0.5 p-0.5" aria-label="Tables of Form GSTR-9">
-              {PARTS.map((p, pi) => (
-                <React.Fragment key={p.part}>
-                  {pi > 0 && <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />}
-                  <span aria-hidden="true" title={`Part ${p.part} — ${p.title}`} className="whitespace-nowrap px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                    Pt {p.part}
-                    <span className="hidden font-medium normal-case tracking-normal 2xl:inline"> · {p.short}</span>
-                  </span>
-                  {p.tables.map((t) => {
-                    const n = t.owns ? openHere.filter(t.owns).length : 0;
-                    return (
-                      <TabsTrigger key={t.key} value={t.key} title={`Table ${t.no} — ${t.name}`} className="h-7 gap-1 px-2 text-xs tabular-nums">
-                        <span className="sr-only">Part {p.part}, Table </span>
-                        {t.no}
-                        {n > 0 && (
-                          <Badge variant="destructive" className="h-4 min-w-4 justify-center rounded-full px-1 text-[10px] leading-none" aria-label={`${n} open`}>
-                            {n}
-                          </Badge>
-                        )}
-                      </TabsTrigger>
-                    );
-                  })}
-                </React.Fragment>
+      <Tabs value={tab} onValueChange={setTab} className="space-y-2">
+        <StepTabsList
+          label="Tables of Form GSTR-9"
+          value={tab}
+          actions={
+            <>
+              {/* The form's headline figures, on a wide screen (each is also on its table). */}
+              <span className="hidden items-center gap-x-4 text-xs 2xl:flex">
+                <Figure label="Turnover (5N + 10 − 11)" value={fmtMoney(g.totalTurnover.t)} />
+                <Figure label="Tax on 4N" value={fmtMoney(totalTax(taxOf(g.t4.N)))} hint="All heads" />
+                <Figure label="Net ITC (7J)" value={fmtMoney(totalTax(g.t7J))} hint={`Availed 6O ${fmtMoney(totalTax(g.t6.O))}`} />
+              </span>
+              <ExportMenu only={['gstr9pdf']} />
+            </>
+          }
+        >
+          {PARTS.map((p, pi) => (
+            <React.Fragment key={p.part}>
+              {pi > 0 && <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />}
+              <span aria-hidden="true" title={`Part ${p.part} — ${p.title}`} className="whitespace-nowrap px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+                Pt {p.part}
+                <span className="hidden font-medium normal-case tracking-normal xl:inline"> · {p.short}</span>
+              </span>
+              {p.tables.map((t) => (
+                <StepTab key={t.key} value={t.key} title={`Table ${t.no} — ${t.name}`} className="gap-1 px-2 tabular-nums">
+                  <span className="sr-only">Part {p.part}, Table </span>
+                  {t.no}
+                  <OpenBadge n={t.owns ? openHere.filter(t.owns).length : 0} showOk={false} />
+                </StepTab>
               ))}
-            </TabsList>
-          </div>
-          <div className="ml-auto flex items-center gap-x-4 text-xs">
-            {/* The form's headline figures, on a wide screen (each is also on its table). */}
-            <span className="hidden items-center gap-x-4 2xl:flex">
-              <Figure label="Turnover (5N + 10 − 11)" value={fmtMoney(g.totalTurnover.t)} />
-              <Figure label="Tax on 4N" value={fmtMoney(totalTax(taxOf(g.t4.N)))} hint="All heads" />
-              <Figure label="Net ITC (7J)" value={fmtMoney(totalTax(g.t7J))} hint={`Availed 6O ${fmtMoney(totalTax(g.t6.O))}`} />
-            </span>
-            <ExportMenu only={['gstr9pdf']} />
-          </div>
-        </div>
+            </React.Fragment>
+          ))}
+        </StepTabsList>
         {TABLES.map((t) => {
           const C = t.component;
           return (
-            <TabsContent key={t.key} value={t.key} className="mt-3">
+            <TabsContent key={t.key} value={t.key} className="mt-0">
               <C />
             </TabsContent>
           );

@@ -1,7 +1,6 @@
 import React from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Badge } from '@/components/gstr9/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { OpenDifferences } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { DiffKpi } from '../gstr9c/bits';
@@ -10,6 +9,7 @@ import { Table11Card, Table9Card } from '../gstr9c/TaxPaidPart';
 import { NoItcNote, Table12Card, Table14Card, Table16Card } from '../gstr9c/ItcPart';
 import AdditionalLiabilityPart from '../gstr9c/AdditionalLiabilityPart';
 import CertificationPart from '../gstr9c/CertificationPart';
+import { OpenBadge, StepTab, StepTabsList } from '../reco/StepTabs';
 
 interface TableDef {
   key: string;
@@ -112,45 +112,32 @@ const Gstr9cStep: React.FC = () => {
         {KPI_LINES.map((k) => <DiffKpi key={k.key} lineKey={k.key} label={k.label} />)}
       </div>
 
-      <Tabs value={tab} onValueChange={setTab}>
-        <div className="max-w-full overflow-x-auto">
-          <TabsList className="h-8 gap-0.5 p-0.5" aria-label="Tables of Form GSTR-9C">
-            {PARTS.map((p, pi) => (
-              <React.Fragment key={p.title}>
-                {pi > 0 && <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />}
-                {p.part && (
-                  <span aria-hidden="true" title={`Part ${p.part} — ${p.title}`} className="whitespace-nowrap px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                    Pt {p.part}
-                    {p.short && <span className="hidden font-medium normal-case tracking-normal 2xl:inline"> · {p.short}</span>}
-                  </span>
-                )}
-                {p.tables.map((t) => {
-                  const open = isOpen(t.diff);
-                  return (
-                    <TabsTrigger key={t.key} value={t.key} title={/^\d/.test(t.text) ? `Table ${t.text} — ${t.name}` : t.name} className="h-7 gap-1 px-2 text-xs tabular-nums">
-                      {/^\d/.test(t.text) && <span className="sr-only">{p.part ? `Part ${p.part}, ` : ''}Table </span>}
-                      {t.text}
-                      {open && (
-                        <Badge variant="destructive" className="h-4 min-w-4 justify-center rounded-full px-1 text-[10px] leading-none" aria-label="1 open">
-                          1
-                        </Badge>
-                      )}
-                    </TabsTrigger>
-                  );
-                })}
-              </React.Fragment>
-            ))}
-          </TabsList>
-        </div>
-        {current?.itc && (
-          <div className="mt-3">
-            <NoItcNote />
-          </div>
-        )}
+      <Tabs value={tab} onValueChange={setTab} className="space-y-2">
+        <StepTabsList label="Tables of Form GSTR-9C" value={tab}>
+          {PARTS.map((p, pi) => (
+            <React.Fragment key={p.title}>
+              {pi > 0 && <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />}
+              {p.part && (
+                <span aria-hidden="true" title={`Part ${p.part} — ${p.title}`} className="whitespace-nowrap px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+                  Pt {p.part}
+                  {p.short && <span className="hidden font-medium normal-case tracking-normal xl:inline"> · {p.short}</span>}
+                </span>
+              )}
+              {p.tables.map((t) => (
+                <StepTab key={t.key} value={t.key} title={/^\d/.test(t.text) ? `Table ${t.text} — ${t.name}` : t.name} className="gap-1 px-2 tabular-nums">
+                  {/^\d/.test(t.text) && <span className="sr-only">{p.part ? `Part ${p.part}, ` : ''}Table </span>}
+                  {t.text}
+                  <OpenBadge n={isOpen(t.diff) ? 1 : 0} showOk={false} />
+                </StepTab>
+              ))}
+            </React.Fragment>
+          ))}
+        </StepTabsList>
+        {current?.itc && <NoItcNote />}
         {TABLES.map((t) => {
           const C = t.component;
           return (
-            <TabsContent key={t.key} value={t.key} className="mt-3">
+            <TabsContent key={t.key} value={t.key} className="mt-0">
               <C />
             </TabsContent>
           );

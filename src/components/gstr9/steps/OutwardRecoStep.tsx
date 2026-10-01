@@ -386,8 +386,8 @@ const OutwardRecoStep: React.FC = () => {
   return (
     <div className="space-y-3">
       <OpenDifferences step="outward" />
-      <Tabs value={tab} onValueChange={setTab} className="space-y-3">
-        <StepTabsList label="Outward reco">
+      <Tabs value={tab} onValueChange={setTab} className="space-y-2">
+        <StepTabsList label="Outward reco" value={tab}>
           <StepTab value="compare">
             Books vs GSTR-9 (Table 4) <OpenBadge n={workings.stepOpen.outward} />
           </StepTab>
