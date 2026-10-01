@@ -85,9 +85,10 @@ export const DifferenceList: React.FC = () => {
           {empty}
         </div>
       ) : (
-        <div className="relative overflow-x-auto rounded-md border">
+        // Scrolls inside itself (header pinned), so the list fills the screen below the tabs instead of making the page tall.
+        <div className="relative overflow-auto rounded-md border" style={{ maxHeight: 'max(320px, calc(100vh - 330px))' }}>
           <table className="w-full min-w-[980px] border-collapse text-xs" aria-label="Difference lines">
-            <thead className="bg-muted">
+            <thead className="sticky top-0 z-10 bg-muted shadow-[0_1px_0_hsl(var(--border))]">
               <tr className="text-muted-foreground">
                 <th scope="col" className="border-b px-2 py-1.5 text-left font-semibold">Line</th>
                 <th scope="col" className="w-32 border-b px-2 py-1.5 text-left font-semibold">Direction</th>

@@ -125,7 +125,7 @@ export const VersionHistory: React.FC = () => {
   return (
     <SectionCard
       title="Version snapshots"
-      description="Whole-sheet restore points: one every 10 minutes of editing, one before another person's edit, one before a restore and one at the lock. Every single change is in the revision history above."
+      description="Whole-sheet restore points: one every 10 minutes of editing, one before another person's edit, one before a restore and one at the lock. Every single change is in the Revision history tab."
       actions={
         <div className="w-60">
           <Select value={key} onValueChange={(v) => setKey(v as DocKey)}>

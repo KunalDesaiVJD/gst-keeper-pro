@@ -15,7 +15,7 @@ const Row: React.FC<{ label: React.ReactNode; value: Tax; tone?: Tone; note?: st
   const cell = (v: number) => {
     const owe = tone === 'balance' && v > tolerance;
     return (
-      <td className={cn('whitespace-nowrap border-b px-2 py-1.5 text-right tabular-nums',
+      <td className={cn('whitespace-nowrap border-b px-2 py-1 text-right tabular-nums',
         tone === 'muted' && 'text-muted-foreground',
         owe && 'font-semibold text-destructive-strong',
         tone === 'balance' && !owe && 'text-success-strong',
@@ -26,7 +26,7 @@ const Row: React.FC<{ label: React.ReactNode; value: Tax; tone?: Tone; note?: st
   };
   return (
     <tr className={cn((tone === 'total' || tone === 'balance') && 'bg-muted/40 font-semibold')}>
-      <td className={cn('border-b px-2 py-1.5', tone === 'muted' && 'text-muted-foreground')}>
+      <td className={cn('border-b px-2 py-1', tone === 'muted' && 'text-muted-foreground')}>
         {label}
         {note && <div className="text-[11px] font-normal text-muted-foreground">{note}</div>}
       </td>
@@ -49,8 +49,8 @@ export const PayableDisclosure: React.FC<{ side: PayableSide; data: PayableSideW
         <thead className="bg-muted">
           <tr className="text-muted-foreground">
             <th className="border-b px-2 py-1.5 text-left font-semibold">{SIDE_LABEL[side]}</th>
-            {HEADS.map(([h, l]) => <th key={h} className="w-28 border-b px-2 py-1.5 text-right font-semibold">{l}</th>)}
-            <th className="w-28 border-b px-2 py-1.5 text-right font-semibold">Total</th>
+            {HEADS.map(([h, l]) => <th key={h} className="w-24 whitespace-nowrap border-b px-2 py-1.5 text-right font-semibold">{l}</th>)}
+            <th className="w-24 border-b px-2 py-1.5 text-right font-semibold">Total</th>
           </tr>
         </thead>
         <tbody>

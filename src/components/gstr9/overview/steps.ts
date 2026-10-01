@@ -40,6 +40,10 @@ export const STEP_META: StepMeta[] = [
 
 export const PHASES: Phase[] = ['Collect', 'Reconcile', 'Returns', 'Finish'];
 
+/** The Review & lock step's tabs, kept in the URL as ?reviewtab=. */
+export const REVIEW_TAB_PARAM = 'reviewtab';
+export type ReviewTab = 'differences' | 'signoff' | 'history' | 'snapshots';
+
 export const stepMeta = (key: string): StepMeta => STEP_META.find((s) => s.key === key) ?? STEP_META[0];
 
 /** Navigate to another step, keeping the rest of the URL (the open client) as it is. */

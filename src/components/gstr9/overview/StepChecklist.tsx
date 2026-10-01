@@ -5,7 +5,19 @@ import { Badge } from '@/components/gstr9/badge';
 import { Progress } from '@/components/ui/progress';
 import { SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { PHASES, STEP_META, stepStatuses, useGoToStep } from './steps';
+import { PHASES, STEP_META, stepStatuses, useGoToStep, type Phase } from './steps';
+
+/**
+ * Where each phase sits in the grid. One column on narrow screens; two on a
+ * laptop (Collect | Reconcile over Returns | Finish, 8 rows tall); three on a
+ * wide screen, with Returns and Finish stacked in the third (5 rows tall).
+ */
+const PLACE: Record<Phase, string> = {
+  Collect: 'xl:col-start-1 xl:row-start-1 2xl:row-span-2',
+  Reconcile: 'xl:col-start-2 xl:row-start-1 2xl:row-span-2',
+  Returns: 'xl:col-start-1 xl:row-start-2 2xl:col-start-3 2xl:row-start-1',
+  Finish: 'xl:col-start-2 xl:row-start-2 2xl:col-start-3 2xl:row-start-2',
+};
 
 /** Every step with what is in it and what still needs attention; each row opens the step. */
 export const StepChecklist: React.FC = () => {
@@ -18,12 +30,12 @@ export const StepChecklist: React.FC = () => {
   return (
     <SectionCard
       title="Progress"
-      description={`${complete} of ${work.length} steps complete. Each step shows what is entered and what still needs attention.`}
+      description={`${complete} of ${work.length} steps complete · what is entered and what still needs attention; a row opens its step.`}
+      actions={<Progress value={(complete / work.length) * 100} className="h-1.5 w-32" aria-label={`${complete} of ${work.length} steps complete`} />}
     >
-      <Progress value={(complete / work.length) * 100} className="h-1.5" aria-label={`${complete} of ${work.length} steps complete`} />
-      <div className="space-y-3">
+      <div className="grid grid-cols-1 items-start gap-x-3 gap-y-2 xl:grid-cols-2 2xl:grid-cols-3">
         {PHASES.map((phase) => (
-          <div key={phase} className="space-y-1">
+          <div key={phase} className={cn('min-w-0 space-y-1', PLACE[phase])}>
             <div className="px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{phase}</div>
             <ul className="divide-y overflow-hidden rounded-md border">
               {STEP_META.filter((s) => s.phase === phase && s.key !== 'overview').map((s) => {
@@ -34,23 +46,23 @@ export const StepChecklist: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => go(s.key)}
-                      className="flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
+                      className="flex w-full items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
                     >
                       <span
                         className={cn(
-                          'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold',
+                          'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold',
                           ok ? 'bg-success/15 text-success-strong' : 'bg-muted text-muted-foreground',
                         )}
                         aria-hidden
                       >
-                        {ok ? <Check className="h-3.5 w-3.5" /> : s.n}
+                        {ok ? <Check className="h-3 w-3" /> : s.n}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium">{s.label}</span>
-                        {st.detail && <span className="block text-xs text-muted-foreground">{st.detail}</span>}
+                        <span className="block text-[13px] font-medium leading-tight">{s.label}</span>
+                        {st.detail && <span className="block text-[11px] leading-snug text-muted-foreground">{st.detail}</span>}
                       </span>
-                      <Badge variant={st.tone} className="shrink-0 whitespace-nowrap text-[10px] font-medium">{st.label}</Badge>
-                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                      <Badge variant={st.tone} className="shrink-0 whitespace-nowrap px-1.5 text-[10px] font-medium">{st.label}</Badge>
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
                     </button>
                   </li>
                 );

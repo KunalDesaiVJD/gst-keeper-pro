@@ -2,7 +2,7 @@ import React from 'react';
 import type { DiffLine, StepKey } from '@/lib/gstr9/engine';
 import { KpiTile } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { monthsApplied, nzT, rupees, rupeesShort, stepMeta, sumTax, useGoToStep, worstHead } from './steps';
+import { monthsApplied, nzT, rupees, stepMeta, sumTax, useGoToStep, worstHead } from './steps';
 
 type Tone = 'ok' | 'warn' | 'error' | 'neutral';
 
@@ -21,11 +21,11 @@ interface TileDef {
   step: StepKey;
   label: string;
   value: React.ReactNode;
-  hint: React.ReactNode;
+  hint: string;
   tone: Tone;
 }
 
-/** The six headline checks of the working, each opening the step it comes from. */
+/** The headline checks of the working, each opening the step it comes from. */
 export const OverviewTiles: React.FC = () => {
   const { workings: w } = useWorkspace();
   const go = useGoToStep();
@@ -104,26 +104,21 @@ export const OverviewTiles: React.FC = () => {
     });
   }
 
-  // Open differences.
-  const justified = w.diffs.filter((d) => d.justification?.text?.trim()).length;
-  tiles.push({
-    key: 'open', step: 'review', label: 'Open differences',
-    value: w.openCount === 0 ? 'None' : String(w.openCount),
-    hint: `${justified} justified · reason needed above ${rupeesShort(w.tolerance)} on any head`,
-    tone: w.openCount > 0 ? 'error' : 'ok',
-  });
+  // The open-difference count and its "Review & lock" call to action are on the
+  // Overview's status line, so there is no sixth tile repeating it.
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
       {tiles.map((t) => (
         <button
           key={t.key}
           type="button"
           onClick={() => go(t.step)}
-          title={`Go to ${stepMeta(t.step).label}`}
+          title={`${t.label} — ${t.hint}. Go to ${stepMeta(t.step).label}`}
           className="rounded-lg text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:h-full"
         >
-          <KpiTile label={t.label} value={t.value} hint={t.hint} tone={t.tone} />
+          {/* KpiTile truncates its hint to one line; here it wraps to up to three, so the figures behind the check stay readable. */}
+          <KpiTile label={t.label} value={t.value} hint={<span className="line-clamp-3 whitespace-normal">{t.hint}</span>} tone={t.tone} />
         </button>
       ))}
     </div>

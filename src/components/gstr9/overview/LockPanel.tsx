@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ArrowUpRight, CheckCircle2, ClipboardCheck, Loader2, Lock, LockOpen, PlayCircle, ShieldCheck, Undo2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/gstr9/badge';
@@ -11,7 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { REVIEW_CHECKLIST, ROLE_LABEL } from '@/lib/gstr9/signoff';
 import { Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { fmtWhen, periodStatus, rupees, rupeesShort, stepMeta, sumTax, useGoToStep } from './steps';
+import { fmtWhen, periodStatus, REVIEW_TAB_PARAM, rupees, rupeesShort, stepMeta, sumTax, useGoToStep } from './steps';
 
 const SHOW_BLOCKERS = 6;
 
@@ -28,6 +29,12 @@ export const LockPanel: React.FC = () => {
   const [busy, setBusy] = useState<null | 'lock' | 'unlock' | 'progress' | 'ready'>(null);
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [readyOpen, setReadyOpen] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const showDifferences = () => {
+    const next = new URLSearchParams(params);
+    next.set(REVIEW_TAB_PARAM, 'differences');
+    setParams(next, { replace: true });
+  };
   const status = periodStatus(period);
   const isClient = readOnly && !locked;
   const blockers = w.diffs.filter((d) => d.open);
@@ -160,7 +167,14 @@ export const LockPanel: React.FC = () => {
                   </li>
                 ))}
               </ul>
-              {blockers.length > SHOW_BLOCKERS && <p className="mt-1 text-muted-foreground">…and {blockers.length - SHOW_BLOCKERS} more in the list above.</p>}
+              {blockers.length > SHOW_BLOCKERS && (
+                <p className="mt-1 text-muted-foreground">
+                  …and {blockers.length - SHOW_BLOCKERS} more —{' '}
+                  <button type="button" onClick={showDifferences} className="font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    see the Differences tab
+                  </button>.
+                </p>
+              )}
             </Note>
           ) : (
             <p className="flex items-center gap-1.5 text-xs text-muted-foreground">

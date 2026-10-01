@@ -97,7 +97,8 @@ export const RevisionHistory: React.FC<{ className?: string; compact?: boolean }
 
       {error && <p className="text-xs text-destructive-strong">Could not load the history: {error}</p>}
 
-      <div className={cn('overflow-auto rounded-md border', compact ? 'max-h-[60vh]' : 'max-h-[32rem]')}>
+      {/* In the side panel: 60% of the screen. On the Review step's tab: the screen below the filters. */}
+      <div className={cn('overflow-auto rounded-md border', compact && 'max-h-[60vh]')} style={compact ? undefined : { maxHeight: 'max(320px, calc(100vh - 360px))' }}>
         <table className="w-full border-collapse text-xs" aria-label="Revision history">
           <thead className="sticky top-0 z-10 bg-muted">
             <tr className="text-left text-muted-foreground">
