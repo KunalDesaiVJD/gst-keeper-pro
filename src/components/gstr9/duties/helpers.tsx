@@ -21,6 +21,13 @@ export const HEADS: Array<[keyof Tax, string]> = [
 ];
 export const headsFor = (cess: boolean) => (cess ? HEADS : HEADS.slice(0, 3));
 
+/**
+ * Which columns the month grids show: the sheet's full layout (default), the
+ * Input sheet with the four suspended-ITC groups folded into their net, or
+ * only books net · as per 3B · difference (both tabs).
+ */
+export type DutiesView = 'sheet' | 'compact' | 'recon';
+
 /** The two as-filed GSTR-3B quantities this step shows (PortalDoc.months[m]). */
 export type PortalTaxField = 'outTax' | 'itcExclRcm';
 
@@ -38,13 +45,14 @@ export const hasCess = (...ts: Array<Partial<Tax> | null | undefined>): boolean 
 export const openCount = (diffs: DiffLine[], prefix: 'dto' | 'dti'): number =>
   diffs.filter((d) => d.open && d.key.startsWith(`${prefix}.`)).length;
 
-/** Link to another step, keeping the open client (and everything else) in the URL. */
+/** Link to another step (optionally to one of its tabs, e.g. { itctab: 'next' }), keeping the open client (and everything else) in the URL. */
 export const useGoStep = () => {
   const [params, setParams] = useSearchParams();
   return useCallback(
-    (key: StepKey) => {
+    (key: StepKey, extra?: Record<string, string>) => {
       const next = new URLSearchParams(params);
       next.set('step', key);
+      Object.entries(extra ?? {}).forEach(([k, v]) => next.set(k, v));
       setParams(next);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     },
@@ -154,9 +162,28 @@ export const monthOptions = (financialYear: string) => {
 // Columns
 // ---------------------------------------------------------------------------
 
-/** Sticky month column (Apr … Mar); footer labels also render here. */
-export function monthCol<R extends { id: MonthKey }>(width: number): GridColumn<R> {
-  return { key: 'month', header: 'Month', type: 'display', value: (r) => MONTH_LABEL[r.id], sticky: true, align: 'left', width };
+/**
+ * Sticky month column (Apr … Mar) carrying the month's justification control
+ * (JustifyControl renders nothing where the engine has no line), so a month's
+ * status stays in sight however far the figures scroll sideways. Footer labels
+ * also render here (see footerStatusLabel).
+ */
+export function monthCol<R extends { id: MonthKey }>(prefix: 'dto' | 'dti', width: number): GridColumn<R> {
+  return {
+    key: 'month',
+    header: 'Month',
+    type: 'display',
+    value: (r) => MONTH_LABEL[r.id],
+    render: (r) => (
+      <span className="flex items-center justify-between gap-1.5">
+        {MONTH_LABEL[r.id]}
+        <JustifyControl lineKey={`${prefix}.${r.id}`} compact />
+      </span>
+    ),
+    sticky: true,
+    align: 'left',
+    width,
+  };
 }
 
 /**
@@ -260,19 +287,6 @@ export function diffCols<R extends { id: MonthKey }>(
   });
 }
 
-/** Status column: the month's justification control (JustifyControl renders nothing where the engine has no line). */
-export function statusCol<R extends { id: MonthKey }>(prefix: 'dto' | 'dti'): GridColumn<R> {
-  return {
-    key: 'status',
-    header: 'Status',
-    type: 'display',
-    value: () => null,
-    width: 64,
-    align: 'center',
-    render: (r) => <JustifyControl lineKey={`${prefix}.${r.id}`} compact />,
-  };
-}
-
 /** Footer cells for a difference, in the same tones as the grid's difference cells. */
 export const diffCells = (prefix: string, t: Tax, cess: boolean, tolerance: number): Record<string, React.ReactNode> =>
   Object.fromEntries(headsFor(cess).map(([h]) => [`${prefix}.${h}`, <DiffValue key={h} value={t[h]} tolerance={tolerance} />]));
@@ -281,7 +295,10 @@ export const diffCells = (prefix: string, t: Tax, cess: boolean, tolerance: numb
 export const soft = (cells: Record<string, React.ReactNode>): Record<string, React.ReactNode> =>
   Object.fromEntries(Object.entries(cells).map(([k, v]) => [k, typeof v === 'number' ? <SoftMoney key={k} value={v} /> : v]));
 
-/** A footer status cell holding a justification control. */
-export const statusCell = (lineKey: string): Record<string, React.ReactNode> => ({
-  status: <JustifyControl lineKey={lineKey} compact />,
-});
+/** A footer-row label with the line's justification control beside it, in the sticky month column. */
+export const footerStatusLabel = (label: React.ReactNode, lineKey: string): React.ReactNode => (
+  <span className="flex items-center justify-between gap-1.5">
+    {label}
+    <JustifyControl lineKey={lineKey} compact />
+  </span>
+);

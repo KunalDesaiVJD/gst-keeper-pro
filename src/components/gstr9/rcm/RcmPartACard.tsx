@@ -9,7 +9,7 @@ import { moneyCol } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
 import { Note, SectionCard, SourceChip } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { monthLabel, useGoToStep } from './rcmShared';
+import { monthLabel, RCM_GRID_MAX_HEIGHT, useGoToStep } from './rcmShared';
 
 /** One month of 3.1(d) of the as-filed GSTR-3B. */
 interface PartARow {
@@ -124,6 +124,7 @@ const RcmPartACard: React.FC = () => {
         getRowId={(r) => r.id}
         onRowsChange={onRowsChange}
         readOnly={readOnly}
+        maxHeight={RCM_GRID_MAX_HEIGHT}
         footer={[
           {
             key: 'total',

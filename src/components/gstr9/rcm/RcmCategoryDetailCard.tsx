@@ -93,7 +93,7 @@ const CategoryBlock: React.FC<{ cat: RcmCategory }> = ({ cat }) => {
       <AccordionTrigger className="gap-3 py-3 text-sm hover:no-underline">
         <span className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-left">
           <span className="font-medium">{categoryName(cat)}</span>
-          <Badge variant="outline" className="text-[10px] font-normal">{fmtRate(rate)} · {cat.supplyType === 'inter' ? 'IGST' : 'CGST + SGST'}</Badge>
+          <Badge variant="outline" className="text-[10px] font-normal">{cat.supplyType === 'inter' ? 'IGST' : 'CGST + SGST'}</Badge>
           <Badge variant="outline" className="text-[10px] font-normal">GSTR-9 {cat.itcTable || '6C'}</Badge>
           {typedMonths > 0 && (
             <Badge variant="warning" className="text-[10px] font-normal">
@@ -101,8 +101,9 @@ const CategoryBlock: React.FC<{ cat: RcmCategory }> = ({ cat }) => {
             </Badge>
           )}
         </span>
-        <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
-          Taxable <Money value={total?.t ?? 0} className="font-medium text-foreground" /> · Tax{' '}
+        <span className="shrink-0 text-right text-xs text-muted-foreground">
+          Taxable <Money value={total?.t ?? 0} className="font-medium text-foreground" /> · Rate{' '}
+          <span className="font-medium text-foreground">{fmtRate(rate)}</span> · Tax{' '}
           <Money value={total ? totalTax(total) : 0} className="font-medium text-foreground" />
         </span>
       </AccordionTrigger>

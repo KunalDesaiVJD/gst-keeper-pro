@@ -47,8 +47,12 @@ export const FigureTable: React.FC<{
   /** Show the Status column (defaults to: any row has a status). */
   withStatus?: boolean;
   maxHeight?: number | string;
+  /** Minimum width of the sticky Particulars column from the sm breakpoint (default 220 px), so long labels wrap less. */
+  labelWidth?: number;
+  /** A narrow Status column, for icon-only (compact) justification controls. */
+  narrowStatus?: boolean;
   className?: string;
-}> = ({ label, columns, rows, footer, firstHeader = 'Particulars', withStatus, maxHeight, className }) => {
+}> = ({ label, columns, rows, footer, firstHeader = 'Particulars', withStatus, maxHeight, labelWidth, narrowStatus, className }) => {
   const hasStatus = withStatus ?? [...rows, ...(footer ?? [])].some((r) => r.status !== undefined);
   const hasGroups = columns.some((c) => c.group);
   const spans = useMemo(() => {
@@ -67,8 +71,9 @@ export const FigureTable: React.FC<{
   const renderRow = (r: FigRow, inFooter = false) => {
     if (r.kind === 'heading') {
       return (
-        <tr key={r.key} className="bg-muted/50">
-          <td colSpan={colCount} className="border-b px-2 py-1.5 text-xs font-semibold sm:sticky sm:left-0">
+        // Opaque in the pinned footer, so rows scrolling underneath don't show through.
+        <tr key={r.key} className={inFooter ? 'bg-muted' : 'bg-muted/50'}>
+          <td colSpan={colCount} className={cn('border-b px-2 py-1.5 text-xs font-semibold sm:sticky sm:left-0', inFooter && 'border-t')}>
             {r.code && <span className="mr-2 font-mono text-muted-foreground">{r.code}</span>}
             {r.label}
             {r.note && <span className="ml-2 inline-flex align-middle">{r.note}</span>}
@@ -107,7 +112,7 @@ export const FigureTable: React.FC<{
                 'border-b border-r px-2 py-1.5 text-right align-top tabular-nums whitespace-nowrap',
                 strong && 'bg-muted',
                 inFooter && 'border-t',
-                groupStart.has(i) && i > 0 && 'border-l-2 border-l-border',
+                groupStart.has(i) && i > 0 && 'border-l border-l-border',
                 r.kind === 'sub' && 'text-muted-foreground',
                 toneClass(r.tones?.[c.key]),
               )}
@@ -126,12 +131,16 @@ export const FigureTable: React.FC<{
   };
 
   return (
-    <div className={cn('overflow-auto rounded-md border bg-card', className)} style={maxHeight ? { maxHeight } : undefined}>
-      <table className="w-full border-collapse text-xs" aria-label={label}>
+    <div
+      className={cn('overflow-auto rounded-md border bg-card', className)}
+      style={{ ...(maxHeight ? { maxHeight } : {}), ['--fig-label-w' as string]: `${labelWidth ?? 220}px` }}
+    >
+      {/* border-separate: the pinned header and footer rows paint solidly (collapsed borders let scrolled rows show through). */}
+      <table className="w-full border-separate border-spacing-0 text-xs" aria-label={label}>
         <thead className="sticky top-0 z-20 bg-muted">
           {hasGroups && (
             <tr>
-              <th rowSpan={2} scope="col" className="z-30 min-w-[160px] sm:sticky sm:left-0 sm:min-w-[220px] border-b border-r bg-muted px-2 py-1.5 text-left align-bottom font-semibold text-muted-foreground">
+              <th rowSpan={2} scope="col" className="z-30 min-w-[160px] sm:sticky sm:left-0 sm:min-w-[var(--fig-label-w)] border-b border-r bg-muted px-2 py-1.5 text-left align-bottom font-semibold text-muted-foreground">
                 {firstHeader}
               </th>
               {spans.map((s) => (
@@ -139,13 +148,13 @@ export const FigureTable: React.FC<{
                   key={s.start}
                   colSpan={s.span}
                   scope="colgroup"
-                  className={cn('border-b border-r px-2 py-1 text-center font-semibold text-foreground', s.start > 0 && 'border-l-2 border-l-border')}
+                  className={cn('border-b border-r px-2 py-1 text-center font-semibold text-foreground', s.start > 0 && 'border-l border-l-border')}
                 >
                   {s.label}
                 </th>
               ))}
               {hasStatus && (
-                <th rowSpan={2} scope="col" className="w-32 border-b px-2 py-1.5 text-right align-bottom font-semibold text-muted-foreground">
+                <th rowSpan={2} scope="col" className={cn(narrowStatus ? 'w-14' : 'w-32', 'border-b px-2 py-1.5 text-right align-bottom font-semibold text-muted-foreground')}>
                   Status
                 </th>
               )}
@@ -153,7 +162,7 @@ export const FigureTable: React.FC<{
           )}
           <tr>
             {!hasGroups && (
-              <th scope="col" className="z-30 min-w-[160px] sm:sticky sm:left-0 sm:min-w-[220px] border-b border-r bg-muted px-2 py-1.5 text-left font-semibold text-muted-foreground">
+              <th scope="col" className="z-30 min-w-[160px] sm:sticky sm:left-0 sm:min-w-[var(--fig-label-w)] border-b border-r bg-muted px-2 py-1.5 text-left font-semibold text-muted-foreground">
                 {firstHeader}
               </th>
             )}
@@ -163,7 +172,7 @@ export const FigureTable: React.FC<{
                 scope="col"
                 className={cn(
                   'border-b border-r px-2 py-1.5 text-right font-semibold text-muted-foreground whitespace-nowrap',
-                  groupStart.has(i) && i > 0 && 'border-l-2 border-l-border',
+                  groupStart.has(i) && i > 0 && 'border-l border-l-border',
                 )}
                 style={{ minWidth: c.width ?? 112 }}
               >
@@ -171,7 +180,7 @@ export const FigureTable: React.FC<{
               </th>
             ))}
             {!hasGroups && hasStatus && (
-              <th scope="col" className="w-32 border-b px-2 py-1.5 text-right font-semibold text-muted-foreground">
+              <th scope="col" className={cn(narrowStatus ? 'w-14' : 'w-32', 'border-b px-2 py-1.5 text-right font-semibold text-muted-foreground')}>
                 Status
               </th>
             )}

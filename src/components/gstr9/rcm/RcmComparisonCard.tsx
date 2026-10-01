@@ -5,7 +5,7 @@ import { diffTone, displayCol, taxFooter } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
 import { JustifyControl, Note, SectionCard, useDiffLine } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { monthLabel, TAX_HEAD_LABEL } from './rcmShared';
+import { monthLabel, RCM_GRID_MAX_HEIGHT, TAX_HEAD_LABEL } from './rcmShared';
 
 interface CmpRow {
   id: MonthKey;
@@ -63,6 +63,7 @@ const RcmComparisonCard: React.FC = () => {
         columns={columns}
         getRowId={(r) => r.id}
         readOnly
+        maxHeight={RCM_GRID_MAX_HEIGHT}
         footer={[
           {
             key: 'total',
@@ -87,11 +88,9 @@ const RcmComparisonCard: React.FC = () => {
         </div>
       )}
       <Note tone="position">
-        Differences read <strong>Books − Portal</strong>. The sheet’s D43 reads Part A − Part B, so its signs are the reverse of these.
-      </Note>
-      <Note tone="position">
-        RCM tax is computed to the paisa, as the sheet does (=D52*2.5%); the portal rounds to the rupee, so differences of ±₹1–2 are normal
-        and fall within the ₹{tol} tolerance.
+        Differences read <strong>Books − Portal</strong>. The sheet’s D43 reads Part A − Part B, so its signs are the reverse of these. RCM tax
+        is computed to the paisa, as the sheet does (=D52*2.5%); the portal rounds to the rupee, so differences of ±₹1–2 are normal and fall
+        within the ₹{tol} tolerance.
       </Note>
     </SectionCard>
   );

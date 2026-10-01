@@ -1,4 +1,5 @@
 import React from 'react';
+import { Button } from '@/components/ui/button';
 import { num, totalTax } from '@/lib/gstr9/engine';
 import { FY_MONTHS, type Formulas, type MonthKey, type RcmCell } from '@/lib/gstr9/types';
 import { SheetGrid, type GridColumn } from '../grid/SheetGrid';
@@ -6,7 +7,7 @@ import { displayCol, moneyCol, taxFooter } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
 import { Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { categoryHeader, cellOf, monthLabel, TAX_HEAD_LABEL, TAX_HEADS } from './rcmShared';
+import { categoryHeader, cellOf, monthLabel, RCM_GRID_MAX_HEIGHT, TAX_HEAD_LABEL, TAX_HEADS, useRcmTab } from './rcmShared';
 
 /** One month of the Part B matrix: the taxable value typed for each category (by category id). */
 interface PartBRow {
@@ -29,6 +30,7 @@ const RcmPartBCard: React.FC = () => {
   const { docs, workings, update, readOnly, financialYear } = useWorkspace();
   const cats = docs.rcm.categories;
   const W = workings.rcm;
+  const [, setTab] = useRcmTab(cats.length > 0);
 
   // Cess is rare on RCM (the sheet has no column for it): show it only once a figure exists.
   const withCess = FY_MONTHS.some((m) => Math.abs(W.partBMonths[m].x) > 0.004);
@@ -99,11 +101,17 @@ const RcmPartBCard: React.FC = () => {
   return (
     <SectionCard
       title="Part B — as per books"
-      description="Type or paste each expense’s taxable value month by month (a column copied from the sheet’s D52:D63 pastes straight in). Tax is computed from the rate; override it per month below."
+      description="Type or paste each expense’s taxable value month by month (a column copied from the sheet’s D52:D63 pastes straight in). Tax is computed from the rate; override it per month in Tax by expense, below."
       excelRef="RCM rows 26–41 (D28:G41)"
     >
       {cats.length === 0 ? (
-        <Note>Add an RCM expense above to start entering Part B.</Note>
+        <Note>
+          Add an RCM expense on the{' '}
+          <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setTab('expenses')}>
+            Expenses &amp; flows
+          </Button>{' '}
+          tab to start entering Part B.
+        </Note>
       ) : (
         <SheetGrid<PartBRow>
           label="RCM Part B — taxable value by expense and month"
@@ -112,6 +120,7 @@ const RcmPartBCard: React.FC = () => {
           getRowId={(r) => r.id}
           onRowsChange={onRowsChange}
           readOnly={readOnly}
+          maxHeight={RCM_GRID_MAX_HEIGHT}
           footer={[{ key: 'total', label: 'Total', tone: 'total', cells: footerCells }]}
         />
       )}

@@ -8,6 +8,7 @@ import { MONTH_LABEL, num } from '@/lib/gstr9/engine';
 import { newId } from '@/lib/gstr9/defaults';
 import { FY_MONTHS, MonthKey, RcmCategory, RcmCell, RcmItcTable, SupplyType } from '@/lib/gstr9/types';
 import { fmtRate } from '../grid/money';
+import { useTabParam } from '../reco/helpers';
 
 /** "apr" in FY 2024-25 → "Apr 2024"; "jan" → "Jan 2025". */
 export const monthLabel = (m: MonthKey, financialYear: string): string => {
@@ -93,3 +94,14 @@ export const useGoToStep = () => {
     [params, setParams],
   );
 };
+
+/** The RCM step's tabs, kept in ?rcmtab= (see RcmStep). */
+export const RCM_TABS = ['compare', 'books', 'portal', 'expenses'] as const;
+export type RcmTab = (typeof RCM_TABS)[number];
+export const RCM_TAB_PARAM = 'rcmtab';
+
+/** The open RCM tab; with no expense entered yet it starts on the expenses list. */
+export const useRcmTab = (hasExpenses: boolean) => useTabParam<RcmTab>(RCM_TAB_PARAM, RCM_TABS, hasExpenses ? 'compare' : 'expenses');
+
+/** Month grids (12 rows + totals) fill the screen below the step's header area, all twelve months in view from a laptop up; shorter screens scroll inside the grid. */
+export const RCM_GRID_MAX_HEIGHT = 'max(480px, calc(100vh - 300px))';
