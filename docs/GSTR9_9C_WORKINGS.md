@@ -99,6 +99,25 @@ stored doc lacks.
   sign-off (the log keeps it). The role is the one the app sends — the app
   has no auth session, so the database checks the declared role, as every
   permission in this app is checked.
+- **Figures that come from a source are locked to the superadmin** (firm
+  decision, 2 Oct 2026). Two kinds: portal data (the GSTR-9 system-computed
+  figures and the as-filed GSTR-3B — on Portal data and wherever they show:
+  Duties & Taxes "As per 3B", RCM Part A), and the figures the working fills
+  in from another table or return, stored as an override that is null while
+  the filled-in figure is used: GSTR-9 6A1, 6G, 7E, Table 9 payable, Table
+  12; Annexure-3 excess ITC; GSTR-9C 5A, 5Q, 7B–7D1, 7F, Table 9, 9Q,
+  12A–12C; notice-format rows read from GSTR-9, the GSTR-3B and Annexure-4.
+  Staff still bring portal figures in by pull or upload (a re-import cannot
+  replace a figure the superadmin typed over); only the superadmin can type
+  over, reset or restore one. Figures staff enter from their own working
+  stay open (books, adjustments, Annexure-3 RCM to be paid — nil unless
+  typed, RCM tax by rate, Table 13, Annexure-4, the reasons). The list is
+  `src/lib/gstr9/sourceLock.ts`; the workspace refuses such a change before
+  it is made and the database refuses it on save (trigger
+  `annual_return_docs_source_lock`, role from `save_annual_return_doc`'s
+  `p_role`; a superadmin's change is labelled "superadmin, locked figure" in
+  the log). A save that declares no role — an app build from before the
+  lock — is not checked.
 - **Every change is logged** in `annual_return_change_log` by an AFTER
   trigger on `annual_return_docs` — one row per changed figure: sheet, path
   inside it (list rows matched by id, with the row's ledger/description as
@@ -307,6 +326,7 @@ checks the version before starting it.
 | Portal JSON parsing / applying | `portalParser.ts`, `portalImport.ts` (`applyHandEdits` for any typed portal figure) |
 | Load / save / lock / history | `store.ts`, `components/gstr9/WorkspaceContext.tsx` |
 | Revision log in words | `audit.ts`, `components/gstr9/overview/RevisionHistory.tsx` |
+| Source lock (superadmin only) | `sourceLock.ts`, migration `20261002100000_annual_return_source_lock.sql` |
 | Sign-off checklist / roles | `signoff.ts`, `components/gstr9/overview/LockPanel.tsx` |
 | Payables & set-off | `payables.ts`, `components/gstr9/payables/*`, `steps/PayablesStep.tsx` |
 | Audit / sign-off / set-off schema | `supabase/migrations/20260929100000_annual_return_audit_signoff_payables.sql` |

@@ -8057,6 +8057,7 @@ export type Database = {
           p_financial_year: string
           p_action?: string
           p_force_history?: boolean
+          p_role?: string
           p_updated_by: string
         }
         Returns: number

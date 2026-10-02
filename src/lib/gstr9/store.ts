@@ -108,6 +108,8 @@ export async function loadDoc<K extends DocKey>(clientId: string, financialYear:
  * version being replaced even inside the history throttle window (restores).
  * `action` labels the change in the revision log ("Imported as-filed GSTR-3B",
  * "Restored version 12" …); the database logs every changed figure itself.
+ * `role` is the user's role: the database refuses a change to a figure that
+ * comes from a source (sourceLock.ts) unless it is the superadmin's.
  */
 export async function saveDoc<K extends DocKey>(
   clientId: string,
@@ -118,6 +120,7 @@ export async function saveDoc<K extends DocKey>(
   updatedBy: string,
   forceHistory = false,
   action?: string,
+  role?: string,
 ): Promise<number> {
   const { data: version, error } = await supabase.rpc('save_annual_return_doc', {
     p_client_id: clientId,
@@ -128,9 +131,11 @@ export async function saveDoc<K extends DocKey>(
     p_updated_by: updatedBy,
     p_force_history: forceHistory,
     p_action: action,
+    p_role: role,
   });
   if (error) {
     if (error.message?.includes('ANNUAL_RETURN_VERSION_CONFLICT')) throw new DocConflictError(key);
+    if (error.message?.includes('ANNUAL_RETURN_SOURCE_LOCKED')) throw new SourceLockedError(key);
     if (error.message?.includes('ANNUAL_RETURN_LOCKED')) throw new YearLockedError();
     throw error;
   }
@@ -146,6 +151,14 @@ export async function loadPeriod(clientId: string, financialYear: string): Promi
     .maybeSingle();
   if (error) throw error;
   return (data as unknown as AnnualReturnPeriod) || null;
+}
+
+/** The save changed a figure that comes from a source, and the user is not the superadmin (sourceLock.ts). */
+export class SourceLockedError extends Error {
+  constructor(public key: DocKey) {
+    super(`${key}: only a superadmin can change figures that come from a source`);
+    this.name = 'SourceLockedError';
+  }
 }
 
 export class NotAllowedError extends Error {

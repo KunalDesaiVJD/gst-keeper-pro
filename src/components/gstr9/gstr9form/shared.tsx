@@ -95,10 +95,13 @@ export const RowSrc: React.FC<{ src: React.ReactNode; step?: StepKey; link?: Rea
   </span>
 );
 
-/** "Use computed" reset for a nullable override (hidden when read-only or nothing is typed). */
+/**
+ * "Use computed" reset for a nullable override (hidden when nothing is typed,
+ * and for anyone but the superadmin — every such figure comes from a source, sourceLock.ts).
+ */
 export const ResetButton: React.FC<{ show: boolean; onClick: () => void; children: React.ReactNode }> = ({ show, onClick, children }) => {
-  const { readOnly } = useWorkspace();
-  if (!show || readOnly) return null;
+  const { canEditSource } = useWorkspace();
+  if (!show || !canEditSource) return null;
   return (
     <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onClick}>
       <RotateCcw className="mr-1 h-3.5 w-3.5" /> {children}

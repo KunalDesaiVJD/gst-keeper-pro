@@ -62,7 +62,7 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
   // Compact: the four suspended-ITC groups fold into their net. Books vs 3B: every typed books group is hidden.
   const compact = view === 'compact';
   const recon = view === 'recon';
-  const { docs, workings, update, readOnly } = useWorkspace();
+  const { docs, workings, update, readOnly, canEditSource } = useWorkspace();
   const goStep = useGoStep();
   const dti = workings.dti;
   const tol = workings.tolerance;
@@ -178,11 +178,12 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
         cess,
         group: 'As per 3B',
         what: WHAT_3B,
+        canEdit: canEditSource,
       }),
       ...diffCols<DtiRow>((r) => dti.months[r.id].diff, { cess, tolerance: tol, group: 'Diff (Books − 3B)', hasLine: (m) => lineKeys.has(`dti.${m}`) }),
     );
     return cols;
-  }, [compact, recon, cess, dti, docs.portal, tol, lineKeys]);
+  }, [compact, recon, cess, dti, docs.portal, tol, lineKeys, canEditSource]);
 
   const footer = useMemo<GridFooterRow[]>(() => {
     const t = dti.totals;

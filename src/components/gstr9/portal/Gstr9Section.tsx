@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, RefreshCw, Upload } from 'lucide-react';
+import { Loader2, Lock, RefreshCw, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/gstr9/badge';
@@ -87,7 +87,9 @@ const TypedBadge: React.FC<{ n: number }> = ({ n }) =>
   n > 0 ? <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">{n} typed</Badge> : null;
 
 export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
-  const { client, financialYear, docs, workings, update, readOnly } = useWorkspace();
+  const { client, financialYear, docs, workings, update, readOnly, canEditSource } = useWorkspace();
+  // Typing over a portal figure is the superadmin's alone (sourceLock.ts).
+  const typeIt = canEditSource ? 'type the figures' : 'ask a superadmin to type the figures';
   const portal = docs.portal;
   const meta = portal.gstr9Meta;
   const period = gstr9Period(financialYear);
@@ -180,7 +182,7 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
   const pull = () => {
     if (readOnly) return;
     if (!bridge.ready) {
-      toast.error('The GST Keeper browser extension was not detected. Install/enable it to pull from the portal — or use Upload, or type the figures.');
+      toast.error(`The GST Keeper browser extension was not detected. Install/enable it to pull from the portal — or use Upload, or ${typeIt}.`);
       return;
     }
     // An extension from before v0.3.0 announces no version and would run its
@@ -227,7 +229,7 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
       }
       if (tries >= POLL_MAX) {
         stopPoll();
-        toast.warning('No GSTR-9 data has arrived after 6 minutes. Check the portal tab; if the pull failed there, use Upload or type the figures.');
+        toast.warning(`No GSTR-9 data has arrived after 6 minutes. Check the portal tab; if the pull failed there, use Upload or ${typeIt}.`);
       }
     }, POLL_MS);
   };
@@ -365,7 +367,7 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
       {error && <Note tone="warn">{error}</Note>}
       {failed && !error && (
         <Note tone="warn">
-          The last pull ({fmtWhen(failed.updatedAt)}) failed: {failed.status}. Pull again, or Upload the JSON saved from the portal, or type the figures below.
+          The last pull ({fmtWhen(failed.updatedAt)}) failed: {failed.status}. Pull again, or Upload the JSON saved from the portal, or {typeIt} below.
         </Note>
       )}
       {pending && !readOnly && (
@@ -380,7 +382,7 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
       )}
 
       <Note tone="warn">
-        The GSTR-9 pull reads the portal&apos;s own system-computed endpoint (the one its GSTR-9 page uses); it has not been exercised live yet. If it fails, Upload the JSON saved from the portal, or type the figures from the portal screen.
+        The GSTR-9 pull reads the portal&apos;s own system-computed endpoint (the one its GSTR-9 page uses); it has not been exercised live yet. If it fails, Upload the JSON saved from the portal, or {typeIt} from the portal screen.
       </Note>
 
       {/* What the working uses, and the tables to type or correct by hand */}
@@ -389,7 +391,11 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
           level="inner"
           label="GSTR-9 system computed"
           value={tab}
-          actions={<span className="text-[11px] text-muted-foreground">Tables 4 – 9: enter or correct by hand</span>}
+          actions={
+            <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+              {canEditSource ? 'Tables 4 – 9: a superadmin can correct a figure by hand' : <><Lock className="h-3 w-3" aria-hidden /> Locked — figures come from the portal; only a superadmin can correct one</>}
+            </span>
+          }
         >
           <StepTab value="used">Used in the working</StepTab>
           <StepTab value="t4">Table 4 <TypedBadge n={typedT4} /></StepTab>
@@ -516,9 +522,9 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
           </Note>
         </TabsContent>
       </Tabs>
-      {tab !== 'used' && (
+      {tab !== 'used' && canEditSource && (
         <div className="text-[11px] text-muted-foreground">
-          Type the figures from the portal&apos;s GSTR-9 screen. A typed figure shows as <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">typed</Badge> and a later pull or upload never replaces it unless you tick it in the preview.
+          As superadmin you can type the figures from the portal&apos;s GSTR-9 screen; staff see them locked. A typed figure shows as <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">typed</Badge> and a later pull or upload never replaces it unless you tick it in the preview.
         </div>
       )}
 
@@ -531,6 +537,7 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
         describe={(p) => describePath(p, financialYear)}
         coverage={preview?.coverage}
         readOnly={readOnly}
+        lockTyped={!canEditSource}
         onApply={apply}
       />
     </SectionCard>

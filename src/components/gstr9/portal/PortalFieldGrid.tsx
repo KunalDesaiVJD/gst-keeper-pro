@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo } from 'react';
 import { getPath, pnum } from '@/lib/gstr9/portalParser';
 import { applyHandEdits, FieldEdit, portalFormulas } from '@/lib/gstr9/portalImport';
+import { LOCKED_TITLE } from '@/lib/gstr9/sourceLock';
 import { SheetGrid, GridColumn, GridFooterRow } from '../grid/SheetGrid';
 import { moneyCol } from '../grid/columns';
 import { useWorkspace } from '../WorkspaceContext';
@@ -14,7 +15,9 @@ import { useWorkspace } from '../WorkspaceContext';
  * is marked as typed (docs.portal.manual) and the section's source becomes
  * "Typed" if nothing had been fetched yet — so a later pull/upload never
  * overwrites it silently. Keyboard, paste from Excel and =a+b behave exactly
- * as in every other grid (SheetGrid).
+ * as in every other grid (SheetGrid). Only a superadmin can type here
+ * (sourceLock.ts); for everyone else the figures are read-only and come in
+ * by pull or upload.
  */
 
 export interface PortalFieldCol {
@@ -49,7 +52,7 @@ export const PortalFieldGrid: React.FC<{
   /** Scroll inside the grid beyond this height (px or any CSS length). */
   maxHeight?: number | string;
 }> = ({ label, rows, cols, codeHeader, labelHeader, labelWidth = 240, mirror, extra, footer, maxHeight }) => {
-  const { docs, update, readOnly } = useWorkspace();
+  const { docs, update, canEditSource } = useWorkspace();
   const portal = docs.portal;
 
   const gridRows = useMemo<GridRow[]>(() => {
@@ -93,11 +96,12 @@ export const PortalFieldGrid: React.FC<{
           {
             group: c.group,
             width: c.width,
-            editable: (r) => !!r.paths[c.key],
+            editable: (r) => canEditSource && !!r.paths[c.key],
             title: (r) => {
               const path = r.paths[c.key];
               if (!path) return undefined;
-              return portal.manual[path] ? 'Typed by hand — a later pull or upload asks before replacing it' : undefined;
+              const typed = portal.manual[path] ? 'Typed by hand by a superadmin — a later pull or upload asks before replacing it.' : '';
+              return canEditSource ? typed || undefined : [typed, LOCKED_TITLE.portal].filter(Boolean).join(' ');
             },
           },
         ),
@@ -107,7 +111,7 @@ export const PortalFieldGrid: React.FC<{
       out.push({ key: '_extra', header: extra.header, type: 'display', value: () => '', align: 'center', width: extra.width ?? 110, render: (r) => extra.render(r) });
     }
     return out;
-  }, [cols, codeHeader, labelHeader, labelWidth, extra, portal.manual]);
+  }, [cols, codeHeader, labelHeader, labelWidth, extra, portal.manual, canEditSource]);
 
   const onRowsChange = useCallback(
     (next: GridRow[]) => {
@@ -142,8 +146,8 @@ export const PortalFieldGrid: React.FC<{
       rows={gridRows}
       columns={columns}
       getRowId={(r) => r.id}
-      onRowsChange={readOnly ? undefined : onRowsChange}
-      readOnly={readOnly}
+      onRowsChange={canEditSource ? onRowsChange : undefined}
+      readOnly={!canEditSource}
       footer={footer}
       maxHeight={maxHeight}
     />

@@ -18,8 +18,10 @@ import {
   PeriodStatus,
   saveDoc,
   setPeriodStatus,
+  SourceLockedError,
   YearLockedError,
 } from '@/lib/gstr9/store';
+import { lockedChanges, lockedMessage, SOURCE_EDITOR_ROLE } from '@/lib/gstr9/sourceLock';
 
 const DOC_LABEL: Record<DocKey, string> = {
   sales: 'Sales', purchases: 'Purchases & ITC', duties_output: 'Duties & Taxes (output)', duties_input: 'Duties & Taxes (input)',
@@ -79,6 +81,12 @@ export interface WorkspaceValue {
   canVerify: boolean;
   /** The user's role as sent to the database (superadmin | gst_manager | employee | client). */
   role: string;
+  /**
+   * The superadmin, while the year is open: the only user who can change a
+   * figure that comes from a source — typed over portal data, or a figure the
+   * working fills in (sourceLock.ts). Anyone on staff can still pull or upload.
+   */
+  canEditSource: boolean;
   /** The payable set-off register (removed ones included) and the client's DRC-03s from the portal. */
   setOffs: SetOff[];
   drc03s: Drc03Filing[];
@@ -197,12 +205,34 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
         const action = labels && labels.size ? [...labels].join(' · ') : undefined;
         setSaveState('saving');
         try {
-          const v = await saveDoc(client.id, financialYear, key, data, versions.current[key], userName, archive, action);
+          const v = await saveDoc(client.id, financialYear, key, data, versions.current[key], userName, archive, action, role);
           if (mine !== scope.current) return false;
           versions.current[key] = v;
           forceHistory.current.delete(key);
         } catch (e) {
           if (mine !== scope.current) return false;
+          if (e instanceof SourceLockedError) {
+            // The database refused a change to a locked figure: show the stored sheet again.
+            ok = false;
+            forceHistory.current.delete(key);
+            try {
+              const fresh = await loadDoc(client.id, financialYear, key);
+              if (mine !== scope.current) return false;
+              versions.current[key] = fresh.version;
+              if (!dirty.current.has(key) && docsRef.current) {
+                const next = { ...docsRef.current, [key]: fresh.data } as AnnualReturnDocs;
+                docsRef.current = next;
+                setDocs(next);
+              }
+              toast.error(`${lockedMessage(key)} "${DOC_LABEL[key]}" was not saved; the saved version is shown again.`);
+            } catch (loadError) {
+              dirty.current.add(key);
+              setSaveState('error');
+              toast.error(`Could not reload "${DOC_LABEL[key]}": ${loadError instanceof Error ? loadError.message : String(loadError)}`);
+              return false;
+            }
+            continue;
+          }
           if (e instanceof DocConflictError) {
             ok = false;
             forceHistory.current.delete(key);
@@ -245,7 +275,7 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
     const p = run().finally(() => { if (saving.current === p) saving.current = null; });
     saving.current = p;
     return p;
-  }, [client.id, financialYear, userName, reload]);
+  }, [client.id, financialYear, userName, role, reload]);
 
   const schedule = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
@@ -290,10 +320,17 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
 
   const locked = period?.status === 'locked';
   const readOnly = locked || !isStaff;
+  const canEditSource = !readOnly && role === SOURCE_EDITOR_ROLE;
 
   const update = useCallback<WorkspaceValue['update']>((key, updater, opts) => {
     if (readOnly || !docsRef.current) return;
-    const next = { ...docsRef.current, [key]: updater(docsRef.current[key]) } as AnnualReturnDocs;
+    const changed = updater(docsRef.current[key]);
+    // The grids already keep these cells read-only; this catches any other way in (paste, a reset, a restore).
+    if (!canEditSource && lockedChanges(key, docsRef.current[key], changed).length) {
+      toast.error(`${lockedMessage(key)} Your change was not made.`);
+      return;
+    }
+    const next = { ...docsRef.current, [key]: changed } as AnnualReturnDocs;
     docsRef.current = next;
     setDocs(next);
     dirty.current.add(key);
@@ -304,7 +341,7 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
       pendingActions.current.set(key, set);
     }
     schedule();
-  }, [readOnly, schedule]);
+  }, [readOnly, canEditSource, schedule]);
 
   const justify = useCallback<WorkspaceValue['justify']>((lineKey, text, diffAt) => {
     update('justifications', (j) => {
@@ -390,6 +427,7 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
     markReady,
     canVerify,
     role,
+    canEditSource,
     setOffs,
     drc03s,
     reloadPayables,

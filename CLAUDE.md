@@ -123,7 +123,9 @@ step workspace. Workings are one JSONB doc per (client, FY, sheet) in
 `annual_return_docs` (version-checked saves, DB-enforced lock, history);
 every figure comes from the pure engine `src/lib/gstr9/engine.ts`. Every
 saved change is logged per figure by a DB trigger (`annual_return_change_log`,
-select-only); only a GST manager / superadmin can verify & lock; payables are
+select-only); only a GST manager / superadmin can verify & lock; figures from a
+source (portal data, filled-in overrides — `src/lib/gstr9/sourceLock.ts`) can be
+typed over only by the superadmin, enforced in the DB too; payables are
 set off only via an imported DRC-03 or a GSTR-3B effect with its copy
 (`annual_return_payable_setoffs`, not blocked by the lock).
 

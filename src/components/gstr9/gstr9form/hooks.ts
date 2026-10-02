@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { StepKey } from '@/lib/gstr9/engine';
 import type { Formulas, Gstr9ManualDoc, Tax, TaxIn } from '@/lib/gstr9/types';
+import { LOCKED_TITLE } from '@/lib/gstr9/sourceLock';
 import type { GridColumn } from '../grid/SheetGrid';
 import { moneyCol } from '../grid/columns';
 import { useWorkspace } from '../WorkspaceContext';
@@ -37,6 +38,8 @@ export interface FixedRowDef<V> {
   write: (g: Gstr9ManualDoc, v: V) => Gstr9ManualDoc;
   /** Nullable rows: the figure used while nothing is typed (shown muted). */
   computed?: Tax | null;
+  /** The figure comes from a source and the user is not the superadmin: shown, not editable (sourceLock.ts). */
+  locked?: boolean;
   /** Heads that can be typed (default: all). */
   heads?: string[];
   /** docs.gstr9.f key holding the "=a+b" of a column (undefined = not kept), e.g. (c) => `t10.${c}`. */
@@ -110,9 +113,10 @@ export function taxInFormCols(group?: string): GridColumn<TaxInRow>[] {
       {
         group,
         nullable: h === 's',
-        editable: (r) => !r.def.heads || r.def.heads.includes(h),
+        editable: (r) => !r.def.locked && (!r.def.heads || r.def.heads.includes(h)),
         placeholder: (r) => (r.v == null ? (r.def.computed ? r.def.computed[h] : 0) : h === 's' ? r.v.c : null),
         title: (r) => {
+          if (r.def.locked) return `${r.v == null ? 'Computed' : 'Typed over by a superadmin'}. ${LOCKED_TITLE.filled}`;
           if (r.v == null) return 'Not typed — the computed figure is used. Type to override.';
           if (h === 's' && r.v.s == null) return 'Mirrors Central tax — type to override, clear to mirror again';
           return undefined;

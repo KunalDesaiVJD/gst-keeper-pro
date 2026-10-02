@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { History, Loader2, RotateCcw } from 'lucide-react';
+import { History, Loader2, Lock, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useConfirm } from '@/components/ui/confirm-dialog';
@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { computeWorkings, tin } from '@/lib/gstr9/engine';
 import { emptyDocs, normalizeDoc } from '@/lib/gstr9/defaults';
 import { loadDocHistory, type DocHistoryEntry } from '@/lib/gstr9/store';
+import { lockedChanges } from '@/lib/gstr9/sourceLock';
 import { DOC_KEYS, FY_MONTHS, type AnnualReturnDocs, type DocKey } from '@/lib/gstr9/types';
 import { SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
@@ -71,7 +72,9 @@ function describe(key: DocKey, raw: unknown): string {
 
 /** Every overwritten version of one sheet, with a restore. */
 export const VersionHistory: React.FC = () => {
-  const { client, financialYear, update, readOnly, flush } = useWorkspace();
+  const { client, financialYear, docs, update, readOnly, flush, canEditSource } = useWorkspace();
+  // A version whose portal or filled-in figures differ from the current ones is the superadmin's to restore (sourceLock.ts).
+  const lockedFor = (e: DocHistoryEntry) => !canEditSource && lockedChanges(e.docKey, docs[e.docKey], normalizeDoc(e.docKey, e.data)).length > 0;
   const confirm = useConfirm();
   const [key, setKey] = useState<DocKey | ''>('');
   const [entries, setEntries] = useState<DocHistoryEntry[] | null>(null);
@@ -172,9 +175,15 @@ export const VersionHistory: React.FC = () => {
                   <td className="border-b px-2 py-1.5 text-muted-foreground">{summaries.get(e.id)}</td>
                   {!readOnly && (
                     <td className="border-b px-2 py-1 text-right">
-                      <Button size="sm" variant="outline" className="h-7" onClick={() => restore(e)}>
-                        <RotateCcw className="mr-1 h-3.5 w-3.5" /> Restore
-                      </Button>
+                      {lockedFor(e) ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground" title="This version has different figures from the portal, or filled in by the working — only a superadmin can restore it.">
+                          <Lock className="h-3 w-3" aria-hidden /> Superadmin
+                        </span>
+                      ) : (
+                        <Button size="sm" variant="outline" className="h-7" onClick={() => restore(e)}>
+                          <RotateCcw className="mr-1 h-3.5 w-3.5" /> Restore
+                        </Button>
+                      )}
                     </td>
                   )}
                 </tr>

@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo } from 'react';
-import { RotateCcw } from 'lucide-react';
+import { Lock, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/gstr9/badge';
 import { GridColumn, GridFooterRow, SheetGrid } from '../grid/SheetGrid';
@@ -8,6 +8,7 @@ import { fmtMoney } from '../grid/money';
 import { JustifyControl } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import type { Formulas, Gstr9cDoc } from '@/lib/gstr9/types';
+import { LOCKED_TITLE } from '@/lib/gstr9/sourceLock';
 import { editLine, Figures, FORM_HEAD_LABEL, FormHead, FormLine, fPath, fPaths, lineValue } from './formLines';
 import { PIN_LAST_ROW } from '../gstr9form/helpers';
 
@@ -26,7 +27,7 @@ const CellIsland: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   );
 };
 
-const StatusCell: React.FC<{ line: FormLine; readOnly: boolean; onReset: () => void }> = ({ line, readOnly, onReset }) => {
+const StatusCell: React.FC<{ line: FormLine; readOnly: boolean; locked: boolean; onReset: () => void }> = ({ line, readOnly, locked, onReset }) => {
   if (line.diffKey) {
     return (
       <CellIsland>
@@ -37,17 +38,19 @@ const StatusCell: React.FC<{ line: FormLine; readOnly: boolean; onReset: () => v
   if (line.mode === 'override') {
     if (!line.stored) {
       return (
-        <Badge variant="outline" title={line.sourceTitle} className="whitespace-nowrap text-[10px] font-normal text-muted-foreground">
+        <Badge variant="outline" title={[line.sourceTitle, locked ? LOCKED_TITLE.filled : ''].filter(Boolean).join(' — ') || undefined} className="gap-1 whitespace-nowrap text-[10px] font-normal text-muted-foreground">
+          {locked && <Lock className="h-2.5 w-2.5" aria-label="Locked" />}
           {line.source ?? 'Computed'}
         </Badge>
       );
     }
     return (
       <CellIsland>
-        <Badge variant="secondary" title={line.sourceTitle ? `Typed over: ${line.sourceTitle}` : undefined} className="text-[10px] font-normal">
+        <Badge variant="secondary" title={[line.sourceTitle ? `Typed over: ${line.sourceTitle}` : '', locked ? 'Typed by a superadmin — locked.' : ''].filter(Boolean).join(' ') || undefined} className="gap-1 text-[10px] font-normal">
+          {locked && <Lock className="h-2.5 w-2.5" aria-label="Locked" />}
           Typed
         </Badge>
-        {!readOnly && (
+        {!readOnly && !locked && (
           <button
             type="button"
             onClick={onReset}
@@ -74,8 +77,9 @@ const StatusCell: React.FC<{ line: FormLine; readOnly: boolean; onReset: () => v
  * A fixed-row GSTR-9C table on the shared SheetGrid: row letter, particulars,
  * the figure columns in the offline utility's order, and a status column
  * (computed source / typed + reset / difference status). Italic figures are
- * computed; typing over one overrides it, Delete restores it. Typed "=a+b"
- * expressions are remembered in the 9C doc's `f` and shown again on edit.
+ * computed; only a superadmin can type over one (sourceLock.ts), and Delete
+ * restores it. Typed "=a+b" expressions are remembered in the 9C doc's `f`
+ * and shown again on edit.
  */
 export const FormGrid: React.FC<{
   label: string;
@@ -89,7 +93,7 @@ export const FormGrid: React.FC<{
   /** Keep the last line (the result, e.g. 5R) pinned at the bottom of the scroll box. */
   pinLast?: boolean;
 }> = ({ label, lines, heads, headLabels, footer, labelWidth = 360, maxHeight, pinLast }) => {
-  const { update, readOnly, workings, docs } = useWorkspace();
+  const { update, readOnly, canEditSource, workings, docs } = useWorkspace();
   const tol = workings.tolerance;
   const showStatus = lines.some((l) => l.mode === 'override' || !!l.diffKey || !!l.source);
 
@@ -158,7 +162,8 @@ export const FormGrid: React.FC<{
         type: 'money',
         width: 118,
         value: (l) => lineValue(l, h),
-        editable: (l) => l.mode !== 'computed' && l.heads.includes(h) && !!l.write,
+        // A typed-over (override) figure is filled in from GSTR-9, the audit report or the books: the superadmin's (sourceLock.ts).
+        editable: (l) => l.mode !== 'computed' && !(l.mode === 'override' && !canEditSource) && l.heads.includes(h) && !!l.write,
         onEdit: (l, e) => {
           const p = fPath(l, h);
           return { ...l, stored: editLine(l, h, e.num), fEdits: p ? { ...(l.fEdits || {}), [p]: e.formula ?? null } : l.fEdits };
@@ -176,7 +181,8 @@ export const FormGrid: React.FC<{
           const v = lineValue(l, h);
           const w = v === null ? null : l.warn?.(h, v);
           if (w) return w;
-          if (l.mode === 'override' && !l.stored) return `Computed${l.sourceTitle ? ` — ${l.sourceTitle}` : ''}. Type to override; Delete restores it.`;
+          if (l.mode === 'override' && !canEditSource) return `${l.stored ? 'Typed over by a superadmin' : `Computed${l.sourceTitle ? ` — ${l.sourceTitle}` : ''}`}. ${LOCKED_TITLE.filled}`;
+          if (l.mode === 'override' && !l.stored) return `Computed${l.sourceTitle ? ` — ${l.sourceTitle}` : ''}. Type to override (superadmin); Delete restores it.`;
           if (l.mode === 'override') return 'Typed over the computed figure. Delete restores the computed figure for this cell.';
           return undefined;
         },
@@ -201,10 +207,10 @@ export const FormGrid: React.FC<{
       width: 168,
       align: 'left',
       value: () => null,
-      render: (l) => <StatusCell line={l} readOnly={!!readOnly} onReset={() => write([{ line: l, v: null }])} />,
+      render: (l) => <StatusCell line={l} readOnly={!!readOnly} locked={!canEditSource} onReset={() => write([{ line: l, v: null }])} />,
     });
     return cols;
-  }, [heads, headLabels, labelWidth, tol, readOnly, write, showStatus, formulaOf]);
+  }, [heads, headLabels, labelWidth, tol, readOnly, canEditSource, write, showStatus, formulaOf]);
 
   const onRowsChange = useCallback(
     (next: FormLine[]) => {

@@ -1,9 +1,10 @@
 import React from 'react';
-import { RotateCcw } from 'lucide-react';
+import { Lock, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/gstr9/badge';
 import { totalTax } from '@/lib/gstr9/engine';
 import type { Tax, TaxIn } from '@/lib/gstr9/types';
+import { LOCKED_TITLE } from '@/lib/gstr9/sourceLock';
 import { SheetGrid, type CellTone, type GridColumn, type GridFooterRow } from '../grid/SheetGrid';
 import { fmtMoney } from '../grid/money';
 import { HEAD_NAME, setHead, setHeadFormula, toTaxIn, type Head } from './taxRows';
@@ -18,6 +19,8 @@ import { HEAD_NAME, setHead, setHeadFormula, toTaxIn, type Head } from './taxRow
  *  - `override`: `stored === null` means "use the computed/suggested figure",
  *                shown muted in italics; typing over any head stores a copy of
  *                that figure with the head replaced, and "Use …" goes back to null.
+ *                A `locked` override line (a figure from a source — sourceLock.ts)
+ *                is read-only for everyone but the superadmin.
  *
  * "=a+b" expressions are kept on the stored TaxIn (`f`, keyed by head) and
  * shown again on edit, like Excel.
@@ -41,6 +44,8 @@ export interface FixedTaxRow {
   /** Override rows: the engine's default for the line (typed or not) — shown while untyped, in the chip's tooltip once typed over, and the starting point when typing. */
   defaultValue?: Tax;
   onChange?: (next: TaxIn | null) => void;
+  /** An override line whose figure comes from a source and the user is not the superadmin: shown, not editable. */
+  locked?: boolean;
   /** Bold (sub)total line. */
   emphasis?: boolean;
   tone?: (head: Head | 'total', v: number) => CellTone;
@@ -103,19 +108,24 @@ const renderMoney = (r: FixedTaxRow, h: Head) => {
  */
 const SourceTag: React.FC<{ row: FixedTaxRow; readOnly?: boolean }> = ({ row: r, readOnly }) => {
   const chip = r.defaultChip ?? 'Computed';
+  const lock = r.locked && <Lock className="h-2.5 w-2.5" aria-label="Locked" />;
   if (!storedOf(r)) {
-    return <Badge variant="secondary" className="ml-1.5 whitespace-nowrap align-middle text-[10px] font-normal">{chip}</Badge>;
+    return (
+      <Badge variant="secondary" className="ml-1.5 gap-1 whitespace-nowrap align-middle text-[10px] font-normal" title={r.locked ? LOCKED_TITLE.filled : undefined}>
+        {lock}{chip}
+      </Badge>
+    );
   }
   return (
     <span className="ml-1.5 inline-flex items-center gap-1 align-middle">
       <Badge
         variant="outline"
         className="whitespace-nowrap text-[10px] font-normal"
-        title={r.defaultValue ? `${chip}: ${brief(r.defaultValue)}` : undefined}
+        title={[r.defaultValue ? `${chip}: ${brief(r.defaultValue)}` : '', r.locked ? 'Typed by a superadmin — locked.' : ''].filter(Boolean).join(' ') || undefined}
       >
-        Typed
+        {lock}Typed
       </Badge>
-      {!readOnly && r.onChange && (
+      {!readOnly && !r.locked && r.onChange && (
         <button
           type="button"
           onMouseDown={(e) => e.stopPropagation()}
@@ -211,12 +221,13 @@ export const FixedTaxGrid: React.FC<FixedTaxGridProps> = ({
       width: 112,
       value: (r) => cellValue(r, h),
       placeholder: (r) => cellPlaceholder(r, h),
-      editable: (r) => r.kind !== 'computed' && !!r.onChange,
+      editable: (r) => r.kind !== 'computed' && !r.locked && !!r.onChange,
       formula: (r) => cellFormula(r, h),
       onEdit: (r, e) => editRow(r, h, e.num, e.formula),
       tone: (r) => r.tone?.(h, r.value[h]),
       title: (r) => {
         if (r.kind === 'computed' || !r.onChange) return undefined;
+        if (r.locked) return LOCKED_TITLE.filled;
         const st = storedOf(r);
         if (!st) return `${r.defaultChip ?? 'Computed'} — type to override`;
         if (h === 's' && st.s === null) return 'Mirrors CGST — type to override, clear to mirror again';

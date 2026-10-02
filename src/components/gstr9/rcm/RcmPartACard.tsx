@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { num } from '@/lib/gstr9/engine';
 import { applyHandEdits, type FieldEdit } from '@/lib/gstr9/portalImport';
 import { FY_MONTHS, type Formulas, type MonthKey, type ValTax } from '@/lib/gstr9/types';
+import { LOCKED_TITLE } from '@/lib/gstr9/sourceLock';
 import { SheetGrid, type GridColumn } from '../grid/SheetGrid';
 import { moneyCol } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
@@ -28,11 +29,12 @@ const fieldPath = (m: MonthKey, h: Head) => `months.${m}.rcm.${h}`;
 
 /**
  * PART A — AS PER GST PORTAL: 3.1(d) of the as-filed GSTR-3B, month by month
- * (RCM rows 5–22). Filled by the Portal data step; staff can type or correct a
- * month here, which marks it Typed so a later re-import asks first.
+ * (RCM rows 5–22). Filled by the Portal data step and locked: only a
+ * superadmin can type or correct a month here (sourceLock.ts), which marks it
+ * Typed so a later re-import asks first.
  */
 const RcmPartACard: React.FC = () => {
-  const { docs, workings, update, readOnly, financialYear } = useWorkspace();
+  const { docs, workings, update, canEditSource, financialYear } = useWorkspace();
   const goTo = useGoToStep();
   const P = docs.portal;
   const W = workings.rcm;
@@ -80,7 +82,11 @@ const RcmPartACard: React.FC = () => {
       moneyCol<PartARow>(h, HEAD_LABEL[h], (r) => r.rcm[h], (r, v) => ({ ...r, rcm: { ...r.rcm, [h]: v ?? 0 } }), {
         group: GROUP,
         width: h === 't' ? 130 : h === 'x' ? 96 : 118,
-        title: (r) => (P.manual?.[fieldPath(r.id, h)] ? 'Typed by hand — a re-import from the portal will ask before replacing it.' : undefined),
+        editable: () => canEditSource,
+        title: (r) => {
+          const typed = P.manual?.[fieldPath(r.id, h)] ? 'Typed by hand by a superadmin — a re-import from the portal will ask before replacing it.' : '';
+          return canEditSource ? typed || undefined : [typed, LOCKED_TITLE.portal].filter(Boolean).join(' ');
+        },
       }),
     ),
   ];
@@ -90,7 +96,9 @@ const RcmPartACard: React.FC = () => {
   return (
     <SectionCard
       title="Part A — as per GST portal"
-      description="3.1(d) of the as-filed GSTR-3B for each month, fetched from the portal in Portal data. Correct a month here only if the fetch is wrong or missing."
+      description={canEditSource
+        ? '3.1(d) of the as-filed GSTR-3B for each month, fetched from the portal in Portal data. Locked for staff; as superadmin, correct a month here only if the fetch is wrong or missing.'
+        : '3.1(d) of the as-filed GSTR-3B for each month, fetched from the portal in Portal data. Locked — only a superadmin can correct a month.'}
       excelRef="RCM rows 5–22 (D9:G22)"
       actions={
         <Button type="button" size="sm" variant="outline" onClick={() => goTo('portal', { portaltab: 'gstr3b' })}>
@@ -114,7 +122,7 @@ const RcmPartACard: React.FC = () => {
           <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => goTo('portal', { portaltab: 'gstr3b' })}>
             Portal data
           </Button>
-          , or type 3.1(d) month by month below.
+          {canEditSource ? ', or type 3.1(d) month by month below.' : '.'}
         </Note>
       )}
       <SheetGrid<PartARow>
@@ -122,8 +130,8 @@ const RcmPartACard: React.FC = () => {
         rows={rows}
         columns={columns}
         getRowId={(r) => r.id}
-        onRowsChange={onRowsChange}
-        readOnly={readOnly}
+        onRowsChange={canEditSource ? onRowsChange : undefined}
+        readOnly={!canEditSource}
         maxHeight={RCM_GRID_MAX_HEIGHT}
         footer={[
           {
