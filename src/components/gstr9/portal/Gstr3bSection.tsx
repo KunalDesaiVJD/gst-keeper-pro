@@ -81,7 +81,9 @@ const InWorking: React.FC<{ r: MonthRow }> = ({ r }) => (
 );
 
 export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
-  const { client, financialYear, docs, workings, update, readOnly } = useWorkspace();
+  const { client, financialYear, docs, workings, update, readOnly, canEditSource } = useWorkspace();
+  // Typing over a portal figure is the superadmin's alone (sourceLock.ts).
+  const typeIt = canEditSource ? 'type the figures below' : 'ask a superadmin to type the figures';
   const portal = docs.portal;
   const periods = useMemo(() => periodsForFY(financialYear), [financialYear]);
 
@@ -139,18 +141,18 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
     (list: AsFiledReturn[]) => {
       const imp = gstr3bIncoming(list, financialYear);
       if (!imp.months.length) {
-        toast.info('No as-filed GSTR-3B has been pulled for this year yet. Pull the 12 months from the portal first — or type the figures below.');
+        toast.info(`No as-filed GSTR-3B has been pulled for this year yet. Pull the 12 months from the portal first — or ${typeIt}.`);
         return;
       }
       setPreview(imp);
     },
-    [financialYear],
+    [financialYear, typeIt],
   );
 
   const pull = () => {
     if (readOnly) return;
     if (!bridge.ready) {
-      toast.error('The GST Keeper browser extension was not detected. Install/enable it to pull from the portal — or type the figures below.');
+      toast.error(`The GST Keeper browser extension was not detected. Install/enable it to pull from the portal — or ${typeIt}.`);
       return;
     }
     const before = new Map(rows.map((r) => [r.period, `${r.updatedAt ?? ''}|${r.status ?? ''}`]));
@@ -184,7 +186,7 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
           toast.success(done ? 'As-filed GSTR-3B received for all 12 months.' : `As-filed GSTR-3B received for ${fresh} of 12 months — the rest may not be filed, or the pull stopped early.`);
           openPreview(list);
         } else {
-          toast.warning('No GSTR-3B arrived after 6 minutes. Check the portal tab; you can also type the figures below.');
+          toast.warning(`No GSTR-3B arrived after 6 minutes. Check the portal tab; you can also ${typeIt}.`);
         }
       }
     }, POLL_MS);
@@ -407,7 +409,8 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
       </Tabs>
       <p className="text-[11px] text-muted-foreground">
         These fill the &quot;AS PER 3B&quot; columns of Duties &amp; Taxes (output and input), RCM Part A, and the 4A/4B/4D figures used by GSTR-9 6A (fallback), 7E and the Notice format.
-        SGST is its own figure in the filed GSTR-3B, so it does not mirror CGST here. Typed figures show as &quot;typed&quot; and are never replaced by a later pull unless you tick them in the preview.
+        SGST is its own figure in the filed GSTR-3B, so it does not mirror CGST here. The figures are locked: only a superadmin can type over one. Typed figures show as &quot;typed&quot; and are
+        never replaced by a later pull unless a superadmin ticks them in the preview.
       </p>
 
       <ImportPreviewDialog
@@ -418,6 +421,7 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
         changes={changes}
         describe={(p) => describePath(p, financialYear)}
         readOnly={readOnly}
+        lockTyped={!canEditSource}
         onApply={apply}
       />
     </SectionCard>

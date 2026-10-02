@@ -6,6 +6,7 @@ import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { StepKey } from '@/lib/gstr9/engine';
 import type { Formulas, Tax, TaxIn, ValTax } from '@/lib/gstr9/types';
+import { LOCKED_TITLE } from '@/lib/gstr9/sourceLock';
 import type { CellTone, GridColumn } from '../grid/SheetGrid';
 import { moneyCol } from '../grid/columns';
 
@@ -162,8 +163,11 @@ export function overrideTaxCols<R extends OverrideRow>(
     order?: Array<keyof Tax>;
     names?: Record<keyof Tax, string>;
     group?: string;
+    /** Rows whose figure comes from a source while the user is not the superadmin — read-only (sourceLock.ts). */
+    locked?: (r: R) => boolean;
   } = {},
 ): GridColumn<R>[] {
+  const locked = (r: R) => !!opts.locked?.(r);
   const base = (r: R): TaxIn => r.v ?? taxToIn(r.computed ?? { i: 0, c: 0, s: 0, x: 0 });
   return (opts.order ?? SHEET_ORDER).map((h) =>
     moneyCol<R>(
@@ -182,10 +186,12 @@ export function overrideTaxCols<R extends OverrideRow>(
         nullable: true,
         group: opts.group,
         width: h === 'x' ? 100 : 124,
-        editable: opts.editable,
+        editable: (r) => !locked(r) && (opts.editable ? opts.editable(r) : true),
         placeholder: (r) => (r.v ? (h === 's' ? r.v.c : null) : r.computed ? r.computed[h] : null),
         title: (r) =>
-          r.v == null && r.computed
+          locked(r)
+            ? `${r.v == null ? 'Computed' : 'Typed over by a superadmin'}. ${LOCKED_TITLE.filled}`
+            : r.v == null && r.computed
             ? (typeof opts.computedHint === 'function' ? opts.computedHint(r) : opts.computedHint) ?? 'Computed — type to override'
             : h === 's' && r.v && r.v.s == null
               ? `Mirrors ${(opts.names ?? HEAD_NAME).c} — type to override, clear to mirror again`

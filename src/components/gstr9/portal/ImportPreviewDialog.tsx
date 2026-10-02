@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Check, X } from 'lucide-react';
+import { Check, Lock, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
@@ -26,9 +26,11 @@ export const ImportPreviewDialog: React.FC<{
   /** What the portal file / pull contained. */
   coverage?: Array<{ label: string; found: boolean }>;
   readOnly?: boolean;
+  /** Not the superadmin: a figure typed by hand stays as it is and cannot be ticked (sourceLock.ts). */
+  lockTyped?: boolean;
   /** Called with the ticked changes (possibly none — the source is still recorded). */
   onApply: (selected: ImportChange[]) => void;
-}> = ({ open, onOpenChange, title, description, changes, describe, coverage, readOnly, onApply }) => {
+}> = ({ open, onOpenChange, title, description, changes, describe, coverage, readOnly, lockTyped, onApply }) => {
   const [picked, setPicked] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -50,16 +52,18 @@ export const ImportPreviewDialog: React.FC<{
   }, [changes, describe]);
 
   const typed = changes.filter((c) => c.manual).length;
+  const lockedPath = useMemo(() => new Set(lockTyped ? changes.filter((c) => c.manual).map((c) => c.path) : []), [changes, lockTyped]);
   const toggle = (paths: string[], on: boolean) =>
     setPicked((prev) => {
       const next = new Set(prev);
-      paths.forEach((p) => (on ? next.add(p) : next.delete(p)));
+      paths.filter((p) => !lockedPath.has(p)).forEach((p) => (on ? next.add(p) : next.delete(p)));
       return next;
     });
-  // All, none, or some ("indeterminate": a dash, announced as partly ticked).
+  // All, none, or some ("indeterminate": a dash, announced as partly ticked). Locked typed figures don't count.
   const stateOf = (paths: string[]): boolean | 'indeterminate' => {
-    const n = paths.filter((p) => picked.has(p)).length;
-    return n === 0 ? false : n === paths.length ? true : 'indeterminate';
+    const open = paths.filter((p) => !lockedPath.has(p));
+    const n = open.filter((p) => picked.has(p)).length;
+    return n === 0 ? false : n === open.length ? true : 'indeterminate';
   };
   const allPaths = changes.map((c) => c.path);
 
@@ -90,7 +94,9 @@ export const ImportPreviewDialog: React.FC<{
           <>
             <div className="text-xs text-muted-foreground">
               {changes.length} figure{changes.length === 1 ? '' : 's'} differ{changes.length === 1 ? 's' : ''} from the working.
-              {typed > 0 && <> {typed} of them {typed === 1 ? 'was' : 'were'} typed by hand and {typed === 1 ? 'is' : 'are'} left unticked — tick {typed === 1 ? 'it' : 'them'} only to replace the typed figure.</>}
+              {typed > 0 && (lockTyped
+                ? <> {typed} of them {typed === 1 ? 'was' : 'were'} typed by hand by a superadmin and {typed === 1 ? 'stays' : 'stay'} as {typed === 1 ? 'it is' : 'they are'} — only a superadmin can replace a typed figure.</>
+                : <> {typed} of them {typed === 1 ? 'was' : 'were'} typed by hand and {typed === 1 ? 'is' : 'are'} left unticked — tick {typed === 1 ? 'it' : 'them'} only to replace the typed figure.</>)}
             </div>
             <div className="min-h-0 flex-1 overflow-auto rounded-md border">
               <table className="w-full border-collapse text-xs" aria-label="Figures that would change">
@@ -132,12 +138,17 @@ export const ImportPreviewDialog: React.FC<{
                                   checked={picked.has(r.path)}
                                   onCheckedChange={(v) => toggle([r.path], v === true)}
                                   aria-label={`Apply ${g.label} — ${r.info.label}`}
-                                  disabled={readOnly}
+                                  disabled={readOnly || lockedPath.has(r.path)}
+                                  title={lockedPath.has(r.path) ? 'Typed by a superadmin — only a superadmin can replace it' : undefined}
                                 />
                               </td>
                               <td className="border-b px-2 py-1">
                                 <span>{r.info.label}</span>
-                                {r.manual && <Badge variant="warning" className="ml-2 px-1.5 py-0 text-[10px] font-medium">typed</Badge>}
+                                {r.manual && (
+                                  <Badge variant="warning" className="ml-2 gap-1 px-1.5 py-0 text-[10px] font-medium">
+                                    {lockedPath.has(r.path) && <Lock className="h-2.5 w-2.5" aria-hidden />}typed{lockedPath.has(r.path) ? ' · stays' : ''}
+                                  </Badge>
+                                )}
                               </td>
                               <td className="border-b px-2 py-1 text-right tabular-nums">{fmtMoney(r.current)}</td>
                               <td className="border-b px-2 py-1 text-right font-medium tabular-nums">{fmtMoney(r.incoming)}</td>

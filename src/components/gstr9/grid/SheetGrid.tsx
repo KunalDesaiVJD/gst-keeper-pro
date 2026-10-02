@@ -512,6 +512,7 @@ export function SheetGrid<R>({
                         id={cellId(r, c)}
                         role="gridcell"
                         aria-selected={isActive}
+                        aria-readonly={!editable || undefined}
                         title={col.title?.(row)}
                         onMouseDown={(e) => {
                           if (isEditing) return;

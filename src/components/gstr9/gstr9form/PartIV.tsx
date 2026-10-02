@@ -1,6 +1,7 @@
 import React from 'react';
 import { taxOf } from '@/lib/gstr9/engine';
 import { Formulas, TABLE9_HEADS, Table9Head, Tax } from '@/lib/gstr9/types';
+import { LOCKED_TITLE } from '@/lib/gstr9/sourceLock';
 import { GridColumn, SheetGrid } from '../grid/SheetGrid';
 import { diffTone, displayCol, moneyCol } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
@@ -41,7 +42,7 @@ const OTHER_ROWS: Array<{ other: OtherKey; code: string; label: string }> = [
 const HEAD_LABEL: Record<Table9Head, string> = { igst: 'Integrated', cgst: 'Central', sgst: 'State/UT', cess: 'Cess' };
 
 export const Table9: React.FC = () => {
-  const { workings, docs, update, readOnly } = useWorkspace();
+  const { workings, docs, update, readOnly, canEditSource } = useWorkspace();
   const g = workings.g9;
   const tol = workings.tolerance;
   const meta = docs.portal.gstr9Meta;
@@ -101,13 +102,16 @@ export const Table9: React.FC = () => {
     moneyCol<T9Row>('payable', 'Tax payable', (r) => (r.head ? r.override : payableNow(r)), (r, v) => ({ ...r, override: v }), {
       nullable: true,
       width: 120,
-      editable: (r) => !!r.head,
+      // The payable comes from the portal (else 4N): the superadmin's to type over (sourceLock.ts).
+      editable: (r) => !!r.head && canEditSource,
       placeholder: (r) => (r.head ? g.t9[r.head].payable : null),
       title: (r) =>
         r.head
-          ? r.override === null
-            ? `From ${sourceLabel(r)} — type to override`
-            : 'Typed override — press Delete to go back to the portal / 4N figure'
+          ? !canEditSource
+            ? `${r.override === null ? `From ${sourceLabel(r)}` : 'Typed over by a superadmin'}. ${LOCKED_TITLE.filled}`
+            : r.override === null
+              ? `From ${sourceLabel(r)} — type to override`
+              : 'Typed override — press Delete to go back to the portal / 4N figure'
           : 'From the portal — edit on Portal data',
       tone: (r) => (r.head && r.override !== null ? 'warn' : undefined),
     }),

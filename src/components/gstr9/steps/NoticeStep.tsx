@@ -38,7 +38,7 @@ type OverrideKey = 'deemedSupplies' | 'unreturnedGoods' | 'pendingDemands' | 'pr
 
 /** Step 12 — NOTICE FORMATE: the outward / inward summary officers ask for. */
 const NoticeStep: React.FC = () => {
-  const { client, financialYear, docs, workings, update, readOnly } = useWorkspace();
+  const { client, financialYear, docs, workings, update, readOnly, canEditSource } = useWorkspace();
   const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
   const [params, setParams] = useSearchParams();
@@ -67,6 +67,8 @@ const NoticeStep: React.FC = () => {
     resetLabel: reset,
     defaultValue,
     onChange: (v: TaxIn | null) => setN(key, v),
+    // Each of these is filled in from GSTR-9, the as-filed GSTR-3B or Annexure-4: the superadmin's to type over.
+    locked: !canEditSource,
   });
 
   const outwardRows: FixedTaxRow[] = [

@@ -41,7 +41,7 @@ const WHAT_3B = '3.1(a) + 3.1(b) tax';
 const OutputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: string }> = ({ cess, view, gridMaxHeight }) => {
   // "Books vs 3B" hides the typed Sales / Credit note groups; Input's "compact" has no Output counterpart.
   const recon = view === 'recon';
-  const { docs, workings, update, readOnly } = useWorkspace();
+  const { docs, workings, update, readOnly, canEditSource } = useWorkspace();
   const dto = workings.dto;
   const tol = workings.tolerance;
 
@@ -106,10 +106,11 @@ const OutputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: stri
         cess,
         group: 'As per 3B',
         what: WHAT_3B,
+        canEdit: canEditSource,
       }),
       ...diffCols<DtoRow>((r) => dto.months[r.id].diff, { cess, tolerance: tol, group: 'Diff (Books − 3B)', hasLine: (m) => lineKeys.has(`dto.${m}`) }),
     ],
-    [recon, cess, dto, docs.portal, tol, lineKeys],
+    [recon, cess, dto, docs.portal, tol, lineKeys, canEditSource],
   );
 
   const footer = useMemo<GridFooterRow[]>(

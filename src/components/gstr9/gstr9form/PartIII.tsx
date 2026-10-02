@@ -23,7 +23,7 @@ const Dash = () => <span className="text-muted-foreground">—</span>;
 // ---------------------------------------------------------------------------
 
 export const Table6: React.FC = () => {
-  const { workings, docs, update } = useWorkspace();
+  const { workings, docs, update, canEditSource } = useWorkspace();
   const g = workings.g9;
   const t6 = g.t6;
   const meta = docs.portal.gstr9Meta;
@@ -112,10 +112,11 @@ export const Table6: React.FC = () => {
       id: '6G',
       code: '6G',
       label: 'ITC received from ISD',
-      title: 'Leave blank to use the portal 6G; type to override it',
+      title: canEditSource ? 'Leave blank to use the portal 6G; type to override it' : 'The portal 6G — locked; only a superadmin can type over it',
       read: (d) => d.t6G,
       write: (d, v) => ({ ...d, t6G: v }),
       computed: docs.portal.gstr9.t6G,
+      locked: !canEditSource,
     },
     { id: '6K', code: '6K', label: 'TRAN-1 credit', title: 'Transition Credit through TRAN-1 (including revisions if any)', read: (d) => d.t6K, write: (d, v) => ({ ...d, t6K: v ?? zIn() }) },
     { id: '6L', code: '6L', label: 'TRAN-2 credit', title: 'Transition Credit through TRAN-2', read: (d) => d.t6L, write: (d, v) => ({ ...d, t6L: v ?? zIn() }) },

@@ -11,7 +11,7 @@ import { StepLink } from './StepLink';
 import { ANNEX_TAB_PARAM, rupees } from './taxRows';
 
 const Annexure3: React.FC = () => {
-  const { docs, workings, update, readOnly } = useWorkspace();
+  const { docs, workings, update, readOnly, canEditSource } = useWorkspace();
   const w = workings.ann3;
   const A = docs.annexures;
   const tol = workings.tolerance;
@@ -37,6 +37,8 @@ const Annexure3: React.FC = () => {
       label: 'Excess ITC claimed as per reco',
       hint: 'Suggested: GSTR-9 Table 12 (ITC of the year reversed in the next year)',
       defaultChip: 'Suggested (Table 12)', resetLabel: 'Use suggested', defaultValue: w.excessItcSuggested,
+      // Filled in from GSTR-9 Table 12: the superadmin's to type over (sourceLock.ts).
+      locked: !canEditSource,
       onChange: (v) => update('annexures', (d) => ({ ...d, a3ExcessItc: v })),
     },
   ];

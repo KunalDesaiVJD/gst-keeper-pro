@@ -219,7 +219,8 @@ export function computedCols<R>(get: (r: R) => Tax, opts: { group: string; prefi
 /**
  * The "AS PER 3B" group: a source chip, then IGST / CGST / SGST (/ Cess) as
  * plain money columns (no SGST mirror — they are the portal's own figures).
- * Typing here overrides the fetched figure; the owner records a hand edit.
+ * Only a superadmin can type over a fetched figure (`canEdit`, sourceLock.ts);
+ * the owner records a hand edit.
  */
 export function portal3bCols<R extends { id: MonthKey }>(opts: {
   field: PortalTaxField;
@@ -230,8 +231,10 @@ export function portal3bCols<R extends { id: MonthKey }>(opts: {
   group: string;
   /** What the figure is, for the header tooltip and cell titles. */
   what: string;
+  /** The superadmin: the only user who can type over a portal figure. */
+  canEdit: boolean;
 }): GridColumn<R>[] {
-  const { field, get, set, portal, cess, group, what } = opts;
+  const { field, get, set, portal, cess, group, what, canEdit } = opts;
   const source: GridColumn<R> = {
     key: `${field}.src`,
     header: (
@@ -240,7 +243,8 @@ export function portal3bCols<R extends { id: MonthKey }>(opts: {
         tip={
           <>
             <span className="font-medium">As per 3B</span> = {what} of the as-filed GSTR-3B, pulled from the GST portal on the
-            Portal data step — never the app’s own GSTR-3B. Type over a figure to override it; a re-import asks before replacing a typed figure.
+            Portal data step — never the app’s own GSTR-3B. The figures are locked: only a superadmin can type over one, and a re-import
+            asks before replacing a typed figure.
           </>
         }
       />
@@ -252,10 +256,11 @@ export function portal3bCols<R extends { id: MonthKey }>(opts: {
     align: 'left',
     render: (r) => <MonthSource meta={portal.monthMeta[r.id]} typedHeads={typedHeadCount(portal, r.id, field)} />,
   };
+  const lockNote = canEdit ? '' : ' Locked — only a superadmin can type over it.';
   const cellTitle = (r: R, h: keyof Tax): string => {
-    if (portal.manual[portalPath(r.id, field, h)]) return `${what} — typed by hand. A portal re-import will ask before replacing it.`;
-    if (!portal.monthMeta[r.id]?.source) return `${what} — not fetched yet. Fetch it on the Portal data step, or type it.`;
-    return `${what} of the as-filed GSTR-3B.`;
+    if (portal.manual[portalPath(r.id, field, h)]) return `${what} — typed by hand by a superadmin. A portal re-import will ask before replacing it.${lockNote}`;
+    if (!portal.monthMeta[r.id]?.source) return `${what} — not fetched yet. Fetch it on the Portal data step${canEdit ? ', or type it' : ''}.${lockNote}`;
+    return `${what} of the as-filed GSTR-3B.${lockNote}`;
   };
   return [
     source,
@@ -263,6 +268,7 @@ export function portal3bCols<R extends { id: MonthKey }>(opts: {
       moneyCol<R>(`${field}.${h}`, label, (r) => get(r)[h], (r, v) => set(r, { ...get(r), [h]: v ?? 0 }), {
         group,
         width: h === 'x' ? 96 : undefined,
+        editable: () => canEdit,
         title: (r) => cellTitle(r, h),
         tone: (r) => (!portal.monthMeta[r.id]?.source && Math.abs(get(r)[h]) < EPS ? 'muted' : undefined),
       }),

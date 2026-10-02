@@ -220,7 +220,7 @@ const codeCol = <R extends { code: string }>(): GridColumn<R> => ({
 });
 
 const T6A1Card: React.FC = () => {
-  const { docs, workings, update, readOnly } = useWorkspace();
+  const { docs, workings, update, readOnly, canEditSource } = useWorkspace();
   const lye = workings.dti.lye;
   const typed = docs.gstr9.t6A1 != null;
   const rows: LabelledRow[] = [
@@ -242,7 +242,7 @@ const T6A1Card: React.FC = () => {
         </span>
       ),
     },
-    ...overrideTaxCols<LabelledRow>({ computedHint: 'Last-year effect (Duties & Taxes row 9) — type to override', order: FORM_ORDER, names: FORM_HEAD_NAME, group: FORM_GROUP }),
+    ...overrideTaxCols<LabelledRow>({ locked: () => !canEditSource, computedHint: 'Last-year effect (Duties & Taxes row 9) — type to override', order: FORM_ORDER, names: FORM_HEAD_NAME, group: FORM_GROUP }),
   ];
 
   const reset = () => {
@@ -254,10 +254,10 @@ const T6A1Card: React.FC = () => {
   return (
     <SectionCard
       title="ITC of a preceding FY availed in this FY (6A1)"
-      description="Defaults to the last-year effect entered on the Duties & Taxes step. Type over it only if the GSTR-9 figure differs."
+      description={`Defaults to the last-year effect entered on the Duties & Taxes step.${canEditSource ? ' Type over it only if the GSTR-9 figure differs.' : ' Locked — only a superadmin can type over it.'}`}
       excelRef="GSTR-9 6A1 · DUTIES & TAXES-INPUT row 9"
       actions={
-        typed && !readOnly ? (
+        typed && canEditSource ? (
           <Button size="sm" variant="outline" onClick={reset}>
             <RotateCcw className="mr-1 h-3.5 w-3.5" /> Use last-year effect
           </Button>
@@ -310,7 +310,7 @@ const limitDesc = (text: string): string => {
 };
 
 const Table7Card: React.FC = () => {
-  const { docs, workings, update, readOnly } = useWorkspace();
+  const { docs, workings, update, readOnly, canEditSource } = useWorkspace();
   const G = docs.gstr9;
   const g9 = workings.g9;
   const h1 = g9.t7H[0];
@@ -344,7 +344,7 @@ const Table7Card: React.FC = () => {
       ),
       onEdit: (r, e) => ({ ...r, label: limitDesc(e.text) }),
     },
-    ...overrideTaxCols<T7Row>({ editable: (r) => r.kind !== 'h1', computedHint: (r) =>
+    ...overrideTaxCols<T7Row>({ editable: (r) => r.kind !== 'h1', locked: (r) => r.id === 's17_5' && !canEditSource, computedHint: (r) =>
         r.kind === 'h1' ? 'Suspended ITC reversed, from Duties & Taxes (I + L) — change it there' : 'As-filed GSTR-3B 4B(1) — type to override', order: FORM_ORDER, names: FORM_HEAD_NAME, group: FORM_GROUP }),
   ];
 
@@ -397,10 +397,10 @@ const Table7Card: React.FC = () => {
   return (
     <SectionCard
       title="Table 7 — ITC reversed and ineligible"
-      description="Type the reversals rule by rule. 7E follows the as-filed GSTR-3B 4B(1) until you type over it; 7H1 comes from the suspended-ITC columns of Duties & Taxes."
+      description={`Type the reversals rule by rule. 7E follows the as-filed GSTR-3B 4B(1)${canEditSource ? ' until you type over it' : ' (locked — only a superadmin can type over it)'}; 7H1 comes from the suspended-ITC columns of Duties & Taxes.`}
       excelRef="GSTR-9 rows 66–78 · GSTR 9-INPUT rows 20–23"
       actions={
-        G.t7.s17_5 != null && !readOnly ? (
+        G.t7.s17_5 != null && canEditSource ? (
           <Button size="sm" variant="outline" onClick={reset7E} title={`As-filed GSTR-3B 4B(1): ${fmtHeads(g9.t7EPortal)}`}>
             <RotateCcw className="mr-1 h-3.5 w-3.5" /> 7E: use as-filed 3B 4B(1) ({fmtMoney(totalTax(g9.t7EPortal))})
           </Button>
@@ -443,7 +443,7 @@ interface NextYearRow extends LabelledRow {
 }
 
 const NextYearCard: React.FC = () => {
-  const { docs, workings, update, readOnly } = useWorkspace();
+  const { docs, workings, update, readOnly, canEditSource } = useWorkspace();
   const G = docs.gstr9;
   const I = workings.itc;
   const t12Typed = G.t12 != null;
@@ -472,7 +472,7 @@ const NextYearCard: React.FC = () => {
         </span>
       ),
     },
-    ...overrideTaxCols<NextYearRow>({ editable: (r) => r.kind !== 'ref', computedHint: (r) =>
+    ...overrideTaxCols<NextYearRow>({ editable: (r) => r.kind !== 'ref', locked: (r) => r.kind === 't12' && !canEditSource, computedHint: (r) =>
         r.kind === 'ref' ? 'Suggestion — “Table 13: use suggested” copies it into Table 13' : 'Computed MAX(7J − books, 0) — type to override', order: FORM_ORDER, names: FORM_HEAD_NAME, group: FORM_GROUP }),
   ];
 
@@ -500,12 +500,12 @@ const NextYearCard: React.FC = () => {
   return (
     <SectionCard
       title="Tables 12 & 13 — ITC of this year reversed / availed next year"
-      description="Table 12 is computed from the gap between 7J and the books unless you type over it. Table 13 is typed."
+      description={`Table 12 is computed from the gap between 7J and the books${canEditSource ? ' unless you type over it' : ' (locked — only a superadmin can type over it)'}. Table 13 is typed.`}
       excelRef="GSTR 9-INPUT rows 27–28 · GSTR-9 rows 110–111, 83"
       actions={
         !readOnly ? (
           <>
-            {t12Typed && (
+            {t12Typed && canEditSource && (
               <Button size="sm" variant="outline" onClick={reset12}>
                 <RotateCcw className="mr-1 h-3.5 w-3.5" /> Table 12: use computed
               </Button>
