@@ -20,6 +20,11 @@ import { classifyBookAgainst2b, invoiceSimilar, TwoBLite } from '@/utils/matchTw
 import { periodMonthLabel, planImport2BPost, postImport2BToLedger, isPostPlanEmpty } from '@/lib/postImport2B';
 import ReclaimMatchDialog, { ReclaimInvoiceLite } from '@/components/dialogs/ReclaimMatchDialog';
 import Gstr2aImportCard from '@/components/gstr2a/Gstr2aImportCard';
+import { cn } from '@/lib/utils';
+import { KpiTile, Note } from '@/components/gstr9/ui';
+import {
+  WS_PAGE, WS_BTN, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR, WS_TR_TOTAL, WS_FILTER_LABEL, WS_CONTROL,
+} from '@/components/workspace/theme';
 
 // Phase 3 — the "Import 2B" tab. Import the portal's GSTR-2B .xlsx into the
 // twob_import_docs staging table (non-RCM B2B only shown), let staff classify
@@ -146,6 +151,37 @@ const sumRows = (rows: { taxable_value: number; input_igst: number; input_cgst: 
     cgst: a.cgst + (r.input_cgst || 0),
     sgst: a.sgst + (r.input_sgst || 0),
   }), { count: 0, taxable: 0, igst: 0, cgst: 0, sgst: 0 });
+
+/** Dense workspace table; the last column drops its right rule (the wrapper draws it). */
+const TABLE_CLS = cn(WS_TABLE, '[&_tr>*:last-child]:border-r-0');
+/** Bordered horizontal scroll area around a table. */
+const SCROLL_CLS = 'w-full rounded-md border bg-card';
+
+/** Which KPI tone each 2B action reads as (same meaning as the classification). */
+const ACTION_TONE: Record<string, 'ok' | 'warn' | 'error' | 'neutral'> = {
+  MATCHED: 'ok',
+  MISMATCHED: 'warn',
+  NOT_IN_BOOKS: 'error',
+  INELIGIBLE: 'neutral',
+  ITC_OF_OTHERS: 'neutral',
+  RECLAIM: 'neutral',
+};
+
+/** A KPI tile that also acts as a filter toggle. */
+const TileButton: React.FC<{ active: boolean; onClick: () => void; title: string; children: React.ReactNode }> = ({ active, onClick, title, children }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={title}
+    aria-pressed={active}
+    className={cn(
+      'rounded-lg text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:h-full',
+      active && 'ring-2 ring-primary/60',
+    )}
+  >
+    {children}
+  </button>
+);
 
 const Import2BTab: React.FC = () => {
   const { user, isStaffRole } = useAuth();
@@ -791,98 +827,106 @@ const Import2BTab: React.FC = () => {
   );
 
   const selectedClientName = clients.find((c) => c.id === selectedClient)?.name || '';
-  const rowSelectCls = 'h-8 w-full rounded-md border border-input bg-background px-2 text-xs disabled:opacity-60';
-  const cellInputCls = 'h-8 w-full rounded-md border border-input bg-background px-2 text-xs disabled:opacity-60';
+  const rowSelectCls = 'h-7 w-full rounded-md border border-input bg-background px-2 text-xs disabled:opacity-60';
+  // Inline cell editor: borderless, fills the cell, ring on focus (the workspace grid look).
+  const cellInputCls = 'block h-8 w-full border-0 bg-transparent px-2 text-xs outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-60';
   const filterInputCls = 'h-7 w-full rounded border border-input bg-background px-1.5 text-[11px] font-normal';
 
   const renderSummaryTable = (title: string, rows: (Totals & { label: string })[]) => {
     const tot = rows.reduce((a, r) => ({ count: a.count + r.count, taxable: a.taxable + r.taxable, igst: a.igst + r.igst, cgst: a.cgst + r.cgst, sgst: a.sgst + r.sgst }), { count: 0, taxable: 0, igst: 0, cgst: 0, sgst: 0 });
     return (
-      <div>
-        <p className="text-sm font-medium mb-2">{title}</p>
-        <table className="w-full text-xs border-collapse">
-          <thead>
-            <tr className="bg-muted/60">
-              <th className="border border-border p-2 text-left">Classification</th>
-              <th className="border border-border p-2 text-right w-14">Count</th>
-              <th className="border border-border p-2 text-right tabular-nums">Taxable</th>
-              <th className="border border-border p-2 text-right tabular-nums">IGST</th>
-              <th className="border border-border p-2 text-right tabular-nums">CGST</th>
-              <th className="border border-border p-2 text-right tabular-nums">SGST</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.label}>
-                <td className="border border-border p-2">{r.label}</td>
-                <td className="border border-border p-2 text-right tabular-nums">{r.count}</td>
-                <td className="border border-border p-2 text-right tabular-nums">{num(r.taxable)}</td>
-                <td className="border border-border p-2 text-right tabular-nums">{num(r.igst)}</td>
-                <td className="border border-border p-2 text-right tabular-nums">{num(r.cgst)}</td>
-                <td className="border border-border p-2 text-right tabular-nums">{num(r.sgst)}</td>
+      <div className="space-y-1">
+        <p className="text-xs font-semibold text-muted-foreground">{title}</p>
+        <div className="overflow-x-auto rounded-md border bg-card">
+          <table className={TABLE_CLS}>
+            <thead>
+              <tr>
+                <th className={WS_TH}>Classification</th>
+                <th className={cn(WS_TH, 'w-14 text-right')}>Count</th>
+                <th className={cn(WS_TH, 'text-right')}>Taxable</th>
+                <th className={cn(WS_TH, 'text-right')}>IGST</th>
+                <th className={cn(WS_TH, 'text-right')}>CGST</th>
+                <th className={cn(WS_TH, 'text-right')}>SGST</th>
               </tr>
-            ))}
-            <tr className="font-medium bg-muted/30">
-              <td className="border border-border p-2">Total</td>
-              <td className="border border-border p-2 text-right tabular-nums">{tot.count}</td>
-              <td className="border border-border p-2 text-right tabular-nums">{num(tot.taxable)}</td>
-              <td className="border border-border p-2 text-right tabular-nums">{num(tot.igst)}</td>
-              <td className="border border-border p-2 text-right tabular-nums">{num(tot.cgst)}</td>
-              <td className="border border-border p-2 text-right tabular-nums">{num(tot.sgst)}</td>
-            </tr>
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.label} className={WS_TR}>
+                  <td className={WS_TD}>{r.label}</td>
+                  <td className={WS_TD_NUM}>{r.count}</td>
+                  <td className={WS_TD_NUM}>{num(r.taxable)}</td>
+                  <td className={WS_TD_NUM}>{num(r.igst)}</td>
+                  <td className={WS_TD_NUM}>{num(r.cgst)}</td>
+                  <td className={WS_TD_NUM}>{num(r.sgst)}</td>
+                </tr>
+              ))}
+              <tr className={WS_TR_TOTAL}>
+                <td className={cn(WS_TD, 'border-b-0')}>Total</td>
+                <td className={cn(WS_TD_NUM, 'border-b-0')}>{tot.count}</td>
+                <td className={cn(WS_TD_NUM, 'border-b-0')}>{num(tot.taxable)}</td>
+                <td className={cn(WS_TD_NUM, 'border-b-0')}>{num(tot.igst)}</td>
+                <td className={cn(WS_TD_NUM, 'border-b-0')}>{num(tot.cgst)}</td>
+                <td className={cn(WS_TD_NUM, 'border-b-0')}>{num(tot.sgst)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     );
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={WS_PAGE}>
       {/* Header */}
       <PageHeader
+        compact
         embedded
         title="Import 2B"
         subtitle="Import GSTR-2B & reconcile with books · B2B only"
+        icon={<FileSpreadsheet />}
         actions={isStaff ? (
           <>
             <Button
               variant="outline"
+              size="sm"
               onClick={pull2BFromPortal}
               disabled={isImporting || !selectedClient || !selectedMonth || isLocked}
-              className={extReady ? '' : 'text-muted-foreground'}
+              className={cn(WS_BTN, !extReady && 'text-muted-foreground')}
               title={extReady
                 ? 'Pull this client\'s GSTR-2B from the portal via the browser extension'
                 : 'GST Keeper extension not detected yet — install/enable it and reload this page'}
             >
-              <RefreshCw className="h-4 w-4 mr-2" />
+              <RefreshCw className="h-3.5 w-3.5" />
               Pull from portal
             </Button>
             <Button
               variant="ghost"
               size="sm"
-              className="text-xs text-muted-foreground hover:text-foreground"
+              className={cn(WS_BTN, 'text-muted-foreground hover:text-foreground')}
               onClick={handleImportClick}
               disabled={isImporting || !selectedClient || !selectedMonth || isLocked}
               title="Manual fallback — import a GSTR-2B Excel file if the portal pull didn't work"
             >
-              <Upload className="h-3.5 w-3.5 mr-1" />
+              <Upload className="h-3.5 w-3.5" />
               Import file
             </Button>
             {(twoBDocs.length > 0 || books.length > 0) && (
               <Button
+                size="sm"
+                className={WS_BTN}
                 onClick={handlePostToReconciliation}
                 disabled={isPosting || readOnly || pendingCount > 0}
                 title={pendingCount > 0
                   ? 'Save your row-action changes first — Post to Reconciliation reads the saved classifications.'
                   : 'Write NOT_IN_BOOKS / NOT_IN_2B classifications through to the live 2B Reconciliation ledger'}
               >
-                {isPosting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+                {isPosting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                 Post to Reconciliation
               </Button>
             )}
             {twoBDocs.length > 0 && (
-              <Button variant="destructive" size="sm" onClick={deleteImported2B} disabled={readOnly}>
-                <Trash2 className="h-4 w-4 mr-2" />Delete 2B
+              <Button variant="destructive" size="sm" className={WS_BTN} onClick={deleteImported2B} disabled={readOnly}>
+                <Trash2 className="h-3.5 w-3.5" />Delete 2B
               </Button>
             )}
           </>
@@ -890,25 +934,21 @@ const Import2BTab: React.FC = () => {
       />
       <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />
 
-      {/* Filters (client / month) */}
+      {/* Filters (client / month): one labelled toolbar. */}
       <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Client:</span>
-              <div className="w-56">
-                <SearchableSelect options={clients.map((c) => ({ value: c.id, label: c.name }))}
-                  value={selectedClient} onValueChange={setSelectedClient} placeholder="Select Client" />
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Month:</span>
-              <div className="w-32">
-                <SearchableMonthSelect options={monthOptions} value={selectedMonth} onValueChange={setSelectedMonth} placeholder="Select Month" />
-              </div>
-            </div>
+        <CardContent className="px-3 py-2">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="w-full min-w-0 space-y-0.5 sm:w-64">
+              <span className={WS_FILTER_LABEL}>Client</span>
+              <SearchableSelect options={clients.map((c) => ({ value: c.id, label: c.name }))}
+                value={selectedClient} onValueChange={setSelectedClient} placeholder="Select Client" className={WS_CONTROL} />
+            </label>
+            <label className="w-36 min-w-0 space-y-0.5">
+              <span className={WS_FILTER_LABEL}>Month</span>
+              <SearchableMonthSelect options={monthOptions} value={selectedMonth} onValueChange={setSelectedMonth} placeholder="Select Month" className={WS_CONTROL} />
+            </label>
             {lastImportedAt && (
-              <div className="text-xs text-muted-foreground ml-auto text-right">
+              <div className="ml-auto text-right text-[11px] leading-snug text-muted-foreground">
                 Imported {new Date(lastImportedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                 {importerName ? ` by ${importerName}` : ''}
                 <br />{twoBDocs.length} docs{rcmHidden ? ` · ${rcmHidden} RCM hidden` : ''}
@@ -932,19 +972,22 @@ const Import2BTab: React.FC = () => {
       )}
 
       {isLocked && (
-        <div className="flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3 text-warning">
-          <Lock className="h-4 w-4 shrink-0" />
-          <span className="text-sm">This sheet is locked because the return has been filed.</span>
-        </div>
+        <Note tone="warn">
+          <span className="inline-flex items-center gap-1"><Lock className="h-3.5 w-3.5" /> This sheet is locked because the return has been filed.</span>
+        </Note>
       )}
 
       {isLoading ? (
-        <div className="flex items-center justify-center py-12"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+        <Card>
+          <CardContent className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading 2B…
+          </CardContent>
+        </Card>
       ) : !selectedClient || !selectedMonth ? (
         <Card>
-          <CardContent className="p-8">
+          <CardContent className="p-6">
             <TableEmptyState
-              icon={<FileSpreadsheet className="h-6 w-6" />}
+              icon={<FileSpreadsheet className="h-5 w-5" />}
               title="Select a client and month to begin"
               description="Pick a client and return period above to import and reconcile GSTR-2B."
             />
@@ -952,15 +995,57 @@ const Import2BTab: React.FC = () => {
         </Card>
       ) : (
         <>
+          {/* Headline tiles: 2B docs by action (each tile filters zone 1 to that action) + books invoices. */}
+          {(twoBDocs.length > 0 || books.length > 0) && (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-8">
+              <TileButton
+                active={!filters.action}
+                onClick={() => { setFilters((f) => ({ ...f, action: '' })); setZone1Open(true); }}
+                title="Show every 2B doc"
+              >
+                <KpiTile
+                  label="2B docs"
+                  value={twoBDocs.length}
+                  hint={`ITC ${num(summary2b.reduce((a, r) => a + r.igst + r.cgst + r.sgst, 0)) || '0'}`}
+                />
+              </TileButton>
+              {TWOB_ACTIONS.map((a, i) => {
+                const r = summary2b[i];
+                const active = filters.action === a.value;
+                return (
+                  <TileButton
+                    key={a.value}
+                    active={active}
+                    onClick={() => { setFilters((f) => ({ ...f, action: active ? '' : a.value })); setZone1Open(true); }}
+                    title={active ? 'Show every 2B doc' : `Show ${a.label} docs only`}
+                  >
+                    <KpiTile
+                      label={a.label}
+                      value={r.count}
+                      hint={`ITC ${num(r.igst + r.cgst + r.sgst) || '0'}`}
+                      tone={r.count ? ACTION_TONE[a.value] : 'neutral'}
+                    />
+                  </TileButton>
+                );
+              })}
+              <KpiTile
+                label="Books invoices"
+                value={books.length}
+                hint={summaryBooks.filter((t) => t.count).map((t) => `${t.label} ${t.count}`).join(' · ') || 'None added'}
+                tone={books.length ? 'warn' : 'neutral'}
+              />
+            </div>
+          )}
+
           {/* Zone 1 — imported 2B */}
           <Card>
-            <CardContent className="p-4">
+            <CardContent className="px-4 py-3">
               <Collapsible open={zone1Open} onOpenChange={setZone1Open}>
-              <div className="mb-3 flex items-center justify-between gap-3 flex-wrap">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <CollapsibleTrigger className="flex items-center gap-1.5 text-left group">
                   <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${zone1Open ? '' : '-rotate-90'}`} />
                   <div>
-                    <p className="font-semibold text-foreground group-hover:text-foreground">1 · GSTR-2B (imported)</p>
+                    <p className="text-[15px] font-semibold leading-snug text-foreground">1 · GSTR-2B (imported)</p>
                     <p className="text-xs text-muted-foreground">
                       {filteredDocs.length}{anyFilter ? ` of ${twoBDocs.length}` : ''} B2B docs{rcmHidden ? ` · ${rcmHidden} RCM hidden (RCM Summary)` : ''} · set the action per row
                     </p>
@@ -975,7 +1060,7 @@ const Import2BTab: React.FC = () => {
                         <option value="">Set action to…</option>
                         {BULK_TWOB_ACTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
-                      <Button size="sm" className="h-7" onClick={applyBulk} disabled={!bulkValue}>Apply</Button>
+                      <Button size="sm" className="h-7 px-2.5 text-xs" onClick={applyBulk} disabled={!bulkValue}>Apply</Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -983,14 +1068,14 @@ const Import2BTab: React.FC = () => {
                         onClick={() => setSelected(new Set())}
                         aria-label="Clear selection"
                       >
-                        <X className="h-4 w-4" />
+                        <X className="h-3.5 w-3.5" />
                       </Button>
                     </div>
                   )}
                   {/* Save staged row-action changes — nothing writes to the DB until this is clicked. */}
                   {!readOnly && pendingCount > 0 && (
                     <div className="flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-2 py-1">
-                      <span className="text-xs font-medium text-warning-foreground">{pendingCount} unsaved change{pendingCount === 1 ? '' : 's'}</span>
+                      <span className="text-xs font-medium text-foreground">{pendingCount} unsaved change{pendingCount === 1 ? '' : 's'}</span>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -1000,8 +1085,8 @@ const Import2BTab: React.FC = () => {
                       >
                         Discard
                       </Button>
-                      <Button size="sm" className="h-7" onClick={saveActions} disabled={isSavingActions}>
-                        {isSavingActions ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : null}
+                      <Button size="sm" className="h-7 gap-1 px-2.5 text-xs" onClick={saveActions} disabled={isSavingActions}>
+                        {isSavingActions ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                         Save changes
                       </Button>
                     </div>
@@ -1011,20 +1096,19 @@ const Import2BTab: React.FC = () => {
               <CollapsibleContent>
               {twoBDocs.length === 0 ? (
                 <TableEmptyState
-                  icon={<FileSpreadsheet className="h-6 w-6" />}
+                  icon={<FileSpreadsheet className="h-5 w-5" />}
                   title="No GSTR-2B imported"
                   description={`Nothing imported for ${selectedClientName} — ${selectedMonth}.${isStaff && !isLocked ? ' Use "Pull from portal" to fetch it.' : ''}`}
                 />
               ) : (
-                <ScrollArea className="w-full">
+                <ScrollArea className={SCROLL_CLS}>
                   <div className="min-w-[1050px]">
-                    <table className="w-full text-xs border-collapse">
+                    <table className={TABLE_CLS}>
                       <thead>
-                        <tr className="bg-primary text-primary-foreground">
-                          <th className="border border-primary-foreground/20 p-2 w-9 text-center">
+                        <tr>
+                          <th className={cn(WS_TH, 'w-9 text-center')}>
                             <div className="flex items-center justify-center">
                               <Checkbox
-                                className="border-primary-foreground/60 data-[state=checked]:bg-primary-foreground data-[state=checked]:text-primary"
                                 checked={allFilteredSelected}
                                 onCheckedChange={toggleAllFiltered}
                                 disabled={readOnly}
@@ -1032,34 +1116,34 @@ const Import2BTab: React.FC = () => {
                               />
                             </div>
                           </th>
-                          <th className="border border-primary-foreground/20 p-2 text-left">Date</th>
-                          <th className="border border-primary-foreground/20 p-2 text-left">Supplier</th>
-                          <th className="border border-primary-foreground/20 p-2 text-left">Invoice</th>
-                          <th className="border border-primary-foreground/20 p-2 text-left">GSTIN</th>
-                          <th className="border border-primary-foreground/20 p-2 text-right">Taxable</th>
-                          <th className="border border-primary-foreground/20 p-2 text-right">IGST</th>
-                          <th className="border border-primary-foreground/20 p-2 text-right">CGST</th>
-                          <th className="border border-primary-foreground/20 p-2 text-right">SGST</th>
-                          <th className="border border-primary-foreground/20 p-2 text-left w-40">Action</th>
+                          <th className={WS_TH}>Date</th>
+                          <th className={WS_TH}>Supplier</th>
+                          <th className={WS_TH}>Invoice</th>
+                          <th className={WS_TH}>GSTIN</th>
+                          <th className={cn(WS_TH, 'text-right')}>Taxable</th>
+                          <th className={cn(WS_TH, 'text-right')}>IGST</th>
+                          <th className={cn(WS_TH, 'text-right')}>CGST</th>
+                          <th className={cn(WS_TH, 'text-right')}>SGST</th>
+                          <th className={cn(WS_TH, 'w-40')}>Action</th>
                         </tr>
                         {/* Heading filter row */}
                         <tr className="bg-muted">
-                          <th className="border border-border p-1"></th>
-                          <th className="border border-border p-1"></th>
-                          <th className="border border-border p-1">
+                          <th className="border-b border-r p-1"></th>
+                          <th className="border-b border-r p-1"></th>
+                          <th className="border-b border-r p-1">
                             <input className={filterInputCls} placeholder="Filter…" value={filters.supplier} onChange={(e) => setFilters((f) => ({ ...f, supplier: e.target.value }))} />
                           </th>
-                          <th className="border border-border p-1">
+                          <th className="border-b border-r p-1">
                             <input className={filterInputCls} placeholder="Filter…" value={filters.invoice} onChange={(e) => setFilters((f) => ({ ...f, invoice: e.target.value }))} />
                           </th>
-                          <th className="border border-border p-1">
+                          <th className="border-b border-r p-1">
                             <input className={filterInputCls} placeholder="Filter…" value={filters.gstin} onChange={(e) => setFilters((f) => ({ ...f, gstin: e.target.value }))} />
                           </th>
-                          <th className="border border-border p-1"></th>
-                          <th className="border border-border p-1"></th>
-                          <th className="border border-border p-1"></th>
-                          <th className="border border-border p-1"></th>
-                          <th className="border border-border p-1">
+                          <th className="border-b border-r p-1"></th>
+                          <th className="border-b border-r p-1"></th>
+                          <th className="border-b border-r p-1"></th>
+                          <th className="border-b border-r p-1"></th>
+                          <th className="border-b border-r p-1">
                             <select className={filterInputCls + ' h-7'} value={filters.action} onChange={(e) => setFilters((f) => ({ ...f, action: e.target.value }))}>
                               <option value="">All</option>
                               {TWOB_ACTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -1071,15 +1155,15 @@ const Import2BTab: React.FC = () => {
                         {filteredDocs.length === 0 ? (
                           <TableEmptyState
                             colSpan={10}
-                            icon={<Inbox className="h-6 w-6" />}
+                            icon={<Inbox className="h-5 w-5" />}
                             title="No rows match the filters"
                             description="Clear or change the column filters above to see imported documents."
                           />
                         ) : filteredDocs.map((d) => {
                           const isDirty = d.id in pendingActions;
                           return (
-                          <tr key={d.id} className={selected.has(d.id) ? 'bg-primary/5' : isDirty ? 'bg-warning/10' : 'hover:bg-muted/40'}>
-                            <td className="border border-border p-2 text-center">
+                          <tr key={d.id} className={cn(WS_TR, selected.has(d.id) ? 'bg-primary/5' : isDirty && 'bg-warning/10')}>
+                            <td className={cn(WS_TD, 'text-center')}>
                               <div className="flex items-center justify-center">
                                 <Checkbox
                                   checked={selected.has(d.id)}
@@ -1089,15 +1173,15 @@ const Import2BTab: React.FC = () => {
                                 />
                               </div>
                             </td>
-                            <td className="border border-border p-2 whitespace-nowrap tabular-nums">{isoToDisplay(d.date)}</td>
-                            <td className="border border-border p-2">{d.supplier_name}</td>
-                            <td className="border border-border p-2">{d.supplier_invoice_number}</td>
-                            <td className="border border-border p-2 font-mono">{d.supplier_gstin}</td>
-                            <td className="border border-border p-2 text-right tabular-nums">{num(d.taxable_value)}</td>
-                            <td className="border border-border p-2 text-right tabular-nums">{num(d.input_igst)}</td>
-                            <td className="border border-border p-2 text-right tabular-nums">{num(d.input_cgst)}</td>
-                            <td className="border border-border p-2 text-right tabular-nums">{num(d.input_sgst)}</td>
-                            <td className="border border-border p-2">
+                            <td className={cn(WS_TD, 'whitespace-nowrap tabular-nums')}>{isoToDisplay(d.date)}</td>
+                            <td className={WS_TD}>{d.supplier_name}</td>
+                            <td className={WS_TD}>{d.supplier_invoice_number}</td>
+                            <td className={cn(WS_TD, 'font-mono')}>{d.supplier_gstin}</td>
+                            <td className={WS_TD_NUM}>{num(d.taxable_value)}</td>
+                            <td className={WS_TD_NUM}>{num(d.input_igst)}</td>
+                            <td className={WS_TD_NUM}>{num(d.input_cgst)}</td>
+                            <td className={WS_TD_NUM}>{num(d.input_sgst)}</td>
+                            <td className={WS_TD}>
                               <select
                                 className={rowSelectCls + (isDirty ? ' border-warning' : '')}
                                 value={effectiveAction(d)}
@@ -1114,13 +1198,13 @@ const Import2BTab: React.FC = () => {
                       </tbody>
                       {filteredDocs.length > 0 && (
                         <tfoot>
-                          <tr className="bg-muted/50 font-semibold">
-                            <td className="border border-border p-2" colSpan={5}>Total</td>
-                            <td className="border border-border p-2 text-right tabular-nums">{num(docsTotals.taxable)}</td>
-                            <td className="border border-border p-2 text-right tabular-nums">{num(docsTotals.igst)}</td>
-                            <td className="border border-border p-2 text-right tabular-nums">{num(docsTotals.cgst)}</td>
-                            <td className="border border-border p-2 text-right tabular-nums">{num(docsTotals.sgst)}</td>
-                            <td className="border border-border p-2"></td>
+                          <tr className={WS_TR_TOTAL}>
+                            <td className={WS_TD} colSpan={5}>Total</td>
+                            <td className={WS_TD_NUM}>{num(docsTotals.taxable)}</td>
+                            <td className={WS_TD_NUM}>{num(docsTotals.igst)}</td>
+                            <td className={WS_TD_NUM}>{num(docsTotals.cgst)}</td>
+                            <td className={WS_TD_NUM}>{num(docsTotals.sgst)}</td>
+                            <td className={WS_TD}></td>
                           </tr>
                         </tfoot>
                       )}
@@ -1136,95 +1220,95 @@ const Import2BTab: React.FC = () => {
 
           {/* Zone 2 — books register */}
           <Card>
-            <CardContent className="p-4">
+            <CardContent className="px-4 py-3">
               <Collapsible open={zone2Open} onOpenChange={setZone2Open}>
-              <div className="mb-3 flex items-center justify-between">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <CollapsibleTrigger className="flex items-center gap-1.5 text-left group">
                   <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${zone2Open ? '' : '-rotate-90'}`} />
                   <div>
-                    <p className="font-semibold text-foreground group-hover:text-foreground">2 · Books / purchase register</p>
+                    <p className="text-[15px] font-semibold leading-snug text-foreground">2 · Books / purchase register</p>
                     <p className="text-xs text-muted-foreground">Add invoices booked but missing from 2B · CGST fills SGST</p>
                   </div>
                 </CollapsibleTrigger>
                 {!readOnly && (
-                  <Button variant="outline" size="sm" onClick={addBookRow}><Plus className="h-4 w-4 mr-1" />Add row</Button>
+                  <Button variant="outline" size="sm" className={WS_BTN} onClick={addBookRow}><Plus className="h-3.5 w-3.5" />Add row</Button>
                 )}
               </div>
               <CollapsibleContent>
-              <ScrollArea className="w-full">
+              <ScrollArea className={SCROLL_CLS}>
                 <div className="min-w-[1050px]">
-                  <table className="w-full text-xs border-collapse">
+                  <table className={TABLE_CLS}>
                     <thead>
-                      <tr className="bg-primary text-primary-foreground">
-                        <th className="border border-primary-foreground/20 p-2 text-left w-28">Date</th>
-                        <th className="border border-primary-foreground/20 p-2 text-left">Supplier</th>
-                        <th className="border border-primary-foreground/20 p-2 text-left">Invoice</th>
-                        <th className="border border-primary-foreground/20 p-2 text-left">GSTIN</th>
-                        <th className="border border-primary-foreground/20 p-2 text-right w-24">Taxable</th>
-                        <th className="border border-primary-foreground/20 p-2 text-right w-20">IGST</th>
-                        <th className="border border-primary-foreground/20 p-2 text-right w-20">CGST</th>
-                        <th className="border border-primary-foreground/20 p-2 text-right w-20">SGST</th>
-                        <th className="border border-primary-foreground/20 p-2 text-left w-32">Treatment</th>
-                        {!readOnly && <th className="border border-primary-foreground/20 p-2 w-10"></th>}
+                      <tr>
+                        <th className={cn(WS_TH, 'w-28')}>Date</th>
+                        <th className={WS_TH}>Supplier</th>
+                        <th className={WS_TH}>Invoice</th>
+                        <th className={WS_TH}>GSTIN</th>
+                        <th className={cn(WS_TH, 'text-right w-24')}>Taxable</th>
+                        <th className={cn(WS_TH, 'text-right w-20')}>IGST</th>
+                        <th className={cn(WS_TH, 'text-right w-20')}>CGST</th>
+                        <th className={cn(WS_TH, 'text-right w-20')}>SGST</th>
+                        <th className={cn(WS_TH, 'w-32')}>Treatment</th>
+                        {!readOnly && <th className={cn(WS_TH, 'w-10')}></th>}
                       </tr>
                     </thead>
                     <tbody>
                       {books.length === 0 ? (
                         <TableEmptyState
                           colSpan={readOnly ? 9 : 10}
-                          icon={<Inbox className="h-6 w-6" />}
+                          icon={<Inbox className="h-5 w-5" />}
                           title="No books invoices added"
                           description={readOnly ? undefined : 'Use "Add row" to record invoices booked but missing from 2B.'}
                         />
                       ) : books.map((b) => (
-                        <tr key={b.id}>
-                          <td className="border border-border p-1">
+                        <tr key={b.id} className={WS_TR}>
+                          <td className="border-b border-r p-0">
                             <input type="date" className={cellInputCls} value={b.date || ''} disabled={readOnly}
                               onChange={(e) => updateBookLocal(b.id, { date: e.target.value })} onBlur={() => saveBookRow(b.id, false)} />
                           </td>
-                          <td className="border border-border p-1">
+                          <td className="border-b border-r p-0">
                             <input className={cellInputCls} value={b.supplier_name || ''} disabled={readOnly}
                               onChange={(e) => updateBookLocal(b.id, { supplier_name: e.target.value })} onBlur={() => saveBookRow(b.id, false)} />
                           </td>
-                          <td className="border border-border p-1">
+                          <td className="border-b border-r p-0">
                             <input className={cellInputCls} value={b.supplier_invoice_number || ''} disabled={readOnly}
                               onChange={(e) => updateBookLocal(b.id, { supplier_invoice_number: e.target.value })} onBlur={() => saveBookRow(b.id, true)} />
                           </td>
-                          <td className="border border-border p-1">
+                          <td className="border-b border-r p-0">
                             <input className={`${cellInputCls} font-mono`} value={b.supplier_gstin || ''} disabled={readOnly}
                               onChange={(e) => updateBookLocal(b.id, { supplier_gstin: e.target.value.toUpperCase() })} onBlur={() => saveBookRow(b.id, true)} />
                           </td>
-                          <td className="border border-border p-1">
+                          <td className="border-b border-r p-0">
                             <input className={`${cellInputCls} text-right tabular-nums`} value={b.taxable_value || ''} disabled={readOnly}
                               onChange={(e) => updateBookLocal(b.id, { taxable_value: toNum(e.target.value) })} onBlur={() => saveBookRow(b.id, false)} />
                           </td>
-                          <td className="border border-border p-1">
+                          <td className="border-b border-r p-0">
                             <input className={`${cellInputCls} text-right tabular-nums`} value={b.input_igst || ''} disabled={readOnly}
                               onChange={(e) => updateBookLocal(b.id, { input_igst: toNum(e.target.value) })} onBlur={() => saveBookRow(b.id, true)} />
                           </td>
-                          <td className="border border-border p-1">
+                          <td className="border-b border-r p-0">
                             <input className={`${cellInputCls} text-right tabular-nums`} value={b.input_cgst || ''} disabled={readOnly}
                               onChange={(e) => updateBookLocal(b.id, { input_cgst: toNum(e.target.value), input_sgst: toNum(e.target.value) })} onBlur={() => saveBookRow(b.id, true)} />
                           </td>
-                          <td className="border border-border p-1">
+                          <td className="border-b border-r p-0">
                             <input className={`${cellInputCls} text-right tabular-nums`} value={b.input_sgst || ''} disabled={readOnly}
                               onChange={(e) => updateBookLocal(b.id, { input_sgst: toNum(e.target.value) })} onBlur={() => saveBookRow(b.id, true)} />
                           </td>
-                          <td className="border border-border p-1">
-                            <select className={rowSelectCls} value={b.book_treatment} disabled={readOnly} onChange={(e) => setBookTreatment(b.id, e.target.value)}>
+                          <td className="border-b border-r p-0">
+                            <select className={cn(rowSelectCls, 'm-0.5 w-[calc(100%-4px)]')} value={b.book_treatment} disabled={readOnly} onChange={(e) => setBookTreatment(b.id, e.target.value)}>
                               {BOOK_TREATMENTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                             </select>
                           </td>
                           {!readOnly && (
-                            <td className="border border-border p-1 text-center">
+                            <td className="border-b border-r px-1 text-center">
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7 text-destructive hover:text-destructive"
+                                className="h-7 w-7 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive-strong focus-visible:opacity-100 group-hover:opacity-100"
                                 onClick={() => deleteBookRow(b.id)}
                                 aria-label={`Delete books row ${b.supplier_invoice_number || ''}`.trim()}
                               >
-                                <Trash2 className="h-4 w-4" />
+                                <Trash2 className="h-3.5 w-3.5" />
                               </Button>
                             </td>
                           )}
@@ -1235,15 +1319,15 @@ const Import2BTab: React.FC = () => {
                       const bookTotals = sumRows(books);
                       return (
                         <tfoot>
-                          <tr className="font-medium bg-muted/30">
-                            <td className="border border-border p-2" colSpan={4}>
+                          <tr className={WS_TR_TOTAL}>
+                            <td className={WS_TD} colSpan={4}>
                               Total ({bookTotals.count})
                             </td>
-                            <td className="border border-border p-2 text-right tabular-nums">{num(bookTotals.taxable)}</td>
-                            <td className="border border-border p-2 text-right tabular-nums">{num(bookTotals.igst)}</td>
-                            <td className="border border-border p-2 text-right tabular-nums">{num(bookTotals.cgst)}</td>
-                            <td className="border border-border p-2 text-right tabular-nums">{num(bookTotals.sgst)}</td>
-                            <td className="border border-border p-2" colSpan={readOnly ? 1 : 2} />
+                            <td className={WS_TD_NUM}>{num(bookTotals.taxable)}</td>
+                            <td className={WS_TD_NUM}>{num(bookTotals.igst)}</td>
+                            <td className={WS_TD_NUM}>{num(bookTotals.cgst)}</td>
+                            <td className={WS_TD_NUM}>{num(bookTotals.sgst)}</td>
+                            <td className={WS_TD} colSpan={readOnly ? 1 : 2} />
                           </tr>
                         </tfoot>
                       );
@@ -1259,24 +1343,24 @@ const Import2BTab: React.FC = () => {
 
           {/* Zone 3 — amount-wise summary */}
           <Card>
-            <CardContent className="p-4 space-y-5">
-              <p className="font-semibold text-foreground">3 · Reconciliation summary (amount-wise)</p>
+            <CardContent className="space-y-3 px-4 py-3">
+              <p className="text-[15px] font-semibold leading-snug text-foreground">3 · Reconciliation summary (amount-wise)</p>
               {renderSummaryTable('GSTR-2B (imported) — by action', summary2b)}
               {renderSummaryTable('Books — by treatment', summaryBooks)}
               {rcmHidden > 0 && <p className="text-xs text-muted-foreground">Plus {rcmHidden} RCM doc(s) hidden — handled in RCM Summary.</p>}
-              <p className="text-xs text-muted-foreground">
+              <Note>
                 Matched supplies claim at the 2B figure and feed ITC Summary directly. "Not in Books" and "Not in 2B"
-                rows only reach the live ledger once you click <span className="font-medium text-foreground">Post to Reconciliation</span> above.
-              </p>
+                rows only reach the live ledger once you click <span className="font-medium">Post to Reconciliation</span> above.
+              </Note>
             </CardContent>
           </Card>
 
           {/* Zone 4 — pending items already on the ledger, awaiting a decision */}
           {(pendingBills2B.length > 0 || pendingBillsBooks.length > 0 || expensedOutItems.length > 0) && (
             <Card>
-              <CardContent className="p-4 space-y-5">
+              <CardContent className="space-y-3 px-4 py-3">
                 <div>
-                  <p className="font-semibold text-foreground flex items-center gap-2"><Clock className="h-4 w-4" />4 · Pending items</p>
+                  <p className="flex items-center gap-1.5 text-[15px] font-semibold leading-snug text-foreground"><Clock className="h-4 w-4 text-muted-foreground" />4 · Pending items</p>
                   <p className="text-xs text-muted-foreground">
                     Already on the 2B Reconciliation ledger for {selectedMonth} · decide Reclaim / Book Entry here — the ledger itself is read-only.
                   </p>
@@ -1284,39 +1368,39 @@ const Import2BTab: React.FC = () => {
 
                 {pendingBills2B.length > 0 && (
                   <Collapsible open={zone4Open.reclaim} onOpenChange={(open) => setZone4Open((z) => ({ ...z, reclaim: open }))}>
-                    <CollapsibleTrigger className="flex w-full items-center gap-1.5 mb-2 text-left group">
+                    <CollapsibleTrigger className="group mb-1.5 flex w-full items-center gap-1.5 text-left">
                       <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${zone4Open.reclaim ? '' : '-rotate-90'}`} />
-                      <p className="text-sm font-medium group-hover:text-foreground">
+                      <p className="text-xs font-semibold text-muted-foreground group-hover:text-foreground">
                         Awaiting reclaim (booked, reversed — not yet back in 2B) · {pendingBills2B.length}
                       </p>
                     </CollapsibleTrigger>
                     <CollapsibleContent>
-                    <ScrollArea className="w-full">
+                    <ScrollArea className={SCROLL_CLS}>
                       <div className="min-w-[900px]">
-                        <table className="w-full text-xs border-collapse">
+                        <table className={TABLE_CLS}>
                           <thead>
-                            <tr className="bg-primary text-primary-foreground">
-                              <th className="border border-primary-foreground/20 p-2 text-left">Date</th>
-                              <th className="border border-primary-foreground/20 p-2 text-left">Supplier</th>
-                              <th className="border border-primary-foreground/20 p-2 text-left">Invoice</th>
-                              <th className="border border-primary-foreground/20 p-2 text-right">IGST</th>
-                              <th className="border border-primary-foreground/20 p-2 text-right">CGST</th>
-                              <th className="border border-primary-foreground/20 p-2 text-right">SGST</th>
-                              <th className="border border-primary-foreground/20 p-2 text-left w-24">Reversed</th>
-                              <th className="border border-primary-foreground/20 p-2 text-left w-44">Reclaim</th>
+                            <tr>
+                              <th className={WS_TH}>Date</th>
+                              <th className={WS_TH}>Supplier</th>
+                              <th className={WS_TH}>Invoice</th>
+                              <th className={cn(WS_TH, 'text-right')}>IGST</th>
+                              <th className={cn(WS_TH, 'text-right')}>CGST</th>
+                              <th className={cn(WS_TH, 'text-right')}>SGST</th>
+                              <th className={cn(WS_TH, 'w-24')}>Reversed</th>
+                              <th className={cn(WS_TH, 'w-44')}>Reclaim</th>
                             </tr>
                           </thead>
                           <tbody>
                             {pendingBills2B.map((r) => (
-                              <tr key={r.id}>
-                                <td className="border border-border p-2 whitespace-nowrap tabular-nums">{isoToDisplay(r.date)}</td>
-                                <td className="border border-border p-2">{r.supplier_name}</td>
-                                <td className="border border-border p-2">{r.supplier_invoice_number}</td>
-                                <td className="border border-border p-2 text-right tabular-nums">{num(r.input_igst)}</td>
-                                <td className="border border-border p-2 text-right tabular-nums">{num(r.input_cgst)}</td>
-                                <td className="border border-border p-2 text-right tabular-nums">{num(r.input_sgst)}</td>
-                                <td className="border border-border p-2">{r.reversal_month || '-'}</td>
-                                <td className="border border-border p-2">
+                              <tr key={r.id} className={WS_TR}>
+                                <td className={cn(WS_TD, 'whitespace-nowrap tabular-nums')}>{isoToDisplay(r.date)}</td>
+                                <td className={WS_TD}>{r.supplier_name}</td>
+                                <td className={WS_TD}>{r.supplier_invoice_number}</td>
+                                <td className={WS_TD_NUM}>{num(r.input_igst)}</td>
+                                <td className={WS_TD_NUM}>{num(r.input_cgst)}</td>
+                                <td className={WS_TD_NUM}>{num(r.input_sgst)}</td>
+                                <td className={WS_TD}>{r.reversal_month || '-'}</td>
+                                <td className={WS_TD}>
                                   <div className="flex items-center gap-1.5">
                                     <Button
                                       size="sm"
@@ -1351,39 +1435,39 @@ const Import2BTab: React.FC = () => {
 
                 {pendingBillsBooks.length > 0 && (
                   <Collapsible open={zone4Open.bookEntry} onOpenChange={(open) => setZone4Open((z) => ({ ...z, bookEntry: open }))}>
-                    <CollapsibleTrigger className="flex w-full items-center gap-1.5 mb-2 text-left group">
+                    <CollapsibleTrigger className="group mb-1.5 flex w-full items-center gap-1.5 text-left">
                       <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${zone4Open.bookEntry ? '' : '-rotate-90'}`} />
-                      <p className="text-sm font-medium group-hover:text-foreground">
+                      <p className="text-xs font-semibold text-muted-foreground group-hover:text-foreground">
                         Awaiting book entry (in 2B — not yet booked) · {pendingBillsBooks.length}
                       </p>
                     </CollapsibleTrigger>
                     <CollapsibleContent>
-                    <ScrollArea className="w-full">
+                    <ScrollArea className={SCROLL_CLS}>
                       <div className="min-w-[900px]">
-                        <table className="w-full text-xs border-collapse">
+                        <table className={TABLE_CLS}>
                           <thead>
-                            <tr className="bg-primary text-primary-foreground">
-                              <th className="border border-primary-foreground/20 p-2 text-left">Date</th>
-                              <th className="border border-primary-foreground/20 p-2 text-left">Supplier</th>
-                              <th className="border border-primary-foreground/20 p-2 text-left">Invoice</th>
-                              <th className="border border-primary-foreground/20 p-2 text-right">IGST</th>
-                              <th className="border border-primary-foreground/20 p-2 text-right">CGST</th>
-                              <th className="border border-primary-foreground/20 p-2 text-right">SGST</th>
-                              <th className="border border-primary-foreground/20 p-2 text-left w-24">In 2B since</th>
-                              <th className="border border-primary-foreground/20 p-2 text-left w-40">Book Entry</th>
+                            <tr>
+                              <th className={WS_TH}>Date</th>
+                              <th className={WS_TH}>Supplier</th>
+                              <th className={WS_TH}>Invoice</th>
+                              <th className={cn(WS_TH, 'text-right')}>IGST</th>
+                              <th className={cn(WS_TH, 'text-right')}>CGST</th>
+                              <th className={cn(WS_TH, 'text-right')}>SGST</th>
+                              <th className={cn(WS_TH, 'w-24')}>In 2B since</th>
+                              <th className={cn(WS_TH, 'w-40')}>Book Entry</th>
                             </tr>
                           </thead>
                           <tbody>
                             {pendingBillsBooks.map((r) => (
-                              <tr key={r.id}>
-                                <td className="border border-border p-2 whitespace-nowrap tabular-nums">{isoToDisplay(r.date)}</td>
-                                <td className="border border-border p-2">{r.supplier_name}</td>
-                                <td className="border border-border p-2">{r.supplier_invoice_number}</td>
-                                <td className="border border-border p-2 text-right tabular-nums">{num(r.input_igst)}</td>
-                                <td className="border border-border p-2 text-right tabular-nums">{num(r.input_cgst)}</td>
-                                <td className="border border-border p-2 text-right tabular-nums">{num(r.input_sgst)}</td>
-                                <td className="border border-border p-2">{r.bill_in_2b_month || '-'}</td>
-                                <td className="border border-border p-2">
+                              <tr key={r.id} className={WS_TR}>
+                                <td className={cn(WS_TD, 'whitespace-nowrap tabular-nums')}>{isoToDisplay(r.date)}</td>
+                                <td className={WS_TD}>{r.supplier_name}</td>
+                                <td className={WS_TD}>{r.supplier_invoice_number}</td>
+                                <td className={WS_TD_NUM}>{num(r.input_igst)}</td>
+                                <td className={WS_TD_NUM}>{num(r.input_cgst)}</td>
+                                <td className={WS_TD_NUM}>{num(r.input_sgst)}</td>
+                                <td className={WS_TD}>{r.bill_in_2b_month || '-'}</td>
+                                <td className={WS_TD}>
                                   <select
                                     className={rowSelectCls}
                                     disabled={readOnly}
@@ -1401,49 +1485,49 @@ const Import2BTab: React.FC = () => {
                       </div>
                       <ScrollBar orientation="horizontal" />
                     </ScrollArea>
-                    <p className="text-xs text-muted-foreground mt-2">
+                    <Note className="mt-2">
                       Once booked, claim the ITC under ITC Summary row 5.2 "ITC for Previous Month" — this invoice
                       won't reappear in a future GSTR-2B pull.
-                    </p>
+                    </Note>
                     </CollapsibleContent>
                   </Collapsible>
                 )}
 
                 {expensedOutItems.length > 0 && (
                   <Collapsible open={zone4Open.expensedOut} onOpenChange={(open) => setZone4Open((z) => ({ ...z, expensedOut: open }))}>
-                    <CollapsibleTrigger className="flex w-full items-center gap-1.5 mb-2 text-left group">
+                    <CollapsibleTrigger className="group mb-1.5 flex w-full items-center gap-1.5 text-left">
                       <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${zone4Open.expensedOut ? '' : '-rotate-90'}`} />
-                      <p className="text-sm font-medium group-hover:text-foreground">
+                      <p className="text-xs font-semibold text-muted-foreground group-hover:text-foreground">
                         Expensed out this period — Undo if this was a mistake · {expensedOutItems.length}
                       </p>
                     </CollapsibleTrigger>
                     <CollapsibleContent>
-                    <ScrollArea className="w-full">
+                    <ScrollArea className={SCROLL_CLS}>
                       <div className="min-w-[900px]">
-                        <table className="w-full text-xs border-collapse">
+                        <table className={TABLE_CLS}>
                           <thead>
-                            <tr className="bg-primary text-primary-foreground">
-                              <th className="border border-primary-foreground/20 p-2 text-left">Date</th>
-                              <th className="border border-primary-foreground/20 p-2 text-left">Supplier</th>
-                              <th className="border border-primary-foreground/20 p-2 text-left">Invoice</th>
-                              <th className="border border-primary-foreground/20 p-2 text-right">IGST</th>
-                              <th className="border border-primary-foreground/20 p-2 text-right">CGST</th>
-                              <th className="border border-primary-foreground/20 p-2 text-right">SGST</th>
-                              <th className="border border-primary-foreground/20 p-2 text-left w-24">Reversed</th>
-                              <th className="border border-primary-foreground/20 p-2 text-left w-28"></th>
+                            <tr>
+                              <th className={WS_TH}>Date</th>
+                              <th className={WS_TH}>Supplier</th>
+                              <th className={WS_TH}>Invoice</th>
+                              <th className={cn(WS_TH, 'text-right')}>IGST</th>
+                              <th className={cn(WS_TH, 'text-right')}>CGST</th>
+                              <th className={cn(WS_TH, 'text-right')}>SGST</th>
+                              <th className={cn(WS_TH, 'w-24')}>Reversed</th>
+                              <th className={cn(WS_TH, 'w-28')}></th>
                             </tr>
                           </thead>
                           <tbody>
                             {expensedOutItems.map((r) => (
-                              <tr key={r.id}>
-                                <td className="border border-border p-2 whitespace-nowrap tabular-nums">{isoToDisplay(r.date)}</td>
-                                <td className="border border-border p-2">{r.supplier_name}</td>
-                                <td className="border border-border p-2">{r.supplier_invoice_number}</td>
-                                <td className="border border-border p-2 text-right tabular-nums">{num(r.input_igst)}</td>
-                                <td className="border border-border p-2 text-right tabular-nums">{num(r.input_cgst)}</td>
-                                <td className="border border-border p-2 text-right tabular-nums">{num(r.input_sgst)}</td>
-                                <td className="border border-border p-2">{r.reversal_month || '-'}</td>
-                                <td className="border border-border p-2">
+                              <tr key={r.id} className={WS_TR}>
+                                <td className={cn(WS_TD, 'whitespace-nowrap tabular-nums')}>{isoToDisplay(r.date)}</td>
+                                <td className={WS_TD}>{r.supplier_name}</td>
+                                <td className={WS_TD}>{r.supplier_invoice_number}</td>
+                                <td className={WS_TD_NUM}>{num(r.input_igst)}</td>
+                                <td className={WS_TD_NUM}>{num(r.input_cgst)}</td>
+                                <td className={WS_TD_NUM}>{num(r.input_sgst)}</td>
+                                <td className={WS_TD}>{r.reversal_month || '-'}</td>
+                                <td className={WS_TD}>
                                   <Button
                                     size="sm"
                                     variant="outline"

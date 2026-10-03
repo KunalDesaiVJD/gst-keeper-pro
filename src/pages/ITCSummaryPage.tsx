@@ -1,12 +1,17 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, Note, SectionCard } from '@/components/gstr9/ui';
+import {
+  WS_BTN, WS_CELL_INPUT, WS_CONTROL, WS_FILTER_LABEL, WS_PAGE, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR, WS_TR_HEADING, WS_TR_TOTAL,
+} from '@/components/workspace/theme';
+import { cn } from '@/lib/utils';
 import { isQuarterEndMonth } from '@/types';
-import { Lock, AlertCircle, Save, FileText, History, AlertTriangle, Trash2, Receipt, Loader2 } from 'lucide-react';
+import { Lock, AlertCircle, Save, FileText, History, Trash2, Receipt, Loader2 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useAuth } from '@/contexts/AuthContext';
@@ -24,6 +29,9 @@ import {
   computeNet4C, computePartialItcSplit, computeSection4ATotal5, computeTotal4A, computeTotal4B,
 } from '@/utils/builderPartialItc';
 import { fetchImport2BEligibleTotal } from '@/lib/postImport2B';
+
+// Auto-linked / auto-calculated rows: figures come from elsewhere, not typed.
+const LOCKED_ROW = 'bg-muted/30';
 
 interface ITCRow {
   srNo: string;
@@ -1152,29 +1160,34 @@ const ITCSummaryPage: React.FC = () => {
     return num.toLocaleString('en-IN');
   };
 
+  // One figure cell (IGST / CGST / SGST): an inline input on rows staff type
+  // into, plain right-aligned text everywhere else.
   const renderEditableCell = (section: keyof ITCData, rowIndex: number, row: ITCRow, field: 'igst' | 'cgst' | 'sgst') => {
     const canEdit = row.editable && !isLocked && !row.isAutoLinked;
     
     if (canEdit) {
       return (
-        <Input
-          type="number"
-          value={row[field]}
-          onChange={(e) => {
-            const numVal = parseFloat(e.target.value) || 0;
-            if (numVal < 0) {
-              setNegativeValueError('Negative values are not allowed in ITC Summary.');
-              setTimeout(() => setNegativeValueError(null), 3000);
-              return;
-            }
-            handleCellChange(section, rowIndex, field, e.target.value);
-          }}
-          min={0}
-          className="w-24 text-right h-8 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-        />
+        <td className={cn(WS_TD, 'bg-primary/[0.03] p-0')}>
+          <Input
+            type="number"
+            value={row[field]}
+            onChange={(e) => {
+              const numVal = parseFloat(e.target.value) || 0;
+              if (numVal < 0) {
+                setNegativeValueError('Negative values are not allowed in ITC Summary.');
+                setTimeout(() => setNegativeValueError(null), 3000);
+                return;
+              }
+              handleCellChange(section, rowIndex, field, e.target.value);
+            }}
+            min={0}
+            aria-label={`${row.srNo || row.particular} ${field.toUpperCase()}`}
+            className={cn(WS_CELL_INPUT, 'text-right tabular-nums [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none')}
+          />
+        </td>
       );
     }
-    return <span>{formatNumber(row[field])}</span>;
+    return <td className={WS_TD_NUM}>{formatNumber(row[field])}</td>;
   };
 
   const handleExportPDF = () => {
@@ -1201,82 +1214,186 @@ const ITCSummaryPage: React.FC = () => {
     toast.success('PDF exported successfully');
   };
 
-  return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="space-y-1">
-        <PageHeader
-          title="ITC Summary"
-          subtitle="Input Tax Credit summary for the month"
-          icon={<Receipt className="h-6 w-6" />}
-          actions={
-            <>
-              {selectedClient && (
-                <Button variant="outline" onClick={handleExportPDF} className="gap-2">
-                  <FileText className="h-4 w-4" />
-                  Export PDF
-                </Button>
-              )}
-              {selectedClient && !isLocked && (
-                <Button onClick={handleSave} disabled={isSaving} className="gap-2">
-                  <Save className="h-4 w-4" />
-                  {isSaving ? 'Saving...' : 'Save Changes'}
-                </Button>
-              )}
-              {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClient && (
-                <Button variant="destructive" onClick={() => setShowClearData(true)} className="gap-2">
-                  <Trash2 className="h-4 w-4" />
-                  Clear Data
-                </Button>
-              )}
-            </>
-          }
-        />
-        {lastSavedBy && (
-          <p className="text-xs text-muted-foreground">
-            Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
-            {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
-            {' '}on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-            {' '}• v{lastSavedBy.version}
-          </p>
-        )}
-      </div>
+  const inr = (n: number) => n.toLocaleString('en-IN');
 
-      {/* Filters */}
+  // "Auto-linked" / "Auto-calculated" pill after a row's particulars.
+  const autoBadge = (label: 'Auto-linked' | 'Auto-calculated') => (
+    <Badge variant="secondary" className="ml-2 gap-1 whitespace-nowrap px-1.5 align-middle text-[10px] font-medium">
+      <Lock className="h-3 w-3" />
+      {label}
+    </Badge>
+  );
+
+  // Reasons column: an inline input on every value row.
+  const reasonCell = (section: keyof ITCData, idx: number, row: ITCRow) => (
+    <td className={cn(WS_TD, 'border-r-0 p-0')}>
+      <Input
+        type="text"
+        value={row.reasons || ''}
+        onChange={(e) => handleReasonsChange(section, idx, e.target.value)}
+        placeholder="Reason…"
+        aria-label={`Reason for ${row.srNo || row.particular}`}
+        className={WS_CELL_INPUT}
+        disabled={isLocked}
+      />
+    </td>
+  );
+
+  // A computed (read-only) row: fixed figures, a badge, and the reason input.
+  const computedRow = (
+    key: string,
+    section: keyof ITCData,
+    idx: number,
+    row: ITCRow,
+    vals: { igst: number; cgst: number; sgst: number },
+    badge: 'Auto-linked' | 'Auto-calculated',
+  ) => (
+    <tr key={key} className={cn(WS_TR, LOCKED_ROW)}>
+      <td className={cn(WS_TD, 'text-muted-foreground')}>{row.srNo}</td>
+      <td className={WS_TD}>{row.particular}{autoBadge(badge)}</td>
+      <td className={WS_TD_NUM}>{formatNumber(vals.igst)}</td>
+      <td className={WS_TD_NUM}>{formatNumber(vals.cgst)}</td>
+      <td className={WS_TD_NUM}>{formatNumber(vals.sgst)}</td>
+      <td className={cn(WS_TD_NUM, 'font-medium')}>{formatNumber(vals.igst + vals.cgst + vals.sgst)}</td>
+      {reasonCell(section, idx, row)}
+    </tr>
+  );
+
+  // An ordinary row: editable figures where the row allows it.
+  const lineRow = (key: string, section: keyof ITCData, idx: number, row: ITCRow) => (
+    <tr key={key} className={cn(WS_TR, row.isAutoLinked && LOCKED_ROW)}>
+      <td className={cn(WS_TD, 'text-muted-foreground')}>{row.srNo}</td>
+      <td className={WS_TD}>
+        {row.particular}
+        {row.isAutoLinked && autoBadge('Auto-linked')}
+      </td>
+      {renderEditableCell(section, idx, row, 'igst')}
+      {renderEditableCell(section, idx, row, 'cgst')}
+      {renderEditableCell(section, idx, row, 'sgst')}
+      <td className={cn(WS_TD_NUM, 'font-medium')}>{inr(row.igst + row.cgst + row.sgst)}</td>
+      {reasonCell(section, idx, row)}
+    </tr>
+  );
+
+  // Sub-heading row inside a section, e.g. 4A (5) "All other ITC".
+  const subHeadingRow = (key: string, row: ITCRow) => (
+    <tr key={key} className="bg-muted/30 font-medium">
+      <td className={cn(WS_TD, 'text-muted-foreground')}>{row.srNo}</td>
+      <td colSpan={6} className={cn(WS_TD, 'border-r-0')}>{row.particular}</td>
+    </tr>
+  );
+
+  // Section heading row: 4 (A), 4 (B), 4 (D).
+  const sectionRow = (code: string, label: string) => (
+    <tr className={WS_TR_HEADING}>
+      <td className={WS_TD}>{code}</td>
+      <td colSpan={6} className={cn(WS_TD, 'border-r-0')}>{label}</td>
+    </tr>
+  );
+
+  // Total row: Total (5), Total (4A), Total (4B), 4 (C).
+  const totalRow = (code: string, label: React.ReactNode, vals: { igst: number; cgst: number; sgst: number }, className: string = WS_TR_TOTAL) => (
+    <tr className={className}>
+      <td className={WS_TD}>{code}</td>
+      <td className={WS_TD}>{label}</td>
+      <td className={WS_TD_NUM}>{inr(vals.igst)}</td>
+      <td className={WS_TD_NUM}>{inr(vals.cgst)}</td>
+      <td className={WS_TD_NUM}>{inr(vals.sgst)}</td>
+      <td className={WS_TD_NUM}>{inr(vals.igst + vals.cgst + vals.sgst)}</td>
+      <td className={cn(WS_TD, 'border-r-0')} />
+    </tr>
+  );
+
+  // Total (4A) − 4A(3) RCM ITC. Total (5) (5.1+5.2−5.3+5.4+5.5) never
+  // includes RCM ITC — row (3) is a separate top-level 4A line, not one of the
+  // 5.x sub-rows — so "Excl RCM" means Total 4A minus the RCM row, full stop;
+  // 5.4/5.5 are ordinary non-RCM reclaim components of ITC Available.
+  const rcmRow3 = itcData.section4A.find(r => r.srNo === '(3)') || { igst: 0, cgst: 0, sgst: 0 };
+  const exclRcm = { igst: total4A.igst - rcmRow3.igst, cgst: total4A.cgst - rcmRow3.cgst, sgst: total4A.sgst - rcmRow3.sgst };
+  const headSplit = (v: { igst: number; cgst: number; sgst: number }) => `IGST ${inr(v.igst)} · CGST ${inr(v.cgst)} · SGST ${inr(v.sgst)}`;
+  const net4CTotal = net4C.igst + net4C.cgst + net4C.sgst;
+
+  return (
+    <div className={WS_PAGE}>
+      {/* One compact row: title, last save, and the sheet's actions. */}
+      <PageHeader
+        compact
+        title="ITC Summary"
+        subtitle="Input Tax Credit for the month"
+        icon={<Receipt />}
+        actions={
+          <>
+            {lastSavedBy && (
+              <span className="text-xs text-muted-foreground">
+                Saved by <span className="font-medium text-foreground">{lastSavedBy.name}</span>
+                {lastSavedBy.role && <> ({lastSavedBy.role})</>}
+                {' '}· {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                {' '}· v{lastSavedBy.version}
+              </span>
+            )}
+            {selectedClient && (
+              <Button variant="outline" size="sm" className={WS_BTN} onClick={handleExportPDF}>
+                <FileText className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Export PDF</span>
+              </Button>
+            )}
+            {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClient && (
+              <Button variant="outline" size="sm" className={cn(WS_BTN, 'text-destructive hover:text-destructive')} onClick={() => setShowClearData(true)}>
+                <Trash2 className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Clear Data</span>
+              </Button>
+            )}
+            {selectedClient && !isLocked && (
+              <Button size="sm" className={cn(WS_BTN, 'px-3')} onClick={handleSave} disabled={isSaving}>
+                {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                {isSaving ? 'Saving…' : 'Save changes'}
+              </Button>
+            )}
+          </>
+        }
+      />
+
+      {/* Filters: one labelled toolbar. */}
       <Card>
-        <CardContent className="p-4">
-          <div className="flex items-center gap-4">
-            <div className="flex-1 max-w-xs">
+        <CardContent className="px-3 py-2">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="w-full min-w-0 space-y-0.5 sm:w-72">
+              <span className={WS_FILTER_LABEL}>Client</span>
               <SearchableSelect
                 options={clients.map(c => ({ value: c.id, label: c.name, sublabel: c.gstin }))}
                 value={selectedClient}
                 onValueChange={setSelectedClient}
-                placeholder="Search Client..."
+                placeholder="Search client…"
                 searchPlaceholder="Type to search clients..."
                 emptyText="No clients found."
                 disabled={!isStaffRole() && clients.length <= 1}
+                className={WS_CONTROL}
               />
-            </div>
-            <div className="w-48">
+            </label>
+            <label className="w-40 min-w-0 space-y-0.5">
+              <span className={WS_FILTER_LABEL}>Return period</span>
               <SearchableMonthSelect
                 options={monthOptions}
                 value={selectedMonth}
                 onValueChange={setSelectedMonth}
-                placeholder="Select Month"
+                placeholder="Select month"
+                className={WS_CONTROL}
               />
+            </label>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              {selectedClient && (
+                <GSTPortalLink 
+                  clientId={selectedClient} 
+                  clientName={selectedClientData?.name} 
+                />
+              )}
+              {canViewVersions && selectedClient && (
+                <Button variant="outline" size="sm" className={WS_BTN} onClick={() => setShowVersionHistory(true)}>
+                  <History className="h-3.5 w-3.5" />
+                  Versions
+                </Button>
+              )}
             </div>
-            {selectedClient && (
-              <GSTPortalLink 
-                clientId={selectedClient} 
-                clientName={selectedClientData?.name} 
-              />
-            )}
-            {canViewVersions && selectedClient && (
-              <Button variant="outline" size="sm" onClick={() => setShowVersionHistory(true)}>
-                <History className="h-4 w-4 mr-1" />
-                View Versions
-              </Button>
-            )}
           </div>
         </CardContent>
       </Card>
@@ -1297,11 +1414,11 @@ const ITCSummaryPage: React.FC = () => {
 
       {!selectedClient ? (
         <Card>
-          <CardContent className="p-6">
+          <CardContent className="p-4">
             <TableEmptyState
-              icon={<AlertCircle className="h-6 w-6" />}
+              icon={<AlertCircle className="h-5 w-5" />}
               title="No client selected"
-              description="Please select a client to view the ITC Summary."
+              description="Pick a client above to see its ITC Summary."
             />
           </CardContent>
         </Card>
@@ -1309,212 +1426,104 @@ const ITCSummaryPage: React.FC = () => {
         <>
           {/* Negative value error message */}
           {negativeValueError && (
-            <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-3 flex items-center gap-2 text-destructive">
-              <AlertCircle className="h-4 w-4" />
-              <span className="text-sm">{negativeValueError}</span>
+            <div role="alert" className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2.5 py-1.5 text-xs text-foreground">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+              {negativeValueError}
             </div>
           )}
 
-          {/* GST Update Sheet Reminder Banner */}
+          {/* GST Update Sheet reminder */}
           {gstUpdateCount > 0 && (
-            <div className="bg-warning/10 border border-warning/30 rounded-lg p-3 flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-warning shrink-0" />
-              <span className="text-sm text-warning">
-                An effect is written on GST Update Sheet. Make sure that effect is given. <span className="text-xs text-warning/80">(Entries found: {gstUpdateCount})</span>
-              </span>
-            </div>
+            <Note tone="warn">
+              An effect is written on GST Update Sheet. Make sure that effect is given.{' '}
+              <span className="text-muted-foreground">(Entries found: {gstUpdateCount})</span>
+            </Note>
           )}
 
-          {/* Summary Boxes */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            {/* 1. Total ITC Excl RCM */}
-            <Card className="bg-info/5 border-info/20">
-              <CardContent className="p-4">
-                <h4 className="text-sm font-semibold text-muted-foreground mb-1">Total ITC Excl RCM</h4>
-                <p className="text-[9px] text-muted-foreground mb-1">Total (4A) − 4A(3) RCM ITC</p>
-                <div className="text-xs">
-                  {(() => {
-                    // Total(5) (5.1+5.2-5.3+5.4+5.5) never includes RCM ITC --
-                    // row (3) is a separate top-level 4A line, not one of the
-                    // 5.x sub-rows -- so subtracting it from Total(5) wasn't
-                    // "excluding" RCM, it was subtracting a figure that was
-                    // never there, and reliably went negative for any client
-                    // whose RCM ITC exceeded their non-RCM 5.1-5.5 total (a
-                    // routine case, not an edge case). "Excl RCM" means
-                    // Total 4A minus the RCM row, full stop -- no reason to
-                    // also strip out 5.4/5.5, which are ordinary non-RCM
-                    // reclaim components of ITC Available, not RCM-related.
-                    const r3 = itcData.section4A.find(r => r.srNo === '(3)') || { igst: 0, cgst: 0, sgst: 0 };
-                    const exclIgst = total4A.igst - r3.igst;
-                    const exclCgst = total4A.cgst - r3.cgst;
-                    const exclSgst = total4A.sgst - r3.sgst;
-                    return (
-                      <>
-                        <div className="flex items-baseline justify-between py-0.5"><span className="text-muted-foreground">IGST</span><span className="font-semibold tabular-nums">{exclIgst.toLocaleString('en-IN')}</span></div>
-                        <div className="flex items-baseline justify-between py-0.5"><span className="text-muted-foreground">CGST</span><span className="font-semibold tabular-nums">{exclCgst.toLocaleString('en-IN')}</span></div>
-                        <div className="flex items-baseline justify-between py-0.5"><span className="text-muted-foreground">SGST</span><span className="font-semibold tabular-nums">{exclSgst.toLocaleString('en-IN')}</span></div>
-                        <div className="flex items-baseline justify-between py-0.5 mt-0.5 pt-1 border-t border-info/20"><span className="text-muted-foreground font-medium">Total</span><span className="font-bold text-primary tabular-nums">{(exclIgst + exclCgst + exclSgst).toLocaleString('en-IN')}</span></div>
-                      </>
-                    );
-                  })()}
-                </div>
-              </CardContent>
-            </Card>
-            {/* 2. RCM ITC */}
-            <Card className="bg-primary/5 border-primary/20">
-              <CardContent className="p-4">
-                <h4 className="text-sm font-semibold text-muted-foreground mb-2">RCM ITC</h4>
-                <div className="text-xs">
-                  <div className="flex items-baseline justify-between py-0.5"><span className="text-muted-foreground">IGST</span><span className="font-semibold tabular-nums">{rcmTotals.igst.toLocaleString('en-IN')}</span></div>
-                  <div className="flex items-baseline justify-between py-0.5"><span className="text-muted-foreground">CGST</span><span className="font-semibold tabular-nums">{rcmTotals.cgst.toLocaleString('en-IN')}</span></div>
-                  <div className="flex items-baseline justify-between py-0.5"><span className="text-muted-foreground">SGST</span><span className="font-semibold tabular-nums">{rcmTotals.sgst.toLocaleString('en-IN')}</span></div>
-                  <div className="flex items-baseline justify-between py-0.5 mt-0.5 pt-1 border-t border-primary/20"><span className="text-muted-foreground font-medium">Total</span><span className="font-bold text-primary tabular-nums">{(rcmTotals.igst + rcmTotals.cgst + rcmTotals.sgst).toLocaleString('en-IN')}</span></div>
-                </div>
-              </CardContent>
-            </Card>
-            {/* 3. RECLAIMED */}
-            <Card className="bg-success/5 border-success/20">
-              <CardContent className="p-4 text-center">
-                <p className="text-sm text-muted-foreground">RECLAIMED</p>
-                <p className="text-[9px] text-muted-foreground">IGST + CGST + SGST</p>
-                <p className="text-2xl font-bold text-success">₹{totalReclaimed.toLocaleString('en-IN')}</p>
-              </CardContent>
-            </Card>
-            {/* 4. REVERSAL */}
-            <Card className="bg-destructive/5 border-destructive/20">
-              <CardContent className="p-4 text-center">
-                <p className="text-sm text-muted-foreground">REVERSAL</p>
-                <p className="text-[9px] text-muted-foreground">IGST + CGST + SGST</p>
-                <p className="text-2xl font-bold text-destructive">₹{totalReversal.toLocaleString('en-IN')}</p>
-              </CardContent>
-            </Card>
-            {/* 5. NET ITC = 4(C) */}
-            <Card className="bg-success/10 border-success/30">
-              <CardContent className="p-4 text-center">
-                <p className="text-sm text-muted-foreground">NET ITC</p>
-                <p className="text-[9px] text-muted-foreground">4(C) = 4A − 4B, IGST + CGST + SGST</p>
-                <p className="text-2xl font-bold text-success">₹{(net4C.igst + net4C.cgst + net4C.sgst).toLocaleString('en-IN')}</p>
-              </CardContent>
-            </Card>
+          {/* Headline figures */}
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
+            <KpiTile
+              label="Total ITC excl. RCM · 4A − 4A(3)"
+              value={`₹${inr(exclRcm.igst + exclRcm.cgst + exclRcm.sgst)}`}
+              hint={headSplit(exclRcm)}
+            />
+            <KpiTile
+              label="RCM ITC"
+              value={`₹${inr(rcmTotals.igst + rcmTotals.cgst + rcmTotals.sgst)}`}
+              hint={headSplit(rcmTotals)}
+            />
+            <KpiTile
+              label="Reclaimed · 5.4 + 5.5"
+              value={`₹${inr(totalReclaimed)}`}
+              hint="IGST + CGST + SGST"
+              tone={totalReclaimed > 0 ? 'ok' : 'neutral'}
+            />
+            <KpiTile
+              label="Reversal · 4(B)"
+              value={`₹${inr(totalReversal)}`}
+              hint="IGST + CGST + SGST"
+              tone={totalReversal > 0 ? 'warn' : 'neutral'}
+            />
+            <KpiTile
+              label="Net ITC · 4(C) = 4A − 4B"
+              value={`₹${inr(net4CTotal)}`}
+              hint={headSplit(net4C)}
+              tone={net4CTotal < 0 ? 'error' : 'ok'}
+            />
           </div>
 
           {/* Lock indicator - No unlock button here, only on Filing Status page */}
           {isLocked && (
-            <div className="bg-warning/10 border border-warning/20 rounded-lg p-3 flex items-center gap-2 text-warning">
-              <Lock className="h-4 w-4" />
-              <span className="text-sm">This sheet is locked because the return has been filed.</span>
+            <div className="flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-xs text-foreground">
+              <Lock className="h-3.5 w-3.5 shrink-0 text-warning" />
+              This sheet is locked because the return has been filed.
             </div>
           )}
 
-          {/* ITC Summary Table */}
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>CLIENT NAME: {selectedClientData?.name}</CardTitle>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    ITC SUMMARY FOR THE MONTH: {selectedMonth}
-                  </p>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto overflow-y-auto max-h-[70vh]">
-                <table className="gst-table">
+          {/* ITC Summary statement */}
+          <SectionCard
+            title={selectedClientData?.name ?? 'ITC Summary'}
+            description={<>ITC summary for the month <span className="font-medium text-foreground">{selectedMonth}</span>{selectedClientData?.gstin && <> · {selectedClientData.gstin}</>}</>}
+            actions={isLocked ? <Badge variant="warning" className="gap-1 text-[10px] font-medium"><Lock className="h-3 w-3" />Locked</Badge> : undefined}
+          >
+              <div className={cn(WS_TABLE_WRAP, 'max-h-[70vh]')}>
+                <table className={cn(WS_TABLE, 'min-w-[860px]')} aria-label="ITC Summary">
                   <thead>
                     <tr>
-                      <th className="w-20 sticky top-0 z-10">Sr. No.</th>
-                      <th className="sticky top-0 z-10">PARTICULAR</th>
-                      <th className="text-right w-28 sticky top-0 z-10">IGST</th>
-                      <th className="text-right w-28 sticky top-0 z-10">CGST</th>
-                      <th className="text-right w-28 sticky top-0 z-10">SGST</th>
-                      <th className="text-right w-32 sticky top-0 z-10">TOTAL</th>
-                      <th className="w-40 sticky top-0 z-10">REASONS</th>
+                      <th className={cn(WS_TH, 'w-16')}>No.</th>
+                      <th className={cn(WS_TH, 'min-w-[16rem]')}>Particulars</th>
+                      <th className={cn(WS_TH, 'w-28 text-right')}>IGST</th>
+                      <th className={cn(WS_TH, 'w-28 text-right')}>CGST</th>
+                      <th className={cn(WS_TH, 'w-28 text-right')}>SGST</th>
+                      <th className={cn(WS_TH, 'w-32 text-right')}>Total</th>
+                      <th className={cn(WS_TH, 'w-48 border-r-0')}>Reasons</th>
                     </tr>
                   </thead>
                   <tbody>
                     {/* Section 4A */}
-                    <tr className="bg-primary/5">
-                      <td colSpan={7} className="font-semibold">4 (A) ITC Available</td>
-                    </tr>
+                    {sectionRow('4 (A)', 'ITC Available')}
                     {itcData.section4A.map((row, idx) => (
                       <React.Fragment key={`4a-${idx}`}>
-                        {row.isHeader ? (
-                          <tr className="bg-muted/20 font-medium">
-                            <td>{row.srNo}</td>
-                            <td colSpan={6}>{row.particular}</td>
-                          </tr>
-                        ) : (
-                        <tr className={row.isAutoLinked ? 'cell-locked' : ''}>
-                          <td>{row.srNo}</td>
-                          <td className="flex items-center gap-2">
-                            {row.particular}
-                            {row.isAutoLinked && (
-                              <Badge variant="outline" className="text-xs flex items-center gap-1">
-                                <Lock className="h-3 w-3" />
-                                Auto-linked
-                              </Badge>
-                            )}
-                          </td>
-                          <td className="text-right tabular-nums">{renderEditableCell('section4A', idx, row, 'igst')}</td>
-                          <td className="text-right tabular-nums">{renderEditableCell('section4A', idx, row, 'cgst')}</td>
-                          <td className="text-right tabular-nums">{renderEditableCell('section4A', idx, row, 'sgst')}</td>
-                          <td className="text-right font-medium tabular-nums">
-                            {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
-                          </td>
-                          <td>
-                            <Input
-                              type="text"
-                              value={row.reasons || ''}
-                              onChange={(e) => handleReasonsChange('section4A', idx, e.target.value)}
-                              placeholder="Reason..."
-                              className="h-8 text-sm"
-                              disabled={isLocked}
-                            />
-                          </td>
-                        </tr>
-                        )}
+                        {row.isHeader
+                          ? subHeadingRow(`4a-h-${idx}`, row)
+                          : lineRow(`4a-r-${idx}`, 'section4A', idx, row)}
                         {/* Insert Total (5) row after row 5.5 */}
-                        {row.srNo === '5.5' && (
-                          <tr className="bg-muted/30 font-medium">
-                            <td>Total (5)</td>
-                            <td className="text-xs text-muted-foreground">Total (5) = 5.1+5.2-5.3+5.4+5.5</td>
-                            <td className="text-right tabular-nums">{total5.igst.toLocaleString('en-IN')}</td>
-                            <td className="text-right tabular-nums">{total5.cgst.toLocaleString('en-IN')}</td>
-                            <td className="text-right tabular-nums">{total5.sgst.toLocaleString('en-IN')}</td>
-                            <td className="text-right tabular-nums">
-                              {(total5.igst + total5.cgst + total5.sgst).toLocaleString('en-IN')}
-                            </td>
-                            <td></td>
-                          </tr>
+                        {row.srNo === '5.5' && totalRow(
+                          'Total (5)',
+                          <span className="font-normal text-muted-foreground">Total (5) = 5.1+5.2-5.3+5.4+5.5</span>,
+                          total5,
+                          'bg-muted/40 font-medium',
                         )}
                       </React.Fragment>
                     ))}
-                    <tr className="bg-muted/50 font-semibold">
-                      <td></td>
-                      <td>Total (4A)</td>
-                      <td className="text-right tabular-nums">{total4A.igst.toLocaleString('en-IN')}</td>
-                      <td className="text-right tabular-nums">{total4A.cgst.toLocaleString('en-IN')}</td>
-                      <td className="text-right tabular-nums">{total4A.sgst.toLocaleString('en-IN')}</td>
-                      <td className="text-right tabular-nums">
-                        {(total4A.igst + total4A.cgst + total4A.sgst).toLocaleString('en-IN')}
-                      </td>
-                      <td></td>
-                    </tr>
+                    {totalRow('', 'Total (4A)', total4A)}
 
                     {/* Section 4B */}
-                    <tr className="bg-primary/5">
-                      <td colSpan={7} className="font-semibold">4 (B) ITC Reversed</td>
-                    </tr>
+                    {sectionRow('4 (B)', 'ITC Reversed')}
                     {itcData.section4B.map((row, idx) => {
                       // Handle header rows differently (for Partial ITC structure)
                       if (row.isHeader) {
-                        return (
-                          <tr key={`4b-${idx}`} className="bg-muted/20 font-medium">
-                            <td>{row.srNo}</td>
-                            <td colSpan={6}>{row.particular}</td>
-                          </tr>
-                        );
+                        return subHeadingRow(`4b-${idx}`, row);
                       }
 
                       // No-ITC builder clients: (1) is locked to mirror the whole of
@@ -1525,62 +1534,10 @@ const ITCSummaryPage: React.FC = () => {
                       // nothing further is needed there.
                       if (isNoItcClient) {
                         if (row.srNo === '(1)') {
-                          return (
-                            <tr key={`4b-${idx}`} className="cell-locked">
-                              <td>{row.srNo}</td>
-                              <td className="flex items-center gap-2">
-                                {row.particular}
-                                <Badge variant="outline" className="text-xs flex items-center gap-1">
-                                  <Lock className="h-3 w-3" />
-                                  Auto-linked
-                                </Badge>
-                              </td>
-                              <td className="text-right tabular-nums">{formatNumber(total4A.igst)}</td>
-                              <td className="text-right tabular-nums">{formatNumber(total4A.cgst)}</td>
-                              <td className="text-right tabular-nums">{formatNumber(total4A.sgst)}</td>
-                              <td className="text-right font-medium tabular-nums">
-                                {formatNumber(total4A.igst + total4A.cgst + total4A.sgst)}
-                              </td>
-                              <td>
-                                <Input
-                                  type="text"
-                                  value={row.reasons || ''}
-                                  onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
-                                  placeholder="Reason..."
-                                  className="h-8 text-sm"
-                                  disabled={isLocked}
-                                />
-                              </td>
-                            </tr>
-                          );
+                          return computedRow(`4b-${idx}`, 'section4B', idx, row, total4A, 'Auto-linked');
                         }
                         if (row.srNo === '(i)' || row.srNo === '(ii)' || row.srNo === '(iii)') {
-                          return (
-                            <tr key={`4b-${idx}`} className="cell-locked">
-                              <td>{row.srNo}</td>
-                              <td className="flex items-center gap-2">
-                                {row.particular}
-                                <Badge variant="outline" className="text-xs flex items-center gap-1">
-                                  <Lock className="h-3 w-3" />
-                                  Auto-linked
-                                </Badge>
-                              </td>
-                              <td className="text-right tabular-nums">0</td>
-                              <td className="text-right tabular-nums">0</td>
-                              <td className="text-right tabular-nums">0</td>
-                              <td className="text-right font-medium tabular-nums">0</td>
-                              <td>
-                                <Input
-                                  type="text"
-                                  value={row.reasons || ''}
-                                  onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
-                                  placeholder="Reason..."
-                                  className="h-8 text-sm"
-                                  disabled={isLocked}
-                                />
-                              </td>
-                            </tr>
-                          );
+                          return computedRow(`4b-${idx}`, 'section4B', idx, row, { igst: 0, cgst: 0, sgst: 0 }, 'Auto-linked');
                         }
                       }
 
@@ -1588,263 +1545,65 @@ const ITCSummaryPage: React.FC = () => {
                       if (isReversalClient && partialITCCalculatedValues) {
                         // (1) = Rule 42/43 carpet-area reversal only (main1Calculated).
                         if (row.srNo === '(1)' && row.particular.includes('Calculation of Ineligible ITC')) {
-                          const vals = partialITCCalculatedValues.row1Reclassified;
-                          return (
-                            <tr key={`4b-${idx}`} className="cell-locked">
-                              <td>{row.srNo}</td>
-                              <td className="flex items-center gap-2">
-                                {row.particular}
-                                <Badge variant="outline" className="text-xs flex items-center gap-1">
-                                  <Lock className="h-3 w-3" />
-                                  Auto-calculated
-                                </Badge>
-                              </td>
-                              <td className="text-right tabular-nums">{formatNumber(vals.igst)}</td>
-                              <td className="text-right tabular-nums">{formatNumber(vals.cgst)}</td>
-                              <td className="text-right tabular-nums">{formatNumber(vals.sgst)}</td>
-                              <td className="text-right font-medium tabular-nums">
-                                {formatNumber(vals.igst + vals.cgst + vals.sgst)}
-                              </td>
-                              <td>
-                                <Input
-                                  type="text"
-                                  value={row.reasons || ''}
-                                  onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
-                                  placeholder="Reason..."
-                                  className="h-8 text-sm"
-                                  disabled={isLocked}
-                                />
-                              </td>
-                            </tr>
-                          );
+                          return computedRow(`4b-${idx}`, 'section4B', idx, row, partialITCCalculatedValues.row1Reclassified, 'Auto-calculated');
                         }
                         // i) On ITC as per 4A - auto-calculated
                         if (row.particular === 'i) On ITC as per 4A') {
-                          const vals = partialITCCalculatedValues.onITCAsPerA;
-                          return (
-                            <tr key={`4b-${idx}`} className="cell-locked">
-                              <td>{row.srNo}</td>
-                              <td className="flex items-center gap-2">
-                                {row.particular}
-                                <Badge variant="outline" className="text-xs flex items-center gap-1">
-                                  <Lock className="h-3 w-3" />
-                                  Auto-calculated
-                                </Badge>
-                              </td>
-                              <td className="text-right tabular-nums">{formatNumber(vals.igst)}</td>
-                              <td className="text-right tabular-nums">{formatNumber(vals.cgst)}</td>
-                              <td className="text-right tabular-nums">{formatNumber(vals.sgst)}</td>
-                              <td className="text-right font-medium tabular-nums">
-                                {formatNumber(vals.igst + vals.cgst + vals.sgst)}
-                              </td>
-                              <td>
-                                <Input
-                                  type="text"
-                                  value={row.reasons || ''}
-                                  onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
-                                  placeholder="Reason..."
-                                  className="h-8 text-sm"
-                                  disabled={isLocked}
-                                />
-                              </td>
-                            </tr>
-                          );
+                          return computedRow(`4b-${idx}`, 'section4B', idx, row, partialITCCalculatedValues.onITCAsPerA, 'Auto-calculated');
                         }
                         // iii) On Other reversal = -Total(4B)(2) × (Residential / Total Area) - AUTO-CALCULATED
                         if (row.particular.includes('On Other reversal')) {
-                          const vals = partialITCCalculatedValues.onOtherReversal;
-                          return (
-                            <tr key={`4b-${idx}`} className="cell-locked">
-                              <td>{row.srNo}</td>
-                              <td className="flex items-center gap-2">
-                                {row.particular}
-                                <Badge variant="outline" className="text-xs flex items-center gap-1">
-                                  <Lock className="h-3 w-3" />
-                                  Auto-calculated
-                                </Badge>
-                              </td>
-                              <td className="text-right tabular-nums">{formatNumber(vals.igst)}</td>
-                              <td className="text-right tabular-nums">{formatNumber(vals.cgst)}</td>
-                              <td className="text-right tabular-nums">{formatNumber(vals.sgst)}</td>
-                              <td className="text-right font-medium tabular-nums">
-                                {formatNumber(vals.igst + vals.cgst + vals.sgst)}
-                              </td>
-                              <td>
-                                <Input
-                                  type="text"
-                                  value={row.reasons || ''}
-                                  onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
-                                  placeholder="Reason..."
-                                  className="h-8 text-sm"
-                                  disabled={isLocked}
-                                />
-                              </td>
-                            </tr>
-                          );
+                          return computedRow(`4b-${idx}`, 'section4B', idx, row, partialITCCalculatedValues.onOtherReversal, 'Auto-calculated');
                         }
                         // (2) Others = 2B-reco / 180-day reversal (row2Calculated).
                         if (row.srNo === '(2)' && row.particular === 'Others') {
-                          const vals = partialITCCalculatedValues.row2Reclassified;
-                          return (
-                            <tr key={`4b-${idx}`} className="cell-locked">
-                              <td>{row.srNo}</td>
-                              <td className="flex items-center gap-2">
-                                {row.particular}
-                                <Badge variant="outline" className="text-xs flex items-center gap-1">
-                                  <Lock className="h-3 w-3" />
-                                  Auto-calculated
-                                </Badge>
-                              </td>
-                              <td className="text-right tabular-nums">{formatNumber(vals.igst)}</td>
-                              <td className="text-right tabular-nums">{formatNumber(vals.cgst)}</td>
-                              <td className="text-right tabular-nums">{formatNumber(vals.sgst)}</td>
-                              <td className="text-right font-medium tabular-nums">
-                                {formatNumber(vals.igst + vals.cgst + vals.sgst)}
-                              </td>
-                              <td>
-                                <Input
-                                  type="text"
-                                  value={row.reasons || ''}
-                                  onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
-                                  placeholder="Reason..."
-                                  className="h-8 text-sm"
-                                  disabled={isLocked}
-                                />
-                              </td>
-                            </tr>
-                          );
+                          return computedRow(`4b-${idx}`, 'section4B', idx, row, partialITCCalculatedValues.row2Reclassified, 'Auto-calculated');
                         }
                       }
 
-                      return (
-                        <tr key={`4b-${idx}`} className={row.isAutoLinked ? 'cell-locked' : ''}>
-                          <td>{row.srNo}</td>
-                          <td className="flex items-center gap-2">
-                            {row.particular}
-                            {row.isAutoLinked && (
-                              <Badge variant="outline" className="text-xs flex items-center gap-1">
-                                <Lock className="h-3 w-3" />
-                                Auto-linked
-                              </Badge>
-                            )}
-                          </td>
-                          <td className="text-right tabular-nums">{renderEditableCell('section4B', idx, row, 'igst')}</td>
-                          <td className="text-right tabular-nums">{renderEditableCell('section4B', idx, row, 'cgst')}</td>
-                          <td className="text-right tabular-nums">{renderEditableCell('section4B', idx, row, 'sgst')}</td>
-                          <td className="text-right font-medium tabular-nums">
-                            {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
-                          </td>
-                          <td>
-                            <Input
-                              type="text"
-                              value={row.reasons || ''}
-                              onChange={(e) => handleReasonsChange('section4B', idx, e.target.value)}
-                              placeholder="Reason..."
-                              className="h-8 text-sm"
-                              disabled={isLocked}
-                            />
-                          </td>
-                        </tr>
-                      );
+                      return lineRow(`4b-${idx}`, 'section4B', idx, row);
                     })}
-                    <tr className="bg-muted/50 font-semibold">
-                      <td></td>
-                      <td>Total (4B)</td>
-                      <td className="text-right tabular-nums">{total4B.igst.toLocaleString('en-IN')}</td>
-                      <td className="text-right tabular-nums">{total4B.cgst.toLocaleString('en-IN')}</td>
-                      <td className="text-right tabular-nums">{total4B.sgst.toLocaleString('en-IN')}</td>
-                      <td className="text-right tabular-nums">
-                        {(total4B.igst + total4B.cgst + total4B.sgst).toLocaleString('en-IN')}
-                      </td>
-                      <td></td>
-                    </tr>
+                    {totalRow('', 'Total (4B)', total4B)}
 
                     {/* Section 4C */}
-                    <tr className="bg-success/10 font-bold">
-                      <td>4 (C)</td>
-                      <td>NET ITC AVAILABLE FOR THE MONTH (A - B)</td>
-                      <td className="text-right tabular-nums">{net4C.igst.toLocaleString('en-IN')}</td>
-                      <td className="text-right tabular-nums">{net4C.cgst.toLocaleString('en-IN')}</td>
-                      <td className="text-right tabular-nums">{net4C.sgst.toLocaleString('en-IN')}</td>
-                      <td className="text-right tabular-nums">
-                        {(net4C.igst + net4C.cgst + net4C.sgst).toLocaleString('en-IN')}
-                      </td>
-                      <td></td>
-                    </tr>
+                    {totalRow('4 (C)', 'Net ITC available for the month (A − B)', net4C, 'bg-success/10 font-bold')}
 
                     {/* Section 4D */}
-                    <tr className="bg-primary/5">
-                      <td colSpan={7} className="font-semibold">4 (D) Other Details</td>
-                    </tr>
-                    {itcData.section4D.map((row, idx) => (
-                      <tr key={`4d-${idx}`} className={row.isAutoLinked ? 'cell-locked' : ''}>
-                        <td>{row.srNo}</td>
-                        <td className="flex items-center gap-2">
-                          {row.particular}
-                          {row.isAutoLinked && (
-                            <Badge variant="outline" className="text-xs flex items-center gap-1">
-                              <Lock className="h-3 w-3" />
-                              Auto-linked
-                            </Badge>
-                          )}
-                        </td>
-                        <td className="text-right tabular-nums">{renderEditableCell('section4D', idx, row, 'igst')}</td>
-                        <td className="text-right tabular-nums">{renderEditableCell('section4D', idx, row, 'cgst')}</td>
-                        <td className="text-right tabular-nums">{renderEditableCell('section4D', idx, row, 'sgst')}</td>
-                        <td className="text-right font-medium tabular-nums">
-                          {(row.igst + row.cgst + row.sgst).toLocaleString('en-IN')}
-                        </td>
-                        <td>
-                          <Input
-                            type="text"
-                            value={row.reasons || ''}
-                            onChange={(e) => handleReasonsChange('section4D', idx, e.target.value)}
-                            placeholder="Reason..."
-                            className="h-8 text-sm"
-                            disabled={isLocked}
-                          />
-                        </td>
-                      </tr>
-                    ))}
+                    {sectionRow('4 (D)', 'Other Details')}
+                    {itcData.section4D.map((row, idx) => lineRow(`4d-${idx}`, 'section4D', idx, row))}
                   </tbody>
                 </table>
               </div>
 
               {/* Area Breakdown Table for Partial ITC Clients */}
               {isPartialITCClient && (
-                <div className="mt-6 flex justify-end">
-                  <table className="border-collapse border border-border">
-                    <tbody>
-                      <tr className="bg-muted/30">
-                        <td className="border border-border px-4 py-2 font-medium">Commercial Area</td>
-                        <td className="border border-border px-4 py-2 text-right tabular-nums text-primary font-medium">
-                          {commercialArea.toLocaleString('en-IN')}
-                        </td>
-                      </tr>
-                      <tr className="bg-muted/30">
-                        <td className="border border-border px-4 py-2 font-medium">Residential Area</td>
-                        <td className="border border-border px-4 py-2 text-right tabular-nums text-primary font-medium">
-                          {residentialArea.toLocaleString('en-IN')}
-                        </td>
-                      </tr>
-                      <tr className="bg-muted/50 font-semibold">
-                        <td className="border border-border px-4 py-2">Total</td>
-                        <td className="border border-border px-4 py-2 text-right tabular-nums text-primary">
-                          {(commercialArea + residentialArea).toLocaleString('en-IN')}
-                        </td>
-                      </tr>
-                      {commercialArea + residentialArea > 0 && (
+                <div className="flex justify-end">
+                  <div className={cn(WS_TABLE_WRAP, 'w-full sm:w-auto')}>
+                    <table className={cn(WS_TABLE, 'sm:min-w-[18rem]')} aria-label="Carpet area split">
+                      <tbody>
                         <tr>
-                          <td className="border border-border px-4 py-2 text-muted-foreground text-sm">
-                            Reversal share (residential)
-                          </td>
-                          <td className="border border-border px-4 py-2 text-right tabular-nums text-sm">
-                            {((residentialArea / (commercialArea + residentialArea)) * 100).toFixed(2)}%
-                          </td>
+                          <td className={WS_TD}>Commercial area</td>
+                          <td className={cn(WS_TD_NUM, 'border-r-0')}>{commercialArea.toLocaleString('en-IN')}</td>
                         </tr>
-                      )}
-                    </tbody>
-                  </table>
+                        <tr>
+                          <td className={WS_TD}>Residential area</td>
+                          <td className={cn(WS_TD_NUM, 'border-r-0')}>{residentialArea.toLocaleString('en-IN')}</td>
+                        </tr>
+                        <tr className={WS_TR_TOTAL}>
+                          <td className={WS_TD}>Total</td>
+                          <td className={cn(WS_TD_NUM, 'border-r-0')}>{(commercialArea + residentialArea).toLocaleString('en-IN')}</td>
+                        </tr>
+                        {commercialArea + residentialArea > 0 && (
+                          <tr>
+                            <td className={cn(WS_TD, 'border-b-0 text-muted-foreground')}>Reversal share (residential)</td>
+                            <td className={cn(WS_TD_NUM, 'border-b-0 border-r-0')}>
+                              {((residentialArea / (commercialArea + residentialArea)) * 100).toFixed(2)}%
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
 
@@ -1853,33 +1612,31 @@ const ITCSummaryPage: React.FC = () => {
                   mix to show, and no reliance on 2B reconciliation's own
                   eligible/reversal split either. */}
               {isNoItcClient && (
-                <div className="mt-6 flex justify-end">
-                  <p className="text-sm text-muted-foreground max-w-md text-right">
-                    No-ITC builder client — every rupee in 4(A), regardless of source, is
-                    reversed in full at 4(B)(1). Row 5.1 stays open for you to enter the ITC
-                    found each period; 4(B)(1)/(2) update automatically and Net ITC (4C) is
-                    always nil.
-                  </p>
-                </div>
+                <Note tone="info">
+                  No-ITC builder client — every rupee in 4(A), regardless of source, is
+                  reversed in full at 4(B)(1). Row 5.1 stays open for you to enter the ITC
+                  found each period; 4(B)(1)/(2) update automatically and Net ITC (4C) is
+                  always nil.
+                </Note>
               )}
 
               {/* Derived from the builder project master — offered, not imposed. */}
               {isPartialITCClient && projectAreas && (
-                <div className="mt-4 rounded-lg border p-3">
+                <div className="rounded-md border px-3 py-2">
                   {(() => {
                     const derivedTotal = projectAreas.residential + projectAreas.commercial;
                     const matches = Math.abs(projectAreas.commercial - commercialArea) < 0.01
                       && Math.abs(projectAreas.residential - residentialArea) < 0.01;
                     return (
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="text-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-xs">
                           <p className="font-medium">
                             From the project master
-                            <span className="text-muted-foreground font-normal">
+                            <span className="font-normal text-muted-foreground">
                               {' '}({projectAreas.projects} project{projectAreas.projects > 1 ? 's' : ''})
                             </span>
                           </p>
-                          <p className="text-xs text-muted-foreground">
+                          <p className="text-muted-foreground">
                             Commercial {projectAreas.commercial.toLocaleString('en-IN')} ·
                             {' '}Residential {projectAreas.residential.toLocaleString('en-IN')} sq m
                             {derivedTotal > 0 && (
@@ -1889,26 +1646,25 @@ const ITCSummaryPage: React.FC = () => {
                           </p>
                         </div>
                         {matches ? (
-                          <span className="text-xs text-emerald-700 font-medium">
+                          <Badge variant="success" className="text-[10px] font-medium">
                             Matches the figures in use
-                          </span>
+                          </Badge>
                         ) : canUnlockSheets() && !isLocked ? (
-                          <Button size="sm" variant="outline" onClick={handleSyncAreas} disabled={isSyncingAreas}>
-                            {isSyncingAreas && <Loader2 className="h-3 w-3 mr-2 animate-spin" />}
+                          <Button size="sm" variant="outline" className={WS_BTN} onClick={handleSyncAreas} disabled={isSyncingAreas}>
+                            {isSyncingAreas && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                             Use project figures
                           </Button>
                         ) : (
-                          <span className="text-xs text-amber-700">
+                          <Badge variant="warning" className="text-[10px] font-medium">
                             Differs from the figures in use
-                          </span>
+                          </Badge>
                         )}
                       </div>
                     );
                   })()}
                 </div>
               )}
-            </CardContent>
-          </Card>
+          </SectionCard>
         </>
       )}
       

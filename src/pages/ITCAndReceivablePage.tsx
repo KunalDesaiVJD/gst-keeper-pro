@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Receipt, Wallet } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { WS_PAGE, WS_TAB, WS_TAB_ACTIVE, WS_TABS_LIST } from '@/components/workspace/theme';
 import ITCSummaryPage from './ITCSummaryPage';
 import GstReceivableRecoPage from './GstReceivableRecoPage';
 
@@ -21,9 +22,9 @@ const ITCAndReceivablePage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('itc-summary');
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Tab Navigation */}
-      <div className="flex flex-wrap gap-2 p-1 bg-muted/50 rounded-lg w-fit">
+    <div className={WS_PAGE}>
+      {/* Tab strip (each tab carries its own compact header). */}
+      <div role="tablist" aria-label="ITC Summary and GST Receivable Reco" className={WS_TABS_LIST}>
         {TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -31,15 +32,13 @@ const ITCAndReceivablePage: React.FC = () => {
           return (
             <button
               key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
               onClick={() => setActiveTab(tab.id)}
-              className={cn(
-                'flex items-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium transition-all duration-200',
-                isActive
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-              )}
+              className={cn(WS_TAB, isActive && WS_TAB_ACTIVE)}
             >
-              <Icon className="h-4 w-4" />
+              <Icon className="h-3.5 w-3.5" />
               <span>{tab.label}</span>
             </button>
           );

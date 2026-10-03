@@ -16,6 +16,9 @@ import {
 import { FileCheck2, Download, FileText, Loader2, FileJson, Send, CheckCircle2, XCircle, X, Lock, History, Info, AlertTriangle } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
+import { KpiTile, Note, SectionCard } from '@/components/gstr9/ui';
+import { Badge } from '@/components/gstr9/badge';
+import { WS_PAGE, WS_BTN, WS_TABLE_WRAP, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR, WS_TR_HEADING, WS_TR_TOTAL, WS_FILTER_LABEL, WS_CONTROL } from '@/components/workspace/theme';
 import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -74,23 +77,36 @@ const pushSeverity = (skipped: string[] | null | undefined): PushSeverity => {
 
 // One line of a portal-style table (Particulars + up to four amount columns).
 const TRow: React.FC<{ label: string; txval?: number; igst?: number; cgst?: number; sgst?: number; bold?: boolean }> = ({ label, txval, igst, cgst, sgst, bold }) => (
-  <tr className={bold ? 'font-semibold bg-muted/40' : 'odd:bg-muted/20'}>
-    <td className="border border-border p-2">{label}</td>
-    <td className="border border-border p-2 text-right tabular-nums">{txval === undefined ? '' : inr(txval)}</td>
-    <td className="border border-border p-2 text-right tabular-nums">{igst === undefined ? '' : inr(igst)}</td>
-    <td className="border border-border p-2 text-right tabular-nums">{cgst === undefined ? '' : inr(cgst)}</td>
-    <td className="border border-border p-2 text-right tabular-nums">{sgst === undefined ? '' : inr(sgst)}</td>
+  <tr className={bold ? WS_TR_TOTAL : WS_TR}>
+    <td className={WS_TD}>{label}</td>
+    <td className={WS_TD_NUM}>{txval === undefined ? '' : inr(txval)}</td>
+    <td className={WS_TD_NUM}>{igst === undefined ? '' : inr(igst)}</td>
+    <td className={WS_TD_NUM}>{cgst === undefined ? '' : inr(cgst)}</td>
+    <td className={WS_TD_NUM}>{sgst === undefined ? '' : inr(sgst)}</td>
   </tr>
 );
 
-const THead: React.FC<{ first: string }> = ({ first }) => (
-  <thead className="sticky top-0 z-10">
-    <tr className="bg-primary text-primary-foreground">
-      <th className="border border-primary-foreground/20 p-2 text-left font-bold">{first}</th>
-      <th className="border border-primary-foreground/20 p-2 text-right font-bold w-28">Taxable value</th>
-      <th className="border border-primary-foreground/20 p-2 text-right font-bold w-28">Integrated tax</th>
-      <th className="border border-primary-foreground/20 p-2 text-right font-bold w-28">Central tax</th>
-      <th className="border border-primary-foreground/20 p-2 text-right font-bold w-28">State/UT tax</th>
+// One line of Table 4 (Particulars + IGST/CGST/SGST). `kind` picks the
+// heading / sub-row / total look; `indent` nests a sub-row under its heading.
+const ItcRow: React.FC<{ label: string; igst: number; cgst: number; sgst: number; kind?: 'total' | 'row'; indent?: boolean }> = ({ label, igst, cgst, sgst, kind = 'row', indent }) => (
+  <tr className={kind === 'total' ? WS_TR_HEADING : WS_TR}>
+    <td className={`${WS_TD} ${indent ? 'pl-6' : ''}`}>{label}</td>
+    <td className={WS_TD_NUM}>{inr(igst)}</td>
+    <td className={WS_TD_NUM}>{inr(cgst)}</td>
+    <td className={WS_TD_NUM}>{inr(sgst)}</td>
+  </tr>
+);
+
+const TAX_TH = `${WS_TH} w-32 text-right`;
+
+const THead: React.FC<{ first: string; taxable?: boolean }> = ({ first, taxable = true }) => (
+  <thead>
+    <tr>
+      <th className={WS_TH}>{first}</th>
+      {taxable && <th className={TAX_TH}>Taxable value</th>}
+      <th className={TAX_TH}>Integrated tax</th>
+      <th className={TAX_TH}>Central tax</th>
+      <th className={TAX_TH}>State/UT tax</th>
     </tr>
   </thead>
 );
@@ -444,34 +460,27 @@ const Gstr3bPage: React.FC = () => {
     toast.info('Opening the GST portal in a new tab — clear the CAPTCHA and let the fill run. It stops before Confirm/Offset/File; review and submit yourself.');
   };
 
-  const Tile: React.FC<{ label: string; value: number; tone?: 'primary' | 'success' | 'info' }> = ({ label, value, tone = 'primary' }) => (
-    <Card className={tone === 'success' ? 'bg-success/5 border-success/20' : tone === 'info' ? 'bg-info/5 border-info/20' : 'bg-primary/5 border-primary/20'}>
-      <CardContent className="p-4">
-        <h4 className="text-sm font-semibold text-muted-foreground mb-1">{label}</h4>
-        <p className={`text-xl font-bold tabular-nums ${tone === 'success' ? 'text-success' : 'text-primary'}`}>₹{inr(value)}</p>
-      </CardContent>
-    </Card>
-  );
-
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
         title="GSTR-3B"
         subtitle="Draft GSTR-3B assembled from GSTR-1, ITC Summary and RCM — client-wise & month-wise"
-        icon={<FileCheck2 className="h-6 w-6" />}
+        icon={<FileCheck2 />}
         actions={result ? (
           <>
-            <Button variant="outline" onClick={handleDownloadJson}>
-              <FileJson className="h-4 w-4 mr-2" /> Download JSON
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={handleDownloadJson}>
+              <FileJson className="h-3.5 w-3.5" /> JSON
             </Button>
-            <Button variant="outline" onClick={handleDownloadPdf}>
-              <Download className="h-4 w-4 mr-2" /> Download PDF
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={handleDownloadPdf}>
+              <Download className="h-3.5 w-3.5" /> PDF
             </Button>
             {isStaff && (
               <Button
                 onClick={handlePush}
+                size="sm"
                 disabled={isPushing || !extReady || isFiled || recoCheckLoading || hasRecoDiff}
-                className="bg-success text-success-foreground hover:bg-success/90"
+                className={WS_BTN}
                 title={
                   isFiled
                     ? 'GSTR-3B already Filed for this period — push is locked'
@@ -484,7 +493,7 @@ const Gstr3bPage: React.FC = () => {
                           : 'Fills Table 3.1 + Table 4 on the live GSTR-3B form; stops before Confirm/Offset/File'
                 }
               >
-                {isPushing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+                {isPushing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                 {isPushing ? 'Pushing…' : 'Push to GST Portal'}
               </Button>
             )}
@@ -492,84 +501,86 @@ const Gstr3bPage: React.FC = () => {
         ) : undefined}
       />
 
-      {/* Filters */}
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Client:</span>
-              <div className="w-56">
-                <SearchableSelect
-                  options={clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin }))}
-                  value={selectedClient}
-                  onValueChange={setSelectedClient}
-                  placeholder="Select Client"
-                  searchPlaceholder="Type to search clients..."
-                  emptyText="No clients found."
-                />
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Month:</span>
-              <div className="w-40">
-                <SearchableMonthSelect
-                  options={monthOptions}
-                  value={selectedMonth}
-                  onValueChange={setSelectedMonth}
-                  placeholder="Select Month"
-                />
-              </div>
-            </div>
-            {isStaff && selectedClient && selectedMonth && gstr1IsNil && (
-              <div className="flex items-center gap-2" title="This period had zero activity for GSTR-3B.">
-                <Checkbox
-                  id="gstr3b-nil-return"
-                  checked={isNilReturn}
-                  disabled={!canEditFilingStatus() || isFiled || isTogglingNil}
-                  onCheckedChange={(v) => handleToggleNilReturn(!!v)}
-                />
-                <label htmlFor="gstr3b-nil-return" className="text-sm font-medium cursor-pointer select-none">
-                  NIL Return
-                </label>
-              </div>
-            )}
-            {selectedClient && selectedMonth && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setVersionHistoryOpen(true)}
-                title={versions.length === 0
-                  ? 'No push history yet for this return'
-                  : `${versions.length} recorded push(es) for this return`}
-              >
-                <History className="h-4 w-4 mr-2" />
-                Push History{versions.length > 0 ? ` (${versions.length})` : ''}
-              </Button>
-            )}
+      {/* Filters — client / period, NIL flag and push history in one compact row */}
+      <Card className="px-3 py-2">
+        <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
+          <div className="w-full space-y-0.5 sm:w-60">
+            <div className={WS_FILTER_LABEL}>Client</div>
+            <SearchableSelect
+              options={clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin }))}
+              value={selectedClient}
+              onValueChange={setSelectedClient}
+              placeholder="Select Client"
+              searchPlaceholder="Type to search clients..."
+              emptyText="No clients found."
+              className={WS_CONTROL}
+            />
           </div>
+          <div className="w-40 space-y-0.5">
+            <div className={WS_FILTER_LABEL}>Return period</div>
+            <SearchableMonthSelect
+              options={monthOptions}
+              value={selectedMonth}
+              onValueChange={setSelectedMonth}
+              placeholder="Select Month"
+              className={WS_CONTROL}
+            />
+          </div>
+          {isStaff && selectedClient && selectedMonth && gstr1IsNil && (
+            <div className="flex h-8 items-center gap-2" title="This period had zero activity for GSTR-3B.">
+              <Checkbox
+                id="gstr3b-nil-return"
+                checked={isNilReturn}
+                disabled={!canEditFilingStatus() || isFiled || isTogglingNil}
+                onCheckedChange={(v) => handleToggleNilReturn(!!v)}
+              />
+              <label htmlFor="gstr3b-nil-return" className="cursor-pointer select-none text-xs font-medium">
+                NIL Return
+              </label>
+            </div>
+          )}
+          {selectedClient && selectedMonth && (
+            <Button
+              variant="outline"
+              size="sm"
+              className={WS_BTN}
+              onClick={() => setVersionHistoryOpen(true)}
+              title={versions.length === 0
+                ? 'No push history yet for this return'
+                : `${versions.length} recorded push(es) for this return`}
+            >
+              <History className="h-3.5 w-3.5" />
+              Push History{versions.length > 0 ? ` (${versions.length})` : ''}
+            </Button>
+          )}
           {versions.length > 0 && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              Last pushed by <span className="font-medium text-foreground">{versions[0].actor_name || '—'}</span> on{' '}
-              {new Date(versions[0].action_at).toLocaleString('en-IN', {
-                day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
-              })}
+            <p className="flex h-8 items-center gap-1.5 text-xs text-muted-foreground sm:ml-auto">
+              <span>
+                Last pushed by <span className="font-medium text-foreground">{versions[0].actor_name || '—'}</span> on{' '}
+                {new Date(versions[0].action_at).toLocaleString('en-IN', {
+                  day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                })}
+              </span>
               {versions[0].status && (
-                <span className={versions[0].status === 'ok' ? 'text-success' : 'text-destructive'}> · {versions[0].status === 'ok' ? 'succeeded' : 'failed'}</span>
+                <Badge variant={versions[0].status === 'ok' ? 'success' : 'destructive'} className="text-[10px] font-medium">
+                  {versions[0].status === 'ok' ? 'succeeded' : 'failed'}
+                </Badge>
               )}
             </p>
           )}
-        </CardContent>
+        </div>
       </Card>
 
       {/* Return is Filed — matches GSTR-1's lock: don't let the tool push a
           draft behind what was already submitted to GSTN. */}
       {isFiled && (
-        <div className="flex items-start gap-2 rounded-lg border border-success/40 bg-success/10 p-3 text-sm text-success-foreground">
-          <Lock className="h-4 w-4 mt-0.5 shrink-0 text-success" />
-          <div className="flex-1">
-            <p className="font-medium text-success">GSTR-3B already Filed for this period</p>
-            <p className="text-xs mt-0.5 text-foreground/80">Push to GST Portal is locked to preserve the record of what was actually filed.</p>
+        <div className="flex items-start gap-2 rounded-md border border-success/40 bg-success/10 px-2.5 py-1.5 text-xs text-foreground">
+          <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
+          <div className="min-w-0 flex-1">
+            <span className="font-semibold">GSTR-3B already Filed for this period.</span>{' '}
+            <span className="text-muted-foreground">Push to GST Portal is locked to preserve the record of what was actually filed.</span>
           </div>
+          <Badge variant="success" className="shrink-0 text-[10px] font-medium">Filed</Badge>
         </div>
       )}
 
@@ -577,28 +588,28 @@ const Gstr3bPage: React.FC = () => {
           don't tie out for this client/period. Advisory, not a block: staff
           should look before filing, but the push itself isn't held up. */}
       {!recoCheckLoading && selectedClient && selectedMonth && hasRecoDiff && (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-destructive" />
-          <div className="flex-1 space-y-1">
-            <p className="font-medium">Reconciliation difference found — Push to GST Portal is locked</p>
+        <div className="flex flex-wrap items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2.5 py-1.5 text-xs text-foreground">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
+          <div className="min-w-0 flex-1 space-y-0.5">
+            <p className="font-semibold text-destructive">Reconciliation difference found — Push to GST Portal is locked</p>
             {suspendedBlocks && (
               <p>
-                <span className="font-medium">Suspended Reco</span> difference: ₹{inr(recoCheck.suspended!.total)} (2B and RCM → Suspended Reco).
+                <span className="font-medium">Suspended Reco</span> difference: <span className="font-semibold tabular-nums">₹{inr(recoCheck.suspended!.total)}</span> (2B and RCM → Suspended Reco).
               </p>
             )}
             {receivableBlocks && (
               <p>
-                <span className="font-medium">GST Receivable Reco</span> difference: ₹{inr(recoCheck.receivable!.total)}.
+                <span className="font-medium">GST Receivable Reco</span> difference: <span className="font-semibold tabular-nums">₹{inr(recoCheck.receivable!.total)}</span>.
               </p>
             )}
-            <p className="text-xs text-foreground/70">Resolve the difference on the relevant page to unlock the push.</p>
+            <p className="text-muted-foreground">Resolve the difference on the relevant page to unlock the push.</p>
           </div>
-          <div className="flex flex-col gap-1.5 shrink-0">
+          <div className="flex shrink-0 flex-wrap gap-1.5">
             {suspendedBlocks && (
-              <Button variant="outline" size="sm" onClick={() => navigate('/2b-and-rcm')}>Suspended Reco</Button>
+              <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate('/2b-and-rcm')}>Suspended Reco</Button>
             )}
             {receivableBlocks && (
-              <Button variant="outline" size="sm" onClick={() => navigate('/itc-summary')}>GST Receivable Reco</Button>
+              <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate('/itc-summary')}>GST Receivable Reco</Button>
             )}
           </div>
         </div>
@@ -608,9 +619,9 @@ const Gstr3bPage: React.FC = () => {
           rows (a GSTR-1A amendment, a prior-period true-up, etc.); flag it
           plainly rather than let it blend in silently. */}
       {result && (result.adjustmentsApplied > 0 || result.adjustmentsUnmapped > 0) && (
-        <div className="flex items-start gap-2 rounded-lg border border-info/40 bg-info/10 p-3 text-sm">
-          <Info className="h-4 w-4 mt-0.5 shrink-0 text-info" />
-          <div className="flex-1">
+        <div className="flex items-start gap-2 rounded-md border border-info/30 bg-info/5 px-2.5 py-1.5 text-xs">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-info" />
+          <div className="min-w-0 flex-1">
             {result.adjustmentsApplied > 0 && (
               <p className="text-foreground">
                 {result.adjustmentsApplied} manual adjustment{result.adjustmentsApplied === 1 ? '' : 's'} from GSTR-3B
@@ -618,12 +629,12 @@ const Gstr3bPage: React.FC = () => {
               </p>
             )}
             {result.adjustmentsUnmapped > 0 && (
-              <p className="text-xs mt-0.5 text-destructive">
+              <p className="mt-0.5 font-medium text-destructive">
                 {result.adjustmentsUnmapped} more, tagged "Other", could NOT be mapped into a table and are excluded — review them.
               </p>
             )}
           </div>
-          <Button variant="outline" size="sm" onClick={() => navigate('/gstr3b-adjustments')}>
+          <Button variant="outline" size="sm" className={`${WS_BTN} shrink-0`} onClick={() => navigate('/gstr3b-adjustments')}>
             Review
           </Button>
         </div>
@@ -644,18 +655,17 @@ const Gstr3bPage: React.FC = () => {
         const dataGapFlags = result.flags.filter(isDataGapFlag);
         const routineFlags = result.flags.filter((f) => !isDataGapFlag(f));
         return (
-          <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning-foreground">
-            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-warning" />
-            <div className="flex-1 space-y-1">
-              <p className="font-medium text-warning">Review before filing</p>
+          <Note tone="warn">
+            <div className="space-y-0.5">
+              <p className="font-semibold">Review before filing</p>
               {dataGapFlags.map((f, i) => (
-                <p key={`gap-${i}`} className="font-medium text-foreground">• {f}</p>
+                <p key={`gap-${i}`} className="font-medium">• {f}</p>
               ))}
               {routineFlags.map((f, i) => (
-                <p key={`routine-${i}`} className="text-xs text-foreground/70">• {f}</p>
+                <p key={`routine-${i}`} className="text-muted-foreground">• {f}</p>
               ))}
             </div>
-          </div>
+          </Note>
         );
       })()}
 
@@ -668,41 +678,42 @@ const Gstr3bPage: React.FC = () => {
         // to report as one. Never let a non-empty skipped list render green.
         const severity: PushSeverity = pushResult.ok ? pushSeverity(pushResult.skipped) : 'critical';
         const styles: Record<PushSeverity, string> = {
-          ok: 'border-success/30 bg-success/10 text-success',
-          warning: 'border-warning/30 bg-warning/10 text-warning',
-          critical: 'border-destructive/30 bg-destructive/10 text-destructive',
+          ok: 'border-success/40 bg-success/10',
+          warning: 'border-warning/40 bg-warning/10',
+          critical: 'border-destructive/40 bg-destructive/5',
         };
+        const iconTone: Record<PushSeverity, string> = { ok: 'text-success', warning: 'text-warning', critical: 'text-destructive' };
         const Icon = severity === 'ok' ? CheckCircle2 : severity === 'warning' ? AlertTriangle : XCircle;
         return (
-          <div className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${styles[severity]}`}>
-            <Icon className={`h-4 w-4 mt-0.5 shrink-0 ${severity === 'ok' ? 'text-success' : ''}`} />
-            <div className="flex-1">
+          <div className={`flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-xs text-foreground ${styles[severity]}`}>
+            <Icon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${iconTone[severity]}`} />
+            <div className="min-w-0 flex-1">
               <p className="break-words">{pushResult.summary}</p>
               {severity === 'critical' && pushResult.ok && (
-                <p className="mt-1 font-medium">⚠ Outward tax (3.1(a)/3.1(b)) was NOT filled on the portal — enter it manually before Confirm / Offset Liability / File.</p>
+                <p className="mt-0.5 font-semibold text-destructive">⚠ Outward tax (3.1(a)/3.1(b)) was NOT filled on the portal — enter it manually before Confirm / Offset Liability / File.</p>
               )}
               {pushResult.skipped && pushResult.skipped.length > 0 && (
-                <ul className="mt-1 text-xs list-disc pl-4 text-foreground/70">
+                <ul className="mt-0.5 list-disc pl-4 text-muted-foreground">
                   {pushResult.skipped.map((s, i) => <li key={i}>{s}</li>)}
                 </ul>
               )}
             </div>
-            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 shrink-0" onClick={() => setPushResult(null)}>
-              <X className="h-4 w-4" />
+            <Button variant="ghost" size="sm" className="h-6 w-6 shrink-0 p-0" onClick={() => setPushResult(null)} aria-label="Dismiss">
+              <X className="h-3.5 w-3.5" />
             </Button>
           </div>
         );
       })()}
 
       {isLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
+        <Card className="flex items-center justify-center gap-2 px-4 py-8 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Building GSTR-3B…
+        </Card>
       ) : !selectedClient || !selectedMonth ? (
         <Card>
           <CardContent className="p-4">
             <TableEmptyState
-              icon={<FileCheck2 className="h-6 w-6" />}
+              icon={<FileCheck2 className="h-5 w-5" />}
               title="No client or month selected"
               description="Select a client and a return period above to build the GSTR-3B."
             />
@@ -712,7 +723,7 @@ const Gstr3bPage: React.FC = () => {
         <Card>
           <CardContent className="p-4">
             <TableEmptyState
-              icon={<FileCheck2 className="h-6 w-6" />}
+              icon={<FileCheck2 className="h-5 w-5" />}
               title="Nothing to show"
               description="No source data found for this client and period."
             />
@@ -721,81 +732,58 @@ const Gstr3bPage: React.FC = () => {
       ) : (
         <>
           {/* Summary tiles */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Tile label="Output Tax (3.1a)" value={sum3(s.outward)} />
-            <Tile label="RCM Liability (3.1d)" value={sum3(s.rcmLiability)} tone="info" />
-            <Tile label="Total Tax Liability" value={sum3(s.totalLiability)} />
-            <Tile label="Net ITC (4C)" value={sum3(s.itcNet)} tone="success" />
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+            <KpiTile label="Output Tax (3.1a)" value={`₹${inr(sum3(s.outward))}`} hint="IGST + CGST + SGST" />
+            <KpiTile label="RCM Liability (3.1d)" value={`₹${inr(sum3(s.rcmLiability))}`} hint="Inward supplies under reverse charge" />
+            <KpiTile label="Total Tax Liability" value={`₹${inr(sum3(s.totalLiability))}`} hint="3.1 (a) + (d)" />
+            <KpiTile label="Net ITC (4C)" value={`₹${inr(sum3(s.itcNet))}`} hint="ITC available − reversed" tone="ok" />
           </div>
 
           {/* 3.1 Outward + inward RCM */}
-          <Card>
-            <CardContent className="p-4">
-              <h3 className="text-base font-semibold mb-3">3.1 Details of outward supplies and inward supplies liable to reverse charge</h3>
-              <div className="overflow-auto rounded-md border border-border">
-                <table className="w-full text-sm border-collapse min-w-[720px]">
-                  <THead first="Nature of supplies" />
-                  <tbody>
-                    <TRow label="(a) Outward taxable supplies (other than zero rated, nil rated and exempted)" txval={s.outward.txval} igst={s.outward.igst} cgst={s.outward.cgst} sgst={s.outward.sgst} />
-                    <TRow label="(b) Outward taxable supplies (zero rated)" txval={s.zeroRated.txval} igst={s.zeroRated.igst} cgst={0} sgst={0} />
-                    <TRow label="(c) Other outward supplies (nil rated, exempted)" txval={s.nilExempt} igst={0} cgst={0} sgst={0} />
-                    <TRow label="(d) Inward supplies (liable to reverse charge)" txval={s.rcmLiability.txval} igst={s.rcmLiability.igst} cgst={s.rcmLiability.cgst} sgst={s.rcmLiability.sgst} />
-                    <TRow label="(e) Non-GST outward supplies" txval={s.nonGst} igst={0} cgst={0} sgst={0} />
-                    <TRow label="Total tax liability (a + d)" igst={s.totalLiability.igst} cgst={s.totalLiability.cgst} sgst={s.totalLiability.sgst} bold />
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
+          <SectionCard title="3.1 Details of outward supplies and inward supplies liable to reverse charge">
+            <div className={WS_TABLE_WRAP}>
+              <table className={`${WS_TABLE} min-w-[720px]`}>
+                <THead first="Nature of supplies" />
+                <tbody>
+                  <TRow label="(a) Outward taxable supplies (other than zero rated, nil rated and exempted)" txval={s.outward.txval} igst={s.outward.igst} cgst={s.outward.cgst} sgst={s.outward.sgst} />
+                  <TRow label="(b) Outward taxable supplies (zero rated)" txval={s.zeroRated.txval} igst={s.zeroRated.igst} cgst={0} sgst={0} />
+                  <TRow label="(c) Other outward supplies (nil rated, exempted)" txval={s.nilExempt} igst={0} cgst={0} sgst={0} />
+                  <TRow label="(d) Inward supplies (liable to reverse charge)" txval={s.rcmLiability.txval} igst={s.rcmLiability.igst} cgst={s.rcmLiability.cgst} sgst={s.rcmLiability.sgst} />
+                  <TRow label="(e) Non-GST outward supplies" txval={s.nonGst} igst={0} cgst={0} sgst={0} />
+                  <TRow label="Total tax liability (a + d)" igst={s.totalLiability.igst} cgst={s.totalLiability.cgst} sgst={s.totalLiability.sgst} bold />
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
 
           {/* 4. Eligible ITC */}
-          <Card>
-            <CardContent className="p-4">
-              <h3 className="text-base font-semibold mb-3">4. Eligible ITC</h3>
-              <div className="overflow-auto rounded-md border border-border">
-                <table className="w-full text-sm border-collapse min-w-[620px]">
-                  <thead className="sticky top-0 z-10">
-                    <tr className="bg-primary text-primary-foreground">
-                      <th className="border border-primary-foreground/20 p-2 text-left font-bold">Details</th>
-                      <th className="border border-primary-foreground/20 p-2 text-right font-bold w-28">Integrated tax</th>
-                      <th className="border border-primary-foreground/20 p-2 text-right font-bold w-28">Central tax</th>
-                      <th className="border border-primary-foreground/20 p-2 text-right font-bold w-28">State/UT tax</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="font-semibold bg-muted/40"><td className="border border-border p-2">(A) ITC Available (whether in full or part)</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcAvailable.igst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcAvailable.cgst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcAvailable.sgst)}</td></tr>
-                    {s.itcAvailableRows.map((r) => (
-                      <tr key={r.srNo} className="odd:bg-muted/20">
-                        <td className="border border-border p-2 pl-6">{r.srNo} {r.label}</td>
-                        <td className="border border-border p-2 text-right tabular-nums">{inr(r.igst)}</td>
-                        <td className="border border-border p-2 text-right tabular-nums">{inr(r.cgst)}</td>
-                        <td className="border border-border p-2 text-right tabular-nums">{inr(r.sgst)}</td>
-                      </tr>
-                    ))}
-                    <tr className="font-semibold bg-muted/40"><td className="border border-border p-2">(B) ITC reversed</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcReversed.igst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcReversed.cgst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcReversed.sgst)}</td></tr>
-                    {s.itcReversedRows.map((r) => (
-                      <tr key={r.srNo} className="odd:bg-muted/20">
-                        <td className="border border-border p-2 pl-6">{r.srNo} {r.label}</td>
-                        <td className="border border-border p-2 text-right tabular-nums">{inr(r.igst)}</td>
-                        <td className="border border-border p-2 text-right tabular-nums">{inr(r.cgst)}</td>
-                        <td className="border border-border p-2 text-right tabular-nums">{inr(r.sgst)}</td>
-                      </tr>
-                    ))}
-                    <tr className="font-semibold bg-muted/40"><td className="border border-border p-2">(C) Net ITC available (A − B)</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcNet.igst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcNet.cgst)}</td><td className="border border-border p-2 text-right tabular-nums">{inr(s.itcNet.sgst)}</td></tr>
-                    <tr className="bg-muted/30 font-medium"><td className="border border-border p-2" colSpan={4}>(D) Other Details</td></tr>
-                    {s.itcOtherDetails.map((d) => (
-                      <tr key={d.srNo} className="odd:bg-muted/20">
-                        <td className="border border-border p-2">{d.srNo} {d.label}</td>
-                        <td className="border border-border p-2 text-right tabular-nums">{inr(d.igst)}</td>
-                        <td className="border border-border p-2 text-right tabular-nums">{inr(d.cgst)}</td>
-                        <td className="border border-border p-2 text-right tabular-nums">{inr(d.sgst)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
+          <SectionCard title="4. Eligible ITC">
+            <div className={WS_TABLE_WRAP}>
+              <table className={`${WS_TABLE} min-w-[620px]`}>
+                <THead first="Details" taxable={false} />
+                <tbody>
+                  <ItcRow kind="total" label="(A) ITC Available (whether in full or part)" igst={s.itcAvailable.igst} cgst={s.itcAvailable.cgst} sgst={s.itcAvailable.sgst} />
+                  {s.itcAvailableRows.map((r) => (
+                    <ItcRow key={r.srNo} indent label={`${r.srNo} ${r.label}`} igst={r.igst} cgst={r.cgst} sgst={r.sgst} />
+                  ))}
+                  <ItcRow kind="total" label="(B) ITC reversed" igst={s.itcReversed.igst} cgst={s.itcReversed.cgst} sgst={s.itcReversed.sgst} />
+                  {s.itcReversedRows.map((r) => (
+                    <ItcRow key={r.srNo} indent label={`${r.srNo} ${r.label}`} igst={r.igst} cgst={r.cgst} sgst={r.sgst} />
+                  ))}
+                  <tr className={WS_TR_TOTAL}>
+                    <td className={WS_TD}>(C) Net ITC available (A − B)</td>
+                    <td className={WS_TD_NUM}>{inr(s.itcNet.igst)}</td>
+                    <td className={WS_TD_NUM}>{inr(s.itcNet.cgst)}</td>
+                    <td className={WS_TD_NUM}>{inr(s.itcNet.sgst)}</td>
+                  </tr>
+                  <tr className={WS_TR_HEADING}><td className={WS_TD} colSpan={4}>(D) Other Details</td></tr>
+                  {s.itcOtherDetails.map((d) => (
+                    <ItcRow key={d.srNo} indent label={`${d.srNo} ${d.label}`} igst={d.igst} cgst={d.cgst} sgst={d.sgst} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
         </>
       )}
 
@@ -808,9 +796,9 @@ const Gstr3bPage: React.FC = () => {
               and which figures changed since the previous attempt.
             </DialogDescription>
           </DialogHeader>
-          <div className="max-h-[65vh] overflow-auto rounded-md border">
-            <Table>
-              <TableHeader className="sticky top-0 bg-muted">
+          <div className={`max-h-[65vh] ${WS_TABLE_WRAP}`}>
+            <Table className="text-xs">
+              <TableHeader className="sticky top-0 z-10 bg-muted [&_th]:h-8 [&_th]:px-2 [&_th]:text-xs [&_th]:font-semibold [&_th]:text-muted-foreground">
                 <TableRow>
                   <TableHead className="w-16">V#</TableHead>
                   <TableHead>By</TableHead>
@@ -821,7 +809,7 @@ const Gstr3bPage: React.FC = () => {
                   <TableHead className="w-28">Changes</TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody className="[&_td]:px-2 [&_td]:py-1.5">
                 {versions.map((v, idx) => {
                   const severity: PushSeverity = v.status === 'ok' ? pushSeverity(v.skipped) : 'critical';
                   // versions are ordered newest first, so the version this one
@@ -829,9 +817,9 @@ const Gstr3bPage: React.FC = () => {
                   const prev = versions[idx + 1];
                   const canDiff = !!v.payload && !!prev?.payload;
                   const diffRows = canDiff ? diffGstr3b(prev.payload, v.payload) : [];
-                  const statusClass = v.status === 'ok'
-                    ? (severity === 'ok' ? 'text-success' : severity === 'warning' ? 'text-warning' : 'text-destructive')
-                    : v.status === 'failed' ? 'text-destructive' : 'text-muted-foreground';
+                  const statusVariant = v.status === 'ok'
+                    ? (severity === 'ok' ? 'success' : severity === 'warning' ? 'warning' : 'destructive')
+                    : v.status === 'failed' ? 'destructive' : 'secondary';
                   const viewButtonClass = severity === 'critical' ? 'text-destructive hover:text-destructive' : severity === 'warning' ? 'text-warning hover:text-warning' : '';
                   return (
                   <React.Fragment key={v.id}>
@@ -844,9 +832,9 @@ const Gstr3bPage: React.FC = () => {
                         })}
                       </TableCell>
                       <TableCell>
-                        <span className={`${statusClass} font-medium`}>
+                        <Badge variant={statusVariant} className="text-[10px] font-medium">
                           {v.status === 'ok' ? `Filled ${v.filled_count ?? 0}` : v.status || '—'}
-                        </span>
+                        </Badge>
                         {severity === 'critical' && <AlertTriangle className="inline-block h-3.5 w-3.5 ml-1 text-destructive" />}
                       </TableCell>
                       <TableCell className="text-xs max-w-md">{v.summary || '—'}</TableCell>
@@ -907,7 +895,7 @@ const Gstr3bPage: React.FC = () => {
                 })}
                 {versions.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground py-6">
+                    <TableCell colSpan={7} className="py-6 text-center text-sm text-muted-foreground">
                       No pushes recorded yet for this return.
                     </TableCell>
                   </TableRow>

@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, SectionCard } from '@/components/gstr9/ui';
+import { WS_BTN, WS_CONTROL, WS_FILTER_LABEL, WS_PAGE } from '@/components/workspace/theme';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -692,179 +696,195 @@ const RCMSummaryPage: React.FC = () => {
     }
   };
 
+  // Headline figures — the same row sums the table's TOTAL row shows.
+  const fyTaxableTotal = data.reduce(
+    (sum, row) => sum + Object.values(row.monthlyValues).reduce((s, v) => s + (v || 0), 0),
+    0,
+  );
+  const lockedInFy = months.filter(m => lockedMonths.has(m)).length;
+
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="space-y-1">
-        <PageHeader
-          title="RCM Summary"
-          subtitle="Reverse Charge Mechanism Summary"
-          icon={<Calculator className="h-6 w-6" />}
-          actions={
-            <>
-              {allMonthsLocked && (
-                <div className="flex items-center gap-2 text-warning bg-warning/10 px-3 py-1.5 rounded-lg">
-                  <Lock className="h-4 w-4" />
-                  <span className="text-sm font-medium">All Periods Locked</span>
-                </div>
-              )}
-              <Button variant="outline" onClick={handleExportPDF} className="gap-2">
-                <FileText className="h-4 w-4" />
-                Export PDF
-              </Button>
-              <Button variant="outline" onClick={handleExportExcel} className="gap-2">
-                <FileSpreadsheet className="h-4 w-4" />
-                Export Excel
-              </Button>
-              {canViewVersions && selectedClient && (
-                <Button variant="outline" onClick={() => setShowVersionHistory(true)} className="gap-2">
-                  <History className="h-4 w-4" />
-                  View Versions
-                </Button>
-              )}
-              {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClient && (
-                <Button variant="destructive" onClick={() => setShowClearData(true)} className="gap-2">
-                  <Trash2 className="h-4 w-4" />
-                  Clear Data
-                </Button>
-              )}
-            </>
-          }
-        />
-        {lastSavedBy && (
-          <p className="text-xs text-muted-foreground">
-            Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
-            {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
-            {' '}on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-            {' '}• v{lastSavedBy.version}
-          </p>
-        )}
-      </div>
-
-      {/* Controls Card */}
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-wrap items-center gap-4">
-            {/* Client Label and Dropdown */}
-            <div className="flex items-center gap-2">
-              <span className="font-medium text-foreground whitespace-nowrap">Name of Client :</span>
-              <div className="min-w-[250px]">
-                <SearchableSelect
-                  options={clients.map((c) => ({
-                    value: c.id,
-                    label: c.name,
-                    sublabel: c.gstin,
-                  }))}
-                  value={selectedClient}
-                  onValueChange={setSelectedClient}
-                  placeholder="Search Client..."
-                  searchPlaceholder="Type to search clients..."
-                  emptyText="No clients found."
-                  disabled={!isStaff && clients.length <= 1}
-                />
-              </div>
-            </div>
-
-            {/* GST Portal Link */}
-            {selectedClient && (
-              <GSTPortalLink
-                clientId={selectedClient}
-                clientName={selectedClientData?.name}
-              />
+    <div className={WS_PAGE}>
+      {/* One compact row: title, last save, and the sheet's actions. */}
+      <PageHeader
+        compact
+        title="RCM Summary"
+        subtitle="Reverse Charge Mechanism, month by month"
+        icon={<Calculator />}
+        actions={
+          <>
+            {lastSavedBy && (
+              <span className="text-xs text-muted-foreground">
+                Saved by <span className="font-medium text-foreground">{lastSavedBy.name}</span>
+                {lastSavedBy.role && <> ({lastSavedBy.role})</>}
+                {' '}· {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                {' '}· v{lastSavedBy.version}
+              </span>
             )}
+            {allMonthsLocked && (
+              <Badge variant="warning" className="gap-1 text-[10px] font-medium">
+                <Lock className="h-3 w-3" />
+                All periods locked
+              </Badge>
+            )}
+            {canViewVersions && selectedClient && (
+              <Button variant="outline" size="sm" className={WS_BTN} onClick={() => setShowVersionHistory(true)} aria-label="Version history">
+                <History className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">History</span>
+              </Button>
+            )}
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={handleExportPDF}>
+              <FileText className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Export PDF</span>
+            </Button>
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={handleExportExcel}>
+              <FileSpreadsheet className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Export Excel</span>
+            </Button>
+            {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClient && (
+              <Button variant="outline" size="sm" className={cn(WS_BTN, 'text-destructive hover:text-destructive')} onClick={() => setShowClearData(true)}>
+                <Trash2 className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Clear Data</span>
+              </Button>
+            )}
+          </>
+        }
+      />
 
-            {/* Action Buttons - Right side */}
-            <div className="flex items-center gap-2 ml-auto">
+      {/* Filters: one labelled toolbar. */}
+      <Card>
+        <CardContent className="px-3 py-2">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="w-full min-w-0 space-y-0.5 sm:w-72">
+              <span className={WS_FILTER_LABEL}>Client</span>
+              <SearchableSelect
+                options={clients.map((c) => ({
+                  value: c.id,
+                  label: c.name,
+                  sublabel: c.gstin,
+                }))}
+                value={selectedClient}
+                onValueChange={setSelectedClient}
+                placeholder="Search client…"
+                searchPlaceholder="Type to search clients..."
+                emptyText="No clients found."
+                disabled={!isStaff && clients.length <= 1}
+                className={WS_CONTROL}
+              />
+            </label>
+            <label className="w-32 min-w-0 space-y-0.5">
+              <span className={WS_FILTER_LABEL}>Financial year</span>
+              <Select value={financialYear} onValueChange={setFinancialYear}>
+                <SelectTrigger className={WS_CONTROL} aria-label="Financial year">
+                  <SelectValue placeholder="Financial Year" />
+                </SelectTrigger>
+                <SelectContent>
+                  {financialYears.map((fy) => (
+                    <SelectItem key={fy} value={fy}>
+                      {fy}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              {selectedClient && (
+                <GSTPortalLink
+                  clientId={selectedClient}
+                  clientName={selectedClientData?.name}
+                />
+              )}
               {isStaff && (
-                <Button variant="outline" size="sm" onClick={() => navigate('/manage-masters')}>
-                  <Settings className="h-4 w-4 mr-1" />
+                <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate('/manage-masters')}>
+                  <Settings className="h-3.5 w-3.5" />
                   Manage Masters
                 </Button>
               )}
-
               {/* Add Master button removed - now in Manage Masters page */}
-
-              {/* Financial Year Dropdown */}
-              <div className="w-36">
-                <Select value={financialYear} onValueChange={setFinancialYear}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Financial Year" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {financialYears.map((fy) => (
-                      <SelectItem key={fy} value={fy}>
-                        {fy}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Locked Months Indicator */}
-      {lockedMonths.size > 0 && !allMonthsLocked && (
-        <Card>
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-medium text-muted-foreground flex items-center gap-1">
-                <Lock className="h-3.5 w-3.5" />
-                Locked Months:
-              </span>
-              {Array.from(lockedMonths).map((month) => (
-                <div key={month} className="flex items-center gap-1 bg-warning/10 text-warning px-2 py-1 rounded text-xs font-medium">
-                  <Lock className="h-3 w-3" />
-                  {month}
-                  {canUnlock && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-4 w-4 p-0 ml-1 hover:bg-warning/20"
-                      aria-label={`Unlock ${month}`}
-                      onClick={() => handleUnlockMonth(month)}
-                    >
-                      <Unlock className="h-3 w-3" />
-                    </Button>
-                  )}
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+      {selectedClient && !isLoading && (
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+          <KpiTile
+            label={`Taxable value under RCM · FY ${financialYear}`}
+            value={`₹${fyTaxableTotal.toLocaleString('en-IN')}`}
+            hint="All expense heads, all months"
+          />
+          <KpiTile
+            label="Expense heads"
+            value={data.length}
+            hint={`${masters.length} in the RCM masters`}
+          />
+          <KpiTile
+            label="Periods locked"
+            value={`${lockedInFy} / ${months.length}`}
+            hint={allMonthsLocked ? 'Whole year filed' : lockedInFy ? 'Filed periods are read-only' : 'None filed yet'}
+            tone={allMonthsLocked ? 'ok' : 'neutral'}
+          />
+          <KpiTile
+            label="Unsaved changes"
+            value={hasChanges ? 'Yes' : 'No'}
+            hint={hasChanges ? 'Save before leaving the page' : 'Everything is saved'}
+            tone={hasChanges ? 'warn' : 'ok'}
+          />
+        </div>
       )}
 
-      {/* Main Table Card */}
-      <Card>
-        <CardHeader className="pb-4">
-          <CardTitle className="text-lg flex items-center justify-between">
-            <span>
-              {selectedClientData
-                ? `${selectedClientData.name} - FY ${financialYear}`
-                : 'Select a client to view RCM data'}
-            </span>
-            {hasChanges && isStaff && !allMonthsLocked && (
-              <Button onClick={handleSave} disabled={isSaving} size="sm">
-                {isSaving ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4 mr-2" />
-                )}
-                Save Changes
-              </Button>
+      {/* Locked Months Indicator */}
+      {lockedMonths.size > 0 && !allMonthsLocked && (
+        <div className="flex flex-wrap items-center gap-1.5 rounded-md border bg-card px-2.5 py-1.5">
+          <span className="mr-1 inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+            <Lock className="h-3.5 w-3.5" />
+            Locked months
+          </span>
+          {Array.from(lockedMonths).map((month) => (
+            <Badge key={month} variant="warning" className="gap-1 px-1.5 text-[10px] font-medium">
+              <Lock className="h-3 w-3" />
+              {month}
+              {canUnlock && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-0.5 h-4 w-4 p-0 hover:bg-warning/30"
+                  aria-label={`Unlock ${month}`}
+                  title={`Unlock ${month}`}
+                  onClick={() => handleUnlockMonth(month)}
+                >
+                  <Unlock className="h-3 w-3" />
+                </Button>
+              )}
+            </Badge>
+          ))}
+        </div>
+      )}
+
+      {/* Main table */}
+      <SectionCard
+        title={selectedClientData
+          ? `${selectedClientData.name} · FY ${financialYear}`
+          : 'Select a client to view RCM data'}
+        description={selectedClientData ? 'Taxable value of inward supplies under reverse charge, by expense head and month; the tax rows below are worked from the rate and supply type.' : undefined}
+        actions={hasChanges && isStaff && !allMonthsLocked ? (
+          <Button size="sm" className={cn(WS_BTN, 'px-3')} onClick={handleSave} disabled={isSaving}>
+            {isSaving ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Save className="h-3.5 w-3.5" />
             )}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
+            Save changes
+          </Button>
+        ) : undefined}
+      >
           {isLoading ? (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading RCM data…
             </div>
           ) : !selectedClient ? (
             <TableEmptyState
-              icon={<Calculator className="h-6 w-6" />}
+              icon={<Calculator className="h-5 w-5" />}
               title="Select a client"
               description="Choose a client and financial year to view and manage RCM data."
             />
@@ -879,8 +899,7 @@ const RCMSummaryPage: React.FC = () => {
               isStaff={isStaff}
             />
           )}
-        </CardContent>
-      </Card>
+      </SectionCard>
 
       {/* Add Master Dialog */}
       <AddMasterDialog

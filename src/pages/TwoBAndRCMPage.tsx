@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { FileText, Pause, FileSpreadsheet } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { WS_PAGE, WS_TABS_LIST, WS_TAB, WS_TAB_ACTIVE } from '@/components/workspace/theme';
 import TwoBReconciliationPage from './TwoBReconciliationPage';
 import SuspendedRecoPage from './SuspendedRecoPage';
 import Import2BTab from './Import2BTab';
@@ -24,15 +25,16 @@ const TwoBAndRCMPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('import-2b');
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
         title="2B and RCM"
-        subtitle="Import GSTR-2B, reconcile against books, and track suspended & receivable items"
-        icon={<FileText className="h-6 w-6" />}
+        subtitle="Import GSTR-2B, reconcile against books, track suspended & receivable items"
+        icon={<FileText />}
       />
 
       {/* Tab Navigation */}
-      <div className="flex flex-wrap gap-2 p-1 bg-muted/50 rounded-lg w-fit">
+      <div role="tablist" aria-label="2B and RCM sections" className={WS_TABS_LIST}>
         {TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -40,15 +42,13 @@ const TwoBAndRCMPage: React.FC = () => {
           return (
             <button
               key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
               onClick={() => setActiveTab(tab.id)}
-              className={cn(
-                'flex items-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium transition-all duration-200',
-                isActive
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-              )}
+              className={cn(WS_TAB, isActive && WS_TAB_ACTIVE)}
             >
-              <Icon className="h-4 w-4" />
+              <Icon className="h-3.5 w-3.5" />
               <span>{tab.label}</span>
             </button>
           );

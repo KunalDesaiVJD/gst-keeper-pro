@@ -7,7 +7,12 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, Note, SectionCard } from '@/components/gstr9/ui';
+import {
+  WS_BTN, WS_CELL_INPUT, WS_CONTROL, WS_FILTER_LABEL, WS_PAGE, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR, WS_TR_TOTAL,
+} from '@/components/workspace/theme';
+import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -878,13 +883,13 @@ const GstReceivableRecoPage: React.FC = () => {
   const diffTotal = applyTolerance(portalClosingTotal - booksClosingTotal);
 
   const renderBooksCell = (value: number, onChange: (val: number) => void) => {
-    if (!isStaff) return <span className="block text-right tabular-nums px-3">{formatNumber(value)}</span>;
+    if (!isStaff) return <span className="block px-2 py-1.5 text-right tabular-nums">{formatNumber(value)}</span>;
     return (
       <Input
         type="number"
         value={value || ''}
         onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-        className="h-10 text-right tabular-nums border-0 shadow-none rounded-none"
+        className={cn(WS_CELL_INPUT, 'text-right tabular-nums [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none')}
         aria-label="Closing balance as per books amount"
       />
     );
@@ -926,31 +931,50 @@ const GstReceivableRecoPage: React.FC = () => {
 
   // ──────────────────────────── Render ───────────────────────────────────
 
+  // Statement cell classes: figures carried in from elsewhere get a faint tint,
+  // typed cells a primary tint, the Total column the muted total look.
+  const SUB = 'mt-0.5 text-[11px] font-normal leading-snug text-muted-foreground';
+  const NUM = WS_TD_NUM;
+  const NUM_TOTAL = cn(WS_TD_NUM, 'border-r-0 bg-muted/40 font-medium');
+  const INPUT_TD = cn(WS_TD, 'bg-primary/[0.03] p-0');
+  const diffCls = (v: number) => (v !== 0 ? 'text-destructive-strong' : '');
+
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
         embedded
         title="GST Receivable Reco"
-        subtitle="Reconcile Electronic Credit Ledger closing with books"
-        icon={<FileText className="h-6 w-6" />}
+        subtitle="Electronic Credit Ledger closing vs books"
+        icon={<FileText />}
         actions={
           <>
+            {lastSavedBy && (
+              <span className="text-xs text-muted-foreground">
+                Saved by <span className="font-medium text-foreground">{lastSavedBy.name}</span>
+                {lastSavedBy.role && <> ({lastSavedBy.role})</>}
+                {lastSavedBy.time && (
+                  <> · {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</>
+                )}
+              </span>
+            )}
             {isStaff && (
               <Button
                 variant="outline"
+                size="sm"
                 onClick={pullLedgers}
                 disabled={!selectedClientId || !selectedMonth}
-                className={extReady ? '' : 'text-muted-foreground'}
+                className={cn(WS_BTN, !extReady && 'text-muted-foreground')}
                 title={extReady
                   ? 'Pull the opening balance from the portal ledgers (via the browser extension)'
                   : 'GST Keeper extension not detected yet — install/enable it and reload this page'}
               >
-                <RefreshCw className="h-4 w-4 mr-2" />
+                <RefreshCw className="h-3.5 w-3.5" />
                 Pull
               </Button>
             )}
             {isEligibleMonth && selectedClientData && (
-              <Button variant="outline" onClick={() => {
+              <Button variant="outline" size="sm" className={WS_BTN} onClick={() => {
                 exportGstReceivableRecoToExcel({
                   clientName: selectedClientData.name,
                   clientGstin: selectedClientData.gstin,
@@ -968,257 +992,278 @@ const GstReceivableRecoPage: React.FC = () => {
                 });
                 toast.success('Excel exported successfully');
               }}>
-                <FileSpreadsheet className="h-4 w-4 mr-2" />
-                Export Excel
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Export Excel</span>
               </Button>
             )}
             {isStaff && isEligibleMonth && (
-              <Button onClick={handleSave} disabled={isSaving}>
-                {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
-                {isSaving ? 'Saving...' : 'Save Changes'}
+              <Button size="sm" className={cn(WS_BTN, 'px-3')} onClick={handleSave} disabled={isSaving}>
+                {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                {isSaving ? 'Saving…' : 'Save changes'}
               </Button>
             )}
           </>
         }
       />
 
-      {lastSavedBy && (
-        <p className="text-xs text-muted-foreground -mt-3">
-          Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
-          {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
-          {lastSavedBy.time && (
-            <> on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</>
-          )}
-        </p>
-      )}
-
+      {/* Filters: one labelled toolbar. */}
       <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="font-medium text-foreground whitespace-nowrap">Client:</span>
-              <div className="min-w-[250px]">
-                <SearchableSelect
-                  options={clients.map(c => ({ value: c.id, label: c.name, sublabel: c.gstin }))}
-                  value={selectedClientId}
-                  onValueChange={setSelectedClientId}
-                  placeholder="Select Client..."
-                  searchPlaceholder="Type to search clients..."
-                  emptyText="No clients found."
-                  disabled={!isStaff && clients.length <= 1}
-                />
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="font-medium text-foreground whitespace-nowrap">Month:</span>
-              <div className="w-40">
-                <SearchableMonthSelect
-                  options={generateMonthOptions}
-                  value={selectedMonth}
-                  onValueChange={setSelectedMonth}
-                  placeholder="Select Month"
-                />
-              </div>
-            </div>
+        <CardContent className="px-3 py-2">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="w-full min-w-0 space-y-0.5 sm:w-72">
+              <span className={WS_FILTER_LABEL}>Client</span>
+              <SearchableSelect
+                options={clients.map(c => ({ value: c.id, label: c.name, sublabel: c.gstin }))}
+                value={selectedClientId}
+                onValueChange={setSelectedClientId}
+                placeholder="Select client…"
+                searchPlaceholder="Type to search clients..."
+                emptyText="No clients found."
+                disabled={!isStaff && clients.length <= 1}
+                className={WS_CONTROL}
+              />
+            </label>
+            <label className="w-40 min-w-0 space-y-0.5">
+              <span className={WS_FILTER_LABEL}>Return period</span>
+              <SearchableMonthSelect
+                options={generateMonthOptions}
+                value={selectedMonth}
+                onValueChange={setSelectedMonth}
+                placeholder="Select month"
+                className={WS_CONTROL}
+              />
+            </label>
           </div>
         </CardContent>
       </Card>
 
-      <Card>
-        <CardContent className="p-4">
-          {!selectedClientId || !selectedMonth ? (
-            <div className="text-center py-8 text-sm text-muted-foreground">
-              Please select a client and month to view the reconciliation.
-            </div>
-          ) : !isEligibleMonth ? (
-            <div className="text-center py-8 text-sm text-muted-foreground">
-              GST Receivable Reco is available from return period <span className="font-semibold">Jun-26</span> onward.
-            </div>
-          ) : isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-primary hover:bg-primary">
-                  <TableHead className="font-bold text-primary-foreground border border-primary">PARTICULARS</TableHead>
-                  <TableHead className="font-bold text-primary-foreground text-center border border-primary">IGST</TableHead>
-                  <TableHead className="font-bold text-primary-foreground text-center border border-primary">CGST</TableHead>
-                  <TableHead className="font-bold text-primary-foreground text-center border border-primary">SGST</TableHead>
-                  <TableHead className="font-bold text-primary-foreground text-center border border-primary">TOTAL</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {/* Opening Balance row — CSV upload / NA / Override */}
-                <TableRow>
-                  <TableCell className="font-medium border border-border align-top">
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span>OPENING BALANCE AS PER PORTAL</span>
-                        {openingSource !== 'manual' && (
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <button type="button" className="inline-flex items-center text-muted-foreground hover:text-foreground" aria-label="Opening balance source">
-                                <Info className="h-4 w-4" />
-                              </button>
-                            </PopoverTrigger>
-                            <PopoverContent className="text-xs max-w-xs space-y-2" align="start">
-                              {openingSource === 'csv' && openingCsvPeriodMonth && (
-                                <p>
-                                  <span className="font-semibold">Source:</span> Credit Ledger CSV ({formatPeriodLabel(openingCsvPeriodMonth)} closing).
-                                  {openingCsvUploaderName && <> Uploaded by <span className="font-semibold">{openingCsvUploaderName}</span></>}
-                                  {openingCsvUploadedAt && (
-                                    <> on {new Date(openingCsvUploadedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</>
-                                  )}.
-                                </p>
-                              )}
-                              {openingSource === 'not_applicable' && (
-                                <p><span className="font-semibold">Source:</span> Marked Not Applicable.</p>
-                              )}
-                              {openingOverrideJustification && (
-                                <div className="border-t pt-2">
+      {!selectedClientId || !selectedMonth ? (
+        <Card>
+          <CardContent className="py-8 text-center text-sm text-muted-foreground">
+            Select a client and month to view the reconciliation.
+          </CardContent>
+        </Card>
+      ) : !isEligibleMonth ? (
+        <Card>
+          <CardContent className="py-8 text-center text-sm text-muted-foreground">
+            GST Receivable Reco is available from return period <span className="font-semibold text-foreground">Jun-26</span> onward.
+          </CardContent>
+        </Card>
+      ) : isLoading ? (
+        <Card>
+          <CardContent className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading reconciliation…
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          {/* Headline figures */}
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
+            <KpiTile label="Opening as per portal" value={formatNumber(openingTotal)} hint={openingSource === 'csv' ? 'From the credit ledger' : openingSource === 'not_applicable' ? 'Marked not applicable' : 'Entered'} />
+            <KpiTile label="Add: Net ITC available (4C)" value={formatNumber(availedTotal)} hint={prevMonthLabel ? `From ${prevMonthLabel} ITC Summary` : 'Previous month ITC Summary'} />
+            <KpiTile label="Closing as per portal" value={formatNumber(portalClosingTotal)} hint="Opening + 4C − utilized − DRC-03" />
+            <KpiTile label="Closing as per books" value={formatNumber(booksClosingTotal)} hint="Typed from the books" />
+            <KpiTile
+              label="Difference"
+              value={formatNumber(diffTotal)}
+              hint={diffTotal === 0 ? 'Tallies (within ₹10)' : 'Portal − books'}
+              tone={diffTotal === 0 ? 'ok' : 'error'}
+            />
+          </div>
+
+          <SectionCard
+            title={selectedClientData?.name ?? 'GST Receivable Reco'}
+            description={<>Return period <span className="font-medium text-foreground">{selectedMonth}</span>{selectedClientData?.gstin && <> · {selectedClientData.gstin}</>}</>}
+          >
+            <div className={WS_TABLE_WRAP}>
+              <table className={cn(WS_TABLE, 'min-w-[760px]')} aria-label="GST receivable reconciliation">
+                <thead>
+                  <tr>
+                    <th className={cn(WS_TH, 'min-w-[18rem]')}>Particulars</th>
+                    <th className={cn(WS_TH, 'w-32 text-right')}>IGST</th>
+                    <th className={cn(WS_TH, 'w-32 text-right')}>CGST</th>
+                    <th className={cn(WS_TH, 'w-32 text-right')}>SGST</th>
+                    <th className={cn(WS_TH, 'w-32 border-r-0 text-right')}>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Opening Balance row — CSV upload / NA / Override */}
+                  <tr className={WS_TR}>
+                    <td className={cn(WS_TD, 'align-top')}>
+                      <div className="flex flex-col gap-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium">Opening balance as per portal</span>
+                          {openingSource === 'csv' && <Badge variant="info" className="text-[10px] font-medium">Credit ledger</Badge>}
+                          {openingSource === 'not_applicable' && <Badge variant="secondary" className="text-[10px] font-medium">Not applicable</Badge>}
+                          {openingOverrideJustification && <Badge variant="warning" className="text-[10px] font-medium">Overridden</Badge>}
+                          {openingSource !== 'manual' && (
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <button type="button" className="inline-flex items-center text-muted-foreground hover:text-foreground" aria-label="Opening balance source">
+                                  <Info className="h-3.5 w-3.5" />
+                                </button>
+                              </PopoverTrigger>
+                              <PopoverContent className="text-xs max-w-xs space-y-2" align="start">
+                                {openingSource === 'csv' && openingCsvPeriodMonth && (
                                   <p>
-                                    <span className="font-semibold">Manually overridden</span>
-                                    {openingOverriderName && <> by <span className="font-semibold">{openingOverriderName}</span></>}
-                                    {openingOverrideAt && (
-                                      <> on {new Date(openingOverrideAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</>
+                                    <span className="font-semibold">Source:</span> Credit Ledger CSV ({formatPeriodLabel(openingCsvPeriodMonth)} closing).
+                                    {openingCsvUploaderName && <> Uploaded by <span className="font-semibold">{openingCsvUploaderName}</span></>}
+                                    {openingCsvUploadedAt && (
+                                      <> on {new Date(openingCsvUploadedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</>
                                     )}.
                                   </p>
-                                  <p className="mt-1"><span className="font-semibold">Reason:</span> {openingOverrideJustification}</p>
-                                </div>
-                              )}
-                            </PopoverContent>
-                          </Popover>
+                                )}
+                                {openingSource === 'not_applicable' && (
+                                  <p><span className="font-semibold">Source:</span> Marked Not Applicable.</p>
+                                )}
+                                {openingOverrideJustification && (
+                                  <div className="border-t pt-2">
+                                    <p>
+                                      <span className="font-semibold">Manually overridden</span>
+                                      {openingOverriderName && <> by <span className="font-semibold">{openingOverriderName}</span></>}
+                                      {openingOverrideAt && (
+                                        <> on {new Date(openingOverrideAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</>
+                                      )}.
+                                    </p>
+                                    <p className="mt-1"><span className="font-semibold">Reason:</span> {openingOverrideJustification}</p>
+                                  </div>
+                                )}
+                              </PopoverContent>
+                            </Popover>
+                          )}
+                        </div>
+                        {isStaff && (
+                          <div className="flex flex-wrap gap-1">
+                            <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={handleNotApplicable} disabled={!selectedClientId || isSaving}>
+                              Not Applicable
+                            </Button>
+                            {openingSource !== 'manual' && canManualOverride() && (
+                              <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={() => setShowOverrideDialog(true)} disabled={!selectedClientId || isSaving}>
+                                <Edit3 className="h-3 w-3" />
+                                Override
+                              </Button>
+                            )}
+                            <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground" onClick={handleUploadClick} disabled={!selectedClientId || isSaving} title="Manual fallback — upload the ledger if the portal sync didn't set this">
+                              <Upload className="h-3 w-3" />
+                              {openingSource === 'csv' ? 'Re-upload' : 'Upload'}
+                            </Button>
+                          </div>
                         )}
                       </div>
-                      {isStaff && (
-                        <div className="flex gap-1.5 flex-wrap">
-                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleNotApplicable} disabled={!selectedClientId || isSaving}>
-                            Not Applicable
-                          </Button>
-                          {openingSource !== 'manual' && canManualOverride() && (
-                            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowOverrideDialog(true)} disabled={!selectedClientId || isSaving}>
-                              <Edit3 className="h-3 w-3 mr-1" />
-                              Override
-                            </Button>
-                          )}
-                          <Button size="sm" variant="ghost" className="h-7 text-xs text-muted-foreground hover:text-foreground" onClick={handleUploadClick} disabled={!selectedClientId || isSaving} title="Manual fallback — upload the ledger if the portal sync didn't set this">
-                            <Upload className="h-3 w-3 mr-1" />
-                            {openingSource === 'csv' ? 'Re-upload' : 'Upload'}
-                          </Button>
-                        </div>
+                    </td>
+                    <td className={cn(NUM, 'align-top')}>{formatNumber(openingIgst)}</td>
+                    <td className={cn(NUM, 'align-top')}>{formatNumber(openingCgst)}</td>
+                    <td className={cn(NUM, 'align-top')}>{formatNumber(openingSgst)}</td>
+                    <td className={cn(NUM_TOTAL, 'align-top')}>{formatNumber(openingTotal)}</td>
+                  </tr>
+
+                  {/* Net ITC Available — auto from ITC Summary (M-1) 4C = 4A − 4B */}
+                  <tr className={WS_TR}>
+                    <td className={WS_TD}>
+                      <div className="font-medium">Add: Net ITC available (4C)</div>
+                      <p className={SUB}>{prevMonthLabel ? `From ${prevMonthLabel} ITC Summary (4A − 4B)` : '4A − 4B from previous month'}</p>
+                      {!hasItcSummary && <p className={SUB}>{prevMonthLabel ? `ITC Summary not saved for ${prevMonthLabel} — showing 0` : 'ITC Summary not saved — showing 0'}</p>}
+                      {hasItcSummary && !prevReturnFiled && <p className={SUB}>{prevMonthLabel ? `${prevMonthLabel}'s GSTR-3B not yet Filed — showing 0 until it's final` : "GSTR-3B not yet Filed — showing 0 until it's final"}</p>}
+                    </td>
+                    <td className={NUM}>{formatNumber(availedIgst)}</td>
+                    <td className={NUM}>{formatNumber(availedCgst)}</td>
+                    <td className={NUM}>{formatNumber(availedSgst)}</td>
+                    <td className={NUM_TOTAL}>{formatNumber(availedTotal)}</td>
+                  </tr>
+
+                  {/* ITC Utilized — actual per-head debit from credit ledger CSV when available, GSTR-3B output otherwise */}
+                  <tr className={WS_TR}>
+                    <td className={WS_TD}>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">Less: ITC utilized</span>
+                        {utilizedFromCsv
+                          ? <Badge variant="info" className="text-[10px] font-medium">Credit ledger</Badge>
+                          : <Badge variant="warning" className="text-[10px] font-medium">Estimate</Badge>}
+                      </div>
+                      <p className={SUB}>
+                        {utilizedFromCsv
+                          ? `Actual per-head debit from ${prevMonthLabel || 'M-1'} row of Credit Ledger (covers cross-head set-off)`
+                          : prevMonthLabel
+                            ? `From ${prevMonthLabel} GSTR-3B output (Table 3.1a), set off cross-head like the portal (estimate)`
+                            : 'From previous month GSTR-3B output (Table 3.1a), set off cross-head like the portal (estimate)'}
+                      </p>
+                      {!utilizedFromCsv && !hasGstr1 && (
+                        <p className={SUB}>
+                          {prevMonthLabel ? `GSTR-1 not imported for ${prevMonthLabel} — showing 0` : 'GSTR-1 not imported — showing 0'}
+                        </p>
                       )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(openingIgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(openingCgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(openingSgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">{formatNumber(openingTotal)}</TableCell>
-                </TableRow>
+                    </td>
+                    <td className={NUM}>{formatNumber(actualUtilizedIgst)}</td>
+                    <td className={NUM}>{formatNumber(actualUtilizedCgst)}</td>
+                    <td className={NUM}>{formatNumber(actualUtilizedSgst)}</td>
+                    <td className={NUM_TOTAL}>{formatNumber(utilizedDisplayTotal)}</td>
+                  </tr>
 
-                {/* Net ITC Available — auto from ITC Summary (M-1) 4C = 4A − 4B */}
-                <TableRow>
-                  <TableCell className="font-medium border border-border">
-                    <div>ADD: NET ITC AVAILABLE (4C)</div>
-                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">{prevMonthLabel ? `From ${prevMonthLabel} ITC Summary (4A − 4B)` : '4A − 4B from previous month'}</p>
-                    {!hasItcSummary && <p className="text-[10px] text-muted-foreground font-normal mt-0.5">{prevMonthLabel ? `ITC Summary not saved for ${prevMonthLabel} — showing 0` : 'ITC Summary not saved — showing 0'}</p>}
-                    {hasItcSummary && !prevReturnFiled && <p className="text-[10px] text-muted-foreground font-normal mt-0.5">{prevMonthLabel ? `${prevMonthLabel}'s GSTR-3B not yet Filed — showing 0 until it's final` : "GSTR-3B not yet Filed — showing 0 until it's final"}</p>}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(availedIgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(availedCgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(availedSgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">{formatNumber(availedTotal)}</TableCell>
-                </TableRow>
-
-                {/* ITC Utilized — actual per-head debit from credit ledger CSV when available, GSTR-3B output otherwise */}
-                <TableRow>
-                  <TableCell className="font-medium border border-border">
-                    <div>LESS: ITC UTILIZED</div>
-                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">
-                      {utilizedFromCsv
-                        ? `Actual per-head debit from ${prevMonthLabel || 'M-1'} row of Credit Ledger (covers cross-head set-off)`
-                        : prevMonthLabel
-                          ? `From ${prevMonthLabel} GSTR-3B output (Table 3.1a), set off cross-head like the portal (estimate)`
-                          : 'From previous month GSTR-3B output (Table 3.1a), set off cross-head like the portal (estimate)'}
-                    </p>
-                    {!utilizedFromCsv && !hasGstr1 && (
-                      <p className="text-[10px] text-muted-foreground font-normal mt-0.5">
-                        {prevMonthLabel ? `GSTR-1 not imported for ${prevMonthLabel} — showing 0` : 'GSTR-1 not imported — showing 0'}
+                  {/* DRC-03 / other ledger debits — auto-detected from the CSV, editable */}
+                  <tr className={WS_TR}>
+                    <td className={WS_TD}>
+                      <div className="font-medium">Less: DRC-03 / other ledger debits</div>
+                      <p className={SUB}>
+                        Demand / appeal / interest / penalty paid through the credit ledger — auto-detected from the CSV; editable
                       </p>
-                    )}
-                    {!utilizedFromCsv && (
-                      <p className="text-[10px] text-warning font-normal mt-0.5">
-                        Tip: Upload the Credit Ledger CSV to pull the actual per-head debit (closing will then tally with the portal).
-                      </p>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(actualUtilizedIgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(actualUtilizedCgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(actualUtilizedSgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">{formatNumber(utilizedDisplayTotal)}</TableCell>
-                </TableRow>
+                    </td>
+                    <td className={INPUT_TD}>{renderBooksCell(drcIgst, setDrcIgst)}</td>
+                    <td className={INPUT_TD}>{renderBooksCell(drcCgst, setDrcCgst)}</td>
+                    <td className={INPUT_TD}>{renderBooksCell(drcSgst, setDrcSgst)}</td>
+                    <td className={NUM_TOTAL}>{formatNumber(drcTotal)}</td>
+                  </tr>
 
-                {/* DRC-03 / other ledger debits — auto-detected from the CSV, editable */}
-                <TableRow>
-                  <TableCell className="font-medium border border-border">
-                    <div>LESS: DRC-03 / OTHER LEDGER DEBITS</div>
-                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">
-                      Demand / appeal / interest / penalty paid through the credit ledger — auto-detected from the CSV; editable
-                    </p>
-                  </TableCell>
-                  <TableCell className="p-0 border border-border">{renderBooksCell(drcIgst, setDrcIgst)}</TableCell>
-                  <TableCell className="p-0 border border-border">{renderBooksCell(drcCgst, setDrcCgst)}</TableCell>
-                  <TableCell className="p-0 border border-border">{renderBooksCell(drcSgst, setDrcSgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">{formatNumber(drcTotal)}</TableCell>
-                </TableRow>
+                  {/* Closing per portal — computed */}
+                  <tr className={WS_TR_TOTAL}>
+                    <td className={WS_TD}>
+                      <div>Closing balance as per portal</div>
+                      <p className={SUB}>Opening + Net ITC Available − ITC Utilized − DRC-03 (clamped at 0)</p>
+                    </td>
+                    <td className={NUM}>{formatNumber(portalClosingIgst)}</td>
+                    <td className={NUM}>{formatNumber(portalClosingCgst)}</td>
+                    <td className={NUM}>{formatNumber(portalClosingSgst)}</td>
+                    <td className={cn(NUM, 'border-r-0')}>{formatNumber(portalClosingTotal)}</td>
+                  </tr>
 
-                {/* Spacer */}
-                <TableRow className="h-2 hover:bg-transparent">
-                  <TableCell colSpan={5} className="border-0 p-0"></TableCell>
-                </TableRow>
+                  {/* Closing per books — manual */}
+                  <tr className={WS_TR}>
+                    <td className={cn(WS_TD, 'font-medium')}>Closing balance as per books</td>
+                    <td className={INPUT_TD}>{renderBooksCell(booksClosingIgst, setBooksClosingIgst)}</td>
+                    <td className={INPUT_TD}>{renderBooksCell(booksClosingCgst, setBooksClosingCgst)}</td>
+                    <td className={INPUT_TD}>{renderBooksCell(booksClosingSgst, setBooksClosingSgst)}</td>
+                    <td className={NUM_TOTAL}>{formatNumber(booksClosingTotal)}</td>
+                  </tr>
 
-                {/* Closing per portal — computed */}
-                <TableRow className="bg-secondary/30 hover:bg-secondary/30">
-                  <TableCell className="font-bold border border-border">
-                    <div>CLOSING BALANCE AS PER PORTAL</div>
-                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">Opening + Net ITC Available − ITC Utilized − DRC-03 (clamped at 0)</p>
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums font-bold border border-border">{formatNumber(portalClosingIgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums font-bold border border-border">{formatNumber(portalClosingCgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums font-bold border border-border">{formatNumber(portalClosingSgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums font-bold border border-border">{formatNumber(portalClosingTotal)}</TableCell>
-                </TableRow>
-
-                {/* Closing per books — manual */}
-                <TableRow>
-                  <TableCell className="font-medium border border-border">CLOSING BALANCE AS PER BOOKS</TableCell>
-                  <TableCell className="p-0 border border-border">{renderBooksCell(booksClosingIgst, setBooksClosingIgst)}</TableCell>
-                  <TableCell className="p-0 border border-border">{renderBooksCell(booksClosingCgst, setBooksClosingCgst)}</TableCell>
-                  <TableCell className="p-0 border border-border">{renderBooksCell(booksClosingSgst, setBooksClosingSgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">{formatNumber(booksClosingTotal)}</TableCell>
-                </TableRow>
-
-                {/* Spacer */}
-                <TableRow className="h-2 hover:bg-transparent">
-                  <TableCell colSpan={5} className="border-0 p-0"></TableCell>
-                </TableRow>
-
-                {/* Difference */}
-                <TableRow className="bg-warning/10 hover:bg-warning/10">
-                  <TableCell className="font-bold border border-border">DIFFERENCE</TableCell>
-                  <TableCell className={`text-right tabular-nums font-medium border border-border ${diffIgst !== 0 ? 'text-destructive' : ''}`}>{formatNumber(diffIgst)}</TableCell>
-                  <TableCell className={`text-right tabular-nums font-medium border border-border ${diffCgst !== 0 ? 'text-destructive' : ''}`}>{formatNumber(diffCgst)}</TableCell>
-                  <TableCell className={`text-right tabular-nums font-medium border border-border ${diffSgst !== 0 ? 'text-destructive' : ''}`}>{formatNumber(diffSgst)}</TableCell>
-                  <TableCell className={`text-right tabular-nums font-bold border border-border ${diffTotal !== 0 ? 'text-destructive' : ''}`}>{formatNumber(diffTotal)}</TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
+                  {/* Difference */}
+                  <tr className={cn('font-semibold', diffTotal !== 0 ? 'bg-destructive/5' : 'bg-success/10')}>
+                    <td className={cn(WS_TD, 'border-b-0')}>
+                      <span className="inline-flex items-center gap-2">
+                        Difference
+                        <Badge variant={diffTotal === 0 ? 'success' : 'destructive'} className="text-[10px] font-medium">
+                          {diffTotal === 0 ? 'Tallies' : 'Differs'}
+                        </Badge>
+                      </span>
+                    </td>
+                    <td className={cn(NUM, 'border-b-0', diffCls(diffIgst))}>{formatNumber(diffIgst)}</td>
+                    <td className={cn(NUM, 'border-b-0', diffCls(diffCgst))}>{formatNumber(diffCgst)}</td>
+                    <td className={cn(NUM, 'border-b-0', diffCls(diffSgst))}>{formatNumber(diffSgst)}</td>
+                    <td className={cn(NUM, 'border-b-0 border-r-0', diffCls(diffTotal))}>{formatNumber(diffTotal)}</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
-          )}
-        </CardContent>
-      </Card>
+
+            {!utilizedFromCsv && (
+              <Note tone="warn">
+                Tip: Upload the Credit Ledger CSV to pull the actual per-head debit (closing will then tally with the portal).
+              </Note>
+            )}
+            <Note>
+              Differences of ₹10 or less per head are treated as nil.
+            </Note>
+          </SectionCard>
+        </>
+      )}
 
       {/* Manual fallback file input — triggered by the muted "Upload" button */}
       <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleFileChange} />

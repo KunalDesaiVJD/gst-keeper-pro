@@ -60,7 +60,7 @@ const ClientHoverDetails: React.FC<ClientHoverDetailsProps> = ({
         onFocus={handleEnter}
         onBlur={handleLeave}
         tabIndex={0}
-        className="cursor-pointer font-medium"
+        className="cursor-pointer rounded-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {clientName}
         {lockIcon}
@@ -69,20 +69,20 @@ const ClientHoverDetails: React.FC<ClientHoverDetailsProps> = ({
         <div
           onMouseEnter={() => clearTimeout(timeoutRef.current)}
           onMouseLeave={handleLeave}
-          className="fixed z-[9999] bg-white dark:bg-card border border-border rounded-lg shadow-lg p-3 w-[260px]"
+          className="fixed z-[9999] w-[260px] rounded-md border bg-popover p-2.5 text-popover-foreground shadow-md"
           style={{ top: pos.top, left: pos.left }}
         >
-          <div className="space-y-2 text-sm">
+          <div className="space-y-1.5 text-xs">
             <div className="flex justify-between">
-              <span className="text-muted-foreground font-medium">Accountant:</span>
+              <span className="font-medium text-muted-foreground">Accountant:</span>
               <span className="text-foreground text-right">{accountant}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-muted-foreground font-medium">Contact:</span>
+              <span className="font-medium text-muted-foreground">Contact:</span>
               <span className="text-foreground text-right">{contact}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-muted-foreground font-medium">Email:</span>
+              <span className="font-medium text-muted-foreground">Email:</span>
               <span className="text-foreground text-right truncate max-w-[150px]">{email}</span>
             </div>
           </div>
