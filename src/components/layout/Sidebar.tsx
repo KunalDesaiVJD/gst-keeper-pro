@@ -143,8 +143,8 @@ const STAFF_NAV_ITEMS: NavItem[] = [
   // "GST Reminders" now lives inside Settings -> GST Reminders tab (not a top-level nav item).
   // The whole promoter module is one destination: /builder is a sequential
   // workspace over setup, masters, receipts, BU, dastavej, adjustments, FSI and
-  // the return. Reports stays separate — it is the output of a finished period,
-  // read by a different person at a different time.
+  // the return. Reports stays its own page (the output of a finished period),
+  // but sits with it under the "Builder" nav group.
   {
     label: 'Builder',
     path: '/builder',
@@ -173,13 +173,13 @@ const STAFF_NAV_ITEMS: NavItem[] = [
 ];
 
 // Collapsible groups in the expanded rail. Order within `paths` is the order
-// shown inside the group. The minimized (icon-only) rail keeps every page as a
-// separate icon, so grouping only affects the expanded sidebar and the mobile
-// drawer.
+// shown inside the group; a group renders where its first visible child sits in
+// the nav list. The minimized (icon-only) rail keeps every page as a separate
+// icon, so grouping only affects the expanded sidebar and the mobile drawer.
 //
-// "GST Working" holds the working sheets — the actual GSTR-3B return is its own
-// page. The builder module no longer needs a group: it collapsed into the single
-// /builder workspace, leaving only it and Builder Reports.
+// "GST Working" holds the working sheets (and Advances, whose set-offs feed the
+// working). "Returns" holds the return pages themselves. "Builder" holds the
+// /builder workspace and its Reports.
 interface NavGroup {
   key: string;
   label: string;
@@ -192,7 +192,19 @@ const NAV_GROUPS: NavGroup[] = [
     key: 'gst-working',
     label: 'GST Working',
     icon: <Files className="h-5 w-5" />,
-    paths: ['/2b-and-rcm', '/rcm-summary', '/itc-summary'],
+    paths: ['/2b-and-rcm', '/rcm-summary', '/itc-summary', '/advances'],
+  },
+  {
+    key: 'returns',
+    label: 'Returns',
+    icon: <FileCheck2 className="h-5 w-5" />,
+    paths: ['/gstr1-data', '/gstr3b', '/gstr3b-adjustments'],
+  },
+  {
+    key: 'builder',
+    label: 'Builder',
+    icon: <Building className="h-5 w-5" />,
+    paths: ['/builder', '/builder-reports'],
   },
 ];
 
