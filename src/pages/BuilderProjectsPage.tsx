@@ -5,10 +5,13 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, SectionCard } from '@/components/gstr9/ui';
+import { WS_BTN, WS_CONTROL, WS_FILTER_LABEL, WS_PAGE, WS_TABLE_WRAP } from '@/components/workspace/theme';
+import { B_TABLE, B_TD, B_TD_NUM, B_TH, B_TH_NUM, B_TR, B_TR_HEAD } from '@/components/builder/theme';
+import { cn } from '@/lib/utils';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
@@ -95,134 +98,165 @@ const BuilderProjectsPage: React.FC = () => {
     setDialogOpen(true);
   };
 
+  const stats = projects.reduce(
+    (acc, p) => {
+      const a = areas[p.id];
+      const rrep = testRrep(a?.residential_sqm || 0, a?.commercial_sqm || 0);
+      acc.units += a?.unit_count ?? 0;
+      if (rrep.isIndeterminate) acc.noArea += 1;
+      else if (rrep.isRrep) acc.rrep += 1;
+      else acc.rep += 1;
+      return acc;
+    },
+    { units: 0, rrep: 0, rep: 0, noArea: 0 },
+  );
+
   return (
-    <div className="space-y-6">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
+        embedded={embedded}
         title="Builder Projects"
         subtitle="RERA projects, their commercial mix, and the 15% RREP test"
-        icon={<Building className="h-5 w-5" />}
+        icon={<Building />}
         actions={
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => navigate('/builder-setup')} hidden={embedded}>
-              <Settings2 className="h-4 w-4 mr-2" /> Client setup
+          <>
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate('/builder-setup')} hidden={embedded}>
+              <Settings2 className="h-3.5 w-3.5" /> Client setup
             </Button>
             {selectedClientId && !readOnly && (
-              <Button onClick={openCreate}>
-                <Plus className="h-4 w-4 mr-2" /> New project
+              <Button size="sm" className={WS_BTN} onClick={openCreate}>
+                <Plus className="h-3.5 w-3.5" /> New project
               </Button>
             )}
-          </div>
+          </>
         }
       />
 
-      <Card>
-        <CardContent className="p-4">
-          <div className="max-w-md">
-            <Label className="mb-1.5 block">Builder client</Label>
-            <SearchableSelect
-              options={clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin || undefined }))}
-              value={selectedClientId || ''}
-              onValueChange={setSelectedClientId}
-              placeholder="Search builder client..."
-              searchPlaceholder="Type to search..."
-              emptyText="No builder clients found."
-            />
-          </div>
-        </CardContent>
-      </Card>
+      {!embedded && (
+        <Card>
+          <CardContent className="px-3 py-2">
+            <label className="block max-w-md space-y-0.5">
+              <span className={WS_FILTER_LABEL}>Builder client</span>
+              <SearchableSelect
+                options={clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin || undefined }))}
+                value={selectedClientId || ''}
+                onValueChange={setSelectedClientId}
+                placeholder="Search builder client..."
+                searchPlaceholder="Type to search..."
+                emptyText="No builder clients found."
+                className={WS_CONTROL}
+              />
+            </label>
+          </CardContent>
+        </Card>
+      )}
 
       {isLoading && (
-        <div className="flex items-center gap-2 text-muted-foreground text-sm">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading projects…
+        <Card>
+          <CardContent className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading projects…
+          </CardContent>
+        </Card>
+      )}
+
+      {selectedClientId && !isLoading && projects.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <KpiTile label="Projects" value={projects.length} />
+          <KpiTile label="Units" value={stats.units} />
+          <KpiTile label="RREP" value={stats.rrep} tone={stats.rrep ? 'ok' : 'neutral'} />
+          <KpiTile
+            label="REP (other than RREP)"
+            value={stats.rep}
+            hint={stats.noArea ? `${stats.noArea} with no area yet` : undefined}
+            tone={stats.rep ? 'warn' : 'neutral'}
+          />
         </div>
       )}
 
       {selectedClientId && !isLoading && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Projects</CardTitle>
-            <CardDescription>
+        <SectionCard
+          title="Projects"
+          description={(
+            <>
               A project is an RREP while commercial carpet area stays at or under{' '}
               {formatPct(RREP_COMMERCIAL_THRESHOLD)} of total carpet area. Cross that line and commercial
               units move from 7.5% with no credit to 18% with proportionate credit.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="p-0">
-            {projects.length === 0 ? (
-              <div className="p-10 text-center text-muted-foreground">
-                <Building className="h-8 w-8 mx-auto mb-3 opacity-40" />
-                <p className="text-sm">No projects yet for this client.</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Project</TableHead>
-                      <TableHead>RERA no.</TableHead>
-                      <TableHead className="text-right">Units</TableHead>
-                      <TableHead className="text-right">Residential</TableHead>
-                      <TableHead className="text-right">Commercial</TableHead>
-                      <TableHead className="text-right">Commercial %</TableHead>
-                      <TableHead>Classification</TableHead>
-                      <TableHead>Affordable limit</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="w-20" />
+            </>
+          )}
+        >
+          {projects.length === 0 ? (
+            <div className="py-6 text-center text-sm text-muted-foreground">
+              <Building className="mx-auto mb-2 h-6 w-6 opacity-40" />
+              No projects yet for this client.
+            </div>
+          ) : (
+            <Table className={B_TABLE} containerClassName={WS_TABLE_WRAP}>
+              <TableHeader>
+                <TableRow className={B_TR_HEAD}>
+                  <TableHead className={B_TH}>Project</TableHead>
+                  <TableHead className={B_TH}>RERA no.</TableHead>
+                  <TableHead className={B_TH_NUM}>Units</TableHead>
+                  <TableHead className={B_TH_NUM}>Residential</TableHead>
+                  <TableHead className={B_TH_NUM}>Commercial</TableHead>
+                  <TableHead className={B_TH_NUM}>Commercial %</TableHead>
+                  <TableHead className={B_TH}>Classification</TableHead>
+                  <TableHead className={B_TH}>Affordable limit</TableHead>
+                  <TableHead className={B_TH}>Status</TableHead>
+                  <TableHead className={cn(B_TH, 'w-16')} />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {projects.map((p) => {
+                  const a = areas[p.id];
+                  const rrep = testRrep(a?.residential_sqm || 0, a?.commercial_sqm || 0);
+                  return (
+                    <TableRow key={p.id} className={cn(B_TR, 'cursor-pointer')} onClick={() => openProject(p.id)}>
+                      <TableCell className={cn(B_TD, 'font-medium')}>
+                        {p.name}
+                        {p.city && <span className="block text-[11px] font-normal text-muted-foreground">{p.city}</span>}
+                      </TableCell>
+                      <TableCell className={cn(B_TD, 'text-muted-foreground')}>{p.rera_number || '—'}</TableCell>
+                      <TableCell className={B_TD_NUM}>{a?.unit_count ?? 0}</TableCell>
+                      <TableCell className={B_TD_NUM}>{formatSqM(rrep.residentialSqM)}</TableCell>
+                      <TableCell className={B_TD_NUM}>{formatSqM(rrep.commercialSqM)}</TableCell>
+                      <TableCell className={cn(B_TD_NUM, 'font-medium')}>
+                        {rrep.isIndeterminate ? '—' : formatPct(rrep.commercialShare)}
+                      </TableCell>
+                      <TableCell className={B_TD}>
+                        {rrep.isIndeterminate ? (
+                          <Badge variant="outline" className="text-[10px] font-medium">No area yet</Badge>
+                        ) : rrep.isRrep ? (
+                          <Badge variant="success" className="text-[10px] font-medium">RREP</Badge>
+                        ) : (
+                          <Badge variant="warning" className="text-[10px] font-medium">
+                            REP (other than RREP)
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className={B_TD}>{p.is_metro ? '60 sq m' : '90 sq m'}</TableCell>
+                      <TableCell className={B_TD}>
+                        <Badge variant={p.status === 'Active' ? 'info' : 'outline'} className="text-[10px] font-medium">{p.status}</Badge>
+                      </TableCell>
+                      <TableCell className={cn(B_TD, 'py-0.5')}>
+                        <div className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+                          {!readOnly && (
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(p)} aria-label="Edit project">
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openProject(p.id)} aria-label="Open project">
+                            <ChevronRight className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {projects.map((p) => {
-                      const a = areas[p.id];
-                      const rrep = testRrep(a?.residential_sqm || 0, a?.commercial_sqm || 0);
-                      return (
-                        <TableRow key={p.id} className="cursor-pointer" onClick={() => openProject(p.id)}>
-                          <TableCell className="font-medium">
-                            {p.name}
-                            {p.city && <span className="block text-xs text-muted-foreground">{p.city}</span>}
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{p.rera_number || '—'}</TableCell>
-                          <TableCell className="text-right text-sm">{a?.unit_count ?? 0}</TableCell>
-                          <TableCell className="text-right text-sm">{formatSqM(rrep.residentialSqM)}</TableCell>
-                          <TableCell className="text-right text-sm">{formatSqM(rrep.commercialSqM)}</TableCell>
-                          <TableCell className="text-right text-sm font-medium">
-                            {rrep.isIndeterminate ? '—' : formatPct(rrep.commercialShare)}
-                          </TableCell>
-                          <TableCell>
-                            {rrep.isIndeterminate ? (
-                              <Badge variant="outline">No area yet</Badge>
-                            ) : rrep.isRrep ? (
-                              <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">RREP</Badge>
-                            ) : (
-                              <Badge className="bg-amber-100 text-amber-800 border-amber-200">
-                                REP (other than RREP)
-                              </Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-sm">{p.is_metro ? '60 sq m' : '90 sq m'}</TableCell>
-                          <TableCell>
-                            <Badge variant={p.status === 'Active' ? 'default' : 'outline'}>{p.status}</Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                              {!readOnly && (
-                                <Button variant="ghost" size="icon" onClick={() => openEdit(p)}>
-                                  <Pencil className="h-4 w-4" />
-                                </Button>
-                              )}
-                              <Button variant="ghost" size="icon" onClick={() => openProject(p.id)}>
-                                <ChevronRight className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </SectionCard>
       )}
 
       <BuilderProjectSettingsDialog

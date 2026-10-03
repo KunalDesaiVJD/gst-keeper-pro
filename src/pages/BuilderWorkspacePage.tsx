@@ -1,7 +1,7 @@
 /**
  * The Builder workspace.
  *
- * Four horizontal tabs and nothing else — no rail, no chips, no sub-strip.
+ * Four steps in one pinned step bar and nothing else — no rail, no sub-strip.
  *
  *   Ledger      one table, one row per unit, every derived column on it, every
  *               action on the row. Masters, corrections and the deed register
@@ -27,9 +27,11 @@ import { useClient } from '@/contexts/ClientContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { BuilderWorkspaceProvider } from '@/contexts/BuilderWorkspaceContext';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { WS_BTN, WS_CONTROL, WS_FILTER_LABEL, WS_PAGE } from '@/components/workspace/theme';
+import { cn } from '@/lib/utils';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import {
@@ -37,7 +39,7 @@ import {
 } from '@/components/ui/select';
 import {
   Building, Layers, CalendarCheck, FileSpreadsheet, AlertTriangle, Settings2, Landmark,
-  Wallet, Loader2,
+  Wallet, Loader2, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { prettyPeriodLabel } from '@/utils/builderLedger';
@@ -58,10 +60,10 @@ import BulkReceiptsDialog, { type BulkReceiptUnit } from '@/components/builder/B
 import BulkOpeningBalancesDialog, { type BulkOpeningUnit } from '@/components/builder/BulkOpeningBalancesDialog';
 
 const TABS = [
-  { key: 'ledger', label: 'Ledger', icon: <Layers className="h-4 w-4" /> },
-  { key: 'bu', label: 'BU Working', icon: <CalendarCheck className="h-4 w-4" /> },
-  { key: 'fsi', label: 'TDR / FSI', icon: <Landmark className="h-4 w-4" /> },
-  { key: 'returns', label: 'Returns', icon: <FileSpreadsheet className="h-4 w-4" /> },
+  { key: 'ledger', label: 'Ledger', icon: <Layers className="h-3.5 w-3.5" /> },
+  { key: 'bu', label: 'BU Working', icon: <CalendarCheck className="h-3.5 w-3.5" /> },
+  { key: 'fsi', label: 'TDR / FSI', icon: <Landmark className="h-3.5 w-3.5" /> },
+  { key: 'returns', label: 'Returns', icon: <FileSpreadsheet className="h-3.5 w-3.5" /> },
 ];
 
 interface ClientRow { id: string; name: string; gstin: string | null }
@@ -196,107 +198,118 @@ const BuilderWorkspacePage: React.FC = () => {
   if (!canViewBuilderReports()) {
     return (
       <Card>
-        <CardContent className="p-10 text-center text-muted-foreground">
-          <p className="text-sm">You do not have permission to view the builder module.</p>
+        <CardContent className="px-4 py-8 text-center text-sm text-muted-foreground">
+          You do not have permission to view the builder module.
         </CardContent>
       </Card>
     );
   }
 
   const needsProject = (
-    <div className="p-10 text-center text-sm text-muted-foreground">
-      This works on one project. Choose one above.
-    </div>
+    <Card>
+      <CardContent className="px-4 py-8 text-center text-sm text-muted-foreground">
+        This works on one project. Choose one above.
+      </CardContent>
+    </Card>
   );
+
+  const tabIdx = Math.max(0, TABS.findIndex((t) => t.key === tab));
+  const activeProject = projects.find((p) => p.id === projectId);
 
   return (
     <BuilderWorkspaceProvider projectId={projectId || undefined} selectProject={selectProject}>
-      <div className="space-y-4">
+      <div className={WS_PAGE}>
         {/* ── Context, chosen once and inherited by every tab ─────────────── */}
-        <Card>
-          <CardContent className="flex flex-wrap items-end gap-3 p-3">
-            <span className="flex items-center gap-2 pb-1 pr-1">
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-                <Building className="h-4 w-4 text-primary" />
-              </span>
-              <span className="text-sm font-semibold">Builder</span>
-            </span>
-            <div className="min-w-[200px] max-w-xs flex-1">
-              <Label className="mb-1 block text-xs">Client</Label>
-              <SearchableSelect
-                options={clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin || undefined }))}
-                value={selectedClientId || ''}
-                onValueChange={setSelectedClientId}
-                placeholder="Search builder client..."
-                searchPlaceholder="Type to search..."
-                emptyText="No builder clients found."
-              />
-            </div>
-            <div className="w-52">
-              <Label className="mb-1 block text-xs">Project</Label>
-              <Select
-                value={projectId || 'NONE'}
-                onValueChange={(v) => patch({ project: v === 'NONE' ? '' : v })}
-                disabled={!selectedClientId}
-              >
-                <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="NONE">
-                    {projects.length ? 'All projects' : 'No projects yet'}
-                  </SelectItem>
-                  {projects.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="w-40">
-              <Label className="mb-1 block text-xs">Period</Label>
-              <SearchableMonthSelect
-                options={monthOptions}
-                value={selectedMonth}
-                onValueChange={setSelectedMonth}
-                placeholder="Period"
-              />
-            </div>
-            <div className="ml-auto flex items-center gap-2 pb-0.5">
+        <PageHeader
+          compact
+          title="Builder"
+          icon={<Building />}
+          actions={(
+            <>
               {fsiBlocked && (
-                <Badge variant="outline" className="gap-1 border-amber-500/50 text-amber-700 dark:text-amber-500">
-                  <AlertTriangle className="h-3 w-3" /> FSI consent pending
+                <Badge variant="warning" className="gap-1 text-[10px] font-medium">
+                  <AlertTriangle className="h-3 w-3 text-warning" /> FSI consent pending
                 </Badge>
               )}
               {canEnterBuilderReceipts() && (
                 <Button
-                  variant="outline" size="sm"
+                  variant="outline" size="sm" className={WS_BTN}
                   onClick={openClientReceipts}
                   disabled={!selectedClientId || bulkLoading !== ''}
                   title="Record this month's receipts across every project this client has, block by block"
                 >
                   {bulkLoading === 'receipts'
-                    ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                    : <Wallet className="mr-1.5 h-4 w-4" />}
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <Wallet className="h-3.5 w-3.5" />}
                   Record receipts
                 </Button>
               )}
               {canManageBuilderUnits() && (
                 <Button
-                  variant="outline" size="sm"
+                  variant="outline" size="sm" className={WS_BTN}
                   onClick={openClientOpenings}
                   disabled={!selectedClientId || bulkLoading !== ''}
                   title="Set opening balances across every project this client has, block by block"
                 >
                   {bulkLoading === 'openings'
-                    ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                    : <Layers className="mr-1.5 h-4 w-4" />}
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <Layers className="h-3.5 w-3.5" />}
                   Opening balances
                 </Button>
               )}
               <Button
-                variant={showSetup ? 'default' : 'outline'} size="sm"
+                variant={showSetup ? 'default' : 'outline'} size="sm" className={WS_BTN}
                 onClick={() => setShowSetup((v) => !v)}
                 disabled={!selectedClientId}
               >
-                <Settings2 className="mr-1.5 h-4 w-4" />
+                <Settings2 className="h-3.5 w-3.5" />
                 Client setup
               </Button>
+            </>
+          )}
+        />
+
+        <Card>
+          <CardContent className="px-3 py-2">
+            <div className="grid grid-cols-1 items-end gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)_minmax(0,1fr)] lg:max-w-4xl">
+              <label className="min-w-0 space-y-0.5">
+                <span className={WS_FILTER_LABEL}>Client</span>
+                <SearchableSelect
+                  options={clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin || undefined }))}
+                  value={selectedClientId || ''}
+                  onValueChange={setSelectedClientId}
+                  placeholder="Search builder client..."
+                  searchPlaceholder="Type to search..."
+                  emptyText="No builder clients found."
+                  className={WS_CONTROL}
+                />
+              </label>
+              <label className="min-w-0 space-y-0.5">
+                <span className={WS_FILTER_LABEL}>Project</span>
+                <Select
+                  value={projectId || 'NONE'}
+                  onValueChange={(v) => patch({ project: v === 'NONE' ? '' : v })}
+                  disabled={!selectedClientId}
+                >
+                  <SelectTrigger className={WS_CONTROL} aria-label="Project"><SelectValue placeholder="Select" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="NONE">
+                      {projects.length ? 'All projects' : 'No projects yet'}
+                    </SelectItem>
+                    {projects.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </label>
+              <label className="min-w-0 space-y-0.5">
+                <span className={WS_FILTER_LABEL}>Period</span>
+                <SearchableMonthSelect
+                  options={monthOptions}
+                  value={selectedMonth}
+                  onValueChange={setSelectedMonth}
+                  placeholder="Period"
+                  className={WS_CONTROL}
+                />
+              </label>
             </div>
           </CardContent>
         </Card>
@@ -304,91 +317,122 @@ const BuilderWorkspacePage: React.FC = () => {
         {/* Setup is a panel, not a step — opened when something changes, which
             for most clients is once, at onboarding. */}
         {showSetup && selectedClientId && (
-          <Card>
-            <CardContent className="p-0">
-              {/* Project masters belong here rather than on the ledger toolbar:
-                  importing units, naming phases and keying opening balances are
-                  onboarding jobs done once, and a button for them sat on screen
-                  every day for the sake of a few minutes at the start. Editing a
-                  single unit's charge heads is still on that unit's row menu,
-                  which is where it is actually needed — a charge added later is
-                  what pushes a unit past ₹45 lakh. */}
-              {projectId && (
-                <div className="flex flex-wrap items-center gap-3 border-b bg-muted/30 px-4 py-3">
-                  <Layers className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/[0.03] p-3">
+            {/* Project masters belong here rather than on the ledger toolbar:
+                importing units, naming phases and keying opening balances are
+                onboarding jobs done once, and a button for them sat on screen
+                every day for the sake of a few minutes at the start. Editing a
+                single unit's charge heads is still on that unit's row menu,
+                which is where it is actually needed — a charge added later is
+                what pushes a unit past ₹45 lakh. */}
+            {projectId && (
+              <Card className="divide-y">
+                <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+                  <Layers className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium">Project masters</p>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-xs font-medium">Project masters</p>
+                    <p className="text-[11px] text-muted-foreground">
                       Units, phases and opening balances for{' '}
-                      {projects.find((p) => p.id === projectId)?.name || 'this project'}.
+                      {activeProject?.name || 'this project'}.
                     </p>
                   </div>
                   <Button
-                    variant="outline" size="sm"
+                    variant="outline" size="sm" className={WS_BTN}
                     onClick={() => window.dispatchEvent(new CustomEvent('builder:open-masters'))}
                   >
                     Open
                   </Button>
                 </div>
-              )}
-              {projectId && (
-                <div className="flex flex-wrap items-center gap-3 border-b bg-muted/30 px-4 py-3">
-                  <Settings2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+                  <Settings2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium">Project settings</p>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-xs font-medium">Project settings</p>
+                    <p className="text-[11px] text-muted-foreground">
                       Metro status, carpet-area source, doc series, opening cut-off and FSI treatment for{' '}
-                      {projects.find((p) => p.id === projectId)?.name || 'this project'}.
+                      {activeProject?.name || 'this project'}.
                     </p>
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => setProjectSettingsOpen(true)}>
+                  <Button variant="outline" size="sm" className={WS_BTN} onClick={() => setProjectSettingsOpen(true)}>
                     Edit
                   </Button>
                 </div>
-              )}
-              <BuilderSettingsPage />
-            </CardContent>
-          </Card>
+              </Card>
+            )}
+            <BuilderSettingsPage />
+          </div>
         )}
 
         {!selectedClientId ? (
           <Card>
-            <CardContent className="p-10 text-center text-muted-foreground">
-              <Building className="mx-auto mb-3 h-8 w-8 opacity-40" />
-              <p className="text-sm">Choose a builder client above to begin.</p>
+            <CardContent className="px-4 py-8 text-center text-sm text-muted-foreground">
+              <Building className="mx-auto mb-2 h-6 w-6 opacity-40" />
+              Choose a builder client above to begin.
             </CardContent>
           </Card>
         ) : (
-          <Card className="overflow-hidden">
-            <div className="flex overflow-x-auto border-b bg-card px-2" role="tablist" aria-label="Builder">
-              {TABS.map((t) => {
-                const on = t.key === tab;
-                return (
-                  <button
-                    key={t.key} type="button" role="tab" aria-selected={on}
-                    onClick={() => patch({ tab: t.key })}
-                    className={`flex items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-semibold transition-colors
-                      ${on ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-                  >
-                    {t.icon}{t.label}
-                    {t.key === 'returns' && postingCount > 0 && (
-                      <Badge variant="outline" className="ml-1 text-[10px]">{formatINR(periodTax)}</Badge>
-                    )}
-                    {(t.key === 'returns' || t.key === 'fsi') && fsiBlocked && (
-                      <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
-                    )}
-                  </button>
-                );
-              })}
+          <>
+            {/* Step bar: pinned while scrolling, so every tab is one click away. */}
+            <div className="sticky top-0 z-30 -mx-4 border-b bg-background px-4 md:-mx-6 md:px-6">
+              <div className="flex items-center gap-1.5 py-1.5 md:pr-12">
+                <Button
+                  variant="ghost" size="icon" className="h-7 w-7 shrink-0"
+                  disabled={tabIdx === 0}
+                  onClick={() => patch({ tab: TABS[tabIdx - 1].key })}
+                  aria-label={tabIdx > 0 ? `Previous: ${TABS[tabIdx - 1].label}` : 'Previous'}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <nav aria-label="Builder" className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5" role="tablist">
+                    {TABS.map((t, i) => {
+                      const on = t.key === tab;
+                      return (
+                        <button
+                          key={t.key} type="button" role="tab" aria-selected={on}
+                          onClick={() => patch({ tab: t.key })}
+                          className={cn(
+                            'flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                            on ? 'bg-primary font-medium text-primary-foreground' : 'text-foreground hover:bg-muted',
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              'flex h-4 min-w-4 items-center justify-center rounded-full px-0.5 text-[9px] font-semibold',
+                              on ? 'bg-primary-foreground/20' : 'bg-muted text-muted-foreground',
+                            )}
+                          >
+                            {i + 1}
+                          </span>
+                          {t.icon}{t.label}
+                          {t.key === 'returns' && postingCount > 0 && (
+                            <Badge variant="secondary" className="ml-0.5 h-4 px-1.5 text-[10px] font-medium leading-none">{formatINR(periodTax)}</Badge>
+                          )}
+                          {(t.key === 'returns' || t.key === 'fsi') && fsiBlocked && (
+                            <AlertTriangle className={cn('h-3.5 w-3.5', on ? 'text-primary-foreground' : 'text-warning')} aria-label="FSI consent pending" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </nav>
+                <Button
+                  variant="ghost" size="icon" className="h-7 w-7 shrink-0"
+                  disabled={tabIdx === TABS.length - 1}
+                  onClick={() => patch({ tab: TABS[tabIdx + 1].key })}
+                  aria-label={tabIdx < TABS.length - 1 ? `Next: ${TABS[tabIdx + 1].label}` : 'Next'}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
 
-            <CardContent className="p-0">
+            <div>
               {tab === 'ledger' && (projectId ? <BuilderBookingsPage /> : <BuilderProjectsPage />)}
               {tab === 'bu' && (projectId ? <BuilderBuEventsPage /> : needsProject)}
               {tab === 'fsi' && (projectId ? <BuilderFsiPage /> : needsProject)}
               {tab === 'returns' && <BuilderReturnsPage />}
-            </CardContent>
-          </Card>
+            </div>
+          </>
         )}
 
         <BuilderProjectSettingsDialog

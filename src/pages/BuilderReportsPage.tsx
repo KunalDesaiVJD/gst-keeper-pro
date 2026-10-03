@@ -3,10 +3,15 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, Note, SectionCard } from '@/components/gstr9/ui';
+import {
+  WS_BTN, WS_CONTROL, WS_FILTER_LABEL, WS_PAGE, WS_TAB, WS_TAB_ACTIVE, WS_TABLE_WRAP, WS_TABS_LIST,
+} from '@/components/workspace/theme';
+import { B_TABLE, B_TD, B_TD_NUM, B_TH, B_TH_NUM, B_TR, B_TR_HEAD } from '@/components/builder/theme';
+import { cn } from '@/lib/utils';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import {
@@ -14,7 +19,7 @@ import {
 } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { FolderDown, FileSpreadsheet, FileText, Loader2, Info } from 'lucide-react';
+import { FolderDown, FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
 import { formatINR } from '@/utils/builderRates';
 import { prettyPeriodLabel } from '@/utils/builderLedger';
 import {
@@ -234,55 +239,57 @@ const BuilderReportsPage: React.FC = () => {
   if (!canViewBuilderReports()) {
     return (
       <Card>
-        <CardContent className="p-10 text-center text-muted-foreground">
-          <p className="text-sm">You do not have permission to view builder reports.</p>
+        <CardContent className="px-4 py-8 text-center text-sm text-muted-foreground">
+          You do not have permission to view builder reports.
         </CardContent>
       </Card>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
         title="Builder Reports"
         subtitle="Working papers and client statements, in Excel and PDF"
-        icon={<FolderDown className="h-5 w-5" />}
+        icon={<FolderDown />}
         actions={
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => exportAs('xlsx')} disabled={!ready || isExporting}>
-              {isExporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileSpreadsheet className="h-4 w-4 mr-2" />}
+          <>
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={() => exportAs('xlsx')} disabled={!ready || isExporting}>
+              {isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
               Excel
             </Button>
-            <Button onClick={() => exportAs('pdf')} disabled={!ready || isExporting}>
-              {isExporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileText className="h-4 w-4 mr-2" />}
+            <Button size="sm" className={WS_BTN} onClick={() => exportAs('pdf')} disabled={!ready || isExporting}>
+              {isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
               PDF
             </Button>
-          </div>
+          </>
         }
       />
 
-      <Card>
-        <CardContent className="p-4 space-y-4">
-          <div>
-            <Label className="mb-1.5 block">Report</Label>
-            <div className="flex flex-wrap gap-2">
-              {REPORTS.map((k) => (
-                <Button
-                  key={k}
-                  size="sm"
-                  variant={kind === k ? 'default' : 'outline'}
-                  onClick={() => setKind(k)}
-                >
-                  {REPORT_LABEL[k]}
-                </Button>
-              ))}
-            </div>
-            <p className="text-xs text-muted-foreground mt-2">{REPORT_DESCRIPTION[kind]}</p>
-          </div>
+      <div className="space-y-1">
+        <div className={WS_TABS_LIST} role="tablist" aria-label="Report">
+          {REPORTS.map((k) => (
+            <button
+              key={k}
+              type="button"
+              role="tab"
+              aria-selected={kind === k}
+              className={cn(WS_TAB, kind === k && WS_TAB_ACTIVE)}
+              onClick={() => setKind(k)}
+            >
+              {REPORT_LABEL[k]}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">{REPORT_DESCRIPTION[kind]}</p>
+      </div>
 
-          <div className="flex flex-wrap items-end gap-4">
-            <div className="flex-1 min-w-[220px] max-w-xs">
-              <Label className="mb-1.5 block">Builder client</Label>
+      <Card>
+        <CardContent className="px-3 py-2">
+          <div className="flex flex-wrap items-start gap-2">
+            <label className="min-w-[220px] max-w-xs flex-1 space-y-0.5">
+              <span className={WS_FILTER_LABEL}>Builder client</span>
               <SearchableSelect
                 options={clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin || undefined }))}
                 value={selectedClientId || ''}
@@ -290,38 +297,40 @@ const BuilderReportsPage: React.FC = () => {
                 placeholder="Search builder client..."
                 searchPlaceholder="Type to search..."
                 emptyText="No builder clients found."
+                className={WS_CONTROL}
               />
-            </div>
+            </label>
 
             {needs.project && (
-              <div className="w-56">
-                <Label className="mb-1.5 block">Project</Label>
+              <label className="w-56 space-y-0.5">
+                <span className={WS_FILTER_LABEL}>Project</span>
                 <Select value={projectId} onValueChange={setProjectId}>
-                  <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
+                  <SelectTrigger className={WS_CONTROL} aria-label="Project"><SelectValue placeholder="Select project" /></SelectTrigger>
                   <SelectContent>
                     {projects.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
-              </div>
+              </label>
             )}
 
             {needs.period && (
-              <div className="w-48">
-                <Label className="mb-1.5 block">Period</Label>
+              <label className="w-48 space-y-0.5">
+                <span className={WS_FILTER_LABEL}>Period</span>
                 <SearchableMonthSelect
                   options={monthOptions}
                   value={selectedMonth}
                   onValueChange={setSelectedMonth}
                   placeholder="Select period"
+                  className={WS_CONTROL}
                 />
-              </div>
+              </label>
             )}
 
             {needs.event && (
-              <div className="w-64">
-                <Label className="mb-1.5 block">BU event</Label>
+              <label className="w-64 space-y-0.5">
+                <span className={WS_FILTER_LABEL}>BU event</span>
                 <Select value={eventId} onValueChange={setEventId}>
-                  <SelectTrigger><SelectValue placeholder="Select a posted BU event" /></SelectTrigger>
+                  <SelectTrigger className={WS_CONTROL} aria-label="BU event"><SelectValue placeholder="Select a posted BU event" /></SelectTrigger>
                   <SelectContent>
                     {events.map((e) => (
                       <SelectItem key={e.id} value={e.id}>
@@ -331,25 +340,25 @@ const BuilderReportsPage: React.FC = () => {
                   </SelectContent>
                 </Select>
                 {projectId && events.length === 0 && (
-                  <p className="text-xs text-muted-foreground mt-1">
+                  <span className="block text-[11px] text-muted-foreground">
                     No posted BU events in this project.
-                  </p>
+                  </span>
                 )}
-              </div>
+              </label>
             )}
 
             {needs.unit && (
-              <div className="w-48">
-                <Label className="mb-1.5 block">Unit</Label>
+              <label className="w-48 space-y-0.5">
+                <span className={WS_FILTER_LABEL}>Unit</span>
                 <Select value={unitId} onValueChange={setUnitId}>
-                  <SelectTrigger><SelectValue placeholder="Select unit" /></SelectTrigger>
+                  <SelectTrigger className={WS_CONTROL} aria-label="Unit"><SelectValue placeholder="Select unit" /></SelectTrigger>
                   <SelectContent>
                     {units.map((u) => (
                       <SelectItem key={u.id} value={u.id}>{u.unit_no}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </label>
             )}
           </div>
         </CardContent>
@@ -357,89 +366,78 @@ const BuilderReportsPage: React.FC = () => {
 
       {!ready && (
         <Card>
-          <CardContent className="p-10 text-center text-muted-foreground">
-            <FolderDown className="h-8 w-8 mx-auto mb-3 opacity-40" />
-            <p className="text-sm">{missing} to build this report.</p>
+          <CardContent className="px-4 py-8 text-center text-sm text-muted-foreground">
+            <FolderDown className="mx-auto mb-2 h-6 w-6 opacity-40" />
+            {missing} to build this report.
           </CardContent>
         </Card>
       )}
 
       {isLoading && (
-        <div className="flex items-center gap-2 text-muted-foreground text-sm">
-          <Loader2 className="h-4 w-4 animate-spin" /> Building…
-        </div>
+        <Card>
+          <CardContent className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Building…
+          </CardContent>
+        </Card>
       )}
 
       {ready && !isLoading && preview && (
         <>
-          <Card>
-            <CardContent className="p-4">
-              <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
-                {preview.tiles.map((t) => (
-                  <div key={t.label}>
-                    <p className="text-xs text-muted-foreground">{t.label}</p>
-                    <p className="text-sm font-semibold">{t.value}</p>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+            {preview.tiles.map((t) => (
+              <KpiTile key={t.label} label={t.label} value={t.value} />
+            ))}
+          </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
+          <SectionCard
+            title={(
+              <span className="flex items-center gap-1.5">
                 {REPORT_LABEL[kind]}
-                <Badge variant="outline">Preview</Badge>
-              </CardTitle>
-              <CardDescription>
-                The exported file carries the full detail; this is the first slice of it.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="p-0">
-              {preview.rows.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-4 py-6">
-                  Nothing to report for this selection.
-                </p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        {preview.columns.map((c, i) => (
-                          <TableHead key={c} className={i >= 3 ? 'text-right' : ''}>{c}</TableHead>
+                <Badge variant="outline" className="text-[10px] font-medium">Preview</Badge>
+              </span>
+            )}
+            description="The exported file carries the full detail; this is the first slice of it."
+          >
+            {preview.rows.length === 0 ? (
+              <p className="py-4 text-center text-sm text-muted-foreground">
+                Nothing to report for this selection.
+              </p>
+            ) : (
+              <>
+                <Table className={B_TABLE} containerClassName={cn(WS_TABLE_WRAP, 'max-h-[70vh]')}>
+                  <TableHeader>
+                    <TableRow className={B_TR_HEAD}>
+                      {preview.columns.map((c, i) => (
+                        <TableHead key={c} className={i >= 3 ? B_TH_NUM : B_TH}>{c}</TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {preview.rows.map((row, ri) => (
+                      <TableRow key={ri} className={B_TR}>
+                        {row.map((cell, ci) => (
+                          <TableCell key={ci} className={ci >= 3 ? B_TD_NUM : B_TD}>
+                            {cell}
+                          </TableCell>
                         ))}
                       </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {preview.rows.map((row, ri) => (
-                        <TableRow key={ri}>
-                          {row.map((cell, ci) => (
-                            <TableCell key={ci} className={`text-sm ${ci >= 3 ? 'text-right' : ''}`}>
-                              {cell}
-                            </TableCell>
-                          ))}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                  {preview.truncated > 0 && (
-                    <p className="text-xs text-muted-foreground px-4 py-2">
-                      {preview.truncated} more row{preview.truncated > 1 ? 's' : ''} in the export.
-                    </p>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                    ))}
+                  </TableBody>
+                </Table>
+                {preview.truncated > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {preview.truncated} more row{preview.truncated > 1 ? 's' : ''} in the export.
+                  </p>
+                )}
+              </>
+            )}
+          </SectionCard>
 
-          <div className="flex gap-2 rounded-lg border bg-muted/30 p-3 text-muted-foreground">
-            <Info className="h-4 w-4 shrink-0 mt-0.5" />
-            <p className="text-xs">
-              Every figure is read back from what the engines already computed and stored, so a working
-              paper cannot disagree with the return it supports. In the Excel copy the numbers are real
-              numbers, not formatted text — they can be footed and pivoted directly.
-            </p>
-          </div>
+          <Note>
+            Every figure is read back from what the engines already computed and stored, so a working
+            paper cannot disagree with the return it supports. In the Excel copy the numbers are real
+            numbers, not formatted text — they can be footed and pivoted directly.
+          </Note>
         </>
       )}
     </div>
