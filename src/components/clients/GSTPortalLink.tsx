@@ -7,6 +7,7 @@ import { PasswordInput } from '@/components/ui/password-input';
 import { ExternalLink, Copy, Check, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { WS_BTN } from '@/components/workspace/theme';
 
 interface GSTPortalLinkProps {
   clientId: string;
@@ -83,10 +84,10 @@ const GSTPortalLink: React.FC<GSTPortalLinkProps> = ({ clientId, clientName }) =
         variant="outline"
         size="sm"
         onClick={handleOpenDialog}
-        className="gap-2"
+        className={WS_BTN}
         title="Open GST Portal"
       >
-        <ExternalLink className="h-3 w-3" />
+        <ExternalLink className="h-3.5 w-3.5" />
         GST
       </Button>
 
@@ -101,8 +102,9 @@ const GSTPortalLink: React.FC<GSTPortalLinkProps> = ({ clientId, clientName }) =
 
           <div className="space-y-4">
             {isLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading credentials…
               </div>
             ) : credentials ? (
               <>

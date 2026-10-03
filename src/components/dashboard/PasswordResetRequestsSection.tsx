@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { SectionCard } from '@/components/gstr9/ui';
+import { WS_BTN } from '@/components/workspace/theme';
+import { cn } from '@/lib/utils';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Key, Loader2, CheckCircle2, Clock, User, X } from 'lucide-react';
@@ -167,40 +169,39 @@ const PasswordResetRequestsSection: React.FC = () => {
 
   return (
     <>
-      <Card className="border-warning/50">
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2">
-            <Key className="h-5 w-5 text-warning" />
+      <SectionCard
+        className="border-warning/50"
+        title={
+          <span className="flex items-center gap-2">
+            <Key className="h-4 w-4 text-warning" />
             Password Reset Requests
             {requests.length > 0 && (
-              <Badge variant="warning" className="ml-2">
+              <Badge variant="warning" className="text-[10px] font-medium">
                 {requests.length} pending
               </Badge>
             )}
-          </CardTitle>
-          <CardDescription>
-            Client password reset requests waiting for approval
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+          </span>
+        }
+        description="Client password reset requests waiting for approval"
+      >
           {isLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="rounded-md border">
               {requests.map((request) => (
                 <div
                   key={request.id}
-                  className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/30 transition-colors"
+                  className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-1.5 transition-colors last:border-b-0 hover:bg-muted/30"
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-full bg-warning/10 flex items-center justify-center">
-                      <User className="h-5 w-5 text-warning" />
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-warning/10">
+                      <User className="h-3.5 w-3.5 text-warning" />
                     </div>
-                    <div>
-                      <p className="font-medium">{request.requested_by_name}</p>
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{request.requested_by_name}</p>
+                      <div className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
                         <Clock className="h-3 w-3" />
                         <span>
                           {new Date(request.requested_at).toLocaleDateString('en-IN', {
@@ -220,20 +221,21 @@ const PasswordResetRequestsSection: React.FC = () => {
                       variant="outline"
                       onClick={() => handleCancelRequest(request)}
                       disabled={cancellingId === request.id}
-                      className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/40"
+                      className={cn(WS_BTN, 'text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/40')}
                     >
                       {cancellingId === request.id ? (
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : (
-                        <X className="h-4 w-4 mr-2" />
+                        <X className="h-3.5 w-3.5" />
                       )}
                       Cancel
                     </Button>
                     <Button
                       size="sm"
+                      className={WS_BTN}
                       onClick={() => setSelectedRequest(request)}
                     >
-                      <Key className="h-4 w-4 mr-2" />
+                      <Key className="h-3.5 w-3.5" />
                       Set New Password
                     </Button>
                   </div>
@@ -241,8 +243,7 @@ const PasswordResetRequestsSection: React.FC = () => {
               ))}
             </div>
           )}
-        </CardContent>
-      </Card>
+      </SectionCard>
 
       {/* Set Password Dialog */}
       <Dialog open={!!selectedRequest} onOpenChange={() => setSelectedRequest(null)}>

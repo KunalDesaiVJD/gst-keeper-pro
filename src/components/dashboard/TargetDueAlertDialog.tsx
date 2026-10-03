@@ -8,7 +8,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -43,32 +43,32 @@ const TargetDueAlertDialog: React.FC<TargetDueAlertDialogProps> = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-destructive">
-            <AlertTriangle className="h-5 w-5" />
+          <DialogTitle className="flex items-center gap-2 text-base text-destructive">
+            <AlertTriangle className="h-4 w-4" />
             Returns Due Today ({today})
           </DialogTitle>
         </DialogHeader>
 
-        <div className="py-4">
-          <p className="text-sm text-muted-foreground mb-4">
+        <div className="space-y-2.5 py-2">
+          <p className="text-sm text-muted-foreground">
             You have <span className="font-bold text-foreground">{totalCount}</span> returns due today that are still pending.
           </p>
           
-          <div className="space-y-2">
+          <div className="rounded-md border">
             {breakdown.filter(b => b.count > 0).map((item) => (
-              <div key={item.returnType} className="flex items-center justify-between p-2 rounded-lg bg-muted/50">
-                <Badge variant="outline">{item.returnType}</Badge>
-                <span className="text-sm font-medium text-warning">{item.count} pending</span>
+              <div key={item.returnType} className="flex items-center justify-between border-b px-3 py-1.5 last:border-b-0">
+                <Badge variant="outline" className="text-[10px] font-medium">{item.returnType}</Badge>
+                <Badge variant="warning" className="text-[10px] font-medium tabular-nums">{item.count} pending</Badge>
               </div>
             ))}
           </div>
         </div>
 
         <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             Dismiss
           </Button>
-          <Button onClick={handleViewAll}>
+          <Button size="sm" onClick={handleViewAll}>
             View All Due Today
           </Button>
         </DialogFooter>

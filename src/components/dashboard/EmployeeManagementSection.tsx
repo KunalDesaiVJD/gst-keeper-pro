@@ -3,7 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { WS_BTN } from '@/components/workspace/theme';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import {
@@ -244,10 +245,10 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
 
   return (
     <Card className="border-0 shadow-none">
-      <CardHeader className="pb-4 px-0">
+      <CardHeader className="px-0 pb-2 pt-0">
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle className="text-base flex items-center gap-2">
+            <CardTitle className="text-[15px] flex items-center gap-2">
               <Users className="h-4 w-4" />
               {sectionTitle}
             </CardTitle>
@@ -255,8 +256,8 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
           </div>
           <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
             <DialogTrigger asChild>
-              <Button size="sm" className="flex items-center gap-2">
-                <UserPlus className="h-4 w-4" />
+              <Button size="sm" className={WS_BTN}>
+                <UserPlus className="h-3.5 w-3.5" />
                 Add Employee
               </Button>
             </DialogTrigger>
@@ -311,10 +312,10 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
         </div>
       </CardHeader>
       <CardContent className="px-0">
-        <div className="space-y-2 max-h-64 overflow-y-auto">
+        <div className="max-h-64 overflow-y-auto rounded-md border">
           {isLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
             </div>
           ) : filteredEmployees.length === 0 ? (
             <TableEmptyState
@@ -326,11 +327,11 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
             filteredEmployees.map((emp) => (
               <div
                 key={emp.id}
-                className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/30 transition-colors"
+                className="flex items-center justify-between gap-2 border-b px-3 py-1.5 transition-colors last:border-b-0 hover:bg-muted/30"
               >
-                <div className="flex items-center gap-3">
-                  <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                    <span className="font-semibold text-primary text-sm">
+                <div className="flex items-center gap-2.5">
+                  <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center">
+                    <span className="font-semibold text-primary text-xs">
                       {emp.first_name.charAt(0)}
                     </span>
                   </div>
@@ -338,12 +339,12 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
                     <div className="flex items-center gap-2">
                       <p className="font-medium text-sm">{emp.first_name}</p>
                       {emp.role === 'gst_manager' ? (
-                        <Badge className="bg-primary/10 text-primary border-0 text-xs flex items-center gap-1">
+                        <Badge variant="info" className="flex items-center gap-1 text-[10px] font-medium">
                           <Shield className="h-3 w-3" />
                           Manager
                         </Badge>
                       ) : (
-                        <Badge variant="secondary" className="text-xs">Employee</Badge>
+                        <Badge variant="secondary" className="text-[10px] font-medium">Employee</Badge>
                       )}
                     </div>
                   </div>
@@ -352,7 +353,7 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                    className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10"
                     onClick={() => handleEditEmployee(emp)}
                     title="Edit role"
                     aria-label={`Edit role for ${emp.first_name}`}
@@ -362,7 +363,7 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                    className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
                     onClick={() => handleDeleteEmployee(emp.id, emp.user_id, emp.first_name)}
                     title="Remove employee"
                     aria-label={`Remove employee ${emp.first_name}`}
