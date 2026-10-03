@@ -43,6 +43,11 @@ export interface WorkspaceClient {
   gstin: string;
   regular_sub_type: string | null;
   builder_itc_type: string | null;
+  /** For GSTR-9 / 9C applicability (register/useApplicability). */
+  registration_type?: string | null;
+  registration_date?: string | null;
+  cancellation_date?: string | null;
+  registration_cancellation_date?: string | null;
 }
 
 export type SaveState = 'idle' | 'pending' | 'saving' | 'saved' | 'error';

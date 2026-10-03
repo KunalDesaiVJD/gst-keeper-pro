@@ -29,7 +29,27 @@ replaced them with a document store (§3) and no data was migrated.
 
 ## 2. The workspace (UI)
 
-`/annual-return` is a guided step workspace. The title, client and FY sit on
+**Home — all clients (applicability register).** `/annual-return` without
+a client lists every client for the chosen FY (`register/ApplicabilityRegister.tsx`).
+Staff type or paste each client's **aggregate turnover** for the year
+(`client_annual_turnover.aggregate_turnover` — the same figure the late-fee
+slab reads, typed once) and the register decides who files
+(`src/lib/gstr9/applicability.ts`): GSTR-9 is required above ₹2 crore
+(up to ₹2 crore the year is exempt — year-wise notifications to FY 2023-24,
+Notification 15/2025-CT from FY 2024-25 onwards), GSTR-9C above ₹5 crore
+(rule 80(3); ₹2 crore for FY 2017-18). Below a threshold the return is
+prepared only if the client wishes — chosen per return in the register
+(`gstr9_opt_in`, `gstr9c_opt_in`, with a note); 9C by choice needs GSTR-9 to
+be filed. Composition (GSTR-4), tax deductors (GSTR-7), ISDs and clients not
+registered during the year are not applicable. Aggregate turnover is the
+PAN's, so GSTINs of one PAN are flagged when their figures differ and a
+figure typed for one is offered to the PAN's blank GSTINs. Each row shows
+the working's status (`annual_return_activity` view, the period's sign-off)
+and opens it; the register exports to Excel. Inside a working, a chip next
+to Save shows the client's applicability, and the 9C step says when 9C is
+not required.
+
+`/annual-return?client=…` is a guided step workspace. The title, client and FY sit on
 one row; the steps are a sticky bar of chips across the top (one row on a
 1920 px screen, two on a 1366 px laptop) with each step's open-difference
 count, so the working keeps the full width. Each step opens with its main
@@ -326,6 +346,7 @@ checks the version before starting it.
 | Portal JSON parsing / applying | `portalParser.ts`, `portalImport.ts` (`applyHandEdits` for any typed portal figure) |
 | Load / save / lock / history | `store.ts`, `components/gstr9/WorkspaceContext.tsx` |
 | Revision log in words | `audit.ts`, `components/gstr9/overview/RevisionHistory.tsx` |
+| Applicability register (home) | `applicability.ts`, `register.ts`, `components/gstr9/register/*`, migration `20261003100000_annual_return_applicability.sql` |
 | Source lock (superadmin only) | `sourceLock.ts`, migration `20261002100000_annual_return_source_lock.sql` |
 | Sign-off checklist / roles | `signoff.ts`, `components/gstr9/overview/LockPanel.tsx` |
 | Payables & set-off | `payables.ts`, `components/gstr9/payables/*`, `steps/PayablesStep.tsx` |

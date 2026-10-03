@@ -3625,36 +3625,48 @@ export type Database = {
       client_annual_turnover: {
         Row: {
           aggregate_turnover: number | null
+          applicability_note: string | null
           client_id: string
           created_at: string
           entered_by: string | null
           exempt_turnover: number | null
           financial_year: string
+          gstr9_opt_in: boolean
+          gstr9c_opt_in: boolean
           id: string
           itc_directly_attributable_exempt: number | null
           updated_at: string
+          updated_by_name: string | null
         }
         Insert: {
           aggregate_turnover?: number | null
+          applicability_note?: string | null
           client_id: string
           created_at?: string
           entered_by?: string | null
           exempt_turnover?: number | null
           financial_year: string
+          gstr9_opt_in?: boolean
+          gstr9c_opt_in?: boolean
           id?: string
           itc_directly_attributable_exempt?: number | null
           updated_at?: string
+          updated_by_name?: string | null
         }
         Update: {
           aggregate_turnover?: number | null
+          applicability_note?: string | null
           client_id?: string
           created_at?: string
           entered_by?: string | null
           exempt_turnover?: number | null
           financial_year?: string
+          gstr9_opt_in?: boolean
+          gstr9c_opt_in?: boolean
           id?: string
           itc_directly_attributable_exempt?: number | null
           updated_at?: string
+          updated_by_name?: string | null
         }
         Relationships: [
           {
@@ -7862,6 +7874,15 @@ export type Database = {
       }
     }
     Views: {
+      annual_return_activity: {
+        Row: {
+          client_id: string | null
+          financial_year: string | null
+          last_saved_at: string | null
+          sheets: number | null
+        }
+        Relationships: []
+      }
       builder_dastavej_reco: {
         Row: {
           booked_at_cutoff: boolean | null

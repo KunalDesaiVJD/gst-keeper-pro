@@ -1,6 +1,6 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlertCircle, Check, ChevronLeft, ChevronRight, CloudUpload, History, Loader2, Lock, ScrollText } from 'lucide-react';
+import { AlertCircle, Check, ChevronLeft, ChevronRight, CloudUpload, History, Loader2, Lock, ScrollText, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/gstr9/badge';
@@ -16,6 +16,8 @@ import { useWorkspace, WorkspaceClient, WorkspaceProvider } from '@/components/g
 import { STEPS, stepByKey } from '@/components/gstr9/steps/registry';
 import RevisionHistory from '@/components/gstr9/overview/RevisionHistory';
 import ExportMenu from '@/components/gstr9/ExportMenu';
+import ApplicabilityRegister from '@/components/gstr9/register/ApplicabilityRegister';
+import ApplicabilityChip from '@/components/gstr9/register/ApplicabilityChip';
 import { PAGE_ROOT_ATTR, STEPBAR_H_VAR } from '@/components/gstr9/reco/StepTabs';
 
 const FY_STORAGE_KEY = 'gstk_annual_return_fy';
@@ -65,15 +67,16 @@ const AnnualReturnPage: React.FC = () => {
   const urlClient = params.get('client');
 
   useEffect(() => {
-    let query = supabase.from('clients').select('id, name, gstin, regular_sub_type, builder_itc_type').order('name');
+    let query = supabase
+      .from('clients')
+      .select('id, name, gstin, regular_sub_type, builder_itc_type, registration_type, registration_date, cancellation_date, registration_cancellation_date')
+      .order('name');
     if (user && !isStaff) query = query.eq('id', user.id);
     query.then(({ data, error }) => {
       if (error) { toast.error('Failed to fetch clients: ' + error.message); return; }
       const list = (data || []) as WorkspaceClient[];
       setClients(list);
       if (!isStaff && list.length && !selectedClientId) setSelectedClientId(list[0].id);
-      // A link / reload with ?client= opens that client's working directly.
-      else if (isStaff && urlClient && urlClient !== selectedClientId && list.some((c) => c.id === urlClient)) setSelectedClientId(urlClient);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStaff, user]);
@@ -82,18 +85,40 @@ const AnnualReturnPage: React.FC = () => {
     try { localStorage.setItem(FY_STORAGE_KEY, financialYear); } catch { /* storage unavailable */ }
   }, [financialYear]);
 
-  // Keep the open client and FY in the URL so a reload or a shared link lands on the same working.
+  // Staff: the URL says which working is open (?client=); without one the page shows every client (the register).
+  // The open client is also the app-wide selected client, so other pages follow it.
   useEffect(() => {
-    const wantClient = selectedClientId || null;
-    if (params.get('client') === wantClient && params.get('fy') === financialYear) return;
-    if (!wantClient) return;
+    if (isStaff && urlClient && urlClient !== selectedClientId && clients.some((c) => c.id === urlClient)) setSelectedClientId(urlClient);
+  }, [isStaff, urlClient, selectedClientId, clients, setSelectedClientId]);
+
+  // Keep the year in the URL so a reload or a shared link lands on the same year.
+  useEffect(() => {
+    if (params.get('fy') === financialYear) return;
     const next = new URLSearchParams(params);
-    next.set('client', wantClient);
     next.set('fy', financialYear);
     setParams(next, { replace: true });
-  }, [selectedClientId, financialYear, params, setParams]);
+  }, [financialYear, params, setParams]);
 
-  const client = clients.find((c) => c.id === selectedClientId) || null;
+  /** Open a client's working (from the register or the client picker). */
+  const openClient = useCallback((id: string) => {
+    if (!id) return;
+    setSelectedClientId(id);
+    // From the register, start at the overview; switching clients inside a working keeps the step.
+    const next = urlClient ? new URLSearchParams(params) : new URLSearchParams();
+    next.set('client', id);
+    next.set('fy', financialYear);
+    setParams(next, { replace: false });
+    window.scrollTo({ top: 0 });
+  }, [urlClient, params, financialYear, setParams, setSelectedClientId]);
+
+  /** Back to every client for the year. */
+  const showRegister = useCallback(() => {
+    setParams(new URLSearchParams({ fy: financialYear }), { replace: false });
+    window.scrollTo({ top: 0 });
+  }, [financialYear, setParams]);
+
+  const showingRegister = isStaff && !urlClient;
+  const client = (isStaff ? clients.find((c) => c.id === urlClient) : clients.find((c) => c.id === selectedClientId)) || null;
   const clientOptions = useMemo(() => clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin })), [clients]);
 
   return (
@@ -106,12 +131,17 @@ const AnnualReturnPage: React.FC = () => {
             Annual Return <span className="font-semibold text-muted-foreground">· GSTR-9 &amp; 9C</span>
           </h1>
         </div>
+        {isStaff && !showingRegister && (
+          <Button type="button" variant="outline" size="sm" className="h-9" onClick={showRegister} title="Every client for the year: turnover, whether GSTR-9 / 9C apply, and each working's status">
+            <Users className="mr-1.5 h-4 w-4" /> All clients
+          </Button>
+        )}
         <div className="w-full min-w-0 sm:w-[24rem] lg:w-[30rem]">
           <SearchableSelect
             options={clientOptions}
-            value={selectedClientId}
-            onValueChange={setSelectedClientId}
-            placeholder="Select a client"
+            value={showingRegister ? '' : client?.id ?? ''}
+            onValueChange={(id) => (isStaff ? openClient(id) : setSelectedClientId(id))}
+            placeholder={showingRegister ? 'Open a client’s working…' : 'Select a client'}
             searchPlaceholder="Search client or GSTIN…"
             disabled={!isStaff}
           />
@@ -128,10 +158,12 @@ const AnnualReturnPage: React.FC = () => {
         </div>
       </div>
 
-      {!client ? (
+      {showingRegister ? (
+        <ApplicabilityRegister financialYear={financialYear} onOpen={openClient} />
+      ) : !client ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
-            Select a client to open their annual return working.
+            {clients.length ? 'This client is not in the list.' : 'Loading…'}
           </CardContent>
         </Card>
       ) : (
@@ -230,6 +262,7 @@ const Workspace: React.FC = () => {
           {step.intro} <span className="inline-block max-w-full break-words rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] sm:whitespace-nowrap">Excel: {step.excel}</span>
         </p>
         <div className="flex items-center gap-2">
+          <ApplicabilityChip />
           <SaveIndicator />
           <HistoryButton />
           <ExportMenu />
