@@ -10,6 +10,11 @@ import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Plus, Loader2, Trash2, Pencil, ShieldAlert, Building2, FileDown } from 'lucide-react';
 import { toast } from 'sonner';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, SectionCard } from '@/components/gstr9/ui';
+import {
+  WS_BTN, WS_TABLE_WRAP, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR, WS_FILTER_LABEL, WS_CONTROL,
+} from '@/components/workspace/theme';
 import { GST_STATE_CODES } from '@/utils/gstr1ManualBuild';
 import {
   fetchProjects, fetchRaBills, saveProject, deleteProject, saveRaBill, deleteRaBill,
@@ -35,13 +40,7 @@ interface Props {
   onChanged: () => void;
 }
 
-const Tile: React.FC<{ label: string; value: string; note?: string }> = ({ label, value, note }) => (
-  <div className="rounded-lg border border-border p-3">
-    <div className="text-xs text-muted-foreground">{label}</div>
-    <div className="text-lg font-bold tabular-nums text-foreground mt-0.5">{value}</div>
-    {note && <div className="text-[11px] text-muted-foreground mt-0.5">{note}</div>}
-  </div>
-);
+const TH = `h-auto ${WS_TH}`;
 
 export const ContractProjectsPanel: React.FC<Props> = ({
   clientId, clientName, clientGstin, homeState, periodMonth, receipts, adjustments,
@@ -134,51 +133,51 @@ export const ContractProjectsPanel: React.FC<Props> = ({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <Card>
-        <CardContent className="p-4 flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-muted-foreground">Project:</span>
+        <CardContent className="flex flex-wrap items-end gap-2 px-3 py-2">
+          <label className="w-full min-w-0 space-y-0.5 sm:w-72">
+            <span className={WS_FILTER_LABEL}>Project</span>
             <Select value={selectedId} onValueChange={setSelectedId}>
-              <SelectTrigger className="w-72"><SelectValue placeholder={projects.length ? 'Select project' : 'No projects yet'} /></SelectTrigger>
+              <SelectTrigger className={WS_CONTROL}><SelectValue placeholder={projects.length ? 'Select project' : 'No projects yet'} /></SelectTrigger>
               <SelectContent>
                 {projects.map((p) => (
                   <SelectItem key={p.id} value={p.id}>{p.code ? `${p.code} — ` : ''}{p.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          </div>
-          {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-          <div className="ml-auto flex gap-2">
+          </label>
+          {loading && <Loader2 className="mb-2 h-4 w-4 animate-spin text-muted-foreground" />}
+          <div className="ml-auto flex flex-wrap gap-2">
             {project && (
-              <Button size="sm" variant="outline" onClick={exportWorkingPaper} disabled={exporting}>
-                {exporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <FileDown className="h-3.5 w-3.5 mr-1.5" />}
+              <Button size="sm" variant="outline" className={WS_BTN} onClick={exportWorkingPaper} disabled={exporting}>
+                {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileDown className="h-3.5 w-3.5" />}
                 Working paper
               </Button>
             )}
+            {canEdit && (
+              <>
+                <Button size="sm" variant="outline" className={WS_BTN} onClick={() => { setEditingProject(null); setProjectDialog(true); }}>
+                  <Plus className="h-3.5 w-3.5" /> New project
+                </Button>
+                {project && (
+                  <>
+                    <Button size="sm" variant="outline" className={WS_BTN} onClick={() => { setEditingProject(project); setProjectDialog(true); }}>
+                      <Pencil className="h-3.5 w-3.5" /> Edit
+                    </Button>
+                    <Button size="sm" variant="outline" className={`${WS_BTN} text-destructive`} onClick={removeProject}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </>
+                )}
+              </>
+            )}
           </div>
-          {canEdit && (
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={() => { setEditingProject(null); setProjectDialog(true); }}>
-                <Plus className="h-3.5 w-3.5 mr-1.5" /> New project
-              </Button>
-              {project && (
-                <>
-                  <Button size="sm" variant="outline" onClick={() => { setEditingProject(project); setProjectDialog(true); }}>
-                    <Pencil className="h-3.5 w-3.5 mr-1.5" /> Edit
-                  </Button>
-                  <Button size="sm" variant="outline" className="text-destructive" onClick={removeProject}>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </>
-              )}
-            </div>
-          )}
         </CardContent>
       </Card>
 
       {!project ? (
-        <Card><CardContent className="p-4">
+        <Card><CardContent className="px-4 py-3">
           <TableEmptyState
             icon={<Building2 className="h-8 w-8" />}
             title="No contract projects yet"
@@ -190,116 +189,113 @@ export const ContractProjectsPanel: React.FC<Props> = ({
           {/* A lapsed bank guarantee on a live advance is the contractor's
               problem long before it is a GST one — but we hold the date. */}
           {bgDays !== null && bgDays < 60 && (wp?.balanceAdvance || 0) > 0 && (
-            <Card className={bgDays < 0 ? 'border-destructive/40 bg-destructive/5' : 'border-warning/40 bg-warning/5'}>
-              <CardContent className="p-3 text-sm flex items-start gap-2">
-                <ShieldAlert className={`h-4 w-4 mt-0.5 shrink-0 ${bgDays < 0 ? 'text-destructive' : 'text-warning'}`} />
-                <div>
-                  <span className="font-semibold text-foreground">
-                    Bank guarantee {bgDays < 0 ? 'has expired' : `expires in ${bgDays} days`}
-                  </span>
-                  <span className="text-muted-foreground">
-                    {' '}({project.bg_no || 'no reference'}, {project.bg_expiry}) with ₹{inr(wp?.balanceAdvance || 0)} of
-                    advance still unrecovered.
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
+            <div
+              className={`flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-xs ${
+                bgDays < 0 ? 'border-destructive/40 bg-destructive/5' : 'border-warning/40 bg-warning/10'
+              }`}
+            >
+              <ShieldAlert className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${bgDays < 0 ? 'text-destructive' : 'text-warning'}`} />
+              <div>
+                <span className="font-semibold text-foreground">
+                  Bank guarantee {bgDays < 0 ? 'has expired' : `expires in ${bgDays} days`}
+                </span>
+                <span className="text-muted-foreground">
+                  {' '}({project.bg_no || 'no reference'}, {project.bg_expiry}) with ₹{inr(wp?.balanceAdvance || 0)} of
+                  advance still unrecovered.
+                </span>
+              </div>
+            </div>
           )}
 
           {wp && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <Tile label="Contract value" value={`₹${inr(wp.contractValue)}`} />
-              <Tile label="Billed to date" value={`₹${inr(wp.billedToDate)}`} note={`${wp.billedPctOfContract}% of contract`} />
-              <Tile label="Advance received" value={`₹${inr(wp.advanceReceived)}`} />
-              <Tile label="Recovered" value={`₹${inr(wp.recovered)}`} />
-              <Tile label="Balance advance" value={`₹${inr(wp.balanceAdvance)}`} />
-              <Tile
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <KpiTile label="Contract value" value={`₹${inr(wp.contractValue)}`} />
+              <KpiTile label="Billed to date" value={`₹${inr(wp.billedToDate)}`} hint={`${wp.billedPctOfContract}% of contract`} />
+              <KpiTile label="Advance received" value={`₹${inr(wp.advanceReceived)}`} />
+              <KpiTile label="Recovered" value={`₹${inr(wp.recovered)}`} />
+              <KpiTile label="Balance advance" value={`₹${inr(wp.balanceAdvance)}`} />
+              <KpiTile
                 label="Open GST on advance"
                 value={`₹${inr(wp.openGstOnAdvance.igst + wp.openGstOnAdvance.cgst + wp.openGstOnAdvance.sgst)}`}
-                note={project.pos_state === homeState ? 'CGST + SGST' : 'IGST — project outside home state'}
+                hint={project.pos_state === homeState ? 'CGST + SGST' : 'IGST — project outside home state'}
               />
-              <Tile label="Retention (expected)" value={`₹${inr(wp.retentionExpected)}`} note={`held ₹${inr(wp.retentionHeld)}`} />
-              <Tile
+              <KpiTile label="Retention (expected)" value={`₹${inr(wp.retentionExpected)}`} hint={`held ₹${inr(wp.retentionHeld)}`} />
+              <KpiTile
                 label="Recovery shortfall"
                 value={`₹${inr(wp.recoveryShortfall)}`}
-                note={wp.recoveryShortfall > 0 ? 'Under-recovered against the schedule' : 'On schedule'}
+                hint={wp.recoveryShortfall > 0 ? 'Under-recovered against the schedule' : 'On schedule'}
+                tone={wp.recoveryShortfall > 0 ? 'warn' : 'ok'}
               />
             </div>
           )}
 
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <p className="text-sm font-semibold text-foreground">RA bills and advance recovery</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Expected recovery comes from the contract terms
-                    ({project.recovery_rule === 'LUMPSUM_AT_BILL_N'
-                      ? `whole advance at RA bill ${project.recovery_at_bill_no ?? '—'}`
-                      : `${project.recovery_pct}% of each RA bill`}).
-                    A variance means the advance is still taxed while the value has already been billed.
-                  </p>
-                </div>
-                {canEdit && (
-                  <Button size="sm" onClick={() => { setEditingBill(null); setBillDialog(true); }}>
-                    <Plus className="h-3.5 w-3.5 mr-1.5" /> Add RA bill
-                  </Button>
-                )}
-              </div>
-
-              {schedule.length === 0 ? (
-                <TableEmptyState title="No RA bills recorded for this project yet." />
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-primary hover:bg-primary">
-                      <TableHead className="text-primary-foreground font-bold">RA bill</TableHead>
-                      <TableHead className="text-primary-foreground font-bold">Period</TableHead>
-                      <TableHead className="text-primary-foreground font-bold text-right">Billed (taxable)</TableHead>
-                      <TableHead className="text-primary-foreground font-bold text-right">Expected recovery</TableHead>
-                      <TableHead className="text-primary-foreground font-bold text-right">Actually adjusted</TableHead>
-                      <TableHead className="text-primary-foreground font-bold text-right">Variance</TableHead>
-                      <TableHead className="text-primary-foreground font-bold text-right">Advance left</TableHead>
-                      {canEdit && <TableHead className="text-primary-foreground font-bold w-16" />}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {schedule.map((row) => (
-                      <TableRow key={row.bill.id}>
-                        <TableCell className="font-medium">
-                          {row.bill.bill_ref || `RA-${row.bill.bill_no}`}
-                          {row.beforeAdvance && (
-                            <span className="ml-2 text-[10px] uppercase tracking-wide text-muted-foreground">pre-advance</span>
-                          )}
-                        </TableCell>
-                        <TableCell>{row.bill.period_month}</TableCell>
-                        <TableCell className="text-right tabular-nums">{inr(row.bill.taxable_value)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{inr(row.expected)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{inr(row.actual)}</TableCell>
-                        {/* Variance carries a WORD as well as a tint — these get printed. */}
-                        <TableCell className={`text-right tabular-nums ${row.variance > 0.5 ? 'text-destructive font-semibold' : ''}`}>
-                          {row.variance > 0.5 ? `${inr(row.variance)} short` : inr(row.variance)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">{inr(row.advanceOutstanding)}</TableCell>
-                        {canEdit && (
-                          <TableCell>
-                            <div className="flex gap-1">
-                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditingBill(row.bill); setBillDialog(true); }}>
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeBill(row.bill)}>
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </TableCell>
+          <SectionCard
+            title="RA bills and advance recovery"
+            description={<>
+              Expected recovery comes from the contract terms
+              ({project.recovery_rule === 'LUMPSUM_AT_BILL_N'
+                ? `whole advance at RA bill ${project.recovery_at_bill_no ?? '—'}`
+                : `${project.recovery_pct}% of each RA bill`}).
+              A variance means the advance is still taxed while the value has already been billed.
+            </>}
+            actions={canEdit ? (
+              <Button size="sm" className={WS_BTN} onClick={() => { setEditingBill(null); setBillDialog(true); }}>
+                <Plus className="h-3.5 w-3.5" /> Add RA bill
+              </Button>
+            ) : undefined}
+          >
+            {schedule.length === 0 ? (
+              <TableEmptyState title="No RA bills recorded for this project yet." />
+            ) : (
+              <Table className={WS_TABLE} containerClassName={`${WS_TABLE_WRAP} max-h-[70vh]`}>
+                <TableHeader>
+                  <TableRow className="border-0 hover:bg-transparent">
+                    <TableHead className={TH}>RA bill</TableHead>
+                    <TableHead className={TH}>Period</TableHead>
+                    <TableHead className={`${TH} text-right`}>Billed (taxable)</TableHead>
+                    <TableHead className={`${TH} text-right`}>Expected recovery</TableHead>
+                    <TableHead className={`${TH} text-right`}>Actually adjusted</TableHead>
+                    <TableHead className={`${TH} text-right`}>Variance</TableHead>
+                    <TableHead className={`${TH} text-right`}>Advance left</TableHead>
+                    {canEdit && <TableHead className={`${TH} w-16`} />}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {schedule.map((row) => (
+                    <TableRow key={row.bill.id} className={`border-0 ${WS_TR}`}>
+                      <TableCell className={`${WS_TD} font-medium whitespace-nowrap`}>
+                        {row.bill.bill_ref || `RA-${row.bill.bill_no}`}
+                        {row.beforeAdvance && (
+                          <Badge variant="secondary" className="ml-2 text-[10px] font-medium">pre-advance</Badge>
                         )}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+                      </TableCell>
+                      <TableCell className={WS_TD}>{row.bill.period_month}</TableCell>
+                      <TableCell className={WS_TD_NUM}>{inr(row.bill.taxable_value)}</TableCell>
+                      <TableCell className={WS_TD_NUM}>{inr(row.expected)}</TableCell>
+                      <TableCell className={WS_TD_NUM}>{inr(row.actual)}</TableCell>
+                      {/* Variance carries a WORD as well as a tint — these get printed. */}
+                      <TableCell className={`${WS_TD_NUM} ${row.variance > 0.5 ? 'text-destructive font-semibold' : ''}`}>
+                        {row.variance > 0.5 ? `${inr(row.variance)} short` : inr(row.variance)}
+                      </TableCell>
+                      <TableCell className={WS_TD_NUM}>{inr(row.advanceOutstanding)}</TableCell>
+                      {canEdit && (
+                        <TableCell className={`${WS_TD} py-0.5`}>
+                          <div className="flex gap-1">
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditingBill(row.bill); setBillDialog(true); }}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeBill(row.bill)}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </SectionCard>
         </>
       )}
 

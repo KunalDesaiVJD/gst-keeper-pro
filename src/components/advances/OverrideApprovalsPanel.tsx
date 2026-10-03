@@ -4,13 +4,17 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
-import { AlertTriangle, CheckCircle2, Loader2, ShieldCheck, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
+import { SectionCard } from '@/components/gstr9/ui';
+import { WS_BTN, WS_TABLE_WRAP, WS_TABLE, WS_TH, WS_TD, WS_TR } from '@/components/workspace/theme';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   fetchPendingOverrides, decideOverride, type AdvanceOverride,
 } from '@/lib/advanceSetoffOverrides';
+
+const TH = `h-auto ${WS_TH}`;
 
 const inr = (n: number) => (n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -85,7 +89,7 @@ export const OverrideApprovalsPanel: React.FC<{ onDecided?: () => void }> = ({ o
 
   if (!canApprove) {
     return (
-      <Card><CardContent className="p-4">
+      <Card><CardContent className="px-4 py-3">
         <TableEmptyState
           icon={<ShieldCheck className="h-8 w-8" />}
           title="Only a GST Manager can decide override requests"
@@ -96,96 +100,91 @@ export const OverrideApprovalsPanel: React.FC<{ onDecided?: () => void }> = ({ o
   }
 
   return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <p className="text-sm font-semibold text-foreground">Override requests awaiting a decision</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Filing stays blocked until one of these is approved. An approval authorises only the findings
-              shown here — if the return changes afterwards it lapses and the block returns.
-            </p>
-          </div>
-          <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-            {loading && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />} Refresh
-          </Button>
-        </div>
-
-        {rows.length === 0 ? (
-          <TableEmptyState
-            icon={<CheckCircle2 className="h-8 w-8" />}
-            title="Nothing waiting"
-            description="No advance set-off override request is pending."
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-primary hover:bg-primary">
-                <TableHead className="text-primary-foreground font-bold">Client / period</TableHead>
-                <TableHead className="text-primary-foreground font-bold">Requested by</TableHead>
-                <TableHead className="text-primary-foreground font-bold">Findings</TableHead>
-                <TableHead className="text-primary-foreground font-bold w-64">Decision note</TableHead>
-                <TableHead className="text-primary-foreground font-bold w-44" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((row) => (
-                <TableRow key={row.id}>
-                  <TableCell className="align-top">
-                    <div className="font-medium">{names[row.client_id] || row.client_id}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {row.period_month} · {String(row.return_type).replace('FILING_STATUS:', 'Marking filed — ')}
-                    </div>
-                  </TableCell>
-                  <TableCell className="align-top">
-                    <div>{row.requested_by_name || '—'}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {new Date(row.requested_at).toLocaleString('en-IN')}
-                    </div>
-                    <div className="text-xs mt-1 italic">“{row.request_reason}”</div>
-                  </TableCell>
-                  <TableCell className="align-top max-w-[380px]">
-                    {(Array.isArray(row.findings) ? row.findings : []).map((f, i) => (
-                      <div key={i} className="flex items-start gap-1.5 mb-1.5">
-                        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-destructive" />
-                        <div>
-                          <div className="text-xs font-medium">{f.title}</div>
-                          <div className="text-[11px] text-muted-foreground leading-snug">{f.detail}</div>
-                          {f.amountAtRisk ? (
-                            <div className="text-[11px] tabular-nums">At risk ₹{inr(f.amountAtRisk)}</div>
-                          ) : null}
-                        </div>
+    <SectionCard
+      title="Override requests awaiting a decision"
+      description={<>Filing stays blocked until one of these is approved. An approval authorises only the findings
+        shown here — if the return changes afterwards it lapses and the block returns.</>}
+      actions={
+        <Button variant="outline" size="sm" className={WS_BTN} onClick={load} disabled={loading}>
+          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Refresh
+        </Button>
+      }
+    >
+      {rows.length === 0 ? (
+        <TableEmptyState
+          icon={<CheckCircle2 className="h-8 w-8" />}
+          title="Nothing waiting"
+          description="No advance set-off override request is pending."
+        />
+      ) : (
+        <Table className={WS_TABLE} containerClassName={`${WS_TABLE_WRAP} max-h-[70vh]`}>
+          <TableHeader>
+            <TableRow className="border-0 hover:bg-transparent">
+              <TableHead className={TH}>Client / period</TableHead>
+              <TableHead className={TH}>Requested by</TableHead>
+              <TableHead className={TH}>Findings</TableHead>
+              <TableHead className={`${TH} w-64`}>Decision note</TableHead>
+              <TableHead className={`${TH} w-44`} />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((row) => (
+              <TableRow key={row.id} className={`border-0 ${WS_TR}`}>
+                <TableCell className={`${WS_TD} align-top`}>
+                  <div className="font-medium">{names[row.client_id] || row.client_id}</div>
+                  <div className="text-muted-foreground">
+                    {row.period_month} · {String(row.return_type).replace('FILING_STATUS:', 'Marking filed — ')}
+                  </div>
+                </TableCell>
+                <TableCell className={`${WS_TD} align-top`}>
+                  <div>{row.requested_by_name || '—'}</div>
+                  <div className="text-muted-foreground">
+                    {new Date(row.requested_at).toLocaleString('en-IN')}
+                  </div>
+                  <div className="mt-1 italic">“{row.request_reason}”</div>
+                </TableCell>
+                <TableCell className={`${WS_TD} align-top max-w-[380px]`}>
+                  {(Array.isArray(row.findings) ? row.findings : []).map((f, i) => (
+                    <div key={i} className="flex items-start gap-1.5 mb-1.5">
+                      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-destructive" />
+                      <div>
+                        <div className="font-medium">{f.title}</div>
+                        <div className="text-[11px] text-muted-foreground leading-snug">{f.detail}</div>
+                        {f.amountAtRisk ? (
+                          <div className="text-[11px] tabular-nums">At risk ₹{inr(f.amountAtRisk)}</div>
+                        ) : null}
                       </div>
-                    ))}
-                  </TableCell>
-                  <TableCell className="align-top">
-                    <Textarea
-                      rows={3}
-                      value={notes[row.id] || ''}
-                      onChange={(e) => setNotes({ ...notes, [row.id]: e.target.value })}
-                      placeholder="Required to reject"
-                    />
-                  </TableCell>
-                  <TableCell className="align-top">
-                    <div className="flex flex-col gap-2">
-                      <Button size="sm" disabled={busyId === row.id} onClick={() => decide(row, 'APPROVED')}>
-                        {busyId === row.id
-                          ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                          : <ShieldCheck className="h-3.5 w-3.5 mr-1.5" />}
-                        Approve
-                      </Button>
-                      <Button size="sm" variant="outline" className="text-destructive" disabled={busyId === row.id} onClick={() => decide(row, 'REJECTED')}>
-                        <XCircle className="h-3.5 w-3.5 mr-1.5" /> Reject
-                      </Button>
                     </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
-    </Card>
+                  ))}
+                </TableCell>
+                <TableCell className={`${WS_TD} align-top`}>
+                  <Textarea
+                    rows={3}
+                    className="min-h-0 text-xs md:text-xs"
+                    value={notes[row.id] || ''}
+                    onChange={(e) => setNotes({ ...notes, [row.id]: e.target.value })}
+                    placeholder="Required to reject"
+                  />
+                </TableCell>
+                <TableCell className={`${WS_TD} align-top`}>
+                  <div className="flex flex-col gap-1.5">
+                    <Button size="sm" className={WS_BTN} disabled={busyId === row.id} onClick={() => decide(row, 'APPROVED')}>
+                      {busyId === row.id
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : <ShieldCheck className="h-3.5 w-3.5" />}
+                      Approve
+                    </Button>
+                    <Button size="sm" variant="outline" className={`${WS_BTN} text-destructive`} disabled={busyId === row.id} onClick={() => decide(row, 'REJECTED')}>
+                      <XCircle className="h-3.5 w-3.5" /> Reject
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </SectionCard>
   );
 };
 

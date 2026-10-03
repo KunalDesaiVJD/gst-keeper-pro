@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -17,7 +17,14 @@ import {
 } from '@/components/ui/dialog';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
-import { FileSignature, Plus, Trash2, Loader2, Info, ClipboardEdit } from 'lucide-react';
+import { FileSignature, Plus, Trash2, Loader2, ClipboardEdit } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { KpiTile, Money, Note, SectionCard } from '@/components/gstr9/ui';
+import { CountBadge, TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepTabs';
+import {
+  WS_PAGE, WS_BTN, WS_TABLE_WRAP, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR, WS_TR_TOTAL,
+  WS_FILTER_LABEL, WS_CONTROL,
+} from '@/components/workspace/theme';
 import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -57,6 +64,8 @@ const TABLE_REF_OPTIONS = [
   { value: '4B(1)', label: '4B(1) — ITC reversed (Rule 38/42/43 & 17(5))' },
   { value: 'Other', label: 'Other' },
 ];
+
+const TH = `h-auto ${WS_TH}`;
 
 const SOURCE_OPTIONS = ['Manual', 'GSTR-1A', 'Prior Period'];
 
@@ -242,48 +251,49 @@ const Gstr3bAdjustmentsPage: React.FC = () => {
     return <Navigate to="/dashboard" replace />;
   }
 
+  const periodLabel = monthOptions.find((m) => m.value === selectedMonth)?.label;
+
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
         title="GSTR-3B Adjustments"
         subtitle="GSTR-1A tracking and manual corrections that GSTR-1 / ITC Summary / RCM don't capture for this period"
-        icon={<FileSignature className="h-6 w-6" />}
+        icon={<FileSignature />}
       />
 
       <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Client:</span>
-              <div className="w-56">
-                <SearchableSelect
-                  options={clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin }))}
-                  value={selectedClient}
-                  onValueChange={setSelectedClient}
-                  placeholder="Select Client"
-                  searchPlaceholder="Type to search clients..."
-                  emptyText="No clients found."
-                />
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Month:</span>
-              <div className="w-40">
-                <SearchableMonthSelect
-                  options={monthOptions}
-                  value={selectedMonth}
-                  onValueChange={setSelectedMonth}
-                  placeholder="Select Month"
-                />
-              </div>
-            </div>
+        <CardContent className="px-3 py-2">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="w-full min-w-0 space-y-0.5 sm:w-64">
+              <span className={WS_FILTER_LABEL}>Client</span>
+              <SearchableSelect
+                options={clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin }))}
+                value={selectedClient}
+                onValueChange={setSelectedClient}
+                placeholder="Select Client"
+                searchPlaceholder="Type to search clients..."
+                emptyText="No clients found."
+                className={WS_CONTROL}
+              />
+            </label>
+            <label className="w-40 min-w-0 space-y-0.5">
+              <span className={WS_FILTER_LABEL}>Month</span>
+              <SearchableMonthSelect
+                options={monthOptions}
+                value={selectedMonth}
+                onValueChange={setSelectedMonth}
+                placeholder="Select Month"
+                className={`w-full ${WS_CONTROL}`}
+              />
+            </label>
           </div>
         </CardContent>
       </Card>
 
       {!selectedClient || !selectedMonth ? (
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="px-4 py-3">
             <TableEmptyState
               icon={<FileSignature className="h-6 w-6" />}
               title="No client or month selected"
@@ -292,119 +302,122 @@ const Gstr3bAdjustmentsPage: React.FC = () => {
           </CardContent>
         </Card>
       ) : (
-        <Tabs value={tab} onValueChange={setTab}>
-          <TabsList>
-            <TabsTrigger value="adjustments">
-              Manual Adjustments {rows.length > 0 && <Badge className="ml-2">{rows.length}</Badge>}
-            </TabsTrigger>
-            <TabsTrigger value="gstr1a">GSTR-1A</TabsTrigger>
-          </TabsList>
+        <>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <TileButton active={tab === 'adjustments'} onClick={() => setTab('adjustments')} title="Show manual adjustments">
+              <KpiTile label="Manual adjustments" value={isLoading ? '…' : rows.length} hint={periodLabel} />
+            </TileButton>
+            <KpiTile label="Taxable value" value={<Money value={totals.taxable} />} />
+            <KpiTile
+              label="Tax · IGST + CGST + SGST + Cess"
+              value={<Money value={totals.igst + totals.cgst + totals.sgst + totals.cess} />}
+            />
+            <TileButton active={tab === 'gstr1a'} onClick={() => setTab('gstr1a')} title="Show GSTR-1A status">
+              <KpiTile
+                label="GSTR-1A"
+                value={gstr1aFiled ? 'Filed' : 'Not filed'}
+                hint={gstr1aFiled && gstr1aArn ? `ARN ${gstr1aArn}` : undefined}
+                tone={gstr1aFiled ? 'ok' : 'neutral'}
+              />
+            </TileButton>
+          </div>
 
-          {/* ── Manual Adjustments ─────────────────────────────────────── */}
-          <TabsContent value="adjustments" className="mt-4 space-y-4">
-            <div className="flex gap-2 rounded-lg border bg-muted/30 p-3 text-muted-foreground">
-              <Info className="h-4 w-4 shrink-0 mt-0.5" />
-              <p className="text-xs">
+          <Tabs value={tab} onValueChange={setTab} className="space-y-3">
+            <TabsList className={TAB_LIST_CLASS}>
+              <TabsTrigger className={TAB_TRIGGER_CLASS} value="adjustments">
+                Manual Adjustments {rows.length > 0 && <CountBadge n={rows.length} label="adjustments" />}
+              </TabsTrigger>
+              <TabsTrigger className={TAB_TRIGGER_CLASS} value="gstr1a">GSTR-1A</TabsTrigger>
+            </TabsList>
+
+            {/* ── Manual Adjustments ─────────────────────────────────────── */}
+            <TabsContent value="adjustments" className="mt-0 space-y-3">
+              <Note tone="info">
                 These rows are <strong>not</strong> pulled automatically into the GSTR-3B draft on the GSTR-3B
                 page — that page is always computed live from GSTR-1, ITC Summary and RCM for this exact
                 period. Use this list as the record of what still needs to be added by hand (e.g. a GSTR-1A
                 amendment, or a prior period's output tax being trued up here) before the return is filed.
-              </p>
-            </div>
+              </Note>
 
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between gap-3">
-                <div>
-                  <CardTitle className="text-base">
-                    {selectedClientData?.name} — {monthOptions.find((m) => m.value === selectedMonth)?.label}
-                  </CardTitle>
-                  <CardDescription>Adjustments recorded for this client and period</CardDescription>
-                </div>
-                <Button onClick={() => openAddDialog()}>
-                  <Plus className="h-4 w-4 mr-2" /> Add Adjustment
-                </Button>
-              </CardHeader>
-              <CardContent className="p-0">
+              <SectionCard
+                title={<>{selectedClientData?.name} — {periodLabel}</>}
+                description="Adjustments recorded for this client and period"
+                actions={
+                  <Button size="sm" className={WS_BTN} onClick={() => openAddDialog()}>
+                    <Plus className="h-3.5 w-3.5" /> Add Adjustment
+                  </Button>
+                }
+              >
                 {isLoading ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                  <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading…
                   </div>
                 ) : rows.length === 0 ? (
-                  <p className="text-sm text-muted-foreground px-4 py-6">No adjustments recorded for this period.</p>
+                  <p className="py-4 text-sm text-muted-foreground">No adjustments recorded for this period.</p>
                 ) : (
-                  <Table>
+                  <Table className={WS_TABLE} containerClassName={`${WS_TABLE_WRAP} max-h-[70vh]`}>
                     <TableHeader>
-                      <TableRow>
-                        <TableHead>Table</TableHead>
-                        <TableHead>Description</TableHead>
-                        <TableHead>Source</TableHead>
-                        <TableHead className="text-right">Taxable value</TableHead>
-                        <TableHead className="text-right">IGST</TableHead>
-                        <TableHead className="text-right">CGST</TableHead>
-                        <TableHead className="text-right">SGST</TableHead>
-                        <TableHead className="text-right">Cess</TableHead>
-                        <TableHead className="w-16" />
+                      <TableRow className="border-0 hover:bg-transparent">
+                        <TableHead className={TH}>Table</TableHead>
+                        <TableHead className={TH}>Description</TableHead>
+                        <TableHead className={TH}>Source</TableHead>
+                        <TableHead className={`${TH} text-right`}>Taxable value</TableHead>
+                        <TableHead className={`${TH} text-right`}>IGST</TableHead>
+                        <TableHead className={`${TH} text-right`}>CGST</TableHead>
+                        <TableHead className={`${TH} text-right`}>SGST</TableHead>
+                        <TableHead className={`${TH} text-right`}>Cess</TableHead>
+                        <TableHead className={`${TH} w-12`} />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {rows.map((r) => (
-                        <TableRow key={r.id}>
-                          <TableCell className="text-sm font-medium">{r.table_ref}</TableCell>
-                          <TableCell className="text-sm">
+                        <TableRow key={r.id} className={`border-0 ${WS_TR}`}>
+                          <TableCell className={`${WS_TD} font-medium whitespace-nowrap`}>{r.table_ref}</TableCell>
+                          <TableCell className={WS_TD}>
                             <div>{r.label}</div>
-                            <div className="text-xs text-muted-foreground">{r.reason}</div>
+                            <div className="text-[11px] text-muted-foreground">{r.reason}</div>
                           </TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{r.source}</Badge>
+                          <TableCell className={WS_TD}>
+                            <Badge variant="outline" className="text-[10px] font-medium">{r.source}</Badge>
                           </TableCell>
-                          <TableCell className="text-right text-sm tabular-nums">{inr(r.taxable_value)}</TableCell>
-                          <TableCell className="text-right text-sm tabular-nums">{inr(r.igst)}</TableCell>
-                          <TableCell className="text-right text-sm tabular-nums">{inr(r.cgst)}</TableCell>
-                          <TableCell className="text-right text-sm tabular-nums">{inr(r.sgst)}</TableCell>
-                          <TableCell className="text-right text-sm tabular-nums">{inr(r.cess)}</TableCell>
-                          <TableCell>
-                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => handleDelete(r)}>
-                              <Trash2 className="h-4 w-4 text-destructive" />
+                          <TableCell className={WS_TD_NUM}>{inr(r.taxable_value)}</TableCell>
+                          <TableCell className={WS_TD_NUM}>{inr(r.igst)}</TableCell>
+                          <TableCell className={WS_TD_NUM}>{inr(r.cgst)}</TableCell>
+                          <TableCell className={WS_TD_NUM}>{inr(r.sgst)}</TableCell>
+                          <TableCell className={WS_TD_NUM}>{inr(r.cess)}</TableCell>
+                          <TableCell className={`${WS_TD} py-0.5`}>
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDelete(r)}>
+                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
                             </Button>
                           </TableCell>
                         </TableRow>
                       ))}
-                      <TableRow className="font-semibold bg-muted/40">
-                        <TableCell colSpan={3}>Total</TableCell>
-                        <TableCell className="text-right tabular-nums">{inr(totals.taxable)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{inr(totals.igst)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{inr(totals.cgst)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{inr(totals.sgst)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{inr(totals.cess)}</TableCell>
-                        <TableCell />
+                      <TableRow className={`border-0 ${WS_TR_TOTAL} hover:bg-muted`}>
+                        <TableCell className={WS_TD} colSpan={3}>Total</TableCell>
+                        <TableCell className={WS_TD_NUM}>{inr(totals.taxable)}</TableCell>
+                        <TableCell className={WS_TD_NUM}>{inr(totals.igst)}</TableCell>
+                        <TableCell className={WS_TD_NUM}>{inr(totals.cgst)}</TableCell>
+                        <TableCell className={WS_TD_NUM}>{inr(totals.sgst)}</TableCell>
+                        <TableCell className={WS_TD_NUM}>{inr(totals.cess)}</TableCell>
+                        <TableCell className={WS_TD} />
                       </TableRow>
                     </TableBody>
                   </Table>
                 )}
-              </CardContent>
-            </Card>
-          </TabsContent>
+              </SectionCard>
+            </TabsContent>
 
-          {/* ── GSTR-1A ────────────────────────────────────────────────── */}
-          <TabsContent value="gstr1a" className="mt-4 space-y-4">
-            <div className="flex gap-2 rounded-lg border bg-muted/30 p-3 text-muted-foreground">
-              <Info className="h-4 w-4 shrink-0 mt-0.5" />
-              <p className="text-xs">
+            {/* ── GSTR-1A ────────────────────────────────────────────────── */}
+            <TabsContent value="gstr1a" className="mt-0 space-y-3">
+              <Note tone="info">
                 GSTR-1A amends GSTR-1 for the <strong>same</strong> period, before GSTR-3B is filed — used
                 correctly, it keeps GSTR-3B in sync rather than causing a mismatch. This tab is a manual
                 record of whether one was filed for this period; it doesn't pull from the GST portal. If the
                 amendment changed the output tax, log the delta as a Manual Adjustment (source "GSTR-1A")
                 as well, so it's visible when preparing GSTR-3B.
-              </p>
-            </div>
+              </Note>
 
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  GSTR-1A — {selectedClientData?.name} — {monthOptions.find((m) => m.value === selectedMonth)?.label}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
+              <SectionCard title={<>GSTR-1A — {selectedClientData?.name} — {periodLabel}</>}>
                 <div className="flex items-center gap-2">
                   <Checkbox
                     id="gstr1a-filed"
@@ -416,36 +429,37 @@ const Gstr3bAdjustmentsPage: React.FC = () => {
                   </label>
                 </div>
                 {gstr1aFiled && (
-                  <div className="max-w-xs space-y-2">
-                    <Label htmlFor="gstr1a-arn">ARN</Label>
-                    <Input id="gstr1a-arn" value={gstr1aArn} onChange={(e) => setGstr1aArn(e.target.value)} placeholder="AA...." />
+                  <div className="max-w-xs space-y-0.5">
+                    <Label htmlFor="gstr1a-arn" className={WS_FILTER_LABEL}>ARN</Label>
+                    <Input id="gstr1a-arn" value={gstr1aArn} onChange={(e) => setGstr1aArn(e.target.value)} placeholder="AA...." className={WS_CONTROL} />
                   </div>
                 )}
-                <div className="space-y-2">
-                  <Label htmlFor="gstr1a-remarks">Remarks</Label>
+                <div className="space-y-0.5">
+                  <Label htmlFor="gstr1a-remarks" className={WS_FILTER_LABEL}>Remarks</Label>
                   <Textarea
                     id="gstr1a-remarks"
                     value={gstr1aRemarks}
                     onChange={(e) => setGstr1aRemarks(e.target.value)}
                     placeholder="What was amended and why"
                     rows={3}
+                    className="text-xs md:text-xs"
                   />
                 </div>
-                <div className="flex gap-2">
-                  <Button onClick={handleSaveGstr1a} disabled={isSavingGstr1a}>
-                    {isSavingGstr1a ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" className={WS_BTN} onClick={handleSaveGstr1a} disabled={isSavingGstr1a}>
+                    {isSavingGstr1a ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                     Save
                   </Button>
                   {gstr1aFiled && (
-                    <Button variant="outline" onClick={() => { setTab('adjustments'); openAddDialog('GSTR-1A'); }}>
-                      <ClipboardEdit className="h-4 w-4 mr-2" /> Add adjustment for this GSTR-1A
+                    <Button size="sm" variant="outline" className={WS_BTN} onClick={() => { setTab('adjustments'); openAddDialog('GSTR-1A'); }}>
+                      <ClipboardEdit className="h-3.5 w-3.5" /> Add adjustment for this GSTR-1A
                     </Button>
                   )}
                 </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
+              </SectionCard>
+            </TabsContent>
+          </Tabs>
+        </>
       )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -520,5 +534,20 @@ const Gstr3bAdjustmentsPage: React.FC = () => {
     </div>
   );
 };
+
+const TileButton: React.FC<{ active: boolean; onClick: () => void; title: string; children: React.ReactNode }> = ({ active, onClick, title, children }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={title}
+    aria-pressed={active}
+    className={cn(
+      'rounded-lg text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:h-full',
+      active && 'ring-2 ring-primary/60',
+    )}
+  >
+    {children}
+  </button>
+);
 
 export default Gstr3bAdjustmentsPage;

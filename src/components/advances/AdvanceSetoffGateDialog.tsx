@@ -3,6 +3,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { AlertTriangle, Info, Loader2, ShieldCheck, Wand2, Clock, XCircle } from 'lucide-react';
+import { Badge } from '@/components/gstr9/badge';
+import { WS_BTN } from '@/components/workspace/theme';
 import type { AdvanceCheckResult, AdvanceFinding } from '@/lib/advanceSetoffCheck';
 import { OVERRIDE_REASON_MIN, type AdvanceOverride, type GateDecision } from '@/lib/advanceSetoffOverrides';
 
@@ -35,7 +37,7 @@ export interface AdvanceSetoffGateDialogProps {
 const FindingRow: React.FC<{ f: AdvanceFinding }> = ({ f }) => {
   const hard = f.severity === 'hard';
   return (
-    <div className={`rounded-md border p-3 ${hard ? 'border-destructive/40 bg-destructive/5' : 'border-warning/40 bg-warning/5'}`}>
+    <div className={`rounded-md border px-3 py-2 ${hard ? 'border-destructive/40 bg-destructive/5' : 'border-warning/40 bg-warning/5'}`}>
       <div className="flex items-start gap-2">
         {hard
           ? <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-destructive" />
@@ -45,11 +47,9 @@ const FindingRow: React.FC<{ f: AdvanceFinding }> = ({ f }) => {
             <span className="text-sm font-semibold text-foreground">{f.title}</span>
             {/* Status carried by a word, not by colour alone — these get read
                 on printouts and by anyone who can't distinguish the tints. */}
-            <span className={`text-[10px] uppercase tracking-wide font-bold px-1.5 py-0.5 rounded ${
-              hard ? 'bg-destructive/15 text-destructive' : 'bg-warning/15 text-warning'
-            }`}>
+            <Badge variant={hard ? 'destructive' : 'warning'} className="text-[10px] font-medium">
               {hard ? 'Blocking' : 'Advisory'}
-            </span>
+            </Badge>
           </div>
           <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{f.detail}</p>
           {f.suggested && (
@@ -118,13 +118,13 @@ export const AdvanceSetoffGateDialog: React.FC<AdvanceSetoffGateDialogProps> = (
               staff must navigate elsewhere to fix it, they override instead —
               and the gate ends up generating overrides, not corrections. */}
           {hasSuggestions && onApplySuggested && (
-            <div className="rounded-md border border-primary/40 bg-primary/5 p-3">
+            <div className="rounded-md border border-primary/40 bg-primary/5 px-3 py-2">
               <p className="text-xs text-muted-foreground mb-2">
                 The set-off can be written into this return now. Table 11B is filled with the suggested
                 figures and the check runs again — nothing is filed by this.
               </p>
-              <Button size="sm" onClick={onApplySuggested} disabled={working}>
-                {working ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5 mr-1.5" />}
+              <Button size="sm" className={WS_BTN} onClick={onApplySuggested} disabled={working}>
+                {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
                 Generate Table 11B &amp; re-check
               </Button>
             </div>
@@ -137,7 +137,7 @@ export const AdvanceSetoffGateDialog: React.FC<AdvanceSetoffGateDialogProps> = (
           )}
 
           {waiting && override && (
-            <div className="rounded-md border border-warning/40 bg-warning/5 p-3 text-xs">
+            <div className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs">
               <div className="flex items-center gap-2 font-semibold text-foreground">
                 <Clock className="h-4 w-4 text-warning" /> Waiting for a GST Manager to approve
               </div>
@@ -149,7 +149,7 @@ export const AdvanceSetoffGateDialog: React.FC<AdvanceSetoffGateDialogProps> = (
             </div>
           )}
           {rejected && override && (
-            <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs">
+            <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs">
               <div className="flex items-center gap-2 font-semibold text-foreground">
                 <XCircle className="h-4 w-4 text-destructive" /> Override rejected
               </div>
@@ -161,7 +161,7 @@ export const AdvanceSetoffGateDialog: React.FC<AdvanceSetoffGateDialogProps> = (
             </div>
           )}
           {lapsed && (
-            <div className="rounded-md border border-warning/40 bg-warning/5 p-3 text-xs">
+            <div className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs">
               <div className="flex items-center gap-2 font-semibold text-foreground">
                 <Clock className="h-4 w-4 text-warning" /> Earlier approval no longer applies
               </div>
@@ -176,7 +176,7 @@ export const AdvanceSetoffGateDialog: React.FC<AdvanceSetoffGateDialogProps> = (
               prevented. A block that cannot be passed gets routed around by
               filing outside the app, which is worse than a recorded override. */}
           {!waiting && canRequest && hard.length > 0 && (
-            <div className="rounded-md border border-border p-3 space-y-2">
+            <div className="rounded-md border border-border px-3 py-2 space-y-2">
               <p className="text-sm font-semibold text-foreground">
                 {canApprove ? 'Override this block' : 'Request an override'}
               </p>
@@ -190,6 +190,7 @@ export const AdvanceSetoffGateDialog: React.FC<AdvanceSetoffGateDialogProps> = (
                 onChange={(e) => setReason(e.target.value)}
                 placeholder="Reason (required, at least 20 characters)"
                 rows={3}
+                className="text-xs md:text-xs"
                 disabled={working}
               />
               <div className="flex items-center justify-between gap-2">
@@ -198,11 +199,12 @@ export const AdvanceSetoffGateDialog: React.FC<AdvanceSetoffGateDialogProps> = (
                 </span>
                 <Button
                   size="sm"
+                  className={WS_BTN}
                   variant={canApprove ? 'default' : 'outline'}
                   disabled={!reasonOk || working}
                   onClick={() => submit(canApprove)}
                 >
-                  {working ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5 mr-1.5" />}
+                  {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
                   {canApprove ? 'Override and continue' : 'Send request to GST Manager'}
                 </Button>
               </div>
