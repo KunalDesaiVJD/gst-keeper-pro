@@ -4,9 +4,12 @@ import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorks
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, Note, SectionCard } from '@/components/gstr9/ui';
+import { WS_BTN, WS_PAGE } from '@/components/workspace/theme';
+import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -19,7 +22,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { toast } from 'sonner';
 import {
   ArrowLeft, Loader2, Landmark, Send, Mail, CheckCircle2, ShieldCheck,
-  AlertTriangle, Info, Paperclip,
+  Paperclip,
 } from 'lucide-react';
 import { formatINR, formatSqM } from '@/utils/builderRates';
 import {
@@ -291,56 +294,52 @@ const BuilderFsiPage: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="flex items-center gap-2 text-muted-foreground text-sm p-6">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading FSI workings…
-      </div>
+      <Card>
+        <CardContent className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading FSI workings…
+        </CardContent>
+      </Card>
     );
   }
   if (!project) return null;
 
   return (
-    <div className="space-y-6">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
+        embedded={embedded}
         title={`${project.name} — TDR / FSI`}
         subtitle="Reverse charge on development rights, crystallising at each BU date"
-        icon={<Landmark className="h-5 w-5" />}
+        icon={<Landmark />}
         actions={embedded ? undefined : (
-          <Button variant="outline" onClick={() => navigate(`/builder-projects/${projectId}`)}>
-            <ArrowLeft className="h-4 w-4 mr-2" /> Project
+          <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate(`/builder-projects/${projectId}`)}>
+            <ArrowLeft className="h-3.5 w-3.5" /> Project
           </Button>
         )}
       />
 
-      <div className="flex gap-2 rounded-lg border bg-muted/30 p-3 text-muted-foreground">
-        <Info className="h-4 w-4 shrink-0 mt-0.5" />
-        <p className="text-xs">
-          Two legs. The <strong>residential</strong> portion attributable to units <em>unbooked</em> at the
-          cut-off is taxed at {FSI_RCM_RATE_PCT}% but capped at 1%/5% of those units' value; units booked
-          before the permission are exempt. The <strong>commercial</strong> portion is taxed at{' '}
-          {FSI_RCM_RATE_PCT}% in full — no exemption, no cap. Both are paid in cash through 3B Table
-          3.1(d); the credit is blocked under the 1%/5% scheme.
-        </p>
-      </div>
+      <Note>
+        Two legs. The <strong>residential</strong> portion attributable to units <em>unbooked</em> at the
+        cut-off is taxed at {FSI_RCM_RATE_PCT}% but capped at 1%/5% of those units' value; units booked
+        before the permission are exempt. The <strong>commercial</strong> portion is taxed at{' '}
+        {FSI_RCM_RATE_PCT}% in full — no exemption, no cap. Both are paid in cash through 3B Table
+        3.1(d); the credit is blocked under the 1%/5% scheme.
+      </Note>
 
       {blockedCount > 0 && (
-        <div className="flex gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-red-900">
-          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-          <p className="text-xs">
-            {blockedCount} FSI liability{blockedCount > 1 ? ' items are' : ' is'} being held back without a
-            complete consent. Those periods will not file until the client's written instruction is
-            attached and a GST Manager has approved it.
-          </p>
-        </div>
+        <Note tone="warn" className="border-destructive/40 bg-destructive/5">
+          {blockedCount} FSI liability{blockedCount > 1 ? ' items are' : ' is'} being held back without a
+          complete consent. Those periods will not file until the client's written instruction is
+          attached and a GST Manager has approved it.
+        </Note>
       )}
 
       {events.length === 0 ? (
         <Card>
-          <CardContent className="p-10 text-center text-muted-foreground">
-            <Landmark className="h-8 w-8 mx-auto mb-3 opacity-40" />
-            <p className="text-sm">
-              No posted BU events yet. The FSI liability crystallises on the BU date, so the event has to
-              be posted before its working can be prepared.
-            </p>
+          <CardContent className="px-4 py-8 text-center text-sm text-muted-foreground">
+            <Landmark className="mx-auto mb-2 h-6 w-6 opacity-40" />
+            No posted BU events yet. The FSI liability crystallises on the BU date, so the event has to
+            be posted before its working can be prepared.
           </CardContent>
         </Card>
       ) : (
@@ -354,159 +353,141 @@ const BuilderFsiPage: React.FC = () => {
           } : null);
 
           return (
-            <Card key={ev.id}>
-              <CardHeader>
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <CardTitle className="text-base flex items-center gap-2">
-                      BU dated {ev.bu_date}
-                      {ev.bu_ref_no && <span className="text-muted-foreground font-normal">· {ev.bu_ref_no}</span>}
-                      {w && (
-                        <Badge className={
-                          w.status === 'POSTED' ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                            : w.status === 'IGNORED' ? 'bg-amber-100 text-amber-800 border-amber-200'
-                              : ''
-                        }>
-                          {FSI_STATUS_LABEL[w.status]}
-                        </Badge>
-                      )}
-                    </CardTitle>
-                    <CardDescription>
-                      Posts to {prettyPeriodLabel(ev.posting_period)}
-                      {w && ` · FSI value ${formatINR(w.tdr_fsi_total_value)}`}
-                    </CardDescription>
-                  </div>
-                  {canPost && (
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => openDialog(ev)}>
-                        {w ? 'Re-prepare' : 'Prepare working'}
-                      </Button>
-                      {w && w.status === 'DRAFT' && (
-                        <Button size="sm" onClick={() => handleCommit(w)} disabled={isSaving}>
-                          <Send className="h-4 w-4 mr-2" /> Commit
-                        </Button>
-                      )}
-                    </div>
+            <SectionCard
+              key={ev.id}
+              title={(
+                <span className="flex flex-wrap items-center gap-1.5">
+                  BU dated {ev.bu_date}
+                  {ev.bu_ref_no && <span className="font-normal text-muted-foreground">· {ev.bu_ref_no}</span>}
+                  {w && (
+                    <Badge
+                      variant={w.status === 'POSTED' ? 'success' : w.status === 'IGNORED' ? 'warning' : 'secondary'}
+                      className="text-[10px] font-medium"
+                    >
+                      {FSI_STATUS_LABEL[w.status]}
+                    </Badge>
                   )}
-                </div>
-              </CardHeader>
-
+                </span>
+              )}
+              description={(
+                <>
+                  Posts to {prettyPeriodLabel(ev.posting_period)}
+                  {w && ` · FSI value ${formatINR(w.tdr_fsi_total_value)}`}
+                </>
+              )}
+              actions={canPost ? (
+                <>
+                  <Button variant="outline" size="sm" className={WS_BTN} onClick={() => openDialog(ev)}>
+                    {w ? 'Re-prepare' : 'Prepare working'}
+                  </Button>
+                  {w && w.status === 'DRAFT' && (
+                    <Button size="sm" className={WS_BTN} onClick={() => handleCommit(w)} disabled={isSaving}>
+                      <Send className="h-3.5 w-3.5" /> Commit
+                    </Button>
+                  )}
+                </>
+              ) : undefined}
+            >
               {w && (
-                <CardContent className="space-y-4">
-                  <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Allocated to this BU</p>
-                      <p className="text-sm font-semibold">{formatINR(w.allocated_value)}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatSqM(w.event_carpet_sqm)} of {formatSqM(w.project_carpet_sqm)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Unbooked residential</p>
-                      <p className="text-sm font-semibold">{formatSqM(w.unbooked_residential_carpet_sqm)}</p>
-                      <p className="text-xs text-muted-foreground">{formatINR(w.unbooked_residential_value)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Residential RCM</p>
-                      <p className="text-sm font-semibold">{formatINR(w.residential_rcm)}</p>
-                      {w.cap_applied && (
-                        <p className="text-xs text-amber-700">
-                          capped from {formatINR(w.residential_rcm_uncapped)}
-                        </p>
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Commercial RCM</p>
-                      <p className="text-sm font-semibold">{formatINR(w.commercial_rcm)}</p>
-                      <p className="text-xs text-muted-foreground">no cap</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Total → 3.1(d)</p>
-                      <p className="text-sm font-semibold">{formatINR(w.total_rcm)}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatINR(w.cgst)} + {formatINR(w.sgst)}
-                      </p>
-                    </div>
+                <>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+                    <KpiTile
+                      label="Allocated to this BU"
+                      value={formatINR(w.allocated_value)}
+                      hint={`${formatSqM(w.event_carpet_sqm)} of ${formatSqM(w.project_carpet_sqm)}`}
+                    />
+                    <KpiTile
+                      label="Unbooked residential"
+                      value={formatSqM(w.unbooked_residential_carpet_sqm)}
+                      hint={formatINR(w.unbooked_residential_value)}
+                    />
+                    <KpiTile
+                      label="Residential RCM"
+                      value={formatINR(w.residential_rcm)}
+                      hint={w.cap_applied ? `capped from ${formatINR(w.residential_rcm_uncapped)}` : undefined}
+                      tone={w.cap_applied ? 'warn' : 'neutral'}
+                    />
+                    <KpiTile label="Commercial RCM" value={formatINR(w.commercial_rcm)} hint="no cap" />
+                    <KpiTile
+                      label="Total → 3.1(d)"
+                      value={formatINR(w.total_rcm)}
+                      hint={`${formatINR(w.cgst)} + ${formatINR(w.sgst)}`}
+                    />
                   </div>
 
                   {w.cap_applied && (
-                    <div className="flex gap-2 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sky-900">
-                      <Info className="h-4 w-4 shrink-0 mt-0.5" />
-                      <p className="text-xs">
-                        The statutory cap bites: {FSI_RCM_RATE_PCT}% on the attributable portion would be{' '}
-                        {formatINR(w.residential_rcm_uncapped)}, but the liability is limited to{' '}
-                        {formatINR(w.cap_amount)} — 1%/5% of the value of the unbooked residential units,
-                        summed per unit at each one's own rate.
-                      </p>
-                    </div>
+                    <Note open>
+                      The statutory cap bites: {FSI_RCM_RATE_PCT}% on the attributable portion would be{' '}
+                      {formatINR(w.residential_rcm_uncapped)}, but the liability is limited to{' '}
+                      {formatINR(w.cap_amount)} — 1%/5% of the value of the unbooked residential units,
+                      summed per unit at each one's own rate.
+                    </Note>
                   )}
 
                   {/* ── Consent trail ─────────────────────────────────── */}
                   {w.treatment === 'IGNORE' && w.total_rcm > 0 && (
-                    <div className="rounded-lg border p-3 space-y-3">
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <p className="text-sm font-medium">Client instruction</p>
-                        <Badge className={progress.complete
-                          ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                          : 'bg-red-100 text-red-800 border-red-200'}>
+                    <div className="space-y-2 rounded-md border px-3 py-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs font-semibold">Client instruction</p>
+                        <Badge variant={progress.complete ? 'success' : 'destructive'} className="text-[10px] font-medium">
                           {progress.complete ? 'Filing released' : `Blocked — ${progress.nextStep}`}
                         </Badge>
                       </div>
 
-                      <div className="grid gap-3 sm:grid-cols-3 text-sm">
-                        <div className="flex items-start gap-2">
-                          <Mail className={`h-4 w-4 mt-0.5 ${progress.emailSent ? 'text-emerald-600' : 'text-muted-foreground'}`} />
+                      <div className="grid gap-2 text-xs sm:grid-cols-3">
+                        <div className="flex items-start gap-1.5">
+                          <Mail className={cn('mt-0.5 h-3.5 w-3.5', progress.emailSent ? 'text-success-strong' : 'text-muted-foreground')} />
                           <div>
-                            <p className="text-xs text-muted-foreground">Request sent</p>
+                            <p className="text-[11px] text-muted-foreground">Request sent</p>
                             <p className="font-medium">{fmtWhen(c?.email_sent_at ?? null)}</p>
                           </div>
                         </div>
-                        <div className="flex items-start gap-2">
-                          <CheckCircle2 className={`h-4 w-4 mt-0.5 ${progress.confirmationReceived ? 'text-emerald-600' : 'text-muted-foreground'}`} />
+                        <div className="flex items-start gap-1.5">
+                          <CheckCircle2 className={cn('mt-0.5 h-3.5 w-3.5', progress.confirmationReceived ? 'text-success-strong' : 'text-muted-foreground')} />
                           <div>
-                            <p className="text-xs text-muted-foreground">Confirmation received</p>
+                            <p className="text-[11px] text-muted-foreground">Confirmation received</p>
                             <p className="font-medium">{fmtWhen(c?.confirmation_received_at ?? null)}</p>
                           </div>
                         </div>
-                        <div className="flex items-start gap-2">
-                          <ShieldCheck className={`h-4 w-4 mt-0.5 ${progress.approved ? 'text-emerald-600' : 'text-muted-foreground'}`} />
+                        <div className="flex items-start gap-1.5">
+                          <ShieldCheck className={cn('mt-0.5 h-3.5 w-3.5', progress.approved ? 'text-success-strong' : 'text-muted-foreground')} />
                           <div>
-                            <p className="text-xs text-muted-foreground">GST Manager approval</p>
+                            <p className="text-[11px] text-muted-foreground">GST Manager approval</p>
                             <p className="font-medium">{fmtWhen(c?.approved_at ?? null)}</p>
                           </div>
                         </div>
                       </div>
 
                       {c?.confirmation_document_url && (
-                        <p className="text-xs text-muted-foreground break-all">
-                          <Paperclip className="h-3 w-3 inline mr-1" />
+                        <p className="break-all text-[11px] text-muted-foreground">
+                          <Paperclip className="mr-1 inline h-3 w-3" />
                           {c.confirmation_document_url}
                         </p>
                       )}
 
                       <div className="flex flex-wrap gap-2">
                         {canPost && !progress.emailSent && (
-                          <Button size="sm" variant="outline" onClick={() => handleRequestConsent(w, ev)} disabled={isSaving}>
-                            <Mail className="h-4 w-4 mr-2" /> Request instruction
+                          <Button size="sm" variant="outline" className={WS_BTN} onClick={() => handleRequestConsent(w, ev)} disabled={isSaving}>
+                            <Mail className="h-3.5 w-3.5" /> Request instruction
                           </Button>
                         )}
                         {canPost && progress.emailSent && !progress.confirmationReceived && (
                           <>
-                            <Button size="sm" variant="outline" onClick={() => setConfirmDialog(w)}>
-                              <CheckCircle2 className="h-4 w-4 mr-2" /> Record confirmation
+                            <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setConfirmDialog(w)}>
+                              <CheckCircle2 className="h-3.5 w-3.5" /> Record confirmation
                             </Button>
-                            <Button size="sm" variant="ghost" onClick={() => handleRequestConsent(w, ev)} disabled={isSaving}>
+                            <Button size="sm" variant="ghost" className={WS_BTN} onClick={() => handleRequestConsent(w, ev)} disabled={isSaving}>
                               Resend
                             </Button>
                           </>
                         )}
                         {progress.confirmationReceived && !progress.approved && (
                           canApprove ? (
-                            <Button size="sm" onClick={() => handleApprove(w)} disabled={isSaving}>
-                              <ShieldCheck className="h-4 w-4 mr-2" /> Approve
+                            <Button size="sm" className={WS_BTN} onClick={() => handleApprove(w)} disabled={isSaving}>
+                              <ShieldCheck className="h-3.5 w-3.5" /> Approve
                             </Button>
                           ) : (
-                            <p className="text-xs text-muted-foreground self-center">
+                            <p className="self-center text-xs text-muted-foreground">
                               Only a GST Manager or Superadmin can approve this.
                             </p>
                           )
@@ -514,9 +495,9 @@ const BuilderFsiPage: React.FC = () => {
                       </div>
                     </div>
                   )}
-                </CardContent>
+                </>
               )}
-            </Card>
+            </SectionCard>
           );
         })
       )}
@@ -558,14 +539,11 @@ const BuilderFsiPage: React.FC = () => {
           </div>
 
           {treatment === 'IGNORE' && (
-            <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
-              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-              <p className="text-xs">
-                Holding this back blocks the period from filing until the client's written instruction is
-                on record and a GST Manager has approved it. The position is the client's, and the file
-                has to show that.
-              </p>
-            </div>
+            <Note tone="warn">
+              Holding this back blocks the period from filing until the client's written instruction is
+              on record and a GST Manager has approved it. The position is the client's, and the file
+              has to show that.
+            </Note>
           )}
 
           <div className="rounded-lg border p-3 bg-muted/30">

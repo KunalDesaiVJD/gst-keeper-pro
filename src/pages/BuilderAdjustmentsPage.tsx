@@ -6,7 +6,13 @@ import { useAuth } from '@/contexts/AuthContext';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { Note } from '@/components/gstr9/ui';
+import { TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepTabs';
+import {
+  WS_BTN, WS_PAGE, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR,
+} from '@/components/workspace/theme';
+import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -16,10 +22,10 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+
 import { toast } from 'sonner';
 import {
-  ArrowLeft, Loader2, AlertTriangle, Wrench, Send, Info, ArrowLeftRight, Undo2,
+  ArrowLeft, Loader2, AlertTriangle, Wrench, Send, ArrowLeftRight, Undo2,
   ReceiptText, Coins,
 } from 'lucide-react';
 import {
@@ -926,56 +932,57 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
 
   if (isLoading) {
     return (
-      <div className="flex items-center gap-2 text-muted-foreground text-sm p-6">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading adjustments…
-      </div>
+      <Card>
+        <CardContent className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading adjustments…
+        </CardContent>
+      </Card>
     );
   }
   if (!project) return null;
 
   return (
-    <div className="space-y-6">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
+        embedded
         title={`${project.name} — Adjustments`}
         subtitle="Re-rating, conversions, credit notes, bounce reversals and excess tax"
-        icon={<Wrench className="h-5 w-5" />}
+        icon={<Wrench />}
         actions={embedded ? undefined : (
-          <Button variant="outline" onClick={() => navigate(`/builder-projects/${projectId}`)}>
-            <ArrowLeft className="h-4 w-4 mr-2" /> Project
+          <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate(`/builder-projects/${projectId}`)}>
+            <ArrowLeft className="h-3.5 w-3.5" /> Project
           </Button>
         )}
       />
 
-      <div className="flex gap-2 rounded-lg border bg-muted/30 p-3 text-muted-foreground">
-        <Info className="h-4 w-4 shrink-0 mt-0.5" />
-        <p className="text-xs">
-          The rule that decides every case here: a change in the flow of <strong>money</strong> is not a
-          change in the <strong>supply</strong>. GST adjusts only when the consideration or the supply
-          itself changes — not when a cheque bounces, and not when a member refinances.
-        </p>
-      </div>
+      <Note tone="position">
+        The rule that decides every case here: a change in the flow of <strong>money</strong> is not a
+        change in the <strong>supply</strong>. GST adjusts only when the consideration or the supply
+        itself changes — not when a cheque bounces, and not when a member refinances.
+      </Note>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="flex-wrap h-auto">
-          <TabsTrigger value="reclass">
-            Re-rating {candidates.length > 0 && <Badge className="ml-2 bg-amber-100 text-amber-800 border-amber-200">{candidates.length}</Badge>}
+        <TabsList className={TAB_LIST_CLASS}>
+          <TabsTrigger value="reclass" className={TAB_TRIGGER_CLASS}>
+            Re-rating {candidates.length > 0 && <Badge variant="warning" className="h-4 min-w-4 justify-center rounded-full px-1 text-[10px] leading-none">{candidates.length}</Badge>}
           </TabsTrigger>
-          <TabsTrigger value="conversions">Conversions ({conversions.length})</TabsTrigger>
-          <TabsTrigger value="notes">Credit notes ({notes.length})</TabsTrigger>
-          <TabsTrigger value="bounce">
-            Bounce register {bouncedNeedingReversal.length > 0 && <Badge className="ml-2 bg-red-100 text-red-800 border-red-200">{bouncedNeedingReversal.length}</Badge>}
+          <TabsTrigger value="conversions" className={TAB_TRIGGER_CLASS}>Conversions ({conversions.length})</TabsTrigger>
+          <TabsTrigger value="notes" className={TAB_TRIGGER_CLASS}>Credit notes ({notes.length})</TabsTrigger>
+          <TabsTrigger value="bounce" className={TAB_TRIGGER_CLASS}>
+            Bounce register {bouncedNeedingReversal.length > 0 && <Badge variant="destructive" className="h-4 min-w-4 justify-center rounded-full px-1 text-[10px] leading-none">{bouncedNeedingReversal.length}</Badge>}
           </TabsTrigger>
-          <TabsTrigger value="excess">Excess tax ({excess.length})</TabsTrigger>
-          <TabsTrigger value="cancellations">Cancellations ({cancellations.length})</TabsTrigger>
+          <TabsTrigger value="excess" className={TAB_TRIGGER_CLASS}>Excess tax ({excess.length})</TabsTrigger>
+          <TabsTrigger value="cancellations" className={TAB_TRIGGER_CLASS}>Cancellations ({cancellations.length})</TabsTrigger>
         </TabsList>
 
         {/* ── Re-rating ─────────────────────────────────────────────────── */}
-        <TabsContent value="reclass" className="mt-4 space-y-4">
+        <TabsContent value="reclass" className="mt-3 space-y-3">
           <Card>
-            <CardHeader className="flex flex-row items-start justify-between gap-3">
+            <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-x-3 gap-y-1.5 space-y-0 px-4 pb-2 pt-3">
               <div>
-                <CardTitle className="text-base">Historical (pre-onboarding) receipts</CardTitle>
-                <CardDescription>
+                <CardTitle className="text-[15px] leading-snug">Historical (pre-onboarding) receipts</CardTitle>
+                <CardDescription className="text-xs leading-snug">
                   A unit's history before this firm's onboarding sits only in a single opening-balance
                   snapshot — invisible to the detection below. Enter its real date-wise receipts here only
                   when a re-rating case actually needs them; the amounts must tally with the unit's opening
@@ -985,7 +992,7 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
               </div>
               {canEdit && (
                 <Select value={histUnitId} onValueChange={handleOpenHistDialog}>
-                  <SelectTrigger className="w-56"><SelectValue placeholder="Select a unit…" /></SelectTrigger>
+                  <SelectTrigger className="h-8 w-56 text-xs" aria-label="Historical receipts for unit"><SelectValue placeholder="Select a unit…" /></SelectTrigger>
                   <SelectContent>
                     {units.map((u) => (
                       <SelectItem key={u.id} value={u.id}>{u.unit_no}</SelectItem>
@@ -997,10 +1004,10 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
           </Card>
 
           <Card>
-            <CardHeader className="flex flex-row items-start justify-between gap-3">
+            <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-x-3 gap-y-1.5 space-y-0 px-4 pb-2 pt-3">
               <div>
-                <CardTitle className="text-base">Units needing re-rating</CardTitle>
-                <CardDescription>
+                <CardTitle className="text-[15px] leading-snug">Units needing re-rating</CardTitle>
+                <CardDescription className="text-xs leading-snug">
                   A unit taxed at 1.5% whose gross consideration has since crossed ₹45 lakh was never
                   affordable. The concession never applied, so the higher rate is due on everything already
                   offered to tax — with interest u/s 50 running from each original period's due date, paid
@@ -1009,473 +1016,486 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
                   retry.
                 </CardDescription>
               </div>
-              <Button size="sm" variant="outline" onClick={() => void runReclassSweep()}>
+              <Button size="sm" variant="outline" className={WS_BTN} onClick={() => void runReclassSweep()}>
                 Re-check for re-rating
               </Button>
             </CardHeader>
-            <CardContent className="p-0">
+            <CardContent className="px-4 pb-3">
               {candidates.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-4 py-6">
+                <p className="py-2 text-sm text-muted-foreground">
                   No units are waiting on re-rating — anything detected posts automatically.
                 </p>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Unit</TableHead>
-                      <TableHead className="text-right">Gross now</TableHead>
-                      <TableHead className="text-right">Correct rate</TableHead>
-                      <TableHead className="text-right">Periods affected</TableHead>
-                      <TableHead className="text-right">Value at 1.5%</TableHead>
-                      <TableHead className="w-24" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {candidates.map((c) => (
-                      <TableRow key={c.unitId}>
-                        <TableCell className="font-medium">{c.unitNo}</TableCell>
-                        <TableCell className="text-right text-sm">{formatINR(c.grossConsideration)}</TableCell>
-                        <TableCell className="text-right text-sm">{c.currentRatePct}%</TableCell>
-                        <TableCell className="text-right text-sm">{c.periods.length}</TableCell>
-                        <TableCell className="text-right text-sm">{formatINR(c.totalTaxableAtOldRate)}</TableCell>
-                        <TableCell>
-                          {canEdit && (
-                            <Button size="sm" variant="outline" onClick={() => { setReclassDialog(c); setReclassPeriod(currentPeriod()); }}>
-                              Schedule
-                            </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <div className={WS_TABLE_WRAP}>
+                  <table className={WS_TABLE}>
+                    <thead>
+                      <tr>
+                        <th className={WS_TH}>Unit</th>
+                        <th className={cn(WS_TH, 'text-right')}>Gross now</th>
+                        <th className={cn(WS_TH, 'text-right')}>Correct rate</th>
+                        <th className={cn(WS_TH, 'text-right')}>Periods affected</th>
+                        <th className={cn(WS_TH, 'text-right')}>Value at 1.5%</th>
+                        <th className={cn(WS_TH, 'w-24')} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {candidates.map((c) => (
+                        <tr className={WS_TR} key={c.unitId}>
+                          <td className={cn(WS_TD, 'font-medium')}>{c.unitNo}</td>
+                          <td className={WS_TD_NUM}>{formatINR(c.grossConsideration)}</td>
+                          <td className={WS_TD_NUM}>{c.currentRatePct}%</td>
+                          <td className={WS_TD_NUM}>{c.periods.length}</td>
+                          <td className={WS_TD_NUM}>{formatINR(c.totalTaxableAtOldRate)}</td>
+                          <td className={WS_TD}>
+                            {canEdit && (
+                              <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => { setReclassDialog(c); setReclassPeriod(currentPeriod()); }}>
+                                Schedule
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </CardContent>
           </Card>
 
           {reclasses.length > 0 && (
             <Card>
-              <CardHeader>
-                <CardTitle className="text-base">DRC-03 workpaper</CardTitle>
-                <CardDescription>
+              <CardHeader className="space-y-0.5 px-4 pb-2 pt-3">
+                <CardTitle className="text-[15px] leading-snug">DRC-03 workpaper</CardTitle>
+                <CardDescription className="text-xs leading-snug">
                   Differential tax and s.50 interest for each re-rating, discharged by voluntary DRC-03 on
                   the GST portal — not reported in GSTR-1 or 3B. Total tax + interest below is the figure
                   to key into the DRC-03 form; mark it filed once done, for the record.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Unit</TableHead>
-                      <TableHead>Posting period</TableHead>
-                      <TableHead className="text-right">Value re-taxed</TableHead>
-                      <TableHead className="text-right">Differential tax</TableHead>
-                      <TableHead className="text-right">Interest u/s 50</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>DRC-03</TableHead>
-                      <TableHead className="w-20" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {reclasses.map((r) => (
-                      <TableRow key={r.id}>
-                        <TableCell className="font-medium">{unitNo(r.unit_id)}</TableCell>
-                        <TableCell className="text-sm">{prettyPeriodLabel(r.posting_period)}</TableCell>
-                        <TableCell className="text-right text-sm">{formatINR(r.total_value_retaxed)}</TableCell>
-                        <TableCell className="text-right text-sm font-medium">{formatINR(r.total_differential_tax)}</TableCell>
-                        <TableCell className="text-right text-sm">{formatINR(r.total_interest)}</TableCell>
-                        <TableCell>
-                          <Badge className={
-                            r.status === 'POSTED' ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                              : r.status === 'REVERSED' ? 'bg-slate-100 text-slate-700 border-slate-200'
-                                : 'bg-amber-100 text-amber-800 border-amber-200'
-                          }>
-                            {r.status}
-                          </Badge>
-                          {r.status === 'REVERSED' && r.reversal_reason && (
-                            <span className="block text-xs text-muted-foreground mt-0.5" title={r.reversal_reason}>
-                              {r.reversal_reason}
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {r.discharge_mode === 'GSTR1_AMENDMENT' ? (
-                            <Badge variant="outline">Table 10</Badge>
-                          ) : (
-                            <>
-                              <Badge className={r.drc03_status === 'FILED'
-                                ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                                : 'bg-amber-100 text-amber-800 border-amber-200'}>
-                                {r.drc03_status === 'FILED' ? 'Filed' : 'Pending'}
-                              </Badge>
-                              {r.drc03_status === 'FILED' && r.drc03_arn && (
-                                <span className="block text-xs text-muted-foreground mt-0.5">{r.drc03_arn}</span>
-                              )}
-                            </>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {canEdit && r.status === 'DRAFT' && (
-                            <Button size="sm" onClick={() => handlePostReclass(r)}>
-                              <Send className="h-3 w-3 mr-1" /> Post
-                            </Button>
-                          )}
-                          {r.status === 'POSTED' && (
-                            <>
-                              <Button size="sm" variant="ghost" onClick={() => void exportDrc03(r, 'pdf')}>PDF</Button>
-                              <Button size="sm" variant="ghost" onClick={() => void exportDrc03(r, 'xlsx')}>Excel</Button>
-                            </>
-                          )}
-                          {isGstManagerOrAbove && r.status === 'POSTED' && r.discharge_mode !== 'GSTR1_AMENDMENT'
-                            && r.drc03_status !== 'FILED' && (
-                            <Button
-                              size="sm" variant="outline"
-                              onClick={() => { setFiledDialog(r); setFiledForm({ arn: '', filed_date: today() }); }}
+              <CardContent className="px-4 pb-3">
+                <div className={WS_TABLE_WRAP}>
+                  <table className={WS_TABLE}>
+                    <thead>
+                      <tr>
+                        <th className={WS_TH}>Unit</th>
+                        <th className={WS_TH}>Posting period</th>
+                        <th className={cn(WS_TH, 'text-right')}>Value re-taxed</th>
+                        <th className={cn(WS_TH, 'text-right')}>Differential tax</th>
+                        <th className={cn(WS_TH, 'text-right')}>Interest u/s 50</th>
+                        <th className={WS_TH}>Status</th>
+                        <th className={WS_TH}>DRC-03</th>
+                        <th className={cn(WS_TH, 'w-20')} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reclasses.map((r) => (
+                        <tr className={WS_TR} key={r.id}>
+                          <td className={cn(WS_TD, 'font-medium')}>{unitNo(r.unit_id)}</td>
+                          <td className={WS_TD}>{prettyPeriodLabel(r.posting_period)}</td>
+                          <td className={WS_TD_NUM}>{formatINR(r.total_value_retaxed)}</td>
+                          <td className={cn(WS_TD_NUM, 'font-medium')}>{formatINR(r.total_differential_tax)}</td>
+                          <td className={WS_TD_NUM}>{formatINR(r.total_interest)}</td>
+                          <td className={WS_TD}>
+                            <Badge
+                              variant={r.status === 'POSTED' ? 'success' : r.status === 'REVERSED' ? 'secondary' : 'warning'}
+                              className="text-[10px] font-medium"
                             >
-                              Mark filed
-                            </Button>
-                          )}
-                          {isSuperAdmin && r.status === 'POSTED' && (
-                            <Button
-                              size="sm" variant="outline"
-                              className="text-red-700 border-red-200 hover:bg-red-50 ml-1"
-                              onClick={() => { setReverseDialog(r); setReverseReason(''); }}
-                            >
-                              <Undo2 className="h-3 w-3 mr-1" /> Reverse
-                            </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                              {r.status}
+                            </Badge>
+                            {r.status === 'REVERSED' && r.reversal_reason && (
+                              <span className="block text-xs text-muted-foreground mt-0.5" title={r.reversal_reason}>
+                                {r.reversal_reason}
+                              </span>
+                            )}
+                          </td>
+                          <td className={WS_TD}>
+                            {r.discharge_mode === 'GSTR1_AMENDMENT' ? (
+                              <Badge variant="outline" className="text-[10px] font-medium">Table 10</Badge>
+                            ) : (
+                              <>
+                                <Badge variant={r.drc03_status === 'FILED' ? 'success' : 'warning'} className="text-[10px] font-medium">
+                                  {r.drc03_status === 'FILED' ? 'Filed' : 'Pending'}
+                                </Badge>
+                                {r.drc03_status === 'FILED' && r.drc03_arn && (
+                                  <span className="block text-xs text-muted-foreground mt-0.5">{r.drc03_arn}</span>
+                                )}
+                              </>
+                            )}
+                          </td>
+                          <td className={WS_TD}>
+                            {canEdit && r.status === 'DRAFT' && (
+                              <Button size="sm" className="h-7 gap-1 px-2 text-xs" onClick={() => handlePostReclass(r)}>
+                                <Send className="h-3 w-3" /> Post
+                              </Button>
+                            )}
+                            {r.status === 'POSTED' && (
+                              <>
+                                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => void exportDrc03(r, 'pdf')}>PDF</Button>
+                                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => void exportDrc03(r, 'xlsx')}>Excel</Button>
+                              </>
+                            )}
+                            {isGstManagerOrAbove && r.status === 'POSTED' && r.discharge_mode !== 'GSTR1_AMENDMENT'
+                              && r.drc03_status !== 'FILED' && (
+                              <Button
+                                size="sm" variant="outline" className="h-7 px-2 text-xs"
+                                onClick={() => { setFiledDialog(r); setFiledForm({ arn: '', filed_date: today() }); }}
+                              >
+                                Mark filed
+                              </Button>
+                            )}
+                            {isSuperAdmin && r.status === 'POSTED' && (
+                              <Button
+                                size="sm" variant="outline"
+                                className="ml-1 h-7 gap-1 border-destructive/40 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                onClick={() => { setReverseDialog(r); setReverseReason(''); }}
+                              >
+                                <Undo2 className="h-3 w-3" /> Reverse
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </CardContent>
             </Card>
           )}
         </TabsContent>
 
         {/* ── Conversions ───────────────────────────────────────────────── */}
-        <TabsContent value="conversions" className="mt-4">
+        <TabsContent value="conversions" className="mt-3">
           <Card>
-            <CardHeader className="flex flex-row items-start justify-between gap-3">
+            <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-x-3 gap-y-1.5 space-y-0 px-4 pb-2 pt-3">
               <div>
-                <CardTitle className="text-base">Unit conversions</CardTitle>
-                <CardDescription>
+                <CardTitle className="text-[15px] leading-snug">Unit conversions</CardTitle>
+                <CardDescription className="text-xs leading-snug">
                   A member moving between units is a cancellation plus a fresh booking, not a ledger entry.
                   Where the rates differ the carried value is re-taxed; where the old unit's credit-note
                   window has closed, its tax cannot be recovered but the new tax is still due.
                 </CardDescription>
               </div>
               {canEdit && (
-                <Button onClick={() => setConvDialog(true)}>
-                  <ArrowLeftRight className="h-4 w-4 mr-2" /> Record conversion
+                <Button size="sm" className={WS_BTN} onClick={() => setConvDialog(true)}>
+                  <ArrowLeftRight className="h-3.5 w-3.5" /> Record conversion
                 </Button>
               )}
             </CardHeader>
-            <CardContent className="p-0">
+            <CardContent className="px-4 pb-3">
               {conversions.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-4 py-6">No conversions recorded.</p>
+                <p className="py-2 text-sm text-muted-foreground">No conversions recorded.</p>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Date</TableHead>
-                      <TableHead>From</TableHead>
-                      <TableHead>To</TableHead>
-                      <TableHead className="text-right">Carried value</TableHead>
-                      <TableHead className="text-right">Rate change</TableHead>
-                      <TableHead className="text-right">Differential</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {conversions.map((c) => (
-                      <TableRow key={c.id}>
-                        <TableCell className="text-sm">{c.conversion_date}</TableCell>
-                        <TableCell className="font-medium">{unitNo(c.from_unit_id)}</TableCell>
-                        <TableCell className="font-medium">{unitNo(c.to_unit_id)}</TableCell>
-                        <TableCell className="text-right text-sm">{formatINR(c.carried_value)}</TableCell>
-                        <TableCell className="text-right text-sm">
-                          {c.from_rate_pct}% → {c.to_rate_pct}%
-                        </TableCell>
-                        <TableCell className="text-right text-sm font-medium">
-                          {formatINR(c.differential_tax)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <div className={WS_TABLE_WRAP}>
+                  <table className={WS_TABLE}>
+                    <thead>
+                      <tr>
+                        <th className={WS_TH}>Date</th>
+                        <th className={WS_TH}>From</th>
+                        <th className={WS_TH}>To</th>
+                        <th className={cn(WS_TH, 'text-right')}>Carried value</th>
+                        <th className={cn(WS_TH, 'text-right')}>Rate change</th>
+                        <th className={cn(WS_TH, 'text-right')}>Differential</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {conversions.map((c) => (
+                        <tr className={WS_TR} key={c.id}>
+                          <td className={WS_TD}>{c.conversion_date}</td>
+                          <td className={cn(WS_TD, 'font-medium')}>{unitNo(c.from_unit_id)}</td>
+                          <td className={cn(WS_TD, 'font-medium')}>{unitNo(c.to_unit_id)}</td>
+                          <td className={WS_TD_NUM}>{formatINR(c.carried_value)}</td>
+                          <td className={WS_TD_NUM}>
+                            {c.from_rate_pct}% → {c.to_rate_pct}%
+                          </td>
+                          <td className={cn(WS_TD_NUM, 'font-medium')}>
+                            {formatINR(c.differential_tax)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </CardContent>
           </Card>
         </TabsContent>
 
         {/* ── Credit notes ──────────────────────────────────────────────── */}
-        <TabsContent value="notes" className="mt-4">
+        <TabsContent value="notes" className="mt-3">
           <Card>
-            <CardHeader className="flex flex-row items-start justify-between gap-3">
+            <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-x-3 gap-y-1.5 space-y-0 px-4 pb-2 pt-3">
               <div>
-                <CardTitle className="text-base">Credit notes</CardTitle>
-                <CardDescription>
+                <CardTitle className="text-[15px] leading-snug">Credit notes</CardTitle>
+                <CardDescription className="text-xs leading-snug">
                   s.34 allows the tax adjustment only until 30 November following the financial year of the
                   original document. Intra-state B2C notes net inside Table 7 — CDNUR cannot arise here.
                 </CardDescription>
               </div>
               {canEdit && (
-                <Button onClick={() => setCnDialog(true)}>
-                  <ReceiptText className="h-4 w-4 mr-2" /> Raise credit note
+                <Button size="sm" className={WS_BTN} onClick={() => setCnDialog(true)}>
+                  <ReceiptText className="h-3.5 w-3.5" /> Raise credit note
                 </Button>
               )}
             </CardHeader>
-            <CardContent className="p-0">
+            <CardContent className="px-4 pb-3">
               {notes.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-4 py-6">No credit notes raised.</p>
+                <p className="py-2 text-sm text-muted-foreground">No credit notes raised.</p>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Unit</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead className="text-right">Value</TableHead>
-                      <TableHead className="text-right">Tax</TableHead>
-                      <TableHead>Window</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {notes.map((n) => (
-                      <TableRow key={n.id}>
-                        <TableCell className="text-sm">{n.note_date}</TableCell>
-                        <TableCell className="font-medium">{unitNo(n.unit_id)}</TableCell>
-                        <TableCell className="text-sm">{NOTE_TYPE_LABEL[n.note_type] || n.note_type}</TableCell>
-                        <TableCell className="text-right text-sm">{formatINR(n.consideration)}</TableCell>
-                        <TableCell className="text-right text-sm">{formatINR(n.cgst + n.sgst)}</TableCell>
-                        <TableCell>
-                          {n.within_window ? (
-                            <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">
-                              Adjusted
-                            </Badge>
-                          ) : (
-                            <Badge className="bg-red-100 text-red-800 border-red-200">
-                              Out of window — buyer refunds u/s 54
-                            </Badge>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <div className={WS_TABLE_WRAP}>
+                  <table className={WS_TABLE}>
+                    <thead>
+                      <tr>
+                        <th className={WS_TH}>Date</th>
+                        <th className={WS_TH}>Unit</th>
+                        <th className={WS_TH}>Type</th>
+                        <th className={cn(WS_TH, 'text-right')}>Value</th>
+                        <th className={cn(WS_TH, 'text-right')}>Tax</th>
+                        <th className={WS_TH}>Window</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {notes.map((n) => (
+                        <tr className={WS_TR} key={n.id}>
+                          <td className={WS_TD}>{n.note_date}</td>
+                          <td className={cn(WS_TD, 'font-medium')}>{unitNo(n.unit_id)}</td>
+                          <td className={WS_TD}>{NOTE_TYPE_LABEL[n.note_type] || n.note_type}</td>
+                          <td className={WS_TD_NUM}>{formatINR(n.consideration)}</td>
+                          <td className={WS_TD_NUM}>{formatINR(n.cgst + n.sgst)}</td>
+                          <td className={WS_TD}>
+                            {n.within_window ? (
+                              <Badge variant="success" className="text-[10px] font-medium">
+                                Adjusted
+                              </Badge>
+                            ) : (
+                              <Badge variant="destructive" className="text-[10px] font-medium">
+                                Out of window — buyer refunds u/s 54
+                              </Badge>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </CardContent>
           </Card>
         </TabsContent>
 
         {/* ── Bounce register ───────────────────────────────────────────── */}
-        <TabsContent value="bounce" className="mt-4 space-y-4">
+        <TabsContent value="bounce" className="mt-3 space-y-3">
           {bounceFocusUnitId && (
-            <div className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+            <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-1 text-xs">
               <span>Showing only unit {unitNo(bounceFocusUnitId)}.</span>
-              <Button variant="ghost" size="sm" className="ml-auto h-7" onClick={() => setBounceFocusUnitId(null)}>
+              <Button variant="ghost" size="sm" className="ml-auto h-7 px-2 text-xs" onClick={() => setBounceFocusUnitId(null)}>
                 Show all units
               </Button>
             </div>
           )}
           {bouncedNeedingReversalFiltered.length > 0 && (
             <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Bounced advances without a reversal</CardTitle>
-                <CardDescription>
+              <CardHeader className="space-y-0.5 px-4 pb-2 pt-3">
+                <CardTitle className="text-[15px] leading-snug">Bounced advances without a reversal</CardTitle>
+                <CardDescription className="text-xs leading-snug">
                   Raise a reversal only where the return for the original period is already filed. If it is
                   still open, simply deleting the receipt is cleaner.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Unit</TableHead>
-                      <TableHead>Receipt date</TableHead>
-                      <TableHead>Original period</TableHead>
-                      <TableHead className="text-right">Consideration</TableHead>
-                      <TableHead className="text-right">Tax</TableHead>
-                      <TableHead className="w-24" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {bouncedNeedingReversalFiltered.map((r) => (
-                      <TableRow key={r.id}>
-                        <TableCell className="font-medium">{unitNo(r.unit_id)}</TableCell>
-                        <TableCell className="text-sm">{r.receipt_date}</TableCell>
-                        <TableCell className="text-sm">{prettyPeriodLabel(r.period_month)}</TableCell>
-                        <TableCell className="text-right text-sm">{formatINR(r.consideration)}</TableCell>
-                        <TableCell className="text-right text-sm">{formatINR(r.cgst + r.sgst)}</TableCell>
-                        <TableCell>
-                          {canEdit && (
-                            <Button size="sm" variant="outline" onClick={() => handleRaiseBounce(r)}>
-                              <Undo2 className="h-3 w-3 mr-1" /> Reverse
-                            </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+              <CardContent className="px-4 pb-3">
+                <div className={WS_TABLE_WRAP}>
+                  <table className={WS_TABLE}>
+                    <thead>
+                      <tr>
+                        <th className={WS_TH}>Unit</th>
+                        <th className={WS_TH}>Receipt date</th>
+                        <th className={WS_TH}>Original period</th>
+                        <th className={cn(WS_TH, 'text-right')}>Consideration</th>
+                        <th className={cn(WS_TH, 'text-right')}>Tax</th>
+                        <th className={cn(WS_TH, 'w-24')} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bouncedNeedingReversalFiltered.map((r) => (
+                        <tr className={WS_TR} key={r.id}>
+                          <td className={cn(WS_TD, 'font-medium')}>{unitNo(r.unit_id)}</td>
+                          <td className={WS_TD}>{r.receipt_date}</td>
+                          <td className={WS_TD}>{prettyPeriodLabel(r.period_month)}</td>
+                          <td className={WS_TD_NUM}>{formatINR(r.consideration)}</td>
+                          <td className={WS_TD_NUM}>{formatINR(r.cgst + r.sgst)}</td>
+                          <td className={WS_TD}>
+                            {canEdit && (
+                              <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={() => handleRaiseBounce(r)}>
+                                <Undo2 className="h-3 w-3" /> Reverse
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </CardContent>
             </Card>
           )}
 
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Reversal register</CardTitle>
-              <CardDescription>
+            <CardHeader className="space-y-0.5 px-4 pb-2 pt-3">
+              <CardTitle className="text-[15px] leading-snug">Reversal register</CardTitle>
+              <CardDescription className="text-xs leading-snug">
                 Offsets go against later months at the <strong>same rate</strong> in the <strong>same
                 project</strong>. The portal rejects a negative Table 11A, so anything that will not fit
                 carries forward rather than being lost.
               </CardDescription>
             </CardHeader>
-            <CardContent className="p-0">
+            <CardContent className="px-4 pb-3">
               {bouncesFiltered.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-4 py-6">
+                <p className="py-2 text-sm text-muted-foreground">
                   {bounceFocusUnitId ? 'No reversals raised for this unit.' : 'No reversals raised.'}
                 </p>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Unit</TableHead>
-                      <TableHead>Bounced</TableHead>
-                      <TableHead>Original period</TableHead>
-                      <TableHead className="text-right">Rate</TableHead>
-                      <TableHead className="text-right">To reverse</TableHead>
-                      <TableHead className="text-right">Offset</TableHead>
-                      <TableHead className="text-right">Carried forward</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="w-24" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {bouncesFiltered.map((b) => {
-                      const carried = Number(b.consideration) - Number(b.adjusted_value);
-                      return (
-                        <TableRow key={b.id}>
-                          <TableCell className="font-medium">{unitNo(b.unit_id)}</TableCell>
-                          <TableCell className="text-sm">{b.bounced_on}</TableCell>
-                          <TableCell className="text-sm">{prettyPeriodLabel(b.original_period)}</TableCell>
-                          <TableCell className="text-right text-sm">{b.rate_pct}%</TableCell>
-                          <TableCell className="text-right text-sm">{formatINR(b.consideration)}</TableCell>
-                          <TableCell className="text-right text-sm">{formatINR(b.adjusted_value)}</TableCell>
-                          <TableCell className="text-right text-sm font-medium">{formatINR(carried)}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{BOUNCE_STATUS_LABEL[b.status] || b.status}</Badge>
-                          </TableCell>
-                          <TableCell>
-                            {canEdit && carried > 0.005 && (
-                              <Button size="sm" variant="outline" onClick={() => handleOffset(b)} disabled={isSaving}>
-                                Offset
-                              </Button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+                <div className={WS_TABLE_WRAP}>
+                  <table className={WS_TABLE}>
+                    <thead>
+                      <tr>
+                        <th className={WS_TH}>Unit</th>
+                        <th className={WS_TH}>Bounced</th>
+                        <th className={WS_TH}>Original period</th>
+                        <th className={cn(WS_TH, 'text-right')}>Rate</th>
+                        <th className={cn(WS_TH, 'text-right')}>To reverse</th>
+                        <th className={cn(WS_TH, 'text-right')}>Offset</th>
+                        <th className={cn(WS_TH, 'text-right')}>Carried forward</th>
+                        <th className={WS_TH}>Status</th>
+                        <th className={cn(WS_TH, 'w-24')} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bouncesFiltered.map((b) => {
+                        const carried = Number(b.consideration) - Number(b.adjusted_value);
+                        return (
+                          <tr className={WS_TR} key={b.id}>
+                            <td className={cn(WS_TD, 'font-medium')}>{unitNo(b.unit_id)}</td>
+                            <td className={WS_TD}>{b.bounced_on}</td>
+                            <td className={WS_TD}>{prettyPeriodLabel(b.original_period)}</td>
+                            <td className={WS_TD_NUM}>{b.rate_pct}%</td>
+                            <td className={WS_TD_NUM}>{formatINR(b.consideration)}</td>
+                            <td className={WS_TD_NUM}>{formatINR(b.adjusted_value)}</td>
+                            <td className={cn(WS_TD_NUM, 'font-medium')}>{formatINR(carried)}</td>
+                            <td className={WS_TD}>
+                              <Badge variant="outline" className="text-[10px] font-medium">{BOUNCE_STATUS_LABEL[b.status] || b.status}</Badge>
+                            </td>
+                            <td className={WS_TD}>
+                              {canEdit && carried > 0.005 && (
+                                <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => handleOffset(b)} disabled={isSaving}>
+                                  Offset
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </CardContent>
           </Card>
         </TabsContent>
 
         {/* ── Excess tax ────────────────────────────────────────────────── */}
-        <TabsContent value="excess" className="mt-4 space-y-4">
+        <TabsContent value="excess" className="mt-3 space-y-3">
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Excess tax register</CardTitle>
-              <CardDescription>
+            <CardHeader className="space-y-0.5 px-4 pb-2 pt-3">
+              <CardTitle className="text-[15px] leading-snug">Excess tax register</CardTitle>
+              <CardDescription className="text-xs leading-snug">
                 Where a receipt was inclusive of GST but tax was computed on the whole figure, tax was paid
                 on the tax. Restating it books the excess <em>and</em> raises the unit's BU differential,
                 because the overstated consideration had inflated its value taxed.
               </CardDescription>
             </CardHeader>
-            <CardContent className="p-0">
+            <CardContent className="px-4 pb-3">
               {excess.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-4 py-6">No restatements recorded.</p>
+                <p className="py-2 text-sm text-muted-foreground">No restatements recorded.</p>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Unit</TableHead>
-                      <TableHead>Identified</TableHead>
-                      <TableHead className="text-right">Original</TableHead>
-                      <TableHead className="text-right">Restated</TableHead>
-                      <TableHead className="text-right">Excess tax</TableHead>
-                      <TableHead>Treatment</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {excess.map((e) => (
-                      <TableRow key={e.id}>
-                        <TableCell className="font-medium">{unitNo(e.unit_id)}</TableCell>
-                        <TableCell className="text-sm">{e.identified_on}</TableCell>
-                        <TableCell className="text-right text-sm">{formatINR(e.original_consideration)}</TableCell>
-                        <TableCell className="text-right text-sm">{formatINR(e.restated_consideration)}</TableCell>
-                        <TableCell className="text-right text-sm font-medium">{formatINR(e.excess_tax)}</TableCell>
-                        <TableCell className="text-sm">{EXCESS_TREATMENT_LABEL[e.treatment] || e.treatment}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <div className={WS_TABLE_WRAP}>
+                  <table className={WS_TABLE}>
+                    <thead>
+                      <tr>
+                        <th className={WS_TH}>Unit</th>
+                        <th className={WS_TH}>Identified</th>
+                        <th className={cn(WS_TH, 'text-right')}>Original</th>
+                        <th className={cn(WS_TH, 'text-right')}>Restated</th>
+                        <th className={cn(WS_TH, 'text-right')}>Excess tax</th>
+                        <th className={WS_TH}>Treatment</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {excess.map((e) => (
+                        <tr className={WS_TR} key={e.id}>
+                          <td className={cn(WS_TD, 'font-medium')}>{unitNo(e.unit_id)}</td>
+                          <td className={WS_TD}>{e.identified_on}</td>
+                          <td className={WS_TD_NUM}>{formatINR(e.original_consideration)}</td>
+                          <td className={WS_TD_NUM}>{formatINR(e.restated_consideration)}</td>
+                          <td className={cn(WS_TD_NUM, 'font-medium')}>{formatINR(e.excess_tax)}</td>
+                          <td className={WS_TD}>{EXCESS_TREATMENT_LABEL[e.treatment] || e.treatment}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </CardContent>
           </Card>
 
           {canEdit && restatable.length > 0 && (
             <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Receipts recorded as GST-exclusive</CardTitle>
-                <CardDescription>
+              <CardHeader className="space-y-0.5 px-4 pb-2 pt-3">
+                <CardTitle className="text-[15px] leading-snug">Receipts recorded as GST-exclusive</CardTitle>
+                <CardDescription className="text-xs leading-snug">
                   If any of these were actually inclusive of GST, restate it here. The per-unit tie-out on
                   the bookings page is the usual way these surface — value taxed overshoots the agreement
                   value by exactly the grossed-up portion.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Unit</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead className="text-right">Amount</TableHead>
-                      <TableHead className="text-right">Tax charged</TableHead>
-                      <TableHead className="w-24" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {restatable.slice(0, 30).map((r) => (
-                      <TableRow key={r.id}>
-                        <TableCell className="font-medium">{unitNo(r.unit_id)}</TableCell>
-                        <TableCell className="text-sm">{r.receipt_date}</TableCell>
-                        <TableCell className="text-right text-sm">{formatINR(r.amount_entered)}</TableCell>
-                        <TableCell className="text-right text-sm">{formatINR(r.cgst + r.sgst)}</TableCell>
-                        <TableCell>
-                          <Button size="sm" variant="outline" onClick={() => { setRestateDialog(r); setRestateTreatment('ADJUST'); }}>
-                            <Coins className="h-3 w-3 mr-1" /> Restate
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+              <CardContent className="px-4 pb-3">
+                <div className={WS_TABLE_WRAP}>
+                  <table className={WS_TABLE}>
+                    <thead>
+                      <tr>
+                        <th className={WS_TH}>Unit</th>
+                        <th className={WS_TH}>Date</th>
+                        <th className={cn(WS_TH, 'text-right')}>Amount</th>
+                        <th className={cn(WS_TH, 'text-right')}>Tax charged</th>
+                        <th className={cn(WS_TH, 'w-24')} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {restatable.slice(0, 30).map((r) => (
+                        <tr className={WS_TR} key={r.id}>
+                          <td className={cn(WS_TD, 'font-medium')}>{unitNo(r.unit_id)}</td>
+                          <td className={WS_TD}>{r.receipt_date}</td>
+                          <td className={WS_TD_NUM}>{formatINR(r.amount_entered)}</td>
+                          <td className={WS_TD_NUM}>{formatINR(r.cgst + r.sgst)}</td>
+                          <td className={WS_TD}>
+                            <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={() => { setRestateDialog(r); setRestateTreatment('ADJUST'); }}>
+                              <Coins className="h-3 w-3" /> Restate
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </CardContent>
             </Card>
           )}
         </TabsContent>
 
         {/* ── Cancellations ─────────────────────────────────────────────── */}
-        <TabsContent value="cancellations" className="mt-4">
+        <TabsContent value="cancellations" className="mt-3">
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Cancelled bookings</CardTitle>
-              <CardDescription>
+            <CardHeader className="space-y-0.5 px-4 pb-2 pt-3">
+              <CardTitle className="text-[15px] leading-snug">Cancelled bookings</CardTitle>
+              <CardDescription className="text-xs leading-snug">
                 A <strong>credit note</strong> cancellation reverses the tax already charged in full,
                 immediately. A <strong>set-off</strong> cancellation raises no credit note — each refund
                 payment instead nets against that payment's own month's Table 11A collections at the
@@ -1483,77 +1503,77 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
                 forward. Use "Cancel booking" on a unit's row menu on the Bookings page to start one.
               </CardDescription>
             </CardHeader>
-            <CardContent className="p-0">
+            <CardContent className="px-4 pb-3">
               {cancellations.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-4 py-6">No bookings cancelled.</p>
+                <p className="py-2 text-sm text-muted-foreground">No bookings cancelled.</p>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Unit</TableHead>
-                      <TableHead>Cancelled</TableHead>
-                      <TableHead>Method</TableHead>
-                      <TableHead className="text-right">Total received</TableHead>
-                      <TableHead className="text-right">Refund payable</TableHead>
-                      <TableHead className="text-right">Refund paid</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="w-32" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {cancellations.map((c) => (
-                      <React.Fragment key={c.id}>
-                        <TableRow>
-                          <TableCell className="font-medium">{unitNo(c.unit_id)}</TableCell>
-                          <TableCell className="text-sm">{c.cancellation_date}</TableCell>
-                          <TableCell className="text-sm">
-                            {c.correction_method === 'CREDIT_NOTE' ? 'Credit note'
-                              : c.correction_method === 'SETOFF' ? 'Set-off' : 'No correction'}
-                          </TableCell>
-                          <TableCell className="text-right text-sm">{formatINR(c.total_received)}</TableCell>
-                          <TableCell className="text-right text-sm">{formatINR(c.refund_payable)}</TableCell>
-                          <TableCell className="text-right text-sm">{formatINR(c.refund_paid)}</TableCell>
-                          <TableCell>
-                            <Badge className={c.status === 'SETTLED'
-                              ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                              : 'bg-amber-100 text-amber-800 border-amber-200'}>
-                              {c.status === 'SETTLED' ? 'Settled' : 'Refund pending'}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            {canEdit && c.status === 'OPEN' && (
-                              <Button
-                                size="sm" variant="outline"
-                                onClick={() => {
-                                  setRefundForm({ payment_date: today(), amount: '', instrument_type: 'NEFT/RTGS', instrument_ref: '', notes: '' });
-                                  setRefundDialog(c);
-                                }}
-                              >
-                                Record payment
-                              </Button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                        {refundPayments.filter((p) => p.cancellation_id === c.id).map((p) => (
-                          <TableRow key={p.id} className="bg-muted/20">
-                            <TableCell />
-                            <TableCell className="text-xs text-muted-foreground">{p.payment_date}</TableCell>
-                            <TableCell colSpan={2} className="text-xs text-muted-foreground">
-                              Paid {formatINR(p.amount)}
-                              {c.correction_method === 'SETOFF' && (
-                                <>
-                                  {' — set off '}{formatINR(p.offset_amount)} against {prettyPeriodLabel(p.period_month)}
-                                  {p.forfeited_amount > 0.005 && <>, {formatINR(p.forfeited_amount)} forfeited</>}
-                                </>
+                <div className={WS_TABLE_WRAP}>
+                  <table className={WS_TABLE}>
+                    <thead>
+                      <tr>
+                        <th className={WS_TH}>Unit</th>
+                        <th className={WS_TH}>Cancelled</th>
+                        <th className={WS_TH}>Method</th>
+                        <th className={cn(WS_TH, 'text-right')}>Total received</th>
+                        <th className={cn(WS_TH, 'text-right')}>Refund payable</th>
+                        <th className={cn(WS_TH, 'text-right')}>Refund paid</th>
+                        <th className={WS_TH}>Status</th>
+                        <th className={cn(WS_TH, 'w-32')} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cancellations.map((c) => (
+                        <React.Fragment key={c.id}>
+                          <tr className={WS_TR}>
+                            <td className={cn(WS_TD, 'font-medium')}>{unitNo(c.unit_id)}</td>
+                            <td className={WS_TD}>{c.cancellation_date}</td>
+                            <td className={WS_TD}>
+                              {c.correction_method === 'CREDIT_NOTE' ? 'Credit note'
+                                : c.correction_method === 'SETOFF' ? 'Set-off' : 'No correction'}
+                            </td>
+                            <td className={WS_TD_NUM}>{formatINR(c.total_received)}</td>
+                            <td className={WS_TD_NUM}>{formatINR(c.refund_payable)}</td>
+                            <td className={WS_TD_NUM}>{formatINR(c.refund_paid)}</td>
+                            <td className={WS_TD}>
+                              <Badge variant={c.status === 'SETTLED' ? 'success' : 'warning'} className="text-[10px] font-medium">
+                                {c.status === 'SETTLED' ? 'Settled' : 'Refund pending'}
+                              </Badge>
+                            </td>
+                            <td className={WS_TD}>
+                              {canEdit && c.status === 'OPEN' && (
+                                <Button
+                                  size="sm" variant="outline" className="h-7 px-2 text-xs"
+                                  onClick={() => {
+                                    setRefundForm({ payment_date: today(), amount: '', instrument_type: 'NEFT/RTGS', instrument_ref: '', notes: '' });
+                                    setRefundDialog(c);
+                                  }}
+                                >
+                                  Record payment
+                                </Button>
                               )}
-                            </TableCell>
-                            <TableCell colSpan={3} />
-                          </TableRow>
-                        ))}
-                      </React.Fragment>
-                    ))}
-                  </TableBody>
-                </Table>
+                            </td>
+                          </tr>
+                          {refundPayments.filter((p) => p.cancellation_id === c.id).map((p) => (
+                            <tr className={cn(WS_TR, 'bg-muted/20')} key={p.id}>
+                              <td className={WS_TD} />
+                              <td className={cn(WS_TD, 'text-muted-foreground')}>{p.payment_date}</td>
+                              <td className={cn(WS_TD, 'text-muted-foreground')} colSpan={2}>
+                                Paid {formatINR(p.amount)}
+                                {c.correction_method === 'SETOFF' && (
+                                  <>
+                                    {' — set off '}{formatINR(p.offset_amount)} against {prettyPeriodLabel(p.period_month)}
+                                    {p.forfeited_amount > 0.005 && <>, {formatINR(p.forfeited_amount)} forfeited</>}
+                                  </>
+                                )}
+                              </td>
+                              <td className={WS_TD} colSpan={3} />
+                            </tr>
+                          ))}
+                        </React.Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </CardContent>
           </Card>
@@ -1632,8 +1652,8 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
                       + 'on this advance.'}
               </p>
               {cancelForm.correction_method === 'CREDIT_NOTE' && cancelPreview && !cancelPreview.window.isOpen && (
-                <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 mt-2 text-amber-900">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <div className="mt-2 flex gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-foreground">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
                   <p className="text-xs">
                     The s.34 window on this booking's earliest receipt closed on {cancelPreview.window.expiryLabel}.
                     A credit note raised now will be recorded but excluded from GSTR-1 — the tax cannot be
@@ -1803,34 +1823,36 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
               </div>
 
               <div className="rounded border overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Period</TableHead>
-                      <TableHead className="text-right">Taxable value</TableHead>
-                      <TableHead className="text-right">At 1.5%</TableHead>
-                      <TableHead className="text-right">At {reclassDialog?.currentRatePct}%</TableHead>
-                      <TableHead className="text-right">Differential</TableHead>
-                      <TableHead>Due date</TableHead>
-                      <TableHead className="text-right">Days</TableHead>
-                      <TableHead className="text-right">Interest</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {previewSchedule.periods.map((p) => (
-                      <TableRow key={p.periodMonth}>
-                        <TableCell className="text-sm">{prettyPeriodLabel(p.periodMonth)}</TableCell>
-                        <TableCell className="text-right text-sm">{formatINR(p.taxableValue)}</TableCell>
-                        <TableCell className="text-right text-sm">{formatINR(p.oldCgst + p.oldSgst)}</TableCell>
-                        <TableCell className="text-right text-sm">{formatINR(p.newCgst + p.newSgst)}</TableCell>
-                        <TableCell className="text-right text-sm font-medium">{formatINR(p.differentialTax)}</TableCell>
-                        <TableCell className="text-sm">{p.dueDate}</TableCell>
-                        <TableCell className="text-right text-sm">{p.interestDays}</TableCell>
-                        <TableCell className="text-right text-sm">{formatINR(p.interestAmount)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <div className={WS_TABLE_WRAP}>
+                  <table className={WS_TABLE}>
+                    <thead>
+                      <tr>
+                        <th className={WS_TH}>Period</th>
+                        <th className={cn(WS_TH, 'text-right')}>Taxable value</th>
+                        <th className={cn(WS_TH, 'text-right')}>At 1.5%</th>
+                        <th className={cn(WS_TH, 'text-right')}>At {reclassDialog?.currentRatePct}%</th>
+                        <th className={cn(WS_TH, 'text-right')}>Differential</th>
+                        <th className={WS_TH}>Due date</th>
+                        <th className={cn(WS_TH, 'text-right')}>Days</th>
+                        <th className={cn(WS_TH, 'text-right')}>Interest</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewSchedule.periods.map((p) => (
+                        <tr className={WS_TR} key={p.periodMonth}>
+                          <td className={WS_TD}>{prettyPeriodLabel(p.periodMonth)}</td>
+                          <td className={WS_TD_NUM}>{formatINR(p.taxableValue)}</td>
+                          <td className={WS_TD_NUM}>{formatINR(p.oldCgst + p.oldSgst)}</td>
+                          <td className={WS_TD_NUM}>{formatINR(p.newCgst + p.newSgst)}</td>
+                          <td className={cn(WS_TD_NUM, 'font-medium')}>{formatINR(p.differentialTax)}</td>
+                          <td className={WS_TD}>{p.dueDate}</td>
+                          <td className={WS_TD_NUM}>{p.interestDays}</td>
+                          <td className={WS_TD_NUM}>{formatINR(p.interestAmount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </>
           )}
@@ -1928,7 +1950,7 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
             <div className="rounded-md border p-3 text-sm space-y-1 bg-muted/30">
               <div className="flex justify-between"><span>Entered here</span><span>{formatINR(histRecon.historicalTotal)}</span></div>
               <div className="flex justify-between"><span>Opening balance — cumulative receipts</span><span>{formatINR(histRecon.openingCumulativeReceipts)}</span></div>
-              <div className={`flex justify-between font-medium ${Math.abs(histRecon.variance) > 0.5 ? 'text-amber-700' : 'text-emerald-700'}`}>
+              <div className={`flex justify-between font-medium ${Math.abs(histRecon.variance) > 0.5 ? 'text-amber-700 dark:text-amber-400' : 'text-success-strong'}`}>
                 <span>Variance</span><span>{formatINR(histRecon.variance)}</span>
               </div>
               {Math.abs(histRecon.variance) > 0.5 && (
@@ -1965,34 +1987,36 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
             <Button onClick={handleAddHistorical} disabled={isSaving}>Add</Button>
           </div>
 
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Date</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
-                <TableHead>Notes</TableHead>
-                <TableHead className="w-16" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {histLoading ? (
-                <TableRow><TableCell colSpan={4} className="text-center text-sm text-muted-foreground py-6">Loading…</TableCell></TableRow>
-              ) : histReceipts.length === 0 ? (
-                <TableRow><TableCell colSpan={4} className="text-center text-sm text-muted-foreground py-6">No historical receipts entered.</TableCell></TableRow>
-              ) : histReceipts.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell className="text-sm">{r.receiptDate}</TableCell>
-                  <TableCell className="text-right text-sm">{formatINR(r.amount)}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{r.notes}</TableCell>
-                  <TableCell>
-                    <Button size="sm" variant="ghost" onClick={() => handleDeleteHistorical(r.id)}>
-                      <Undo2 className="h-3 w-3" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <div className={WS_TABLE_WRAP}>
+            <table className={WS_TABLE}>
+              <thead>
+                <tr>
+                  <th className={WS_TH}>Date</th>
+                  <th className={cn(WS_TH, 'text-right')}>Amount</th>
+                  <th className={WS_TH}>Notes</th>
+                  <th className={cn(WS_TH, 'w-16')} />
+                </tr>
+              </thead>
+              <tbody>
+                {histLoading ? (
+                  <tr className={WS_TR}><td className={cn(WS_TD, 'text-center text-muted-foreground py-6')} colSpan={4}>Loading…</td></tr>
+                ) : histReceipts.length === 0 ? (
+                  <tr className={WS_TR}><td className={cn(WS_TD, 'text-center text-muted-foreground py-6')} colSpan={4}>No historical receipts entered.</td></tr>
+                ) : histReceipts.map((r) => (
+                  <tr className={WS_TR} key={r.id}>
+                    <td className={WS_TD}>{r.receiptDate}</td>
+                    <td className={WS_TD_NUM}>{formatINR(r.amount)}</td>
+                    <td className={cn(WS_TD, 'text-muted-foreground')}>{r.notes}</td>
+                    <td className={WS_TD}>
+                      <Button size="sm" variant="ghost" onClick={() => handleDeleteHistorical(r.id)}>
+                        <Undo2 className="h-3 w-3" />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setHistDialog(false)}>Close</Button>
@@ -2051,10 +2075,10 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
           </div>
 
           {cnWindow && (
-            <div className={`flex gap-2 rounded-lg border p-3 ${cnWindow.isOpen
-              ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
-              : 'border-red-200 bg-red-50 text-red-900'}`}>
-              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            <div className={`flex gap-2 rounded-md border px-2.5 py-1.5 text-foreground ${cnWindow.isOpen
+              ? 'border-success/40 bg-success/10'
+              : 'border-destructive/40 bg-destructive/5'}`}>
+              <AlertTriangle className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${cnWindow.isOpen ? 'text-success-strong' : 'text-destructive'}`} />
               <p className="text-xs">
                 {cnWindow.isOpen
                   ? `Window open until ${cnWindow.expiryLabel} — ${cnWindow.daysRemaining} days remaining.`

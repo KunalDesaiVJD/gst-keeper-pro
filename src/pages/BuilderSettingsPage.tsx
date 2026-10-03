@@ -3,18 +3,21 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, Note, SectionCard } from '@/components/gstr9/ui';
+import { WS_BTN, WS_CONTROL, WS_FILTER_LABEL, WS_PAGE } from '@/components/workspace/theme';
+import { useBuilderEmbedded } from '@/contexts/BuilderWorkspaceContext';
+import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { toast } from 'sonner';
 import {
-  Building2, Save, Loader2, Mail, CheckCircle2, AlertTriangle, Paperclip, MapPin,
+  Building2, Save, Loader2, Mail, CheckCircle2, Paperclip, MapPin,
 } from 'lucide-react';
 import {
   CHARGE_HEADS,
@@ -68,6 +71,7 @@ const BuilderSettingsPage: React.FC = () => {
   const [isSending, setIsSending] = useState(false);
 
   const readOnly = !canManageBuilderProjects();
+  const embedded = useBuilderEmbedded();
   const selectedClient = useMemo(
     () => clients.find((c) => c.id === selectedClientId) || null,
     [clients, selectedClientId],
@@ -187,32 +191,39 @@ const BuilderSettingsPage: React.FC = () => {
     ? 'none'
     : settings.confirmation_received_at ? 'received' : 'sent';
 
+  const optionClass = (on: boolean) => cn(
+    'flex cursor-pointer items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-xs',
+    on ? 'border-primary bg-primary/5' : 'hover:bg-muted/50',
+  );
+
   return (
-    <div className="space-y-6">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
+        embedded={embedded}
         title="Builder Setup"
         subtitle="Client-level GST elections for real estate projects, and the written confirmation trail"
-        icon={<Building2 className="h-5 w-5" />}
+        icon={<Building2 />}
         actions={
           settings && !readOnly ? (
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={handleSendConfirmation} disabled={isSending || isSaving}>
-                {isSending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Mail className="h-4 w-4 mr-2" />}
+            <>
+              <Button variant="outline" size="sm" className={WS_BTN} onClick={handleSendConfirmation} disabled={isSending || isSaving}>
+                {isSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
                 Send confirmation
               </Button>
-              <Button onClick={handleSave} disabled={isSaving}>
-                {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+              <Button size="sm" className={WS_BTN} onClick={handleSave} disabled={isSaving}>
+                {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 Save
               </Button>
-            </div>
+            </>
           ) : undefined
         }
       />
 
       <Card>
-        <CardContent className="p-4">
-          <div className="max-w-md">
-            <Label className="mb-1.5 block">Builder client</Label>
+        <CardContent className="px-3 py-2">
+          <label className="block max-w-md space-y-0.5">
+            <span className={WS_FILTER_LABEL}>Builder client</span>
             <SearchableSelect
               options={clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin || undefined }))}
               value={selectedClientId || ''}
@@ -220,106 +231,107 @@ const BuilderSettingsPage: React.FC = () => {
               placeholder="Search builder client..."
               searchPlaceholder="Type to search..."
               emptyText="No builder clients. Set a client's sub-type to Builder first."
+              className={WS_CONTROL}
             />
-          </div>
+          </label>
         </CardContent>
       </Card>
 
       {isLoading && (
-        <div className="flex items-center gap-2 text-muted-foreground text-sm">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading settings…
-        </div>
+        <Card>
+          <CardContent className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading settings…
+          </CardContent>
+        </Card>
       )}
 
       {settings && !isLoading && (
-        <>
+        <div className="grid gap-3 lg:grid-cols-2">
           {/* ── Invoicing model ──────────────────────────────────────────── */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">1. How this client bills members</CardTitle>
-              <CardDescription>
+          <SectionCard
+            title="1. How this client bills members"
+            description={(
+              <>
                 Most promoters raise a milestone tax invoice as construction progresses. Some never do —
                 they collect strictly against the agreement, and the whole balance falls due only at the
                 BU (or an earlier dastavej) cut-off. Get this right first: it decides whether "Raise
                 invoice" appears on the ledger at all.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between py-2">
-                <div className="min-w-0 pr-4">
-                  <p className="text-sm font-medium">Raises milestone invoices</p>
-                  <p className="text-xs text-muted-foreground">
-                    {settings.raises_invoices
-                      ? 'Milestone, delay-interest and other manual invoices are available on the ledger.'
-                      : 'Invoicing hidden on the ledger. Tax is charged only on advances (Table 11A) and '
-                        + "at the BU/dastavej differential — the two events this client actually uses. "
-                        + 'The automatic BU differential invoice still fires when that event posts.'}
-                  </p>
-                </div>
-                <Switch
-                  checked={settings.raises_invoices}
-                  disabled={readOnly}
-                  onCheckedChange={(v) => patch({ raises_invoices: v })}
-                />
+              </>
+            )}
+          >
+            <div className="flex items-center justify-between gap-3 rounded-md border px-2.5 py-1.5">
+              <div className="min-w-0">
+                <p className="text-xs font-medium">Raises milestone invoices</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {settings.raises_invoices
+                    ? 'Milestone, delay-interest and other manual invoices are available on the ledger.'
+                    : 'Invoicing hidden on the ledger. Tax is charged only on advances (Table 11A) and '
+                      + "at the BU/dastavej differential — the two events this client actually uses. "
+                      + 'The automatic BU differential invoice still fires when that event posts.'}
+                </p>
               </div>
-            </CardContent>
-          </Card>
+              <Switch
+                checked={settings.raises_invoices}
+                disabled={readOnly}
+                onCheckedChange={(v) => patch({ raises_invoices: v })}
+              />
+            </div>
+          </SectionCard>
 
           {/* ── Metro / non-metro ────────────────────────────────────────── */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <MapPin className="h-4 w-4" /> 2. Metropolitan city
-              </CardTitle>
-              <CardDescription>
+          <SectionCard
+            title={<span className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> 2. Metropolitan city</span>}
+            description={(
+              <>
                 Decides the affordable-housing carpet limit: 60 sq m in a metropolitan city, 90 sq m
                 elsewhere. The metro list is Bengaluru, Chennai, Delhi NCR, Hyderabad, Kolkata and MMR —
                 Gujarat cities are never metro. This is only a default for a <strong>new</strong> project
                 created for this client; it is set per project (a client could in principle build in more
                 than one city) and never changes an existing project's own election.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between py-2">
-                <div className="min-w-0 pr-4">
-                  <p className="text-sm font-medium">New projects default to metropolitan</p>
-                  <p className="text-xs text-muted-foreground">
-                    {settings.default_is_metro
-                      ? 'New projects for this client start as metro (60 sq m affordable limit). Override per project if one falls outside the metro list.'
-                      : 'New projects for this client start as non-metro (90 sq m affordable limit) — the default for Gujarat property.'}
-                  </p>
-                </div>
-                <Switch
-                  checked={settings.default_is_metro}
-                  disabled={readOnly}
-                  onCheckedChange={(v) => patch({ default_is_metro: v })}
-                />
+              </>
+            )}
+          >
+            <div className="flex items-center justify-between gap-3 rounded-md border px-2.5 py-1.5">
+              <div className="min-w-0">
+                <p className="text-xs font-medium">New projects default to metropolitan</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {settings.default_is_metro
+                    ? 'New projects for this client start as metro (60 sq m affordable limit). Override per project if one falls outside the metro list.'
+                    : 'New projects for this client start as non-metro (90 sq m affordable limit) — the default for Gujarat property.'}
+                </p>
               </div>
-            </CardContent>
-          </Card>
+              <Switch
+                checked={settings.default_is_metro}
+                disabled={readOnly}
+                onCheckedChange={(v) => patch({ default_is_metro: v })}
+              />
+            </div>
+          </SectionCard>
 
           {/* ── Charge heads ─────────────────────────────────────────────── */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">3. Charges forming part of the unit price</CardTitle>
-              <CardDescription>
+          <SectionCard
+            className="lg:col-span-2"
+            title="3. Charges forming part of the unit price"
+            description={(
+              <>
                 Whatever is switched on here forms the "gross amount charged" for the apartment. That one
                 base decides both the ₹45 lakh affordable limit and the taxable value — they are the same
                 statutory concept, which is why each head has a single switch rather than two.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-1">
+              </>
+            )}
+          >
+            <div className="grid gap-x-4 sm:grid-cols-2 xl:grid-cols-3">
               {CHARGE_HEADS.map((head) => {
                 const key = CHARGE_HEAD_SETTING_KEY[head] as keyof ChargeInclusionSettings;
                 const on = settings[key] !== false;
                 return (
                   <div
                     key={head}
-                    className="flex items-center justify-between py-2 border-b last:border-b-0 border-border/60"
+                    className="flex items-center justify-between gap-3 border-b border-border/60 py-1.5"
                   >
                     <div className="min-w-0">
-                      <p className="text-sm font-medium">{CHARGE_HEAD_LABEL[head]}</p>
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-xs font-medium">{CHARGE_HEAD_LABEL[head]}</p>
+                      <p className="text-[11px] text-muted-foreground">
                         {on ? 'Included in gross amount charged' : 'Excluded — not taxed, not counted toward ₹45 lakh'}
                       </p>
                     </div>
@@ -331,234 +343,201 @@ const BuilderSettingsPage: React.FC = () => {
                   </div>
                 );
               })}
-              <p className="text-xs text-muted-foreground pt-3">
-                Stamp duty, registration charges and GST itself are never part of this base.
-              </p>
-            </CardContent>
-          </Card>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Stamp duty, registration charges and GST itself are never part of this base.
+            </p>
+          </SectionCard>
 
           {/* ── Extra work ───────────────────────────────────────────────── */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">4. Extra / additional work billed to members</CardTitle>
-              <CardDescription>Modifications and upgrades charged over and above the unit price.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <RadioGroup
-                value={settings.extra_work_rate}
-                onValueChange={(v) => patch({ extra_work_rate: v as ExtraWorkRate })}
-                disabled={readOnly}
-                className="space-y-2"
-              >
-                {(Object.keys(EXTRA_WORK_LABEL) as ExtraWorkRate[]).map((k) => (
-                  <label
-                    key={k}
-                    htmlFor={`extra-${k}`}
-                    className={`flex items-center gap-3 rounded-lg border p-3 cursor-pointer ${
-                      settings.extra_work_rate === k ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
-                    }`}
-                  >
-                    <RadioGroupItem value={k} id={`extra-${k}`} />
-                    <span className="text-sm">{EXTRA_WORK_LABEL[k]}</span>
-                  </label>
-                ))}
-              </RadioGroup>
-            </CardContent>
-          </Card>
+          <SectionCard
+            title="4. Extra / additional work billed to members"
+            description="Modifications and upgrades charged over and above the unit price."
+          >
+            <RadioGroup
+              value={settings.extra_work_rate}
+              onValueChange={(v) => patch({ extra_work_rate: v as ExtraWorkRate })}
+              disabled={readOnly}
+              className="gap-1.5"
+            >
+              {(Object.keys(EXTRA_WORK_LABEL) as ExtraWorkRate[]).map((k) => (
+                <label key={k} htmlFor={`extra-${k}`} className={optionClass(settings.extra_work_rate === k)}>
+                  <RadioGroupItem value={k} id={`extra-${k}`} />
+                  <span>{EXTRA_WORK_LABEL[k]}</span>
+                </label>
+              ))}
+            </RadioGroup>
+          </SectionCard>
 
           {/* ── Delay interest ───────────────────────────────────────────── */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">5. Interest recovered on delayed instalments</CardTitle>
-              <CardDescription>
+          <SectionCard
+            title="5. Interest recovered on delayed instalments"
+            description={(
+              <>
                 Section 15(2)(d) includes such interest in the value of the principal supply, which would
                 carry the unit's own rate. A flat 18% is the more conservative election — it never
                 under-charges, so it carries no exposure to the department, but it does cost the member more.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <RadioGroup
-                value={settings.delay_interest_basis}
-                onValueChange={(v) => patch({ delay_interest_basis: v as DelayInterestBasis })}
-                disabled={readOnly}
-                className="space-y-2"
-              >
-                {(Object.keys(DELAY_INTEREST_LABEL) as DelayInterestBasis[]).map((k) => (
-                  <label
-                    key={k}
-                    htmlFor={`delay-${k}`}
-                    className={`flex items-center gap-3 rounded-lg border p-3 cursor-pointer ${
-                      settings.delay_interest_basis === k ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
-                    }`}
-                  >
-                    <RadioGroupItem value={k} id={`delay-${k}`} />
-                    <span className="text-sm">{DELAY_INTEREST_LABEL[k]}</span>
-                  </label>
-                ))}
-              </RadioGroup>
-            </CardContent>
-          </Card>
+              </>
+            )}
+          >
+            <RadioGroup
+              value={settings.delay_interest_basis}
+              onValueChange={(v) => patch({ delay_interest_basis: v as DelayInterestBasis })}
+              disabled={readOnly}
+              className="gap-1.5"
+            >
+              {(Object.keys(DELAY_INTEREST_LABEL) as DelayInterestBasis[]).map((k) => (
+                <label key={k} htmlFor={`delay-${k}`} className={optionClass(settings.delay_interest_basis === k)}>
+                  <RadioGroupItem value={k} id={`delay-${k}`} />
+                  <span>{DELAY_INTEREST_LABEL[k]}</span>
+                </label>
+              ))}
+            </RadioGroup>
+          </SectionCard>
 
           {/* ── Excess tax ───────────────────────────────────────────────── */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">6. Excess tax paid on GST-inclusive receipts</CardTitle>
-              <CardDescription>
+          <SectionCard
+            title="6. Excess tax paid on GST-inclusive receipts"
+            description={(
+              <>
                 Where a receipt was inclusive of GST but tax was computed on the whole figure, tax has been
                 paid on the tax. This is how the excess is dealt with once the receipt is restated.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <RadioGroup
-                value={settings.excess_tax_treatment}
-                onValueChange={(v) => patch({ excess_tax_treatment: v as ExcessTaxTreatment })}
-                disabled={readOnly}
-                className="space-y-2"
-              >
-                {(Object.keys(EXCESS_TAX_LABEL) as ExcessTaxTreatment[]).map((k) => (
-                  <label
-                    key={k}
-                    htmlFor={`excess-${k}`}
-                    className={`flex items-center gap-3 rounded-lg border p-3 cursor-pointer ${
-                      settings.excess_tax_treatment === k ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
-                    }`}
-                  >
-                    <RadioGroupItem value={k} id={`excess-${k}`} />
-                    <span className="text-sm">{EXCESS_TAX_LABEL[k]}</span>
-                  </label>
-                ))}
-              </RadioGroup>
-            </CardContent>
-          </Card>
+              </>
+            )}
+          >
+            <RadioGroup
+              value={settings.excess_tax_treatment}
+              onValueChange={(v) => patch({ excess_tax_treatment: v as ExcessTaxTreatment })}
+              disabled={readOnly}
+              className="gap-1.5"
+            >
+              {(Object.keys(EXCESS_TAX_LABEL) as ExcessTaxTreatment[]).map((k) => (
+                <label key={k} htmlFor={`excess-${k}`} className={optionClass(settings.excess_tax_treatment === k)}>
+                  <RadioGroupItem value={k} id={`excess-${k}`} />
+                  <span>{EXCESS_TAX_LABEL[k]}</span>
+                </label>
+              ))}
+            </RadioGroup>
+          </SectionCard>
 
           {/* ── FSI ──────────────────────────────────────────────────────── */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">7. TDR / FSI under reverse charge — default</CardTitle>
-              <CardDescription>
+          <SectionCard
+            title="7. TDR / FSI under reverse charge — default"
+            description={(
+              <>
                 Overridable per project. Choosing not to pay requires the client's written instruction on
                 file and GST Manager sign-off before the affected return can be filed.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <RadioGroup
-                value={settings.default_fsi_treatment}
-                onValueChange={(v) => patch({ default_fsi_treatment: v as FsiTreatment })}
-                disabled={readOnly}
-                className="space-y-2"
-              >
-                {(Object.keys(FSI_TREATMENT_LABEL) as FsiTreatment[]).map((k) => (
-                  <label
-                    key={k}
-                    htmlFor={`fsi-${k}`}
-                    className={`flex items-center gap-3 rounded-lg border p-3 cursor-pointer ${
-                      settings.default_fsi_treatment === k ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
-                    }`}
-                  >
-                    <RadioGroupItem value={k} id={`fsi-${k}`} />
-                    <span className="text-sm">{FSI_TREATMENT_LABEL[k]}</span>
-                  </label>
-                ))}
-              </RadioGroup>
-              {settings.default_fsi_treatment === 'IGNORE' && (
-                <div className="mt-3 flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                  <p className="text-xs">
-                    The TDR/FSI liability crystallises on the BU date. Returns for a period carrying an
-                    ignored FSI liability stay blocked until the client's written instruction is attached
-                    and approved by the GST Manager.
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+              </>
+            )}
+          >
+            <RadioGroup
+              value={settings.default_fsi_treatment}
+              onValueChange={(v) => patch({ default_fsi_treatment: v as FsiTreatment })}
+              disabled={readOnly}
+              className="gap-1.5"
+            >
+              {(Object.keys(FSI_TREATMENT_LABEL) as FsiTreatment[]).map((k) => (
+                <label key={k} htmlFor={`fsi-${k}`} className={optionClass(settings.default_fsi_treatment === k)}>
+                  <RadioGroupItem value={k} id={`fsi-${k}`} />
+                  <span>{FSI_TREATMENT_LABEL[k]}</span>
+                </label>
+              ))}
+            </RadioGroup>
+            {settings.default_fsi_treatment === 'IGNORE' && (
+              <Note tone="warn">
+                The TDR/FSI liability crystallises on the BU date. Returns for a period carrying an
+                ignored FSI liability stay blocked until the client's written instruction is attached
+                and approved by the GST Manager.
+              </Note>
+            )}
+          </SectionCard>
 
           {/* ── Confirmation trail ───────────────────────────────────────── */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
+          <SectionCard
+            className="lg:col-span-2"
+            title={(
+              <span className="flex flex-wrap items-center gap-1.5">
                 8. Client confirmation
                 {confirmationState === 'received' && (
-                  <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">
-                    <CheckCircle2 className="h-3 w-3 mr-1" /> Confirmed
+                  <Badge variant="success" className="gap-1 text-[10px] font-medium">
+                    <CheckCircle2 className="h-3 w-3" /> Confirmed
                   </Badge>
                 )}
                 {confirmationState === 'sent' && (
-                  <Badge className="bg-amber-100 text-amber-800 border-amber-200">Awaiting reply</Badge>
+                  <Badge variant="warning" className="text-[10px] font-medium">Awaiting reply</Badge>
                 )}
                 {confirmationState === 'none' && (
-                  <Badge variant="outline">Not sent</Badge>
+                  <Badge variant="outline" className="text-[10px] font-medium">Not sent</Badge>
                 )}
-              </CardTitle>
-              <CardDescription>
+              </span>
+            )}
+            description={(
+              <>
                 The elections above are the client's, not ours. Send the letter from {`gst@vjdesai.com`},
                 then record their reply here.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <Label className="text-xs text-muted-foreground">Letter sent</Label>
-                  <p className="text-sm font-medium">{fmtWhen(settings.confirmation_sent_at)}</p>
-                </div>
-                <div>
-                  <Label className="text-xs text-muted-foreground">Reply received</Label>
-                  <p className="text-sm font-medium">{fmtWhen(settings.confirmation_received_at)}</p>
-                </div>
-              </div>
+              </>
+            )}
+            actions={!readOnly && settings.confirmation_sent_at && !settings.confirmation_received_at ? (
+              <Button variant="outline" size="sm" className={WS_BTN} onClick={markReceived}>
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Mark confirmation received
+              </Button>
+            ) : undefined}
+          >
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <KpiTile label="Letter sent" value={<span className="text-xs">{fmtWhen(settings.confirmation_sent_at)}</span>} />
+              <KpiTile
+                label="Reply received"
+                value={<span className="text-xs">{fmtWhen(settings.confirmation_received_at)}</span>}
+                tone={settings.confirmation_received_at ? 'ok' : 'neutral'}
+              />
+            </div>
 
-              <div>
-                <Label htmlFor="conf-doc" className="mb-1.5 block">
-                  <Paperclip className="h-3 w-3 inline mr-1" />
+            <div className="grid gap-2 md:grid-cols-2">
+              <label className="block space-y-0.5" htmlFor="conf-doc">
+                <span className={cn(WS_FILTER_LABEL, 'flex items-center gap-1')}>
+                  <Paperclip className="h-3 w-3" />
                   Link to the client's written confirmation
-                </Label>
+                </span>
                 <Input
                   id="conf-doc"
+                  className={WS_CONTROL}
                   value={settings.confirmation_document_url || ''}
                   disabled={readOnly}
                   placeholder="Paste a link to the email or scanned letter"
                   onChange={(e) => patch({ confirmation_document_url: e.target.value })}
                 />
-              </div>
+              </label>
 
-              <div>
-                <Label htmlFor="conf-notes" className="mb-1.5 block">Notes</Label>
+              <label className="block space-y-0.5" htmlFor="conf-notes">
+                <span className={WS_FILTER_LABEL}>Notes</span>
                 <Textarea
                   id="conf-notes"
-                  rows={3}
+                  rows={2}
+                  className="min-h-[2rem] text-xs"
                   value={settings.confirmation_notes || ''}
                   disabled={readOnly}
                   placeholder="Anything the client asked to change, and what was agreed"
                   onChange={(e) => patch({ confirmation_notes: e.target.value })}
                 />
-              </div>
+              </label>
+            </div>
 
-              {!readOnly && settings.confirmation_sent_at && !settings.confirmation_received_at && (
-                <Button variant="outline" size="sm" onClick={markReceived}>
-                  <CheckCircle2 className="h-4 w-4 mr-2" />
-                  Mark confirmation received
-                </Button>
-              )}
-
-              {selectedClient && !selectedClient.email && (
-                <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                  <p className="text-xs">
-                    No email address on file for {selectedClient.name}. Add one on the client record before
-                    sending the confirmation letter.
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </>
+            {selectedClient && !selectedClient.email && (
+              <Note tone="warn">
+                No email address on file for {selectedClient.name}. Add one on the client record before
+                sending the confirmation letter.
+              </Note>
+            )}
+          </SectionCard>
+        </div>
       )}
 
       {!selectedClientId && !isLoading && (
         <Card>
-          <CardContent className="p-10 text-center text-muted-foreground">
-            <Building2 className="h-8 w-8 mx-auto mb-3 opacity-40" />
-            <p className="text-sm">Select a builder client to capture their GST elections.</p>
+          <CardContent className="px-4 py-8 text-center text-sm text-muted-foreground">
+            <Building2 className="mx-auto mb-2 h-6 w-6 opacity-40" />
+            Select a builder client to capture their GST elections.
           </CardContent>
         </Card>
       )}

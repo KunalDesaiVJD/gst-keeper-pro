@@ -17,7 +17,10 @@ import React, { useMemo, useState } from 'react';
 import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge, type BadgeProps } from '@/components/ui/badge';
+import type { BadgeProps } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile } from '@/components/gstr9/ui';
+import { WS_TABLE, WS_TH, WS_TD, WS_TR_TOTAL } from '@/components/workspace/theme';
 import { Input } from '@/components/ui/input';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
@@ -156,8 +159,8 @@ export const AllClientsSnapshotView: React.FC<AllClientsSnapshotViewProps> = ({ 
   if (table.rows.length === 0) {
     return (
       <Card>
-        <CardContent className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
-          <Inbox className="h-8 w-8" />
+        <CardContent className="flex flex-col items-center justify-center gap-1.5 py-8 text-muted-foreground">
+          <Inbox className="h-5 w-5 opacity-60" />
           <p className="text-sm">No data available for this report yet.</p>
         </CardContent>
       </Card>
@@ -165,13 +168,13 @@ export const AllClientsSnapshotView: React.FC<AllClientsSnapshotViewProps> = ({ 
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Header strip */}
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader className="space-y-0.5 px-4 py-3">
           <div className="flex items-center gap-2">
             <ReportIcon className="h-4 w-4 text-muted-foreground shrink-0" />
-            <CardTitle className="text-base">{table.title}</CardTitle>
+            <CardTitle className="text-[15px] leading-snug">{table.title}</CardTitle>
           </div>
           {table.subtitle && (
             <p className="text-xs text-muted-foreground pl-6">{table.subtitle}</p>
@@ -181,35 +184,26 @@ export const AllClientsSnapshotView: React.FC<AllClientsSnapshotViewProps> = ({ 
 
       {/* Grand-total summary strip — shown up top so headline figures are readable before scrolling */}
       {grandTotalRows.length > 0 && (
-        <Card className="border-primary/30 bg-primary/5">
-          <CardContent className="p-4">
-            <div className="flex flex-wrap gap-x-8 gap-y-3">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
               {table.headers.map((h, ci) => {
                 const value = grandTotalRows[0]?.[ci];
                 if (value === undefined || value === '') return null;
                 if (typeof value === 'string' && value.trim().toUpperCase() === 'TOTAL') return null;
                 if (!isNumericHeader(h)) return null;
-                return (
-                  <div key={ci} className="min-w-[110px]">
-                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium">{h}</div>
-                    <div className="text-base font-semibold tabular-nums mt-0.5">{formatCell(value)}</div>
-                  </div>
-                );
+                return <KpiTile key={ci} label={h} value={formatCell(value)} />;
               })}
-            </div>
-          </CardContent>
-        </Card>
+        </div>
       )}
 
       {/* Search + filter + count */}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search clients…"
-            className="pl-8 h-8 text-sm"
+            className="pl-8 h-8 text-xs"
           />
         </div>
 
@@ -240,13 +234,13 @@ export const AllClientsSnapshotView: React.FC<AllClientsSnapshotViewProps> = ({ 
       <Card className="overflow-hidden">
         <CardContent className="p-0">
           {sortedRows.length === 0 ? (
-            <div className="py-10 text-center text-sm text-muted-foreground">
+            <div className="py-6 text-center text-sm text-muted-foreground">
               No clients match your filters.
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <Table>
-                <TableHeader className="sticky top-0 z-20 bg-background">
+              <Table className={WS_TABLE}>
+                <TableHeader className="sticky top-0 z-20">
                   <TableRow>
                     {table.headers.map((h, ci) => {
                       const isSorted = sort.colIdx === ci && sort.dir;
@@ -256,9 +250,9 @@ export const AllClientsSnapshotView: React.FC<AllClientsSnapshotViewProps> = ({ 
                           key={ci}
                           onClick={() => handleSort(ci)}
                           className={cn(
-                            'px-3 py-2 text-xs font-semibold whitespace-nowrap bg-muted/60 cursor-pointer select-none hover:bg-muted transition-colors',
+                            WS_TH, 'h-auto cursor-pointer select-none transition-colors hover:bg-muted/70 hover:text-foreground',
                             isNumericHeader(h) && 'text-right',
-                            ci === 0 && 'sticky left-0 z-30 bg-muted/60',
+                            ci === 0 && 'sticky left-0 z-30',
                           )}
                         >
                           <span className={cn('inline-flex items-center gap-1', isNumericHeader(h) && 'flex-row-reverse')}>
@@ -277,14 +271,14 @@ export const AllClientsSnapshotView: React.FC<AllClientsSnapshotViewProps> = ({ 
                 </TableHeader>
                 <TableBody>
                   {sortedRows.map((row, ri) => (
-                    <TableRow key={ri}>
+                    <TableRow key={ri} className="hover:bg-muted/30">
                       {row.map((cell, ci) => {
                         const header = table.headers[ci] || '';
                         if (isUrl(cell)) {
                           return (
                             <TableCell
                               key={ci}
-                              className={cn('px-3 py-1.5 text-xs whitespace-nowrap', ci === 0 && 'sticky left-0 z-10 bg-background')}
+                              className={cn(WS_TD, 'whitespace-nowrap', ci === 0 && 'sticky left-0 z-10 bg-card')}
                             >
                               <a
                                 href={cell}
@@ -299,8 +293,8 @@ export const AllClientsSnapshotView: React.FC<AllClientsSnapshotViewProps> = ({ 
                         }
                         if (ci === statusColIdx && String(cell) !== '' && !isSentinelCell(cell)) {
                           return (
-                            <TableCell key={ci} className="px-3 py-1.5 text-xs whitespace-nowrap">
-                              <Badge variant={statusVariant(String(cell))} className="text-[10px] py-0">
+                            <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
+                              <Badge variant={statusVariant(String(cell))} className="text-[10px] py-0 font-medium">
                                 {String(cell)}
                               </Badge>
                             </TableCell>
@@ -308,7 +302,7 @@ export const AllClientsSnapshotView: React.FC<AllClientsSnapshotViewProps> = ({ 
                         }
                         if (isSentinelCell(cell)) {
                           return (
-                            <TableCell key={ci} className="px-3 py-1.5 text-xs">
+                            <TableCell key={ci} className={WS_TD}>
                               <Badge
                                 variant="outline"
                                 className="border-dashed text-muted-foreground font-normal text-[10px]"
@@ -322,11 +316,11 @@ export const AllClientsSnapshotView: React.FC<AllClientsSnapshotViewProps> = ({ 
                           <TableCell
                             key={ci}
                             className={cn(
-                              'px-3 py-1.5 text-xs',
+                              WS_TD,
                               isNumericHeader(header)
                                 ? 'text-right whitespace-nowrap tabular-nums'
                                 : 'max-w-[280px] truncate',
-                              ci === 0 && 'sticky left-0 z-10 bg-background font-medium',
+                              ci === 0 && 'sticky left-0 z-10 bg-card font-medium',
                             )}
                           >
                             {formatCell(cell)}
@@ -344,21 +338,21 @@ export const AllClientsSnapshotView: React.FC<AllClientsSnapshotViewProps> = ({ 
 
       {/* Pinned grand-total row(s) — always visible, exempt from search/filter/sort */}
       {grandTotalRows.length > 0 && (
-        <Card className="border-primary/30 sticky bottom-0 shadow-md">
+        <Card className="sticky bottom-0 overflow-hidden shadow-md">
           <CardContent className="p-0 overflow-x-auto">
-            <Table>
+            <Table className={WS_TABLE}>
               <TableBody>
                 {grandTotalRows.map((row, ri) => (
-                  <TableRow key={ri} className="bg-primary/5 font-semibold hover:bg-primary/10">
+                  <TableRow key={ri} className={cn(WS_TR_TOTAL, 'hover:bg-muted')}>
                     {row.map((cell, ci) => {
                       const header = table.headers[ci] || '';
                       return (
                         <TableCell
                           key={ci}
                           className={cn(
-                            'px-3 py-2 text-xs',
+                            WS_TD, 'border-b-0',
                             isNumericHeader(header) ? 'text-right whitespace-nowrap tabular-nums' : '',
-                            ci === 0 && 'sticky left-0 bg-primary/5',
+                            ci === 0 && 'sticky left-0 bg-muted',
                           )}
                         >
                           {formatCell(cell)}

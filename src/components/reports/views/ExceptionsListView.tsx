@@ -9,7 +9,9 @@ import React, { useMemo, useState } from 'react';
 import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile } from '@/components/gstr9/ui';
+import { WS_TABLE, WS_TH, WS_TD } from '@/components/workspace/theme';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
@@ -148,16 +150,16 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
   if (flaggedCount === 0) {
     return (
       <Card>
-        <CardHeader className="gap-1.5">
-          <CardTitle className="flex items-center gap-2 text-base">
+        <CardHeader className="space-y-0.5 px-4 pb-2 pt-3">
+          <CardTitle className="flex items-center gap-2 text-[15px] leading-snug">
             <Icon className="h-4 w-4 text-muted-foreground" />
             {table.title}
           </CardTitle>
-          <CardDescription>{table.subtitle}</CardDescription>
+          <CardDescription className="text-xs">{table.subtitle}</CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed py-14 text-center">
-            <CheckCircle2 className="h-8 w-8 text-success" />
+        <CardContent className="px-4 pb-3">
+          <div className="flex flex-col items-center justify-center gap-1.5 rounded-md border border-dashed py-8 text-center">
+            <CheckCircle2 className="h-5 w-5 text-success" />
             <p className="text-sm font-medium text-foreground">No exceptions this period</p>
             <p className="max-w-sm text-xs text-muted-foreground">
               Every client cleared this check for the selected period — nothing needs action.
@@ -170,30 +172,27 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
 
   return (
     <Card className="border-destructive/30">
-      <CardHeader className="gap-2">
+      <CardHeader className="space-y-0 px-4 pb-2 pt-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="space-y-1.5">
-            <CardTitle className="flex items-center gap-2 text-base">
+          <div className="space-y-0.5">
+            <CardTitle className="flex items-center gap-2 text-[15px] leading-snug">
               <Icon className="h-4 w-4 text-destructive" />
               {table.title}
             </CardTitle>
-            <CardDescription>{table.subtitle}</CardDescription>
+            <CardDescription className="text-xs">{table.subtitle}</CardDescription>
           </div>
-          <Badge variant="destructive" className="flex shrink-0 items-center gap-1.5 px-3 py-1 text-xs font-semibold">
-            <AlertTriangle className="h-3.5 w-3.5" />
+          <Badge variant="destructive" className="flex shrink-0 items-center gap-1 text-[10px] font-medium">
+            <AlertTriangle className="h-3 w-3 text-destructive" />
             {flaggedCount} client{flaggedCount === 1 ? '' : 's'} flagged
           </Badge>
         </div>
       </CardHeader>
 
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-2.5 px-4 pb-3">
         {/* Summary strip — the number this report exists to surface, readable before scrolling */}
         {amountColIdx !== -1 && totalAmount !== null && (
-          <div className="flex flex-wrap items-center gap-3 rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3">
-            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Total {headers[amountColIdx]}
-            </span>
-            <span className="text-xl font-bold tabular-nums text-destructive">{formatCell(totalAmount)}</span>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+            <KpiTile label={`Total ${headers[amountColIdx]}`} value={formatCell(totalAmount)} tone="error" />
           </div>
         )}
 
@@ -205,7 +204,7 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search client, GSTIN…"
-              className="h-8 pl-8 text-sm"
+              className="h-8 pl-8 text-xs"
             />
           </div>
 
@@ -231,15 +230,15 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
         </div>
 
         {/* Table */}
-        <div className="max-h-[65vh] overflow-auto rounded-md border">
-          <Table>
-            <TableHeader className="sticky top-0 z-10 bg-background">
+        <div className="max-h-[65vh] overflow-auto rounded-md border bg-card">
+          <Table className={WS_TABLE}>
+            <TableHeader className="sticky top-0 z-10">
               <TableRow>
                 {headers.map((h, i) => (
                   <TableHead
                     key={i}
                     className={cn(
-                      'whitespace-nowrap bg-muted/60 px-3 py-2 text-xs font-semibold',
+                      WS_TH, 'h-auto',
                       (isNumericHeader(h) || i === amountColIdx) && 'text-right',
                       i === amountColIdx && 'text-destructive',
                     )}
@@ -253,20 +252,20 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
             <TableBody>
               {visibleRows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={headers.length} className="py-10 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={headers.length} className="border-b py-6 text-center text-sm text-muted-foreground">
                     No rows match &quot;{search}&quot;.
                   </TableCell>
                 </TableRow>
               )}
 
               {visibleRows.map((row, ri) => (
-                <TableRow key={ri}>
+                <TableRow key={ri} className="hover:bg-muted/30">
                   {row.map((cell, ci) => {
                     const header = headers[ci] || '';
 
                     if (isUrlCell(cell)) {
                       return (
-                        <TableCell key={ci} className="whitespace-nowrap px-3 py-1.5 text-xs">
+                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
                           <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild>
                             <a href={cell as string} target="_blank" rel="noopener noreferrer">View</a>
                           </Button>
@@ -276,8 +275,8 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
 
                     if (ci === statusColIdx && String(cell ?? '').trim() && !isSentinelCell(cell)) {
                       return (
-                        <TableCell key={ci} className="whitespace-nowrap px-3 py-1.5 text-xs">
-                          <Badge variant={STATUS_VARIANT(String(cell))} className="py-0 text-[10px]">
+                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
+                          <Badge variant={STATUS_VARIANT(String(cell))} className="py-0 text-[10px] font-medium">
                             {String(cell)}
                           </Badge>
                         </TableCell>
@@ -286,7 +285,7 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
 
                     if (isSentinelCell(cell)) {
                       return (
-                        <TableCell key={ci} className="whitespace-nowrap px-3 py-1.5 text-xs">
+                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
                           <Badge variant="outline" className="border-dashed py-0 text-[10px] text-muted-foreground">
                             {String(cell)}
                           </Badge>
@@ -298,7 +297,7 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
                       return (
                         <TableCell
                           key={ci}
-                          className="whitespace-nowrap px-3 py-1.5 text-right text-sm font-bold tabular-nums text-destructive"
+                          className={cn(WS_TD, 'whitespace-nowrap text-right font-bold tabular-nums text-destructive-strong')}
                         >
                           {formatCell(cell)}
                         </TableCell>
@@ -309,7 +308,7 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
                       <TableCell
                         key={ci}
                         className={cn(
-                          'px-3 py-1.5 text-xs',
+                          WS_TD,
                           isNumericHeader(header) || typeof cell === 'number'
                             ? 'whitespace-nowrap text-right tabular-nums'
                             : 'max-w-[280px]',
@@ -330,7 +329,7 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
                   <TableRow
                     key={`total-${ri}`}
                     className={cn(
-                      'border-t-2 border-primary/20 bg-primary/5 font-semibold hover:bg-primary/10',
+                      'bg-muted font-semibold hover:bg-muted',
                       ri === totalRows.length - 1 && 'sticky bottom-0 z-10',
                     )}
                   >
@@ -340,11 +339,11 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
                         <TableCell
                           key={ci}
                           className={cn(
-                            'bg-primary/5 px-3 py-1.5 text-xs',
+                            WS_TD, 'bg-muted',
                             isNumericHeader(header) || ci === amountColIdx || typeof cell === 'number'
                               ? 'whitespace-nowrap text-right tabular-nums'
                               : '',
-                            ci === amountColIdx && 'text-sm font-bold text-destructive',
+                            ci === amountColIdx && 'font-bold text-destructive-strong',
                           )}
                         >
                           {formatCell(cell)}

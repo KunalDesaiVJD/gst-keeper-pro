@@ -33,8 +33,14 @@ import {
 } from '@/components/ui/select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Note } from '@/components/gstr9/ui';
+import {
+  WS_CONTROL, WS_FILTER_LABEL, WS_TABLE_WRAP, WS_TR_HEADING, WS_TR_TOTAL,
+} from '@/components/workspace/theme';
+import { B_TABLE, B_TD, B_TD_NUM, B_TH, B_TH_NUM, B_TR, B_TR_HEAD } from './theme';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { Loader2, Wallet, AlertTriangle, Users } from 'lucide-react';
+import { Loader2, Wallet, Users } from 'lucide-react';
 import { formatINR, computeTds194IA, isTds194IAApplicable, type BuilderRateCode } from '@/utils/builderRates';
 import { deriveReceipt, prettyPeriodLabel } from '@/utils/builderLedger';
 import { recheckStaleScheduleIII } from '@/lib/builderBuPosting';
@@ -358,26 +364,27 @@ const BulkReceiptsDialog: React.FC<Props> = ({
         </DialogHeader>
 
         {/* Common to the whole run. */}
-        <div className="grid gap-3 rounded-lg border bg-muted/30 p-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-2 rounded-md border bg-muted/30 px-3 py-2 sm:grid-cols-2 lg:grid-cols-4">
           <div>
-            <Label className="mb-1.5 block text-xs">Period</Label>
+            <Label className={cn(WS_FILTER_LABEL, 'mb-0.5 block')}>Period</Label>
             <SearchableMonthSelect
               options={monthOptions}
               value={common.receipt_month}
               onValueChange={(v) => setCommon({ ...common, receipt_month: v })}
               placeholder="Select month"
+              className={WS_CONTROL}
             />
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
               Only the return period matters here — no exact date needed.
             </p>
           </div>
           <div>
-            <Label className="mb-1.5 block text-xs">Nature</Label>
+            <Label className={cn(WS_FILTER_LABEL, 'mb-0.5 block')}>Nature</Label>
             <Select
               value={common.receipt_nature}
               onValueChange={(v) => setCommon({ ...common, receipt_nature: v })}
             >
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger className={WS_CONTROL}><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="ADVANCE">Advance — taxable on receipt</SelectItem>
                 <SelectItem value="AGAINST_INVOICE">Against an invoice — no fresh tax</SelectItem>
@@ -385,26 +392,26 @@ const BulkReceiptsDialog: React.FC<Props> = ({
             </Select>
           </div>
           <div>
-            <Label className="mb-1.5 block text-xs">Instrument</Label>
+            <Label className={cn(WS_FILTER_LABEL, 'mb-0.5 block')}>Instrument</Label>
             <Select
               value={common.instrument_type}
               onValueChange={(v) => setCommon({ ...common, instrument_type: v })}
             >
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger className={WS_CONTROL}><SelectValue /></SelectTrigger>
               <SelectContent>
                 {INSTRUMENTS.map((i) => <SelectItem key={i} value={i}>{i}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-2 pt-5">
-            <label className="flex items-center gap-2 text-sm">
+          <div className="space-y-1.5 pt-4">
+            <label className="flex items-center gap-2 text-xs">
               <Checkbox
                 checked={common.amount_is_gst_inclusive}
                 onCheckedChange={(v) => setCommon({ ...common, amount_is_gst_inclusive: v === true })}
               />
               Amounts include GST
             </label>
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex items-center gap-2 text-xs">
               <Checkbox
                 checked={common.deduct_tds}
                 onCheckedChange={(v) => setCommon({ ...common, deduct_tds: v === true })}
@@ -415,29 +422,27 @@ const BulkReceiptsDialog: React.FC<Props> = ({
         </div>
 
         {overCollected.length > 0 && (
-          <p className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-muted-foreground">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+          <Note tone="warn">
             {overCollected.length} unit{overCollected.length === 1 ? '' : 's'} would be collected
             beyond the balance still to be taxed ({overCollected.map((r) => r.u.unitNo).join(', ')}).
             That is legitimate where the customer's price has increased — but update that unit's value in
             Unit Master first, so the ₹45 lakh test and rate stay correct (a residential unit crossing
             ₹45,00,000 is re-rated on everything already taxed).
-          </p>
+          </Note>
         )}
 
-        <div className="max-h-[46vh] overflow-auto rounded-md border">
-          <Table>
-            <TableHeader className="sticky top-0 bg-background">
-              <TableRow>
-                <TableHead>Unit</TableHead>
-                <TableHead>Rate</TableHead>
-                <TableHead className="text-right">Balance to tax</TableHead>
-                <TableHead className="w-40 text-right">Amount</TableHead>
-                <TableHead className="text-right">Consideration</TableHead>
-                <TableHead className="text-right">CGST</TableHead>
-                <TableHead className="text-right">SGST</TableHead>
-                {common.deduct_tds && <TableHead className="text-right">TDS</TableHead>}
-                <TableHead className="w-36">Reference</TableHead>
+        <Table className={B_TABLE} containerClassName={cn(WS_TABLE_WRAP, 'max-h-[46vh]')}>
+            <TableHeader>
+              <TableRow className={B_TR_HEAD}>
+                <TableHead className={B_TH}>Unit</TableHead>
+                <TableHead className={B_TH}>Rate</TableHead>
+                <TableHead className={B_TH_NUM}>Balance to tax</TableHead>
+                <TableHead className={cn(B_TH_NUM, "w-40")}>Amount</TableHead>
+                <TableHead className={B_TH_NUM}>Consideration</TableHead>
+                <TableHead className={B_TH_NUM}>CGST</TableHead>
+                <TableHead className={B_TH_NUM}>SGST</TableHead>
+                {common.deduct_tds && <TableHead className={B_TH_NUM}>TDS</TableHead>}
+                <TableHead className={cn(B_TH, "w-36")}>Reference</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -451,8 +456,8 @@ const BulkReceiptsDialog: React.FC<Props> = ({
                 return (
                   <React.Fragment key={r.u.unitId}>
                     {showGroupHeader && (
-                      <TableRow className="bg-muted/50 hover:bg-muted/50">
-                        <TableCell colSpan={colCount} className="py-1.5 text-xs font-semibold text-muted-foreground">
+                      <TableRow className={cn(WS_TR_HEADING, 'border-0 hover:bg-muted/50')}>
+                        <TableCell colSpan={colCount} className={cn(B_TD, 'text-muted-foreground')}>
                           {groupLabelOf(r.u)}
                           {gt && gt.count > 0 && (
                             <span className="ml-2 font-normal">
@@ -462,8 +467,8 @@ const BulkReceiptsDialog: React.FC<Props> = ({
                         </TableCell>
                       </TableRow>
                     )}
-                    <TableRow className={r.entered > 0 ? 'bg-primary/5' : undefined}>
-                      <TableCell className="font-medium">
+                    <TableRow className={cn(B_TR, r.entered > 0 && 'bg-primary/5')}>
+                      <TableCell className={cn(B_TD, 'font-medium')}>
                         {r.u.unitNo}
                         {hasJoint && (
                           <span className="block text-xs text-muted-foreground">
@@ -483,19 +488,19 @@ const BulkReceiptsDialog: React.FC<Props> = ({
                           )
                         )}
                       </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-xs">{r.u.ratePct}%</Badge>
+                      <TableCell className={B_TD}>
+                        <Badge variant="outline" className="text-[10px] font-medium">{r.u.ratePct}%</Badge>
                       </TableCell>
-                      <TableCell className="text-right text-sm tabular-nums">
+                      <TableCell className={B_TD_NUM}>
                         {formatINR(r.u.balanceToTax)}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className={B_TD}>
                         {!isSplit ? (
                           <>
                             <Input
                               {...registerAmount(r.u.unitId, null)}
                               inputMode="decimal"
-                              className="h-8 text-right tabular-nums"
+                              className="h-7 text-right text-xs tabular-nums md:text-xs"
                               value={amounts[r.u.unitId] || ''}
                               onChange={(e) => setAmounts({ ...amounts, [r.u.unitId]: e.target.value })}
                               placeholder="—"
@@ -520,24 +525,24 @@ const BulkReceiptsDialog: React.FC<Props> = ({
                           </button>
                         )}
                       </TableCell>
-                      <TableCell className="text-right text-sm tabular-nums">
+                      <TableCell className={B_TD_NUM}>
                         {r.derived ? formatINR(r.derived.tax.consideration) : <span className="text-muted-foreground">—</span>}
                       </TableCell>
-                      <TableCell className="text-right text-sm tabular-nums">
+                      <TableCell className={B_TD_NUM}>
                         {r.derived ? formatINR(r.derived.tax.cgst) : <span className="text-muted-foreground">—</span>}
                       </TableCell>
-                      <TableCell className="text-right text-sm tabular-nums">
+                      <TableCell className={B_TD_NUM}>
                         {r.derived ? formatINR(r.derived.tax.sgst) : <span className="text-muted-foreground">—</span>}
                       </TableCell>
                       {common.deduct_tds && (
-                        <TableCell className="text-right text-sm tabular-nums">
+                        <TableCell className={B_TD_NUM}>
                           {r.tds ? formatINR(r.tds) : <span className="text-muted-foreground">—</span>}
                         </TableCell>
                       )}
-                      <TableCell>
+                      <TableCell className={B_TD}>
                         {!isSplit ? (
                           <Input
-                            className="h-8 text-xs"
+                            className="h-7 text-xs md:text-xs"
                             value={refs[r.u.unitId] || ''}
                             onChange={(e) => setRefs({ ...refs, [r.u.unitId]: e.target.value })}
                             placeholder="UTR / chq"
@@ -550,8 +555,8 @@ const BulkReceiptsDialog: React.FC<Props> = ({
                     </TableRow>
 
                     {isSplit && (
-                      <TableRow className="bg-muted/20 hover:bg-muted/20">
-                        <TableCell colSpan={colCount} className="py-2 pl-8">
+                      <TableRow className="border-0 bg-muted/20 hover:bg-muted/20">
+                        <TableCell colSpan={colCount} className={cn(B_TD, 'py-2 pl-8')}>
                           <div className="space-y-1.5">
                             {r.u.members.map((m) => (
                               <div key={m.name} className="grid grid-cols-[1fr_140px_140px] items-center gap-3">
@@ -588,23 +593,22 @@ const BulkReceiptsDialog: React.FC<Props> = ({
                 );
               })}
             </TableBody>
-            <TableFooter className="sticky bottom-0 bg-background">
-              <TableRow>
-                <TableCell colSpan={3} className="font-semibold">
+            <TableFooter className="sticky bottom-0 z-10 border-t-0 bg-muted">
+              <TableRow className={cn(WS_TR_TOTAL, 'border-0 hover:bg-muted')}>
+                <TableCell colSpan={3} className={B_TD}>
                   {active.length} of {units.length} units
                 </TableCell>
-                <TableCell className="text-right font-semibold tabular-nums">{formatINR(totals.entered)}</TableCell>
-                <TableCell className="text-right font-semibold tabular-nums">{formatINR(totals.consideration)}</TableCell>
-                <TableCell className="text-right font-semibold tabular-nums">{formatINR(totals.cgst)}</TableCell>
-                <TableCell className="text-right font-semibold tabular-nums">{formatINR(totals.sgst)}</TableCell>
+                <TableCell className={B_TD_NUM}>{formatINR(totals.entered)}</TableCell>
+                <TableCell className={B_TD_NUM}>{formatINR(totals.consideration)}</TableCell>
+                <TableCell className={B_TD_NUM}>{formatINR(totals.cgst)}</TableCell>
+                <TableCell className={B_TD_NUM}>{formatINR(totals.sgst)}</TableCell>
                 {common.deduct_tds && (
-                  <TableCell className="text-right font-semibold tabular-nums">{formatINR(totals.tds)}</TableCell>
+                  <TableCell className={B_TD_NUM}>{formatINR(totals.tds)}</TableCell>
                 )}
-                <TableCell />
+                <TableCell className={B_TD} />
               </TableRow>
             </TableFooter>
           </Table>
-        </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>

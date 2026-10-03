@@ -32,13 +32,18 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Badge } from '@/components/gstr9/badge';
+import { Note } from '@/components/gstr9/ui';
+import { TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepTabs';
+import { WS_BTN, WS_CONTROL, WS_FILTER_LABEL, WS_TABLE_WRAP } from '@/components/workspace/theme';
+import { B_TABLE, B_TD, B_TD_NUM, B_TH, B_TH_NUM, B_TR, B_TR_HEAD } from './theme';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
   Loader2, Layers, AlertTriangle, CheckCircle2, Download, Upload, FileSpreadsheet,
@@ -285,26 +290,26 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
         </DialogHeader>
 
         <Tabs value={mode} onValueChange={setMode}>
-          <TabsList>
-            <TabsTrigger value="template">Excel template</TabsTrigger>
-            <TabsTrigger value="generate">Generate a tower</TabsTrigger>
-            <TabsTrigger value="paste">Quick paste</TabsTrigger>
+          <TabsList className={TAB_LIST_CLASS}>
+            <TabsTrigger value="template" className={TAB_TRIGGER_CLASS}>Excel template</TabsTrigger>
+            <TabsTrigger value="generate" className={TAB_TRIGGER_CLASS}>Generate a tower</TabsTrigger>
+            <TabsTrigger value="paste" className={TAB_TRIGGER_CLASS}>Quick paste</TabsTrigger>
           </TabsList>
 
           {/* ── Template ──────────────────────────────────────────────────── */}
-          <TabsContent value="template" className="space-y-4 pt-4">
+          <TabsContent value="template" className="mt-0 space-y-3 pt-3">
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-lg border p-4">
-                <p className="flex items-center gap-2 text-sm font-medium">
+              <div className="rounded-md border px-3 py-2.5">
+                <p className="flex items-center gap-2 text-xs font-semibold">
                   <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">1</span>
                   Download the template
                 </p>
-                <p className="mt-1.5 text-xs text-muted-foreground">
+                <p className="mt-1 text-xs text-muted-foreground">
                   Pre-filled with this project&apos;s {groupingLabel.toLowerCase()}s, your client&apos;s
                   confirmed charge-head elections, and a reference sheet explaining what drives the rate.
                 </p>
                 <Button
-                  variant="outline" size="sm" className="mt-3"
+                  variant="outline" size="sm" className={cn(WS_BTN, 'mt-2')}
                   onClick={() => {
                     downloadUnitTemplate({
                       projectName, groupingLabel,
@@ -314,21 +319,21 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
                     toast.success('Template downloaded.');
                   }}
                 >
-                  <Download className="mr-1.5 h-3.5 w-3.5" /> Download template
+                  <Download className="h-3.5 w-3.5" /> Download template
                 </Button>
               </div>
 
-              <div className="rounded-lg border p-4">
-                <p className="flex items-center gap-2 text-sm font-medium">
+              <div className="rounded-md border px-3 py-2.5">
+                <p className="flex items-center gap-2 text-xs font-semibold">
                   <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">2</span>
                   Upload it back
                 </p>
-                <p className="mt-1.5 text-xs text-muted-foreground">
+                <p className="mt-1 text-xs text-muted-foreground">
                   Columns are matched by name, so reordering, deleting unused columns or adding your
                   own is fine. .xlsx, .xls or .csv.
                 </p>
-                <Button variant="outline" size="sm" className="mt-3" onClick={() => fileRef.current?.click()}>
-                  <Upload className="mr-1.5 h-3.5 w-3.5" /> Choose file
+                <Button variant="outline" size="sm" className={cn(WS_BTN, 'mt-2')} onClick={() => fileRef.current?.click()}>
+                  <Upload className="h-3.5 w-3.5" /> Choose file
                 </Button>
                 <input
                   ref={fileRef} type="file" className="hidden"
@@ -345,104 +350,111 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
               </p>
             )}
             {uploadError && (
-              <p className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
+              <p className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2.5 py-1.5 text-xs text-destructive-strong">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                 {uploadError}
               </p>
             )}
-            <p className="text-xs text-muted-foreground">
+            <Note>
               This is the only route that carries charge heads. That matters: a charge head is what
               pushes a unit past ₹45 lakh and out of the 1.5% bracket, so importing the unit list
               without its charges can classify correctly today and be wrong once the charges are
               keyed in later.
-            </p>
+            </Note>
           </TabsContent>
 
           {/* ── Generate ──────────────────────────────────────────────────── */}
-          <TabsContent value="generate" className="space-y-4 pt-4">
-            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          <TabsContent value="generate" className="mt-0 space-y-3 pt-3">
+            <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-4">
               <div>
-                <Label className="mb-1.5 block">Floor from</Label>
+                <Label className={cn(WS_FILTER_LABEL, 'mb-0.5 block')}>Floor from</Label>
                 <Input
+                  className={WS_CONTROL}
                   type="number" value={gen.floorFrom}
                   onChange={(e) => setGen({ ...gen, floorFrom: e.target.value })}
                 />
               </div>
               <div>
-                <Label className="mb-1.5 block">Floor to</Label>
+                <Label className={cn(WS_FILTER_LABEL, 'mb-0.5 block')}>Floor to</Label>
                 <Input
+                  className={WS_CONTROL}
                   type="number" value={gen.floorTo}
                   onChange={(e) => setGen({ ...gen, floorTo: e.target.value })}
                 />
               </div>
               <div>
-                <Label className="mb-1.5 block">Units per floor</Label>
+                <Label className={cn(WS_FILTER_LABEL, 'mb-0.5 block')}>Units per floor</Label>
                 <Input
+                  className={WS_CONTROL}
                   type="number" value={gen.perFloor}
                   onChange={(e) => setGen({ ...gen, perFloor: e.target.value })}
                 />
               </div>
               <div>
-                <Label className="mb-1.5 block">Skip floors</Label>
+                <Label className={cn(WS_FILTER_LABEL, 'mb-0.5 block')}>Skip floors</Label>
                 <Input
+                  className={WS_CONTROL}
                   placeholder="e.g. 13"
                   value={gen.skipFloors}
                   onChange={(e) => setGen({ ...gen, skipFloors: e.target.value })}
                 />
               </div>
               <div className="sm:col-span-2">
-                <Label className="mb-1.5 block">Numbering pattern</Label>
+                <Label className={cn(WS_FILTER_LABEL, 'mb-0.5 block')}>Numbering pattern</Label>
                 <Input
+                  className={WS_CONTROL}
                   value={gen.pattern}
                   onChange={(e) => setGen({ ...gen, pattern: e.target.value })}
                 />
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
                   {'{F}'} floor · {'{N}'} unit · {'{NN}'} padded. {'{F}{NN}'} → 302 on floor 3.
                 </p>
               </div>
               <div>
-                <Label className="mb-1.5 block">Type</Label>
+                <Label className={cn(WS_FILTER_LABEL, 'mb-0.5 block')}>Type</Label>
                 <Select
                   value={gen.unit_type}
                   onValueChange={(v) => setGen({ ...gen, unit_type: v as UnitType })}
                 >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger className={WS_CONTROL}><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {UNIT_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div>
-                <Label className="mb-1.5 block">Status</Label>
+                <Label className={cn(WS_FILTER_LABEL, 'mb-0.5 block')}>Status</Label>
                 <Select value={gen.status} onValueChange={(v) => setGen({ ...gen, status: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger className={WS_CONTROL}><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {UNIT_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div>
-                <Label className="mb-1.5 block">Carpet area (sq m)</Label>
+                <Label className={cn(WS_FILTER_LABEL, 'mb-0.5 block')}>Carpet area (sq m)</Label>
                 <Input
+                  className={WS_CONTROL}
                   type="number" value={gen.carpet}
                   onChange={(e) => setGen({ ...gen, carpet: e.target.value })}
                 />
               </div>
               <div>
-                <Label className="mb-1.5 block">Base consideration</Label>
+                <Label className={cn(WS_FILTER_LABEL, 'mb-0.5 block')}>Base consideration</Label>
                 <Input
+                  className={WS_CONTROL}
                   type="number" value={gen.consideration}
                   onChange={(e) => setGen({ ...gen, consideration: e.target.value })}
                 />
               </div>
               {groups.length > 0 && (
                 <div>
-                  <Label className="mb-1.5 block">{groupingLabel}</Label>
+                  <Label className={cn(WS_FILTER_LABEL, 'mb-0.5 block')}>{groupingLabel}</Label>
                   <Select
                     value={gen.group_id || 'NONE'}
                     onValueChange={(v) => setGen({ ...gen, group_id: v === 'NONE' ? '' : v })}
                   >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger className={WS_CONTROL}><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="NONE">Ungrouped</SelectItem>
                       {groups.map((g) => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
@@ -459,9 +471,9 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
           </TabsContent>
 
           {/* ── Paste ─────────────────────────────────────────────────────── */}
-          <TabsContent value="paste" className="space-y-3 pt-4">
+          <TabsContent value="paste" className="mt-0 space-y-3 pt-3">
             <div>
-              <Label className="mb-1.5 block">Paste rows</Label>
+              <Label className={cn(WS_FILTER_LABEL, 'mb-0.5 block')}>Paste rows</Label>
               <Textarea
                 rows={10}
                 className="font-mono text-xs"
@@ -485,20 +497,20 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
         {/* ── Preview ─────────────────────────────────────────────────────── */}
         {previewed.length > 0 && (
           <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <Badge variant="outline" className="gap-1">
-                <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="success" className="gap-1 text-[10px] font-medium">
+                <CheckCircle2 className="h-3 w-3 text-success-strong" />
                 {okRows.length} ready
               </Badge>
               {badRows.length > 0 && (
-                <Badge variant="outline" className="gap-1 border-destructive/40">
+                <Badge variant="destructive" className="gap-1 text-[10px] font-medium">
                   <AlertTriangle className="h-3 w-3 text-destructive" />
                   {badRows.length} skipped
                 </Badge>
               )}
               {mismatchCount > 0 && (
-                <Badge variant="outline" className="gap-1 border-amber-500/40">
-                  <AlertTriangle className="h-3 w-3 text-amber-600 dark:text-amber-500" />
+                <Badge variant="warning" className="gap-1 text-[10px] font-medium">
+                  <AlertTriangle className="h-3 w-3 text-warning" />
                   {mismatchCount} name/type worth a second look
                 </Badge>
               )}
@@ -507,66 +519,64 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
               </span>
             </div>
 
-            <div className="max-h-[40vh] overflow-auto rounded-md border">
-              <Table>
-                <TableHeader className="sticky top-0 bg-background">
-                  <TableRow>
-                    <TableHead>Unit</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead className="text-right">Carpet</TableHead>
-                    <TableHead className="text-right">Charges</TableHead>
-                    <TableHead className="text-right">Gross</TableHead>
-                    <TableHead>Affordable</TableHead>
-                    <TableHead>Rate</TableHead>
-                    <TableHead>Status</TableHead>
+            <Table className={B_TABLE} containerClassName={cn(WS_TABLE_WRAP, 'max-h-[40vh]')}>
+                <TableHeader>
+                  <TableRow className={B_TR_HEAD}>
+                    <TableHead className={B_TH}>Unit</TableHead>
+                    <TableHead className={B_TH}>Type</TableHead>
+                    <TableHead className={B_TH_NUM}>Carpet</TableHead>
+                    <TableHead className={B_TH_NUM}>Charges</TableHead>
+                    <TableHead className={B_TH_NUM}>Gross</TableHead>
+                    <TableHead className={B_TH}>Affordable</TableHead>
+                    <TableHead className={B_TH}>Rate</TableHead>
+                    <TableHead className={B_TH}>Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {previewed.slice(0, 300).map((r, i) => (
-                    <TableRow key={`${r.unit_no}-${i}`} className={r.problem ? 'opacity-50' : undefined}>
-                      <TableCell className="font-medium text-sm">
+                    <TableRow key={`${r.unit_no}-${i}`} className={cn(B_TR, r.problem && 'opacity-50')}>
+                      <TableCell className={cn(B_TD, 'font-medium')}>
                         {r.unit_no || <span className="text-muted-foreground">—</span>}
                         {r.problem && (
-                          <span className="block text-xs text-destructive">{r.problem}</span>
+                          <span className="block text-[11px] font-normal text-destructive-strong">{r.problem}</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className={B_TD}>
                         {r.unit_type}
                         {r.nameMismatch && (
                           <span
-                            className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-500"
+                            className="flex items-center gap-1 text-[11px] text-warning"
                             title={r.nameMismatch}
                           >
                             <AlertTriangle className="h-3 w-3 shrink-0" /> Check type
                           </span>
                         )}
                       </TableCell>
-                      <TableCell className="text-right text-sm">{r.carpet_area_sqm || '—'}</TableCell>
-                      <TableCell className="text-right text-sm">
+                      <TableCell className={B_TD_NUM}>{r.carpet_area_sqm || '—'}</TableCell>
+                      <TableCell className={B_TD_NUM}>
                         {r.charges.length
                           ? formatINR(r.charges.reduce((s2, c) => s2 + c.amount, 0))
                           : <span className="text-muted-foreground">—</span>}
                       </TableCell>
-                      <TableCell className="text-right text-sm">{formatINR(r.cls.gross.gross)}</TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className={B_TD_NUM}>{formatINR(r.cls.gross.gross)}</TableCell>
+                      <TableCell className={B_TD}>
                         {r.unit_type === 'Commercial'
                           ? <span className="text-muted-foreground">n/a</span>
                           : r.cls.affordable.isAffordable
-                            ? <Badge variant="outline" className="text-xs">Yes</Badge>
-                            : <span className="text-muted-foreground text-xs">No</span>}
+                            ? <Badge variant="success" className="text-[10px] font-medium">Yes</Badge>
+                            : <span className="text-muted-foreground">No</span>}
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className={B_TD}>
                         {r.cls.ratePct}%
-                        <span className="block text-xs text-muted-foreground">
+                        <span className="block text-[11px] text-muted-foreground">
                           {RATE_CODE_LABEL[r.cls.rateCode]}
                         </span>
                       </TableCell>
-                      <TableCell className="text-sm">{r.status}</TableCell>
+                      <TableCell className={B_TD}>{r.status}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
-            </div>
             {previewed.length > 300 && (
               <p className="text-xs text-muted-foreground">
                 Showing the first 300 of {previewed.length} rows. All {okRows.length} valid rows
@@ -577,7 +587,7 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
         )}
 
         {mismatchCount > 0 && (
-          <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
+          <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5">
             <Checkbox
               id="mismatch-ack"
               checked={mismatchAcked}

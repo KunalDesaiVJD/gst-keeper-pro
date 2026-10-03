@@ -11,12 +11,14 @@ import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile } from '@/components/gstr9/ui';
+import { WS_TABLE, WS_TH, WS_TD, WS_TR_TOTAL } from '@/components/workspace/theme';
 import { Input } from '@/components/ui/input';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { cn } from '@/lib/utils';
 import {
-  Search, ExternalLink, ArrowUpCircle, ArrowDownCircle, Scale, Landmark, Inbox, BookText,
+  Search, ExternalLink, ArrowUpCircle, ArrowDownCircle, Inbox, BookText,
 } from 'lucide-react';
 
 interface LedgerRegisterViewProps {
@@ -60,33 +62,6 @@ const formatNumber = (v: string | number): string => {
   const rounded = Math.round(n * 100) / 100;
   return rounded.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 };
-
-type Tone = 'rose' | 'emerald' | 'neutral';
-
-const TONE_TEXT: Record<Tone, string> = {
-  rose: 'text-rose-600 dark:text-rose-400',
-  emerald: 'text-emerald-600 dark:text-emerald-400',
-  neutral: 'text-foreground',
-};
-
-const StatTile: React.FC<{
-  label: string;
-  value: string;
-  icon: React.ComponentType<{ className?: string }>;
-  tone: Tone;
-  sub?: string;
-}> = ({ label, value, icon: Icon, tone, sub }) => (
-  <div className="flex items-start gap-2.5 min-w-0">
-    <div className={cn('mt-0.5 shrink-0 rounded-md border bg-background/70 p-1.5', TONE_TEXT[tone])}>
-      <Icon className="h-4 w-4" />
-    </div>
-    <div className="min-w-0">
-      <p className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium truncate">{label}</p>
-      <p className={cn('text-base font-semibold tabular-nums truncate', TONE_TEXT[tone])}>{value}</p>
-      {sub && <p className="text-[10px] text-muted-foreground mt-0.5 truncate">{sub}</p>}
-    </div>
-  </div>
-);
 
 export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, report }) => {
   const { headers, rows } = table;
@@ -163,16 +138,16 @@ export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, r
   if (rows.length === 0) {
     return (
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <BookText className="h-5 w-5 text-muted-foreground" />
+        <CardHeader className="space-y-0.5 px-4 pb-2 pt-3">
+          <CardTitle className="flex items-center gap-2 text-[15px] leading-snug">
+            <BookText className="h-4 w-4 text-muted-foreground" />
             {table.title || report.title}
           </CardTitle>
-          {table.subtitle && <CardDescription>{table.subtitle}</CardDescription>}
+          {table.subtitle && <CardDescription className="text-xs">{table.subtitle}</CardDescription>}
         </CardHeader>
-        <CardContent>
-          <div className="flex flex-col items-center justify-center gap-2 py-14 text-center text-muted-foreground">
-            <Inbox className="h-8 w-8" />
+        <CardContent className="px-4 pb-3">
+          <div className="flex flex-col items-center justify-center gap-1.5 py-8 text-center text-muted-foreground">
+            <Inbox className="h-5 w-5 opacity-60" />
             <p className="text-sm">No ledger entries on record for this period.</p>
           </div>
         </CardContent>
@@ -181,50 +156,39 @@ export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, r
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <BookText className="h-5 w-5 text-muted-foreground" />
+        <CardHeader className="space-y-0.5 px-4 py-3">
+          <CardTitle className="flex items-center gap-2 text-[15px] leading-snug">
+            <BookText className="h-4 w-4 text-muted-foreground" />
             {table.title || report.title}
           </CardTitle>
-          {table.subtitle && <CardDescription className="whitespace-pre-line">{table.subtitle}</CardDescription>}
+          {table.subtitle && <CardDescription className="whitespace-pre-line text-xs">{table.subtitle}</CardDescription>}
         </CardHeader>
       </Card>
 
       {/* Totals strip — reflects whatever is currently filtered below */}
-      <Card className="border-primary/15 bg-primary/5">
-        <CardContent className="p-4">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {hasType ? (
-              <>
-                <StatTile label="Total Debit" value={formatNumber(stats.totalDebit)} icon={ArrowUpCircle} tone="rose" />
-                <StatTile label="Total Credit" value={formatNumber(stats.totalCredit)} icon={ArrowDownCircle} tone="emerald" />
-                <StatTile
-                  label="Net (Credit − Debit)"
-                  value={formatNumber(stats.net)}
-                  icon={Scale}
-                  tone={stats.net >= 0 ? 'emerald' : 'rose'}
-                />
-              </>
-            ) : (
-              <StatTile label="Total" value={formatNumber(stats.totalAll)} icon={Scale} tone="neutral" />
-            )}
-            {closingBalance !== null && (
-              <StatTile
-                label="Closing Balance"
-                value={formatNumber(closingBalance)}
-                icon={Landmark}
-                tone="neutral"
-                sub="Full ledger, unfiltered"
-              />
-            )}
-          </div>
-        </CardContent>
-      </Card>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+        {hasType ? (
+          <>
+            <TileButton active={typeFilter === 'debit'} onClick={() => setTypeFilter(typeFilter === 'debit' ? 'all' : 'debit')} title="Show debit entries only">
+              <KpiTile label="Total Debit" value={formatNumber(stats.totalDebit)} tone="error" />
+            </TileButton>
+            <TileButton active={typeFilter === 'credit'} onClick={() => setTypeFilter(typeFilter === 'credit' ? 'all' : 'credit')} title="Show credit entries only">
+              <KpiTile label="Total Credit" value={formatNumber(stats.totalCredit)} tone="ok" />
+            </TileButton>
+            <KpiTile label="Net (Credit − Debit)" value={formatNumber(stats.net)} tone={stats.net >= 0 ? 'ok' : 'error'} />
+          </>
+        ) : (
+          <KpiTile label="Total" value={formatNumber(stats.totalAll)} />
+        )}
+        {closingBalance !== null && (
+          <KpiTile label="Closing Balance" value={formatNumber(closingBalance)} hint="Full ledger, unfiltered" />
+        )}
+      </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2">
         {hasType && (
           <ToggleGroup
             type="single"
@@ -248,7 +212,7 @@ export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, r
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search description, date…"
-            className="pl-8 h-8 text-sm"
+            className="pl-8 h-8 text-xs"
           />
         </div>
 
@@ -260,17 +224,17 @@ export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, r
       </div>
 
       {/* Register */}
-      <div className="rounded-md border max-h-[65vh] overflow-y-auto">
-        <Table>
-          <TableHeader className="sticky top-0 z-10 bg-background">
+      <div className="rounded-md border bg-card max-h-[65vh] overflow-y-auto">
+        <Table className={WS_TABLE}>
+          <TableHeader className="sticky top-0 z-10">
             <TableRow>
               {headers.map((h, i) => (
                 <TableHead
                   key={i}
                   className={cn(
-                    'px-3 py-2 text-xs font-semibold whitespace-nowrap bg-muted/60',
+                    WS_TH, 'h-auto',
                     isNumericCol[i] && 'text-right',
-                    i === balanceColIdx && 'border-l border-border',
+                    i === balanceColIdx && 'border-l',
                   )}
                 >
                   {h}
@@ -281,7 +245,7 @@ export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, r
           <TableBody>
             {filteredDataRows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={headers.length} className="text-center text-sm text-muted-foreground py-10">
+                <TableCell colSpan={headers.length} className="border-b text-center text-sm text-muted-foreground py-6">
                   No entries match the current filters.
                 </TableCell>
               </TableRow>
@@ -294,14 +258,14 @@ export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, r
               const amountTint = isDebit ? 'text-rose-600 dark:text-rose-400' : isCredit ? 'text-emerald-600 dark:text-emerald-400' : '';
 
               return (
-                <TableRow key={key}>
+                <TableRow key={key} className="hover:bg-muted/30">
                   {row.map((cell, ci) => {
                     const isBalance = ci === balanceColIdx;
                     const numeric = isNumericCol[ci];
 
                     if (isUrlCell(cell)) {
                       return (
-                        <TableCell key={ci} className="px-3 py-2 text-xs whitespace-nowrap">
+                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
                           <a
                             href={cell}
                             target="_blank"
@@ -316,7 +280,7 @@ export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, r
 
                     if (isSentinelCell(cell)) {
                       return (
-                        <TableCell key={ci} className="px-3 py-2 text-xs whitespace-nowrap">
+                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
                           <Badge variant="outline" className="border-dashed text-muted-foreground text-[10px] py-0 font-normal">
                             Not pulled
                           </Badge>
@@ -326,15 +290,15 @@ export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, r
 
                     if (ci === statusColIdx && String(cell ?? '') !== '') {
                       return (
-                        <TableCell key={ci} className="px-3 py-2 text-xs whitespace-nowrap">
-                          <Badge variant={STATUS_VARIANT(String(cell))} className="text-[10px] py-0">{String(cell)}</Badge>
+                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
+                          <Badge variant={STATUS_VARIANT(String(cell))} className="text-[10px] py-0 font-medium">{String(cell)}</Badge>
                         </TableCell>
                       );
                     }
 
                     if (ci === typeColIdx && String(cell ?? '') !== '') {
                       return (
-                        <TableCell key={ci} className="px-3 py-2 text-xs whitespace-nowrap">
+                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
                           <Badge
                             variant="outline"
                             className={cn(
@@ -355,9 +319,9 @@ export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, r
                       <TableCell
                         key={ci}
                         className={cn(
-                          'px-3 py-2 text-xs',
+                          WS_TD,
                           numeric ? 'text-right whitespace-nowrap tabular-nums' : 'max-w-[320px]',
-                          isBalance && 'border-l border-border font-semibold text-foreground',
+                          isBalance && 'border-l font-semibold text-foreground',
                           !isBalance && numeric && amountTint,
                         )}
                       >
@@ -371,7 +335,7 @@ export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, r
 
             {/* Grand-total / NET row — always visible, pinned below the filtered data, never filtered itself */}
             {summaryRows.map(({ row, key }) => (
-              <TableRow key={`summary-${key}`} className="bg-primary/5 font-semibold hover:bg-primary/10 border-t-2 border-primary/20">
+              <TableRow key={`summary-${key}`} className={cn(WS_TR_TOTAL, 'hover:bg-muted')}>
                 {row.map((cell, ci) => {
                   const isBalance = ci === balanceColIdx;
                   const numeric = isNumericCol[ci];
@@ -380,9 +344,9 @@ export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, r
                     <TableCell
                       key={ci}
                       className={cn(
-                        'px-3 py-2 text-xs',
+                        WS_TD,
                         numeric && 'text-right whitespace-nowrap tabular-nums',
-                        isBalance && 'border-l border-border',
+                        isBalance && 'border-l',
                       )}
                     >
                       {display}
@@ -397,3 +361,18 @@ export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, r
     </div>
   );
 };
+
+const TileButton: React.FC<{ active: boolean; onClick: () => void; title: string; children: React.ReactNode }> = ({ active, onClick, title, children }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={title}
+    aria-pressed={active}
+    className={cn(
+      'rounded-lg text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:h-full',
+      active && 'ring-2 ring-primary/60',
+    )}
+  >
+    {children}
+  </button>
+);

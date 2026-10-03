@@ -11,7 +11,9 @@ import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { Card, CardContent } from '@/components/ui/card';
 import NoticesCardHeader from '@/components/notices/NoticesCardHeader';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile } from '@/components/gstr9/ui';
+import { WS_BTN, WS_TABLE, WS_TH, WS_TD, WS_TR_TOTAL } from '@/components/workspace/theme';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
@@ -238,8 +240,8 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
       <Card>
         <NoticesCardHeader title={table.title} description={table.subtitle} />
         <CardContent className="pt-3 pb-3">
-          <div className="flex flex-col items-center justify-center gap-2 py-14 text-center text-muted-foreground">
-            <Inbox className="h-7 w-7" />
+          <div className="flex flex-col items-center justify-center gap-1.5 py-8 text-center text-muted-foreground">
+            <Inbox className="h-5 w-5 opacity-60" />
             <p className="text-sm">No {report.title.toLowerCase()} records on file.</p>
           </div>
         </CardContent>
@@ -251,38 +253,41 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
     <Card>
       <NoticesCardHeader title={table.title} description={table.subtitle} />
 
-      <CardContent className="pt-3 pb-3 space-y-4">
+      <CardContent className="pt-3 pb-3 space-y-2.5">
         {/* Summary strip — readable at a glance before scrolling the table */}
-        <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2.5">
-          <span className="text-xs text-muted-foreground">
-            <span className="font-semibold text-foreground tabular-nums">{dataRows.length}</span>{' '}
-            event{dataRows.length === 1 ? '' : 's'}
-          </span>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+          {statusColIdx !== -1 && statusCounts.length > 0 ? (
+            <TileButton active={statusFilter === 'all'} onClick={() => setStatusFilter('all')} title="Show all statuses">
+              <KpiTile label={dataRows.length === 1 ? 'Event' : 'Events'} value={dataRows.length} />
+            </TileButton>
+          ) : (
+            <KpiTile label={dataRows.length === 1 ? 'Event' : 'Events'} value={dataRows.length} />
+          )}
           {evidenceColIdx !== -1 && (
-            <>
-              <span className="text-muted-foreground/40">•</span>
-              <span className="text-xs text-muted-foreground">
-                <span className="font-semibold text-foreground tabular-nums">{withEvidenceCount}</span> with evidence PDF
-                {withEvidenceCount < dataRows.length && (
-                  <span className="ml-1 text-muted-foreground/80">
-                    ({dataRows.length - withEvidenceCount} not captured)
-                  </span>
-                )}
-              </span>
-            </>
+            <KpiTile
+              label="With evidence PDF"
+              value={withEvidenceCount}
+              hint={withEvidenceCount < dataRows.length ? `${dataRows.length - withEvidenceCount} not captured` : undefined}
+              tone={withEvidenceCount < dataRows.length ? 'warn' : 'ok'}
+            />
           )}
-          {statusCounts.length > 0 && (
-            <>
-              <span className="text-muted-foreground/40">•</span>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {statusCounts.map(({ label, count }) => (
-                  <Badge key={label} variant={STATUS_VARIANT(label)} className="text-[10px] py-0 font-medium">
-                    {label} · {count}
-                  </Badge>
-                ))}
-              </div>
-            </>
-          )}
+          {statusCounts.map(({ label, count }) => {
+            const variant = STATUS_VARIANT(label);
+            return (
+              <TileButton
+                key={label}
+                active={statusFilter === label}
+                onClick={() => setStatusFilter(statusFilter === label ? 'all' : label)}
+                title={`Show ${label} only`}
+              >
+                <KpiTile
+                  label={label}
+                  value={count}
+                  tone={variant === 'success' ? 'ok' : variant === 'warning' ? 'warn' : variant === 'destructive' ? 'error' : 'neutral'}
+                />
+              </TileButton>
+            );
+          })}
         </div>
 
         {/* Filters + bulk action */}
@@ -293,7 +298,7 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search reference no., description, date…"
-              className="h-8 pl-8 text-sm"
+              className="h-8 pl-8 text-xs"
             />
           </div>
 
@@ -322,23 +327,23 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
           )}
 
           {evidenceColIdx !== -1 && (
-            <Button variant="outline" size="sm" onClick={handleDownloadAll} className="h-8">
-              <DownloadCloud className="mr-1.5 h-3.5 w-3.5" />
+            <Button variant="outline" size="sm" onClick={handleDownloadAll} className={WS_BTN}>
+              <DownloadCloud className="h-3.5 w-3.5" />
               Download all visible PDFs
             </Button>
           )}
         </div>
 
         {/* Table */}
-        <div className="max-h-[65vh] overflow-auto rounded-md border">
-          <Table>
-            <TableHeader className="sticky top-0 z-10 bg-background">
+        <div className="max-h-[65vh] overflow-auto rounded-md border bg-card">
+          <Table className={WS_TABLE}>
+            <TableHeader className="sticky top-0 z-10">
               <TableRow>
                 {headers.map((h, i) => (
                   <TableHead
                     key={i}
                     className={cn(
-                      'whitespace-nowrap bg-muted/60 px-3 py-2 text-xs font-semibold',
+                      WS_TH, 'h-auto',
                       isNumericHeader(h) && 'text-right',
                       i === evidenceColIdx && 'text-center',
                     )}
@@ -351,14 +356,14 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
             <TableBody>
               {visibleRows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={headers.length} className="py-10 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={headers.length} className="border-b py-6 text-center text-sm text-muted-foreground">
                     No rows match the current filters.
                   </TableCell>
                 </TableRow>
               )}
 
               {visibleRows.map((row, ri) => (
-                <TableRow key={ri}>
+                <TableRow key={ri} className="hover:bg-muted/30">
                   {row.map((cell, ci) => {
                     const header = headers[ci] || '';
 
@@ -368,7 +373,7 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
                     // a red Adobe-PDF icon does elsewhere; absent stays neutral/muted.
                     if (ci === evidenceColIdx) {
                       return (
-                        <TableCell key={ci} className="px-3 py-1.5 text-center">
+                        <TableCell key={ci} className={cn(WS_TD, 'py-1 text-center')}>
                           {isUrl(cell) ? (
                             <Button
                               variant="outline"
@@ -402,8 +407,8 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
                     // Type column: a colored pill instead of plain text.
                     if (ci === typeColIdx && String(cell ?? '').trim() && !isSentinel(cell)) {
                       return (
-                        <TableCell key={ci} className="whitespace-nowrap px-3 py-1.5 text-xs">
-                          <Badge variant={TYPE_VARIANT(String(cell))} className="py-0 text-[10px]">
+                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
+                          <Badge variant={TYPE_VARIANT(String(cell))} className="py-0 text-[10px] font-medium">
                             {String(cell)}
                           </Badge>
                         </TableCell>
@@ -413,7 +418,7 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
                     // Generic URL fallback (a report may carry a link outside the designated evidence column).
                     if (isUrl(cell)) {
                       return (
-                        <TableCell key={ci} className="whitespace-nowrap px-3 py-1.5 text-xs">
+                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
                           <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild>
                             <a href={cell as string} target="_blank" rel="noopener noreferrer">View</a>
                           </Button>
@@ -424,8 +429,8 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
                     // Status badge.
                     if (ci === statusColIdx && String(cell ?? '').trim() && !isSentinel(cell)) {
                       return (
-                        <TableCell key={ci} className="whitespace-nowrap px-3 py-1.5 text-xs">
-                          <Badge variant={STATUS_VARIANT(String(cell))} className="py-0 text-[10px]">
+                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
+                          <Badge variant={STATUS_VARIANT(String(cell))} className="py-0 text-[10px] font-medium">
                             {String(cell)}
                           </Badge>
                         </TableCell>
@@ -437,7 +442,7 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
                       const linkClientId = clientIdByRow.get(row);
                       if (linkClientId) {
                         return (
-                          <TableCell key={ci} className="whitespace-nowrap px-3 py-1.5 text-xs">
+                          <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
                             <Link to={`/notices-case-folder/${linkClientId}/${encodeURIComponent(String(cell))}`} className="text-primary hover:underline">
                               {String(cell)}
                             </Link>
@@ -449,7 +454,7 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
                     // Sentinel ("NOT PULLED" / "not captured" / "not pulled").
                     if (isSentinel(cell)) {
                       return (
-                        <TableCell key={ci} className="whitespace-nowrap px-3 py-1.5 text-xs">
+                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
                           <Badge variant="outline" className="border-dashed py-0 text-[10px] text-muted-foreground">
                             {String(cell)}
                           </Badge>
@@ -461,7 +466,7 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
                       <TableCell
                         key={ci}
                         className={cn(
-                          'px-3 py-1.5 text-xs',
+                          WS_TD,
                           isNumericHeader(header) ? 'whitespace-nowrap text-right tabular-nums' : 'max-w-[320px]',
                         )}
                       >
@@ -473,14 +478,14 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
               ))}
 
               {totalRows.map((row, ri) => (
-                <TableRow key={`total-${ri}`} className="bg-primary/5 font-semibold hover:bg-primary/10">
+                <TableRow key={`total-${ri}`} className={cn(WS_TR_TOTAL, 'hover:bg-muted')}>
                   {row.map((cell, ci) => {
                     const header = headers[ci] || '';
                     return (
                       <TableCell
                         key={ci}
                         className={cn(
-                          'px-3 py-1.5 text-xs',
+                          WS_TD,
                           isNumericHeader(header) ? 'whitespace-nowrap text-right tabular-nums' : '',
                         )}
                       >
@@ -497,3 +502,18 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
     </Card>
   );
 };
+
+const TileButton: React.FC<{ active: boolean; onClick: () => void; title: string; children: React.ReactNode }> = ({ active, onClick, title, children }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={title}
+    aria-pressed={active}
+    className={cn(
+      'rounded-lg text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:h-full',
+      active && 'ring-2 ring-primary/60',
+    )}
+  >
+    {children}
+  </button>
+);

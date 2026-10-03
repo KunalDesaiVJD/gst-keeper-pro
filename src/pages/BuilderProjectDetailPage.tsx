@@ -4,9 +4,14 @@ import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorks
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, Note, SectionCard } from '@/components/gstr9/ui';
+import { TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepTabs';
+import { WS_BTN, WS_PAGE, WS_TABLE_WRAP } from '@/components/workspace/theme';
+import { B_TABLE, B_TD, B_TD_NUM, B_TH, B_TH_NUM, B_TR, B_TR_HEAD } from '@/components/builder/theme';
+import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -585,9 +590,11 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
 
   if (isLoading) {
     return (
-      <div className="flex items-center gap-2 text-muted-foreground text-sm p-6">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading project…
-      </div>
+      <Card>
+        <CardContent className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading project…
+        </CardContent>
+      </Card>
     );
   }
   if (!project) return null;
@@ -595,271 +602,249 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
   const label = project.grouping_label || 'Block';
 
   return (
-    <div className="space-y-6">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
+        embedded={embedded}
         title={project.name}
         subtitle={[project.rera_number, project.city].filter(Boolean).join(' · ') || 'Builder project'}
-        icon={<Layers className="h-5 w-5" />}
+        icon={<Layers />}
         actions={embedded ? undefined : (
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => navigate('/builder-projects')}>
-              <ArrowLeft className="h-4 w-4 mr-2" /> Back
+          <>
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate('/builder-projects')}>
+              <ArrowLeft className="h-3.5 w-3.5" /> Back
             </Button>
-            <Button variant="outline" onClick={() => navigate(`/builder-projects/${projectId}/fsi`)}>
-              <Landmark className="h-4 w-4 mr-2" /> TDR / FSI
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate(`/builder-projects/${projectId}/fsi`)}>
+              <Landmark className="h-3.5 w-3.5" /> TDR / FSI
             </Button>
-            <Button variant="outline" onClick={() => navigate(`/builder-projects/${projectId}/adjustments`)}>
-              <Wrench className="h-4 w-4 mr-2" /> Adjustments
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate(`/builder-projects/${projectId}/adjustments`)}>
+              <Wrench className="h-3.5 w-3.5" /> Adjustments
             </Button>
-            <Button variant="outline" onClick={() => navigate(`/builder-projects/${projectId}/bu-events`)}>
-              <CalendarCheck className="h-4 w-4 mr-2" /> BU Events
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate(`/builder-projects/${projectId}/bu-events`)}>
+              <CalendarCheck className="h-3.5 w-3.5" /> BU Events
             </Button>
-            <Button onClick={() => navigate(`/builder-projects/${projectId}/bookings`)}>
-              <Receipt className="h-4 w-4 mr-2" /> Bookings & Receipts
+            <Button size="sm" className={WS_BTN} onClick={() => navigate(`/builder-projects/${projectId}/bookings`)}>
+              <Receipt className="h-3.5 w-3.5" /> Bookings & Receipts
             </Button>
-          </div>
+          </>
         )}
       />
 
       {/* ── The 15% test ─────────────────────────────────────────────────── */}
-      <Card>
-        <CardContent className="p-4">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            <div>
-              <p className="text-xs text-muted-foreground">Residential carpet</p>
-              <p className="text-sm font-semibold">{formatSqM(rrep.residentialSqM)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Commercial carpet</p>
-              <p className="text-sm font-semibold">{formatSqM(rrep.commercialSqM)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Commercial share</p>
-              <p className="text-sm font-semibold">
-                {rrep.isIndeterminate ? '—' : formatPct(rrep.commercialShare)}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Classification</p>
-              {rrep.isIndeterminate ? (
-                <Badge variant="outline">No area yet</Badge>
-              ) : rrep.isRrep ? (
-                <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">RREP</Badge>
-              ) : (
-                <Badge className="bg-amber-100 text-amber-800 border-amber-200">REP (other than RREP)</Badge>
-              )}
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Affordable carpet limit</p>
-              <p className="text-sm font-semibold">{project.is_metro ? '60 sq m' : '90 sq m'}</p>
-            </div>
-          </div>
-          {!rrep.isIndeterminate && !rrep.isRrep && (
-            <div className="mt-3 flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
-              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-              <p className="text-xs">
-                Commercial carpet area exceeds 15%, so this is a REP other than an RREP. Commercial units
-                here are taxed at 18% on 2/3rd value with proportionate credit, and the residential share
-                of input tax is reversed by carpet area.
-              </p>
-            </div>
-          )}
-          {project.carpet_area_source === 'MANUAL' && (
-            <p className="mt-3 text-xs text-muted-foreground">
-              Areas are entered manually on the project, not derived from the unit master.
-            </p>
-          )}
-        </CardContent>
-      </Card>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+        <KpiTile label="Residential carpet" value={formatSqM(rrep.residentialSqM)} />
+        <KpiTile label="Commercial carpet" value={formatSqM(rrep.commercialSqM)} />
+        <KpiTile
+          label="Commercial share"
+          value={rrep.isIndeterminate ? '—' : formatPct(rrep.commercialShare)}
+          tone={rrep.isIndeterminate ? 'neutral' : rrep.isRrep ? 'ok' : 'warn'}
+        />
+        <KpiTile
+          label="Classification"
+          value={
+            rrep.isIndeterminate ? (
+              <Badge variant="outline" className="text-[10px] font-medium">No area yet</Badge>
+            ) : rrep.isRrep ? (
+              <Badge variant="success" className="text-[10px] font-medium">RREP</Badge>
+            ) : (
+              <Badge variant="warning" className="text-[10px] font-medium">REP (other than RREP)</Badge>
+            )
+          }
+          tone={rrep.isIndeterminate ? 'neutral' : rrep.isRrep ? 'ok' : 'warn'}
+        />
+        <KpiTile label="Affordable carpet limit" value={project.is_metro ? '60 sq m' : '90 sq m'} />
+      </div>
+      {!rrep.isIndeterminate && !rrep.isRrep && (
+        <Note tone="warn">
+          Commercial carpet area exceeds 15%, so this is a REP other than an RREP. Commercial units
+          here are taxed at 18% on 2/3rd value with proportionate credit, and the residential share
+          of input tax is reversed by carpet area.
+        </Note>
+      )}
+      {project.carpet_area_source === 'MANUAL' && (
+        <Note>Areas are entered manually on the project, not derived from the unit master.</Note>
+      )}
 
-      <Tabs defaultValue="units">
-        <TabsList>
-          <TabsTrigger value="units">Units ({units.length})</TabsTrigger>
-          <TabsTrigger value="groups">{label}s ({groups.length})</TabsTrigger>
+      <Tabs defaultValue="units" className="space-y-3">
+        <TabsList className={TAB_LIST_CLASS}>
+          <TabsTrigger value="units" className={TAB_TRIGGER_CLASS}>Units ({units.length})</TabsTrigger>
+          <TabsTrigger value="groups" className={TAB_TRIGGER_CLASS}>{label}s ({groups.length})</TabsTrigger>
         </TabsList>
 
         {/* ── Units ──────────────────────────────────────────────────────── */}
-        <TabsContent value="units" className="mt-4">
-          <Card>
-            <CardHeader className="flex flex-row items-start justify-between gap-3">
-              <div>
-                <CardTitle className="text-base">Unit master</CardTitle>
-                <CardDescription>
-                  Affordable status and rate are derived, never typed. Adding a charge head can push a unit
-                  past ₹45 lakh and out of the 1.5% bracket — the derived columns show that immediately.
-                </CardDescription>
+        <TabsContent value="units" className="mt-0">
+          <SectionCard
+            title="Unit master"
+            description={(
+              <>
+                Affordable status and rate are derived, never typed. Adding a charge head can push a unit
+                past ₹45 lakh and out of the 1.5% bracket — the derived columns show that immediately.
+              </>
+            )}
+            actions={canEditUnits ? (
+              <>
+                <Button variant="outline" size="sm" className={WS_BTN} onClick={() => setBulkDialog(true)}>
+                  <Layers className="h-3.5 w-3.5" /> Add many
+                </Button>
+                <Button variant="outline" size="sm" className={WS_BTN} onClick={() => setBulkOpeningDialog(true)} disabled={!units.length}>
+                  <Wallet className="h-3.5 w-3.5" /> Opening balances
+                </Button>
+                <Button size="sm" className={WS_BTN} onClick={openCreateUnit}><Plus className="h-3.5 w-3.5" /> Add unit</Button>
+              </>
+            ) : undefined}
+          >
+            {units.length === 0 ? (
+              <div className="py-6 text-center text-sm text-muted-foreground">
+                <Home className="mx-auto mb-2 h-6 w-6 opacity-40" />
+                No units yet.
               </div>
-              {canEditUnits && (
-                <div className="flex shrink-0 gap-2">
-                  <Button variant="outline" onClick={() => setBulkDialog(true)}>
-                    <Layers className="h-4 w-4 mr-2" /> Add many
-                  </Button>
-                  <Button variant="outline" onClick={() => setBulkOpeningDialog(true)} disabled={!units.length}>
-                    <Wallet className="h-4 w-4 mr-2" /> Opening balances
-                  </Button>
-                  <Button onClick={openCreateUnit}><Plus className="h-4 w-4 mr-2" /> Add unit</Button>
-                </div>
-              )}
-            </CardHeader>
-            <CardContent className="p-0">
-              {units.length === 0 ? (
-                <div className="p-10 text-center text-muted-foreground">
-                  <Home className="h-8 w-8 mx-auto mb-3 opacity-40" />
-                  <p className="text-sm">No units yet.</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Unit</TableHead>
-                        <TableHead>{label}</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead className="text-right">Carpet (sq m)</TableHead>
-                        <TableHead className="text-right">Base value</TableHead>
-                        <TableHead className="text-right">Charges</TableHead>
-                        <TableHead className="text-right">Gross</TableHead>
-                        <TableHead>Affordable</TableHead>
-                        <TableHead>Rate</TableHead>
-                        <TableHead>Opening</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead className="w-28" />
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {units.map((u) => {
-                        const cls = classifyStored(u);
-                        const opening = openings[u.id];
-                        return (
-                          <TableRow key={u.id}>
-                            <TableCell className="font-medium">
-                              {u.unit_no}
-                              {u.onboarding_status === 'CLOSED_PRE_ONBOARDING' && (
-                                <Badge variant="outline" className="ml-1.5 text-[10px]">Closed pre-onboarding</Badge>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-sm text-muted-foreground">{groupName_(u.group_id)}</TableCell>
-                            <TableCell className="text-sm">{u.unit_type}</TableCell>
-                            <TableCell className="text-right text-sm">{Number(u.carpet_area_sqm).toFixed(3)}</TableCell>
-                            <TableCell className="text-right text-sm">{formatINR(u.base_consideration)}</TableCell>
-                            <TableCell className="text-right text-sm">
-                              {cls.gross.includedCharges > 0 ? formatINR(cls.gross.includedCharges) : '—'}
-                              {cls.gross.excludedCharges > 0 && (
-                                <span className="block text-xs text-muted-foreground">
-                                  {formatINR(cls.gross.excludedCharges)} excl.
-                                </span>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-right text-sm font-medium">{formatINR(cls.gross.gross)}</TableCell>
-                            <TableCell>
-                              {u.unit_type === 'Commercial' ? (
-                                <span className="text-xs text-muted-foreground">n/a</span>
-                              ) : cls.affordable.isAffordable ? (
-                                <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">Yes</Badge>
-                              ) : (
-                                <Badge variant="outline">No</Badge>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-sm">
-                              <span className="font-medium">{cls.ratePct}%</span>
-                              <span className="block text-xs text-muted-foreground">eff. {cls.effectiveRatePct}%</span>
-                            </TableCell>
-                            <TableCell>
-                              {opening ? (
-                                <Badge className="bg-sky-100 text-sky-800 border-sky-200">Set</Badge>
-                              ) : (
-                                <Badge variant="outline">—</Badge>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant={u.status === 'Available' ? 'outline' : 'default'}>{u.status}</Badge>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-0.5">
-                                <Button variant="ghost" size="icon" title="Classification history" onClick={() => openHistory(u)}>
-                                  <History className="h-4 w-4" />
+            ) : (
+              <Table className={B_TABLE} containerClassName={cn(WS_TABLE_WRAP, 'max-h-[70vh]')}>
+                <TableHeader>
+                  <TableRow className={B_TR_HEAD}>
+                    <TableHead className={B_TH}>Unit</TableHead>
+                    <TableHead className={B_TH}>{label}</TableHead>
+                    <TableHead className={B_TH}>Type</TableHead>
+                    <TableHead className={B_TH_NUM}>Carpet (sq m)</TableHead>
+                    <TableHead className={B_TH_NUM}>Base value</TableHead>
+                    <TableHead className={B_TH_NUM}>Charges</TableHead>
+                    <TableHead className={B_TH_NUM}>Gross</TableHead>
+                    <TableHead className={B_TH}>Affordable</TableHead>
+                    <TableHead className={B_TH}>Rate</TableHead>
+                    <TableHead className={B_TH}>Opening</TableHead>
+                    <TableHead className={B_TH}>Status</TableHead>
+                    <TableHead className={cn(B_TH, 'w-28')} />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {units.map((u) => {
+                    const cls = classifyStored(u);
+                    const opening = openings[u.id];
+                    return (
+                      <TableRow key={u.id} className={B_TR}>
+                        <TableCell className={cn(B_TD, 'font-medium')}>
+                          {u.unit_no}
+                          {u.onboarding_status === 'CLOSED_PRE_ONBOARDING' && (
+                            <Badge variant="outline" className="ml-1.5 text-[10px] font-medium">Closed pre-onboarding</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className={cn(B_TD, 'text-muted-foreground')}>{groupName_(u.group_id)}</TableCell>
+                        <TableCell className={B_TD}>{u.unit_type}</TableCell>
+                        <TableCell className={B_TD_NUM}>{Number(u.carpet_area_sqm).toFixed(3)}</TableCell>
+                        <TableCell className={B_TD_NUM}>{formatINR(u.base_consideration)}</TableCell>
+                        <TableCell className={B_TD_NUM}>
+                          {cls.gross.includedCharges > 0 ? formatINR(cls.gross.includedCharges) : '—'}
+                          {cls.gross.excludedCharges > 0 && (
+                            <span className="block text-[11px] text-muted-foreground">
+                              {formatINR(cls.gross.excludedCharges)} excl.
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className={cn(B_TD_NUM, 'font-medium')}>{formatINR(cls.gross.gross)}</TableCell>
+                        <TableCell className={B_TD}>
+                          {u.unit_type === 'Commercial' ? (
+                            <span className="text-muted-foreground">n/a</span>
+                          ) : cls.affordable.isAffordable ? (
+                            <Badge variant="success" className="text-[10px] font-medium">Yes</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[10px] font-medium">No</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className={B_TD}>
+                          <span className="font-medium tabular-nums">{cls.ratePct}%</span>
+                          <span className="block text-[11px] text-muted-foreground">eff. {cls.effectiveRatePct}%</span>
+                        </TableCell>
+                        <TableCell className={B_TD}>
+                          {opening ? (
+                            <Badge variant="info" className="text-[10px] font-medium">Set</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[10px] font-medium">—</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className={B_TD}>
+                          <Badge variant={u.status === 'Available' ? 'outline' : 'secondary'} className="text-[10px] font-medium">{u.status}</Badge>
+                        </TableCell>
+                        <TableCell className={cn(B_TD, 'py-0.5')}>
+                          <div className="flex items-center gap-0.5">
+                            <Button variant="ghost" size="icon" className="h-7 w-7" title="Classification history" onClick={() => openHistory(u)}>
+                              <History className="h-3.5 w-3.5" />
+                            </Button>
+                            {canEditUnits && (
+                              <>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" title="Opening balance" onClick={() => openOpening(u)}>
+                                  <Wallet className="h-3.5 w-3.5" />
                                 </Button>
-                                {canEditUnits && (
-                                  <>
-                                    <Button variant="ghost" size="icon" title="Opening balance" onClick={() => openOpening(u)}>
-                                      <Wallet className="h-4 w-4" />
-                                    </Button>
-                                    <Button variant="ghost" size="icon" title="Edit unit" onClick={() => openEditUnit(u)}>
-                                      <Pencil className="h-4 w-4" />
-                                    </Button>
-                                    <Button variant="ghost" size="icon" title="Delete unit" onClick={() => handleDeleteUnit(u)}>
-                                      <Trash2 className="h-4 w-4 text-destructive" />
-                                    </Button>
-                                  </>
-                                )}
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" title="Edit unit" onClick={() => openEditUnit(u)}>
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" title="Delete unit" onClick={() => handleDeleteUnit(u)}>
+                                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </SectionCard>
         </TabsContent>
 
         {/* ── Groups ─────────────────────────────────────────────────────── */}
-        <TabsContent value="groups" className="mt-4">
-          <Card>
-            <CardHeader className="flex flex-row items-start justify-between gap-3">
-              <div>
-                <CardTitle className="text-base">{label}s</CardTitle>
-                <CardDescription>
-                  BU permission often arrives {label.toLowerCase()} by {label.toLowerCase()}, so the
-                  differential can fire in several months for one project.
-                </CardDescription>
+        <TabsContent value="groups" className="mt-0">
+          <SectionCard
+            title={`${label}s`}
+            description={(
+              <>
+                BU permission often arrives {label.toLowerCase()} by {label.toLowerCase()}, so the
+                differential can fire in several months for one project.
+              </>
+            )}
+            actions={canEditProject ? (
+              <Button size="sm" className={WS_BTN} onClick={() => setGroupDialog(true)}><Plus className="h-3.5 w-3.5" /> Add {label.toLowerCase()}</Button>
+            ) : undefined}
+          >
+            {groups.length === 0 ? (
+              <div className="py-6 text-center text-sm text-muted-foreground">
+                <Layers className="mx-auto mb-2 h-6 w-6 opacity-40" />
+                No {label.toLowerCase()}s defined. Units can stay ungrouped.
               </div>
-              {canEditProject && (
-                <Button onClick={() => setGroupDialog(true)}><Plus className="h-4 w-4 mr-2" /> Add {label.toLowerCase()}</Button>
-              )}
-            </CardHeader>
-            <CardContent className="p-0">
-              {groups.length === 0 ? (
-                <div className="p-10 text-center text-muted-foreground">
-                  <Layers className="h-8 w-8 mx-auto mb-3 opacity-40" />
-                  <p className="text-sm">No {label.toLowerCase()}s defined. Units can stay ungrouped.</p>
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{label}</TableHead>
-                      <TableHead className="text-right">Units</TableHead>
-                      <TableHead className="text-right">Carpet (sq m)</TableHead>
-                      <TableHead className="w-16" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {groups.map((g) => {
-                      const gu = units.filter((u) => u.group_id === g.id);
-                      const area = gu.reduce((s, u) => s + (Number(u.carpet_area_sqm) || 0), 0);
-                      return (
-                        <TableRow key={g.id}>
-                          <TableCell className="font-medium">{g.name}</TableCell>
-                          <TableCell className="text-right text-sm">{gu.length}</TableCell>
-                          <TableCell className="text-right text-sm">{area.toFixed(3)}</TableCell>
-                          <TableCell>
-                            {canEditProject && (
-                              <Button variant="ghost" size="icon" onClick={() => handleDeleteGroup(g)}>
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                              </Button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+            ) : (
+              <Table className={B_TABLE} containerClassName={WS_TABLE_WRAP}>
+                <TableHeader>
+                  <TableRow className={B_TR_HEAD}>
+                    <TableHead className={B_TH}>{label}</TableHead>
+                    <TableHead className={B_TH_NUM}>Units</TableHead>
+                    <TableHead className={B_TH_NUM}>Carpet (sq m)</TableHead>
+                    <TableHead className={cn(B_TH, 'w-16')} />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {groups.map((g) => {
+                    const gu = units.filter((u) => u.group_id === g.id);
+                    const area = gu.reduce((s, u) => s + (Number(u.carpet_area_sqm) || 0), 0);
+                    return (
+                      <TableRow key={g.id} className={B_TR}>
+                        <TableCell className={cn(B_TD, 'font-medium')}>{g.name}</TableCell>
+                        <TableCell className={B_TD_NUM}>{gu.length}</TableCell>
+                        <TableCell className={B_TD_NUM}>{area.toFixed(3)}</TableCell>
+                        <TableCell className={cn(B_TD, 'py-0.5')}>
+                          {canEditProject && (
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDeleteGroup(g)} aria-label={`Delete ${label.toLowerCase()}`}>
+                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </SectionCard>
         </TabsContent>
       </Tabs>
 
@@ -991,15 +976,12 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
                 </SelectContent>
               </Select>
               {unitForm.onboarding_status === 'CLOSED_PRE_ONBOARDING' && (
-                <div className="mt-2 flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                  <p className="text-xs">
-                    This unit is skipped by every BU-event sweep and by the dastavej auto-post differential —
-                    this software will never compute or post GST for it. It still counts toward the project's
-                    carpet area for the 15% test. Only set this where the firm's own records already show the
-                    unit fully and correctly taxed before this project was onboarded here.
-                  </p>
-                </div>
+                <Note tone="warn" className="mt-2">
+                  This unit is skipped by every BU-event sweep and by the dastavej auto-post differential —
+                  this software will never compute or post GST for it. It still counts toward the project's
+                  carpet area for the 15% test. Only set this where the firm's own records already show the
+                  unit fully and correctly taxed before this project was onboarded here.
+                </Note>
               )}
             </div>
           </div>
@@ -1055,14 +1037,11 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
               && !formClassification.affordable.isAffordable
               && formClassification.affordable.areaWithinLimit
               && !formClassification.affordable.valueWithinLimit && (
-              <div className="flex gap-2 rounded border border-amber-200 bg-amber-50 p-2 text-amber-900">
-                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                <p className="text-xs">
-                  Carpet area is within the limit but gross consideration exceeds ₹45 lakh, so the unit is
-                  not affordable. If it was previously taxed at 1.5%, the concession never applied and 7.5%
-                  is due on everything already offered to tax.
-                </p>
-              </div>
+              <Note tone="warn">
+                Carpet area is within the limit but gross consideration exceeds ₹45 lakh, so the unit is
+                not affordable. If it was previously taxed at 1.5%, the concession never applied and 7.5%
+                is due on everything already offered to tax.
+              </Note>
             )}
           </div>
 
@@ -1094,36 +1073,34 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
           ) : historyRows.length === 0 ? (
             <p className="text-sm text-muted-foreground py-6">No history recorded yet.</p>
           ) : (
-            <div className="overflow-x-auto rounded-md border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>When</TableHead>
-                    <TableHead>Rate</TableHead>
-                    <TableHead>Affordable</TableHead>
-                    <TableHead className="text-right">Carpet</TableHead>
-                    <TableHead className="text-right">Gross</TableHead>
-                    <TableHead>Reason</TableHead>
-                    <TableHead>By</TableHead>
+            <Table className={B_TABLE} containerClassName={WS_TABLE_WRAP}>
+              <TableHeader>
+                <TableRow className={B_TR_HEAD}>
+                  <TableHead className={B_TH}>When</TableHead>
+                  <TableHead className={B_TH}>Rate</TableHead>
+                  <TableHead className={B_TH}>Affordable</TableHead>
+                  <TableHead className={B_TH_NUM}>Carpet</TableHead>
+                  <TableHead className={B_TH_NUM}>Gross</TableHead>
+                  <TableHead className={B_TH}>Reason</TableHead>
+                  <TableHead className={B_TH}>By</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {historyRows.map((r) => (
+                  <TableRow key={r.id} className={B_TR}>
+                    <TableCell className={B_TD}>{r.effective_from}</TableCell>
+                    <TableCell className={B_TD}>{RATE_CODE_LABEL[r.rate_code]}</TableCell>
+                    <TableCell className={B_TD}>{r.is_affordable ? 'Yes' : 'No'}</TableCell>
+                    <TableCell className={B_TD_NUM}>{formatSqM(r.carpet_area_sqm)}</TableCell>
+                    <TableCell className={B_TD_NUM}>{formatINR(r.gross_consideration)}</TableCell>
+                    <TableCell className={B_TD}>{r.reason}</TableCell>
+                    <TableCell className={B_TD}>
+                      {(r.created_by && staffNames[r.created_by]) || '—'}
+                    </TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {historyRows.map((r) => (
-                    <TableRow key={r.id}>
-                      <TableCell className="text-sm">{r.effective_from}</TableCell>
-                      <TableCell className="text-sm">{RATE_CODE_LABEL[r.rate_code]}</TableCell>
-                      <TableCell className="text-sm">{r.is_affordable ? 'Yes' : 'No'}</TableCell>
-                      <TableCell className="text-right text-sm">{formatSqM(r.carpet_area_sqm)}</TableCell>
-                      <TableCell className="text-right text-sm">{formatINR(r.gross_consideration)}</TableCell>
-                      <TableCell className="text-sm">{r.reason}</TableCell>
-                      <TableCell className="text-sm">
-                        {(r.created_by && staffNames[r.created_by]) || '—'}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </DialogContent>
       </Dialog>

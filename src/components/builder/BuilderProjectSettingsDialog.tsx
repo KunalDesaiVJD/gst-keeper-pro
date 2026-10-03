@@ -6,7 +6,8 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { Note } from '@/components/gstr9/ui';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -14,7 +15,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
+import { Loader2, Trash2 } from 'lucide-react';
 import { RREP_COMMERCIAL_THRESHOLD, formatPct, testRrep } from '@/utils/builderRates';
 
 /**
@@ -294,7 +295,7 @@ const BuilderProjectSettingsDialog: React.FC<Props> = ({
                   onChange={(e) => setForm({ ...form, manual_commercial_carpet_sqm: e.target.value })}
                 />
               </div>
-              <div className="sm:col-span-2 rounded-lg border p-3 text-sm">
+              <div className="sm:col-span-2 rounded-md border px-2.5 py-1.5 text-xs">
                 {formRrep.isIndeterminate ? (
                   <span className="text-muted-foreground">Enter carpet areas to see the 15% test.</span>
                 ) : (
@@ -302,9 +303,9 @@ const BuilderProjectSettingsDialog: React.FC<Props> = ({
                     <span>Commercial share: <strong>{formatPct(formRrep.commercialShare)}</strong>
                       {' '}(RREP at or under {formatPct(RREP_COMMERCIAL_THRESHOLD)})</span>
                     {formRrep.isRrep ? (
-                      <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">RREP</Badge>
+                      <Badge variant="success" className="text-[10px] font-medium">RREP</Badge>
                     ) : (
-                      <Badge className="bg-amber-100 text-amber-800 border-amber-200">REP (other than RREP)</Badge>
+                      <Badge variant="warning" className="text-[10px] font-medium">REP (other than RREP)</Badge>
                     )}
                   </div>
                 )}
@@ -339,13 +340,10 @@ const BuilderProjectSettingsDialog: React.FC<Props> = ({
           </div>
 
           {form.fsi_treatment === 'IGNORE' && (
-            <div className="sm:col-span-2 flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
-              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-              <p className="text-xs">
-                Returns for the period carrying this project's FSI liability will stay blocked until the
-                client's written instruction is attached and the GST Manager has approved it.
-              </p>
-            </div>
+            <Note tone="warn" className="sm:col-span-2">
+              Returns for the period carrying this project's FSI liability will stay blocked until the
+              client's written instruction is attached and the GST Manager has approved it.
+            </Note>
           )}
 
           <div className="sm:col-span-2">
