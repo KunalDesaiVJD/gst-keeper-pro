@@ -1,7 +1,9 @@
 import React from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
-import { OpenDifferences } from '../ui';
+import { Note, OpenDifferences } from '../ui';
+import { useApplicability } from '../register/useApplicability';
+import { croreText } from '@/lib/gstr9/applicability';
 import { useWorkspace } from '../WorkspaceContext';
 import { DiffKpi } from '../gstr9c/bits';
 import { Table5Card, Table7Card } from '../gstr9c/TurnoverPart';
@@ -88,7 +90,9 @@ const OLD_TAB: Record<string, string> = { turnover: '5', tax: '9', itc: '12', li
  * justification. One tab per table, so each opens in one screen.
  */
 const Gstr9cStep: React.FC = () => {
-  const { workings } = useWorkspace();
+  const { workings, client, financialYear } = useWorkspace();
+  const { result: app, entry } = useApplicability(client, financialYear);
+  const turnover = entry?.aggregate_turnover ?? null;
   const [params, setParams] = useSearchParams();
   const fromUrl = params.get(TAB_PARAM) ?? OLD_TAB[params.get(OLD_TAB_PARAM) ?? ''] ?? null;
   const tab = TABLES.some((t) => t.key === fromUrl) ? (fromUrl as string) : TABLES[0].key;
@@ -106,6 +110,13 @@ const Gstr9cStep: React.FC = () => {
 
   return (
     <div className="space-y-3">
+      {app && app.gstr9 !== 'unknown' && !app.file9c && (
+        <Note tone="info">
+          {app.notApplicable
+            ? <>GSTR-9C does not apply to this registration ({app.notApplicable}).</>
+            : <>GSTR-9C is not required for FY {financialYear}: aggregate turnover {turnover !== null ? `₹${(turnover / 1_00_00_000).toLocaleString('en-IN', { maximumFractionDigits: 2 })} crore` : ''} is not above {croreText(app.thresholds.gstr9c)}. Prepare it only if the client wishes — choose “Preparing” for this client on All clients.</>}
+        </Note>
+      )}
       {openElsewhere && <OpenDifferences step="gstr9c" />}
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
