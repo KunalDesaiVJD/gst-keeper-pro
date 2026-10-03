@@ -3,9 +3,14 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, Note, SectionCard } from '@/components/gstr9/ui';
+import {
+  WS_CONTROL, WS_FILTER_LABEL, WS_PAGE, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR,
+} from '@/components/workspace/theme';
+import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/ui/searchable-select';
@@ -15,9 +20,8 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { FileSignature, Loader2, Pencil, Info, AlertTriangle, CheckCircle2, Percent } from 'lucide-react';
+import { FileSignature, Loader2, Pencil, CheckCircle2, Percent } from 'lucide-react';
 import { formatINR, type BuilderRateCode } from '@/utils/builderRates';
 import {
   autoPostDastavejDifferential, clearDastavejDate, markLateDiscoveryInterestPaid, previewLateDiscoveryInterest,
@@ -98,11 +102,11 @@ const resolveAction = (r: RecoRow): Action => {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-const TONE_CLASS: Record<Action['tone'], string> = {
-  ok: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-  info: 'bg-sky-100 text-sky-800 border-sky-200',
-  warn: 'bg-amber-100 text-amber-800 border-amber-200',
-  muted: '',
+const TONE_VARIANT: Record<Action['tone'], 'success' | 'info' | 'warning' | 'outline'> = {
+  ok: 'success',
+  info: 'info',
+  warn: 'warning',
+  muted: 'outline',
 };
 
 interface Props {
@@ -348,18 +352,20 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
   }, [rows]);
 
   return (
-    <div className="space-y-6">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
+        embedded
         title="Dastavej Reconciliation"
         subtitle="Registered deed value against the value actually offered to tax"
-        icon={<FileSignature className="h-5 w-5" />}
+        icon={<FileSignature />}
       />
 
       <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-wrap items-end gap-4">
-            <div className="flex-1 min-w-[220px] max-w-xs">
-              <Label className="mb-1.5 block">Builder client</Label>
+        <CardContent className="px-3 py-2">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="min-w-[220px] max-w-xs flex-1 space-y-0.5">
+              <span className={WS_FILTER_LABEL}>Builder client</span>
               <SearchableSelect
                 options={clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin || undefined }))}
                 value={selectedClientId || ''}
@@ -367,218 +373,193 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
                 placeholder="Search builder client..."
                 searchPlaceholder="Type to search..."
                 emptyText="No builder clients found."
+                className={WS_CONTROL}
               />
-            </div>
-            <div className="w-56">
-              <Label className="mb-1.5 block">Project</Label>
+            </label>
+            <label className="w-56 space-y-0.5">
+              <span className={WS_FILTER_LABEL}>Project</span>
               <Select value={projectFilter} onValueChange={setProjectFilter}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger className={WS_CONTROL} aria-label="Project"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ALL">All projects</SelectItem>
                   {projects.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
                 </SelectContent>
               </Select>
-            </div>
+            </label>
           </div>
         </CardContent>
       </Card>
 
-      <div className="flex gap-2 rounded-lg border bg-muted/30 p-3 text-muted-foreground">
-        <Info className="h-4 w-4 shrink-0 mt-0.5" />
-        <p className="text-xs">
-          Registration usually creates no fresh GST — by the time the deed is executed the unit is normally
-          already fully taxed through ordinary advances, and this page exists to catch variances. Where it
-          isn't — the unit registered before advances caught up — saving the date taxes the shortfall
-          automatically, right here, so nothing is left open until some future BU event. Where the deed is
-          registered at a jantri value above the agreement value, GST still follows the actual transaction
-          value u/s 15; the reconciliation just needs to be documented, because it is a standard audit query.
-        </p>
-      </div>
+      <Note>
+        Registration usually creates no fresh GST — by the time the deed is executed the unit is normally
+        already fully taxed through ordinary advances, and this page exists to catch variances. Where it
+        isn't — the unit registered before advances caught up — saving the date taxes the shortfall
+        automatically, right here, so nothing is left open until some future BU event. Where the deed is
+        registered at a jantri value above the agreement value, GST still follows the actual transaction
+        value u/s 15; the reconciliation just needs to be documented, because it is a standard audit query.
+      </Note>
 
       {isLoading && (
-        <div className="flex items-center gap-2 text-muted-foreground text-sm">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-        </div>
+        <Card>
+          <CardContent className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+          </CardContent>
+        </Card>
       )}
 
       {!isLoading && selectedClientId && (
         <>
-          <Card>
-            <CardContent className="p-4">
-              <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                <div>
-                  <p className="text-xs text-muted-foreground">Reconciled</p>
-                  <p className="text-sm font-semibold">{summary.reconciled}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Taxed at registration</p>
-                  <p className="text-sm font-semibold">{summary.autoTaxed}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Supplementary due</p>
-                  <p className="text-sm font-semibold">{summary.supplementary}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Credit note due</p>
-                  <p className="text-sm font-semibold">{summary.creditNote}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Schedule III</p>
-                  <p className="text-sm font-semibold">{summary.scheduleIII}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Value not captured</p>
-                  <p className="text-sm font-semibold">{summary.pending}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+            <KpiTile label="Reconciled" value={summary.reconciled} tone={summary.reconciled ? 'ok' : 'neutral'} />
+            <KpiTile label="Taxed at registration" value={summary.autoTaxed} />
+            <KpiTile label="Supplementary due" value={summary.supplementary} tone={summary.supplementary ? 'warn' : 'neutral'} />
+            <KpiTile label="Credit note due" value={summary.creditNote} tone={summary.creditNote ? 'warn' : 'neutral'} />
+            <KpiTile label="Schedule III" value={summary.scheduleIII} />
+            <KpiTile label="Value not captured" value={summary.pending} tone={summary.pending ? 'warn' : 'neutral'} />
+          </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Registered units ({rows.length})</CardTitle>
-              <CardDescription>
+          <SectionCard
+            title={`Registered units (${rows.length})`}
+            description={(
+              <>
                 A unit unbooked at its BU cut-off falls under Schedule III — its later sale is not a supply,
                 so the deed carries no GST and appears in no return.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="p-0">
-              {rows.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-4 py-6">
-                  No units with dastavej details recorded yet.
-                </p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Project</TableHead>
-                        <TableHead>Unit</TableHead>
-                        <TableHead>Dastavej date</TableHead>
-                        <TableHead>Cut-off date</TableHead>
-                        <TableHead className="text-right">Deed value</TableHead>
-                        <TableHead className="text-right">Value taxed</TableHead>
-                        <TableHead className="text-right">Variance</TableHead>
-                        <TableHead>Action</TableHead>
-                        <TableHead className="w-12" />
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {rows.map((r) => {
-                        const action = resolveAction(r);
-                        return (
-                          <TableRow key={r.unit_id}>
-                            <TableCell className="text-sm text-muted-foreground">{r.project_name}</TableCell>
-                            <TableCell className="font-medium">
-                              {r.unit_no}
-                              <span className="block text-xs text-muted-foreground">{r.unit_type}</span>
-                            </TableCell>
-                            <TableCell className="text-sm">{r.dastavej_date || '—'}</TableCell>
-                            <TableCell className="text-sm">
-                              {r.bu_date ? (
-                                <>
-                                  {r.bu_date}
-                                  <span className="block text-xs text-muted-foreground">
-                                    {r.cut_off_source === 'DASTAVEJ' ? 'via dastavej' : 'via BU'}
-                                  </span>
-                                </>
-                              ) : '—'}
-                            </TableCell>
-                            <TableCell className="text-right text-sm">
-                              {r.dastavej_value === null ? '—' : formatINR(r.dastavej_value)}
-                            </TableCell>
-                            <TableCell className="text-right text-sm">{formatINR(r.value_taxed)}</TableCell>
-                            <TableCell className="text-right text-sm font-medium">
-                              {r.variance === null ? '—' : formatINR(r.variance)}
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant="outline" className={TONE_CLASS[action.tone]}>
-                                {action.label}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex items-center">
-                                {canEdit && (
-                                  <Button
-                                    variant="ghost" size="icon"
-                                    onClick={() => openEdit(r.unit_id, r.unit_no, r.dastavej_date, r.dastavej_value)}
-                                  >
-                                    <Pencil className="h-4 w-4" />
-                                  </Button>
-                                )}
-                                {canEdit && r.dastavej_date && (
-                                  <Button
-                                    variant="ghost" size="icon" title="Late-discovery interest"
-                                    onClick={() => openLateInterest(r.unit_id, r.unit_no, r.dastavej_date!, r.project_id)}
-                                  >
-                                    <Percent className="h-4 w-4" />
-                                  </Button>
-                                )}
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+              </>
+            )}
+          >
+            {rows.length === 0 ? (
+              <p className="py-4 text-sm text-muted-foreground">
+                No units with dastavej details recorded yet.
+              </p>
+            ) : (
+              <div className={WS_TABLE_WRAP}>
+                <table className={WS_TABLE}>
+                  <thead>
+                    <tr>
+                      <th className={WS_TH}>Project</th>
+                      <th className={WS_TH}>Unit</th>
+                      <th className={WS_TH}>Dastavej date</th>
+                      <th className={WS_TH}>Cut-off date</th>
+                      <th className={cn(WS_TH, 'text-right')}>Deed value</th>
+                      <th className={cn(WS_TH, 'text-right')}>Value taxed</th>
+                      <th className={cn(WS_TH, 'text-right')}>Variance</th>
+                      <th className={WS_TH}>Action</th>
+                      <th className={cn(WS_TH, 'w-16')}><span className="sr-only">Edit</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => {
+                      const action = resolveAction(r);
+                      return (
+                        <tr key={r.unit_id} className={WS_TR}>
+                          <td className={cn(WS_TD, 'text-muted-foreground')}>{r.project_name}</td>
+                          <td className={cn(WS_TD, 'font-medium')}>
+                            {r.unit_no}
+                            <span className="block text-[11px] font-normal text-muted-foreground">{r.unit_type}</span>
+                          </td>
+                          <td className={cn(WS_TD, 'whitespace-nowrap')}>{r.dastavej_date || '—'}</td>
+                          <td className={cn(WS_TD, 'whitespace-nowrap')}>
+                            {r.bu_date ? (
+                              <>
+                                {r.bu_date}
+                                <span className="block text-[11px] text-muted-foreground">
+                                  {r.cut_off_source === 'DASTAVEJ' ? 'via dastavej' : 'via BU'}
+                                </span>
+                              </>
+                            ) : '—'}
+                          </td>
+                          <td className={WS_TD_NUM}>
+                            {r.dastavej_value === null ? '—' : formatINR(r.dastavej_value)}
+                          </td>
+                          <td className={WS_TD_NUM}>{formatINR(r.value_taxed)}</td>
+                          <td className={cn(WS_TD_NUM, 'font-medium')}>
+                            {r.variance === null ? '—' : formatINR(r.variance)}
+                          </td>
+                          <td className={WS_TD}>
+                            <Badge variant={TONE_VARIANT[action.tone]} className="text-[10px] font-medium">
+                              {action.label}
+                            </Badge>
+                          </td>
+                          <td className={cn(WS_TD, 'py-0.5')}>
+                            <div className="flex items-center">
+                              {canEdit && (
+                                <Button
+                                  variant="ghost" size="icon" className="h-7 w-7" title="Edit dastavej"
+                                  onClick={() => openEdit(r.unit_id, r.unit_no, r.dastavej_date, r.dastavej_value)}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              {canEdit && r.dastavej_date && (
+                                <Button
+                                  variant="ghost" size="icon" className="h-7 w-7" title="Late-discovery interest"
+                                  onClick={() => openLateInterest(r.unit_id, r.unit_no, r.dastavej_date!, r.project_id)}
+                                >
+                                  <Percent className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </SectionCard>
 
           {pending.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Awaiting registration ({pending.length})</CardTitle>
-                <CardDescription>
+            <SectionCard
+              title={`Awaiting registration (${pending.length})`}
+              description={(
+                <>
                   Units with no deed recorded. A dastavej dated before the BU permission pulls that unit's
                   cut-off earlier, so capturing it matters before a BU event is prepared.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="p-0">
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Unit</TableHead>
-                        <TableHead className="w-12" />
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {pending.slice(0, 50).map((u) => (
-                        <TableRow key={u.id}>
-                          <TableCell className="font-medium">{u.unit_no}</TableCell>
-                          <TableCell>
-                            {canEdit && (
-                              <Button
-                                variant="ghost" size="icon"
-                                onClick={() => openEdit(u.id, u.unit_no, u.dastavej_date, u.dastavej_value)}
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                  {pending.length > 50 && (
-                    <p className="text-xs text-muted-foreground px-4 py-2">
-                      Showing the first 50 of {pending.length}.
-                    </p>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+                </>
+              )}
+            >
+              <div className={WS_TABLE_WRAP}>
+                <table className={WS_TABLE}>
+                  <thead>
+                    <tr>
+                      <th className={WS_TH}>Unit</th>
+                      <th className={cn(WS_TH, 'w-12')}><span className="sr-only">Edit</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pending.slice(0, 50).map((u) => (
+                      <tr key={u.id} className={WS_TR}>
+                        <td className={cn(WS_TD, 'font-medium')}>{u.unit_no}</td>
+                        <td className={cn(WS_TD, 'py-0.5')}>
+                          {canEdit && (
+                            <Button
+                              variant="ghost" size="icon" className="h-7 w-7" title="Record dastavej"
+                              onClick={() => openEdit(u.id, u.unit_no, u.dastavej_date, u.dastavej_value)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {pending.length > 50 && (
+                <p className="text-xs text-muted-foreground">
+                  Showing the first 50 of {pending.length}.
+                </p>
+              )}
+            </SectionCard>
           )}
         </>
       )}
 
       {!selectedClientId && !isLoading && (
         <Card>
-          <CardContent className="p-10 text-center text-muted-foreground">
-            <FileSignature className="h-8 w-8 mx-auto mb-3 opacity-40" />
-            <p className="text-sm">Select a builder client.</p>
+          <CardContent className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+            <FileSignature className="h-4 w-4 opacity-60" /> Select a builder client.
           </CardContent>
         </Card>
       )}
@@ -613,15 +594,12 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
             </div>
           </div>
 
-          <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
-            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-            <p className="text-xs">
-              Saving a date on a unit not yet closed against any event checks it immediately: fully taxed
-              already → nothing happens; a shortfall → it's posted right now, dated to this deed. Changing
-              the date on a unit <strong>already</strong> covered by a posted event does not re-run that
-              working — unpost it and prepare it again if the cut-off should move.
-            </p>
-          </div>
+          <Note tone="warn">
+            Saving a date on a unit not yet closed against any event checks it immediately: fully taxed
+            already → nothing happens; a shortfall → it's posted right now, dated to this deed. Changing
+            the date on a unit <strong>already</strong> covered by a posted event does not re-run that
+            working — unpost it and prepare it again if the cut-off should move.
+          </Note>
 
           <DialogFooter>
             {form.dastavej_date && (
@@ -659,13 +637,10 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
           {interestPreview && (
             <div className="space-y-4">
               {!interestPreview.bookedAtCutOff ? (
-                <div className="flex gap-2 rounded-lg border border-muted bg-muted/30 p-3 text-muted-foreground">
-                  <Info className="h-4 w-4 shrink-0 mt-0.5" />
-                  <p className="text-xs">Unbooked at this cut-off — Schedule III, no GST involved.</p>
-                </div>
+                <Note open>Unbooked at this cut-off — Schedule III, no GST involved.</Note>
               ) : interestPreview.shortfallValue <= 0 ? (
-                <div className="flex gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-emerald-900">
-                  <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
+                <div className="flex items-start gap-2 rounded-md border border-success/40 bg-success/10 px-2.5 py-1.5 text-foreground">
+                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-strong" />
                   <p className="text-xs">
                     No shortfall as of {interestPreview.cutOffPeriod} — advances before the cut-off already
                     covered the agreement value. Nothing to price here.
@@ -685,45 +660,44 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
                   </div>
 
                   {interestPreview.tranches.length > 0 && (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Period</TableHead>
-                          <TableHead className="text-right">Allocated</TableHead>
-                          <TableHead className="text-right">Tax</TableHead>
-                          <TableHead className="text-right">Days late</TableHead>
-                          <TableHead className="text-right">Interest</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {interestPreview.tranches.map((t) => (
-                          <TableRow key={t.periodMonth}>
-                            <TableCell className="text-sm">{t.periodMonth}</TableCell>
-                            <TableCell className="text-right text-sm">{formatINR(t.allocated)}</TableCell>
-                            <TableCell className="text-right text-sm">{formatINR(t.tax)}</TableCell>
-                            <TableCell className="text-right text-sm">{t.interestDays}</TableCell>
-                            <TableCell className="text-right text-sm font-medium">{formatINR(t.interestAmount)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+                    <div className={WS_TABLE_WRAP}>
+                      <table className={WS_TABLE}>
+                        <thead>
+                          <tr>
+                            <th className={WS_TH}>Period</th>
+                            <th className={cn(WS_TH, 'text-right')}>Allocated</th>
+                            <th className={cn(WS_TH, 'text-right')}>Tax</th>
+                            <th className={cn(WS_TH, 'text-right')}>Days late</th>
+                            <th className={cn(WS_TH, 'text-right')}>Interest</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {interestPreview.tranches.map((t) => (
+                            <tr key={t.periodMonth} className={WS_TR}>
+                              <td className={WS_TD}>{t.periodMonth}</td>
+                              <td className={WS_TD_NUM}>{formatINR(t.allocated)}</td>
+                              <td className={WS_TD_NUM}>{formatINR(t.tax)}</td>
+                              <td className={WS_TD_NUM}>{t.interestDays}</td>
+                              <td className={cn(WS_TD_NUM, 'font-medium')}>{formatINR(t.interestAmount)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
 
-                  <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sky-900">
+                  <div className="rounded-md border border-info/40 bg-info/10 px-3 py-2 text-foreground">
                     <p className="text-sm font-medium">Total interest owed: {formatINR(interestPreview.totalInterest)}</p>
                     <p className="text-xs mt-1">Settled by voluntary payment on the portal — never through GSTR-1/3B.</p>
                   </div>
 
                   {interestPreview.residualUnrecovered > 0.005 && (
-                    <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
-                      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                      <p className="text-xs">
-                        {formatINR(interestPreview.residualUnrecovered)} of the shortfall was never
-                        recovered by any later advance — still genuinely untaxed. This portion needs an
-                        ordinary differential post (BU Events page, single unit, Discovery-with-interest
-                        basis) for fresh tax plus interest to today, on top of the amount above.
-                      </p>
-                    </div>
+                    <Note tone="warn">
+                      {formatINR(interestPreview.residualUnrecovered)} of the shortfall was never
+                      recovered by any later advance — still genuinely untaxed. This portion needs an
+                      ordinary differential post (BU Events page, single unit, Discovery-with-interest
+                      basis) for fresh tax plus interest to today, on top of the amount above.
+                    </Note>
                   )}
 
                   {!interestSavedId ? (
