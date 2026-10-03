@@ -11,7 +11,7 @@ import React from 'react';
 import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { FileText, ExternalLink, UserCircle2 } from 'lucide-react';
@@ -110,8 +110,8 @@ export const ProfileCardView: React.FC<ProfileCardViewProps> = ({ table }) => {
   if (fields.length === 0) {
     return (
       <Card>
-        <CardContent className="py-16 flex flex-col items-center gap-2 text-center text-muted-foreground">
-          <UserCircle2 className="h-8 w-8 opacity-50" />
+        <CardContent className="flex flex-col items-center gap-1.5 py-8 text-center text-muted-foreground">
+          <UserCircle2 className="h-5 w-5 opacity-50" />
           <p className="text-sm">No profile data available for this report yet.</p>
         </CardContent>
       </Card>
@@ -120,17 +120,17 @@ export const ProfileCardView: React.FC<ProfileCardViewProps> = ({ table }) => {
 
   return (
     <Card className="overflow-hidden">
-      <CardHeader className="border-b bg-primary/5">
-        <div className="flex items-center gap-4">
-          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary/10 text-lg font-semibold text-primary">
+      <CardHeader className="space-y-0 border-b bg-muted/40 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
             {initials(headline)}
           </div>
           <div className="min-w-0">
-            <CardTitle className="truncate text-xl">{headline}</CardTitle>
+            <CardTitle className="truncate text-[15px] leading-snug">{headline}</CardTitle>
             {subtitleChips.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
+              <div className="mt-1 flex flex-wrap gap-1">
                 {subtitleChips.map((chip, i) => (
-                  <Badge key={i} variant="outline" className="font-normal text-xs">
+                  <Badge key={i} variant="outline" className="text-[10px] font-normal">
                     {chip}
                   </Badge>
                 ))}
@@ -140,16 +140,16 @@ export const ProfileCardView: React.FC<ProfileCardViewProps> = ({ table }) => {
         </div>
       </CardHeader>
 
-      <CardContent className="pt-6">
-        <div className="grid grid-cols-1 gap-x-10 gap-y-6 sm:grid-cols-2">
+      <CardContent className="px-4 pb-3 pt-3">
+        <div className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
           {fields.map((field, i) => {
             const urlValue = isUrl(field.value) ? field.value : null;
             return (
-              <div key={i} className={cn(urlValue && 'sm:col-span-2')}>
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{field.label}</p>
-                <div className="mt-1.5">
+              <div key={i} className={cn('min-w-0 border-b border-dashed pb-2', urlValue && 'sm:col-span-2 lg:col-span-3')}>
+                <p className="text-[11px] font-medium text-muted-foreground">{field.label}</p>
+                <div className="mt-0.5">
                   {urlValue ? (
-                    <Button asChild size="sm">
+                    <Button asChild size="sm" className="h-8 gap-1 px-2.5 text-xs">
                       <a
                         href={urlValue}
                         target="_blank"
@@ -162,9 +162,9 @@ export const ProfileCardView: React.FC<ProfileCardViewProps> = ({ table }) => {
                       </a>
                     </Button>
                   ) : isStatusLabel(field.label) && field.value !== '' ? (
-                    <Badge variant={statusVariant(String(field.value))}>{String(field.value)}</Badge>
+                    <Badge variant={statusVariant(String(field.value))} className="text-[10px] font-medium">{String(field.value)}</Badge>
                   ) : isSentinel(field.value) ? (
-                    <Badge variant="outline" className="border-dashed font-normal text-muted-foreground">
+                    <Badge variant="outline" className="border-dashed text-[10px] font-normal text-muted-foreground">
                       Not pulled
                     </Badge>
                   ) : (

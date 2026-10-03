@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -11,6 +11,7 @@ import {
   FileSpreadsheet, FileText, Loader2, Search, Star, X, LayoutGrid, DownloadCloud, Eye,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { WS_BTN, WS_CONTROL, WS_FILTER_LABEL } from '@/components/workspace/theme';
 import {
   REPORT_CATEGORY_LABELS,
   REPORT_CATEGORY_ORDER,
@@ -227,17 +228,17 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
       : null;
 
     return (
-      <div className="group flex items-start gap-3 px-3 py-3 rounded-lg hover:bg-muted/50 transition-colors">
-        <div className="shrink-0 rounded-md bg-primary/10 p-2 mt-0.5">
-          <Icon className="h-4 w-4 text-primary" />
+      <div className="group flex items-start gap-2.5 rounded-md px-2.5 py-2 transition-colors hover:bg-muted/30">
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10">
+          <Icon className="h-3.5 w-3.5 text-primary" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-medium text-sm leading-tight">{report.title}</span>
+            <span className="text-sm font-medium leading-tight">{report.title}</span>
             <Tooltip>
               <TooltipTrigger asChild>
                 <span>
-                  <Badge variant={statusMeta.badgeVariant} className="shrink-0 cursor-default">{statusMeta.shortLabel}</Badge>
+                  <Badge variant={statusMeta.badgeVariant} className="shrink-0 cursor-default text-[10px] font-medium">{statusMeta.shortLabel}</Badge>
                 </span>
               </TooltipTrigger>
               <TooltipContent side="top">{statusMeta.label}</TooltipContent>
@@ -255,7 +256,7 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
                 onClick={() => togglePin(report.key)}
                 aria-label={isPinned ? `Unpin ${report.title}` : `Pin ${report.title}`}
               >
-                <Star className={cn('h-4 w-4', isPinned ? 'fill-amber-400 text-amber-500' : 'text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity')} />
+                <Star className={cn('h-3.5 w-3.5', isPinned ? 'fill-amber-400 text-amber-500' : 'text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity')} />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="top">{isPinned ? 'Unpin' : 'Pin to top'}</TooltipContent>
@@ -267,9 +268,10 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
                 disabled={pullDisabled}
                 variant="outline"
                 size="sm"
+                className={WS_BTN}
                 aria-label={`Pull ${report.title} from the GST portal`}
               >
-                {pulling ? <Loader2 className="h-3.5 w-3.5 animate-spin sm:mr-1.5" /> : <DownloadCloud className="h-3.5 w-3.5 sm:mr-1.5" />}
+                {pulling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <DownloadCloud className="h-3.5 w-3.5" />}
                 <span className="hidden sm:inline">Pull</span>
               </Button>
             );
@@ -284,9 +286,10 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
                 disabled={disabled}
                 variant="outline"
                 size="sm"
+                className={WS_BTN}
                 aria-label={`Preview ${report.title} on screen`}
               >
-                <Eye className="h-3.5 w-3.5 sm:mr-1.5" />
+                <Eye className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Preview</span>
               </Button>
             );
@@ -301,9 +304,10 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
                 disabled={disabled || xlsxBusy}
                 variant="outline"
                 size="sm"
+                className={WS_BTN}
                 aria-label={`Download ${report.title} as Excel`}
               >
-                {xlsxBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin sm:mr-1.5" /> : <FileSpreadsheet className="h-3.5 w-3.5 sm:mr-1.5" />}
+                {xlsxBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
                 <span className="hidden sm:inline">Excel</span>
               </Button>
             );
@@ -318,9 +322,10 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
                 disabled={disabled || pdfBusy}
                 variant="outline"
                 size="sm"
+                className={WS_BTN}
                 aria-label={`Download ${report.title} as PDF`}
               >
-                {pdfBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin sm:mr-1.5" /> : <FileText className="h-3.5 w-3.5 sm:mr-1.5" />}
+                {pdfBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
                 <span className="hidden sm:inline">PDF</span>
               </Button>
             );
@@ -342,27 +347,27 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
         disabled={disabled}
         onClick={() => setActiveCategory(cat)}
         className={cn(
-          'w-full flex items-center justify-between gap-2 rounded-md px-3 py-1.5 text-sm text-left transition-colors',
-          active ? 'bg-primary text-primary-foreground font-medium' : 'text-foreground hover:bg-muted',
+          'flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1 text-left text-xs font-medium transition-colors',
+          active ? 'bg-primary text-primary-foreground shadow' : 'text-foreground/80 hover:bg-muted hover:text-foreground',
           disabled && 'opacity-40 cursor-not-allowed hover:bg-transparent',
         )}
       >
         <span className="truncate">{label}</span>
-        <span className={cn('text-xs tabular-nums shrink-0', active ? 'text-primary-foreground/80' : 'text-muted-foreground')}>{count}</span>
+        <span className={cn('shrink-0 text-[11px] tabular-nums', active ? 'text-primary-foreground/80' : 'text-muted-foreground')}>{count}</span>
       </button>
     );
   };
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6">
+    <div className="flex flex-col gap-3 lg:flex-row">
       {/* Sidebar — desktop only; mobile/tablet gets an inline category select in the toolbar below */}
-      <aside className="hidden lg:block w-60 shrink-0">
-        <div className="sticky top-4 space-y-4">
+      <aside className="hidden w-56 shrink-0 lg:block">
+        <div className="sticky top-4 space-y-3 rounded-md border bg-card p-1.5">
           {pinnedReports.length > 0 && (
             <div>
-              <div className="flex items-center gap-1.5 px-3 mb-1.5">
+              <div className="mb-1 flex items-center gap-1.5 px-2.5 pt-1">
                 <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-500" />
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pinned</span>
+                <span className={WS_FILTER_LABEL}>Pinned</span>
               </div>
               <div className="space-y-0.5">
                 {pinnedReports.map((r) => (
@@ -370,14 +375,14 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
                     key={r.key}
                     type="button"
                     onClick={() => { setActiveCategory('all'); setSearch(r.title); }}
-                    className="w-full text-left truncate rounded-md px-3 py-1 text-sm text-foreground hover:bg-muted transition-colors"
+                    className="w-full truncate rounded-md px-2.5 py-1 text-left text-xs text-foreground transition-colors hover:bg-muted"
                     title={r.title}
                   >
                     {r.title}
                   </button>
                 ))}
               </div>
-              <Separator className="mt-3" />
+              <Separator className="mt-2" />
             </div>
           )}
           <div className="space-y-0.5">
@@ -390,18 +395,20 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
       </aside>
 
       {/* Main column */}
-      <div className="min-w-0 flex-1 space-y-4">
+      <div className="min-w-0 flex-1 space-y-3">
         <Card>
-          <CardContent className="p-4 space-y-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="relative flex-1 min-w-[200px]">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <CardContent className="space-y-2 px-3 py-2">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="relative block min-w-[200px] flex-1 space-y-1">
+                <span className={cn(WS_FILTER_LABEL, 'block')}>Search</span>
+                <span className="relative block">
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   ref={searchRef}
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search reports… (press /)"
-                  className="pl-9"
+                  className={cn(WS_CONTROL, 'pl-8')}
                   aria-label="Search reports"
                 />
                 {search && (
@@ -414,18 +421,22 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
                     <X className="h-3.5 w-3.5" />
                   </button>
                 )}
+                </span>
               </div>
-              <div className="lg:hidden w-44">
+              <label className="block w-44 space-y-1 lg:hidden">
+                <span className={cn(WS_FILTER_LABEL, 'block')}>Category</span>
                 <SearchableSelect
                   options={[{ value: 'all', label: `All Reports (${reports.length})` }, ...REPORT_CATEGORY_ORDER.map((cat) => ({ value: cat, label: `${REPORT_CATEGORY_LABELS[cat]} (${categoryCounts.get(cat) || 0})` }))]}
                   value={activeCategory}
                   onValueChange={(v) => setActiveCategory(v as ReportCategory | 'all')}
                   placeholder="Category"
+                  className={WS_CONTROL}
                 />
-              </div>
+              </label>
               {anyVisibleNeedsMonth && (
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm font-medium whitespace-nowrap text-muted-foreground">Periods</span>
+                <div className="space-y-1">
+                  <span className={cn(WS_FILTER_LABEL, 'block')}>Periods</span>
+                  <div className="flex items-center gap-1.5">
                   <MultiSelectPopover
                     options={monthOptions}
                     selectedValues={selectedPeriods}
@@ -439,7 +450,7 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
                   />
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => onPeriodsChange(thisFyMonths)}>
+                      <Button variant="outline" size="sm" className={WS_BTN} onClick={() => onPeriodsChange(thisFyMonths)}>
                         This FY
                       </Button>
                     </TooltipTrigger>
@@ -447,16 +458,17 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => onPeriodsChange(lastFyMonths)}>
+                      <Button variant="outline" size="sm" className={WS_BTN} onClick={() => onPeriodsChange(lastFyMonths)}>
                         Last FY
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent side="top">Select every month in the previous financial year</TooltipContent>
                   </Tooltip>
+                  </div>
                 </div>
               )}
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium whitespace-nowrap text-muted-foreground">Client</span>
+              <div className="space-y-1">
+                <span className={cn(WS_FILTER_LABEL, 'block')}>Client</span>
                 <div className="w-52">
                   <SearchableSelect
                     options={clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin }))}
@@ -465,18 +477,19 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
                     placeholder="Any client"
                     searchPlaceholder="Type to search…"
                     emptyText="No clients found."
+                    className={WS_CONTROL}
                   />
                 </div>
               </div>
             </div>
             {fyLabel && anyVisibleNeedsMonth && (
-              <p className="text-xs text-muted-foreground">Per-client reports that span a year use {fyLabel}.</p>
+              <p className="text-[11px] text-muted-foreground">Per-client reports that span a year use {fyLabel}.</p>
             )}
             {!anyVisibleNeedsMonth && filteredReports.length > 0 && (
-              <p className="text-xs text-muted-foreground">These reports cover the client's full history on record — no period to pick.</p>
+              <p className="text-[11px] text-muted-foreground">These reports cover the client's full history on record — no period to pick.</p>
             )}
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground mr-1">Status:</span>
+              <span className={cn(WS_FILTER_LABEL, 'mr-1')}>Status:</span>
               {STATUS_ORDER.map((status) => {
                 const meta = REPORT_STATUS_META[status];
                 const active = activeStatuses.has(status);
@@ -486,7 +499,7 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
                     type="button"
                     onClick={() => toggleStatus(status)}
                     className={cn(
-                      'text-xs rounded-full border px-2.5 py-0.5 font-medium transition-colors',
+                      'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors',
                       active ? 'bg-primary text-primary-foreground border-primary' : 'bg-transparent text-muted-foreground border-border hover:border-primary/50 hover:text-foreground',
                     )}
                   >
@@ -499,7 +512,7 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
         </Card>
 
         <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {isBrowsingAll ? <>{reports.length} reports</> : <>Showing <span className="font-medium text-foreground">{filteredReports.length}</span> of {reports.length}</>}
           </p>
           {hasFilters && (
@@ -511,13 +524,13 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
 
         {grouped ? (
           <Card>
-            <CardContent className="p-2 divide-y divide-border">
+            <CardContent className="divide-y divide-border p-1.5">
               {[...grouped.entries()].map(([cat, rows]) => (
-                <div key={cat} className="py-3 first:pt-2 last:pb-2">
-                  <div className="flex items-center gap-2 px-3 mb-1">
+                <div key={cat} className="py-2 first:pt-1 last:pb-1">
+                  <div className="mb-0.5 flex items-center gap-1.5 rounded-sm bg-muted/50 px-2.5 py-1">
                     <LayoutGrid className="h-3.5 w-3.5 text-muted-foreground" />
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{REPORT_CATEGORY_LABELS[cat]}</h3>
-                    <span className="text-xs text-muted-foreground">({rows.length})</span>
+                    <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{REPORT_CATEGORY_LABELS[cat]}</h3>
+                    <span className="text-[11px] tabular-nums text-muted-foreground">({rows.length})</span>
                   </div>
                   <div className="divide-y divide-border/60">
                     {rows.map((r) => <ReportRow key={r.key} report={r} />)}
@@ -528,14 +541,14 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
           </Card>
         ) : filteredReports.length === 0 ? (
           <Card>
-            <CardContent className="p-10 text-center">
+            <CardContent className="px-4 py-6 text-center">
               <p className="text-sm text-muted-foreground">No reports match your filters.</p>
               <Button variant="link" size="sm" onClick={clearFilters}>Clear filters</Button>
             </CardContent>
           </Card>
         ) : (
           <Card>
-            <CardContent className="p-2 divide-y divide-border/60">
+            <CardContent className="divide-y divide-border/60 p-1.5">
               {filteredReports.map((r) => <ReportRow key={r.key} report={r} />)}
             </CardContent>
           </Card>

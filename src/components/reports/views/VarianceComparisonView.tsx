@@ -10,7 +10,9 @@
 // follows (see ReportPreviewDialog.tsx).
 import React, { useCallback, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile } from '@/components/gstr9/ui';
+import { WS_BTN, WS_TABLE, WS_TH, WS_TD, WS_TR_TOTAL } from '@/components/workspace/theme';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
@@ -156,7 +158,7 @@ export const VarianceComparisonView: React.FC<VarianceComparisonViewProps> = ({ 
 
     if (ci === statusIdx && String(cell).trim() !== '') {
       return (
-        <Badge variant={STATUS_VARIANT(String(cell))} className="text-[10px] py-0">
+        <Badge variant={STATUS_VARIANT(String(cell))} className="text-[10px] py-0 font-medium">
           {String(cell)}
         </Badge>
       );
@@ -167,7 +169,7 @@ export const VarianceComparisonView: React.FC<VarianceComparisonViewProps> = ({ 
       if (v === null) return formatCell(cell);
       const isMismatch = Math.abs(v) > VARIANCE_EPSILON;
       return (
-        <span className={cn('tabular-nums', isMismatch ? 'text-destructive font-semibold' : 'text-success')}>
+        <span className={cn('tabular-nums', isMismatch ? 'text-destructive-strong font-semibold' : 'text-success-strong')}>
           {formatCell(v)}
         </span>
       );
@@ -179,8 +181,8 @@ export const VarianceComparisonView: React.FC<VarianceComparisonViewProps> = ({ 
   if (table.rows.length === 0) {
     return (
       <Card>
-        <CardContent className="flex flex-col items-center justify-center gap-2 py-16 text-center">
-          <Inbox className="h-8 w-8 text-muted-foreground" />
+        <CardContent className="flex flex-col items-center justify-center gap-1.5 py-8 text-center">
+          <Inbox className="h-5 w-5 text-muted-foreground opacity-60" />
           <p className="text-sm text-muted-foreground max-w-sm">
             No data in this report yet. {table.subtitle}
           </p>
@@ -190,21 +192,21 @@ export const VarianceComparisonView: React.FC<VarianceComparisonViewProps> = ({ 
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <Card>
-        <CardHeader className="pb-4">
-          <CardTitle className="text-lg">{table.title}</CardTitle>
-          <CardDescription>{table.subtitle}</CardDescription>
+        <CardHeader className="space-y-0.5 px-4 pb-3 pt-3">
+          <CardTitle className="text-[15px] leading-snug">{table.title}</CardTitle>
+          <CardDescription className="text-xs">{table.subtitle}</CardDescription>
           {report.description && (
             <CardDescription className="text-xs text-muted-foreground/80">{report.description}</CardDescription>
           )}
           {panInfo && (
-            <div className="flex items-center gap-2 mt-2">
-              <Badge variant="outline" className="gap-1.5 text-xs font-medium">
+            <div className="flex items-center gap-1.5 pt-1.5">
+              <Badge variant="outline" className="gap-1 text-[10px] font-medium">
                 <Building2 className="h-3 w-3" />
                 PAN: {panInfo.pan}
               </Badge>
-              <Badge variant="secondary" className="text-xs font-medium">
+              <Badge variant="secondary" className="text-[10px] font-medium">
                 {entityCount} {entityCount === 1 ? 'entity' : 'entities'}
               </Badge>
             </div>
@@ -212,33 +214,32 @@ export const VarianceComparisonView: React.FC<VarianceComparisonViewProps> = ({ 
         </CardHeader>
 
         {hasVarianceCol && (
-          <CardContent className="pt-0 pb-4">
-            <div
-              className={cn(
-                'flex items-center gap-2 rounded-md border px-3 py-2 text-sm',
-                mismatchCount > 0 ? 'bg-destructive/5 border-destructive/20 text-destructive' : 'bg-success/5 border-success/20 text-success',
-              )}
-            >
-              {mismatchCount > 0 && <AlertTriangle className="h-4 w-4 shrink-0" />}
-              <span className="font-medium">
-                {mismatchCount} of {dataRows.length} row{dataRows.length === 1 ? '' : 's'} mismatched
-              </span>
-              <span className="text-muted-foreground font-normal">
-                (variance beyond ±{VARIANCE_EPSILON} treated as a mismatch)
-              </span>
+          <CardContent className="px-4 pb-3 pt-0">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+              <TileButton active={!mismatchesOnly} onClick={() => setMismatchesOnly(false)} title="Show every row">
+                <KpiTile label="Rows" value={dataRows.length} hint={totalRows.length > 0 ? 'plus the total row' : undefined} />
+              </TileButton>
+              <TileButton active={mismatchesOnly} onClick={() => setMismatchesOnly((v) => !v)} title="Show mismatched rows only">
+                <KpiTile
+                  label="Mismatched"
+                  value={mismatchCount}
+                  hint={`${mismatchCount} of ${dataRows.length} row${dataRows.length === 1 ? '' : 's'} · variance beyond ±${VARIANCE_EPSILON}`}
+                  tone={mismatchCount > 0 ? 'error' : 'ok'}
+                />
+              </TileButton>
             </div>
           </CardContent>
         )}
       </Card>
 
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search this report…"
-            className="pl-8 h-8 text-sm"
+            className="pl-8 h-8 text-xs"
           />
         </div>
 
@@ -249,7 +250,7 @@ export const VarianceComparisonView: React.FC<VarianceComparisonViewProps> = ({ 
             size="sm"
             aria-pressed={mismatchesOnly}
             onClick={() => setMismatchesOnly((v) => !v)}
-            className="h-8 text-xs gap-1.5"
+            className={WS_BTN}
           >
             <AlertTriangle className="h-3.5 w-3.5" />
             Show mismatches only
@@ -263,15 +264,15 @@ export const VarianceComparisonView: React.FC<VarianceComparisonViewProps> = ({ 
         </span>
       </div>
 
-      <div className="rounded-md border overflow-auto max-h-[65vh]">
-        <Table>
-          <TableHeader className="sticky top-0 z-20 bg-background">
+      <div className="rounded-md border bg-card overflow-auto max-h-[65vh]">
+        <Table className={WS_TABLE}>
+          <TableHeader className="sticky top-0 z-20">
             <TableRow>
               {table.headers.map((h, i) => (
                 <TableHead
                   key={i}
                   className={cn(
-                    'px-3 py-2 text-xs font-semibold whitespace-nowrap bg-muted/60',
+                    WS_TH, 'h-auto',
                     (isNumericHeader(h) || i === varianceIdx) && 'text-right',
                   )}
                 >
@@ -284,18 +285,18 @@ export const VarianceComparisonView: React.FC<VarianceComparisonViewProps> = ({ 
           <TableBody>
             {filteredRows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={table.headers.length} className="text-center text-sm text-muted-foreground py-10">
+                <TableCell colSpan={table.headers.length} className="border-b text-center text-sm text-muted-foreground py-6">
                   No rows match the current search/filter.
                 </TableCell>
               </TableRow>
             )}
             {filteredRows.map((row, ri) => (
-              <TableRow key={ri}>
+              <TableRow key={ri} className="hover:bg-muted/30">
                 {row.map((cell, ci) => (
                   <TableCell
                     key={ci}
                     className={cn(
-                      'px-3 py-2 text-xs',
+                      WS_TD,
                       (isNumericHeader(table.headers[ci] || '') || ci === varianceIdx)
                         ? 'text-right whitespace-nowrap tabular-nums'
                         : 'max-w-[280px]',
@@ -314,7 +315,7 @@ export const VarianceComparisonView: React.FC<VarianceComparisonViewProps> = ({ 
                 <TableRow
                   key={`total-${ri}`}
                   className={cn(
-                    'bg-primary/10 hover:bg-primary/10 font-semibold border-t-2 border-primary/20',
+                    WS_TR_TOTAL, 'hover:bg-muted',
                     ri === totalRows.length - 1 && 'sticky bottom-0 z-10',
                   )}
                 >
@@ -322,7 +323,7 @@ export const VarianceComparisonView: React.FC<VarianceComparisonViewProps> = ({ 
                     <TableCell
                       key={ci}
                       className={cn(
-                        'px-3 py-2 text-xs bg-primary/10',
+                        WS_TD, 'bg-muted',
                         (isNumericHeader(table.headers[ci] || '') || ci === varianceIdx)
                           ? 'text-right whitespace-nowrap tabular-nums'
                           : 'max-w-[280px]',
@@ -340,3 +341,18 @@ export const VarianceComparisonView: React.FC<VarianceComparisonViewProps> = ({ 
     </div>
   );
 };
+
+const TileButton: React.FC<{ active: boolean; onClick: () => void; title: string; children: React.ReactNode }> = ({ active, onClick, title, children }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={title}
+    aria-pressed={active}
+    className={cn(
+      'rounded-lg text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:h-full',
+      active && 'ring-2 ring-primary/60',
+    )}
+  >
+    {children}
+  </button>
+);
