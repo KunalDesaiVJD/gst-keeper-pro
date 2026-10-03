@@ -7,6 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { PasswordInput } from '@/components/ui/password-input';
 import { KeyRound, Copy, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
+import { Note } from '@/components/gstr9/ui';
+import { WS_FILTER_LABEL } from '@/components/workspace/theme';
 
 interface ClientCredentialsSectionProps {
   gstin: string;
@@ -76,16 +78,16 @@ const ClientCredentialsSection: React.FC<ClientCredentialsSectionProps> = ({
 
   return (
     <Card className="border-primary/20">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-lg flex items-center gap-2">
-          <KeyRound className="h-5 w-5 text-primary" />
+      <CardHeader className="space-y-0.5 px-4 pb-2 pt-3">
+        <CardTitle className="flex items-center gap-2 text-[15px] leading-snug">
+          <KeyRound className="h-4 w-4 text-primary" />
           Client Login Credentials
         </CardTitle>
-        <CardDescription>
+        <CardDescription className="text-xs leading-snug">
           Generate login credentials for this client to access their portal
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-3 px-4 pb-3">
         <div className="flex items-center space-x-2">
           <Checkbox
             id="generateCreds"
@@ -100,15 +102,15 @@ const ClientCredentialsSection: React.FC<ClientCredentialsSectionProps> = ({
               }
             }}
           />
-          <Label htmlFor="generateCreds" className="cursor-pointer">
+          <Label htmlFor="generateCreds" className="cursor-pointer text-sm">
             Generate login credentials for this client
           </Label>
         </div>
 
         {generateCredentials && (
-          <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
-            <div className="space-y-2">
-              <Label htmlFor="clientUserId">User ID (Auto-generated from PAN)</Label>
+          <div className="space-y-3 rounded-md border bg-muted/30 p-3">
+            <div className="space-y-1">
+              <Label htmlFor="clientUserId" className={WS_FILTER_LABEL}>User ID (Auto-generated from PAN)</Label>
               <div className="flex gap-2">
                 <Input
                   id="clientUserId"
@@ -128,8 +130,8 @@ const ClientCredentialsSection: React.FC<ClientCredentialsSectionProps> = ({
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="clientPassword">Initial Password</Label>
+            <div className="space-y-1">
+              <Label htmlFor="clientPassword" className={WS_FILTER_LABEL}>Initial Password</Label>
               <div className="flex gap-2">
                 <div className="flex-1">
                   <PasswordInput
@@ -170,23 +172,23 @@ const ClientCredentialsSection: React.FC<ClientCredentialsSectionProps> = ({
                   <RefreshCw className="h-4 w-4" />
                 </Button>
               </div>
-              <div className="flex items-center gap-2 mt-2">
+              <div className="flex items-center gap-2 pt-0.5">
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
                   onClick={handleUsePANAsPassword}
-                  className="text-xs"
+                  className="h-7 px-2 text-xs"
                 >
                   Use PAN as password
                 </Button>
               </div>
             </div>
 
-            <div className="text-xs text-muted-foreground p-2 bg-warning/10 rounded border border-warning/30">
+            <Note tone="warn">
               <strong>Note:</strong> The client will be required to change this password on their first login.
               Make sure to communicate these credentials securely to the client.
-            </div>
+            </Note>
           </div>
         )}
       </CardContent>

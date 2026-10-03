@@ -42,11 +42,11 @@ const ClientPasswordResetRequest: React.FC = () => {
   if (hasSubmitted) {
     return (
       <Card>
-        <CardContent className="p-6">
-          <div className="flex flex-col items-center justify-center text-center py-6">
-            <CheckCircle2 className="h-12 w-12 text-success mb-4" />
-            <h3 className="text-lg font-semibold mb-2">Request Submitted</h3>
-            <p className="text-muted-foreground">
+        <CardContent className="px-4 py-3">
+          <div className="flex flex-col items-center justify-center py-4 text-center">
+            <CheckCircle2 className="mb-2 h-8 w-8 text-success" />
+            <h3 className="mb-1 text-[15px] font-semibold">Request Submitted</h3>
+            <p className="text-sm text-muted-foreground">
               Your password reset request has been submitted. An employee will set your new password shortly.
             </p>
           </div>
@@ -57,39 +57,40 @@ const ClientPasswordResetRequest: React.FC = () => {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Lock className="h-5 w-5" />
+      <CardHeader className="space-y-0.5 px-4 pb-2 pt-3">
+        <CardTitle className="flex items-center gap-2 text-[15px] leading-snug">
+          <Lock className="h-4 w-4 text-primary" />
           Request Password Reset
         </CardTitle>
-        <CardDescription>
+        <CardDescription className="text-xs leading-snug">
           Submit a request to have an employee reset your password
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-2">
-          <Label htmlFor="reason">Reason (optional)</Label>
+      <CardContent className="space-y-3 px-4 pb-3">
+        <div className="space-y-1">
+          <Label htmlFor="reason" className="text-[11px] font-medium text-muted-foreground">Reason (optional)</Label>
           <Textarea
             id="reason"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder="Enter reason for password reset request..."
-            className="min-h-[80px]"
+            className="min-h-[72px] text-sm"
           />
         </div>
         <Button 
           onClick={handleSubmitRequest} 
           disabled={isSubmitting}
-          className="w-full"
+          size="sm"
+          className="h-8 w-full gap-1 text-xs"
         >
           {isSubmitting ? (
             <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
               Submitting...
             </>
           ) : (
             <>
-              <Send className="mr-2 h-4 w-4" />
+              <Send className="h-3.5 w-3.5" />
               Submit Request
             </>
           )}

@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile } from '@/components/gstr9/ui';
 import {
   Plus,
   Search,
@@ -36,6 +37,10 @@ import {
   type ClientCredentialRow,
 } from '@/utils/allClientsReports';
 import { renderReportToPdf } from '@/utils/closingBalanceReportsPdf';
+import {
+  WS_PAGE, WS_BTN, WS_TABLE_WRAP, WS_TABLE, WS_TH, WS_TD, WS_TR,
+  WS_FILTER_LABEL, WS_CONTROL, WS_TABS_LIST, WS_TAB, WS_TAB_ACTIVE,
+} from '@/components/workspace/theme';
 
 interface Client {
   id: string;
@@ -184,8 +189,13 @@ const ClientsPage: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className={WS_PAGE}>
+        <Card>
+          <CardContent className="flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading clients…
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -195,19 +205,23 @@ const ClientsPage: React.FC = () => {
     { id: 'credentials', label: 'Credentials', icon: KeyRound },
   ];
 
+  const credsWithLogin = creds.filter((c) => !!c.gst_user_id).length;
+  const credsMissing = creds.length - credsWithLogin;
+
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
         title="Clients"
         subtitle="Manage your client database"
-        icon={<Users className="h-6 w-6" />}
+        icon={<Users />}
         actions={
           activeTab === 'clients'
             ? (canAddEditClients() ? (
                 <>
-                  <BulkAddClientsDialog onSuccess={() => fetchClients()} />
-                  <Button onClick={() => navigate('/add-client')} className="flex items-center gap-2">
-                    <Plus className="h-4 w-4" />
+                  <BulkAddClientsDialog onSuccess={() => fetchClients()} triggerClassName={WS_BTN} />
+                  <Button size="sm" onClick={() => navigate('/add-client')} className={WS_BTN}>
+                    <Plus className="h-3.5 w-3.5" />
                     Add Client
                   </Button>
                 </>
@@ -216,22 +230,24 @@ const ClientsPage: React.FC = () => {
               <>
                 <Button
                   variant="default"
+                  size="sm"
                   onClick={() => handleExportCreds('xlsx')}
                   disabled={exporting === 'xlsx'}
-                  className="flex items-center gap-2"
+                  className={WS_BTN}
                   aria-label="Export credentials as Excel"
                 >
-                  {exporting === 'xlsx' ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+                  {exporting === 'xlsx' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
                   Excel
                 </Button>
                 <Button
                   variant="outline"
+                  size="sm"
                   onClick={() => handleExportCreds('pdf')}
                   disabled={exporting === 'pdf'}
-                  className="flex items-center gap-2"
+                  className={WS_BTN}
                   aria-label="Export credentials as PDF"
                 >
-                  {exporting === 'pdf' ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                  {exporting === 'pdf' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
                   PDF
                 </Button>
               </>
@@ -239,23 +255,38 @@ const ClientsPage: React.FC = () => {
         }
       />
 
+      {/* Summary tiles — each opens the tab it describes. */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <TileButton active={activeTab === 'clients'} onClick={() => setActiveTab('clients')} title="Show the client list">
+          <KpiTile
+            label="Clients"
+            value={clients.length}
+            hint={searchTerm.trim() ? `${filteredClients.length} match the search` : 'All clients on record'}
+          />
+        </TileButton>
+        <TileButton active={activeTab === 'credentials'} onClick={() => setActiveTab('credentials')} title="Show GST portal credentials">
+          <KpiTile label="GST portal login saved" value={credsWithLogin} hint="Clients with a GST user ID" tone={credsWithLogin ? 'ok' : 'neutral'} />
+        </TileButton>
+        <TileButton active={false} onClick={() => setActiveTab('credentials')} title="Show GST portal credentials">
+          <KpiTile label="No GST portal login" value={credsMissing} hint="Add it in Edit Client" tone={credsMissing ? 'warn' : 'ok'} />
+        </TileButton>
+      </div>
+
       {/* Tab strip */}
-      <div className="flex flex-wrap gap-2 p-1 bg-muted/50 rounded-lg w-fit">
+      <div role="tablist" aria-label="Clients and credentials" className={WS_TABS_LIST}>
         {TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
           return (
             <button
               key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
               onClick={() => setActiveTab(tab.id)}
-              className={cn(
-                'flex items-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium transition-all duration-200',
-                isActive
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-              )}
+              className={cn(WS_TAB, isActive && WS_TAB_ACTIVE)}
             >
-              <Icon className="h-4 w-4" />
+              <Icon className="h-3.5 w-3.5" />
               <span>{tab.label}</span>
             </button>
           );
@@ -265,181 +296,233 @@ const ClientsPage: React.FC = () => {
       {activeTab === 'clients' ? (
         <>
           {/* Search */}
-          <div className="relative max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search by name or GSTIN..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
-            />
-          </div>
+          <Card>
+            <CardContent className="px-3 py-2">
+              <label className="block max-w-md space-y-0.5">
+                <span className={WS_FILTER_LABEL}>Search</span>
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Search by name or GSTIN..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className={cn(WS_CONTROL, 'pl-8')}
+                  />
+                </div>
+              </label>
+            </CardContent>
+          </Card>
 
-          {/* Client Cards */}
-          <div className="grid gap-4">
-            {filteredClients.map((client) => (
-              <Card key={client.id} className="hover:shadow-card-hover transition-shadow">
-                <CardContent className="p-6">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-4">
-                      <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
-                        <Building2 className="h-6 w-6 text-primary" />
-                      </div>
-                      <div className="space-y-1">
-                        <h3 className="font-semibold text-foreground">{client.name}</h3>
-                        <p className="text-sm text-muted-foreground">GSTIN: {client.gstin}</p>
-                        <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                          {client.mobile && (
-                            <span className="flex items-center gap-1">
-                              <Phone className="h-3 w-3" />
-                              {client.mobile}
-                            </span>
-                          )}
-                          {client.email && (
-                            <span className="flex items-center gap-1">
-                              <Mail className="h-3 w-3" />
-                              {client.email}
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 pt-2">
-                          <Badge variant="outline" className="text-xs">
-                            {client.registration_type}
-                          </Badge>
+          {/* Client list */}
+          {filteredClients.length === 0 ? (
+            <Card>
+              <CardContent className="p-4">
+                <TableEmptyState
+                  icon={<Building2 className="h-6 w-6" />}
+                  title={clients.length === 0 ? 'No clients yet' : 'No matching clients'}
+                  description={
+                    clients.length === 0
+                      ? 'Add your first client to get started.'
+                      : 'No clients found matching your search.'
+                  }
+                />
+              </CardContent>
+            </Card>
+          ) : (
+            <div className={cn(WS_TABLE_WRAP, 'max-h-[70vh]')}>
+              <table className={cn(WS_TABLE, 'min-w-[860px]')}>
+                <thead>
+                  <tr>
+                    <th className={cn(WS_TH, 'w-10 text-center')}>#</th>
+                    <th className={WS_TH}>Client Name</th>
+                    <th className={WS_TH}>GSTIN</th>
+                    <th className={WS_TH}>Contact</th>
+                    <th className={WS_TH}>Registration</th>
+                    <th className={WS_TH}>Returns</th>
+                    {(canAddEditClients() || canDeleteClients()) && (
+                      <th className={cn(WS_TH, 'w-20 text-center')}>Actions</th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredClients.map((client, i) => (
+                    <tr key={client.id} className={WS_TR}>
+                      <td className={cn(WS_TD, 'text-center tabular-nums text-muted-foreground')}>{i + 1}</td>
+                      <td className={cn(WS_TD, 'font-medium text-foreground')}>
+                        <span className="flex items-center gap-1.5">
+                          <Building2 className="h-3.5 w-3.5 shrink-0 text-primary" />
+                          {client.name}
+                        </span>
+                      </td>
+                      <td className={cn(WS_TD, 'whitespace-nowrap font-mono')}>{client.gstin}</td>
+                      <td className={cn(WS_TD, 'text-muted-foreground')}>
+                        {client.mobile || client.email ? (
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                            {client.mobile && (
+                              <span className="flex items-center gap-1 whitespace-nowrap">
+                                <Phone className="h-3 w-3" />
+                                {client.mobile}
+                              </span>
+                            )}
+                            {client.email && (
+                              <span className="flex items-center gap-1 break-all">
+                                <Mail className="h-3 w-3 shrink-0" />
+                                {client.email}
+                              </span>
+                            )}
+                          </div>
+                        ) : '—'}
+                      </td>
+                      <td className={WS_TD}>
+                        <Badge variant="outline" className="whitespace-nowrap text-[10px] font-medium">
+                          {client.registration_type}
+                        </Badge>
+                      </td>
+                      <td className={WS_TD}>
+                        <div className="flex flex-wrap gap-1">
                           {client.selected_returns?.map((ret) => (
-                            <Badge key={ret} variant="secondary" className="text-xs">
+                            <Badge key={ret} variant="secondary" className="whitespace-nowrap text-[10px] font-medium">
                               {ret}
                             </Badge>
                           ))}
                         </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {canAddEditClients() && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          title="Edit Client"
-                          aria-label={`Edit client ${client.name}`}
-                          onClick={() => navigate(`/edit-client/${client.id}`)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
+                      </td>
+                      {(canAddEditClients() || canDeleteClients()) && (
+                        <td className={cn(WS_TD, 'py-0.5 text-center')}>
+                          <div className="flex items-center justify-center gap-0.5">
+                            {canAddEditClients() && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                title="Edit Client"
+                                aria-label={`Edit client ${client.name}`}
+                                onClick={() => navigate(`/edit-client/${client.id}`)}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                            {canDeleteClients() && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                title="Delete Client"
+                                aria-label={`Delete client ${client.name}`}
+                                className="h-7 w-7 text-destructive hover:text-destructive"
+                                onClick={() => handleDeleteClient(client.id, client.name)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                          </div>
+                        </td>
                       )}
-                      {canDeleteClients() && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          title="Delete Client"
-                          aria-label={`Delete client ${client.name}`}
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => handleDeleteClient(client.id, client.name)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-
-            {filteredClients.length === 0 && (
-              <Card>
-                <CardContent className="p-6">
-                  <TableEmptyState
-                    icon={<Building2 className="h-6 w-6" />}
-                    title={clients.length === 0 ? 'No clients yet' : 'No matching clients'}
-                    description={
-                      clients.length === 0
-                        ? 'Add your first client to get started.'
-                        : 'No clients found matching your search.'
-                    }
-                  />
-                </CardContent>
-              </Card>
-            )}
-          </div>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       ) : (
         <>
           {/* Credentials toolbar */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="relative max-w-md flex-1 min-w-[220px]">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search name / GSTIN / User ID..."
-                value={credSearch}
-                onChange={(e) => setCredSearch(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            <Button variant="outline" size="sm" onClick={() => setShowPasswords((v) => !v)}>
-              {showPasswords
-                ? <><EyeOff className="h-4 w-4 mr-1.5" /> Hide passwords</>
-                : <><Eye className="h-4 w-4 mr-1.5" /> Reveal passwords</>}
-            </Button>
-          </div>
-
-          {/* Credentials table — every client, live-updating */}
           <Card>
-            <CardContent className="p-4">
-              <div className="overflow-auto max-h-[65vh] rounded-md border border-border">
-                <table className="w-full text-sm border-collapse min-w-[720px]">
-                  <thead className="sticky top-0 z-10">
-                    <tr className="bg-primary text-primary-foreground">
-                      <th className="border border-primary-foreground/20 p-2 text-center w-10">#</th>
-                      <th className="border border-primary-foreground/20 p-2 text-left">Client Name</th>
-                      <th className="border border-primary-foreground/20 p-2 text-left">GSTIN</th>
-                      <th className="border border-primary-foreground/20 p-2 text-left">GST User ID</th>
-                      <th className="border border-primary-foreground/20 p-2 text-left">GST Password</th>
-                      <th className="border border-primary-foreground/20 p-2 text-center w-16">Login</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredCreds.map((c, i) => (
-                      <tr key={`${c.gstin || c.name}-${i}`} className="odd:bg-muted/30">
-                        <td className="border border-border p-2 text-center tabular-nums">{i + 1}</td>
-                        <td className="border border-border p-2 font-medium">{c.name}</td>
-                        <td className="border border-border p-2 font-mono text-xs">{c.gstin || '—'}</td>
-                        <td className="border border-border p-2 font-mono text-xs">{c.gst_user_id || '—'}</td>
-                        <td className="border border-border p-2 font-mono text-xs">
-                          {c.gst_password ? (showPasswords ? c.gst_password : '••••••••') : '—'}
-                        </td>
-                        <td className="border border-border p-2 text-center">
-                          <button
-                            onClick={() => handlePortalLogin(c.id)}
-                            disabled={!c.gst_user_id}
-                            className={`inline-flex items-center justify-center h-7 w-7 rounded ${
-                              !c.gst_user_id ? 'text-muted-foreground/40 cursor-not-allowed'
-                                : extReady ? 'text-primary hover:bg-primary/10' : 'text-muted-foreground hover:bg-muted'
-                            }`}
-                            title={!c.gst_user_id ? 'No GST credentials saved'
-                              : extReady ? `Log ${c.name} into the GST portal (you do the CAPTCHA)`
-                                : 'GST Keeper extension not detected yet — install/enable it and reload this page'}
-                            aria-label={`Log ${c.name} into the GST portal`}
-                          >
-                            <LogIn className="h-4 w-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                    {filteredCreds.length === 0 && (
-                      <tr>
-                        <td colSpan={6} className="text-center p-6 text-muted-foreground">
-                          {creds.length === 0 ? 'No clients found.' : 'No clients match your search.'}
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+            <CardContent className="px-3 py-2">
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <label className="min-w-[220px] max-w-md flex-1 space-y-0.5">
+                  <span className={WS_FILTER_LABEL}>Search</span>
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      placeholder="Search name / GSTIN / User ID..."
+                      value={credSearch}
+                      onChange={(e) => setCredSearch(e.target.value)}
+                      className={cn(WS_CONTROL, 'pl-8')}
+                    />
+                  </div>
+                </label>
+                <Button variant="outline" size="sm" className={WS_BTN} onClick={() => setShowPasswords((v) => !v)}>
+                  {showPasswords
+                    ? <><EyeOff className="h-3.5 w-3.5" /> Hide passwords</>
+                    : <><Eye className="h-3.5 w-3.5" /> Reveal passwords</>}
+                </Button>
               </div>
             </CardContent>
           </Card>
+
+          {/* Credentials table — every client, live-updating */}
+          <div className={cn(WS_TABLE_WRAP, 'max-h-[65vh]')}>
+            <table className={cn(WS_TABLE, 'min-w-[720px]')}>
+              <thead>
+                <tr>
+                  <th className={cn(WS_TH, 'w-10 text-center')}>#</th>
+                  <th className={WS_TH}>Client Name</th>
+                  <th className={WS_TH}>GSTIN</th>
+                  <th className={WS_TH}>GST User ID</th>
+                  <th className={WS_TH}>GST Password</th>
+                  <th className={cn(WS_TH, 'w-16 text-center')}>Login</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredCreds.map((c, i) => (
+                  <tr key={`${c.gstin || c.name}-${i}`} className={WS_TR}>
+                    <td className={cn(WS_TD, 'text-center tabular-nums text-muted-foreground')}>{i + 1}</td>
+                    <td className={cn(WS_TD, 'font-medium')}>{c.name}</td>
+                    <td className={cn(WS_TD, 'whitespace-nowrap font-mono')}>{c.gstin || '—'}</td>
+                    <td className={cn(WS_TD, 'font-mono')}>{c.gst_user_id || '—'}</td>
+                    <td className={cn(WS_TD, 'font-mono')}>
+                      {c.gst_password ? (showPasswords ? c.gst_password : '••••••••') : '—'}
+                    </td>
+                    <td className={cn(WS_TD, 'py-0.5 text-center')}>
+                      <button
+                        type="button"
+                        onClick={() => handlePortalLogin(c.id)}
+                        disabled={!c.gst_user_id}
+                        className={`inline-flex items-center justify-center h-7 w-7 rounded ${
+                          !c.gst_user_id ? 'text-muted-foreground/40 cursor-not-allowed'
+                            : extReady ? 'text-primary hover:bg-primary/10' : 'text-muted-foreground hover:bg-muted'
+                        }`}
+                        title={!c.gst_user_id ? 'No GST credentials saved'
+                          : extReady ? `Log ${c.name} into the GST portal (you do the CAPTCHA)`
+                            : 'GST Keeper extension not detected yet — install/enable it and reload this page'}
+                        aria-label={`Log ${c.name} into the GST portal`}
+                      >
+                        <LogIn className="h-3.5 w-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {filteredCreds.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-2 py-6 text-center text-sm text-muted-foreground">
+                      {creds.length === 0 ? 'No clients found.' : 'No clients match your search.'}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
     </div>
   );
 };
+
+/** A KPI tile that toggles the tab it describes (as on GST Running Update). */
+const TileButton: React.FC<{ active: boolean; onClick: () => void; title: string; children: React.ReactNode }> = ({ active, onClick, title, children }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={title}
+    aria-pressed={active}
+    className={cn(
+      'rounded-lg text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:h-full',
+      active && 'ring-2 ring-primary/60',
+    )}
+  >
+    {children}
+  </button>
+);
 
 export default ClientsPage;

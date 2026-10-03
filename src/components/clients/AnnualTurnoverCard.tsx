@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { cn } from '@/lib/utils';
+import { WS_BTN, WS_CONTROL, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR } from '@/components/workspace/theme';
 import { Loader2, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -106,89 +107,91 @@ export const AnnualTurnoverCard: React.FC<AnnualTurnoverCardProps> = ({ clientId
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="px-4 pb-2 pt-3">
         <div className="flex items-start justify-between gap-2">
-          <div>
-            <CardTitle>Annual Turnover</CardTitle>
-            <CardDescription>
+          <div className="min-w-0 space-y-0.5">
+            <CardTitle className="text-[15px] leading-snug">Annual Turnover</CardTitle>
+            <CardDescription className="text-xs leading-snug">
               Feeds the Interest/Late Fee and Rule 42 ITC-reversal reports (late-fee turnover slab, Rule 42 exempt-turnover ratio). Not used anywhere else in the app.
             </CardDescription>
           </div>
           {!draft && (
-            <Button variant="outline" size="sm" onClick={startAdd}>
-              <Plus className="h-3.5 w-3.5 mr-1.5" /> Add Year
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={startAdd}>
+              <Plus className="h-3.5 w-3.5" /> Add Year
             </Button>
           )}
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-4 pb-3">
         {loading ? (
-          <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+          <div className="flex items-center gap-2 py-3 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading turnover…</div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Financial Year</TableHead>
-                <TableHead className="text-right">Aggregate Turnover</TableHead>
-                <TableHead className="text-right">Exempt Turnover</TableHead>
-                <TableHead className="text-right">ITC excl. to Exempt (T1)</TableHead>
-                <TableHead className="w-24" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          <div className={WS_TABLE_WRAP}>
+          <table className={cn(WS_TABLE, 'min-w-[640px]')}>
+            <thead>
+              <tr>
+                <th className={WS_TH}>Financial Year</th>
+                <th className={cn(WS_TH, 'text-right')}>Aggregate Turnover</th>
+                <th className={cn(WS_TH, 'text-right')}>Exempt Turnover</th>
+                <th className={cn(WS_TH, 'text-right')}>ITC excl. to Exempt (T1)</th>
+                <th className={cn(WS_TH, 'w-32')} />
+              </tr>
+            </thead>
+            <tbody>
               {rows.length === 0 && !draft && (
-                <TableRow><TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-6">No turnover on record yet.</TableCell></TableRow>
+                <tr><td colSpan={5} className="px-2 py-6 text-center text-sm text-muted-foreground">No turnover on record yet.</td></tr>
               )}
               {rows.map((row) => (
                 draft?.fy === row.financial_year ? null : (
-                  <TableRow key={row.id}>
-                    <TableCell className="font-medium">FY {row.financial_year}</TableCell>
-                    <TableCell className="text-right tabular-nums">{row.aggregate_turnover != null ? row.aggregate_turnover.toLocaleString('en-IN') : '—'}</TableCell>
-                    <TableCell className="text-right tabular-nums">{row.exempt_turnover != null ? row.exempt_turnover.toLocaleString('en-IN') : '—'}</TableCell>
-                    <TableCell className="text-right tabular-nums">{row.itc_directly_attributable_exempt != null ? row.itc_directly_attributable_exempt.toLocaleString('en-IN') : '—'}</TableCell>
-                    <TableCell>
+                  <tr key={row.id} className={WS_TR}>
+                    <td className={cn(WS_TD, 'font-medium')}>FY {row.financial_year}</td>
+                    <td className={WS_TD_NUM}>{row.aggregate_turnover != null ? row.aggregate_turnover.toLocaleString('en-IN') : '—'}</td>
+                    <td className={WS_TD_NUM}>{row.exempt_turnover != null ? row.exempt_turnover.toLocaleString('en-IN') : '—'}</td>
+                    <td className={WS_TD_NUM}>{row.itc_directly_attributable_exempt != null ? row.itc_directly_attributable_exempt.toLocaleString('en-IN') : '—'}</td>
+                    <td className={cn(WS_TD, 'py-0.5')}>
                       <div className="flex gap-1 justify-end">
-                        <Button variant="ghost" size="sm" onClick={() => startEdit(row)}>Edit</Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => deleteRow(row)} aria-label={`Delete FY ${row.financial_year}`}>
+                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => startEdit(row)}>Edit</Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => deleteRow(row)} aria-label={`Delete FY ${row.financial_year}`}>
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
-                    </TableCell>
-                  </TableRow>
+                    </td>
+                  </tr>
                 )
               ))}
               {draft && (
-                <TableRow>
-                  <TableCell>
+                <tr className="bg-muted/30">
+                  <td className={cn(WS_TD, 'p-1')}>
                     <select
-                      className="w-full h-9 rounded-md border border-input bg-background px-2 text-sm"
+                      className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs"
                       value={draft.fy}
                       onChange={(e) => setDraft({ ...draft, fy: e.target.value })}
                     >
                       {fyOptions().map((fy) => <option key={fy} value={fy}>FY {fy}</option>)}
                     </select>
-                  </TableCell>
-                  <TableCell>
-                    <Input type="number" value={draft.aggregate} onChange={(e) => setDraft({ ...draft, aggregate: e.target.value })} placeholder="0" className="text-right" />
-                  </TableCell>
-                  <TableCell>
-                    <Input type="number" value={draft.exempt} onChange={(e) => setDraft({ ...draft, exempt: e.target.value })} placeholder="0" className="text-right" />
-                  </TableCell>
-                  <TableCell>
-                    <Input type="number" value={draft.t1} onChange={(e) => setDraft({ ...draft, t1: e.target.value })} placeholder="0 (optional)" className="text-right" />
-                  </TableCell>
-                  <TableCell>
+                  </td>
+                  <td className={cn(WS_TD, 'p-1')}>
+                    <Input type="number" value={draft.aggregate} onChange={(e) => setDraft({ ...draft, aggregate: e.target.value })} placeholder="0" className={cn(WS_CONTROL, 'text-right tabular-nums md:text-xs')} />
+                  </td>
+                  <td className={cn(WS_TD, 'p-1')}>
+                    <Input type="number" value={draft.exempt} onChange={(e) => setDraft({ ...draft, exempt: e.target.value })} placeholder="0" className={cn(WS_CONTROL, 'text-right tabular-nums md:text-xs')} />
+                  </td>
+                  <td className={cn(WS_TD, 'p-1')}>
+                    <Input type="number" value={draft.t1} onChange={(e) => setDraft({ ...draft, t1: e.target.value })} placeholder="0 (optional)" className={cn(WS_CONTROL, 'text-right tabular-nums md:text-xs')} />
+                  </td>
+                  <td className={cn(WS_TD, 'p-1')}>
                     <div className="flex gap-1 justify-end">
-                      <Button size="sm" onClick={saveDraft} disabled={saving}>
+                      <Button size="sm" className="h-7 px-2" onClick={saveDraft} disabled={saving} aria-label="Save turnover">
                         {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                       </Button>
-                      <Button variant="ghost" size="sm" onClick={() => setDraft(null)} disabled={saving}>Cancel</Button>
+                      <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => setDraft(null)} disabled={saving}>Cancel</Button>
                     </div>
-                  </TableCell>
-                </TableRow>
+                  </td>
+                </tr>
               )}
-            </TableBody>
-          </Table>
+            </tbody>
+          </table>
+          </div>
         )}
       </CardContent>
     </Card>
