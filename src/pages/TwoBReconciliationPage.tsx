@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
@@ -18,7 +18,6 @@ import {
   Save,
   Filter,
   Inbox,
-  Info,
 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
@@ -33,6 +32,31 @@ import VersionHistoryDialog from '@/components/dialogs/VersionHistoryDialog';
 import { TwoBVersion, BillNotIn2B, BillNotInBooks, isQuarterEndMonth } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
+import { cn } from '@/lib/utils';
+import { KpiTile, Note } from '@/components/gstr9/ui';
+import {
+  WS_PAGE, WS_BTN, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR, WS_TR_TOTAL, WS_FILTER_LABEL, WS_CONTROL,
+} from '@/components/workspace/theme';
+
+/** Dense workspace table; the last column drops its right rule (the wrapper draws it). */
+const TABLE_CLS = cn(WS_TABLE, '[&_tr>*:last-child]:border-r-0');
+const fmtINR = (n: number) => n.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+
+/** A KPI tile that also acts as a filter toggle. */
+const TileButton: React.FC<{ active: boolean; onClick: () => void; title: string; children: React.ReactNode }> = ({ active, onClick, title, children }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={title}
+    aria-pressed={active}
+    className={cn(
+      'rounded-lg text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:h-full',
+      active && 'ring-2 ring-primary/60',
+    )}
+  >
+    {children}
+  </button>
+);
 
 interface Client {
   id: string;
@@ -1158,7 +1182,7 @@ const TwoBReconciliationPage: React.FC = () => {
         return <span>{format(new Date(value as string), 'dd/MM/yyyy')}</span>;
       }
       if (type === 'number' && value !== null && value !== undefined) {
-        return <span className="font-mono tabular-nums">{Number(value).toLocaleString('en-IN')}</span>;
+        return <span className="tabular-nums">{Number(value).toLocaleString('en-IN')}</span>;
       }
       return <span>{value ?? '-'}</span>;
     }
@@ -1183,7 +1207,7 @@ const TwoBReconciliationPage: React.FC = () => {
         }}
         min={type === 'number' ? 0 : undefined}
         max={type === 'date' && maxDate ? maxDate : undefined}
-        className={`h-8 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${type === 'number' ? 'w-28 text-right font-mono tabular-nums' : ''} ${className}`}
+        className={`h-7 px-2 text-xs md:text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${type === 'number' ? 'w-28 text-right tabular-nums' : ''} ${className}`}
       />
     );
   };
@@ -1207,7 +1231,7 @@ const TwoBReconciliationPage: React.FC = () => {
     if (shouldBeReadOnly) {
       const displayVal = value || '-';
       const suffix = reclaimSubtype === 'EXPENSE_OUT' ? ' (Expense out)' : '';
-      return <span className="text-sm">{displayVal}{suffix}</span>;
+      return <span className="text-xs">{displayVal}{suffix}</span>;
     }
 
     return (
@@ -1239,7 +1263,7 @@ const TwoBReconciliationPage: React.FC = () => {
           }
         }}
       >
-        <SelectTrigger className="h-8 text-sm w-28">
+        <SelectTrigger className="h-7 w-28 px-2 text-xs">
           {/*
             Override SelectValue's default rendering. Radix normally reflects
             the trigger text by looking up the current value in the SelectItem
@@ -1279,24 +1303,33 @@ const TwoBReconciliationPage: React.FC = () => {
   };
 
 
+  // Body cell classes: a touch tighter when the cells hold inline editors.
+  const tdCls = readOnly ? WS_TD : cn(WS_TD, 'px-1 py-0.5');
+  const tdNumCls = readOnly ? WS_TD_NUM : cn(WS_TD_NUM, 'px-1 py-0.5');
+  const cf2BCount = localBills2B.filter(r => r.is_carried_forward).length;
+  const cfBooksCount = localBillsBooks.filter(r => r.is_carried_forward).length;
+
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={WS_PAGE}>
       {/* Header */}
       <PageHeader
+        compact
         embedded
         title="2B Reconciliation"
         subtitle={isLiberalClient ? 'Manage bills not available in 2B or Books' : 'Read-only ledger — managed via Import 2B'}
+        icon={<FileSpreadsheet />}
         actions={
           <>
             {selectedClientId && !readOnly && (
               <Button
+                size="sm"
                 onClick={handleSaveAll}
                 disabled={isSaving || !hasUnsavedChanges || hasMandatoryFieldErrors}
                 variant={hasUnsavedChanges ? "default" : "outline"}
                 title={hasMandatoryFieldErrors ? 'Fix mandatory field errors before saving' : ''}
-                className="flex items-center gap-2"
+                className={WS_BTN}
               >
-                <Save className="h-4 w-4" />
+                <Save className="h-3.5 w-3.5" />
                 {isSaving ? 'Saving...' : 'Save Changes'}
               </Button>
             )}
@@ -1308,18 +1341,18 @@ const TwoBReconciliationPage: React.FC = () => {
               className="hidden"
             />
             {canImportExcel() && (
-              <Button variant="outline" className="flex items-center gap-2" onClick={handleImportClick} disabled={readOnly}>
-                <Upload className="h-4 w-4" />
+              <Button variant="outline" size="sm" className={WS_BTN} onClick={handleImportClick} disabled={readOnly}>
+                <Upload className="h-3.5 w-3.5" />
                 Import Excel
               </Button>
             )}
-            <Button variant="outline" className="flex items-center gap-2" onClick={handleExportExcel}>
-              <FileSpreadsheet className="h-4 w-4" />
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={handleExportExcel}>
+              <FileSpreadsheet className="h-3.5 w-3.5" />
               Export Excel
             </Button>
             {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClientId && (
-              <Button variant="destructive" size="sm" onClick={() => setShowClearData(true)} className="gap-2">
-                <Trash2 className="h-4 w-4" />
+              <Button variant="destructive" size="sm" onClick={() => setShowClearData(true)} className={WS_BTN}>
+                <Trash2 className="h-3.5 w-3.5" />
                 Clear Data
               </Button>
             )}
@@ -1327,23 +1360,12 @@ const TwoBReconciliationPage: React.FC = () => {
         }
       />
 
-      {/* Last saved audit label */}
-      {lastSavedInfo && selectedClientId && (
-        <p className="-mt-4 text-xs text-muted-foreground">
-          Last {lastSavedInfo.actionType === 'RESTORE' ? 'restored' : 'saved'} by{' '}
-          <span className="font-medium text-foreground">{lastSavedInfo.savedBy}</span>
-          {lastSavedInfo.savedByRole && (
-            <span className="text-muted-foreground"> ({lastSavedInfo.savedByRole})</span>
-          )}
-          {' '}on {format(lastSavedInfo.savedAt, 'dd-MMM-yyyy HH:mm')} • v{lastSavedInfo.versionNumber}
-        </p>
-      )}
-
-      {/* Filters */}
+      {/* Filters: one labelled toolbar. */}
       <Card>
-        <CardContent className="p-4">
-          <div className="flex items-center gap-4">
-            <div className="flex-1 max-w-xs">
+        <CardContent className="px-3 py-2">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="w-full min-w-0 space-y-0.5 sm:w-72">
+              <span className={WS_FILTER_LABEL}>Client</span>
               <SearchableSelect
                 options={clients.map(c => ({ value: c.id, label: c.name, sublabel: c.gstin }))}
                 value={selectedClientId}
@@ -1352,25 +1374,40 @@ const TwoBReconciliationPage: React.FC = () => {
                 searchPlaceholder="Type to search clients..."
                 emptyText="No clients found."
                 disabled={!isStaffRole() && clients.length <= 1}
+                className={WS_CONTROL}
               />
-            </div>
-            <div className="w-48">
+            </label>
+            <label className="w-40 min-w-0 space-y-0.5">
+              <span className={WS_FILTER_LABEL}>Month</span>
               <SearchableMonthSelect
                 options={monthOptions}
                 value={selectedMonth}
                 onValueChange={setSelectedMonth}
                 placeholder="Select Month"
+                className={WS_CONTROL}
               />
-            </div>
+            </label>
             {canViewVersionHistory() && selectedClientId && (
-              <Button 
-                variant="outline" 
-                className="flex items-center gap-2"
+              <Button
+                variant="outline"
+                size="sm"
+                className={WS_BTN}
                 onClick={() => setShowVersionHistory(true)}
               >
-                <History className="h-4 w-4" />
+                <History className="h-3.5 w-3.5" />
                 View Versions
               </Button>
+            )}
+            {/* Last saved audit label */}
+            {lastSavedInfo && selectedClientId && (
+              <p className="ml-auto self-center text-[11px] text-muted-foreground">
+                Last {lastSavedInfo.actionType === 'RESTORE' ? 'restored' : 'saved'} by{' '}
+                <span className="font-medium text-foreground">{lastSavedInfo.savedBy}</span>
+                {lastSavedInfo.savedByRole && (
+                  <span className="text-muted-foreground"> ({lastSavedInfo.savedByRole})</span>
+                )}
+                {' '}on {format(lastSavedInfo.savedAt, 'dd-MMM-yyyy HH:mm')} • v{lastSavedInfo.versionNumber}
+              </p>
             )}
           </div>
         </CardContent>
@@ -1378,9 +1415,9 @@ const TwoBReconciliationPage: React.FC = () => {
 
       {!selectedClientId ? (
         <Card>
-          <CardContent className="p-12">
+          <CardContent className="p-6">
             <TableEmptyState
-              icon={<AlertCircle className="h-6 w-6" />}
+              icon={<AlertCircle className="h-5 w-5" />}
               title="No client selected"
               description="Please select a client to view 2B reconciliation data."
             />
@@ -1388,42 +1425,70 @@ const TwoBReconciliationPage: React.FC = () => {
         </Card>
       ) : (
         <>
+          {/* Headline tiles; the carried-forward tiles double as the "Show CF only" toggles. */}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+            <TileButton active={!showOnlyCF2B} onClick={() => setShowOnlyCF2B(false)} title="Show every bill not in 2B">
+              <KpiTile
+                label="Not in 2B"
+                value={filteredBills2B.length === localBills2B.length ? localBills2B.length : `${filteredBills2B.length} / ${localBills2B.length}`}
+                hint={`ITC ${fmtINR(totals2B.igst + totals2B.cgst + totals2B.sgst)} · rev ${totals2B.reversalCount} · rec ${totals2B.reclaimCount}`}
+                tone={localBills2B.length ? 'warn' : 'ok'}
+              />
+            </TileButton>
+            <TileButton active={showOnlyCF2B} onClick={() => setShowOnlyCF2B(!showOnlyCF2B)} title={showOnlyCF2B ? 'Show all bills not in 2B' : 'Show carried-forward bills only'}>
+              <KpiTile label="Not in 2B · carried forward" value={cf2BCount} hint="From earlier periods" />
+            </TileButton>
+            <TileButton active={!showOnlyCFBooks} onClick={() => setShowOnlyCFBooks(false)} title="Show every bill not in books">
+              <KpiTile
+                label="Not in Books"
+                value={filteredBillsBooks.length === localBillsBooks.length ? localBillsBooks.length : `${filteredBillsBooks.length} / ${localBillsBooks.length}`}
+                hint={`ITC ${fmtINR(totalsBooks.igst + totalsBooks.cgst + totalsBooks.sgst)} · booked ${totalsBooks.bookEntryCount} · in 2B ${totalsBooks.in2BCount}`}
+                tone={localBillsBooks.length ? 'warn' : 'ok'}
+              />
+            </TileButton>
+            <TileButton active={showOnlyCFBooks} onClick={() => setShowOnlyCFBooks(!showOnlyCFBooks)} title={showOnlyCFBooks ? 'Show all bills not in books' : 'Show carried-forward bills only'}>
+              <KpiTile label="Not in Books · carried forward" value={cfBooksCount} hint="From earlier periods" />
+            </TileButton>
+            <KpiTile
+              label="Sheet"
+              value={isLocked ? 'Locked' : isLiberalClient ? 'Liberal' : 'Strict'}
+              hint={isLocked ? 'Return filed — read-only' : isLiberalClient ? 'Directly editable' : 'Read-only · edit via Import 2B'}
+              tone={isLocked ? 'warn' : 'neutral'}
+            />
+          </div>
+
           {/* Negative value error message */}
           {negativeValueError && (
-            <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-3 flex items-center gap-2 text-destructive">
-              <AlertCircle className="h-4 w-4" />
-              <span className="text-sm">{negativeValueError}</span>
+            <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2.5 py-1.5 text-xs text-foreground">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+              <span>{negativeValueError}</span>
             </div>
           )}
 
           {/* Strict mode — this client's entries only go through Import 2B */}
           {!isLiberalClient && (
-            <div className="flex items-start gap-2 rounded-lg border border-info/30 bg-info/10 p-3 text-info">
-              <Info className="h-4 w-4 shrink-0 mt-0.5" />
-              <span className="text-sm">
-                This sheet is read-only for {selectedClientData?.name}. Add invoices, classify 2B documents, and
-                record reversals / reclaims / book entries on the <span className="font-medium">Import 2B</span> tab
-                — changes post through here automatically. A superadmin or GST manager can switch this client to
-                Liberal mode (directly editable) from Edit Client.
-              </span>
-            </div>
+            <Note>
+              This sheet is read-only for {selectedClientData?.name}. Add invoices, classify 2B documents, and
+              record reversals / reclaims / book entries on the <span className="font-medium">Import 2B</span> tab
+              — changes post through here automatically. A superadmin or GST manager can switch this client to
+              Liberal mode (directly editable) from Edit Client.
+            </Note>
           )}
 
           {/* Lock indicator - No unlock button here, only on Filing Status page */}
           {isLocked && (
-            <div className="bg-warning/10 border border-warning/20 rounded-lg p-3 flex items-center gap-2 text-warning">
-              <Lock className="h-4 w-4" />
-              <span className="text-sm">This sheet is locked because the return has been filed.</span>
-            </div>
+            <Note tone="warn">
+              <span className="inline-flex items-center gap-1"><Lock className="h-3.5 w-3.5" /> This sheet is locked because the return has been filed.</span>
+            </Note>
           )}
 
           {/* Table 1: Bills Not Available in 2B */}
           <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-lg">Bills Not Available in 2B</CardTitle>
-                  <p className="text-sm text-muted-foreground mt-1">
+            <CardHeader className="px-4 pb-2 pt-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="space-y-0.5">
+                  <CardTitle className="text-[15px] leading-snug">Bills Not Available in 2B</CardTitle>
+                  <p className="text-xs text-muted-foreground">
                     Client: {selectedClientData?.name} | Edit cells directly to modify data
                   </p>
                 </div>
@@ -1431,20 +1496,20 @@ const TwoBReconciliationPage: React.FC = () => {
                   variant={showOnlyCF2B ? "default" : "outline"}
                   size="sm"
                   onClick={() => setShowOnlyCF2B(!showOnlyCF2B)}
-                  className="gap-1"
+                  className={WS_BTN}
                 >
-                  <Filter className="h-3 w-3" />
+                  <Filter className="h-3.5 w-3.5" />
                   {showOnlyCF2B ? "Show All" : "Show CF Only"}
                 </Button>
               </div>
             </CardHeader>
-            <CardContent>
-              <div className="overflow-auto max-h-[75vh] relative" style={{ overflowX: 'auto', overflowY: 'auto' }}>
-                <table className="gst-table">
-                  <thead className="sticky top-0 z-10">
+            <CardContent className="px-4 pb-3">
+              <div className="relative max-h-[75vh] overflow-auto rounded-md border bg-card">
+                <table className={TABLE_CLS}>
+                  <thead>
                     <tr>
-                      <th className="w-28">
-                        <div className="flex flex-col items-center gap-1">
+                      <th className={cn(WS_TH, 'w-28')}>
+                        <div className="flex flex-col items-start gap-1">
                           <span>Date</span>
                           {!readOnly && (
                             <Button
@@ -1460,15 +1525,15 @@ const TwoBReconciliationPage: React.FC = () => {
                           )}
                         </div>
                       </th>
-                      <th>Supplier Name</th>
-                      <th className="w-28">Invoice No.</th>
-                      <th className="w-36">GSTIN</th>
-                      <th className="text-right w-32">Taxable Value</th>
-                      <th className="text-right w-28">IGST</th>
-                      <th className="text-right w-28">CGST</th>
-                      <th className="text-right w-28">SGST</th>
-                      <th className="w-32">
-                        <div className="flex flex-col items-center gap-1">
+                      <th className={WS_TH}>Supplier Name</th>
+                      <th className={cn(WS_TH, 'w-28')}>Invoice No.</th>
+                      <th className={cn(WS_TH, 'w-36')}>GSTIN</th>
+                      <th className={cn(WS_TH, 'text-right w-32')}>Taxable Value</th>
+                      <th className={cn(WS_TH, 'text-right w-28')}>IGST</th>
+                      <th className={cn(WS_TH, 'text-right w-28')}>CGST</th>
+                      <th className={cn(WS_TH, 'text-right w-28')}>SGST</th>
+                      <th className={cn(WS_TH, 'w-32')}>
+                        <div className="flex flex-col items-start gap-1">
                           <span>Reversal</span>
                           <MultiSelectPopover
                             options={reversalReclaimMonths}
@@ -1479,8 +1544,8 @@ const TwoBReconciliationPage: React.FC = () => {
                           />
                         </div>
                       </th>
-                      <th className="w-28">
-                        <div className="flex flex-col items-center gap-1">
+                      <th className={cn(WS_TH, 'w-28')}>
+                        <div className="flex flex-col items-start gap-1">
                           <span>Reclaim</span>
                           <MultiSelectPopover
                             options={reversalReclaimMonths}
@@ -1491,13 +1556,13 @@ const TwoBReconciliationPage: React.FC = () => {
                           />
                         </div>
                       </th>
-                      {!readOnly && <th className="w-12"></th>}
+                      {!readOnly && <th className={cn(WS_TH, 'w-12')}></th>}
                     </tr>
                   </thead>
                   <tbody>
                     {filteredBills2B.map((row) => (
-                      <tr key={row.id} className={row.is_carried_forward ? 'bg-info/10' : ''}>
-                        <td>
+                      <tr key={row.id} className={cn(WS_TR, row.is_carried_forward && 'bg-info/10')}>
+                        <td className={tdCls}>
                           {renderEditableInput(
                             row.date,
                             (val) => handleUpdate2BField(row.id, 'date', val),
@@ -1508,7 +1573,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             maxDateForReturnPeriod
                           )}
                         </td>
-                        <td>
+                        <td className={tdCls}>
                           <div className="flex items-center gap-2">
                             {renderEditableInput(
                               row.supplier_name,
@@ -1518,11 +1583,11 @@ const TwoBReconciliationPage: React.FC = () => {
                               row.is_carried_forward || false
                             )}
                             {row.is_carried_forward && (
-                              <Badge variant="outline" className="text-xs shrink-0">CF</Badge>
+                              <Badge variant="info" className="shrink-0 px-1.5 text-[10px] font-medium">CF</Badge>
                             )}
                           </div>
                         </td>
-                        <td>
+                        <td className={tdCls}>
                           {renderEditableInput(
                             row.supplier_invoice_number,
                             (val) => handleUpdate2BField(row.id, 'supplier_invoice_number', val),
@@ -1531,7 +1596,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false
                           )}
                         </td>
-                        <td>
+                        <td className={tdCls}>
                           {renderEditableInput(
                             row.supplier_gstin,
                             (val) => handleUpdate2BField(row.id, 'supplier_gstin', val),
@@ -1540,7 +1605,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false
                           )}
                         </td>
-                        <td className="text-right">
+                        <td className={tdNumCls}>
                           {renderEditableInput(
                             row.taxable_value,
                             (val) => handleUpdate2BField(row.id, 'taxable_value', val),
@@ -1549,7 +1614,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false
                           )}
                         </td>
-                        <td className="text-right">
+                        <td className={tdNumCls}>
                           {renderEditableInput(
                             row.input_igst,
                             (val) => handleUpdate2BField(row.id, 'input_igst', val),
@@ -1558,7 +1623,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false
                           )}
                         </td>
-                        <td className="text-right">
+                        <td className={tdNumCls}>
                           {renderEditableInput(
                             row.input_cgst,
                             (val) => handleUpdate2BField(row.id, 'input_cgst', val),
@@ -1567,7 +1632,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false
                           )}
                         </td>
-                        <td className="text-right">
+                        <td className={tdNumCls}>
                           {renderEditableInput(
                             row.input_sgst,
                             (val) => handleUpdate2BField(row.id, 'input_sgst', val),
@@ -1576,7 +1641,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false
                           )}
                         </td>
-                        <td>
+                        <td className={tdCls}>
                           {renderMonthDropdown(
                             row.reversal_month,
                             (val) => handleUpdate2BField(row.id, 'reversal_month', val || null),
@@ -1584,7 +1649,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false
                           )}
                         </td>
-                        <td>
+                        <td className={tdCls}>
                           {renderMonthDropdown(
                             row.reclaim_month,
                             (val) => handleUpdate2BField(row.id, 'reclaim_month', val || null),
@@ -1597,26 +1662,26 @@ const TwoBReconciliationPage: React.FC = () => {
                           )}
                         </td>
                         {!readOnly && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && (
-                          <td>
+                          <td className={tdCls}>
                             <Button
                               variant="ghost"
                               size="icon"
                               onClick={() => handleDeleteRow2B(row.id)}
-                              className="h-7 w-7 text-destructive hover:text-destructive"
+                              className="h-7 w-7 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive-strong focus-visible:opacity-100 group-hover:opacity-100"
                               aria-label={row.is_carried_forward ? 'Delete carried forward row' : 'Delete row'}
                               title={row.is_carried_forward ? 'Delete carried forward row' : 'Delete row'}
                             >
-                              <Trash2 className="h-3 w-3" />
+                              <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </td>
                         )}
-                        {!readOnly && (!canDelete2BRows() || (row.is_carried_forward && user?.role !== 'superadmin' && user?.role !== 'gst_manager')) && <td></td>}
+                        {!readOnly && (!canDelete2BRows() || (row.is_carried_forward && user?.role !== 'superadmin' && user?.role !== 'gst_manager')) && <td className={WS_TD}></td>}
                       </tr>
                     ))}
                     {filteredBills2B.length === 0 && (
                       <TableEmptyState
                         colSpan={readOnly ? 10 : 11}
-                        icon={<Inbox className="h-6 w-6" />}
+                        icon={<Inbox className="h-5 w-5" />}
                         title={localBills2B.length === 0 ? 'No records found' : 'No matching records'}
                         description={localBills2B.length === 0
                           ? 'Click the + button below Date or use "Import Excel" to add data.'
@@ -1624,15 +1689,15 @@ const TwoBReconciliationPage: React.FC = () => {
                       />
                     )}
                     {/* Totals Row */}
-                    <tr className="bg-muted/50 font-semibold">
-                      <td colSpan={4} className="text-right">TOTAL</td>
-                      <td className="text-right tabular-nums">{totals2B.taxableValue.toLocaleString('en-IN')}</td>
-                      <td className="text-right tabular-nums">{totals2B.igst.toLocaleString('en-IN')}</td>
-                      <td className="text-right tabular-nums">{totals2B.cgst.toLocaleString('en-IN')}</td>
-                      <td className="text-right tabular-nums">{totals2B.sgst.toLocaleString('en-IN')}</td>
-                      <td></td>
-                      <td></td>
-                      {!readOnly && <td></td>}
+                    <tr className={cn(WS_TR_TOTAL, 'sticky bottom-0 z-10')}>
+                      <td colSpan={4} className={cn(WS_TD, 'border-b-0 text-right')}>TOTAL</td>
+                      <td className={cn(WS_TD_NUM, 'border-b-0')}>{totals2B.taxableValue.toLocaleString('en-IN')}</td>
+                      <td className={cn(WS_TD_NUM, 'border-b-0')}>{totals2B.igst.toLocaleString('en-IN')}</td>
+                      <td className={cn(WS_TD_NUM, 'border-b-0')}>{totals2B.cgst.toLocaleString('en-IN')}</td>
+                      <td className={cn(WS_TD_NUM, 'border-b-0')}>{totals2B.sgst.toLocaleString('en-IN')}</td>
+                      <td className={cn(WS_TD, 'border-b-0')}></td>
+                      <td className={cn(WS_TD, 'border-b-0')}></td>
+                      {!readOnly && <td className={cn(WS_TD, 'border-b-0')}></td>}
                     </tr>
                   </tbody>
                 </table>
@@ -1642,30 +1707,30 @@ const TwoBReconciliationPage: React.FC = () => {
 
           {/* Table 2: Bills Not Available in Books */}
           <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-lg">Bills Not Available in Books</CardTitle>
-                  <p className="text-sm text-muted-foreground">Edit cells directly to modify data</p>
+            <CardHeader className="px-4 pb-2 pt-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="space-y-0.5">
+                  <CardTitle className="text-[15px] leading-snug">Bills Not Available in Books</CardTitle>
+                  <p className="text-xs text-muted-foreground">Edit cells directly to modify data</p>
                 </div>
                 <Button
                   variant={showOnlyCFBooks ? "default" : "outline"}
                   size="sm"
                   onClick={() => setShowOnlyCFBooks(!showOnlyCFBooks)}
-                  className="gap-1"
+                  className={WS_BTN}
                 >
-                  <Filter className="h-3 w-3" />
+                  <Filter className="h-3.5 w-3.5" />
                   {showOnlyCFBooks ? "Show All" : "Show CF Only"}
                 </Button>
               </div>
             </CardHeader>
-            <CardContent>
-              <div className="overflow-auto max-h-[75vh] relative" style={{ overflowX: 'auto', overflowY: 'auto' }}>
-                <table className="gst-table">
-                  <thead className="sticky top-0 z-10">
+            <CardContent className="px-4 pb-3">
+              <div className="relative max-h-[75vh] overflow-auto rounded-md border bg-card">
+                <table className={TABLE_CLS}>
+                  <thead>
                     <tr>
-                      <th className="w-28">
-                        <div className="flex flex-col items-center gap-1">
+                      <th className={cn(WS_TH, 'w-28')}>
+                        <div className="flex flex-col items-start gap-1">
                           <span>Date</span>
                           {!readOnly && (
                             <Button
@@ -1681,15 +1746,15 @@ const TwoBReconciliationPage: React.FC = () => {
                           )}
                         </div>
                       </th>
-                      <th>Supplier Name</th>
-                      <th className="w-28">Invoice No.</th>
-                      <th className="w-36">GSTIN</th>
-                      <th className="text-right w-32">Taxable Value</th>
-                      <th className="text-right w-28">IGST</th>
-                      <th className="text-right w-28">CGST</th>
-                      <th className="text-right w-28">SGST</th>
-                      <th className="w-32">
-                        <div className="flex flex-col items-center gap-1">
+                      <th className={WS_TH}>Supplier Name</th>
+                      <th className={cn(WS_TH, 'w-28')}>Invoice No.</th>
+                      <th className={cn(WS_TH, 'w-36')}>GSTIN</th>
+                      <th className={cn(WS_TH, 'text-right w-32')}>Taxable Value</th>
+                      <th className={cn(WS_TH, 'text-right w-28')}>IGST</th>
+                      <th className={cn(WS_TH, 'text-right w-28')}>CGST</th>
+                      <th className={cn(WS_TH, 'text-right w-28')}>SGST</th>
+                      <th className={cn(WS_TH, 'w-32')}>
+                        <div className="flex flex-col items-start gap-1">
                           <span>Book Entry</span>
                           <MultiSelectPopover
                             options={reversalReclaimMonths}
@@ -1700,8 +1765,8 @@ const TwoBReconciliationPage: React.FC = () => {
                           />
                         </div>
                       </th>
-                      <th className="w-28">
-                        <div className="flex flex-col items-center gap-1">
+                      <th className={cn(WS_TH, 'w-28')}>
+                        <div className="flex flex-col items-start gap-1">
                           <span>In 2B</span>
                           <MultiSelectPopover
                             options={reversalReclaimMonths}
@@ -1712,13 +1777,13 @@ const TwoBReconciliationPage: React.FC = () => {
                           />
                         </div>
                       </th>
-                      {!readOnly && <th className="w-12"></th>}
+                      {!readOnly && <th className={cn(WS_TH, 'w-12')}></th>}
                     </tr>
                   </thead>
                   <tbody>
                     {filteredBillsBooks.map((row) => (
-                      <tr key={row.id} className={row.is_carried_forward ? 'bg-info/10' : ''}>
-                        <td>
+                      <tr key={row.id} className={cn(WS_TR, row.is_carried_forward && 'bg-info/10')}>
+                        <td className={tdCls}>
                           {renderEditableInput(
                             row.date,
                             (val) => handleUpdateBooksField(row.id, 'date', val),
@@ -1729,7 +1794,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             maxDateForReturnPeriod
                           )}
                         </td>
-                        <td>
+                        <td className={tdCls}>
                           <div className="flex items-center gap-2">
                             {renderEditableInput(
                               row.supplier_name,
@@ -1739,11 +1804,11 @@ const TwoBReconciliationPage: React.FC = () => {
                               row.is_carried_forward || false
                             )}
                             {row.is_carried_forward && (
-                              <Badge variant="outline" className="text-xs shrink-0">CF</Badge>
+                              <Badge variant="info" className="shrink-0 px-1.5 text-[10px] font-medium">CF</Badge>
                             )}
                           </div>
                         </td>
-                        <td>
+                        <td className={tdCls}>
                           {renderEditableInput(
                             row.supplier_invoice_number,
                             (val) => handleUpdateBooksField(row.id, 'supplier_invoice_number', val),
@@ -1752,7 +1817,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false
                           )}
                         </td>
-                        <td>
+                        <td className={tdCls}>
                           {renderEditableInput(
                             row.supplier_gstin,
                             (val) => handleUpdateBooksField(row.id, 'supplier_gstin', val),
@@ -1761,7 +1826,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false
                           )}
                         </td>
-                        <td className="text-right">
+                        <td className={tdNumCls}>
                           {renderEditableInput(
                             row.taxable_value,
                             (val) => handleUpdateBooksField(row.id, 'taxable_value', val),
@@ -1770,7 +1835,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false
                           )}
                         </td>
-                        <td className="text-right">
+                        <td className={tdNumCls}>
                           {renderEditableInput(
                             row.input_igst,
                             (val) => handleUpdateBooksField(row.id, 'input_igst', val),
@@ -1779,7 +1844,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false
                           )}
                         </td>
-                        <td className="text-right">
+                        <td className={tdNumCls}>
                           {renderEditableInput(
                             row.input_cgst,
                             (val) => handleUpdateBooksField(row.id, 'input_cgst', val),
@@ -1788,7 +1853,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false
                           )}
                         </td>
-                        <td className="text-right">
+                        <td className={tdNumCls}>
                           {renderEditableInput(
                             row.input_sgst,
                             (val) => handleUpdateBooksField(row.id, 'input_sgst', val),
@@ -1797,7 +1862,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false
                           )}
                         </td>
-                        <td>
+                        <td className={tdCls}>
                           {renderMonthDropdown(
                             row.book_entry_month,
                             (val) => handleUpdateBooksField(row.id, 'book_entry_month', val || null),
@@ -1806,7 +1871,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             true // isEditableForCF - allow editing Book Entry column for carried forward rows
                           )}
                         </td>
-                        <td>
+                        <td className={tdCls}>
                           {renderMonthDropdown(
                             row.bill_in_2b_month,
                             (val) => handleUpdateBooksField(row.id, 'bill_in_2b_month', val || null),
@@ -1816,26 +1881,26 @@ const TwoBReconciliationPage: React.FC = () => {
                           )}
                         </td>
                         {!readOnly && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && (
-                          <td>
+                          <td className={tdCls}>
                             <Button
                               variant="ghost"
                               size="icon"
                               onClick={() => handleDeleteRowBooks(row.id)}
-                              className="h-7 w-7 text-destructive hover:text-destructive"
+                              className="h-7 w-7 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive-strong focus-visible:opacity-100 group-hover:opacity-100"
                               aria-label={row.is_carried_forward ? 'Delete carried forward row' : 'Delete row'}
                               title={row.is_carried_forward ? 'Delete carried forward row' : 'Delete row'}
                             >
-                              <Trash2 className="h-3 w-3" />
+                              <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </td>
                         )}
-                        {!readOnly && (!canDelete2BRows() || (row.is_carried_forward && user?.role !== 'superadmin' && user?.role !== 'gst_manager')) && <td></td>}
+                        {!readOnly && (!canDelete2BRows() || (row.is_carried_forward && user?.role !== 'superadmin' && user?.role !== 'gst_manager')) && <td className={WS_TD}></td>}
                       </tr>
                     ))}
                     {filteredBillsBooks.length === 0 && (
                       <TableEmptyState
                         colSpan={readOnly ? 10 : 11}
-                        icon={<Inbox className="h-6 w-6" />}
+                        icon={<Inbox className="h-5 w-5" />}
                         title={localBillsBooks.length === 0 ? 'No records found' : 'No matching records'}
                         description={localBillsBooks.length === 0
                           ? 'Click the + button below Date or use "Import Excel" to add data.'
@@ -1843,15 +1908,15 @@ const TwoBReconciliationPage: React.FC = () => {
                       />
                     )}
                     {/* Totals Row */}
-                    <tr className="bg-muted/50 font-semibold">
-                      <td colSpan={4} className="text-right">TOTAL</td>
-                      <td className="text-right tabular-nums">{totalsBooks.taxableValue.toLocaleString('en-IN')}</td>
-                      <td className="text-right tabular-nums">{totalsBooks.igst.toLocaleString('en-IN')}</td>
-                      <td className="text-right tabular-nums">{totalsBooks.cgst.toLocaleString('en-IN')}</td>
-                      <td className="text-right tabular-nums">{totalsBooks.sgst.toLocaleString('en-IN')}</td>
-                      <td></td>
-                      <td></td>
-                      {!readOnly && <td></td>}
+                    <tr className={cn(WS_TR_TOTAL, 'sticky bottom-0 z-10')}>
+                      <td colSpan={4} className={cn(WS_TD, 'border-b-0 text-right')}>TOTAL</td>
+                      <td className={cn(WS_TD_NUM, 'border-b-0')}>{totalsBooks.taxableValue.toLocaleString('en-IN')}</td>
+                      <td className={cn(WS_TD_NUM, 'border-b-0')}>{totalsBooks.igst.toLocaleString('en-IN')}</td>
+                      <td className={cn(WS_TD_NUM, 'border-b-0')}>{totalsBooks.cgst.toLocaleString('en-IN')}</td>
+                      <td className={cn(WS_TD_NUM, 'border-b-0')}>{totalsBooks.sgst.toLocaleString('en-IN')}</td>
+                      <td className={cn(WS_TD, 'border-b-0')}></td>
+                      <td className={cn(WS_TD, 'border-b-0')}></td>
+                      {!readOnly && <td className={cn(WS_TD, 'border-b-0')}></td>}
                     </tr>
                   </tbody>
                 </table>
