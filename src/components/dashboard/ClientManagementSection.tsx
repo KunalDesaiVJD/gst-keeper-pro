@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { SectionCard } from '@/components/gstr9/ui';
+import { WS_BTN, WS_CONTROL } from '@/components/workspace/theme';
+import { cn } from '@/lib/utils';
 import {
   Plus,
   Search,
@@ -95,41 +97,39 @@ const ClientManagementSection: React.FC = () => {
   );
 
   return (
-    <Card>
-      <CardHeader className="pb-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Building2 className="h-5 w-5" />
-              Client Management
-            </CardTitle>
-            <CardDescription>{clients.length} clients in database</CardDescription>
-          </div>
-          {canAddEditClients() && (
-            <Button onClick={() => navigate('/add-client')} size="sm" className="flex items-center gap-2">
-              <Plus className="h-4 w-4" />
-              Add Client
-            </Button>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent>
+    <SectionCard
+      title={
+        <span className="flex items-center gap-2">
+          <Building2 className="h-4 w-4 text-primary" />
+          Client Management
+        </span>
+      }
+      description={`${clients.length} clients in database`}
+      actions={
+        canAddEditClients() && (
+          <Button onClick={() => navigate('/add-client')} size="sm" className={WS_BTN}>
+            <Plus className="h-3.5 w-3.5" />
+            Add Client
+          </Button>
+        )
+      }
+    >
         {/* Search */}
-        <div className="relative mb-4">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Search by name or GSTIN..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
+            className={cn(WS_CONTROL, 'pl-8')}
           />
         </div>
 
         {/* Client List */}
-        <div className="space-y-2 max-h-80 overflow-y-auto">
+        <div className="max-h-80 overflow-y-auto rounded-md border">
           {isLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
             </div>
           ) : filteredClients.length === 0 ? (
             <TableEmptyState
@@ -145,15 +145,15 @@ const ClientManagementSection: React.FC = () => {
             filteredClients.slice(0, 10).map((client) => (
               <div
                 key={client.id}
-                className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/30 transition-colors"
+                className="flex items-center justify-between gap-2 border-b px-3 py-1.5 transition-colors last:border-b-0 hover:bg-muted/30"
               >
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                    <Building2 className="h-4 w-4 text-primary" />
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <Building2 className="h-3.5 w-3.5 text-primary" />
                   </div>
                   <div className="min-w-0">
                     <p className="font-medium text-sm truncate">{client.name}</p>
-                    <p className="text-xs text-muted-foreground truncate">{client.gstin}</p>
+                    <p className="text-xs text-muted-foreground truncate font-mono">{client.gstin}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
@@ -165,7 +165,7 @@ const ClientManagementSection: React.FC = () => {
                       </span>
                     )}
                   </div>
-                  <Badge variant="outline" className="text-xs hidden md:inline-flex">
+                  <Badge variant="outline" className="text-[10px] font-medium hidden md:inline-flex">
                     {client.registration_type}
                   </Badge>
                   <div className="flex items-center gap-1">
@@ -173,7 +173,7 @@ const ClientManagementSection: React.FC = () => {
                       <Button 
                         variant="ghost" 
                         size="icon" 
-                        className="h-8 w-8"
+                        className="h-7 w-7"
                         title="Edit client"
                         aria-label={`Edit client ${client.name}`}
                         onClick={(e) => {
@@ -188,7 +188,7 @@ const ClientManagementSection: React.FC = () => {
                       <Button 
                         variant="ghost" 
                         size="icon" 
-                        className="h-8 w-8 text-destructive hover:text-destructive"
+                        className="h-7 w-7 text-destructive hover:text-destructive"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleDeleteClient(client.id, client.name);
@@ -207,15 +207,14 @@ const ClientManagementSection: React.FC = () => {
           {filteredClients.length > 10 && (
             <Button 
               variant="ghost" 
-              className="w-full text-sm text-muted-foreground"
+              className="h-8 w-full rounded-none text-xs text-muted-foreground"
               onClick={() => navigate('/clients')}
             >
               View all {filteredClients.length} clients →
             </Button>
           )}
         </div>
-      </CardContent>
-    </Card>
+    </SectionCard>
   );
 };
 

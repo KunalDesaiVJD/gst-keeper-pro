@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Plus, Trash2, Loader2, ListTodo } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { WS_BTN, WS_TABLE, WS_TH, WS_TD, WS_TR, WS_CELL_INPUT } from '@/components/workspace/theme';
 import { toast } from 'sonner';
 import {
   TaskReminderRow, TaskReminderPatch,
@@ -116,66 +117,66 @@ export const TaskReminderDialog: React.FC<TaskReminderDialogProps> = ({ open, on
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-6xl max-h-[85vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <ListTodo className="h-5 w-5" />
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <ListTodo className="h-4 w-4 text-primary" />
             My Task Reminders
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-xs">
             Private to you — no one else can see or edit these rows. Click any cell to edit.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-auto border rounded-md">
+        <div className="flex-1 overflow-auto rounded-md border bg-card">
           {loading ? (
-            <div className="flex items-center justify-center py-16 text-muted-foreground">
-              <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading…
+            <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
             </div>
           ) : (
-            <Table>
+            <Table className={WS_TABLE} containerClassName="overflow-visible">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-10">Done</TableHead>
-                  <TableHead className="min-w-[220px]">Task</TableHead>
-                  <TableHead className="min-w-[160px]">Client</TableHead>
-                  <TableHead className="min-w-[140px]">Reminder Frequency</TableHead>
-                  <TableHead className="min-w-[150px]">Deadline for Submission</TableHead>
-                  <TableHead className="min-w-[150px]">Task Allocated To</TableHead>
-                  <TableHead className="min-w-[150px]">Task Received From</TableHead>
-                  <TableHead className="min-w-[150px]">Ticket Status</TableHead>
-                  <TableHead className="w-10" />
+                  <TableHead className={cn(WS_TH, 'h-auto w-10')}>Done</TableHead>
+                  <TableHead className={cn(WS_TH, 'h-auto min-w-[220px]')}>Task</TableHead>
+                  <TableHead className={cn(WS_TH, 'h-auto min-w-[160px]')}>Client</TableHead>
+                  <TableHead className={cn(WS_TH, 'h-auto min-w-[140px]')}>Reminder Frequency</TableHead>
+                  <TableHead className={cn(WS_TH, 'h-auto min-w-[150px]')}>Deadline for Submission</TableHead>
+                  <TableHead className={cn(WS_TH, 'h-auto min-w-[150px]')}>Task Allocated To</TableHead>
+                  <TableHead className={cn(WS_TH, 'h-auto min-w-[150px]')}>Task Received From</TableHead>
+                  <TableHead className={cn(WS_TH, 'h-auto min-w-[150px]')}>Ticket Status</TableHead>
+                  <TableHead className={cn(WS_TH, 'h-auto w-10')} />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {sortedRows.map((row) => (
-                  <TableRow key={row.id} className={row.is_done ? 'opacity-50' : undefined}>
-                    <TableCell>
+                  <TableRow key={row.id} className={cn(WS_TR, 'border-0', row.is_done && 'opacity-50')}>
+                    <TableCell className={cn(WS_TD, 'text-center')}>
                       <Checkbox
                         checked={row.is_done}
                         onCheckedChange={(checked) => patchRow(row.id, { is_done: checked === true })}
                       />
                     </TableCell>
-                    <TableCell className="p-1">
+                    <TableCell className={cn(WS_TD, 'p-0')}>
                       <Input
-                        className="border-0 shadow-none focus-visible:ring-1 h-8"
+                        className={WS_CELL_INPUT}
                         defaultValue={row.task}
                         onBlur={(e) => e.target.value !== row.task && patchRow(row.id, { task: e.target.value })}
                         placeholder="Task…"
                       />
                     </TableCell>
-                    <TableCell className="p-1">
+                    <TableCell className={cn(WS_TD, 'p-0')}>
                       <Input
-                        className="border-0 shadow-none focus-visible:ring-1 h-8"
+                        className={WS_CELL_INPUT}
                         defaultValue={row.client}
                         onBlur={(e) => e.target.value !== row.client && patchRow(row.id, { client: e.target.value })}
                         placeholder="Client…"
                       />
                     </TableCell>
-                    <TableCell className="p-1">
+                    <TableCell className={cn(WS_TD, 'p-0')}>
                       <Select
                         value={row.reminder_frequency || undefined}
                         onValueChange={(v) => patchRow(row.id, { reminder_frequency: v })}
                       >
-                        <SelectTrigger className="border-0 shadow-none focus:ring-1 h-8">
+                        <SelectTrigger className="h-8 rounded-none border-0 bg-transparent px-2 text-xs shadow-none focus:ring-1 focus:ring-inset focus:ring-primary focus:ring-offset-0">
                           <SelectValue placeholder="—" />
                         </SelectTrigger>
                         <SelectContent>
@@ -185,53 +186,53 @@ export const TaskReminderDialog: React.FC<TaskReminderDialogProps> = ({ open, on
                         </SelectContent>
                       </Select>
                     </TableCell>
-                    <TableCell className="p-1">
+                    <TableCell className={cn(WS_TD, 'p-0')}>
                       <Input
                         type="date"
-                        className={cn('border-0 shadow-none focus-visible:ring-1 h-8 rounded', deadlineUrgencyClass(row.deadline, row.is_done))}
+                        className={cn(WS_CELL_INPUT, deadlineUrgencyClass(row.deadline, row.is_done))}
                         defaultValue={row.deadline || ''}
                         onBlur={(e) => e.target.value !== (row.deadline || '') && patchRow(row.id, { deadline: e.target.value || null })}
                       />
                     </TableCell>
-                    <TableCell className="p-1">
+                    <TableCell className={cn(WS_TD, 'p-0')}>
                       <Input
-                        className="border-0 shadow-none focus-visible:ring-1 h-8"
+                        className={WS_CELL_INPUT}
                         defaultValue={row.allocated_to}
                         onBlur={(e) => e.target.value !== row.allocated_to && patchRow(row.id, { allocated_to: e.target.value })}
                         placeholder="Allocated to…"
                       />
                     </TableCell>
-                    <TableCell className="p-1">
+                    <TableCell className={cn(WS_TD, 'p-0')}>
                       <Input
-                        className="border-0 shadow-none focus-visible:ring-1 h-8"
+                        className={WS_CELL_INPUT}
                         defaultValue={row.received_from}
                         onBlur={(e) => e.target.value !== row.received_from && patchRow(row.id, { received_from: e.target.value })}
                         placeholder="Received from…"
                       />
                     </TableCell>
-                    <TableCell className="p-1">
+                    <TableCell className={cn(WS_TD, 'p-0')}>
                       <Input
-                        className="border-0 shadow-none focus-visible:ring-1 h-8"
+                        className={WS_CELL_INPUT}
                         defaultValue={row.ticket_status}
                         onBlur={(e) => e.target.value !== row.ticket_status && patchRow(row.id, { ticket_status: e.target.value })}
                         placeholder="Ticket status…"
                       />
                     </TableCell>
-                    <TableCell className="p-1">
+                    <TableCell className={cn(WS_TD, 'p-0')}>
                       <Button
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 text-muted-foreground hover:text-destructive"
                         onClick={() => setDeleteTarget(row)}
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </TableCell>
                   </TableRow>
                 ))}
                 {!sortedRows.length && (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={9} className={cn(WS_TD, 'py-8 text-center text-sm text-muted-foreground')}>
                       No tasks yet — click "Add Task" to start your list.
                     </TableCell>
                   </TableRow>
@@ -242,8 +243,8 @@ export const TaskReminderDialog: React.FC<TaskReminderDialogProps> = ({ open, on
         </div>
 
         <div className="flex items-center justify-between pt-1">
-          <Button variant="outline" size="sm" onClick={handleAddRow}>
-            <Plus className="h-4 w-4 mr-1" /> Add Task
+          <Button variant="outline" size="sm" className={WS_BTN} onClick={handleAddRow}>
+            <Plus className="h-3.5 w-3.5" /> Add Task
           </Button>
           {savingId && <span className="text-xs text-muted-foreground">Saving…</span>}
         </div>

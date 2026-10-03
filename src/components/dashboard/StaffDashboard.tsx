@@ -2,20 +2,18 @@ import React, { useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, SectionCard } from '@/components/gstr9/ui';
+import { WS_PAGE, WS_BTN, WS_TABLE_WRAP, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR, WS_FILTER_LABEL, WS_CONTROL } from '@/components/workspace/theme';
+import { cn } from '@/lib/utils';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { PageHeader } from '@/components/layout/PageHeader';
 import {
-  AlertTriangle,
-  CheckCircle2,
-  Calendar,
   Building2,
   ChevronDown,
   ChevronUp,
   LayoutDashboard,
-  Target,
   ListTodo
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
@@ -288,39 +286,41 @@ const StaffDashboard: React.FC = () => {
     navigate(`/filing-status?filter=target_due_today&targetDate=${todayDate}&includeOverdue=true`);
   };
 
-  const clientMetricCards = [
+  const loadingValue = (n: number) => (isLoading ? '—' : n);
+
+  const clientMetricCards: { label: string; value: React.ReactNode; tone: 'ok' | 'warn' | 'error' | 'neutral'; onClick: () => void; title: string }[] = [
     {
       label: 'Total Clients',
-      value: metrics.totalClients,
-      icon: <Building2 className="h-8 w-8 text-primary" />,
+      value: loadingValue(metrics.totalClients),
+      tone: 'neutral',
       onClick: () => navigate('/clients'),
-      bgColor: 'bg-primary/5',
+      title: 'Open Clients',
     },
     {
       label: 'Pending Filings',
-      value: metrics.pendingFilings,
-      icon: <AlertTriangle className="h-8 w-8 text-warning" />,
+      value: loadingValue(metrics.pendingFilings),
+      tone: isLoading ? 'neutral' : metrics.pendingFilings ? 'warn' : 'ok',
       onClick: () => navigate('/filing-status?filter=pending'),
-      bgColor: 'bg-warning/5',
+      title: 'Open pending filings in Filing Status',
     },
     {
       label: 'Target Due / Overdue',
-      value: metrics.targetDueToday,
-      icon: <Target className="h-8 w-8 text-destructive" />,
+      value: loadingValue(metrics.targetDueToday),
+      tone: isLoading ? 'neutral' : metrics.targetDueToday ? 'error' : 'ok',
       onClick: handleTargetDueClick,
-      bgColor: 'bg-destructive/5',
+      title: 'Open target due / overdue filings in Filing Status',
     },
     {
       label: 'Filed This Month',
-      value: metrics.filedThisMonth,
-      icon: <CheckCircle2 className="h-8 w-8 text-success" />,
+      value: loadingValue(metrics.filedThisMonth),
+      tone: isLoading || !metrics.filedThisMonth ? 'neutral' : 'ok',
       onClick: () => navigate('/filing-status?filter=filed'),
-      bgColor: 'bg-success/5',
+      title: 'Open filed returns in Filing Status',
     },
   ];
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={WS_PAGE}>
       {/* Target Due Today Alert */}
       <TargetDueAlertDialog
         open={showDueAlert}
@@ -331,28 +331,29 @@ const StaffDashboard: React.FC = () => {
 
       {/* Header with Month Selector */}
       <PageHeader
+        compact
         title="Dashboard"
         subtitle="Welcome back! Here's your overview."
-        icon={<LayoutDashboard className="h-6 w-6" />}
+        icon={<LayoutDashboard />}
         actions={
-          <div className="flex items-center gap-3">
-            <Button variant="outline" size="sm" onClick={() => setShowTaskReminder(true)}>
-              <ListTodo className="h-4 w-4 mr-1.5" />
+          <>
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={() => setShowTaskReminder(true)}>
+              <ListTodo className="h-3.5 w-3.5" />
               Task Reminder
             </Button>
-            <Calendar className="h-5 w-5 text-muted-foreground" />
-            <div>
-              <p className="text-[10px] text-muted-foreground mb-0.5">Return Period</p>
-              <div className="w-48">
+            <label className="flex items-center gap-1.5">
+              <span className={WS_FILTER_LABEL}>Return Period</span>
+              <div className="w-44">
                 <SearchableMonthSelect
                   options={months}
                   value={selectedMonth}
                   onValueChange={setSelectedMonth}
                   placeholder="Select Month"
+                  className={WS_CONTROL}
                 />
               </div>
-            </div>
-          </div>
+            </label>
+          </>
         }
       />
       {user && (
@@ -360,83 +361,79 @@ const StaffDashboard: React.FC = () => {
       )}
 
       <PasswordResetRequestsSection />
-      <Card>
-        <CardHeader className="pb-2">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Building2 className="h-5 w-5 text-primary" />
-              Client Management
-            </CardTitle>
-            <CardDescription>Overview of client filings and status</CardDescription>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-            {clientMetricCards.map((card, index) => (
-              <Card 
-                key={index}
-                className="metric-card cursor-pointer hover:shadow-card-hover transition-all duration-200 border"
-                onClick={card.onClick}
-              >
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <p className="text-sm text-muted-foreground font-medium">{card.label}</p>
-                      <p className="text-3xl font-bold text-foreground mt-1 tabular-nums">
-                        {isLoading ? '—' : card.value}
-                      </p>
-                    </div>
-                    <div className={`p-2 rounded-full ${card.bgColor}`}>
-                      {card.icon}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
 
+      <SectionCard
+        title={
+          <span className="flex items-center gap-2">
+            <Building2 className="h-4 w-4 text-primary" />
+            Client Management
+          </span>
+        }
+        description="Overview of client filings and status"
+      >
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+          {clientMetricCards.map((card) => (
+            <NavTile key={card.label} onClick={card.onClick} title={card.title}>
+              <KpiTile label={card.label} value={card.value} tone={card.tone} />
+            </NavTile>
+          ))}
+        </div>
+
+        <div>
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setShowReturnBreakdown(!showReturnBreakdown)}
             aria-expanded={showReturnBreakdown}
-            className="text-sm text-muted-foreground mb-2"
+            className={cn(WS_BTN, 'text-muted-foreground')}
           >
-            {showReturnBreakdown ? <ChevronUp className="h-4 w-4 mr-1" /> : <ChevronDown className="h-4 w-4 mr-1" />}
+            {showReturnBreakdown ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
             {showReturnBreakdown ? 'Hide' : 'Show'} Return-wise Breakdown
           </Button>
+        </div>
 
-          {showReturnBreakdown && returnMetrics.length > 0 && (
-            <div className="overflow-x-auto rounded-lg border">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 z-10">
-                  <tr className="bg-primary text-primary-foreground">
-                    <th className="text-left p-2 font-medium">Return Type</th>
-                    <th className="text-right p-2 font-medium">Total Clients</th>
-                    <th className="text-right p-2 font-medium">Pending</th>
-                    <th className="text-right p-2 font-medium">Filed</th>
+        {showReturnBreakdown && returnMetrics.length > 0 && (
+          <div className={WS_TABLE_WRAP}>
+            <table className={WS_TABLE}>
+              <thead>
+                <tr>
+                  <th className={WS_TH}>Return Type</th>
+                  <th className={cn(WS_TH, 'text-right')}>Total Clients</th>
+                  <th className={cn(WS_TH, 'text-right')}>Pending</th>
+                  <th className={cn(WS_TH, 'text-right')}>Filed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {returnMetrics.map((rm) => (
+                  <tr key={rm.returnType} className={WS_TR}>
+                    <td className={WS_TD}><Badge variant="outline" className="text-[10px] font-medium">{rm.returnType}</Badge></td>
+                    <td className={WS_TD_NUM}>{rm.totalClients}</td>
+                    <td className={cn(WS_TD_NUM, 'font-medium', rm.pending > 0 && 'text-warning')}>{rm.pending}</td>
+                    <td className={cn(WS_TD_NUM, 'font-medium', rm.filed > 0 && 'text-success-strong')}>{rm.filed}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {returnMetrics.map((rm) => (
-                    <tr key={rm.returnType} className="border-b last:border-0 hover:bg-muted/30">
-                      <td className="p-2"><Badge variant="outline">{rm.returnType}</Badge></td>
-                      <td className="text-right p-2 tabular-nums">{rm.totalClients}</td>
-                      <td className="text-right p-2 tabular-nums font-medium text-warning">{rm.pending}</td>
-                      <td className="text-right p-2 tabular-nums font-medium text-success">{rm.filed}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </SectionCard>
 
       {canManageEmployees() && <UserManagementSection />}
       <ClientManagementSection />
     </div>
   );
 };
+
+/** A KpiTile that navigates elsewhere when clicked. */
+const NavTile: React.FC<{ onClick: () => void; title: string; children: React.ReactNode }> = ({ onClick, title, children }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={title}
+    className="rounded-lg text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:h-full [&>div]:transition-colors [&>div]:hover:bg-muted/30"
+  >
+    {children}
+  </button>
+);
 
 export default StaffDashboard;
