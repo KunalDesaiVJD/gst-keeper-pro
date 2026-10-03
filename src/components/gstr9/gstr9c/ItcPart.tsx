@@ -185,6 +185,8 @@ export const Table16Card: React.FC = () => {
         stored: { t: n0(C.t16?.[k]) },
         fKey: `t16.${k}`,
         write: (d, v) => ({ ...d, t16: { ...d.t16, [k]: n0(v?.t) } }),
+        // B (State/UT tax) is the Central tax figure: locked, entered through A.
+        ...(k === 'B' ? { follows: 'A' } : {}),
       })),
     [C.t16],
   );

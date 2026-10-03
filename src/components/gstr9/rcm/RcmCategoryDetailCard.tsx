@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { num, rcmCellTax, totalTax } from '@/lib/gstr9/engine';
 import { FY_MONTHS, type Formulas, type MonthKey, type RcmCategory, type RcmCell } from '@/lib/gstr9/types';
 import { SheetGrid, type GridColumn } from '../grid/SheetGrid';
-import { moneyCol } from '../grid/columns';
+import { moneyCol, lockSgst } from '../grid/columns';
 import { fmtMoney, fmtRate } from '../grid/money';
 import { Money, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
@@ -62,8 +62,9 @@ const CategoryBlock: React.FC<{ cat: RcmCategory }> = ({ cat }) => {
   /** Tax at the category rate with nothing typed — what a cleared cell goes back to. */
   const pure = (r: DetailRow) => rcmCellTax(cat, { taxable: num(r.taxable) });
 
-  const taxCol = (h: TaxHead) =>
-    moneyCol<DetailRow>(h, TAX_HEAD_LABEL[h], (r) => r[h] ?? null, (r, v) => ({ ...r, [h]: v }), {
+  // SGST is the CGST figure and is locked (lockSgst): a CGST entry carries it.
+  const taxCol = (h: TaxHead) => {
+    const col = moneyCol<DetailRow>(h, TAX_HEAD_LABEL[h], (r) => r[h] ?? null, (r, v) => (h === 'c' ? { ...r, c: v, s: null } : { ...r, [h]: v }), {
       group: 'Tax — computed unless typed',
       width: h === 'x' ? 96 : 118,
       nullable: true,
@@ -77,10 +78,11 @@ const CategoryBlock: React.FC<{ cat: RcmCategory }> = ({ cat }) => {
         if (isTyped(r, h)) {
           return `Typed. At ${fmtRate(rate)} it would be ${fmtMoney(pure(r)[h])} — clear the cell to use the computed figure.`;
         }
-        if (h === 's') return 'Mirrors CGST (the sheet’s =+F) — type to override.';
         return `Computed at ${fmtRate(rate)} — type to override.`;
       },
     });
+    return h === 's' ? lockSgst(col) : col;
+  };
 
   const columns: GridColumn<DetailRow>[] = [
     { key: 'month', header: 'Month', type: 'display', align: 'left', sticky: true, width: 92, value: (r) => monthLabel(r.id, financialYear) },

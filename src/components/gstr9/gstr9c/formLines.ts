@@ -71,6 +71,12 @@ export interface FormLine {
   emphasis?: 'total' | 'diff';
   /** A per-cell warning (e.g. a negative figure in a row the form subtracts). */
   warn?: (h: FormHead, v: number) => string | null;
+  /**
+   * A State/UT tax row that is always the Central tax row (`id` of that row) —
+   * locked, and written with the same figure whenever that row is entered
+   * (SGST = CGST, grid/columns lockSgst). E.g. Table 16 B follows A.
+   */
+  follows?: string;
 }
 
 const EPS = 0.005;
@@ -107,6 +113,18 @@ export function editLine(l: FormLine, h: FormHead, v: number | null): Figures | 
   next[h] = v === null ? n0(def[h]) : v;
   const same = l.heads.every((k) => Math.abs(n0(next[k]) - n0(def[k])) < EPS);
   return same ? null : next;
+}
+
+/**
+ * Enter one head of a row. SGST is locked (grid/columns lockSgst): entering
+ * CGST sets SGST to the same figure (a cleared CGST on an override row puts
+ * SGST back to its computed default too).
+ */
+export function enterLine(l: FormLine, h: FormHead, v: number | null): Figures | null {
+  if (h === 's') return l.stored ?? null;
+  const first = editLine(l, h, v);
+  if (h !== 'c' || !l.heads.includes('s')) return first;
+  return editLine({ ...l, stored: first }, 's', v);
 }
 
 // ---------------------------------------------------------------------------

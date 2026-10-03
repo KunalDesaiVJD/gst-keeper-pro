@@ -8,7 +8,7 @@ import type { StepKey } from '@/lib/gstr9/engine';
 import type { Formulas, Tax, TaxIn, ValTax } from '@/lib/gstr9/types';
 import { LOCKED_TITLE } from '@/lib/gstr9/sourceLock';
 import type { CellTone, GridColumn } from '../grid/SheetGrid';
-import { moneyCol } from '../grid/columns';
+import { moneyCol, SGST_LOCKED_TITLE } from '../grid/columns';
 
 /** Link to another step, keeping the open client (and everything else) in the URL. */
 export const useGoToStep = () => {
@@ -178,24 +178,25 @@ export function overrideTaxCols<R extends OverrideRow>(
         // Clearing a cell of a row that still follows its computed default changes nothing.
         if (r.v == null && n == null) return r;
         const next: TaxIn = { i: base(r).i, c: base(r).c, s: base(r).s, x: base(r).x };
-        if (h === 's') next.s = n ?? null;
-        else next[h] = n ?? 0;
+        if (h === 's') return r; // SGST is locked (lockSgst)
+        next[h] = n ?? 0;
+        if (h === 'c') next.s = null; // a CGST entry carries SGST
         return { ...r, v: next };
       },
       {
         nullable: true,
         group: opts.group,
         width: h === 'x' ? 100 : 124,
-        editable: (r) => !locked(r) && (opts.editable ? opts.editable(r) : true),
+        editable: (r) => h !== 's' && !locked(r) && (opts.editable ? opts.editable(r) : true),
         placeholder: (r) => (r.v ? (h === 's' ? r.v.c : null) : r.computed ? r.computed[h] : null),
         title: (r) =>
-          locked(r)
-            ? `${r.v == null ? 'Computed' : 'Typed over by a superadmin'}. ${LOCKED_TITLE.filled}`
-            : r.v == null && r.computed
-            ? (typeof opts.computedHint === 'function' ? opts.computedHint(r) : opts.computedHint) ?? 'Computed — type to override'
-            : h === 's' && r.v && r.v.s == null
-              ? `Mirrors ${(opts.names ?? HEAD_NAME).c} — type to override, clear to mirror again`
-              : undefined,
+          h === 's'
+            ? SGST_LOCKED_TITLE
+            : locked(r)
+              ? `${r.v == null ? 'Computed' : 'Typed over by a superadmin'}. ${LOCKED_TITLE.filled}`
+              : r.v == null && r.computed
+                ? (typeof opts.computedHint === 'function' ? opts.computedHint(r) : opts.computedHint) ?? 'Computed — type to override'
+                : undefined,
       },
     ),
   );

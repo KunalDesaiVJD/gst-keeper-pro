@@ -461,7 +461,7 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
             }]}
           />
           <Note tone="info">
-            SGST follows CGST while the two are equal (the sheet&apos;s <span className="font-mono">=K</span> cells) — type SGST to set it on its own. 4G here is the portal&apos;s annual figure: GSTR-9 4G itself is RCM Part A (3.1(d) of the as-filed GSTR-3B, month by month), and this figure is used only when no month is applied.
+            SGST is the CGST figure (the sheet&apos;s <span className="font-mono">=K</span> cells) and is locked: a CGST typed here carries it. 4G here is the portal&apos;s annual figure: GSTR-9 4G itself is RCM Part A (3.1(d) of the as-filed GSTR-3B, month by month), and this figure is used only when no month is applied.
           </Note>
         </TabsContent>
 

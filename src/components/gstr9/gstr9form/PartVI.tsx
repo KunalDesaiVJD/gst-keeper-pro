@@ -3,12 +3,12 @@ import { addT, impliedRate, rateMismatch, rowTax } from '@/lib/gstr9/engine';
 import type { HsnRow, Tax, ValTax } from '@/lib/gstr9/types';
 import { newId, zVal } from '@/lib/gstr9/defaults';
 import { GridColumn, SheetGrid } from '../grid/SheetGrid';
-import { diffTone, displayCol, moneyCol, taxFooter, taxInCols } from '../grid/columns';
+import { diffTone, displayCol, lockSgst, moneyCol, taxFooter, taxInCols } from '../grid/columns';
 import { fmtRate } from '../grid/money';
 import { SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { FORM_GRID_MAX_H, FORM_HEAD_LABELS, particularsCol } from './helpers';
-import { FixedRow, FixedRowDef, useFixedRows } from './hooks';
+import { FixedRow, FixedRowDef, lockFollowerRows, useFixedRows } from './hooks';
 
 // ---------------------------------------------------------------------------
 // Table 15 — demands and refunds
@@ -52,7 +52,11 @@ export const Table15: React.FC = () => {
   ];
   const columns: GridColumn<T15Row>[] = [
     particularsCol<T15Row>('Details', 230),
-    ...taxHeads.map((h) => moneyCol<T15Row>(h, FORM_HEAD_LABELS[h], (r) => r.v[h], (r, v) => ({ ...r, v: { ...r.v, [h]: v ?? 0 } }), { width: 104 })),
+    // SGST is the CGST figure and is locked (lockSgst): a CGST entry carries it.
+    ...taxHeads.map((h) => {
+      const col = moneyCol<T15Row>(h, FORM_HEAD_LABELS[h], (r) => r.v[h], (r, v) => ({ ...r, v: h === 'c' ? { ...r.v, c: v ?? 0, s: v ?? 0 } : { ...r.v, [h]: v ?? 0 } }), { width: 104 });
+      return h === 's' ? lockSgst(col) : col;
+    }),
     ...ext.map(([k, header]) =>
       moneyCol<T15Row>(
         k,
@@ -110,15 +114,17 @@ export const Table16: React.FC = () => {
   const valueOnly = (r: T16Row) => r.id === '16A';
   const columns: GridColumn<T16Row>[] = [
     particularsCol<T16Row>('Details', 300),
-    ...heads.map((h) =>
-      moneyCol<T16Row>(
+    ...heads.map((h) => {
+      const col = moneyCol<T16Row>(
         h,
         FORM_HEAD_LABELS[h],
         (r) => (h !== 't' && valueOnly(r) ? null : r.v[h]),
-        (r, v) => ({ ...r, v: { ...r.v, [h]: v ?? 0 } }),
+        // SGST is the CGST figure and is locked (lockSgst): a CGST entry carries it.
+        (r, v) => ({ ...r, v: h === 'c' ? { ...r.v, c: v ?? 0, s: v ?? 0 } : { ...r.v, [h]: v ?? 0 } }),
         { editable: (r) => h === 't' || !valueOnly(r) },
-      ),
-    ),
+      );
+      return h === 's' ? lockSgst(col) : col;
+    }),
   ];
   return (
     <SectionCard
@@ -147,6 +153,8 @@ const T19_DEFS: FixedRowDef<T19Val>[] = T19_ROWS.map((r) => ({
   read: (g) => g.t19?.[r.k] ?? { payable: 0, paid: 0 },
   write: (g, v) => ({ ...g, t19: { ...g.t19, [r.k]: v ?? { payable: 0, paid: 0 } } }),
   fKey: (c) => `t19.${r.k}.${c}`,
+  // State tax late fee is the Central tax late fee: locked, entered through Central tax.
+  ...(r.k === 'sgst' ? { follows: 'cgst' } : {}),
 }));
 
 type T19Row = FixedRow<T19Val>;
@@ -158,8 +166,8 @@ export const Table19: React.FC = () => {
   const diff = (r: T19Row) => r.v.payable - r.v.paid;
   const columns: GridColumn<T19Row>[] = [
     particularsCol<T19Row>('Description', 180),
-    moneyCol<T19Row>('payable', 'Payable', (r) => r.v.payable, (r, v) => ({ ...r, v: { ...r.v, payable: v ?? 0 } })),
-    moneyCol<T19Row>('paid', 'Paid', (r) => r.v.paid, (r, v) => ({ ...r, v: { ...r.v, paid: v ?? 0 } })),
+    lockFollowerRows(moneyCol<T19Row>('payable', 'Payable', (r) => r.v.payable, (r, v) => ({ ...r, v: { ...r.v, payable: v ?? 0 } }))),
+    lockFollowerRows(moneyCol<T19Row>('paid', 'Paid', (r) => r.v.paid, (r, v) => ({ ...r, v: { ...r.v, paid: v ?? 0 } }))),
     displayCol<T19Row>('diff', 'Payable − Paid', (r) => diff(r), { tone: (r) => diffTone(diff(r), tol) }),
   ];
   return (

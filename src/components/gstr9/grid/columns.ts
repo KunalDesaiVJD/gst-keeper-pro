@@ -63,6 +63,19 @@ export function moneyCol<R>(
   };
 }
 
+/**
+ * SGST is the same figure as CGST throughout the Annual Return workings
+ * (firm decision, 3 Oct 2026): it is shown, never entered — a CGST entry
+ * (typed, pasted or cleared) carries it. The column stays in the paste map,
+ * so a block copied from the workbook (… CGST, SGST, Cess) still lands in the
+ * right columns; the pasted SGST is ignored.
+ */
+export const SGST_LOCKED_TITLE = 'Same as CGST — locked. Enter CGST; SGST follows it.';
+
+export function lockSgst<R>(col: GridColumn<R>): GridColumn<R> {
+  return { ...col, editable: () => false, title: () => SGST_LOCKED_TITLE };
+}
+
 /** A read-only money column. */
 export function displayCol<R>(
   key: string,
@@ -84,9 +97,9 @@ export interface TaxColsOpts<R> {
 }
 
 /**
- * IGST / CGST / SGST (/ Cess) columns for a TaxIn field. SGST shows the CGST
- * figure in italics while it mirrors it (the Excel's `=F` cells); typing a
- * value breaks the mirror, clearing it restores the mirror.
+ * IGST / CGST / SGST (/ Cess) columns for a TaxIn field. SGST mirrors CGST (the
+ * Excel's `=F` cells) and is locked (lockSgst): a CGST entry puts it back to
+ * mirroring, so it always equals CGST.
  */
 export function taxInCols<R>(get: (row: R) => TaxIn, set: (row: R, t: TaxIn) => R, opts: TaxColsOpts<R>): GridColumn<R>[] {
   const p = opts.prefix;
@@ -96,19 +109,15 @@ export function taxInCols<R>(get: (row: R) => TaxIn, set: (row: R, t: TaxIn) => 
       group: opts.group, editable: opts.editable, tone: opts.tone ? (r) => opts.tone!(r, 'i') : undefined,
     }));
   }
-  cols.push(moneyCol<R>(`${p}.c`, 'CGST', (r) => get(r).c, (r, v) => set(r, { ...get(r), c: v ?? 0 }), {
+  cols.push(moneyCol<R>(`${p}.c`, 'CGST', (r) => get(r).c, (r, v) => set(r, { ...get(r), c: v ?? 0, s: null }), {
     group: opts.group, editable: opts.editable, tone: opts.tone ? (r) => opts.tone!(r, 'c') : undefined,
   }));
-  // SGST typed (or pasted, e.g. the sheet's `=+F` column) equal to CGST goes back to
-  // mirroring, so a later CGST correction carries through to SGST.
-  cols.push(moneyCol<R>(`${p}.s`, 'SGST', (r) => get(r).s, (r, v) => set(r, { ...get(r), s: v !== null && Math.abs(v - get(r).c) < 0.005 ? null : v }), {
+  cols.push(lockSgst(moneyCol<R>(`${p}.s`, 'SGST', (r) => get(r).s, (r) => r, {
     group: opts.group,
-    editable: opts.editable,
     nullable: true,
     placeholder: (r) => get(r).c,
-    title: (r) => (get(r).s === null ? 'Mirrors CGST — type to override, clear to mirror again' : undefined),
     tone: opts.tone ? (r) => opts.tone!(r, 's') : undefined,
-  }));
+  })));
   if (opts.cess) {
     cols.push(moneyCol<R>(`${p}.x`, 'Cess', (r) => get(r).x, (r, v) => set(r, { ...get(r), x: v ?? 0 }), {
       group: opts.group, editable: opts.editable, width: 96, tone: opts.tone ? (r) => opts.tone!(r, 'x') : undefined,

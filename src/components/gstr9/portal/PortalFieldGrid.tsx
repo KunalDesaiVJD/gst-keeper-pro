@@ -3,7 +3,7 @@ import { getPath, pnum } from '@/lib/gstr9/portalParser';
 import { applyHandEdits, FieldEdit, portalFormulas } from '@/lib/gstr9/portalImport';
 import { LOCKED_TITLE } from '@/lib/gstr9/sourceLock';
 import { SheetGrid, GridColumn, GridFooterRow } from '../grid/SheetGrid';
-import { moneyCol } from '../grid/columns';
+import { moneyCol, SGST_LOCKED_TITLE } from '../grid/columns';
 import { useWorkspace } from '../WorkspaceContext';
 
 /**
@@ -44,7 +44,7 @@ export const PortalFieldGrid: React.FC<{
   codeHeader?: string;
   labelHeader: string;
   labelWidth?: number;
-  /** SGST follows CGST while the two were equal (the sheet's `=K` cells) — GSTR-9 annual figures only. */
+  /** SGST is the CGST figure (the sheet's `=K` cells): locked, and a typed CGST carries it — GSTR-9 annual figures only. */
   mirror?: { c: string; s: string };
   /** Trailing read-only column (e.g. the month's source chip). */
   extra?: { header: string; width?: number; render: (row: PortalFieldRow) => React.ReactNode };
@@ -96,10 +96,11 @@ export const PortalFieldGrid: React.FC<{
           {
             group: c.group,
             width: c.width,
-            editable: (r) => canEditSource && !!r.paths[c.key],
+            editable: (r) => canEditSource && !!r.paths[c.key] && c.key !== mirror?.s,
             title: (r) => {
               const path = r.paths[c.key];
               if (!path) return undefined;
+              if (c.key === mirror?.s) return SGST_LOCKED_TITLE;
               const typed = portal.manual[path] ? 'Typed by hand by a superadmin — a later pull or upload asks before replacing it.' : '';
               return canEditSource ? typed || undefined : [typed, LOCKED_TITLE.portal].filter(Boolean).join(' ');
             },
@@ -111,7 +112,7 @@ export const PortalFieldGrid: React.FC<{
       out.push({ key: '_extra', header: extra.header, type: 'display', value: () => '', align: 'center', width: extra.width ?? 110, render: (r) => extra.render(r) });
     }
     return out;
-  }, [cols, codeHeader, labelHeader, labelWidth, extra, portal.manual, canEditSource]);
+  }, [cols, codeHeader, labelHeader, labelWidth, extra, portal.manual, canEditSource, mirror]);
 
   const onRowsChange = useCallback(
     (next: GridRow[]) => {
@@ -130,9 +131,10 @@ export const PortalFieldGrid: React.FC<{
             changed.add(c.key);
           }
         });
-        if (mirror && changed.has(mirror.c) && !changed.has(mirror.s)) {
+        // A typed CGST carries SGST (locked).
+        if (mirror && changed.has(mirror.c)) {
           const sPath = nr.paths[mirror.s];
-          if (sPath && Math.abs((pr.v[mirror.s] ?? 0) - (pr.v[mirror.c] ?? 0)) < 1e-9) edits.push({ path: sPath, value: nr.v[mirror.c] ?? 0, formula: null });
+          if (sPath) edits.push({ path: sPath, value: nr.v[mirror.c] ?? 0, formula: null });
         }
       });
       if (edits.length) update('portal', (d) => applyHandEdits(d, edits));
