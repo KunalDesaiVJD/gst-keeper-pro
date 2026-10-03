@@ -69,7 +69,17 @@ order). Every entry grid behaves like the Excel sheet:
 - `=a+b` expressions are accepted and kept (shown again on edit, like Excel);
 - paste a block straight from the firm's sheet — columns are taken in the
   sheet's own order;
-- SGST mirrors CGST (the sheet's `=F` cells) until you type a different SGST;
+- **SGST is locked to CGST** (firm decision, 3 Oct 2026): SGST is never
+  typed anywhere in the workings — every SGST column, and every State/UT tax
+  row (GSTR-9 Tables 14 and 19, GSTR-9C Table 16), shows the CGST figure,
+  shaded, and a CGST entry (typed, pasted or cleared) carries it
+  (`lockSgst` in `grid/columns.ts`; `follows` on fixed rows). A pasted block
+  still lines up — its SGST cell is skipped. The exceptions are the portal's
+  own per-head figures — the as-filed GSTR-3B (Portal data months, Duties &
+  Taxes "As per 3B", RCM Part A) and GSTR-9 Table 9 as the portal computes it
+  (and its payable override) — where SGST is the return's own figure, typed
+  only by a superadmin; and a set-off, which records a DRC-03's or GSTR-3B's
+  amounts head by head;
 - tax is computed from the rate where the sheet does (`=D*18%`), and the
   implied rate is checked on every ledger;
 - totals are always visible; every change autosaves (no Save buttons);

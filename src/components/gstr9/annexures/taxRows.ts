@@ -21,8 +21,22 @@ export const toTaxIn = (t: Tax): TaxIn => ({ i: t.i, c: t.c, s: same(t.s, t.c) ?
 /** A resolved figure as a typed cell with SGST written out (no mirror). */
 export const explicitTaxIn = (t: Tax): TaxIn => ({ i: t.i, c: t.c, s: t.s, x: t.x });
 
-/** Set one head of a typed cell. A cleared SGST goes back to mirroring CGST; any other cleared head is 0. */
-export const setHead = (t: TaxIn, h: Head, v: number | null): TaxIn => (h === 's' ? { ...t, s: v } : { ...t, [h]: v ?? 0 });
+/**
+ * Set one head of a typed cell; a cleared head is 0. SGST is never set on its
+ * own (it is locked — grid/columns lockSgst): setting CGST puts SGST back to
+ * mirroring it, and drops any expression SGST once had.
+ */
+export const setHead = (t: TaxIn, h: Head, v: number | null): TaxIn => {
+  if (h === 's') return t;
+  if (h !== 'c') return { ...t, [h]: v ?? 0 };
+  const next: TaxIn = { ...t, c: v ?? 0, s: null };
+  if (next.f?.s) {
+    const { s: _drop, ...rest } = next.f;
+    next.f = Object.keys(rest).length ? rest : undefined;
+    if (!next.f) delete next.f;
+  }
+  return next;
+};
 
 /** Remember (or forget) the "=a+b" expression typed into one head of a cell group. */
 export const setHeadFormula = (t: TaxIn, h: Head, formula: string | undefined): TaxIn => {

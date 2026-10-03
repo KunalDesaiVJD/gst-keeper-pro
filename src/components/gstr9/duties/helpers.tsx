@@ -186,25 +186,9 @@ export function monthCol<R extends { id: MonthKey }>(prefix: 'dto' | 'dti', widt
   };
 }
 
-/**
- * taxInCols, plus: an SGST that is entered (typed or pasted) equal to CGST goes
- * back to mirroring it — the workbook's SGST cells are `=D` / `=+J`, so pasting
- * the sheet's CGST + SGST pair keeps the two linked, as they are in Excel.
- */
+/** taxInCols for the Duties & Taxes grids (SGST mirrors CGST, locked — see lockSgst). */
 export function mirroredTaxCols<R>(get: (r: R) => TaxIn, set: (r: R, t: TaxIn) => R, opts: TaxColsOpts<R>): GridColumn<R>[] {
-  return taxInCols<R>(get, set, opts).map((col) => {
-    if (col.key !== `${opts.prefix}.s` || !col.onEdit) return col;
-    const base = col.onEdit;
-    return {
-      ...col,
-      onEdit: (r, e) => {
-        const out = base(r, e);
-        const t = get(out);
-        if (!e.formula && t.s !== null && t.s !== undefined && Math.abs(t.s - t.c) < 0.005) return set(out, { ...t, s: null });
-        return out;
-      },
-    };
-  });
+  return taxInCols<R>(get, set, opts);
 }
 
 /**
@@ -264,6 +248,7 @@ export function portal3bCols<R extends { id: MonthKey }>(opts: {
   };
   return [
     source,
+    // SGST here is the filed return's own figure, not a copy of CGST — it stays its own cell (superadmin only).
     ...headsFor(cess).map(([h, label]) =>
       moneyCol<R>(`${field}.${h}`, label, (r) => get(r)[h], (r, v) => set(r, { ...get(r), [h]: v ?? 0 }), {
         group,

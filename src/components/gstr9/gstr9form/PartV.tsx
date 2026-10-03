@@ -2,11 +2,11 @@ import React from 'react';
 import type { Tax, ValTax } from '@/lib/gstr9/types';
 import { zVal } from '@/lib/gstr9/defaults';
 import { GridColumn, SheetGrid } from '../grid/SheetGrid';
-import { diffTone, displayCol, moneyCol } from '../grid/columns';
+import { diffTone, displayCol, lockSgst, moneyCol } from '../grid/columns';
 import { MatrixRow, MatrixTable, Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { FORM_HEAD_LABELS, FORM_HEADS, particularsCol } from './helpers';
-import { FixedRow, FixedRowDef, useFixedRows } from './hooks';
+import { FixedRow, FixedRowDef, lockFollowerRows, useFixedRows } from './hooks';
 import { RowSrc, Src, StepLink } from './shared';
 
 const VT_ORDER: Array<keyof ValTax & string> = ['t', 'c', 's', 'i', 'x'];
@@ -45,7 +45,11 @@ export const Tables10to13: React.FC = () => {
 
   const columns: GridColumn<VRow>[] = [
     particularsCol<VRow>('Particulars', 360),
-    ...VT_ORDER.map((h) => moneyCol<VRow>(h, FORM_HEAD_LABELS[h], (r) => r.v[h], (r, v) => ({ ...r, v: { ...r.v, [h]: v ?? 0 } }))),
+    // SGST is the CGST figure and is locked (lockSgst): a CGST entry carries it.
+    ...VT_ORDER.map((h) => {
+      const col = moneyCol<VRow>(h, FORM_HEAD_LABELS[h], (r) => r.v[h], (r, v) => ({ ...r, v: h === 'c' ? { ...r.v, c: v ?? 0, s: v ?? 0 } : { ...r.v, [h]: v ?? 0 } }));
+      return h === 's' ? lockSgst(col) : col;
+    }),
   ];
 
   const t12Src =
@@ -111,6 +115,8 @@ const T14_DEFS: FixedRowDef<T14Val>[] = T14_ROWS.map((r) => ({
   read: (g) => g.t14[r.k],
   write: (g, v) => ({ ...g, t14: { ...g.t14, [r.k]: v ?? { payable: 0, paid: 0 } } }),
   fKey: (c) => `t14.${r.k}.${c}`,
+  // State/UT tax is the Central tax figure: locked, entered through Central tax.
+  ...(r.k === 'sgst' ? { follows: 'cgst' } : {}),
 }));
 
 type T14Row = FixedRow<T14Val>;
@@ -124,8 +130,8 @@ export const Table14: React.FC = () => {
 
   const columns: GridColumn<T14Row>[] = [
     particularsCol<T14Row>('Description', 180),
-    moneyCol<T14Row>('payable', 'Payable', (r) => r.v.payable, (r, v) => ({ ...r, v: { ...r.v, payable: v ?? 0 } })),
-    moneyCol<T14Row>('paid', 'Paid', (r) => r.v.paid, (r, v) => ({ ...r, v: { ...r.v, paid: v ?? 0 } })),
+    lockFollowerRows(moneyCol<T14Row>('payable', 'Payable', (r) => r.v.payable, (r, v) => ({ ...r, v: { ...r.v, payable: v ?? 0 } }))),
+    lockFollowerRows(moneyCol<T14Row>('paid', 'Paid', (r) => r.v.paid, (r, v) => ({ ...r, v: { ...r.v, paid: v ?? 0 } }))),
     displayCol<T14Row>('diff', 'Payable − Paid', (r) => diff(r), { tone: (r) => diffTone(diff(r), tol) }),
     displayCol<T14Row>('ref', 'Tax in 10 − 11 (ref.)', (r) => (T14_TAX[r.id as T14Key] ? ref[T14_TAX[r.id as T14Key]!] : null), {
       width: 140,

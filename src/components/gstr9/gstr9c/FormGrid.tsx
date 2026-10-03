@@ -3,13 +3,13 @@ import { Lock, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/gstr9/badge';
 import { GridColumn, GridFooterRow, SheetGrid } from '../grid/SheetGrid';
-import { diffTone } from '../grid/columns';
+import { diffTone, SGST_LOCKED_TITLE } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
 import { JustifyControl } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import type { Formulas, Gstr9cDoc } from '@/lib/gstr9/types';
 import { LOCKED_TITLE } from '@/lib/gstr9/sourceLock';
-import { editLine, Figures, FORM_HEAD_LABEL, FormHead, FormLine, fPath, fPaths, lineValue } from './formLines';
+import { enterLine, Figures, FORM_HEAD_LABEL, FormHead, FormLine, fPath, fPaths, lineValue } from './formLines';
 import { PIN_LAST_ROW } from '../gstr9form/helpers';
 
 /**
@@ -163,10 +163,13 @@ export const FormGrid: React.FC<{
         width: 118,
         value: (l) => lineValue(l, h),
         // A typed-over (override) figure is filled in from GSTR-9, the audit report or the books: the superadmin's (sourceLock.ts).
-        editable: (l) => l.mode !== 'computed' && !(l.mode === 'override' && !canEditSource) && l.heads.includes(h) && !!l.write,
+        // SGST (a column, or a State/UT row that follows the Central row) is locked: CGST carries it.
+        editable: (l) => h !== 's' && !l.follows && l.mode !== 'computed' && !(l.mode === 'override' && !canEditSource) && l.heads.includes(h) && !!l.write,
         onEdit: (l, e) => {
           const p = fPath(l, h);
-          return { ...l, stored: editLine(l, h, e.num), fEdits: p ? { ...(l.fEdits || {}), [p]: e.formula ?? null } : l.fEdits };
+          const sp = h === 'c' && l.heads.includes('s') ? fPath(l, 's') : undefined;
+          const fEdits = { ...(l.fEdits || {}), ...(p ? { [p]: e.formula ?? null } : {}), ...(sp ? { [sp]: null } : {}) };
+          return { ...l, stored: enterLine(l, h, e.num), fEdits: p || sp ? fEdits : l.fEdits };
         },
         formula: (l) => formulaOf(l, h),
         tone: (l) => {
@@ -181,6 +184,7 @@ export const FormGrid: React.FC<{
           const v = lineValue(l, h);
           const w = v === null ? null : l.warn?.(h, v);
           if (w) return w;
+          if (h === 's' || l.follows) return SGST_LOCKED_TITLE;
           if (l.mode === 'override' && !canEditSource) return `${l.stored ? 'Typed over by a superadmin' : `Computed${l.sourceTitle ? ` — ${l.sourceTitle}` : ''}`}. ${LOCKED_TITLE.filled}`;
           if (l.mode === 'override' && !l.stored) return `Computed${l.sourceTitle ? ` — ${l.sourceTitle}` : ''}. Type to override (superadmin); Delete restores it.`;
           if (l.mode === 'override') return 'Typed over the computed figure. Delete restores the computed figure for this cell.';
@@ -220,6 +224,10 @@ export const FormGrid: React.FC<{
         // Clearing a cell that already follows the computation changes nothing — don't save.
         if (l.mode === 'override' && !l.stored && !lines[i]?.stored) return;
         changed.push({ line: l, v: l.stored ?? null });
+        // A State/UT row that follows this row takes the same figure.
+        lines
+          .filter((f) => f.follows === l.id)
+          .forEach((f) => changed.push({ line: { ...f, fEdits: Object.fromEntries(fPaths(f).map((p) => [p, null])) }, v: l.stored ?? null }));
       });
       write(changed);
     },

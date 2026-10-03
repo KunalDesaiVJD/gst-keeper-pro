@@ -226,7 +226,7 @@ export const PurchaseSectionGrid: React.FC<{ section: InputSection }> = ({ secti
         }
       />
       <p className="text-[11px] text-muted-foreground">
-        Paste straight from PL-INPUT {meta.sheetRows}, columns C–H (Head in books → Rate). SGST mirrors CGST until you type over it; tax is
+        Paste straight from PL-INPUT {meta.sheetRows}, columns C–H (Head in books → Rate). SGST is the CGST figure and is locked (a pasted SGST is ignored); tax is
         filled from the rate where a row has none.
       </p>
     </SectionCard>

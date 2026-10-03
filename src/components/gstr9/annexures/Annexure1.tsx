@@ -6,7 +6,7 @@ import type { Formulas, Tax } from '@/lib/gstr9/types';
 import { useWorkspace } from '../WorkspaceContext';
 import { MatrixTable, Note, SectionCard, SourceChip, useDiffLine, type MatrixRow } from '../ui';
 import { SheetGrid, type GridColumn } from '../grid/SheetGrid';
-import { moneyCol } from '../grid/columns';
+import { moneyCol, lockSgst } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
 import { HEAD_NAME, pickFormulas, putFormulas } from './taxRows';
 import { StepLink } from './StepLink';
@@ -130,13 +130,12 @@ const Annexure1: React.FC = () => {
     },
     moneyCol<EntryRow>('t', 'Amount', (r) => r.t, (r, v) => ({ ...r, t: v ?? 0 }), { width: 140 }),
     moneyCol<EntryRow>('i', 'IGST', (r) => (hasTax(r) ? r.i : null), (r, v) => ({ ...r, i: v ?? 0 }), { editable: hasTax }),
-    moneyCol<EntryRow>('c', 'CGST', (r) => (hasTax(r) ? r.c : null), (r, v) => ({ ...r, c: v ?? 0 }), { editable: hasTax }),
-    moneyCol<EntryRow>('s', 'SGST', (r) => (hasTax(r) ? r.s : null), (r, v) => ({ ...r, s: v }), {
-      editable: hasTax,
+    // SGST mirrors CGST and is locked (lockSgst): a CGST entry carries it.
+    moneyCol<EntryRow>('c', 'CGST', (r) => (hasTax(r) ? r.c : null), (r, v) => ({ ...r, c: v ?? 0, s: null }), { editable: hasTax }),
+    lockSgst(moneyCol<EntryRow>('s', 'SGST', (r) => (hasTax(r) ? r.s : null), (r) => r, {
       nullable: true,
       placeholder: (r) => (hasTax(r) ? r.c : null),
-      title: (r) => (hasTax(r) && r.s === null ? 'Mirrors CGST — type to override, clear to mirror again' : undefined),
-    }),
+    })),
     moneyCol<EntryRow>('x', 'Cess', (r) => (hasTax(r) ? r.x : null), (r, v) => ({ ...r, x: v ?? 0 }), { editable: hasTax, width: 96 }),
   ];
   const onEntriesChange = (next: EntryRow[]) => {

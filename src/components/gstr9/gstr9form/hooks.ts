@@ -4,7 +4,7 @@ import type { StepKey } from '@/lib/gstr9/engine';
 import type { Formulas, Gstr9ManualDoc, Tax, TaxIn } from '@/lib/gstr9/types';
 import { LOCKED_TITLE } from '@/lib/gstr9/sourceLock';
 import type { GridColumn } from '../grid/SheetGrid';
-import { moneyCol } from '../grid/columns';
+import { moneyCol, SGST_LOCKED_TITLE } from '../grid/columns';
 import { useWorkspace } from '../WorkspaceContext';
 import { docFormulas, FORM_HEAD_LABELS, seedTaxIn, setDocFormulas, TAX_ORDER } from './helpers';
 
@@ -44,6 +44,12 @@ export interface FixedRowDef<V> {
   heads?: string[];
   /** docs.gstr9.f key holding the "=a+b" of a column (undefined = not kept), e.g. (c) => `t10.${c}`. */
   fKey?: (col: string) => string | undefined;
+  /**
+   * A State/UT tax row that is always the Central tax row (`id` of that row):
+   * locked, and written with the same figures whenever that row is entered
+   * (SGST = CGST, grid/columns lockSgst). E.g. Table 14 and 19 "State tax".
+   */
+  follows?: string;
 }
 
 export interface FixedRow<V> {
@@ -82,19 +88,33 @@ export function useFixedRows<V>(defs: FixedRowDef<V>[], opts: FixedRowOpts<V> = 
     if (!changed.length) return;
     update('gstr9', (g) =>
       changed.reduce((acc, r) => {
-        if (opts.toValue) return r.def.write(acc, opts.toValue(r.v, r.f));
-        const out = r.def.write(acc, r.v);
-        return r.def.fKey ? { ...out, f: setDocFormulas(out.f, cols, r.def.fKey, r.f) } : out;
+        let out = opts.toValue ? r.def.write(acc, opts.toValue(r.v, r.f)) : r.def.write(acc, r.v);
+        if (!opts.toValue && r.def.fKey) out = { ...out, f: setDocFormulas(out.f, cols, r.def.fKey, r.f) };
+        // Rows that follow this one (State/UT tax after Central tax) take the same figures, without expressions.
+        defs.filter((d) => d.follows === r.def.id).forEach((d) => {
+          out = opts.toValue ? d.write(out, opts.toValue(r.v, undefined)) : d.write(out, r.v);
+          if (!opts.toValue && d.fKey) out = { ...out, f: setDocFormulas(out.f, cols, d.fKey, undefined) };
+        });
+        return out;
       }, g),
     );
   };
   return { rows, onRowsChange, readOnly };
 }
 
+/** A money column of a fixed-row grid whose follower rows (def.follows) are locked. */
+export function lockFollowerRows<V>(col: GridColumn<FixedRow<V>>): GridColumn<FixedRow<V>> {
+  return {
+    ...col,
+    editable: (r) => !r.def.follows && (col.editable ? col.editable(r) : true),
+    title: (r) => (r.def.follows ? SGST_LOCKED_TITLE : col.title?.(r)),
+  };
+}
+
 export type TaxInRow = FixedRow<TaxIn | null>;
 
 /**
- * Central / State-UT (mirrors Central) / Integrated / Cess columns, in the
+ * Central / State-UT (mirrors Central, locked — lockSgst) / Integrated / Cess columns, in the
  * form's order, for TaxIn rows. Column keys are the heads, so the formula
  * memory lands in TaxIn.f keyed by head. A null row value means "use the
  * computed figure" (shown muted); typing into any head seeds the override.
@@ -106,19 +126,21 @@ export function taxInFormCols(group?: string): GridColumn<TaxInRow>[] {
       FORM_HEAD_LABELS[h],
       (r) => (r.v == null ? null : r.v[h]),
       (r, val) => {
+        if (h === 's') return r; // SGST is locked (lockSgst)
         const base = r.v ?? seedTaxIn(r.def.computed);
-        const v: TaxIn = h === 's' ? { ...base, s: val } : { ...base, [h]: val ?? 0 };
+        // A CGST entry carries SGST (null = mirrors CGST).
+        const v: TaxIn = h === 'c' ? { ...base, c: val ?? 0, s: null } : { ...base, [h]: val ?? 0 };
         return { ...r, v };
       },
       {
         group,
         nullable: h === 's',
-        editable: (r) => !r.def.locked && (!r.def.heads || r.def.heads.includes(h)),
+        editable: (r) => h !== 's' && !r.def.locked && (!r.def.heads || r.def.heads.includes(h)),
         placeholder: (r) => (r.v == null ? (r.def.computed ? r.def.computed[h] : 0) : h === 's' ? r.v.c : null),
         title: (r) => {
+          if (h === 's') return SGST_LOCKED_TITLE;
           if (r.def.locked) return `${r.v == null ? 'Computed' : 'Typed over by a superadmin'}. ${LOCKED_TITLE.filled}`;
           if (r.v == null) return 'Not typed — the computed figure is used. Type to override.';
-          if (h === 's' && r.v.s == null) return 'Mirrors Central tax — type to override, clear to mirror again';
           return undefined;
         },
       },

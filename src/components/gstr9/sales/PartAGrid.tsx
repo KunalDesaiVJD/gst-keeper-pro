@@ -6,7 +6,7 @@ import type { OutwardCategory, SalesRow, SupplyType } from '@/lib/gstr9/types';
 import { useWorkspace } from '../WorkspaceContext';
 import { Note, SectionCard } from '../ui';
 import { GridColumn, GridFooterRow, SheetGrid } from '../grid/SheetGrid';
-import { moneyCol, taxFooter } from '../grid/columns';
+import { moneyCol, taxFooter, lockSgst } from '../grid/columns';
 import { fmtRate } from '../grid/money';
 import {
   CATEGORY_OPTIONS,
@@ -47,24 +47,12 @@ const PartAGrid: React.FC = () => {
       width: 136,
     });
     const igst = moneyCol<SalesRow>(TAX_KEY.i, 'IGST', (r) => r.igst, (r, v) => syncSupply({ ...r, igst: v ?? 0 }));
-    const cgst = moneyCol<SalesRow>(TAX_KEY.c, 'CGST', (r) => r.cgst, (r, v) => syncSupply({ ...r, cgst: v ?? 0 }));
-    const sgstBase = moneyCol<SalesRow>(TAX_KEY.s, 'SGST', (r) => r.sgst, (r, v) => syncSupply({ ...r, sgst: v }), {
+    // SGST mirrors CGST and is locked (lockSgst): a CGST entry carries it.
+    const cgst = moneyCol<SalesRow>(TAX_KEY.c, 'CGST', (r) => r.cgst, (r, v) => syncSupply(setFormula({ ...r, cgst: v ?? 0, sgst: null }, TAX_KEY.s, undefined)));
+    const sgst = lockSgst(moneyCol<SalesRow>(TAX_KEY.s, 'SGST', (r) => r.sgst, (r) => r, {
       nullable: true,
       placeholder: (r) => r.cgst,
-      title: (r) => (r.sgst === null || r.sgst === undefined ? 'Mirrors CGST — type to override, clear to mirror again' : undefined),
-    });
-    // A pasted/typed SGST equal to CGST goes back to mirroring (the sheet's `=F` cell),
-    // so pasting the sheet's SGST + CGST pair keeps them linked.
-    const sgst: GridColumn<SalesRow> = {
-      ...sgstBase,
-      onEdit: (r, e) => {
-        const out = sgstBase.onEdit!(r, e);
-        if (!e.formula && out.sgst !== null && out.sgst !== undefined && Math.abs(out.sgst - out.cgst) < 0.005) {
-          return setFormula({ ...out, sgst: null }, TAX_KEY.s, undefined);
-        }
-        return out;
-      },
-    };
+    }));
     const rate: GridColumn<SalesRow> = {
       key: 'rate',
       header: 'Rate %',

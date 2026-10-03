@@ -7,6 +7,7 @@ import type { Tax, TaxIn } from '@/lib/gstr9/types';
 import { LOCKED_TITLE } from '@/lib/gstr9/sourceLock';
 import { SheetGrid, type CellTone, type GridColumn, type GridFooterRow } from '../grid/SheetGrid';
 import { fmtMoney } from '../grid/money';
+import { SGST_LOCKED_TITLE } from '../grid/columns';
 import { HEAD_NAME, setHead, setHeadFormula, toTaxIn, type Head } from './taxRows';
 
 /**
@@ -221,16 +222,17 @@ export const FixedTaxGrid: React.FC<FixedTaxGridProps> = ({
       width: 112,
       value: (r) => cellValue(r, h),
       placeholder: (r) => cellPlaceholder(r, h),
-      editable: (r) => r.kind !== 'computed' && !r.locked && !!r.onChange,
+      // SGST is locked (lockSgst): a CGST entry carries it.
+      editable: (r) => h !== 's' && r.kind !== 'computed' && !r.locked && !!r.onChange,
       formula: (r) => cellFormula(r, h),
       onEdit: (r, e) => editRow(r, h, e.num, e.formula),
       tone: (r) => r.tone?.(h, r.value[h]),
       title: (r) => {
         if (r.kind === 'computed' || !r.onChange) return undefined;
+        if (h === 's') return SGST_LOCKED_TITLE;
         if (r.locked) return LOCKED_TITLE.filled;
         const st = storedOf(r);
         if (!st) return `${r.defaultChip ?? 'Computed'} — type to override`;
-        if (h === 's' && st.s === null) return 'Mirrors CGST — type to override, clear to mirror again';
         return undefined;
       },
       render: (r) => renderMoney(r, h),
