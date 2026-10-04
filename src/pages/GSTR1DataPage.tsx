@@ -167,7 +167,7 @@ const TFOOT = 'sticky bottom-0 z-10 border-t-0 bg-transparent';
 // Header for a table nested inside another scroll area (no sticky — it would
 // pin to the outer container).
 const TH_STATIC = `${TH} static`;
-const CELL_SELECT = 'h-8 rounded-none border-0 bg-transparent px-2 text-xs shadow-none focus:ring-1 focus:ring-inset focus:ring-primary focus:ring-offset-0';
+const CELL_SELECT = 'h-9 rounded-none border-0 bg-transparent px-2 text-sm shadow-none focus:ring-1 focus:ring-inset focus:ring-primary focus:ring-offset-0';
 
 // GSTR-1 JSON section types
 interface B2BInvoice {

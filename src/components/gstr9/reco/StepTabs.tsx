@@ -41,9 +41,9 @@ export const CountBadge: React.FC<{ n: number; label: string }> = ({ n, label })
  * badges keep their own white pill there (see ../badge).
  */
 export const TAB_LIST_CLASS =
-  'h-auto max-w-full flex-wrap justify-start gap-0.5 rounded-md border border-primary/20 bg-primary/[0.08] p-0.5 text-foreground/80';
+  'h-auto max-w-full flex-wrap justify-start gap-1 rounded-md border border-primary/20 bg-primary/[0.08] p-1 text-foreground/80';
 export const TAB_TRIGGER_CLASS = cn(
-  'group/tab h-7 gap-1.5 px-2.5 text-xs font-medium hover:bg-card hover:text-foreground',
+  'group/tab h-9 gap-2 px-4 text-sm font-medium hover:bg-card hover:text-foreground',
   'data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow data-[state=active]:hover:bg-primary data-[state=active]:hover:text-primary-foreground',
   '[&_.text-muted-foreground]:text-foreground/70 [&[data-state=active]_.text-muted-foreground]:text-primary-foreground/80 [&[data-state=active]_.text-foreground]:text-primary-foreground [&[data-state=active]_.text-success-strong]:text-primary-foreground',
 );

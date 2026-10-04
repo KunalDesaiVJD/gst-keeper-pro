@@ -187,7 +187,7 @@ export function FormTable<R extends FormTableRow>({
   const hasStatus = rows.some((r) => r.diffKey);
   return (
     <div className={cn('overflow-x-auto rounded-md border', maxHeight && cn('overflow-y-auto', PIN_LAST_ROW), className)} style={maxHeight ? { maxHeight } : undefined}>
-      <table className="w-full border-separate border-spacing-0 text-xs" aria-label={label}>
+      <table className="w-full border-separate border-spacing-0 text-sm" aria-label={label}>
         <thead className="sticky top-0 z-10 bg-muted">
           {hasGroups && (
             <tr>

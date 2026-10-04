@@ -34,7 +34,7 @@ import {
 import BuilderProjectDetailPage from './BuilderProjectDetailPage';
 import BuilderAdjustmentsPage from './BuilderAdjustmentsPage';
 import BuilderDastavejPage from './BuilderDastavejPage';
-import { AFFORDABLE_VALUE_LIMIT } from '@/utils/builderRates';
+import { AFFORDABLE_VALUE_LIMIT, formatCarpet } from '@/utils/builderRates';
 import BulkReceiptsDialog, { type BulkReceiptUnit } from '@/components/builder/BulkReceiptsDialog';
 import {
   ArrowLeft, Loader2, ChevronDown, ChevronRight, Plus, Receipt, FileText,
@@ -1367,7 +1367,7 @@ const BuilderBookingsPage: React.FC = () => {
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex rounded-md border border-primary/20 bg-primary/[0.08] p-0.5" role="group" aria-label="View">
               <Button
-                variant={viewMode === 'upto' ? 'default' : 'ghost'} size="sm" className="h-7 gap-1 px-2.5 text-xs"
+                variant={viewMode === 'upto' ? 'default' : 'ghost'} size="sm" className="h-9 gap-1.5 px-4 text-sm"
                 aria-pressed={viewMode === 'upto'}
                 onClick={() => setViewMode('upto')}
                 title="Cumulative position as of the end of the selected period"
@@ -1375,7 +1375,7 @@ const BuilderBookingsPage: React.FC = () => {
                 <History className="h-3.5 w-3.5" /> Up to {prettyPeriodLabel(selectedMonth)}
               </Button>
               <Button
-                variant={viewMode === 'month' ? 'default' : 'ghost'} size="sm" className="h-7 gap-1 px-2.5 text-xs"
+                variant={viewMode === 'month' ? 'default' : 'ghost'} size="sm" className="h-9 gap-1.5 px-4 text-sm"
                 aria-pressed={viewMode === 'month'}
                 onClick={() => setViewMode('month')}
                 title="Every receipt and invoice dated in this period, across all units — tally against your bank statement or Tally"
@@ -1911,7 +1911,7 @@ const BuilderBookingsPage: React.FC = () => {
                             )}
                           </td>
                           <td className={WS_TD_NUM}>
-                            {u.carpet_area_sqm || '—'}
+                            {u.carpet_area_sqm ? formatCarpet(u.carpet_area_sqm) : '—'}
                           </td>
                           <td className={WS_TD}>
                             {cls.ratePct}%

@@ -136,7 +136,7 @@ export const FigureTable: React.FC<{
       style={{ ...(maxHeight ? { maxHeight } : {}), ['--fig-label-w' as string]: `${labelWidth ?? 220}px` }}
     >
       {/* border-separate: the pinned header and footer rows paint solidly (collapsed borders let scrolled rows show through). */}
-      <table className="w-full border-separate border-spacing-0 text-xs" aria-label={label}>
+      <table className="w-full border-separate border-spacing-0 text-sm" aria-label={label}>
         <thead className="sticky top-0 z-20 bg-muted">
           {hasGroups && (
             <tr>

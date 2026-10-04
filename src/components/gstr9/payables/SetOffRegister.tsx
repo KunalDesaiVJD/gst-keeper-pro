@@ -29,7 +29,7 @@ export const SetOffRegister: React.FC = () => {
   return (
     <>
       <div className="overflow-x-auto rounded-md border">
-        <table className="w-full min-w-[960px] border-collapse text-xs" aria-label="Set-off register">
+        <table className="w-full min-w-[960px] border-collapse text-sm" aria-label="Set-off register">
           <thead className="bg-muted text-muted-foreground">
             <tr>
               <th className="border-b px-2 py-1.5 text-left font-semibold">Payable</th>

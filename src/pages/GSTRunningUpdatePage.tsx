@@ -570,9 +570,9 @@ const GSTRunningUpdatePage: React.FC = () => {
   }, [filteredUpdates]);
 
   const colSpan = 17 + (canDeleteGSTRows ? 1 : 0);
-  const TH = 'sticky top-0 z-10 border-b border-r bg-muted px-2 py-1.5 text-left font-semibold text-muted-foreground whitespace-nowrap';
-  const CELL_INPUT = 'h-8 rounded-none border-0 bg-transparent px-2 text-xs md:text-xs shadow-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary focus-visible:ring-offset-0';
-  const CELL_SELECT = 'h-8 rounded-none border-0 bg-transparent px-2 text-xs shadow-none';
+  const TH = 'sticky top-0 z-10 border-b border-r bg-muted px-2 py-1.5 text-left text-[13px] font-semibold text-muted-foreground whitespace-nowrap';
+  const CELL_INPUT = 'h-9 rounded-none border-0 bg-transparent px-2 text-sm md:text-sm shadow-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary focus-visible:ring-offset-0';
+  const CELL_SELECT = 'h-9 rounded-none border-0 bg-transparent px-2 text-sm shadow-none';
   const FILTER_LABEL = 'text-[11px] font-medium text-muted-foreground';
 
   return (
@@ -776,7 +776,7 @@ const GSTRunningUpdatePage: React.FC = () => {
         </Card>
       ) : (
         <div className="relative max-h-[70vh] overflow-auto rounded-md border bg-card">
-          <table className="w-full min-w-[1650px] table-fixed border-separate border-spacing-0 text-xs" aria-label="GST update sheet">
+          <table className="w-full min-w-[1650px] table-fixed border-separate border-spacing-0 text-sm" aria-label="GST update sheet">
             <colgroup>
               <col style={{ width: columnWidths['sr'] || 48 }} />
               <col style={{ width: columnWidths['client'] || 180 }} />
@@ -938,7 +938,7 @@ const GSTRunningUpdatePage: React.FC = () => {
                       <textarea
                         value={update.remarks}
                         onChange={(e) => handleFieldChange(originalIndex, 'remarks', e.target.value)}
-                        className="block min-h-[32px] max-h-[80px] w-full resize-y [field-sizing:content] border-0 bg-transparent px-2 py-1.5 text-xs leading-snug shadow-none outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
+                        className="block min-h-[36px] max-h-[96px] w-full resize-y [field-sizing:content] border-0 bg-transparent px-2 py-1.5 text-sm leading-snug shadow-none outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
                         disabled={!canEdit}
                         placeholder={canEdit ? 'How the effect was given…' : undefined}
                         rows={1}

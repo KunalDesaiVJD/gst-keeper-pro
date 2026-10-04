@@ -50,7 +50,7 @@ import {
 } from 'lucide-react';
 import {
   RATE_CODE_LABEL, classifyUnit, formatINR, suggestedUnitTypeMismatch,
-  type ChargeInclusionSettings, type UnitType,
+  type ChargeInclusionSettings, type UnitType, formatCarpet
 } from '@/utils/builderRates';
 import {
   BULK_UNIT_STATUSES, generateUnits, parsePastedUnits,
@@ -552,7 +552,7 @@ const BulkAddUnitsDialog: React.FC<Props> = ({
                           </span>
                         )}
                       </TableCell>
-                      <TableCell className={B_TD_NUM}>{r.carpet_area_sqm || '—'}</TableCell>
+                      <TableCell className={B_TD_NUM}>{r.carpet_area_sqm ? formatCarpet(r.carpet_area_sqm) : '—'}</TableCell>
                       <TableCell className={B_TD_NUM}>
                         {r.charges.length
                           ? formatINR(r.charges.reduce((s2, c) => s2 + c.amount, 0))

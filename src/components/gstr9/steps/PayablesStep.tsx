@@ -136,7 +136,7 @@ const PayablesStep: React.FC = () => {
               </p>
             ) : (
               <div className="overflow-x-auto rounded-md border">
-                <table className="w-full min-w-[820px] border-collapse text-xs" aria-label="DRC-03s for this financial year">
+                <table className="w-full min-w-[820px] border-collapse text-sm" aria-label="DRC-03s for this financial year">
                   <thead className="bg-muted text-muted-foreground">
                     <tr>
                       <th className="border-b px-2 py-1.5 text-left font-semibold">ARN · date</th>

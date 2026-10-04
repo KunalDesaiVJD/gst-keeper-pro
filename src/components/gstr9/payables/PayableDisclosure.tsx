@@ -45,7 +45,7 @@ export const PayableDisclosure: React.FC<{ side: PayableSide; data: PayableSideW
   const has = (t: Tax) => sumTax(t) > 0.004 || Object.values(t).some((v) => Math.abs(v) > 0.004);
   return (
     <div className="overflow-x-auto rounded-md border">
-      <table className="w-full min-w-[720px] border-collapse text-xs" aria-label={`${SIDE_LABEL[side]} payable`}>
+      <table className="w-full min-w-[720px] border-collapse text-sm" aria-label={`${SIDE_LABEL[side]} payable`}>
         <thead className="bg-muted">
           <tr className="text-muted-foreground">
             <th className="border-b px-2 py-1.5 text-left font-semibold">{SIDE_LABEL[side]}</th>

@@ -306,7 +306,7 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
       <div>
         {details ? (
           <div className="overflow-x-auto rounded-md border">
-            <table className="w-full border-collapse text-xs" aria-label="As-filed GSTR-3B by month">
+            <table className="w-full border-collapse text-sm" aria-label="As-filed GSTR-3B by month">
               <thead className="bg-muted">
                 <tr>
                   <th className="border-b border-r px-2 py-1.5 text-left font-semibold text-muted-foreground">Month</th>
