@@ -101,9 +101,9 @@ export const KpiTile: React.FC<{ label: string; value: React.ReactNode; hint?: R
       tone === 'error' && 'border-destructive/40',
     )}
   >
-    <div className="truncate text-[11px] font-medium text-muted-foreground" title={label}>{label}</div>
-    <div className={cn('text-[15px] font-semibold leading-tight tabular-nums', tone === 'error' && 'text-destructive-strong', tone === 'ok' && 'text-success-strong')}>{value}</div>
-    {hint && <div className="truncate text-[11px] leading-tight text-muted-foreground" title={typeof hint === 'string' ? hint : undefined}>{hint}</div>}
+    <div className="truncate text-xs font-medium text-muted-foreground" title={label}>{label}</div>
+    <div className={cn('text-lg font-semibold leading-tight tabular-nums', tone === 'error' && 'text-destructive-strong', tone === 'ok' && 'text-success-strong')}>{value}</div>
+    {hint && <div className="truncate text-xs leading-tight text-muted-foreground" title={typeof hint === 'string' ? hint : undefined}>{hint}</div>}
   </div>
 );
 
@@ -287,7 +287,7 @@ export const MatrixTable: React.FC<{
   const hasDiff = withDiffColumn ?? rows.some((r) => r.diffKey);
   return (
     <div className={cn('overflow-x-auto rounded-md border', className)}>
-      <table className="w-full border-collapse text-xs" aria-label={label}>
+      <table className="w-full border-collapse text-sm" aria-label={label}>
         <thead className="bg-muted">
           <tr>
             <th className="w-14 border-b border-r px-2 py-1.5 text-left font-semibold text-muted-foreground">No.</th>

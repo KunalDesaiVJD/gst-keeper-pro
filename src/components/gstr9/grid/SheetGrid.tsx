@@ -460,7 +460,7 @@ export function SheetGrid<R>({
         style={maxHeight ? { maxHeight } : undefined}
       >
         {/* border-separate: sticky header/footer rows paint solidly (collapsed borders let scrolled rows show through). */}
-        <table className="w-full border-separate border-spacing-0 text-xs">
+        <table className="w-full border-separate border-spacing-0 text-sm">
           <thead className="sticky top-0 z-20 bg-muted">
             {hasGroups && (
               <tr>
@@ -543,7 +543,7 @@ export function SheetGrid<R>({
                           col.type === 'select' ? (
                             <select
                               ref={(el) => { inputRef.current = el; }}
-                              className="absolute inset-0 h-full w-full border-0 bg-card px-1 text-xs outline outline-2 outline-primary"
+                              className="absolute inset-0 h-full w-full border-0 bg-card px-1 text-sm outline outline-2 outline-primary"
                               value={editing.draft}
                               aria-label={typeof col.header === 'string' ? col.header : col.key}
                               onChange={(e) => {
@@ -566,7 +566,7 @@ export function SheetGrid<R>({
                           ) : (
                             <input
                               ref={(el) => { inputRef.current = el; }}
-                              className={cn('absolute inset-0 h-full w-full border-0 bg-card px-2 text-xs tabular-nums outline outline-2', error ? 'outline-destructive' : 'outline-primary', alignCls(col))}
+                              className={cn('absolute inset-0 h-full w-full border-0 bg-card px-2 text-sm tabular-nums outline outline-2', error ? 'outline-destructive' : 'outline-primary', alignCls(col))}
                               value={editing.draft}
                               aria-label={typeof col.header === 'string' ? col.header : col.key}
                               aria-invalid={!!error}

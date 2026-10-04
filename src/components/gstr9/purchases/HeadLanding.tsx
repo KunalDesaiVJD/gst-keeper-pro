@@ -76,7 +76,7 @@ export const HeadLanding: React.FC<{ onGo: (step: StepKey) => void }> = ({ onGo 
         <p className="text-sm text-muted-foreground">No ledgers entered yet.</p>
       ) : (
         <div className="overflow-x-auto rounded-md border">
-          <table className="w-full border-collapse text-xs" aria-label="Ledgers per GSTR-9C expense head">
+          <table className="w-full border-collapse text-sm" aria-label="Ledgers per GSTR-9C expense head">
             <thead className="bg-muted">
               <tr>
                 <th className="w-12 border-b border-r px-2 py-1.5 text-left font-semibold text-muted-foreground">Row</th>

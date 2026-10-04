@@ -38,9 +38,9 @@ const SECTION_LABELS: Record<Gstr1Section, string> = {
 // merge these over their own h-12 / p-4 defaults).
 const TH = `h-auto ${WS_TH}`;
 const TD = WS_TD;
-const CELL_SELECT = 'h-8 w-full justify-between rounded-none border-0 bg-transparent px-2 text-xs font-normal shadow-none focus:ring-1 focus:ring-inset focus:ring-primary focus:ring-offset-0';
-const READ_CELL = 'block px-2 py-1.5 text-xs';
-const READ_NUM = 'block px-2 py-1.5 text-right text-xs tabular-nums';
+const CELL_SELECT = 'h-9 w-full justify-between rounded-none border-0 bg-transparent px-2 text-sm font-normal shadow-none focus:ring-1 focus:ring-inset focus:ring-primary focus:ring-offset-0';
+const READ_CELL = 'block px-2 py-1.5 text-sm';
+const READ_NUM = 'block px-2 py-1.5 text-right text-sm tabular-nums';
 
 let _localIdSeq = 0;
 const newRowId = () => `new_${Date.now()}_${_localIdSeq++}`;

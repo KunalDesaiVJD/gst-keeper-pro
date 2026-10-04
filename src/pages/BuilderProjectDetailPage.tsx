@@ -35,7 +35,7 @@ import {
 } from '@/utils/builderRates';
 import { CHARGE_HEADS, fetchBuilderSettings } from '@/lib/builderSettings';
 import { recheckStaleScheduleIII } from '@/lib/builderBuPosting';
-import { CHARGE_HEAD_LABEL } from '@/utils/builderRates';
+import { CHARGE_HEAD_LABEL, formatCarpet } from '@/utils/builderRates';
 import BulkAddUnitsDialog from '@/components/builder/BulkAddUnitsDialog';
 import BulkOpeningBalancesDialog, { type BulkOpeningUnit } from '@/components/builder/BulkOpeningBalancesDialog';
 
@@ -327,7 +327,8 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
       unit_no: u.unit_no,
       group_id: u.group_id || '',
       unit_type: u.unit_type,
-      carpet_area_sqm: String(u.carpet_area_sqm ?? ''),
+      // Strip float noise (38.730000000000004 → 38.73) without rounding real decimals.
+      carpet_area_sqm: u.carpet_area_sqm == null ? '' : String(parseFloat(Number(u.carpet_area_sqm).toFixed(6))),
       base_consideration: String(u.base_consideration ?? ''),
       status: u.status,
       onboarding_status: u.onboarding_status || 'LIVE',
@@ -730,7 +731,7 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
                         </TableCell>
                         <TableCell className={cn(B_TD, 'text-muted-foreground')}>{groupName_(u.group_id)}</TableCell>
                         <TableCell className={B_TD}>{u.unit_type}</TableCell>
-                        <TableCell className={B_TD_NUM}>{Number(u.carpet_area_sqm).toFixed(3)}</TableCell>
+                        <TableCell className={B_TD_NUM}>{formatCarpet(u.carpet_area_sqm)}</TableCell>
                         <TableCell className={B_TD_NUM}>{formatINR(u.base_consideration)}</TableCell>
                         <TableCell className={B_TD_NUM}>
                           {cls.gross.includedCharges > 0 ? formatINR(cls.gross.includedCharges) : '—'}

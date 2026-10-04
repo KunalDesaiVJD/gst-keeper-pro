@@ -245,11 +245,11 @@ const Workspace: React.FC = () => {
       {/* Step bar: pinned while scrolling, so every step is one click away and the content keeps the full width. */}
       <div ref={barRef} className="sticky top-0 z-30 -mx-4 border-b bg-background px-4 md:-mx-6 md:px-6">
         <div className="flex items-center gap-1.5 py-1.5 md:pr-12">
-          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" disabled={idx === 0} onClick={() => go(STEPS[idx - 1].key)} aria-label={idx > 0 ? `Previous: ${STEPS[idx - 1].label}` : 'Previous step'}>
+          <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" disabled={idx === 0} onClick={() => go(STEPS[idx - 1].key)} aria-label={idx > 0 ? `Previous: ${STEPS[idx - 1].label}` : 'Previous step'}>
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <StepBar active={step.key} onGo={go} stepOpen={workings.stepOpen} phases={phases} />
-          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" disabled={idx === STEPS.length - 1} onClick={() => go(STEPS[idx + 1].key)} aria-label={idx < STEPS.length - 1 ? `Next: ${STEPS[idx + 1].label}` : 'Next step'}>
+          <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" disabled={idx === STEPS.length - 1} onClick={() => go(STEPS[idx + 1].key)} aria-label={idx < STEPS.length - 1 ? `Next: ${STEPS[idx + 1].label}` : 'Next step'}>
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
@@ -298,7 +298,7 @@ const StepBar: React.FC<{
   return (
     <nav aria-label="Annual return steps" className="min-w-0 flex-1">
       {/* Wraps onto a second row when the screen is narrow, so every step stays in sight. */}
-      <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5">
+      <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
         {phases.map((phase, pi) => (
           // `contents`: chips wrap one by one; a thin rule marks where a phase starts.
           <div key={phase} role="group" aria-label={phase} className="contents">
@@ -315,11 +315,11 @@ const StepBar: React.FC<{
                   aria-current={on ? 'step' : undefined}
                   title={`${n}. ${s.label}${open ? ` — ${open} open` : ''}`}
                   className={cn(
-                    'flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    'flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                     on ? 'bg-primary font-medium text-primary-foreground' : 'text-foreground hover:bg-muted',
                   )}
                 >
-                  <span className={cn('flex h-4 min-w-4 items-center justify-center rounded-full px-0.5 text-[9px] font-semibold', on ? 'bg-primary-foreground/20' : 'bg-muted text-muted-foreground')}>{n}</span>
+                  <span className={cn('flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[11px] font-semibold', on ? 'bg-primary-foreground/20' : 'bg-muted text-muted-foreground')}>{n}</span>
                   {s.short}
                   {open > 0 && (
                     <Badge variant="destructive" className="h-4 min-w-4 justify-center rounded-full px-1 text-[10px] leading-none" aria-label={`${open} open`}>{open}</Badge>
