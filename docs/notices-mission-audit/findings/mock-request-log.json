@@ -1,0 +1,218 @@
+[
+ {
+  "screen": "d-01-dashboard",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ },
+ {
+  "screen": "d-02-dashboard-bell",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ },
+ {
+  "screen": "d-03-dashboard-reports-menu",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ },
+ {
+  "screen": "d-04-dashboard-search-company",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ },
+ {
+  "screen": "d-05-dashboard-add-notice",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ },
+ {
+  "screen": "d-05-dashboard-add-notice",
+  "method": "POST",
+  "table": "gst_notices",
+  "query": "",
+  "status": 400,
+  "code": "23502",
+  "message": "null value in column \"portal_key\" of relation \"gst_notices\" violates not-null constraint"
+ },
+ {
+  "screen": "d-06-dashboard-sync-all-no-extension",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ },
+ {
+  "screen": "d-08-dashboard-closing-sweep",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ },
+ {
+  "screen": "d-08-dashboard-closing-sweep",
+  "method": "GET",
+  "table": "gst_case_folder_items",
+  "query": "?select=notice_id,folder_section,raw_json&notice_id=in.(a1000000-0000-4000-8000-000000000030,a1000000-0000-4000-8000-000000000032,a1000000-0000-4000-8000-000000000033,a1000000-0000-4000-8000-000000000035,a1000000-0000-4000-8000-000000000036,a1000000-0000-4000-8000-000000000037,a1000000-0000-4000-8000-000000000038)&deleted_at=is.null",
+  "status": 400,
+  "code": "42703",
+  "message": "column gst_case_folder_items.notice_id does not exist"
+ },
+ {
+  "screen": "d-08-dashboard-closing-sweep",
+  "method": "GET",
+  "table": "gst_case_folder_items",
+  "query": "?select=notice_id,folder_section,raw_json&notice_id=in.(a1000000-0000-4000-8000-000000000030,a1000000-0000-4000-8000-000000000031,a1000000-0000-4000-8000-000000000032,a1000000-0000-4000-8000-000000000033,a1000000-0000-4000-8000-000000000034,a1000000-0000-4000-8000-000000000035,a1000000-0000-4000-8000-000000000036,a1000000-0000-4000-8000-000000000037,a1000000-0000-4000-8000-000000000038,a1000000-00",
+  "status": 400,
+  "code": "42703",
+  "message": "column gst_case_folder_items.notice_id does not exist"
+ },
+ {
+  "screen": "d-09-dashboard-send-digest",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ },
+ {
+  "screen": "d-09-dashboard-send-digest",
+  "method": "GET",
+  "table": "gst_notices",
+  "query": "?select=id,client_id,notice_type,reference_number,description,issue_date,due_date,extended_due_date,staff_status,priority,assign_to,assign_to_user_id,reply_date,reply_ref_number,order_date,order_number,hearing_date,issued_by&deleted_at=is.null",
+  "status": 400,
+  "code": "42703",
+  "message": "column gst_notices.hearing_date does not exist"
+ },
+ {
+  "screen": "d-10-dashboard-category-filter",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ },
+ {
+  "screen": "d-11-dashboard-calendar-month",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ },
+ {
+  "screen": "d-12-dashboard-queue-assign",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ },
+ {
+  "screen": "d-13-dashboard-queue-change-stage",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ },
+ {
+  "screen": "d-40-drawer-notice-not-found",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ },
+ {
+  "screen": "d-40-drawer-notice-not-found",
+  "method": "GET",
+  "table": "gst_notices",
+  "query": "?select=id,client_id,notice_type,reference_number,description,issue_date,due_date,extended_due_date,staff_status,priority,assign_to,assign_to_user_id,reply_date,reply_ref_number,order_date,order_number,hearing_date,issued_by,amount_of_demand,remarks,financial_year,close_reason,pdf_url,pulled_at,matter_id&id=eq.a1000000-0000-4000-8000-000000000017",
+  "status": 400,
+  "code": "42703",
+  "message": "column gst_notices.hearing_date does not exist"
+ },
+ {
+  "screen": "m-01-dashboard",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ },
+ {
+  "screen": "m-40-drawer-notice-not-found",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ },
+ {
+  "screen": "m-40-drawer-notice-not-found",
+  "method": "GET",
+  "table": "gst_notices",
+  "query": "?select=id,client_id,notice_type,reference_number,description,issue_date,due_date,extended_due_date,staff_status,priority,assign_to,assign_to_user_id,reply_date,reply_ref_number,order_date,order_number,hearing_date,issued_by,amount_of_demand,remarks,financial_year,close_reason,pdf_url,pulled_at,matter_id&id=eq.a1000000-0000-4000-8000-000000000017",
+  "status": 400,
+  "code": "42703",
+  "message": "column gst_notices.hearing_date does not exist"
+ },
+ {
+  "screen": "m-130-mobile-nav",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ },
+ {
+  "screen": "counts",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ },
+ {
+  "screen": "d-07-dashboard-sync-all-extension",
+  "method": "GET",
+  "table": "profiles",
+  "query": "?select=user_id,first_name,last_name",
+  "status": 400,
+  "code": "42703",
+  "message": "column profiles.last_name does not exist"
+ }
+]

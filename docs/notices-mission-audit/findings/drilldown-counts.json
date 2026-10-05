@@ -1,0 +1,40 @@
+{
+  "dashboard": {
+    "overdueTile": "14",
+    "due7Tile": "12",
+    "newTile": "6",
+    "exposureTile": "₹ 4.23 cr",
+    "exposureMatters": "22",
+    "queueTabs": "Team · 51 Mine · 2 Unassigned · 30 Hearings · 2",
+    "categoryTotal": "182"
+  },
+  "notices_all": {
+    "(none)": "141 records",
+    "?filter=overdue": "69 records, overdue",
+    "?filter=due7": "10 records, due within 7 days",
+    "?filter=new": "6 records, first seen in the last 24 hours",
+    "?filter=last24h": "75 records, pulled from the portal in the last 24 hours",
+    "?filter=last15": "14 records, issued in the last 15 days",
+    "?filter=priority": "30 records, flagged priority",
+    "?filter=submitted": "3 records, with a submission logged",
+    "?filter=replied": "38 records, with a reply logged",
+    "?status=Open": "51 records, status Open",
+    "?status=Closed": "90 records, status Closed",
+    "?type=registration": "21 records",
+    "?type=other": "120 records",
+    "?category=Demand%20Notice": "28 records, Demand Notice",
+    "?category=Registration": "21 records, Registration",
+    "?category=Non%20filers": "22 records, Non filers",
+    "?date=2026-10-09": "2 records, issued/due on 2026-10-09",
+    "?client=c1000000-0000-4000-8000-000000000001": "12 records",
+    "?tab=merged": "186 records — every source (Notices & Orders, Refunds, DRC-03) combined, most recent first"
+  },
+  "notice_summary_total": [
+    "182",
+    "67",
+    "115",
+    "38"
+  ],
+  "gstin_wise_header": "12 companies · 186 notices",
+  "company_list_failed_rows": "5"
+}

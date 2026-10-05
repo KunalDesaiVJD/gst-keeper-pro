@@ -1,0 +1,1155 @@
+{
+  "summary": "Today the reply journey happens almost entirely outside the app. The extension already captures every notice, its PDF and the full case folder, including structured portal JSON with section, FY, reply due date, PH option, officer and the demand details (dmddtls). None of that structure is used downstream. Per the repo, the only per-notice drawer selects gst_notices.hearing_date, a column the repo's own commit 50e12fc says does not exist, so it renders 'Notice not found'. The same select silently empties the alert digests. The Sweep queries a gst_case_folder_items.notice_id column that no migration defines, and its due-date extractor reads the wrong JSON paths, so case notices (DRC-01A/DRC-01/ASMT-10) never get a due date: 0 of 403 in the 13-Sep-2026 review. matter_deadlines is never written. Filing is recorded by hand: reply_date was set on 0 rows while 121 REPLY items sat in the synced case folders. Every PDF sits in a public bucket with anon read/write/delete. There is no issue table, no evidence linkage, no drafting workspace, no client document requests and no precedent library. A typical ASMT-10/DRC-01A costs about 8.5 staff-hours and 12-25 elapsed days, most of it re-keying and hunting data the app already holds: as-filed GSTR-1/3B JSON, 2A/2B documents, ITC/RCM/suspended ledgers, DRC-03, the GSTR-9 'Notice reply format' and the interest/late-fee engines. The Reply Factory has five parts. (0) Fix the plumbing: private bucket with signed URLs, the hearing_date/notice_id drift, due dates, a DB-trigger event log, REPLY auto-reconcile and a deadline engine. (1) Add a notice_issues model fed by portal JSON plus claude-haiku-4-5-20251001 extraction (schema-validated, every field quote-verified, portal JSON wins on conflict). (2) Add deterministic recipes that turn the existing month-level reports into FY annexures with row provenance. (3) Draft with claude-opus-5-5 using cached statute/template packs and citations, behind hard gates: every rupee figure must trace to an annexure cell, and only authorities from a verified library may be cited. QA runs on claude-sonnet-5. (4) Partner approval, then a DOCX/PDF pack, then extension-assisted filing that stops before DSC/EVC and captures the acknowledgement automatically. Targets: ASMT-10/DRC-01A from about 520 to about 105 staff-minutes, first draft within 1 working day, DRC-01B/01C answered the same day, and 95% of filings recorded with no typing.",
+  "currentJourney": [
+    {
+      "step": "1. Notice issued on the portal (View Notices & Orders, or an Additional Notices & Orders case folder)",
+      "who": "Proper officer / GSTN -> client's registered email and mobile",
+      "where": "GST portal; client inbox",
+      "minutes": 0,
+      "pain": "The firm is not the addressee. It learns at the next Sync All or when the client forwards the email. Short-clock forms (DRC-01B/01C 7 days, REG-17/REG-23 7 working days, RFD-08 15 days, MOV-07) can lose most of their window before anyone in the firm sees them."
+    },
+    {
+      "step": "2. Run Sync All through the Chrome extension",
+      "who": "Article/junior (attended)",
+      "where": "App -> Chrome extension -> portal APIs (get/notices, litserv case/task/get, case/folder/items, document downloads)",
+      "minutes": 5,
+      "pain": "Manual and serial, with a human CAPTCHA per client login. A full run for about 121 clients takes hours; the review record noted 92 clients could not finish inside the old 20-minute job window. Case/task rows (DRC-01, ASMT-10, Enforcement, Appeal) are saved with due_date, status and issued_by = null (extension/content.js:2807). The structured folder JSON is stored but never parsed into fields. The 5 minutes shown is each notice's share of the run."
+    },
+    {
+      "step": "3. Run the Sweep (auto-close and due-date extraction)",
+      "who": "Junior",
+      "where": "App - Notices Dashboard / work queue",
+      "minutes": 1,
+      "pain": "Both passes select and filter gst_case_folder_items.notice_id, a column no migration or generated type defines (src/lib/noticeAutoClose.ts:44-45,164-165), so the sweep errors out. Even if fixed, extractDueDate reads sdtls.duedate, dtscn.duedate and duedate (lines 139-142), but the live-confirmed fields are duedt, sdtls.<dtscn|srscn|remnd>.duedt and replyDuedt (AdditionalNoticeFolderPage.tsx:168,176). Review record, 13-Sep-2026: 0 of 403 case rows had a due date."
+    },
+    {
+      "step": "4. Triage: open the notice, read the PDF, set status, priority, owner, due date and amount",
+      "who": "Senior / manager",
+      "where": "App drawer or list 'Log reply / order / submission' dialog + PDF viewer",
+      "minutes": 25,
+      "pain": "The drawer query selects the non-existent gst_notices.hearing_date and drops the error, so it shows 'Notice not found' (NoticeDrawer.tsx:144,200-201). FY, amount, extended due date, free-text assign_to and remarks are re-keyed by hand (NoticeWorkflowListView.tsx:541-555). Section, DIN, tax periods, the issue list and head-wise demand have no field at all. Four different status vocabularies are in use."
+    },
+    {
+      "step": "5. Create a litigation matter and type the demand",
+      "who": "Senior",
+      "where": "App - drawer 'Create Matter' or Litigation Matters page",
+      "minutes": 10,
+      "pain": "Tax, interest, penalty and cess are typed by hand from DRC-01/DRC-02 (LitigationMatterDetailPage.tsx:482-490, no event logged), although dmddtls in the folder JSON already carries them. The matter gets the original rather than the extended due date, no actor, and lifecycle 'demand' whatever the form."
+    },
+    {
+      "step": "6. Tell the client and request documents",
+      "who": "Senior / junior",
+      "where": "Email, WhatsApp, phone (outside the app)",
+      "minutes": 30,
+      "pain": "There is no request list, status or reminder ladder (roadmap item 1.6 is unbuilt). Files come back over email/WhatsApp into local folders, not onto the notice. Typically 3-10 elapsed days, often the longest wait in the journey (estimate)."
+    },
+    {
+      "step": "7. Hunt for data: pull and export returns, 2A/2B and ledgers; fetch e-way bills and supplier status elsewhere",
+      "who": "Junior",
+      "where": "App Reports (client + month), extension pulls, GST portal, e-way bill portal, taxpayer search",
+      "minutes": 90,
+      "pain": "Every comparison report takes one client and one month (src/lib/reportsCatalog.ts:251-300, 845-891), so an FY notice needs 12 runs of several reports, plus chasing NOT PULLED gaps. E-way bills, supplier cancellation dates, e-invoices and client documents are not in the app at all."
+    },
+    {
+      "step": "8. Build the reconciliation working in Excel",
+      "who": "Junior / senior",
+      "where": "Excel (copy-paste from app exports and Tally books)",
+      "minutes": 120,
+      "pain": "Re-keys numbers the app already computes: GSTR-1 vs 3B, 3B vs 2B/2A, RCM vs ITC, interest, Rule 42. Figures carry no provenance and formula errors creep in. The GSTR-9 'Notice reply format' (src/components/gstr9/steps/NoticeStep.tsx:166-171) sits unused in another module."
+    },
+    {
+      "step": "9. Find a precedent reply and the law",
+      "who": "Senior",
+      "where": "Shared drive, old emails, CBIC website, case-law databases",
+      "minutes": 30,
+      "pain": "No template or precedent library. 121 past REPLY items with attachments across 68 cases (review record) are captured in the case folders but are unindexed and unsearchable."
+    },
+    {
+      "step": "10. Draft the reply in Word",
+      "who": "Senior",
+      "where": "MS Word",
+      "minutes": 90,
+      "pain": "Boilerplate is retyped for every notice, figures are transcribed from Excel, and issue coverage is checked by eye. Estimates: an s.73/74/74A SCN takes 2-4 h; a DRC-01B/01C explanation 20-40 min."
+    },
+    {
+      "step": "11. Partner review and redlines",
+      "who": "Partner + senior",
+      "where": "Email + Word track changes",
+      "minutes": 45,
+      "pain": "No review queue or version history in the app, and approvals are not recorded. One to three cycles add 1-4 elapsed days."
+    },
+    {
+      "step": "12. Finalise the pack: letterhead, client signature or authorisation, PDF merge, compress or split for the portal",
+      "who": "Junior + client",
+      "where": "Word/PDF tools; courier or email for the signature",
+      "minutes": 35,
+      "pain": "Files are juggled by hand to fit the portal's attachment limits (verify the current limits). The client signature round-trip adds 1-2 days."
+    },
+    {
+      "step": "13. File on the portal",
+      "who": "Junior + client (EVC OTP) or partner (DSC)",
+      "where": "GST portal: case folder -> Notices -> Reply (ASMT-11 / DRC-06 / DRC-01A Part B / RFD-09) or Return Compliance (DRC-01B/01C)",
+      "minutes": 30,
+      "pain": "A fresh login with CAPTCHA. The extension's 'Portal' icon lands only on the generic Notices & Orders list (extension/content.js:514-523). Reply text is pasted and files attached one at a time. The OTP has to be coordinated with the client's authorised signatory."
+    },
+    {
+      "step": "14. Record the filing in the app",
+      "who": "Junior",
+      "where": "App - list view edit dialog",
+      "minutes": 8,
+      "pain": "Reply Ref No., Reply Date and Submission ARN are typed by hand (NoticeWorkflowListView.tsx:1124-1147). In practice this is skipped: reply_date was set on 0 rows while 121 REPLY items existed (review record), so replied notices stay 'Overdue'. Saving the dialog also wipes close_reason (lines 522, 554) and writes a free-text assign_to instead of the user id."
+    },
+    {
+      "step": "15. Personal hearing and written submissions (when opted or fixed)",
+      "who": "Partner / senior",
+      "where": "Officer's office or video; matter page",
+      "minutes": 120,
+      "pain": "The PH date sits in the folder JSON (pershrng and related fields) and is never parsed; hearings are entered by hand on the matter. There is no carry-list, and post-hearing submissions repeat steps 7-13."
+    },
+    {
+      "step": "16. Order received: decide on appeal, compute limitation and pre-deposit",
+      "who": "Partner / senior",
+      "where": "App (sync) + Excel",
+      "minutes": 30,
+      "pain": "No code writes matter_deadlines, so there is no appeal or rectification clock and E5 limitation alerts never fire. Pre-deposit is computed by hand, with no order-vs-reply comparison to build the grounds."
+    }
+  ],
+  "evidenceSources": [
+    {
+      "module": "Notices & case folders (extension sync)",
+      "tables": "gst_notices; gst_case_folder_items.raw_json: sdtls.<dtscn|srscn|remnd|dtorder>.{type, sec, fy, duedt, pershrng, facts/reason/grounds}, todtls.{nm, dg}, dmddtls, pymtdtls, gdssvcdtls, reply.{replyty, ntcno, decdtls}; attachments (PDFs in storage)",
+      "answers": "Form, section, FY, reply due date, PH, officer and issue-wise demand without OCR; which notices were already replied and when (REPLY items); orders that start appeal clocks; the firm's own past replies as a precedent and eval corpus."
+    },
+    {
+      "module": "Filed returns (as-filed portal JSON)",
+      "tables": "gst_filed_returns (return_type GSTR1/GSTR3B: full_json, summary, arn, filed_date); filing_status.return_pdf_url",
+      "answers": "GSTR-1 vs GSTR-3B liability (DRC-01B, ASMT-10, REG-31); 3B Table 4A/4B/4D ITC (DRC-01C); cash vs ITC discharge (interest base); filing dates for late fee, s.16(4) availment date and GSTR-3A; ARN-backed proof."
+    },
+    {
+      "module": "GSTR-1 workspace & reports",
+      "tables": "gstr1_data.raw_json, gstr1_manual_entries, gstr1_upload_versions, portal_gstr1_category_figures; reports: rate-wise, HSN, customer-wise, P.Y invoices in C.Y (src/utils/gstr1Reports.ts)",
+      "answers": "Invoice-level timing differences, amendments and credit notes, advances (AT/TXPD), export/SEZ with or without payment, HSN/rate disputes, the invoice side of e-way bill matching, next-FY amendments for ASMT-10."
+    },
+    {
+      "module": "Import 2B / 2B Reconciliation",
+      "tables": "twob_import_docs (itc_action, itc_reason, gstr1_filing_date, gstr1_period, irn, reverse_charge), books_register, bills_not_in_2b (reversal_month, reclaim_month, reclaimed_via_doc_id), bills_not_in_books, twob_versions",
+      "answers": "DRC-01C attribution (reclaims, prior-period 2B), ITC claimed above 2B (ASMT-10/DRC-01), s.16(2)(aa) compliance, s.16(4) time-bar inputs, INELIGIBLE / ITC_OF_OTHERS items, supplier-wise annexures."
+    },
+    {
+      "module": "GSTR-2A (periods up to Dec-2021)",
+      "tables": "gstr2a_import_docs; GSTR-2A rate-wise / supplier-wise / P.Y-in-C.Y reports; 'GSTR 3B vs GSTR 2A ITC' report",
+      "answers": "2A vs 3B mismatches for FY 2017-18 to 2021-22, where the Circular 183/15/2022 and 193/05/2023 procedure applies (verify); suppliers who filed late or never filed."
+    },
+    {
+      "module": "ITC Summary",
+      "tables": "itc_summaries.data (monthly), itc_versions, itc_reversal_lines (Rule 42/43 by FY)",
+      "answers": "Month-wise availed / reversed / reclaimed narrative; Table 4B(1)/(2) explanations; Rule 42/43 reversal workings."
+    },
+    {
+      "module": "Suspended Reco & ECRRS",
+      "tables": "suspended_reco; gst_credit_reversal_reclaim_entries (portal Electronic Credit Reversal and Re-claimed Statement)",
+      "answers": "Proof that ITC reversed (Rule 37A / 4B(2)) was re-claimed only after it appeared in 2B, plus the opening balance of reversed ITC. Defends DRC-01C and 'excess ITC' charges."
+    },
+    {
+      "module": "RCM Summary",
+      "tables": "rcm_data, rcm_masters, rcm_versions, gst_rcm_liability_itc_entries (portal RCM liability/ITC statement), rcm_annual_return_lines",
+      "answers": "RCM liability determined vs paid (3.1(d)); ITC 4A(2)/(3) not exceeding RCM paid; category-wise RCM (GTA, legal, security, rent from unregistered persons, import of services); revenue-neutrality facts."
+    },
+    {
+      "module": "GSTR-3B workspace",
+      "tables": "gstr3b_adjustments (label, reason, table_ref), gstr3b_push_versions; computeItcOffset() in src/utils/gstr3bReports.ts:312",
+      "answers": "Why a month's 3B differs from GSTR-1 or 2B (documented adjustments with reasons); the cash vs credit set-off that drives interest."
+    },
+    {
+      "module": "GST Running Update",
+      "tables": "gst_running_updates (matter_brief, update_type, update_in_return, effect_month, itc_section, interest)",
+      "answers": "The documented 'adjusted in the return of month X' trail, which is the core evidence for timing-difference paragraphs in DRC-01B/ASMT-10 replies."
+    },
+    {
+      "module": "Filing Status",
+      "tables": "filing_status (status, filed_date, arn, is_nil, return_pdf_url); clients.target_date_group1/2",
+      "answers": "Non-filing grounds for GSTR-3A and REG-17, late-fee and interest day counts, acknowledgement PDFs."
+    },
+    {
+      "module": "Electronic ledgers & challans",
+      "tables": "gst_cash_ledger_entries, gst_credit_ledger_transactions, gst_liability_ledger_entries, gst_challans, portal_tax_payment_entries",
+      "answers": "Payment dates and amounts for s.50(1) interest; the ECL balance trail for s.50(3) / Rule 88B(3) (ITC wrongly availed but never utilised means no interest, verify); proof of discharge; pre-deposit debits."
+    },
+    {
+      "module": "DRC-03 voluntary payments",
+      "tables": "gst_drc03_filings (igst/cgst/sgst/cess, interest, penalty, cause_of_payment, section, period_from/to, arn, pdf_url)",
+      "answers": "Payments before or after the SCN (s.73(5)/(8), s.74(5)/(8), s.74A windows; verify), ARNs for the 'paid' option in DRC-01A/01B/01C Part B, matter paid_total, DRC-03A linkage."
+    },
+    {
+      "module": "Refunds",
+      "tables": "gst_refund_applications; refund case folders (APLCN, NOTAC incl. RFD-08 rsnnoticeother/duedate, REPLY, ORDRS)",
+      "answers": "RFD-08 / RFD-09 reply facts and amounts, deficiency history, appeals against RFD-06 rejection."
+    },
+    {
+      "module": "Annual Return GSTR-9/9C",
+      "tables": "annual_return_docs (incl. the 'notice' doc behind NoticeStep's Notice reply format with PDF export), gstr9_table14_differential_tax, gstr9_table15_demands_refunds, gstr9c_table5_turnover_reco, gstr9c_table7_taxable_turnover_reco, gstr9c_table12_net_itc, client_annual_turnover",
+      "answers": "FY outward-liability and ITC reconciliation 'in the format officers ask for'; Table 8A vs 3B; Table 14 differential tax paid; turnover per books vs returns (ASMT-10/DRC-01 for FY 2019-20 onwards); the late-fee turnover tier."
+    },
+    {
+      "module": "Books (Tally-derived) data",
+      "tables": "duties_taxes_output_monthly, duties_taxes_input_monthly, books_turnover_lines, books_purchase_lines, pl_input_lines, pl_output_lines, expense_head_mappings",
+      "answers": "Books vs returns turnover and ITC; s.17(5) candidates by expense head; the Rule 42 common-credit base; ITR/26AS comparisons once that data is loaded."
+    },
+    {
+      "module": "Client master & taxpayer profile",
+      "tables": "clients (name, gstin, registration/cancellation dates, regular_sub_type, assigned_accountant), gst_taxpayer_profile (legal/trade name, address, constitution, jurisdiction), client_scheme_history",
+      "answers": "Reply header and addressee, automatic owner assignment, CMP-05 eligibility history (composition/QRMP), registration cases (REG-17/23/31). Never include gst_password or client_password in AI context."
+    },
+    {
+      "module": "Interest, late fee & scrutiny engines",
+      "tables": "src/utils/interestLateFee.ts, src/utils/interestScrutinyReports.ts (interest scrutiny, Rule 42 short reversal), docs/INTEREST_LATE_FEE_POSITIONS.md",
+      "answers": "Interest and late-fee issues in ASMT-10/DRC-01, computed on the firm's elected basis; Rule 42 short-reversal issues."
+    },
+    {
+      "module": "Advances",
+      "tables": "AdvancesPage + src/lib/advanceRegister.ts, advanceBalance.ts, advanceSetoffCheck.ts; GSTR-1 AT/TXPD sections",
+      "answers": "Tax on advances (services) and its adjustment. Explains GSTR-1 vs 3B timing and 'tax not paid on advances' charges."
+    },
+    {
+      "module": "Builder module",
+      "tables": "builder_* (projects, units, bookings, receipts, BU events, FSI workings, RCM postings, period postings)",
+      "answers": "Real-estate SCN issues: rate (1%/5%/12%/18%), land deduction, ITC reversal at the BU/CC cut-off, TDR/FSI RCM, procurement-shortfall RCM, with numbers per unit and project (positions in docs/BUILDER_GST_POSITIONS.md)."
+    },
+    {
+      "module": "GST receivable reco",
+      "tables": "gst_receivable_reco",
+      "answers": "Reconciliation of books to the electronic credit ledger, including DRC adjustments, for ITC-balance disputes."
+    },
+    {
+      "module": "Litigation & communications",
+      "tables": "litigation_matters, matter_hearings, matter_payments, matter_documents, matter_events, notice_events, email_outbox, email_templates",
+      "answers": "Hearing history, payments, positions already taken for the same client or issue, communications to cite."
+    },
+    {
+      "module": "GAPS - not in the app today",
+      "tables": "none (would need ewb_documents, supplier_registration_status, einvoice_docs, client document store)",
+      "answers": "E-way bill vs GSTR-1, ITC from cancelled suppliers (cancellation dates), e-invoice vs GSTR-1, ITR/26AS turnover, and the documentary proof every contested issue needs (invoices, GRNs, bank UTRs, contracts)."
+    }
+  ],
+  "taxonomy": [
+    {
+      "form": "ASMT-10",
+      "basis": "s.61 CGST Act; Rule 99 (scrutiny of returns). Outcome: ASMT-12 acceptance, or action under s.65/66/67/73/74/74A.",
+      "replyForm": "ASMT-11 (accept and pay via DRC-03, or explain), filed in the 'Scrutiny Of Returns' case folder -> Notices -> Reply, with text and attachments",
+      "window": "30 days from service, or the further period the officer permits (Rule 99(2))",
+      "typicalIssues": "GSTR-1 vs 3B liability; 2A/2B vs 3B ITC; RCM liability vs ITC; ITC from cancelled or non-filing suppliers; s.16(4) time-bar; s.17(5) blocked credit; Rule 42/43 reversal; s.50 interest on delayed payment; late fee; e-way bill vs GSTR-1; GSTR-9/9C vs 3B; ITR/26AS turnover vs GST; HSN/rate.",
+      "autoSource": "gst_filed_returns (GSTR1/GSTR3B full_json), twob_import_docs / gstr2a_import_docs, books_register, bills_not_in_2b, itc_summaries, rcm_data + gst_rcm_liability_itc_entries, gst_credit_reversal_reclaim_entries, gst_drc03_filings, annual_return_docs (Notice reply format), interestLateFee.ts",
+      "automation": "Assisted",
+      "minutesSaved": 300,
+      "verify": "Portal path and attachment limits (file count and size); whether the officer used 2A or 2B for the ITC test; reply character limit."
+    },
+    {
+      "form": "DRC-01A",
+      "basis": "Rule 142(1A): pre-SCN intimation of tax, interest and penalty ascertained under s.73/74 (and s.74A from FY 2024-25)",
+      "replyForm": "DRC-01A Part B (accept / partly accept / disagree, with reasons) and/or DRC-03 payment quoting the intimation; filed in the 'Determination Of Tax' case folder -> Intimations -> Reply",
+      "window": "Date stated in Part A (commonly 15-30 days; verify for each notice)",
+      "typicalIssues": "Same issue set as the proposed SCN (see ASMT-10), usually after a scrutiny or audit; arithmetic or head-wise errors; double counting across periods.",
+      "autoSource": "Case-folder INTIM items (sdtls.dtscn.sec/fy/duedt, dmddtls) + the ASMT-10 sources; gst_drc03_filings for 'paid' responses",
+      "automation": "Assisted",
+      "minutesSaved": 300,
+      "verify": "Rule 142(1A) reads 'may' since Notification 79/2020-CT; some High Courts have treated pre-SCN consultation as mandatory for some periods. Extension to s.74A by Notification 12/2024-CT. Part B options on the current portal."
+    },
+    {
+      "form": "DRC-01 (SCN u/s 73)",
+      "basis": "s.73 (non-fraud demand, tax periods up to FY 2023-24); Rule 142(1) (DRC-01 summary + DRC-02 statement); s.75(4) PH; s.75(7) order cannot exceed the notice",
+      "replyForm": "DRC-06 (reply + PH option) in the case folder -> Notices -> Reply; payment via DRC-03 with DRC-03A linkage to the demand",
+      "window": "As specified in the SCN (commonly 30 days). s.73(8): tax + interest paid within 30 days of the SCN means no penalty and the proceedings are concluded.",
+      "typicalIssues": "Merits on each issue; limitation (s.73(2)/(10) and the notified extensions for FY 2017-18 to 2019-20); missing DIN or jurisdiction; quantification errors; tax demanded on both CGST and IGST; non-consideration of the DRC-01A/ASMT-11 reply; natural justice.",
+      "autoSource": "All ASMT-10 sources + notice_issues (dmddtls) + prior replies (REPLY items) + litigation_rules (limitation)",
+      "automation": "Assisted",
+      "minutesSaved": 360,
+      "verify": "s.73(10) time limits and the extensions (Notifications 13/2022, 9/2023, 56/2023); s.73(12) sunset after FY 2023-24 (Finance (No. 2) Act 2024); DIN requirement for state officers; usual SCN reply period."
+    },
+    {
+      "form": "DRC-01 (SCN u/s 74)",
+      "basis": "s.74 (fraud, wilful misstatement or suppression; tax periods up to FY 2023-24); Rule 142",
+      "replyForm": "DRC-06 in the case folder -> Notices -> Reply",
+      "window": "As specified in the SCN (commonly 30 days). s.74(8): tax + interest + 25% penalty paid within 30 days of the SCN concludes the proceedings.",
+      "typicalIssues": "The s.73 issues, plus rebutting the fraud/suppression ingredients (data was on the portal, so nothing was suppressed), the extended 5-year limitation (s.74(10)), and penalty quantum.",
+      "autoSource": "As s.73 + filing history (filing_status / gst_filed_returns) to show disclosure in returns",
+      "automation": "Assisted",
+      "minutesSaved": 300,
+      "verify": "Reduced-penalty slabs under s.74(5)/(8)/(11); s.74(12) sunset; case law on invoking the extended period (from the verified library only)."
+    },
+    {
+      "form": "DRC-01 (SCN u/s 74A)",
+      "basis": "s.74A, inserted by Finance (No. 2) Act 2024 w.e.f. 01-11-2024, for tax periods from FY 2024-25 (fraud and non-fraud in one section); Rule 142 as amended",
+      "replyForm": "DRC-06 in the case folder -> Notices -> Reply",
+      "window": "As specified in the SCN. Reduced-penalty window: tax + interest within 60 days of the SCN (verify).",
+      "typicalIssues": "Same issue set as s.73/74; classification as fraud vs non-fraud; time limits (SCN within 42 months of the annual-return due date; order within 12 months of the SCN, extendable by 6 months); penalty (non-fraud: higher of 10% of tax or Rs 10,000).",
+      "autoSource": "As s.73",
+      "automation": "Assisted",
+      "minutesSaved": 360,
+      "verify": "All s.74A figures (42 / 12+6 months, penalty rates, 60-day windows) and the Rule 142 amendments notified with it."
+    },
+    {
+      "form": "DRC-01B",
+      "basis": "Rule 88C (GSTR-1/IFF liability exceeds GSTR-3B beyond the notified limit); Rule 59(6)(e) blocks the next GSTR-1 if not answered",
+      "replyForm": "DRC-01B Part B on the portal ('Return Compliance' -> liability mismatch GSTR-1 vs 3B; verify path): paid via DRC-03 (enter ARN), explanation, or both",
+      "window": "7 days from the intimation",
+      "typicalIssues": "Timing (invoice in GSTR-1 of month M, tax paid in 3B of M+1); amendments and credit notes netted in other months; advances (AT/TXPD); RCM or zero-rated supplies tagged wrongly in GSTR-1; 3B errors corrected in a later 3B; DRC-03 payments.",
+      "autoSource": "gst_filed_returns (GSTR1 sec_sum TTL_LIAB, GSTR3B 3.1), gstr3b_adjustments, gst_running_updates, gst_drc03_filings, gst_liability_ledger_entries",
+      "automation": "Full",
+      "minutesSaved": 90,
+      "verify": "Threshold (reported as Rs 25 lakh and 20%; confirm the notified figure); menu path and reason-code list on the current portal."
+    },
+    {
+      "form": "DRC-01C",
+      "basis": "Rule 88D (ITC availed in GSTR-3B exceeds GSTR-2B beyond the notified limit); Rule 59(6)(f) blocks the next GSTR-1 if not answered",
+      "replyForm": "DRC-01C Part B on the portal ('Return Compliance' -> ITC mismatch GSTR-2B vs 3B; verify path): paid or reversed via DRC-03 (ARN), explanation, or both",
+      "window": "7 days from the intimation",
+      "typicalIssues": "Reclaim of ITC reversed earlier (Rule 37A / 4B(2) -> 4D(1)/4A(5)); ITC from an earlier 2B claimed now; ITC on invoices not yet in 2B (s.16(2)(aa) exposure); import/ISD/RCM rows outside the comparison; 2B amendments and credit-note netting.",
+      "autoSource": "twob_import_docs, books_register, bills_not_in_2b (reversal/reclaim months), bills_not_in_books, gst_credit_reversal_reclaim_entries, itc_summaries, gst_filed_returns (3B Table 4)",
+      "automation": "Full",
+      "minutesSaved": 100,
+      "verify": "Threshold (reported as Rs 25 lakh and 20%); which Table 4A rows the portal compares with 2B; menu path."
+    },
+    {
+      "form": "GSTR-3A",
+      "basis": "s.46; Rule 68 (return-defaulter notice); s.62 best-judgement assessment (ASMT-13); s.47 late fee; s.50 interest",
+      "replyForm": "No reply form: file the pending return. The notice is deemed withdrawn if the return is filed before the assessment order.",
+      "window": "15 days",
+      "typicalIssues": "GSTR-3B / GSTR-1 / GSTR-4 / GSTR-9 / GSTR-10 not filed; the return was in fact filed (portal lag).",
+      "autoSource": "filing_status, gst_filed_returns (filed_date, ARN), client_scheme_history, interestLateFee.ts",
+      "automation": "Full",
+      "minutesSaved": 15,
+      "verify": "s.62(2) withdrawal window after an ASMT-13 order (60 days, extendable by 60 days with additional late fee per Finance Act 2023)."
+    },
+    {
+      "form": "REG-03",
+      "basis": "s.25; Rule 9(2) (clarification on a registration or amendment application)",
+      "replyForm": "REG-04 (clarification and documents) via the registration clarification screen (verify path)",
+      "window": "7 working days from receipt",
+      "typicalIssues": "Proof of principal place (rent agreement, NOC, electricity bill), signatory or partner documents, constitution documents, photographs, Aadhaar authentication or physical verification queries.",
+      "autoSource": "clients, gst_taxpayer_profile; client uploads",
+      "automation": "Assisted",
+      "minutesSaved": 20,
+      "verify": "Current screen path and permitted file types."
+    },
+    {
+      "form": "REG-17",
+      "basis": "s.29(2); Rule 22(1) (SCN for cancellation); suspension under Rule 21A",
+      "replyForm": "REG-18 (reply to the cancellation SCN), on the portal (verify path)",
+      "window": "7 working days from service",
+      "typicalIssues": "Returns not filed for the specified period; business not functioning at the principal place; registration obtained by fraud; ITC availed in breach of s.16; Rule 21 grounds.",
+      "autoSource": "filing_status, gst_filed_returns, gst_challans, gst_taxpayer_profile",
+      "automation": "Assisted",
+      "minutesSaved": 40,
+      "verify": "Reply route and the REG-20 dropping mechanism on the current portal."
+    },
+    {
+      "form": "REG-23",
+      "basis": "s.30; Rule 23(3) (SCN on an application for revocation of cancellation)",
+      "replyForm": "REG-24",
+      "window": "7 working days from service",
+      "typicalIssues": "Revocation application deficient; returns and dues up to the cancellation date not filed or paid; late application.",
+      "autoSource": "filing_status, gst_filed_returns, ledgers",
+      "automation": "Assisted",
+      "minutesSaved": 30,
+      "verify": "Time limit for REG-21 revocation (90 days from the cancellation order, extendable per Rule 23 as amended in 2023)."
+    },
+    {
+      "form": "REG-31",
+      "basis": "Rule 21A(2A) (intimation of suspension and notice for cancellation on significant return differences or anomalies)",
+      "replyForm": "Reply or explanation on the portal against the REG-31 (verify path); suspension can be revoked on a satisfactory reply",
+      "window": "30 days",
+      "typicalIssues": "GSTR-1 vs 3B liability gap, 2B vs 3B ITC gap, non-filing, other anomalies flagged by the system.",
+      "autoSource": "Same recipes as DRC-01B / DRC-01C, plus filing_status",
+      "automation": "Assisted",
+      "minutesSaved": 90,
+      "verify": "Reply route; effect of the reply on suspension (Rule 21A(4))."
+    },
+    {
+      "form": "RFD-08",
+      "basis": "s.54; Rule 92(3) (SCN proposing rejection of a refund)",
+      "replyForm": "RFD-09, in the refund case folder -> Reply",
+      "window": "15 days from receipt",
+      "typicalIssues": "Inverted-duty formula (Rule 89(5)); export realisation (BRC/FIRC); shipping-bill vs invoice mismatch; ITC not in 2B; capital goods / input services in Net ITC; unjust enrichment (s.54(8)); 2-year limitation; deficiencies.",
+      "autoSource": "gst_refund_applications, refund case folders (APLCN/NOTAC/REPLY), twob_import_docs, gst_filed_returns, gst_credit_ledger_transactions",
+      "automation": "Assisted",
+      "minutesSaved": 120,
+      "verify": "Current Rule 89(5) formula; RFD-06 order within 60 days (s.54(7)); attachment limits."
+    },
+    {
+      "form": "ADT-01",
+      "basis": "s.65; Rule 101 (audit by tax authorities)",
+      "replyForm": "Produce books and records on the date and at the place stated; written replies to discrepancies raised during the audit (usually letters, not a portal form)",
+      "window": "Notice at least 15 working days before the audit; audit to finish within 3 months of commencement (extendable to 6)",
+      "typicalIssues": "Full-scope audit: every ASMT-10 issue plus documentation, valuation, classification, RCM and ITC eligibility.",
+      "autoSource": "Everything: returns, recon packs, GSTR-9/9C workings, ledgers, DRC-03",
+      "automation": "Assisted",
+      "minutesSaved": 240,
+      "verify": "Rule 101 periods; whether ADT forms are exchanged on the portal in the client's state."
+    },
+    {
+      "form": "ADT-02",
+      "basis": "s.65(6) (audit findings); s.65(7) -> s.73/74/74A",
+      "replyForm": "Accept and pay via DRC-03, or contest in writing; an SCN follows on unpaid observations",
+      "window": "Report within 30 days of the audit's conclusion; taxpayer action as stated in the report",
+      "typicalIssues": "Audit observations, para by para.",
+      "autoSource": "As ADT-01 + notice_issues from the report",
+      "automation": "Assisted",
+      "minutesSaved": 120,
+      "verify": "Whether state audit wings issue observations before ADT-02, and the response window they allow."
+    },
+    {
+      "form": "DRC-07 -> APL-01",
+      "basis": "Rule 142(5) (summary of order); s.107 and Rules 108/109 (first appeal); s.107(6)-(7) pre-deposit and stay of recovery; s.161 rectification",
+      "replyForm": "APL-01 with statement of facts and grounds, filed on the portal (My Applications -> Appeal to Appellate Authority; verify) after the pre-deposit; APL-02 acknowledgement. Or a rectification application under s.161.",
+      "window": "3 months from communication of the order, plus a condonable 1 month (s.107(1), (4)); rectification within 3 months",
+      "typicalIssues": "Natural justice (no PH, reply ignored); order going beyond the SCN (s.75(7)); limitation; quantification; merits on each issue; stay of recovery.",
+      "autoSource": "Order rows and ORDRS/DRC7A folder items, the filed reply and notice_issues (reply vs findings diff), gst_drc03_filings / ledgers (pre-deposit), litigation_rules",
+      "automation": "Assisted",
+      "minutesSaved": 300,
+      "verify": "Pre-deposit (full admitted amount + 10% of disputed tax; cap Rs 20 crore per Act after Finance (No. 2) Act 2024); 10% of penalty for penalty-only orders and s.129 appeals (Finance Act 2025)."
+    },
+    {
+      "form": "APL-04 -> GSTAT (APL-05)",
+      "basis": "s.112; GSTAT procedure rules (verify current rules)",
+      "replyForm": "APL-05 on the GSTAT e-filing portal (separate from the GST common portal; verify), paper book, additional pre-deposit",
+      "window": "3 months from communication of the order (condonable by 3 months); a special start date applies to orders passed before GSTAT became operational (verify)",
+      "typicalIssues": "Questions of fact and law from the APL-04 order; pre-deposit; recovery stay.",
+      "autoSource": "Matter file: notice, reply, orders, hearing notes, payments; reply_drafts as the base for grounds",
+      "automation": "Assisted",
+      "minutesSaved": 240,
+      "verify": "Pre-deposit (additional 10%, cap Rs 20 crore per Act after Finance (No. 2) Act 2024); the notified filing window for legacy orders; e-filing procedure."
+    },
+    {
+      "form": "INS-01 / Summons u/s 70",
+      "basis": "s.67 (inspection / search; INS-01 authorisation, INS-02 seizure, INS-03 prohibition); s.70 (summons to give evidence or produce documents)",
+      "replyForm": "Appearance and statement; letter producing documents (no portal reply form)",
+      "window": "Date stated in the summons; inspection is immediate",
+      "typicalIssues": "Investigation of fake-invoice ITC, undervaluation, clandestine removal, RCM; requests for specified documents.",
+      "autoSource": "Document pack built from returns, 2B, ledgers and books; matter history",
+      "automation": "Manual",
+      "minutesSaved": 60,
+      "verify": "CBIC instruction on issuing summons (Instruction 03/2022-23); state practice."
+    },
+    {
+      "form": "DRC-13 / DRC-22",
+      "basis": "s.79(1)(c) garnishee notice (Rule 145, DRC-13/14); s.83 provisional attachment (Rule 159, DRC-22), which lapses after 1 year (s.83(2))",
+      "replyForm": "Pay; seek a stay by filing an appeal with pre-deposit (s.107(7)); instalments (DRC-20, s.80); objection to attachment (Rule 159(5)); release order",
+      "window": "Immediate; objection to provisional attachment within 7 days (Rule 159(5))",
+      "typicalIssues": "Recovery started while an appeal or rectification is pending; attachment of bank accounts; partial payments not credited.",
+      "autoSource": "Matter: order, appeal status, pre-deposit (gst_drc03_filings / ledgers), payments",
+      "automation": "Manual",
+      "minutesSaved": 30,
+      "verify": "Current Rule 159 forms and objection procedure; recovery-start rule (3 months after service of the order unless recorded otherwise)."
+    },
+    {
+      "form": "CMP-05",
+      "basis": "s.10; Rule 6(4) (SCN denying the composition option)",
+      "replyForm": "CMP-06 reply; order in CMP-07",
+      "window": "15 days of receipt",
+      "typicalIssues": "Inter-state outward supply, e-commerce supplies, turnover above the limit, notified goods, service-supplier limits, tax collected on invoices.",
+      "autoSource": "client_scheme_history, client_annual_turnover, gst_filed_returns (GSTR-4/CMP-08), books turnover",
+      "automation": "Assisted",
+      "minutesSaved": 40,
+      "verify": "Current s.10 limits and exclusions."
+    },
+    {
+      "form": "MOV-07 / MOV-09",
+      "basis": "s.129 (detention, penalty); s.130 (confiscation); e-way bill rules and the MOV-series forms",
+      "replyForm": "Reply to MOV-07 before the officer; release on payment; appeal against MOV-09 by APL-01 with penalty pre-deposit",
+      "window": "Notice within 7 days of detention; order within 7 days of service of the notice (s.129(3) as amended by Finance Act 2021)",
+      "typicalIssues": "E-way bill missing or expired, Part-B not updated, invoice or quantity discrepancy, valuation, minor technical lapses.",
+      "autoSource": "No e-way bill data in the app; invoice from GSTR-1 / books; uploaded e-way bill and transport documents",
+      "automation": "Manual",
+      "minutesSaved": 30,
+      "verify": "Penalty quantum under s.129(1) and pre-deposit for s.129 appeals (25% under Finance Act 2021; 10% under Finance Act 2025)."
+    }
+  ],
+  "recipes": [
+    {
+      "issue": "DRC-01B: GSTR-1 vs GSTR-3B liability (Rule 88C)",
+      "inputs": "gst_filed_returns GSTR1 (summary sec_sum TTL_LIAB per head; full_json B2B/B2CL/B2CS/EXP/SEZ/CDNR/CDNUR/AT/TXPD and amendment sections) and GSTR3B (3.1(a)+(b), plus 3.1(c)/(e) for context) per month with ARN and filed_date; gstr3b_adjustments (reason, table_ref); gst_running_updates (effect_month, update_in_return); gst_drc03_filings; gst_liability_ledger_entries; intimation period and amounts from the DRC-01B (portal JSON or extraction).",
+      "computation": "For every month m in the intimation period and the FY to date: D(m,head) = GSTR-1 liability - 3B liability, plus the cumulative C(m,head). Attribute the difference in order: (1) timing - GSTR-1 documents of m whose tax appears in 3B of m+k, matched by doc no/date from the GSTR-1 JSON and running-update notes; the cumulative difference should revert to about 0; (2) amendments and credit notes booked in other months; (3) advances AT/TXPD; (4) mis-tagging - RCM invoices or WOPAY exports in GSTR-1 that carry no 3.1(a) tax; (5) DRC-03 paid (ARN, date, head). Residual R(head) = cumulative minus everything explained. If R > 0: tax payable plus s.50 interest on the cash portion via interestLateFee.computeInterest, from the 3B due date to the payment date. Check R against the Rule 88C threshold (verify).",
+      "annexure": "A-1 Month-wise GSTR-1 vs GSTR-3B by head (IGST/CGST/SGST/Cess) with ARNs, filing dates, difference and cumulative. A-2 Reconciling items: doc no, date, GSTIN, taxable value, tax, GSTR-1 month, 3B month, reason code. A-3 DRC-03 payments: ARN, date, head-wise. A-4 Residual and interest computation. Part B: prefilled values (reason, amount, ARN).",
+      "paragraph": "\"The difference of Rs {A1.diff_total} between the liability declared in GSTR-1 and GSTR-3B for {period} arises because {n} invoices carrying tax of Rs {A2.timing_total}, reported in GSTR-1 for {month}, were offered to tax in GSTR-3B for {next_month} (Annexure A-2, rows {rows}). Taken over {range}, the tax paid through GSTR-3B is not less than the liability in GSTR-1 (Annexure A-1, cumulative column). [If residual:] The balance of Rs {A4.residual} has been paid vide DRC-03 ARN {arn} dated {date} with interest of Rs {A4.interest}. There is therefore no short payment, and we request that the intimation be dropped.\""
+    },
+    {
+      "issue": "DRC-01C: ITC in GSTR-3B vs GSTR-2B (Rule 88D)",
+      "inputs": "gst_filed_returns GSTR3B Table 4A(1)-(5), 4B(1)/(2), 4D(1) per month; twob_import_docs per period (MATCHED / MISMATCHED / INELIGIBLE / ITC_OF_OTHERS, itc_available, invoice_type incl. ISD/IMPG/CDN, gstr1_filing_date); books_register; bills_not_in_2b (reversal_month, reclaim_month, reclaimed_via_doc_id); bills_not_in_books (bill_in_2b_month, book_entry_month); gst_credit_reversal_reclaim_entries (ECRRS); itc_summaries; gst_credit_ledger_transactions (balance trail); gst_drc03_filings.",
+      "computation": "Per month and head: E = ITC availed in the 3B rows the portal compares (verify) - ITC available in 2B. Attribute: (1) reclaims of earlier reversals - 4D(1)/4A(5) reclaim tied to bills_not_in_2b.reclaim_month and the ECRRS reclaim entries; (2) earlier-period 2B ITC availed now - bills_not_in_books where the 2B month precedes the claim month; (3) rows outside the comparison basis (imports, ISD, RCM); (4) 2B credit-note netting and amendments; (5) genuine excess - NOT_IN_2B items claimed and not reversed. For (5), s.50(3) interest arises only if utilised: test the daily ECL balance against the excess (Rule 88B(3); verify).",
+      "annexure": "B-1 Month-wise 3B ITC vs 2B ITC by head. B-2 Reclaims: ECRRS reference, reversal month, reclaim month, amount, invoice list. B-3 Earlier-2B invoices availed this period: supplier GSTIN, invoice no/date, 2B month, ITC. B-4 Excess (if any): action taken (DRC-03 / 4B(2) reversal), ECL balance trail, interest.",
+      "paragraph": "\"The ITC of Rs {B1.excess} availed over GSTR-2B for {month} comprises (i) Rs {B2.total}, being re-claim of ITC reversed in Table 4B(2) of GSTR-3B for {reversal_months} on invoices that have since appeared in GSTR-2B for {months}, as shown in the Electronic Credit Reversal and Re-claimed Statement (Annexure B-2); and (ii) Rs {B3.total} on invoices that appeared in GSTR-2B for {earlier_months} and were availed in this period, within the time limit of s.16(4) (Annexure B-3). [If residual:] ITC of Rs {B4.amount} has been reversed vide {DRC-03 ARN / Table 4B(2) of {month}}; the balance in the electronic credit ledger never fell below this amount, so no interest is payable (Annexure B-4). No ITC has been availed beyond the entitlement under s.16(2)(aa) read with Rule 36(4).\""
+    },
+    {
+      "issue": "ASMT-10: GSTR-1 vs GSTR-3B for the FY",
+      "inputs": "As DRC-01B for all 12 months; GSTR-1 of the next FY (Apr-Nov) for current-FY documents (buildGstr1PyInCyReport); GSTR-9 / 9C (annual_return_docs tables 4/5/9/10/11/14; gstr9_table14_differential_tax); books (duties_taxes_output_monthly, books_turnover_lines); the officer's figures per head from the notice.",
+      "computation": "First reproduce the officer's arithmetic (which GSTR-1 figure and which 3B rows) so the reply speaks to the same numbers. Then the month table and FY totals. Add next-FY amendments and additions for current-FY supplies, and tax paid in the next FY's 3B or via GSTR-9 Table 14. Subtract DRC-03 payments. Residual, with interest on the cash portion.",
+      "annexure": "C-1 Month-wise GSTR-1 vs 3B (as A-1). C-2 Next-FY amendments and additions for current-FY documents. C-3 'Notice reply format' outward rows 1-11 from the GSTR-9 workspace (NoticeStep, PDF export exists). C-4 Payments (next-FY 3B, Table 14, DRC-03). C-5 Residual and interest.",
+      "paragraph": "\"The notice compares GSTR-1 (Rs {X}) with GSTR-3B (Rs {Y}) for FY {fy}. The difference is fully explained by (a) supplies of FY {fy} declared and paid in GSTR-3B for {next_fy_months} (Rs {A}; Annexures C-2/C-4, also disclosed in Tables 10/11/14 of GSTR-9), and (b) {other reasons}. The outward-liability reconciliation in Annexure C-3 shows net tax payable of Rs {C3.r11}, which [has been paid vide ... / is nil].\""
+    },
+    {
+      "issue": "ASMT-10 / DRC-01: GSTR-2A/2B vs GSTR-3B ITC for the FY",
+      "inputs": "GSTR-3B Table 4A/4B/4D for 12 months (gst_filed_returns); gstr2a_import_docs (periods to Dec-2021) or twob_import_docs (2B), incl. gstr1_filing_date; books_register; bills_not_in_2b / bills_not_in_books; itc_summaries; annual_return_docs (8A-8D; inward 'notice format' rows 1-9); the officer's basis from the notice (2A or 2B; which table).",
+      "computation": "Supplier-wise: ITC per books vs 2A/2B vs 3B claimed. FY-level: 3B net ITC (4A - 4B + reclaims) vs 2A/2B, including 2A of later periods up to the s.16(4) cut-off. Categorise: (i) supplier filed late - the invoice appears in a later 2A/2B; (ii) supplier never filed - for periods up to 31-12-2021 use the Circular 183/15/2022 and 193/05/2023 procedure (CA certificate above the threshold, supplier certificate below; verify thresholds); from 01-01-2022 s.16(2)(aa) requires 2B; (iii) wrong GSTIN / POS / ITC_OF_OTHERS; (iv) IMPG, ISD, RCM not populated in 2A; (v) ITC already reversed or never availed.",
+      "annexure": "D-1 FY reconciliation (3B vs 2A/2B vs books) by head. D-2 Supplier-wise differences with category and evidence pointer. D-3 Invoices appearing in 2A/2B of later periods (with month). D-4 Certificates required or enclosed (supplier/CA) for periods up to Dec-2021. D-5 Items reversed or paid.",
+      "paragraph": "\"For FY {fy}, ITC availed in GSTR-3B (net Rs {X}) exceeds the ITC auto-populated in GSTR-2A/2B (Rs {Y}) by Rs {Z}. Of this, Rs {A} relates to invoices whose suppliers furnished GSTR-1 late and which appear in GSTR-2A for {months} (Annexure D-3); Rs {B} relates to imports, ISD and reverse-charge ITC that do not populate GSTR-2A (Annexure D-1); for the balance of Rs {C}, the supplier-wise details and certificates contemplated by Circular 183/15/2022-GST, made applicable to 01-04-2019 to 31-12-2021 by Circular 193/05/2023-GST [verify], are enclosed (Annexure D-4).\""
+    },
+    {
+      "issue": "RCM liability and ITC",
+      "inputs": "rcm_data (month, particulars, supply_type, rate-wise tax), rcm_masters (notified categories), books_purchase_lines / expense_head_mappings (GTA, legal, security, director fees, rent from unregistered persons, import of services), twob_import_docs with reverse_charge = Y, gst_rcm_liability_itc_entries (portal RCM liability/ITC statement), GSTR-3B 3.1(d), 4A(2), 4A(3); gst_cash_ledger_entries.",
+      "computation": "(i) RCM liability determined from the books by notified category x rate, minus 3.1(d) declared, per month. (ii) ITC in 4A(2)+4A(3) must not exceed cumulative RCM paid; the statement's closing balance must never go negative. (iii) Supplier-declared RCM invoices in 2B vs 3.1(d). (iv) Short-paid RCM: tax plus s.50 interest; ITC is available in the same period unless blocked under s.17(5), so present the revenue-neutrality facts (the legal weight of that argument: verify from the library).",
+      "annexure": "E-1 RCM register vs 3.1(d), month-wise. E-2 Category-wise RCM (GTA / legal / rent / import of services) with ledger references. E-3 Portal RCM liability/ITC statement with running balance. E-4 Short payment, DRC-03 and interest.",
+      "paragraph": "\"RCM liability on {categories} for FY {fy} of Rs {X} was discharged in cash in Table 3.1(d) of GSTR-3B (Annexures E-1, E-3). ITC of Rs {Y} was taken in Table 4A(3) only after payment; the RCM Liability/ITC Statement shows a non-negative closing balance in every month. The difference pointed out arises because {e.g. the notice treats freight paid to GTAs who charged tax at 12% under forward charge as RCM supplies (Annexure E-2)}.\""
+    },
+    {
+      "issue": "E-way bill value vs GSTR-1",
+      "inputs": "E-way bill data, which is NOT in the app: import the e-way bill portal's 'generated by me / by others' reports, or pull them through a GSP, into a new ewb_documents table. GSTR-1 invoice-level JSON (gst_filed_returns full_json / gstr1_data.raw_json); delivery challans from the books, if available.",
+      "computation": "Match e-way bills to GSTR-1 documents on doc no (normalised), date (+/- 1 month) and recipient GSTIN. Classify the unmatched: cancelled within 24 h; non-supply movements (job work, same-GSTIN transfers, SKD/line sales, exhibitions, returns - from supply type and sub-type); rejected by the recipient; invoice reported in another month; value basis (e-way bill value includes tax and charges, GSTR-1 shows taxable value); several e-way bills for one invoice; e-way bills generated by the transporter.",
+      "annexure": "F-1 Summary of e-way bill value vs GSTR-1 value, by month. F-2 Matched list. F-3 Unmatched e-way bills with reason code and supporting document. F-4 Residual and tax.",
+      "paragraph": "\"The aggregate value of e-way bills (Rs {X}) differs from the outward supplies in GSTR-1 (Rs {Y}) because (a) e-way bills of Rs {A} were cancelled within 24 hours; (b) Rs {B} relates to movement of goods for job work under delivery challans, which are not supplies; (c) Rs {C} is the difference between e-way bill value, which includes GST, and taxable value reported in GSTR-1 (Annexure F-3).\""
+    },
+    {
+      "issue": "Interest (s.50) and late fee (s.47)",
+      "inputs": "filing_status / gst_filed_returns.filed_date per return and period; statutory due dates and extensions (needs a due-date-extension table; verify notifications) or clients.target_date_group1/2; GSTR-3B full_json (tax payable, paid in cash / ITC per head, interest and late fee paid); gst_cash_ledger_entries (debit dates); gst_credit_ledger_transactions (ECL balance trail); client_annual_turnover (late-fee tier); gst_drc03_filings (interest paid); gst_running_updates.interest.",
+      "computation": "s.50(1): cash-portion tax x 18% x days late / 365 (proviso to s.50(1) and Rule 88B(1); firm positions in docs/INTEREST_LATE_FEE_POSITIONS.md). s.50(3): interest on wrongly availed ITC only for days it was utilised - daily ECL balance vs the wrongly availed amount (Rule 88B(3); verify). Late fee: per return, per day, per head, with tier and nil caps (interestLateFee.computeLateFee). Then reconcile with the department's figure, which is often on gross tax, and deduct interest and late fee already paid.",
+      "annexure": "G-1 Return-wise: due date, filed date, days late, cash portion by head, interest at 18%, paid, balance. G-2 Late fee per return with tier and cap. G-3 ECL balance trail for s.50(3). G-4 Reconciliation with the notice's computation.",
+      "paragraph": "\"Interest under s.50(1) is leviable only on the portion of tax paid by debiting the electronic cash ledger (proviso to s.50(1) read with Rule 88B(1)) [verify]; the notice computes interest on the gross liability of Rs {X}. Correctly computed, interest is Rs {Y} (Annexure G-1), of which Rs {Z} was paid with GSTR-3B / DRC-03 ARN {arn}. The ITC of Rs {W} treated as wrongly availed was never utilised - the credit-ledger balance never fell below that amount (Annexure G-3) - so no interest arises under s.50(3).\""
+    },
+    {
+      "issue": "Ineligible ITC u/s 17(5)",
+      "inputs": "books_purchase_lines (expense_head, ledger_head, taxes) and expense_head_mappings; pl_input_lines; duties_taxes_input_monthly; twob_import_docs (portal INELIGIBLE flag, supplier, taxable value, ITC); GSTR-3B 4B(1) and 4D; builder module for construction cases; the list of items the notice treats as blocked.",
+      "computation": "Map expense heads to s.17(5) clauses: motor vehicles/vessels/aircraft (a, aa, ab); food, catering, beauty, health, insurance, club and fitness membership, employee travel benefits (b); works contract or construction of immovable property on own account (c, d); composition supplies (e); non-residents (f); CSR (fa; verify effective date); personal consumption (g); goods lost, stolen, written off, gifted or given as free samples (h); tax paid under s.74/129/130 (i). Compute ITC claimed per clause vs reversed in 4B(1) or not availed (4D). Test the exceptions: vehicles for transporting goods, more than 13 seats, further supply of the same category, services obligatory for employers under law.",
+      "annexure": "H-1 Expense-head ITC with s.17(5) clause and treatment. H-2 Items claimed under an exception, with justification and evidence. H-3 Items reversed (3B month, row). H-4 Residual payable with interest.",
+      "paragraph": "\"ITC of Rs {X} on {head} was not availed, or was reversed in Table 4B(1) of GSTR-3B for {months} (Annexure H-3). ITC of Rs {Y} on {motor vehicles used for transportation of goods} falls outside s.17(5)(a) by virtue of {clause}; registration certificates and usage records are enclosed (Annexure H-2).\""
+    },
+    {
+      "issue": "ITC from cancelled or non-existent suppliers",
+      "inputs": "twob_import_docs / gstr2a_import_docs (supplier GSTIN, invoice, gstr1_filing_date, irn); books_register; supplier registration status with effective cancellation date and order date, which is NOT in the app (new supplier_registration_status table filled through a GSP taxpayer-search API; check the permitted method); e-way bills (not in app); bank proof and GRNs from client uploads.",
+      "computation": "For each cancelled supplier, bucket invoices by date against (a) the effective date of cancellation and (b) the date of the cancellation order. (i) Before the effective date: registration was valid at the time of supply. (ii) Between a retrospective effective date and the order date: contestable - show every s.16(2) condition met (tax invoice, receipt of goods via e-way bill/GRN, invoice in 2A/2B, payment including tax through banking channels, plus Rule 37 180-day payment). (iii) After the order date: not admissible - reverse with interest. Amounts by head.",
+      "annexure": "I-1 Supplier list: GSTIN, name, effective date, order date, invoice count, value and ITC per bucket. I-2 Invoice-level evidence matrix: in 2A/2B? (month), e-way bill no., GRN, payment UTR and date. I-3 Reversals made and interest.",
+      "paragraph": "\"The registration of {supplier} was cancelled on {order_date} with retrospective effect from {effective_date}. All {n} invoices, carrying ITC of Rs {X}, were issued while the supplier's registration was active on the portal; they are reflected in our GSTR-2A/2B for {months}; the goods were received under e-way bills {..}; and the consideration including tax was paid through banking channels (Annexure I-2). Every condition of s.16(2) is satisfied. [Authority from the firm's verified library only; the legal position on retrospective cancellation must be checked: verify.]\""
+    },
+    {
+      "issue": "Time-barred ITC u/s 16(4)",
+      "inputs": "twob_import_docs / gstr2a_import_docs (invoice date, 2B/2A period, gstr1_filing_date); books_register.period_month and bills_not_in_2b.reclaim_month (the month ITC was actually availed); gst_filed_returns GSTR3B.filed_date for that month; GSTR-9 filing date for the FY (if pulled); cutoff.ts; s.16(5)/(6) flags (FY 2017-18 to 2020-21; revoked registrations); the invoice list from the notice.",
+      "computation": "For each invoice: FY of the invoice date; deadline = the earlier of 30 November after the FY and the date the GSTR-9 for that FY was furnished (s.16(4) as amended by Finance Act 2022; verify - the app's cutoff.ts uses 30 November only); availment date = filing date of the 3B in which the ITC was claimed. Time-barred if availment date > deadline, unless s.16(5) (returns filed up to 30-11-2021 for FY 2017-18 to 2020-21) or s.16(6) applies. Show the supplier's GSTR-1 filing date alongside, because officers often apply that date instead.",
+      "annexure": "J-1 Invoice-wise: supplier GSTIN, invoice no/date, FY, 2A/2B period, supplier GSTR-1 filing date, 3B period claimed, 3B filing date, deadline, s.16(5)/(6) flag, status. J-2 Summary by status and head. J-3 Reversal or payment for genuinely late items.",
+      "paragraph": "\"ITC on the {n} invoices in Annexure J-1 was availed in GSTR-3B for {month}, filed on {date}, before the time limit of {deadline} under s.16(4). The notice appears to apply the date on which the supplier furnished GSTR-1, which is not the test under s.16(4). [For FY 2017-18 to 2020-21:] s.16(5), inserted by the Finance (No. 2) Act, 2024 with retrospective effect from 01-07-2017, allows ITC availed in any return filed up to 30-11-2021 [and Circular 237/31/2024-GST deals with pending demands: verify].\""
+    },
+    {
+      "issue": "Rule 42/43 reversal on exempt or non-business supplies",
+      "inputs": "itc_reversal_lines (rule, FY); buildRule42ShortReversalReport (src/utils/interestScrutinyReports.ts:304); GSTR-3B 3.1(c)/(e) and 4B(1); books turnover (exempt / taxable); itc_summaries (common credit).",
+      "computation": "Rule 42: compute D1 and D2 monthly, then the annual true-up (verify the true-up deadline). Compare with 4B(1) reversals by month. The difference is reversed with interest, or explained (e.g. exempt turnover in the notice includes no-supply items such as interest or securities valued per the Rule 45 explanation; verify).",
+      "annexure": "K-1 Monthly Rule 42 computation (T, T1-T4, C1, C2, D1, D2). K-2 Annual true-up. K-3 Reversals in 3B by month. K-4 Residual and interest.",
+      "paragraph": "\"Common credit was reversed each month under Rule 42 and trued up for the year in GSTR-3B for {month} (Annexures K-1 to K-3). The notice's figure treats {item} as exempt turnover, whereas {explanation}. No further reversal is required.\""
+    }
+  ],
+  "aiPipeline": [
+    {
+      "stage": "0. Preconditions (block AI until done)",
+      "what": "Private storage with signed URLs (R-01); secrets out of git (R-02); schema drift fixed (R-03, R-04); a server-validated staff session for edge functions (R-15); credential columns excluded (R-16); client consent clause in engagement letters; ai_audit_log table.",
+      "where": "supabase/migrations/<ts>_reply_factory_preconditions.sql; supabase/functions/_shared/auth.ts; supabase/functions/_shared/ai/redact.ts",
+      "model": "none",
+      "guardrails": "A feature flag per client (clients.ai_consent_at / ai_opt_out); every AI endpoint refuses to run when consent or a session is missing."
+    },
+    {
+      "stage": "1. Trigger and intake",
+      "what": "Enqueue ai_jobs(kind='extract') when a gst_notices row is first seen, when a NOTCE/INTIM/ORDRS/NOTAC folder item arrives, or when a PDF is uploaded manually. Skip LUT and DRC-03 acknowledgement rows. De-duplicate on the PDF's sha256.",
+      "where": "Postgres trigger on gst_notices / gst_case_folder_items -> ai_jobs table; worker = supabase/functions/notice-ai-worker on pg_cron, or the agent runner (agent/src) for long jobs",
+      "model": "none",
+      "guardrails": "Idempotent on (notice_id, doc sha256, pipeline_version); retries with backoff; a per-day spend cap."
+    },
+    {
+      "stage": "2. Document text and page map",
+      "what": "Fetch the PDF from private storage with the service role. Upload it once through the Files API so extraction, drafting and QA reuse the same file_id; delete it after filing or the retention period. Classify pages (notice body, DRC-02 summary, annexure tables, relied-upon documents, Gujarati/Hindi pages). Store page_count, sha256 and per-page text in notice_documents.",
+      "where": "notice-ai-worker -> notice_documents",
+      "model": "claude-haiku-4-5-20251001 for page classification on PDFs up to 100 pages (200K context, 100-page PDF limit); claude-sonnet-5 for longer PDFs (1M context, 600 pages / 32 MB per request)",
+      "guardrails": "Originals are never altered; bilingual or low-quality scans are flagged for a human check; files over the size limit are split by page range, never truncated silently."
+    },
+    {
+      "stage": "3. Structured extraction",
+      "what": "Extract to a JSON schema: form_code, sections, act(s), FY and tax periods, reference no., DIN, issue date, reply due date, PH date/time/mode/venue, officer name/designation/jurisdiction, demand by head, and issues[] (issue_code from the firm taxonomy, title, period, tax/interest/penalty per head, para no., page, source_quote), plus documents asked for and relied-upon documents.",
+      "where": "notice-ai-worker -> notice_extractions (status 'proposed') + notice_issues (status 'proposed')",
+      "model": "claude-haiku-4-5-20251001 with structured outputs (output_config.format JSON schema); escalate to claude-sonnet-5 when validators fail or the PDF exceeds 100 pages; Message Batches API (50% cost) to backfill the existing ~1,060 notices",
+      "guardrails": "(a) Every field carries page + verbatim source_quote, checked by substring match against the page text; the Citations API cannot be combined with structured outputs, so verification happens in code. (b) Arithmetic: issue amounts must sum to the DRC-02 / total demand per head. (c) Cross-check against portal JSON (sdtls.dtscn.sec/fy/duedt/pershrng, dmddtls): the portal value wins and conflicts are flagged. (d) Enumerated codes only, with 'OTHER' + free text allowed. (e) The due date and demand always need one-click human confirmation."
+    },
+    {
+      "stage": "4. Apply to the notice and start the clocks",
+      "what": "On confirmation, or automatically when the portal JSON agrees: fill form_code, section, period, DIN, officer, due_date (with source), amount_of_demand and financial_year. Create matter_deadlines from litigation_rules (reply due, PH, order time limit under s.73(10)/74(10)/74A, appeal clock on orders). Set priority (short-clock forms = High), owner = clients.assigned_accountant, reviewer by rule, and SLA milestones (documents requested D+1, first draft at 40% of the window, partner review at 70%).",
+      "where": "RPC apply_notice_extraction(); notice_events ('extracted', 'confirmed'); matter_deadlines",
+      "model": "none",
+      "guardrails": "Never overwrite staff-entered values (fill nulls or propose only); every write carries source='ai:extract@vN'; one-click undo from the event log."
+    },
+    {
+      "stage": "5. Evidence and annexures (deterministic)",
+      "what": "For each issue_code, run its recipe across the notice's periods. A data-readiness check lists missing pulls (e.g. GSTR-3B for Jul-Sep 2021 NOT PULLED) and queues extension pull jobs. Output annexure JSON whose rows carry provenance (table, primary key, ARN, pulled_at), plus XLSX and PDF tables.",
+      "where": "src/lib/reply/recipes/*.ts (pure; reuse src/utils/gstr3bReports.ts, interestLateFee.ts, interestScrutinyReports.ts, gstr9/notice/cutoff.ts, the NoticeStep notice format) -> reply_annexures (versioned)",
+      "model": "none",
+      "guardrails": "Numbers come only from code. A rerun invalidates downstream drafts and shows a diff. Annexures are locked once the draft is approved."
+    },
+    {
+      "stage": "6. Client document requests",
+      "what": "Generate the list of documents the app cannot produce for each issue (invoices, e-way bills, GRNs, bank UTRs, supplier or CA certificates under Circular 183/193 - verify), with due dates, an E12 email and reminders, and a signed client upload link; received files land on the notice.",
+      "where": "notice_doc_requests; email_outbox + send-gst-email; NoticeDetailPage 'Client requests' tab",
+      "model": "Deterministic list from issue codes; claude-haiku-4-5-20251001 only to phrase the covering email",
+      "guardrails": "The AI only rephrases and never adds items; nothing from other clients appears in a request; uploads are virus-scanned and size-checked."
+    },
+    {
+      "stage": "7. Precedent and authority retrieval",
+      "what": "Candidates: firm templates for (form, issue_code); past approved replies (121 REPLY items across 68 cases already synced, plus partner-final drafts going forward) with outcomes (ASMT-12 / DRC-07: dropped, confirmed, partly); and a curated legal_authorities table (statute sections, rules, circulars, judgments with verified citation, holding and date). Retrieve by issue_code / section / FY filters plus Postgres full-text search. Precedent cards are generated in batch.",
+      "where": "reply_templates, precedent_cards, legal_authorities (partner-maintained); batch job in the agent runner",
+      "model": "claude-sonnet-5 via the Message Batches API for precedent cards (claude-sonnet-5-5 costs the same; compare on the eval set before switching)",
+      "guardrails": "Only partner-approved templates and precedents are used. Other clients' names and GSTINs are pseudonymised in precedent text. legal_authorities is the only citation source; anything else is stripped and flagged."
+    },
+    {
+      "stage": "8. Draft the reply",
+      "what": "Structure: preliminary objections where applicable (limitation, DIN, jurisdiction, natural justice, notice beyond DRC-01A), facts, then issue-wise replies (stance, computation by annexure reference, law), then the prayer (drop proceedings, PH request). Output carries citations to notice pages and annexure rows, with placeholders where data is missing.",
+      "where": "supabase/functions/notice-ai-draft (streaming; long runs go to the worker, verify Edge Function wall-clock limits) -> reply_drafts (version, markdown, citations JSON, prompt hash, input hashes, model, usage)",
+      "model": "claude-opus-5-5. Adaptive thinking is always on and cannot be disabled; set output_config.effort 'high' explicitly (the default is medium); stream; enable the server-side refusal fallback (fallbacks:'default', beta). Prompt caching: frozen system prompt + style guide + statute/circular pack + form template, cached with cache_control (1h TTL for morning batches; 512-token minimum on Opus 5.5), with volatile notice content after the last breakpoint. Citations enabled on the notice PDF and annexure documents. No forced tool_choice (400 on Opus 5.5): use auto + strict tools.",
+      "guardrails": "Figures are written as annexure cell references ({{A2.r5.cgst}}) and filled in by code; a post-check regex requires every rupee figure in the text to equal an annexure cell or a cited notice span, else the draft is blocked. Authorities only by legal_authorities id. No facts beyond the notice, annexures and client documents. Never assert a payment or ARN that is not in the database."
+    },
+    {
+      "stage": "9. Automated QA",
+      "what": "Check against a rubric: every notice_issue answered; amounts consistent; PH requested when an adverse finding is contemplated; limitation/DIN objections considered; reduced-penalty window flagged (s.73(8)/74(8)/74A; verify); tone and format; prohibited content. Results are written onto the draft as a checklist.",
+      "where": "supabase/functions/notice-ai-qa -> reply_draft_checks",
+      "model": "claude-sonnet-5 as judge (claude-opus-5-5 at effort 'low' for SCNs)",
+      "guardrails": "The code gates (numeric trace = 100%, authority whitelist, issue coverage = 100%) block hard; the LLM judge is advisory only."
+    },
+    {
+      "stage": "10. Human review and redlines",
+      "what": "Staff edit in the Draft tab (versioned, diff against AI v1), then the partner review queue, comments and approval. Approval writes a partner_approved event (permission key partner_review). Edit distance is stored for the KPI and the eval set. Optional 'revise per comments' action.",
+      "where": "NoticeDetailPage Draft tab; reply_drafts, reply_reviews; notice_events",
+      "model": "claude-opus-5-5 (revision on request only)",
+      "guardrails": "Nothing renders or files without approval. Approval is tied to the version hash; any edit after approval resets it."
+    },
+    {
+      "stage": "11. Render the upload pack",
+      "what": "DOCX (docx library) and PDF on the firm letterhead (reportTheme.drawHeader), or the taxpayer letterhead template for client-signed replies; annexures as PDF/XLSX; a document index. Merge, split and compress to the portal limits (verify current limits: types, MB per file, file count), with a checksum manifest.",
+      "where": "Client-side docx/jsPDF (move docx from devDependencies) + agent runner (qpdf/ghostscript) -> filing_packs",
+      "model": "none",
+      "guardrails": "A pack is built only from the approved version; a size and format validator runs; file names carry the notice reference."
+    },
+    {
+      "stage": "12. Evaluation and learning loop",
+      "what": "Eval set from the firm's past notices and replies (seed: the 121 REPLY items / 68 cases plus their notices), labelled by a partner with issue list, due date, demand by head and the final reply. Graders: exact match for extraction fields; issue recall; numeric trace; authority whitelist; an LLM-judge rubric against the partner-final reply; a monthly blind A/B by the partner. Run on every prompt or model change.",
+      "where": "scripts/evals/* (Node) using Message Batches; results in ai_eval_runs",
+      "model": "Each candidate model under test (claude-haiku-4-5-20251001 / claude-sonnet-5 / claude-opus-5-5; claude-sonnet-5-5 as a challenger)",
+      "guardrails": "Held-out test split. No prompt or model change ships if a hard gate regresses. Outcomes (dropped / confirmed) feed precedent ranking."
+    },
+    {
+      "stage": "13. Data protection and audit",
+      "what": "DPDP Act 2023: the firm is the Data Fiduciary and Anthropic a processor under the commercial terms / DPA. Client consent (engagement-letter clause) for AI processing and cross-border transfer; inference_geo offers only 'us' or 'global', with no India pin (verify s.16 restricted-country notifications and the DPDP Rules 2025 timelines). ICAI confidentiality duties. Minimisation and redaction: never send gst_password, client_password, gst_user_id or profiles.password; mask PAN, Aadhaar and bank account numbers unless they are in issue. Delete Files API objects after filing. ZDR or retention terms per contract (verify). An ai_audit_log row per call: user, notice, model, file hashes, tokens, cost, output id.",
+      "where": "supabase/functions/_shared/ai/redact.ts (deny-list test), ai_audit_log, clients.ai_consent_at; signed URLs only",
+      "model": "n/a",
+      "guardrails": "Calls are blocked without consent; quarterly access review; an incident runbook (DPDP breach intimation; verify timelines); AI never files or signs anything."
+    }
+  ],
+  "filingAssist": [
+    {
+      "step": "1. Gate: 'File on portal' button on the notice page",
+      "automation": "Full (app). Enabled only when the draft is partner-approved, the pack passes the size/format validator and no REPLY item already exists for this notice.",
+      "risk": "Stale sync data could hide an existing reply, so step 3 re-checks live through litserv before any field is touched."
+    },
+    {
+      "step": "2. Launch and log in as the client",
+      "automation": "Assisted. The app posts __gstkPrepareReply {noticeId, clientId, caseArn, refNo, formCode, packId}; the background worker fetches the pack through short-lived signed URLs and reuses handleLogin (a human types the CAPTCHA).",
+      "risk": "Today the portal password is copied into chrome.storage job objects (extension/background.js:304,516); fetch it at login time or have the user type it. GSTN treats automated access as unauthorised (agent/README.md 'Legal / risk'), so keep this user-initiated and attended, and never solve the CAPTCHA."
+    },
+    {
+      "step": "3. Navigate to the right reply screen",
+      "automation": "Full where selectors are known, via a versioned route map per form: case-folder notices (ASMT-10, DRC-01A, DRC-01, RFD-08) -> litserv case folder for the case ARN -> Notices/Intimations -> item with refId -> Reply; DRC-01B/01C -> Return Compliance screens; REG-03/17/23/31 -> registration reply screens (verify each path).",
+      "risk": "Selector fragility on an Angular SPA that changes with portal releases. Assert screen identity (the on-screen reference no. must equal the notice ref) before acting; otherwise fall back to 'stop and guide' mode with copy-to-clipboard."
+    },
+    {
+      "step": "4. Prefill the form fields",
+      "automation": "Full: reply text (a summary within the field's character limit, verify; the full reply goes as the PDF), reply type, PH option, DRC-03 ARN(s) for Part B 'paid' options, DRC-01B/01C reason codes.",
+      "risk": "Wrong field or wrong notice. Read back every filled value, highlight it, and leave the declaration and verification ticks to the human."
+    },
+    {
+      "step": "5. Attach the pack",
+      "automation": "Full (best effort): download the files, set input[type=file] through DataTransfer, dispatch input/change events, then confirm each filename and size appears on screen.",
+      "risk": "The portal may ignore programmatically set files or enforce type, size or count limits (verify). Fallback: save the pack to a local folder and let the user attach it."
+    },
+    {
+      "step": "6. Stop before submit",
+      "automation": "Manual by design: a banner says 'Check, then sign with DSC/EVC'. The extension never clicks Submit/File/Proceed-to-sign and never touches the OTP or DSC.",
+      "risk": "The EVC OTP goes to the authorised signatory (often the client), so the app should schedule a call slot. Users may expect auto-filing, so the UI copy must be explicit."
+    },
+    {
+      "step": "7. Capture the acknowledgement automatically",
+      "automation": "Full: the content script watches the submit response or acknowledgement page (reply ARN/ref, date, ack PDF), then __gstkReplyFiled -> RPC log_reply_filed sets reply_date, reply_ref_number / submission_arn, stage 'Filed', deadline met, a reply_logged event and the matter stage; the ack PDF goes to private storage.",
+      "risk": "Ack page formats change. Fallback: the REPLY-folder reconciler on the next sync (reply.ntcno / decdtls.dt) marks the notice filed with no typing."
+    },
+    {
+      "step": "8. Post-filing automation",
+      "automation": "Full: create the PH deadline if one was opted for; send the client the filed copy (E13); watch for ASMT-12, DRC-07 or closure items to close the notice or open the appeal clock.",
+      "risk": "A misclassified folder item could close a notice wrongly, so closure requires an item-type match and orders need human confirmation."
+    },
+    {
+      "step": "9. Governance",
+      "automation": "Full: written client authorisation for portal access on file; every extension action logged with a screenshot (the agent already does screenshot audits); a per-portal-release kill switch with a canary run on a test GSTIN.",
+      "risk": "Legal exposure (GSTN advisory, IT Act) grows sharply if this ever runs unattended or auto-submits, so both are kept out of scope permanently."
+    }
+  ],
+  "perNoticeSpec": [
+    {
+      "section": "Route and shell",
+      "contents": "A full page at /notices/:id (deep link from alert emails, the queue and the matter), with a sticky header, tabs (Overview, Issues, Evidence, Documents, Draft, Checklist, Client requests, Timeline, Hearings, Payments, Matter) and a 'next action' button. The drawer becomes a peek with 'Open full page'.",
+      "existsToday": "Partly",
+      "gap": "NoticeDrawer is mounted only on NoticesDashboardPage (line 457) and there is no /notices/:id route (App.tsx:110-119). The drawer's query selects the non-existent gst_notices.hearing_date (NoticeDrawer.tsx:144), so per the repo it renders 'Notice not found'. LitigationMatterDetailPage is a matter view, not a notice view."
+    },
+    {
+      "section": "Header facts",
+      "contents": "Client (legal/trade name, GSTIN, jurisdiction); form + section (e.g. DRC-01 u/s 73); FY and tax periods; reference no.; DIN; issue date; officer name/designation/office; case ARN; demand by head (tax/interest/penalty x IGST/CGST/SGST/Cess); PH requested/date; a source badge per field (portal / AI / manual).",
+      "existsToday": "Partly",
+      "gap": "The drawer shows notice_type, reference, FY, a single demand figure and issued_by. There is no section, DIN, period, officer designation or head-wise demand. The case-folder JSON holds sec/fy/todtls/dmddtls, but the page hides the arrays (AdditionalNoticeFolderPage.tsx:181-185, 271). The matter page shows four hand-typed totals."
+    },
+    {
+      "section": "Clock and ownership",
+      "contents": "Countdown to the effective due date (portal / extended, with source), a bar showing the statutory window, internal milestones (documents requested, first draft, partner review, filing), owner and reviewer (user ids), next action, and risk flags (short clock, demand above a threshold, reduced-penalty window closing).",
+      "existsToday": "Partly",
+      "gap": "The banner appears only within 7 days and ignores reply_date (NoticeDrawer.tsx:275-287). The owner is free text in the edit dialog but a user id in the queue (R-12). There is no reviewer at notice level and no milestones."
+    },
+    {
+      "section": "Issues table",
+      "contents": "One row per issue: code (firm taxonomy), description, period, demand by head, the officer's basis with para/page link, the system-computed exposure, our stance (accept / contest / partly), evidence status (annexure ready / data missing / documents awaited), linked payment (DRC-03) and status.",
+      "existsToday": "No",
+      "gap": "There is no notice_issues table. The matter has four typed totals (LitigationMatterDetailPage.tsx:637-669) with no issue split, and dmddtls is hidden."
+    },
+    {
+      "section": "Evidence and annexures",
+      "contents": "Per issue: the recipe output with data readiness (months pulled / missing, with one-click pulls), an annexure preview with provenance per row (table, ARN, pulled_at), regenerate, XLSX/PDF export, and a link to the GSTR-9 notice format.",
+      "existsToday": "No",
+      "gap": "The comparisons exist as client+month reports (reportsCatalog.ts:251-300, 845-891) and the FY notice format exists in GSTR-9 (NoticeStep.tsx:166-171), but nothing links them to a notice."
+    },
+    {
+      "section": "Documents",
+      "contents": "The portal notice PDF; every case-folder attachment (intimations, notices, replies, orders); client uploads; our drafts, final reply and acknowledgement; annexures. Each has a kind, version and sha256, is served by signed URL, and supports preview and bulk download.",
+      "existsToday": "Partly",
+      "gap": "The drawer shows only pdf_url (NoticeDrawer.tsx:483-497). Folder attachments appear only on the case-folder page. Matter 'Add Document' saves metadata without a file (LitigationMatterDetailPage.tsx:461-470). All URLs are public (R-01)."
+    },
+    {
+      "section": "Draft reply",
+      "contents": "An editor holding AI draft v1..n with citations (hover to the notice page or annexure row), placeholders for missing data, version compare, comments and redlines, a QA checklist, partner approval, and DOCX/PDF generation on letterhead.",
+      "existsToday": "No",
+      "gap": "Nothing in the app; drafting happens in Word (roadmap 3b.2 / 5.3 unbuilt)."
+    },
+    {
+      "section": "Checklist",
+      "contents": "A form-specific checklist (e.g. DRC-06: PH option chosen, DRC-03 ARNs linked, authorisation letter, DIN and limitation checks, annexure index, size check), ticked automatically wherever the system can verify an item.",
+      "existsToday": "No",
+      "gap": "Only a stage stepper inferred by regex from the free-text status (NoticeDrawer.tsx:98-109)."
+    },
+    {
+      "section": "Client document requests",
+      "contents": "An item list per issue, with sent date, reminders, a signed client upload link, received / accepted status and ageing; one click to resend.",
+      "existsToday": "No",
+      "gap": "Roadmap 1.6 is unbuilt; requests go by email or WhatsApp with no status."
+    },
+    {
+      "section": "Timeline / activity",
+      "contents": "A complete DB-trigger event log: captured, extracted, confirmed, assigned, stage changes, draft versions, QA results, approvals, filing, ack, folder items arriving, alerts sent. Each entry shows actor and source.",
+      "existsToday": "Partly",
+      "gap": "notice_events is written only by some app paths: bulk operations and sync are not logged and 'captured' is never written (R-14). The drawer shows the last 30 events only (NoticeDrawer.tsx:150)."
+    },
+    {
+      "section": "Hearings",
+      "contents": "PH date/time/mode/venue from the notice JSON (pershrng) or the officer's letter; adjournment count (s.75(5) limit, verify); attendees; written submissions due; outcome; a carry-list generated from the issues table.",
+      "existsToday": "Partly",
+      "gap": "matter_hearings exists on the matter page but is entered by hand. The PH fields in the folder JSON are not parsed, and gst_notices.hearing_date does not exist although the drawer and alerts query it (R-03)."
+    },
+    {
+      "section": "Payments and DRC-03",
+      "contents": "Linked DRC-03s (auto-matched by ARN, period and cause), pre-deposits, reduced-penalty windows with amounts and last dates (s.73(8) / 74(8) / 74A; verify), and outstanding demand per head.",
+      "existsToday": "Partly",
+      "gap": "matter_payments is typed by hand and paid_total is updated read-modify-write (LitigationMatterDetailPage.tsx:390-416). The synced gst_drc03_filings are not linked to notices or matters."
+    },
+    {
+      "section": "Deadlines and statutory clocks",
+      "contents": "Reply due, PH, order time limit (s.73(10) / 74(10) / 74A), appeal (s.107: 3 months + 1), rectification (s.161), recovery start. Each date is computed, can be overridden, and shows its statutory basis.",
+      "existsToday": "Partly",
+      "gap": "The drawer has a Deadlines tab, but no code writes matter_deadlines (R-07)."
+    },
+    {
+      "section": "Linked matter, related notices and precedents",
+      "contents": "Matter header (stage, lifecycle), sibling notices under the same case ARN, earlier notices on the same issue or FY, and the top precedent replies with their outcomes.",
+      "existsToday": "Partly",
+      "gap": "'Create Matter' exists (NoticeDrawer.tsx:247-266) but uses the original due date, no actor and lifecycle 'demand'. There are no related-notice or precedent links."
+    },
+    {
+      "section": "Portal actions",
+      "contents": "Open this notice's reply screen logged in; prepare and attach the pack; capture the ack; refresh this case folder now.",
+      "existsToday": "Partly",
+      "gap": "The 'Portal' icon exists only in the list view and lands on the generic Notices & Orders page (extension/content.js:514-523)."
+    },
+    {
+      "section": "Outcome and learning",
+      "contents": "Outcome per issue (dropped / confirmed / partly), order reference, appeal decision, and partner feedback that flows into the precedent library and the eval set.",
+      "existsToday": "No",
+      "gap": "Only a free-text close_reason; the matter's closed_reason is coarse and not recorded per issue."
+    }
+  ],
+  "findings": [
+    {
+      "id": "R-01",
+      "severity": "Critical",
+      "pillar": "Security",
+      "issue": "Every notice PDF, case-folder attachment and manual upload sits in a public bucket with anon INSERT, SELECT, UPDATE and DELETE policies, and is stored as a permanent public URL. Anyone holding the bundle's anon key can list, download, overwrite or delete every client's SCNs and replies. This blocks emailing links, a client portal and any AI pipeline.",
+      "evidence": "supabase/migrations/20260321093054_e19b7266-1b9c-47f9-9fab-9341156d37e0.sql:13-27; supabase/migrations/20260819010000_return_pdfs_update_policy.sql:10-13 (the later public=false insert in 20260713180000_portal_reco_opening_source.sql:24-26 is ON CONFLICT DO NOTHING); extension/background.js:285; src/components/notices/AddNoticeDialog.tsx:64-70",
+      "fix": "Make return-pdfs private and drop the four 'Anyone can ...' policies. Store storage paths, not URLs, in gst_notices.pdf_url, case-folder attachments and refund documents (one-off rewrite). Serve files through a signed-URL edge function that validates the staff session, and have the extension upload with an upload-token RPC instead of the anon key. Check the live bucket state first.",
+      "effort": "M"
+    },
+    {
+      "id": "R-02",
+      "severity": "Critical",
+      "pillar": "Security",
+      "issue": "A third-party bearer token for the GSP push API is committed in plain text in a README, so anyone with repo access can push returns through it. Fix secret hygiene before an Anthropic API key is introduced.",
+      "evidence": "supabase/functions/gst-push/README.md:24 (value deliberately not reproduced)",
+      "fix": "Rotate the token with the provider and remove it from the README and git history. Keep secrets only in `supabase secrets`, add secret scanning to CI, and store ANTHROPIC_API_KEY the same way from day one.",
+      "effort": "S"
+    },
+    {
+      "id": "R-03",
+      "severity": "Critical",
+      "pillar": "Per-notice",
+      "issue": "The only per-notice view queries a column that does not exist. NoticeDrawer selects gst_notices.hearing_date, which commit 50e12fc removed from useNoticeSet because 'the hearing_date column doesn't exist ... causing the query to silently fail'. The error is discarded, so the drawer renders 'Notice not found.' for every notice. The alert code selects the same column, so event alerts and the digests return 'no notices' silently.",
+      "evidence": "src/components/notices/NoticeDrawer.tsx:142-157,200-201; src/lib/noticeAlertQueue.ts:244-249,319-324; supabase/functions/queue-notice-alerts/index.ts:102-106; git show 50e12fc; no migration adds gst_notices.hearing_date",
+      "fix": "Either add hearing_date (with a source column) to gst_notices and fill it from the folder JSON PH fields, or drop it from all three selects. Surface query errors instead of treating them as empty results, and generate types from the live DB in CI to catch drift. Check the live DB first.",
+      "effort": "S"
+    },
+    {
+      "id": "R-04",
+      "severity": "High",
+      "pillar": "Data trust",
+      "issue": "The Sweep cannot work. runAutoClose and runDueDateSweep select and filter gst_case_folder_items.notice_id, but that table is keyed by (client_id, case_id) and has no notice_id. Both passes error, nothing is auto-closed or dated, and staff see a 'Sweep errors' toast.",
+      "evidence": "src/lib/noticeAutoClose.ts:41-45,161-166; supabase/migrations/20260828160000_gst_case_folder_items.sql:14-23; supabase/migrations/20260914100000_notices_upsert_sync.sql:113-138; src/integrations/supabase/types.ts (gst_case_folder_items Row has no notice_id)",
+      "fix": "Join folder items to notices on (client_id, case_id), and page through results with fetchAllRows instead of a 2,000-id IN list. Move the sweep into SQL (an RPC, or a trigger on folder-item upsert) so it runs on every sync without a button.",
+      "effort": "S"
+    },
+    {
+      "id": "R-05",
+      "severity": "High",
+      "pillar": "Reply speed",
+      "issue": "Case notices (DRC-01A, DRC-01, ASMT-10, Enforcement, Appeal) never get a reply due date. The extension writes due_date = null for every case/task row, and the extractor reads sdtls.duedate, dtscn.duedate and duedate, while the live-confirmed paths are duedt, sdtls.<dtscn|srscn|remnd>.duedt and replyDuedt. The notices with the longest replies are therefore invisible to Overdue, Due-in-7 and E3 alerts.",
+      "evidence": "extension/content.js:2802-2808; src/lib/noticeAutoClose.ts:136-143; src/pages/AdditionalNoticeFolderPage.tsx:168,176,254; review record 13-Sep-2026: 0 of 403 case rows dated, 159 due-date fields present in folder JSON",
+      "fix": "Write one shared extractor (used by the extension and by SQL) with the confirmed paths, also capturing the PH date/option and the RFD-08 duedate. Set due_date at capture with due_date_source = 'portal_json', and add an 'open case notice without a due date' exception tile.",
+      "effort": "S"
+    },
+    {
+      "id": "R-06",
+      "severity": "High",
+      "pillar": "Zero-touch",
+      "issue": "Filing is never recorded automatically. Reply ref, date and ARN are typed in the list dialog, so in practice they are not: reply_date was set on 0 rows while 121 REPLY items across 68 cases had been synced, and replied notices stay Overdue.",
+      "evidence": "src/components/reports/views/NoticeWorkflowListView.tsx:1124-1147; src/pages/AdditionalNoticeFolderPage.tsx:138-152 (replyFields already parses reply type, against, date and filed-by); docs/notices-roadmap/review-record.json",
+      "fix": "Add a REPLY-item reconciler that runs on every sync. Match reply.ntcno or refId to the notice; set reply_date, reply_ref_number and submission_arn with source = 'portal'; move the stage to Filed; mark the deadline met; log reply_logged. The filing-assist ack capture writes through the same RPC.",
+      "effort": "S"
+    },
+    {
+      "id": "R-07",
+      "severity": "High",
+      "pillar": "Per-notice",
+      "issue": "There are no statutory clocks. The drawer and the E5 limitation alert read matter_deadlines, but no code or migration ever inserts a row, so no reply, PH, order time-limit, appeal (s.107), rectification (s.161) or recovery dates exist anywhere.",
+      "evidence": "supabase/migrations/20260914140000_notice_alerts_phase1.sql:88-110 (creates the table only); src/components/notices/NoticeDrawer.tsx:151-154; supabase/functions/queue-notice-alerts/index.ts:324-330; no insert anywhere in src, extension or supabase",
+      "fix": "Build a deadline engine on litigation_rules keyed by form code. Create rows when NOTCE/INTIM/ORDRS/NOTAC items are captured and when extraction is confirmed. Store computed and override dates with their statutory_basis; is_met is set by the REPLY reconciler or the appeal filing.",
+      "effort": "M"
+    },
+    {
+      "id": "R-08",
+      "severity": "High",
+      "pillar": "Per-notice",
+      "issue": "There is no issue-level model. A notice carries one amount_of_demand and a matter four hand-typed totals. The case-folder page hides the per-issue demand (dmddtls), goods/services and payment arrays the portal returns, so no screen can show, for example, 'issue 3: 2B vs 3B ITC, Rs x CGST, our position'.",
+      "evidence": "src/pages/AdditionalNoticeFolderPage.tsx:270-271; src/pages/LitigationMatterDetailPage.tsx:482-490,637-669; src/integrations/supabase/types.ts (gst_notices Row)",
+      "fix": "Add a notice_issues table: issue_code from a firm taxonomy, period, head-wise tax/interest/penalty, para/page reference, stance, status and payment link. Populate it from dmddtls plus AI extraction, and make matter demand a SUM view over it.",
+      "effort": "M"
+    },
+    {
+      "id": "R-09",
+      "severity": "High",
+      "pillar": "Reply speed",
+      "issue": "There is no reply workspace at all: no templates, precedents, drafts, versions or partner approval (roadmap 3b.2 and 5.3 are unbuilt). The reply is drafted in Word, and the app learns only a reference number afterwards.",
+      "evidence": "docs/notices-roadmap/src/sec-roadmap.html (3b.2, 5.3); no reply/template tables in src/integrations/supabase/types.ts; src/pages/LitigationMatterDetailPage.tsx:461-470",
+      "fix": "Build the Reply Factory: reply_templates, legal_authorities, reply_annexures, reply_drafts (versioned), reply_reviews and filing_packs, plus a Draft tab on /notices/:id (see aiPipeline).",
+      "effort": "L"
+    },
+    {
+      "id": "R-10",
+      "severity": "High",
+      "pillar": "Reply speed",
+      "issue": "The evidence engines exist but are month-scoped and disconnected from notices: GSTR-3B vs GSTR-1, 3B vs 2B/2A, RCM vs ITC, interest scrutiny, Rule 42 short reversal and the GSTR-9 'Notice reply format'. Staff re-run them month by month and rebuild the results in Excel.",
+      "evidence": "src/lib/reportsCatalog.ts:251-300,406-560,845-891; src/utils/gstr3bReports.ts:101-262; src/components/gstr9/steps/NoticeStep.tsx:166-171",
+      "fix": "Add a recipe layer (src/lib/reply/recipes/*) that runs these builders over the notice's periods, checks data readiness (and queues missing pulls), and stores annexures with row provenance in reply_annexures.",
+      "effort": "M"
+    },
+    {
+      "id": "R-11",
+      "severity": "High",
+      "pillar": "Reply speed",
+      "issue": "Client document requests are not tracked (roadmap 1.6 is unbuilt). Requests and files travel by email and WhatsApp with no status, ageing or link to the notice, and this is usually the longest wait in the journey.",
+      "evidence": "No request table or UI in src or supabase/migrations; docs/notices-roadmap/src/sec-roadmap.html (1.6)",
+      "fix": "Add notice_doc_requests (item, issue_id, requested_at, due, status, received_document_id), E12/E13 emails through email_outbox, and a signed client upload link. Generate the list automatically from issue codes.",
+      "effort": "M"
+    },
+    {
+      "id": "R-12",
+      "severity": "High",
+      "pillar": "Data trust",
+      "issue": "Ownership is split between two fields. The edit dialog writes free-text assign_to only, while the work queue's Mine and Unassigned tabs use assign_to_user_id. A notice assigned in the dialog still shows as Unassigned and never appears in 'Mine'.",
+      "evidence": "src/components/reports/views/NoticeWorkflowListView.tsx:553,1160-1163; src/components/notices/NoticeWorkQueue.tsx:188-189",
+      "fix": "Use a staff picker that writes assign_to_user_id everywhere (derive assign_to from profiles), back-fill existing rows by name, and add reviewer_user_id to the notice.",
+      "effort": "S"
+    },
+    {
+      "id": "R-13",
+      "severity": "High",
+      "pillar": "Data trust",
+      "issue": "Four stage vocabularies are in use: the work queue's STAGE_OPTIONS, the drawer's regex stepper, the list view's Open/Closed select, and the matter's 11 stages. The list view shows 'Set status' for a row in 'Partner review' and overwrites it with one click. Stage-based SLAs, MIS and alerts cannot be trusted.",
+      "evidence": "src/components/notices/NoticeWorkQueue.tsx:42-52; src/components/notices/NoticeDrawer.tsx:86-109; src/components/reports/views/NoticeWorkflowListView.tsx:74,885-899; src/pages/LitigationMatterDetailPage.tsx:110-114",
+      "fix": "Define one stage enum (Captured -> Triage -> Awaiting data -> Drafting -> Partner review -> Filed -> Hearing -> Order -> Appeal -> Closed) with a CHECK constraint. Every status select uses it, and open/closed is derived from it.",
+      "effort": "M"
+    },
+    {
+      "id": "R-14",
+      "severity": "High",
+      "pillar": "Data trust",
+      "issue": "The activity timeline is incomplete. There is no trigger on gst_notices, and notice_events is written only by a few app paths. Bulk assign, priority and stage in the queue, and bulk status in the list, write nothing, and no code ever writes a 'captured' event. The E1 'new notice' rule therefore has no event source, and touches per notice cannot be measured.",
+      "evidence": "supabase/migrations/20260914140000_notice_alerts_phase1.sql:8-25; src/components/notices/NoticeWorkQueue.tsx:230-283; src/components/reports/views/NoticeWorkflowListView.tsx:463-505; src/lib/noticeEvents.ts",
+      "fix": "Add AFTER INSERT/UPDATE triggers on gst_notices (and on folder items) that write notice_events, taking the actor from a session setting set by an RPC. Suppress events on bulk re-sync by comparing portal_hash and first_seen_at.",
+      "effort": "M"
+    },
+    {
+      "id": "R-15",
+      "severity": "High",
+      "pillar": "Security",
+      "issue": "The existing edge-function pattern (verify_jwt = false, authorising on a caller-supplied actorId) must not be reused for AI. User ids are readable through the open profiles table, so an AI drafting endpoint built that way would let anyone with the anon key read any client's notice through the model and spend the firm's API budget.",
+      "evidence": "supabase/config.toml:7-8; supabase/functions/gst-push/README.md ('Authorization' section)",
+      "fix": "Use a server-validated staff session (a signed token issued at authenticate_staff and verified in a shared _shared/auth.ts), with per-user rate limits and an ai_audit_log. The client role gets no access to AI endpoints.",
+      "effort": "M"
+    },
+    {
+      "id": "R-16",
+      "severity": "High",
+      "pillar": "Security",
+      "issue": "Portal passwords are stored in plaintext columns (clients.gst_password and client_password, profiles.password) and copied into chrome.storage job objects. Any AI context builder that selects * from clients would send credentials to a third party, and filing assist would widen the exposure.",
+      "evidence": "src/integrations/supabase/types.ts:3809 (clients.gst_password); extension/background.js:304,516",
+      "fix": "Read clients only through a clients_safe view with explicit column lists in every AI or report path. Add a redaction module (_shared/ai/redact.ts) with a deny-list test, encrypt credentials at rest, and keep passwords out of job objects by fetching them at login time.",
+      "effort": "M"
+    },
+    {
+      "id": "R-17",
+      "severity": "Medium",
+      "pillar": "Data trust",
+      "issue": "Saving the edit dialog for any reason wipes close_reason, because the field is initialised blank and written as null. This erases 'auto:closure' tags and logs a spurious change.",
+      "evidence": "src/components/reports/views/NoticeWorkflowListView.tsx:522,554,569",
+      "fix": "Prefill closeReason from the row, and write only the fields the user changed.",
+      "effort": "S"
+    },
+    {
+      "id": "R-18",
+      "severity": "Medium",
+      "pillar": "Per-notice",
+      "issue": "Documents are scattered and incomplete. The drawer shows only pdf_url, case-folder attachments appear only on the folder page, and the matter's 'Add Document' stores a title with no file, even though matter_documents has storage_path, mime and size_bytes columns.",
+      "evidence": "src/components/notices/NoticeDrawer.tsx:483-497; src/pages/AdditionalNoticeFolderPage.tsx:523-535; src/pages/LitigationMatterDetailPage.tsx:461-470",
+      "fix": "Build a unified documents panel (portal PDF, all folder attachments, uploads, drafts, acknowledgements) backed by notice_documents with kinds, versions, sha256 and signed URLs.",
+      "effort": "M"
+    },
+    {
+      "id": "R-19",
+      "severity": "Medium",
+      "pillar": "Per-notice",
+      "issue": "There is no deep-linkable notice page. The drawer mounts only on the dashboard and no /notices/:id route exists, so alert emails, the queue and teammates cannot link to a specific notice (roadmap 2.6).",
+      "evidence": "src/pages/NoticesDashboardPage.tsx:457; src/App.tsx:110-119",
+      "fix": "Add NoticeDetailPage at /notices/:id implementing perNoticeSpec, and reduce the drawer to a peek with 'Open full page'.",
+      "effort": "M"
+    },
+    {
+      "id": "R-20",
+      "severity": "Medium",
+      "pillar": "Data trust",
+      "issue": "The work queue fetches .limit(1000) across all notices, closed ones included, and filters out closed rows client-side, so open notices beyond the cap silently disappear. It also sorts newest-issued first while its pill says 'earliest due first'.",
+      "evidence": "src/components/notices/NoticeWorkQueue.tsx:149-153,170,180,396",
+      "fix": "Filter to open notices server-side and ORDER BY effective due date (nulls last), using fetchAllRows or a view/RPC. Fix the label.",
+      "effort": "S"
+    },
+    {
+      "id": "R-21",
+      "severity": "Medium",
+      "pillar": "Per-notice",
+      "issue": "Payments are not linked. DRC-03 filings are synced with head-wise amounts, but matter payments are typed by hand (drc03_arn is never captured), and paid_total is updated read-modify-write from stale page state, so concurrent updates are lost.",
+      "evidence": "src/pages/LitigationMatterDetailPage.tsx:390-416; src/lib/litigationData.ts:514-544; types.ts gst_drc03_filings",
+      "fix": "Auto-link gst_drc03_filings to notices and matters by ARN, period and cause (suggest, then confirm), and compute paid and pre-deposit totals in a SQL view.",
+      "effort": "M"
+    },
+    {
+      "id": "R-22",
+      "severity": "Medium",
+      "pillar": "Data trust",
+      "issue": "Matter numbering and status are inconsistent. Two generators (per-year max+1 and global count+1) can produce duplicate matter_no values. The list page creates status 'open' while the detail page tests status === 'Open', so a matter created from the list shows 'Reopen' instead of 'Close'.",
+      "evidence": "src/lib/litigationData.ts:191-215; src/pages/LitigationMattersPage.tsx:202-215; src/pages/LitigationMatterDetailPage.tsx:618",
+      "fix": "Use a DB sequence or unique constraint for matter_no, a status enum with a CHECK constraint, and a single createMatter path.",
+      "effort": "S"
+    },
+    {
+      "id": "R-23",
+      "severity": "Medium",
+      "pillar": "Data trust",
+      "issue": "s.16(4) ineligible ITC is a typed input in the GSTR-9 notice format, and the cut-off helper uses 30 November only. The provision as amended by Finance Act 2022 reads '... or furnishing of the relevant annual return, whichever is earlier' (verify). The inputs needed to compute it (2B gstr1_filing_date, 3B filing dates) are already in the database.",
+      "evidence": "src/components/gstr9/notice/cutoff.ts:9-13; src/components/gstr9/steps/NoticeStep.tsx:112-119; types.ts twob_import_docs.gstr1_filing_date, gst_filed_returns.filed_date",
+      "fix": "Build the s.16(4) recipe: deadline = min(30 November, GSTR-9 filing date), with s.16(5)/(6) flags and an invoice-level annexure. Feed the GSTR-9 row from it.",
+      "effort": "S"
+    },
+    {
+      "id": "R-24",
+      "severity": "Medium",
+      "pillar": "Zero-touch",
+      "issue": "Manual notices (physical or emailed: summons, ADT-01, MOV-07, GSTAT, many state notices) are keyed into an 8-field dialog with type 'Notice' or 'Order' only, and the attachment goes to the public bucket. There is no PDF-to-fields extraction.",
+      "evidence": "src/components/notices/AddNoticeDialog.tsx:30-33,62-86,131-137",
+      "fix": "Make the flow upload-first: PDF -> private storage -> extraction stage -> prefilled form for confirmation.",
+      "effort": "M"
+    },
+    {
+      "id": "R-25",
+      "severity": "Medium",
+      "pillar": "Reply speed",
+      "issue": "Work starts late because nothing is scheduled before the deadline. The drawer warns only inside 7 days and ignores reply_date, there are no internal milestones (documents requested, first draft, partner review), and isDueIn7 also counts notices that have already been replied to.",
+      "evidence": "src/components/notices/NoticeDrawer.tsx:275-287; src/utils/noticeDefinitions.ts (isDueIn7 has no reply_date check)",
+      "fix": "Add SLA milestones per form (documents requested D+1, first draft at 40% of the window, partner review at 70%) that drive queue sorting and alerts, and exclude replied notices from due-soon.",
+      "effort": "S"
+    },
+    {
+      "id": "R-26",
+      "severity": "Medium",
+      "pillar": "Fetch",
+      "issue": "Capture latency is bound to people. Notices arrive only when someone runs Sync All and types a CAPTCHA for each client, and the 'Portal' button logs in but lands on the generic Notices & Orders list rather than the notice's case folder or reply screen.",
+      "evidence": "extension/content.js:361 (handleLogin), 514-523; agent/README.md (CAPTCHA posture; unattended sync is Phase 4, not built)",
+      "fix": "Schedule an agent pull with a CAPTCHA inbox (roadmap Phase 4), and add a per-form deep-link route map to the case folder, which filing assist will reuse.",
+      "effort": "L"
+    },
+    {
+      "id": "R-27",
+      "severity": "Low",
+      "pillar": "Per-notice",
+      "issue": "'Create Matter' from the drawer uses the original rather than the extended due date, passes no actor, and hard-codes lifecycle 'demand' with title = notice_type. Lifecycle vocabularies also differ between LIFECYCLES (lowercase) and LIFECYCLE_HINTS ('Assessment', 'Scrutiny').",
+      "evidence": "src/components/notices/NoticeDrawer.tsx:247-266; src/pages/LitigationMattersPage.tsx:52-56; src/lib/litigationData.ts:598-611",
+      "fix": "Derive lifecycle from the form code, carry the effective due date and the actor, and link the notice in the same transaction (RPC).",
+      "effort": "S"
+    },
+    {
+      "id": "R-28",
+      "severity": "Low",
+      "pillar": "Per-notice",
+      "issue": "The case-folder page hides useful facts: 'Reply Type' and 'Original Due Date' are always blank, the officer column shows only the designation (todtls.dg), and the fallback dump drops arrays. These are exactly the fields the issue table and header need.",
+      "evidence": "src/pages/AdditionalNoticeFolderPage.tsx:181,199-208,270-271",
+      "fix": "Parse these into typed columns at sync (notice header facts and notice_issues) instead of rendering raw JSON.",
+      "effort": "S"
+    }
+  ],
+  "kpis": [
+    {
+      "kpi": "Capture latency (portal issue -> in app)",
+      "baseline": "Not measured; manual Sync All, estimated 2-7 days",
+      "target": "< 24 h for every notice; < 4 h for 7-day forms (DRC-01B/01C, REG-17/23, MOV-07)",
+      "howMeasured": "Median of (first_seen_at - issue_date) per form, from gst_notices"
+    },
+    {
+      "kpi": "Triage time (captured -> form, issues, due date and owner confirmed)",
+      "baseline": "Not recorded; estimated 2-5 days",
+      "target": "<= 2 working hours (AI extraction + one-click confirm)",
+      "howMeasured": "notice_extractions.confirmed_at - first_seen_at"
+    },
+    {
+      "kpi": "Due-date coverage of open notices",
+      "baseline": "0 of 403 case rows dated (review record, 13-Sep-2026)",
+      "target": ">= 98%, each with a source tag (portal JSON / AI / manual)",
+      "howMeasured": "Share of open notices with a non-null effective due date, by source"
+    },
+    {
+      "kpi": "Time to first draft (captured -> reply_drafts v1)",
+      "baseline": "Estimated 7-14 days (drafting starts in the last week of the window)",
+      "target": "DRC-01B/01C <= 2 h; ASMT-10 / DRC-01A / RFD-08 <= 1 working day; SCN <= 3 working days",
+      "howMeasured": "reply_drafts.created_at (v1) - first_seen_at"
+    },
+    {
+      "kpi": "Time to filed reply",
+      "baseline": "Cannot be measured today (reply_date logged on 0 rows)",
+      "target": "Median <= 40% of the statutory window; ASMT-10 <= 10 days; DRC-01B/01C <= 3 days",
+      "howMeasured": "Portal-reconciled reply_date - first_seen_at, also as a share of the window length"
+    },
+    {
+      "kpi": "On-time reply rate",
+      "baseline": "Unknown (estimated 60-75%; many filed on extension)",
+      "target": ">= 95% by the original due date; 100% by the effective due date",
+      "howMeasured": "reply_date <= due_date (and <= extended_due_date) over notices that have a due date"
+    },
+    {
+      "kpi": "Auto-annexure coverage",
+      "baseline": "0% (all workings in Excel)",
+      "target": ">= 70% of ASMT-10 / DRC-01A / DRC-01B / DRC-01C / RFD-08 issues with a system annexure within 6 months; >= 85% at 12 months",
+      "howMeasured": "notice_issues with at least one reply_annexures row / all issues, by form"
+    },
+    {
+      "kpi": "Staff minutes per notice",
+      "baseline": "Estimated from currentJourney: ASMT-10 / DRC-01A about 520 min; s.73/74 SCN about 700; DRC-01B/01C about 120",
+      "target": "About 105 / 200 / 25 min",
+      "howMeasured": "Active-session time from notice_events plus an optional timer on the notice page; quarterly sample time study"
+    },
+    {
+      "kpi": "Touches per notice (human actions until filed)",
+      "baseline": "Estimated 15-20 across app, Excel, Word, email and portal",
+      "target": "<= 5 (confirm extraction, approve requests, review draft, partner approval, sign on portal)",
+      "howMeasured": "Count of human-actor notice_events between 'captured' and 'reply_logged' (needs the R-14 trigger)"
+    },
+    {
+      "kpi": "Re-keyed fields per notice",
+      "baseline": "Estimated 15-25 (due date, FY, demand heads, issue amounts, ARN, ref no., dates, owner)",
+      "target": "<= 2",
+      "howMeasured": "Fields with source = 'manual' / fields filled, from provenance columns"
+    },
+    {
+      "kpi": "Partner edit distance on the AI draft",
+      "baseline": "n/a",
+      "target": "< 25% of characters changed by month 3 and falling; zero rejections for wrong numbers",
+      "howMeasured": "diff(reply_drafts v1, approved version) per notice"
+    },
+    {
+      "kpi": "Numeric trace rate",
+      "baseline": "n/a (Excel -> Word copy)",
+      "target": "100% of rupee figures in approved replies trace to an annexure cell or a cited notice span (hard gate)",
+      "howMeasured": "QA validator result stored on each approved draft"
+    },
+    {
+      "kpi": "Unverified authority citations",
+      "baseline": "n/a",
+      "target": "0 (hard gate)",
+      "howMeasured": "Citations in approved drafts that do not resolve to a legal_authorities id"
+    },
+    {
+      "kpi": "Extraction accuracy",
+      "baseline": "n/a",
+      "target": "Due date exact >= 98%; demand by head within Rs 1 >= 95%; DIN/reference exact >= 99%; issue recall >= 95%",
+      "howMeasured": "Eval set of past notices with partner-labelled answers; weekly regression run"
+    },
+    {
+      "kpi": "Filings recorded automatically",
+      "baseline": "0% (manual dialog; 0 reply_date rows)",
+      "target": ">= 95% captured within 24 h by ack capture or the REPLY reconciler",
+      "howMeasured": "reply_date with source in ('portal_ack', 'portal_folder') / replies filed"
+    },
+    {
+      "kpi": "Client document turnaround",
+      "baseline": "Not tracked (email/WhatsApp)",
+      "target": "Median <= 3 days; no request older than 7 days without escalation",
+      "howMeasured": "notice_doc_requests.received_at - requested_at"
+    },
+    {
+      "kpi": "Genuinely overdue open notices",
+      "baseline": "473 shown 'Over Due' of 1,060 on 13-Sep-2026, inflated by missing reply_date and stale history",
+      "target": "0 genuinely overdue; stale history closed by rule",
+      "howMeasured": "isOverdue() after REPLY reconciliation and the fixed auto-close"
+    },
+    {
+      "kpi": "AI cost per notice",
+      "baseline": "n/a",
+      "target": "<= Rs 200 all-in (estimated USD 0.5-2 at list prices with prompt caching; backfill through Batches at 50%)",
+      "howMeasured": "ai_audit_log tokens x price per model"
+    }
+  ]
+}

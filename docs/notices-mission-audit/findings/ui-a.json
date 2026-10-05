@@ -1,0 +1,1123 @@
+{
+ "screens": [
+  {
+   "id": "01-dashboard",
+   "verdict": "The skeleton is right (tiles, queue, calendar, sync health), but nothing on it is yet trustworthy or actionable: the tile copy misleads and the 'work queue' is a newest-first list of 'Captured' rows whose only call to action ('Assign ›') opens a drawer. It is far from the target command centre's ranked next-best-action table.",
+   "score": 5,
+   "findings": [
+    {
+     "id": "U-01-1",
+     "severity": "High",
+     "area": "Layout",
+     "issue": "The work queue cannot answer 'what do I do next'. Rows are ~75 px tall, so about 8 fit in the 620 px box, and 7 of the first 8 show stage 'Captured'. No line says what the notice is about (only 'Notice' plus a reference chip), and there is no readiness or next action. Rows are ordered newest-issued first (19 Oct, 03 Nov, —, 11 Oct …), the list stops at 50 of 51 with no paging, and 'View full work queue →' opens a different 141-row archive with other columns.",
+     "fix": "Rebuild the card as the target's 'Today's plan'. Columns: Client (name + GSTIN font-mono text-xs) · Notice (form · FY · ₹, second line = description line-clamp-1) · Due ('−2 d' / '03 Oct', text-destructive when overdue) · Next action (one Button size='sm' whose label comes from the stage: Assign / Request data / Review draft / File) · Owner avatar. Use h-14 rows with py-2 (≈12 per screen). Order overdue first, then effective due ascending, then demand descending, with undated rows under a 'Needs triage' tab. Footer 'Showing 12 of 51 · View all →' should open the same queue (filter=open&sort=due), not the archive.",
+     "ref": "src/components/notices/NoticeWorkQueue.tsx:58,77-80,180,411-537",
+     "pillar": "At-a-glance",
+     "links": "L-08, L-40"
+    },
+    {
+     "id": "U-01-2",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "The row call to action 'Assign ›' / 'Open ›' is a plain <span>. It does not assign anything; the whole row just opens the notice drawer, which shows 'Notice not found' in production. Neither the row nor the CTA can take keyboard focus, so a keyboard user cannot open a notice from the dashboard at all.",
+     "fix": "Make the CTA a real <Button variant='link'> that opens the assignee Popover in place on unassigned rows. Make the client/notice cell a <Link to={`/notices/${id}`}> (or a <button> that opens the drawer) with focus-visible:ring-2 ring-ring. Keep the row hover only as a visual cue.",
+     "ref": "src/components/notices/NoticeWorkQueue.tsx:435-440,504-508",
+     "pillar": "Per-notice",
+     "links": "L-03"
+    },
+    {
+     "id": "U-01-3",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "The KPI tile copy misleads in several places. (1) '14 of 51 overdue' reads as if 51 were overdue; 51 is the open count. (2) '1 appeals · 1 hearings' has no singular form. (3) 'Next: Test Engineering Works · Notice · Mo…' truncates the date, which is the only useful part. (4) 'New since last sync' actually counts notices first seen in the last 24 h. (5) That tile's 'Unassigned 30' chip counts every open unassigned notice, not the 6 new ones. (6) The 'Act now' and 'This week' chips just restate the label. (7) The Exposure tile calls 22 notices '22 matters', its second line is empty because the tax/interest/penalty props are never passed, and 'Exposure report →' opens a plain list. The result is four tiles with uneven content.",
+     "fix": "Reword and restructure: '14 overdue · of 51 open'; add a plural() helper; lead with the date ('Mon 5 Oct · Test Engineering Works · DRC-01C'); rename to 'New in last 24 h' (or compute against the last successful run); make the chip count unassigned notices among newRows; replace the decorative chips with the money/oldest line; label '22 notices with demand' with 'Open list →' until a real exposure view exists. Give every tile the same three-line structure (label / value + qualifier / footer link), as in the target.",
+     "ref": "src/components/notices/NeedsAttentionStrip.tsx:96-98,120-133,147-162,176-192; src/pages/NoticesDashboardPage.tsx:224,350-370",
+     "pillar": "At-a-glance",
+     "links": "L-13"
+    },
+    {
+     "id": "U-01-4",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "The header status line always reassures. It shows a green dot and 'Last sync 05 Oct 2026, 07:55 IST · 11 GSTINs' whatever the state, while the Sync & alerts card on the same page says 'Offline' or 'Attention' and only 5 of 11 clients synced in 24 h. '11 GSTINs' counts all non-excluded clients, not the ones that synced.",
+     "fix": "Derive one health state (share of fresh GSTINs, failures, extension) and use it in both places. Dot: bg-success, bg-warning or bg-destructive. Copy: '5 of 11 GSTINs synced in 24 h · 2 logins failed →'. Target wording: '● Autopilot on · portal sweep today 06:12 · 90 of 92 GSTINs fresh · 2 need you →'.",
+     "ref": "src/pages/NoticesDashboardPage.tsx:287-319",
+     "pillar": "Data trust",
+     "links": "S-13"
+    },
+    {
+     "id": "U-01-5",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "Each category bar is scaled to 100 % of its own total, so 'Appeal 1' draws the same full-width bar as 'Notice 28'. Rows follow a fixed taxonomy order rather than open work, so the card cannot show where the load is. Form codes read 'DRC 01' and 'ASMT 10' while the rest of the module writes 'DRC-01' and 'ASMT-10'.",
+     "fix": "Set bar width to cat.total / max(total), with the open/replied/closed split inside the bar. Sort by open count descending (ties by total) and show 'open n' as the figure. Hyphenate the form codes. Alternatively, replace the card with the target's 'Exposure by stage' and 'Clients needing attention' panels.",
+     "ref": "src/components/notices/CategorySummaryBars.tsx:73-127",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-01-6",
+     "severity": "Low",
+     "area": "Layout",
+     "issue": "The bottom row stretches three cards of very different length to one height (the grid's default align-items: stretch), which leaves ~130 px blank under the 2-week calendar. The calendar and sync health, the two things a partner scans first, sit below a 620 px table.",
+     "fix": "Use the target layout: queue (2/3 width) beside a right column holding Reply pipeline and Autopilot health, via xl:grid-cols-[2fr_1fr]. Set items-start on the bottom row.",
+     "ref": "src/pages/NoticesDashboardPage.tsx:372-376",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "03-dashboard-reports-menu",
+   "verdict": "The module navigation sends people to the wrong places and hides the operational pages. One report appears twice, the page for syncing clients and fixing failed logins sits under 'Reports', and Refunds and DRC-03 have no entry at all.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-03-1",
+     "severity": "High",
+     "area": "Content",
+     "issue": "'GSTIN Wise Notice Count' in Reports is the same page as the 'Clients' tab. 'Company List & sync log', where failed logins are fixed and clients are synced, is filed under Reports. The Refunds and DRC-03 lists have no nav entry and can only be reached through a category count on the dashboard. 'Matters' and 'Hearings' point to the wrong pages.",
+     "fix": "Use the target's tabs: Command centre · Work queue (31) · All notices (473) · Matters (64) · Hearings (4) · Calendar · Clients (Company list + sync) · Reports ▾. The Reports menu then holds Notice summary, GSTIN-wise count, Litigation MIS, Refunds and DRC-03.",
+     "ref": "src/components/notices/NoticesTopNav.tsx:7-13,56-77",
+     "pillar": "At-a-glance",
+     "links": "L-40"
+    },
+    {
+     "id": "U-03-2",
+     "severity": "Medium",
+     "area": "Consistency",
+     "issue": "The tab bar is a hand-rolled text-xs strip (~28 px tall, muted text), while the rest of the app moved to the WS_TABS_LIST / WS_TAB navy rail (h-9 text-sm) in #115. 'Reports ▾' uses a text glyph instead of an icon. The tabs carry no counts, so the nav gives no sense of load.",
+     "fix": "Render the bar with WS_TABS_LIST, WS_TAB and WS_TAB_ACTIVE; use a ChevronDown h-3.5 w-3.5 icon on Reports; add a count Badge to each tab (open queue, all notices, matters, hearings) fed from the same summary hook as the tiles.",
+     "ref": "src/components/notices/NoticesTopNav.tsx:20-23,43,53-55",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-03-3",
+     "severity": "Medium",
+     "area": "Accessibility",
+     "issue": "The <nav> has no accessible name, and the active tab is shown by colour only (no aria-current='page'). The Reports trigger does not announce when one of its pages is the current one.",
+     "fix": "Add <nav aria-label='Notices & Litigation'> and aria-current={active ? 'page' : undefined} on each Link. When isReportActive, append the current page name to the Reports trigger label.",
+     "ref": "src/components/notices/NoticesTopNav.tsx:43-50",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "04-dashboard-search-company",
+   "verdict": "The search pill promises GSTIN, name and ARN search plus ⌘K. What it delivers is a GSTIN/name-only modal table that ⌘K cannot open, and it cannot find a notice, which is what staff search for most.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-04-1",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "Ctrl/⌘K does nothing because there is no key handler. The placeholder promises ARN search, but only name and GSTIN are matched, and every result leads to the company profile. A reference no., ARN, DIN or case ID copied from an email or a call finds nothing.",
+     "fix": "Replace the dialog with CommandDialog (src/components/ui/command.tsx), opened by a window keydown handler for ctrl/meta+K in MainLayout. Search clients (name, GSTIN) and gst_notices (reference_number, case_id, ARN, DIN), with grouped results Clients / Notices / Matters. Enter on a notice opens /notices/:id (or the drawer). Show 'Ctrl K' rather than '⌘K' for Windows users.",
+     "ref": "src/pages/NoticesDashboardPage.tsx:76-88,323-332,410-455",
+     "pillar": "Per-notice"
+    },
+    {
+     "id": "U-04-2",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Only the GSTIN text is a link; the row and trade name are not clickable, and arrow keys and Enter do nothing. Results carry no context (open or overdue counts) to show which client needs attention.",
+     "fix": "Make each result a CommandItem: name (font-medium) + GSTIN (font-mono text-xs) + chips such as '3 open · 1 overdue'. The whole row is selectable by keyboard.",
+     "ref": "src/pages/NoticesDashboardPage.tsx:439-446",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-04-3",
+     "severity": "Medium",
+     "area": "Empty/error state",
+     "issue": "Loading is inferred from an empty client list. If the query fails or returns no rows, the spinner turns forever and the error is never shown.",
+     "fix": "Keep explicit loading and error state. On error render 'Couldn't load clients · Retry'; on zero rows render 'No clients are set up for notices'.",
+     "ref": "src/pages/NoticesDashboardPage.tsx:76-83,434-435",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-04-4",
+     "severity": "Low",
+     "area": "Consistency",
+     "issue": "A quick lookup opens a full modal titled 'Search Company', with a table and a Close footer. The same thing is called 'Company' here, 'Client' in the queue and 'GSTIN' in the tiles.",
+     "fix": "Use a palette with no footer, titled 'Search clients and notices', and standardise on 'Client'.",
+     "ref": "src/pages/NoticesDashboardPage.tsx:410-455",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "05-dashboard-add-notice",
+   "verdict": "Manual entry is broken end to end: every submit is rejected. Even once fixed, it asks staff to retype what the attached PDF already says, and each failed attempt leaves an orphan file behind.",
+   "score": 2,
+   "findings": [
+    {
+     "id": "U-05-1",
+     "severity": "High",
+     "area": "Data",
+     "issue": "The attachment is uploaded to storage before the row is inserted. When the insert fails, which today is every submit, the PDF stays in the public bucket with no notice pointing at it, and each retry uploads another copy.",
+     "fix": "Insert first (.insert(...).select('id').single()), then upload to manual/<client>/<noticeId>/<file> and update pdf_url. If the upload fails, keep the row and show 'Attachment failed · Retry'. If the insert fails, never upload (or delete the object).",
+     "ref": "src/components/notices/AddNoticeDialog.tsx:61-71,73-88",
+     "pillar": "Data trust",
+     "links": "L-07, R-01"
+    },
+    {
+     "id": "U-05-2",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "The PDF is the seventh of eight fields. Staff type the GSTIN, reference, issuer, dates and demand by hand from the document they then attach. There is no form (ASMT-10, DRC-01 …), section, FY, owner or priority field, so every manual notice lands in the queue as 'Captured · Unassigned' and needs two or three more edits.",
+     "fix": "Make the dialog upload-first: put a dropzone at the top (border-dashed, 'Drop the notice PDF') and extract GSTIN, reference, DIN, dates and demand into prefilled fields marked 'read from PDF — check'. Add a Form Select whose choice sets the default reply window, an FY Select, and an Owner field that defaults to the client's assigned accountant.",
+     "ref": "src/components/notices/AddNoticeDialog.tsx:109-159",
+     "pillar": "Zero-touch",
+     "links": "R-24"
+    },
+    {
+     "id": "U-05-3",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "There is no duplicate check. A reference number that already exists, or that will arrive with the next portal sync, is accepted silently, so the same notice can exist twice with different owners and stages.",
+     "fix": "Run a debounced lookup on reference_number and case_id while the user types. If a match is found, show a Note such as 'ZD0605… already captured for Sandbox Auto Components — open it' and disable Submit.",
+     "ref": "src/components/notices/AddNoticeDialog.tsx:52-86",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-05-4",
+     "severity": "Medium",
+     "area": "Consistency",
+     "issue": "The form departs from the house kit. Labels read 'GSTIN-Trade Name *', 'Ref/Notice Id *' and 'Amount Of Demand'; the asterisks are plain text. Validation is one toast listing four fields instead of inline messages. Amount is a number input with spinners, and Type offers only Notice or Order.",
+     "fix": "Use react-hook-form + zod with a FormMessage under each field. Use sentence-case labels ('Client (GSTIN)', 'Reference no.', 'Demand (₹)'), NumberInput from @/components/ui/number-input, and the required-field marker used on other forms.",
+     "ref": "src/components/notices/AddNoticeDialog.tsx:53-56,112-157",
+     "pillar": "Reply speed"
+    },
+    {
+     "id": "U-05-5",
+     "severity": "Low",
+     "area": "Consistency",
+     "issue": "The header trigger lacks text-xs, so 'Add Notice' renders at 14 px next to the 12 px 'Send digest' and 'Sync All', and the button row looks uneven.",
+     "fix": "Use className={WS_BTN} (h-8 gap-1 px-2.5 text-xs) like the other header actions.",
+     "ref": "src/components/notices/AddNoticeDialog.tsx:99",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "06-dashboard-sync-all-no-extension",
+   "verdict": "Without the extension, the primary 'Sync All' button still looks available and fails with a toast that gives no next step. The card beside it mislabels the state as 'Offline' and fills its feed with workflow events rather than sync events.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-06-1",
+     "severity": "High",
+     "area": "Empty/error state",
+     "issue": "When the extension is not detected, 'Sync All' stays an enabled navy primary button. Clicking it shows a 4-second toast ('…not detected. Install/enable it…') with no install link, no minimum version and no alternative. The card's badge says 'Offline', as if the portal or the system were down.",
+     "fix": "When !extReady, render the button as an outline 'Connect extension' that opens a Popover: 'GST Keeper extension not found on this PC · Install (link to the packaged build / README) · Needs v0.3.0+ · Check again' (the last re-sends the ping). Badge text: 'Extension not on this PC' in the warning tone, not 'Offline'.",
+     "ref": "src/pages/NoticesDashboardPage.tsx:172-176,338-341; src/components/notices/SyncHealthCard.tsx:187-191",
+     "pillar": "Fetch"
+    },
+    {
+     "id": "U-06-2",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "The card is subtitled 'Portal pulls, failed logins, emails sent', but its feed lists notice workflow events ('Staff Reply drafted · Test Engineering Works', 'Staff Filed …'), with 'Staff' as the actor because no name is ever written. It says nothing about which clients synced, failed or are waiting for a CAPTCHA.",
+     "fix": "Feed the card from client_sync_log / run summaries, e.g. '07:41 Sample Pharma ✓ 2 new' and '07:43 Delta Demo ✗ password changed — Update'. Move notice activity to the bell and the queue.",
+     "ref": "src/components/notices/SyncHealthCard.tsx:37-114,211",
+     "pillar": "Fetch",
+     "links": "L-28, S-14"
+    },
+    {
+     "id": "U-06-3",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Four links in one card ('Clients synced 5 / 11', '2 · fix →', 'Sync one or more clients', 'Sync log →') all open the same unfiltered Company List. 'fix →' also drops the ?status=failed filter that the header's '2 logins failed' link uses.",
+     "fix": "Point 'fix →' to /notices-company-list?status=failed and 'Sync log →' to a run-log view. List the failed clients inline with 'Update password' buttons, as in the target-sync 'Freshness by client — Needs attention' panel.",
+     "ref": "src/components/notices/SyncHealthCard.tsx:137,145,205-208,215",
+     "pillar": "Fetch"
+    }
+   ]
+  },
+  {
+   "id": "07-dashboard-sync-all-extension",
+   "verdict": "Starting a run works, but afterwards the page is blind: one toast, no progress, no CAPTCHA queue, no stop and no refresh. The operator has to watch the extension tab instead of the app.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-07-1",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "After the toast 'Sync started for 11 client(s)…', the dashboard shows nothing about the run. There is no 'n of 11 done', no indication of which client is waiting for a CAPTCHA, no failures as they happen and no Stop button. The tiles and the header ('Last sync 07:55') do not refresh when the run ends.",
+     "fix": "Add a persistent run banner under the header: a Progress bar, 'Waiting for CAPTCHA: Demo Textiles · Open tab' and Stop, fed by extension progress messages over the existing postMessage bridge. Call refetch() and reload the sync logs on the completion message. Once the agent lands, this becomes the target-sync 'CAPTCHA wall'.",
+     "ref": "src/pages/NoticesDashboardPage.tsx:122-129,172-179",
+     "pillar": "Fetch",
+     "links": "S-01"
+    },
+    {
+     "id": "U-07-2",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "One click queues 11 portal logins (≈11 CAPTCHAs). There is no confirmation of scope or time and no option to sync only stale or failed clients. The inactive Dummy Retail Traders is included in the run.",
+     "fix": "Ask for confirmation in a Popover: 'Sync 10 active clients · ~10 CAPTCHAs · ~25 min · skips 1 inactive', with a radio choice 'All / Stale > 24 h (4) / Failed (2)'.",
+     "ref": "src/pages/NoticesDashboardPage.tsx:172-179",
+     "pillar": "Zero-touch",
+     "links": "S-25"
+    },
+    {
+     "id": "U-07-3",
+     "severity": "Medium",
+     "area": "Empty/error state",
+     "issue": "The busy state clears only when the extension replies. If a detected extension never answers (an old build or a crash), 'Sync All' stays disabled with a spinner until the page is reloaded.",
+     "fix": "Start a 15 s timer on click. On timeout, call setSyncing(false) and show a toast 'Extension didn't respond — reload the extension tab' with a Retry action.",
+     "ref": "src/pages/NoticesDashboardPage.tsx:122-124,177-178",
+     "pillar": "Fetch"
+    },
+    {
+     "id": "U-07-4",
+     "severity": "Low",
+     "area": "Content",
+     "issue": "The card badge says 'Attention' next to 'v0.3.3 · connected' without saying what needs attention; the 2 failed logins are three rows further down.",
+     "fix": "Make the badge name its cause: '2 logins failed' (warning), 'Healthy' or 'Extension missing'.",
+     "ref": "src/components/notices/SyncHealthCard.tsx:126-127,182-186",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "08-dashboard-closing-sweep",
+   "verdict": "A job that runs on its own and can close notices in bulk is exposed as a tiny link in the queue footer. Today it fails, and even when it works it would close notices with no preview, no list and no undo.",
+   "score": 2,
+   "findings": [
+    {
+     "id": "U-08-1",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "Auto-close and the due-date back-fill sit behind 'run the closing sweep', an inline link in the queue footer that staff have to notice and press. This job should run after every sync and only report what it did.",
+     "fix": "Run it server-side after each client's ingest. In the queue footer, show the outcome instead, as in the target: '4 notices closed automatically this morning (order dropped proceedings / refund sanctioned) — see why', linking to a 'Closed automatically' filter.",
+     "ref": "src/components/notices/NoticeWorkQueue.tsx:516-531; src/pages/NoticesDashboardPage.tsx:139-152",
+     "pillar": "Zero-touch",
+     "links": "S-05, L-02"
+    },
+    {
+     "id": "U-08-2",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "When the sweep succeeds, it closes notices in bulk with no preview, no list of what was closed or why, and no undo. The only trace is a toast reading 'Sweep: auto-closed N'.",
+     "fix": "Do a dry run first: a Dialog listing each candidate (client, form, reason: closure folder / refund order / LUT order) with checkboxes and a 'Close 4' button. Show the result toast with Undo, and tag the rows with a 'Closed automatically' Badge (info tone) whose reason is visible in the list.",
+     "ref": "src/pages/NoticesDashboardPage.tsx:140-151",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-08-3",
+     "severity": "Low",
+     "area": "Content",
+     "issue": "'19 open rows have no due date or stage' is developer language and mixes two unrelated gaps. The count is the queue's own heuristic, the same one behind the tile's 'need closing'.",
+     "fix": "Reword to '19 open notices have no due date — set dates', linking to filter=nodue in the list.",
+     "ref": "src/components/notices/NoticeWorkQueue.tsx:201,516-531",
+     "pillar": "At-a-glance",
+     "links": "L-36"
+    }
+   ]
+  },
+  {
+   "id": "09-dashboard-send-digest",
+   "verdict": "'Send digest' is a manual header button with no preview. It currently tells staff that nothing is due while 14 notices are overdue.",
+   "score": 2,
+   "findings": [
+    {
+     "id": "U-09-1",
+     "severity": "High",
+     "area": "Empty/error state",
+     "issue": "The digest replies 'No notice alerts due right now.' (an info toast) directly under a tile that shows 14 overdue. The alert path fails on a missing column, and the UI turns that failure into an all-clear.",
+     "fix": "Distinguish 'nothing due' from 'couldn't check' and surface errors. Before sending, show 'Today's digest: 14 overdue, 12 due this week → 6 recipients', so that a zero is visibly wrong.",
+     "ref": "src/pages/NoticesDashboardPage.tsx:154-170",
+     "pillar": "Data trust",
+     "links": "L-01"
+    },
+    {
+     "id": "U-09-2",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Emailing staff is one click with no preview, no recipient list and no confirmation, and nothing shows when the digest last went out. The card's 'Emails sent today 0' is a hard-coded constant.",
+     "fix": "Move the digest into the Autopilot/Sync card as a row: 'Daily digest · 08:00 · last sent Sat 4 Oct to 6 staff · Preview · Send now'. Preview opens a dialog that renders the email (recipients and sections) before anything is sent.",
+     "ref": "src/pages/NoticesDashboardPage.tsx:334-337; src/components/notices/SyncHealthCard.tsx:157-158",
+     "pillar": "Zero-touch",
+     "links": "S-13"
+    },
+    {
+     "id": "U-09-3",
+     "severity": "Low",
+     "area": "Layout",
+     "issue": "The header gives equal weight to four actions (Search, Add Notice, Send digest, Sync All), one of which is a once-a-day automation.",
+     "fix": "Keep search, 'Add notice' and a primary 'Sync now' in the header. Move digest and sweep into a 'More ▾' DropdownMenu or the Autopilot card.",
+     "ref": "src/pages/NoticesDashboardPage.tsx:321-343",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "10-dashboard-category-filter",
+   "verdict": "The category lens re-scopes the tiles and the calendar but not the queue directly beneath them. The only sign that the dashboard is filtered sits in the bottom-left card.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-10-1",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "Clicking 'Demand Notice' re-scopes the tiles (5 / 3 / 2 / ₹22.2 L) and the calendar, but the work queue still lists all 51 (Team · 51). The only filter indicator is a small chip in the category card, far below the tiles that changed. The tile links also drop the category.",
+     "fix": "Lift the filter into a chip bar under the module tabs ('Category: Demand Notice ✕'). Pass it to NoticeWorkQueue as a categoryFilter prop and into every tile and calendar link (&category=…), and persist it in the URL (?category=).",
+     "ref": "src/pages/NoticesDashboardPage.tsx:187-189,366-373; src/components/notices/CategorySummaryBars.tsx:53-61",
+     "pillar": "At-a-glance",
+     "links": "L-04"
+    },
+    {
+     "id": "U-10-2",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "'+ 8 categories with no data' appends the empty rows at the bottom of a 300 px internal scroll box, so the click appears to do nothing except change its own label to 'Hide 8 categories with no data'.",
+     "fix": "Drop the toggle, since zero rows carry no information, or show them as one muted line under the box: 'No notices yet in: Appeal, Audit, Penalty…'.",
+     "ref": "src/components/notices/CategorySummaryBars.tsx:72,130-136,155-162",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-10-3",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Each row does two different things: clicking the row filters the dashboard, while clicking the count leaves the page. The only difference is a hover underline on the number, and the active row is marked by a faint bg-primary/10.",
+     "fix": "Make the row a <button aria-pressed> with a check icon and bg-primary/10 ring-2 ring-primary when active. Make the count a separate 'Open list' button (ArrowUpRight icon with an aria-label).",
+     "ref": "src/components/notices/CategorySummaryBars.tsx:74-126",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "11-dashboard-calendar-month",
+   "verdict": "A useful idea held back by its details. The 35-day grid has no month boundary, chips are colour-coded numerals, the legend promises hearings and appeal limits that never appear, and empty days lead to empty lists.",
+   "score": 5,
+   "findings": [
+    {
+     "id": "U-11-1",
+     "severity": "Medium",
+     "area": "Layout",
+     "issue": "'Month' is a rolling 35-day grid starting today, with no month labels: 1–8 Nov follow 31 Oct with nothing marking the change. Weekends and public holidays look like working days.",
+     "fix": "Label the first cell of each month '1 Nov' (text-primary font-semibold), tint Sat/Sun with bg-muted/40, and mark holidays 'PH' as in the target. Rename the toggle '5 weeks', or render the actual calendar month.",
+     "ref": "src/components/notices/Next14DaysStrip.tsx:51-59,110-139,193",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-11-2",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "Chips are 9 px numerals whose type is shown only by colour (amber = reply due, blue = issued), and 'issued' is not a deadline anyway. The legend lists Appeal limitation and Hearing, which are never fed into the strip. The footer spotlight reads 'Mon, 5 Oct: Notice', naming neither the client nor the form.",
+     "fix": "Use text chips like the target ('2 due', 'PH', 'appeal') at text-[10px]. Drop 'issued' from the deadline grid or show it as a separate dot. Feed hearings and limitation dates, or hide their legend entries. Spotlight text: 'Next: Mon 5 Oct · Test Engineering Works · DRC-01C reply'.",
+     "ref": "src/components/notices/Next14DaysStrip.tsx:24-44,157-173,232-245; src/pages/NoticesDashboardPage.tsx:268-285",
+     "pillar": "At-a-glance",
+     "links": "L-33"
+    },
+    {
+     "id": "U-11-3",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Every day cell is clickable (cursor-pointer), including empty ones, which open an empty list. The cells are divs, so keyboard users cannot open a day at all.",
+     "fix": "Render a <button aria-label='Fri 9 Oct: 2 replies due'> only for days that have items. Leave empty days as plain, non-interactive cells.",
+     "ref": "src/components/notices/Next14DaysStrip.tsx:125-133",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-11-4",
+     "severity": "Low",
+     "area": "Layout",
+     "issue": "Switching to Month adds ~230 px to the middle card, which stretches the Category and Sync cards and leaves blank space in both.",
+     "fix": "Set items-start on the grid, or move the month view to the target's 'Calendar' tab with an ICS feed link.",
+     "ref": "src/pages/NoticesDashboardPage.tsx:376",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "12-dashboard-queue-assign",
+   "verdict": "Assigning is the first triage step for 30 unassigned notices. Today it is impossible (the member list is empty), and even when fixed the design is slow: a modal, no 'assign to me' and no suggested owner.",
+   "score": 2,
+   "findings": [
+    {
+     "id": "U-12-1",
+     "severity": "High",
+     "area": "Empty/error state",
+     "issue": "The member list opens as an empty white strip under the trigger, with no message. The user cannot tell that loading the staff list failed (the profiles query returns 400) rather than that nobody is available.",
+     "fix": "Track the profiles error. In SelectContent, render 'Couldn't load staff · Retry' or 'No staff found', and disable 'Assign ▾' with a stated reason when the list is empty.",
+     "ref": "src/components/notices/NoticeWorkQueue.tsx:161-166,546-553",
+     "pillar": "Reply speed",
+     "links": "L-08"
+    },
+    {
+     "id": "U-12-2",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Each batch takes six steps: tick rows → 'Assign ▾' → modal → open the select → pick → Assign. There is no 'Assign to me', no avatar quick-pick and no suggestion from the client's assigned accountant, and the dialog does not list which notices it will change.",
+     "fix": "Replace the modal with an 'Assign' Popover offering 'Me', the suggested owner ('Client's accountant: Associate One') and a searchable list with avatars. Clicking an owner avatar in a row opens the same Popover. The description lists the first three client · reference pairs (+n more).",
+     "ref": "src/components/notices/NoticeWorkQueue.tsx:364-370,540-562",
+     "pillar": "Reply speed",
+     "links": "L-18"
+    },
+    {
+     "id": "U-12-3",
+     "severity": "Medium",
+     "area": "Consistency",
+     "issue": "'Assign ▾', 'Set priority ▾' and 'Change stage ▾' carry a dropdown caret but open modal dialogs. '✉ Email GST team' uses a text glyph while Export uses a lucide icon. All of these are h-7 text-[11px], smaller than WS_BTN. 'Email GST team' opens a mailto with an empty To.",
+     "fix": "Either make them real DropdownMenus or Popovers, or drop the caret. Use the lucide Mail icon and className={WS_BTN}. Prefill the team address from settings.",
+     "ref": "src/components/notices/NoticeWorkQueue.tsx:285-297,364-394",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-12-4",
+     "severity": "Low",
+     "area": "Accessibility",
+     "issue": "Two 'Select all rows' checkboxes (in the toolbar and in the header) do the same thing. The owner cell shows '?' both for unassigned rows (grey) and for an assignee whose profile failed to load (navy): one glyph with two meanings.",
+     "fix": "Keep only the header checkbox and show 'n selected' in the toolbar. Show unassigned as a dashed circle with sr-only 'Unassigned', and an unknown profile as initials taken from the assign_to text.",
+     "ref": "src/components/notices/NoticeWorkQueue.tsx:356-363,414-419,494-501",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "13-dashboard-queue-change-stage",
+   "verdict": "Bulk stage change is quick but unsafe. Choosing Closed removes notices immediately, with an optional free-text reason, no summary, no confirmation and no undo.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-13-1",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "Setting 2 notices to 'Closed' removes them from the queue on Save. There is no list of what is being closed, no confirmation and no undo, and a single optional free-text reason is applied to unrelated notices.",
+     "fix": "Require a reason Select (Reply accepted · Order dropped proceedings · Withdrawn by officer · Duplicate · Merged into case · Other + note). List the affected notices in the description. On success, show toast.success('Closed 2 notices', { action: { label: 'Undo', onClick: … } }) that restores the previous stage and close_reason.",
+     "ref": "src/components/notices/NoticeWorkQueue.tsx:262-283,588-618",
+     "pillar": "Data trust",
+     "links": "L-28"
+    },
+    {
+     "id": "U-13-2",
+     "severity": "Medium",
+     "area": "Consistency",
+     "issue": "The stage list does not match the table. Rows display 'Captured' (null status), which cannot be chosen; 'Open' sits among the workflow stages; and the list page calls the same action 'Update Status' with only Open and Closed.",
+     "fix": "Build one StageSelect component on a shared enum, with Captured first, and use it in the queue, the list and the drawer.",
+     "ref": "src/components/notices/NoticeWorkQueue.tsx:42-52,94-98",
+     "pillar": "At-a-glance",
+     "links": "L-25"
+    },
+    {
+     "id": "U-13-3",
+     "severity": "Medium",
+     "area": "Accessibility",
+     "issue": "Stage is shown as an 8 px coloured square beside the text. Amber is used for both Hearing and Awaiting data, orange for Order and grey for Captured; there is no legend, and the colours are raw palette values.",
+     "fix": "Render stage as a Badge (gstr9/badge) with semantic tones (warning = awaiting/hearing told apart by icon, info = drafting/review, success = filed, destructive = order/appeal) and a tooltip giving the stage date.",
+     "ref": "src/components/notices/NoticeWorkQueue.tsx:81-92,466-471",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "02-dashboard-bell",
+   "verdict": "The bell exists but is not useful. Entries are bare event types with no client, notice or values, system events never appear, and on desktop the bell physically covers the page's primary action.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-02-1",
+     "severity": "High",
+     "area": "Content",
+     "issue": "Entries read 'status changed · 2h ago', 'priority changed · Associate Two' and 'document added'. They give no client, form or reference and no old → new value, so the user has to open each one to learn whether it matters. The query does not even select client_id, old_value or new_value.",
+     "fix": "Select client_id, old_value and new_value (plus clients(name) and gst_notices(notice_type, reference_number)) and render two lines: '<b>Demo Textiles</b> · ASMT-10 ZD24…' / 'Associate Two moved Reply drafted → Partner review · 2 h'. Group consecutive events per notice, and add a due chip when the notice is due within 7 days.",
+     "ref": "src/components/notices/NotificationBell.tsx:76-91,201-224",
+     "pillar": "Per-notice",
+     "links": "L-29"
+    },
+    {
+     "id": "U-02-2",
+     "severity": "High",
+     "area": "Layout",
+     "issue": "The desktop bell is position:fixed (top-4 right-4 z-40) and sits on top of the right-most header action on every module page: the right end of 'Sync All' on the dashboard and the end of 'Add Notice' on the list. Its red dot reads as part of that button.",
+     "fix": "Give NoticesPageHeader the same md:pr-12 reserve that PageHeader compact already has, or switch the module to PageHeader compact. Longer term, move the bell into a real top bar so nothing floats over page content.",
+     "ref": "src/components/layout/MainLayout.tsx:68-71; src/components/notices/NoticesPageHeader.tsx:29",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-02-3",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Read and unread items look identical; the only signal is a dot on the bell, with no count. Times mix '2h ago' with '04/10/2026'. Read state lives in this browser's localStorage, so it resets on another PC. There is no 'View all', no 'For me' filter, and the list is capped at 30.",
+     "fix": "Style unread rows with bg-primary/5, a dot and font-semibold. Show a count badge on the bell (1–9, 9+). Use one relative format ('2 h', 'Sat 4 Oct'). Persist last-seen per user (for example profiles.notif_seen_at). Add 'For me | All' tabs (assigned to me / my clients) and a 'See all activity →' link.",
+     "ref": "src/components/notices/NotificationBell.tsx:13,24-57,141-152,173-175",
+     "pillar": "Zero-touch"
+    },
+    {
+     "id": "U-02-4",
+     "severity": "Low",
+     "area": "Accessibility",
+     "issue": "The trigger's aria-label is just 'Notifications'. Unread state is shown only by a colour dot (raw bg-red-500), so screen-reader users never learn that anything is new.",
+     "fix": "Use aria-label={`Notifications, ${unreadCount} unread`}, a bg-destructive dot with a visible count, and aria-live='polite' on the count.",
+     "ref": "src/components/notices/NotificationBell.tsx:166-176",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "130-mobile-nav",
+   "verdict": "On a phone the module is barely navigable: one sidebar entry, a tab bar that overflows the screen, and a drawer close button that is nearly invisible. On desktop, admins do not even see the module's icon in the collapsed rail.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-130-1",
+     "severity": "High",
+     "area": "Mobile",
+     "issue": "The module tab bar is an inline-flex that neither wraps nor scrolls. At 390 px, every page that carries it renders ~485 px wide, with sideways page scrolling and cards clipped on the right.",
+     "fix": "Use <nav className='flex max-w-full overflow-x-auto [scrollbar-width:none] snap-x'> with snap-start items, or WS_TABS_LIST, which wraps. Below sm, show a Select 'Section: Work queue ▾' instead.",
+     "ref": "src/components/notices/NoticesTopNav.tsx:43",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-130-2",
+     "severity": "High",
+     "area": "Mobile",
+     "issue": "In the mobile drawer the whole module is one 'Notices Dashboard' entry with no children, while GST Working, Returns and Builder are expandable groups. Work queue, Matters, Hearings, Refunds, DRC-03, Company list and Reports can be reached only through the overflowing tab bar.",
+     "fix": "Add a NAV_GROUPS entry { key: 'notices', label: 'Notices & Litigation', paths: ['/notices-dashboard', '/notices-all', '/litigation', '/notices-company-list', '/refunds-all', '/drc03-all', '/notices-report', '/litigation-mis'] } and a STAFF_NAV_ITEMS entry for each path.",
+     "ref": "src/components/layout/Sidebar.tsx:167-172,190-208",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-130-3",
+     "severity": "Medium",
+     "area": "Consistency",
+     "issue": "The entry is called 'Notices Dashboard' while every page says 'Notices & Litigation'. NOTICES_PATHS omits /notices-company-list, /notices-company/:id and /notices-case-folder/:id, so the sidebar loses its active highlight on those pages.",
+     "fix": "Rename the entry 'Notices & Litigation' and add the three paths (startsWith match) to NOTICES_PATHS.",
+     "ref": "src/components/layout/Sidebar.tsx:168,213-216",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-130-4",
+     "severity": "Medium",
+     "area": "Accessibility",
+     "issue": "The Sheet's close × (absolute right-4 top-4, opacity-70) lands on the white logo card as light grey on white and is practically invisible. The only obvious way out is to tap the dimmed page.",
+     "fix": "Give the drawer's logo row pr-10, or hide the default close and render a visible ghost Button (X icon, text-sidebar-foreground, aria-label='Close navigation') beside the logo.",
+     "ref": "src/components/ui/sheet.tsx:60; src/components/layout/Sidebar.tsx:300",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-130-5",
+     "severity": "Medium",
+     "area": "Layout",
+     "issue": "On desktop, superadmin and gst_manager users have 16 icons in the collapsed rail. At 900 px height the Notices icon, which is last, is scrolled out of view, so the rail never shows which module is open. Employees, who have one item fewer, do see it.",
+     "fix": "Move Notices higher in the list (it is a daily module), group rarely used items in the rail as well, or scroll the active icon into view on mount.",
+     "ref": "src/components/layout/Sidebar.tsx:167-172,468",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "20-workqueue-all",
+   "verdict": "Despite its 'Work Queue' tab, this page is the full 141-notice archive rendered as a 23-column export. It opens with a wall of raw-status tiles, rows are 130–210 px tall, the actions are off-screen, and there is no way to open a notice.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-20-1",
+     "severity": "High",
+     "area": "Data",
+     "issue": "The tile strip groups raw staff_status strings into 16 tiles taking ~250 px. It includes a '—' tile for 34 notices with no status, 'Open 1' while the dashboard reports 51 open, and one tile per rare value (Dropped 1, Adjudged 1 …). The first tile is labelled 'Events'.",
+     "fix": "Show five fixed KpiTiles computed with noticeDefinitions (Open 51 · Overdue 14 · Due ≤ 7 d · Unassigned · Closed), each a TileButton filter. Move stages into a 'Stage' FilterPill, display null status as 'Captured', and label the first tile 'Notices'.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:327-338,625-658; src/pages/AllClientsNoticesPage.tsx:210",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-20-2",
+     "severity": "High",
+     "area": "Layout",
+     "issue": "The table is shaped for export: 23 columns, and Description is the only column that wraps, so it collapses to ~110 px and wraps over 6–10 lines. Rows are 130–210 px tall, about 4 per screen. Status is clipped at the right edge at 1440 px, and PDF and Actions are columns 24–25 and not sticky.",
+     "fix": "Default to 8 columns: Client + GSTIN · Form · Reference · About (line-clamp-2, min-w-[240px], title tooltip) · Due / days · Stage · Demand ₹ · Owner. Add a sticky right-0 Actions column (PDF, Log, Portal) with bg-card and a left shadow. Put the other 15 columns behind a 'Columns ▾' menu; reply, order and submission details belong in the notice view.",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:201-205; src/components/reports/views/NoticeWorkflowListView.tsx:960-1002",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-20-3",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "There is no way to open a notice from the list. Rows are not clickable, the drawer is not mounted on this page, and reference numbers link (to the case folder) only when a case ID exists. The pencil's 'log' dialog is the only per-row view.",
+     "fix": "Make the client/reference cell a Link to /notices/:id, or mount NoticeDrawer on this page and open it on row click or Enter. Keep the case-folder link as a secondary icon.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:822-1003; src/pages/AllClientsNoticesPage.tsx:315",
+     "pillar": "Per-notice",
+     "links": "R-19"
+    },
+    {
+     "id": "U-20-4",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "The headings misdescribe the page. The H1 and the card title both read 'Notices — All Clients' (a double title). The subtitle says 'filtered from the dashboard tile you clicked' even when nothing was clicked. The highlighted tab says 'Work Queue' for a list in which 90 of 141 rows are closed.",
+     "fix": "Use the H1 'All notices' with a subtitle that summarises the active filters (or nothing). Drop the card header title. Route 'Work queue' to the open queue (filter=open, sorted by due date).",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:193-200,263-268; src/components/reports/views/NoticeWorkflowListView.tsx:621",
+     "pillar": "At-a-glance",
+     "links": "L-40"
+    },
+    {
+     "id": "U-20-5",
+     "severity": "Medium",
+     "area": "Consistency",
+     "issue": "Filters live in three places in three styles: a 'Type: All notices' pill floating at the right of the nav row; URL filters echoed only as grey subtitle text; and an in-card toolbar (search + 4 selects) that pushes 'Export to Excel' onto its own line. 'Notices & Orders | Merged Notices' is yet another tab style under the module tabs.",
+     "fix": "Use one filter bar inside the card: search (flex-1), then FilterPills (Source, Type, Stage, Priority, Due, Owner, Client), then active-filter chips with ✕, then a right-aligned Export (ml-auto). The Notices/Merged toggle becomes the Source pill, and any remaining tabs use the WS tab styles.",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:270-306; src/components/reports/views/NoticeWorkflowListView.tsx:661-779",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-20-6",
+     "severity": "Medium",
+     "area": "Mobile",
+     "issue": "At 390 px the 16 tiles stack two to a row and push the table ~1,200 px down the page. The table then shows only GSTIN and trade name inside a fixed-height box (a scroll inside the page scroll), so due date, stage and actions are off-screen.",
+     "fix": "Below md, render a card list (client · form · due chip · stage badge · ⋯ actions) instead of the table, and show the tiles as one horizontally scrolling chip row (flex overflow-x-auto gap-2).",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:625,782",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "21-workqueue-merged",
+   "verdict": "Merging the sources is useful, but this tab swaps in a different, poorer list component, drops the active filters, counts refund and DRC-03 cases twice, and opens with 28 raw-status tiles.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-21-1",
+     "severity": "High",
+     "area": "Layout",
+     "issue": "Before a single row is visible, 28 tiles in six rows (~370 px) mix notice stages with refund and DRC-03 portal statuses ('Pending for Action by Tax Officer', 'Refund Sanctioned', 'Provisional Refund Order Issued (RFD-…' cut off).",
+     "fix": "Group by source: three compact tile groups (Notices: Open / Closed · Refunds: In progress / Sanctioned / Rejected · DRC-03: Filed), each mapped from families of statuses, with the raw status available in a Status filter.",
+     "ref": "src/components/reports/views/EvidenceEventListView.tsx:186-200,259-290",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-21-2",
+     "severity": "Medium",
+     "area": "Consistency",
+     "issue": "The Merged tab renders a different component. It has no Export to Excel, no type, priority or date filters, and no row actions; GSTIN is in body text instead of mono, and status appears as grey pills. Two tabs of one page behave differently.",
+     "fix": "Use one list component with a Source column and pill (Notices & Orders · Refunds · DRC-03). Give refund and DRC-03 rows their own actions (open case folder, PDF).",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:312-315; src/components/reports/views/EvidenceEventListView.tsx:259-335",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-21-3",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Switching to Merged silently drops the URL filters (overdue, status, category, date, client, noticeId); only Type survives. An 'overdue' drill-down of 69 becomes 186 rows, and nothing on screen says the filter was lost.",
+     "fix": "Apply the same predicates to merged rows (date, client and status map cleanly), or disable the Merged tab while a notice-only filter is active and explain why in a tooltip.",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:222-249",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-21-4",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "Refund and DRC-03 cases appear twice: once as the 'Refunds' / 'Voluntary Payment' case row and once from the dedicated table. Merged therefore shows 186 records against Notice Summary's 182.",
+     "fix": "Deduplicate by ARN exactly as computeNoticeSummary does: keep the dedicated row and link it to the case row's folder.",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:228-248",
+     "pillar": "Data trust",
+     "links": "L-12, L-36"
+    },
+    {
+     "id": "U-21-5",
+     "severity": "Low",
+     "area": "Layout",
+     "issue": "The 'Section' column repeats 'Notices & Orders' on every row, wrapping over two lines and squeezing Description further.",
+     "fix": "Replace it with a small source Badge (N / R / D with a tooltip) inside the Type cell.",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:231,254",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "22-workqueue-overdue-drilldown",
+   "verdict": "The overdue drill-down contradicts its own tile on screen (69 vs 14, including 'Closed 43') and is sorted by issue date, so the most overdue items are not at the top.",
+   "score": 2,
+   "findings": [
+    {
+     "id": "U-22-1",
+     "severity": "High",
+     "area": "Data",
+     "issue": "The page meant to show the 14 overdue notices lists 69, and its own tile strip shows 'Closed 43' inside an 'overdue' view. A partner will notice the contradiction within a second.",
+     "fix": "Use isOverdue from noticeDefinitions for filter=overdue and show the count in the H1 ('Overdue · 14').",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:179",
+     "pillar": "Data trust",
+     "links": "L-04"
+    },
+    {
+     "id": "U-22-2",
+     "severity": "High",
+     "area": "Logic",
+     "issue": "The list is sorted by issue date, newest first, and has no 'days overdue' column. The most overdue notice is not first, and lateness has to be worked out from the Due Date column.",
+     "fix": "When filter=overdue (or due7), sort by effective due date ascending and add a 'Late by' column with a destructive Badge ('12 d'). Make column headers sortable (with aria-sort).",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:369-380",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-22-3",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Two filter systems disagree on screen. The drill-down filter comes from the URL, but the toolbar's date filter reads 'No date filter', and there is no chip to clear 'overdue'. The only way out is to click the 'Work Queue' tab.",
+     "fix": "Initialise the toolbar from the URL and write changes back, so the URL is the single source of truth. Show 'Overdue ✕' as a removable chip next to the search.",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:98-113,193-200; src/components/reports/views/NoticeWorkflowListView.tsx:714-725",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-22-4",
+     "severity": "Low",
+     "area": "Content",
+     "issue": "The date filter options read 'Over Due Notices', 'Notice Due in 7 Days', 'Last 24 Hours' and 'Last 15 Days': a word split in two, Title Case, and the last two silently filter on issue date.",
+     "fix": "Rename them 'Overdue', 'Due in 7 days', 'Issued in last 24 h' and 'Issued in last 15 days'.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:719-723",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "23-workqueue-matters-submitted",
+   "verdict": "The 'Matters' tab opens three notices with a submission logged, under an 'All Clients' heading. It is the wrong destination, and the reason each row is listed is off-screen.",
+   "score": 2,
+   "findings": [
+    {
+     "id": "U-23-1",
+     "severity": "High",
+     "area": "Content",
+     "issue": "The highlighted tab says 'Matters', while the H1 and the card both say 'Notices — All Clients' and the rows are notices filtered by 'submission logged'. The actual litigation matters live under 'Hearings'.",
+     "fix": "Point 'Matters' at /litigation, and add a 'Submitted' quick-filter chip to the list.",
+     "ref": "src/components/notices/NoticesTopNav.tsx:10; src/pages/AllClientsNoticesPage.tsx:181",
+     "pillar": "At-a-glance",
+     "links": "L-40"
+    },
+    {
+     "id": "U-23-2",
+     "severity": "Medium",
+     "area": "Layout",
+     "issue": "The fields that put a row in this view, Submission ARN and Submission Date, are columns 16–17 and off-screen to the right. The visible part of the table is mostly a Description wrapping over 10 lines.",
+     "fix": "Use per-filter column presets: for filter=submitted, show Submission ARN and date beside the reference; for filter=replied, show reply ref and date.",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:201-205",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-23-3",
+     "severity": "Low",
+     "area": "Consistency",
+     "issue": "Every row without a priority shows a faint grey flag (text-muted-foreground/30), which reads like a disabled control. Only High is red.",
+     "fix": "Render nothing when there is no priority, and show High and Medium as text Badges ('High' destructive, 'Medium' warning) so the column can be scanned.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:866-877",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "24-workqueue-open-exposure",
+   "verdict": "The ₹4.23 cr tile opens a list with no rupees on screen: 51 open notices, the amount column off to the right, no total and no sort by demand.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-24-1",
+     "severity": "High",
+     "area": "Data",
+     "issue": "The 'Exposure under dispute' drill-down lists all 51 open notices, 29 of which have no demand. Amount of Demand is column 18 and off-screen, there is no total row and no sort by amount, so the screen can neither confirm nor explain the ₹4.23 cr.",
+     "fix": "Add filter=exposure: open notices with a demand, sorted by amount descending, with a Demand ₹ column next to Client and a sticky tfoot (WS_TR_TOTAL) reading 'Total ₹4.23 cr across 22 notices'.",
+     "ref": "src/pages/NoticesDashboardPage.tsx:369; src/pages/AllClientsNoticesPage.tsx:175,201-205",
+     "pillar": "At-a-glance",
+     "links": "L-04, L-13"
+    },
+    {
+     "id": "U-24-2",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "The tile's 'Exposure report →' promises a report but lands on the generic list with the 'Work Queue' tab highlighted. There is no split by stage, client or head (tax / interest / penalty), unlike the target's 'Exposure by stage'.",
+     "fix": "Either build an exposure view (bars by stage plus top clients, as in target-dashboard) or relabel the link 'Open notices with demand →'.",
+     "ref": "src/components/notices/NeedsAttentionStrip.tsx:192",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "25-workqueue-calendar-date",
+   "verdict": "The day drill-down works and stays small, but it echoes the date in ISO format, does not say why each row matched, and offers no way to move to the next day.",
+   "score": 5,
+   "findings": [
+    {
+     "id": "U-25-1",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "The filter is echoed as 'issued/due on 2026-10-09' (ISO), while the table uses 09/10/2026 and the calendar 'Fri 9'. Rows do not say whether they matched on the issue date or the due date.",
+     "fix": "Title the page 'Fri 9 Oct 2026 · 2 notices' and add a per-row Badge 'Due today' or 'Issued today'.",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:187,200",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-25-2",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "There is no day navigation and no way back. To look at Saturday the user has to return to the dashboard and click again.",
+     "fix": "Add a date chip with ‹ › buttons (setParams date ± 1) and a 'Back to dashboard' breadcrumb. Optionally keep a mini row of the 2-week strip above the list for context.",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:106,187",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "26-workqueue-client-scope",
+   "verdict": "A list scoped to one client that never names the client and cannot be cleared, and whose count differs from the profile tile that opened it.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-26-1",
+     "severity": "High",
+     "area": "Content",
+     "issue": "With ?client= the page still says 'Notices — All Clients' and '12 records'. The client's name appears nowhere outside the rows, there is no chip to remove the scope, and there is no link back to the company profile.",
+     "fix": "Use the H1 'Demo Textiles Pvt Ltd · notices', a breadcrumb 'Notices & Litigation › Clients › Demo Textiles', a chip 'Client: Demo Textiles ✕' and a 'Company profile' link.",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:109,188,193-200,263-268",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-26-2",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "The profile's 'Total Notices 17' opens a 12-row list, because refund and DRC-03 rows are not listed, and nothing on screen explains the 5 missing.",
+     "fix": "Add a footer line '+5 refund / DRC-03 cases → Merged view for this client', with the Merged tab honouring ?client=.",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:188",
+     "pillar": "Data trust",
+     "links": "L-21, L-12"
+    },
+    {
+     "id": "U-26-3",
+     "severity": "Low",
+     "area": "Layout",
+     "issue": "In a single-client view, the GSTIN and Trade Name columns repeat the same values on all 12 rows and take up ~300 px.",
+     "fix": "Hide GSTIN and Trade Name when clientParam is set, building the headers conditionally.",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:201-207",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "27-workqueue-notice-deeplink",
+   "verdict": "The bell and the drawer's 'Open in list' both land here, on a one-row, 23-column spreadsheet. That is the opposite of a per-notice view.",
+   "score": 2,
+   "findings": [
+    {
+     "id": "U-27-1",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "?noticeId= shows one notice as a spreadsheet row, with Description wrapping over 16 lines, under tiles reading 'Event 1' and 'With evidence PDF 0'. There is no notice header, PDF, timeline, deadline or next action, so coming here from the drawer loses information.",
+     "fix": "Route the bell, the drawer and search to /notices/:id: the target notice workspace with stepper, ₹ tiles, issues, documents and file-on-portal. Until that page exists, open NoticeDrawer automatically when noticeId is present.",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:113,189; src/components/notices/NotificationBell.tsx:154-161; src/components/notices/NoticeDrawer.tsx:507-508",
+     "pillar": "Per-notice",
+     "links": "R-19, L-03"
+    },
+    {
+     "id": "U-27-2",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "Nothing in the page chrome identifies the notice: the H1 says 'Notices — All Clients', the subtitle '1 record', the 'Work Queue' tab is highlighted, and there is no 'Show all ✕' to leave the single-notice scope.",
+     "fix": "Title the page '<Client> · <form> <reference>' and add a removable chip 'Showing one notice ✕'.",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:193-200,263-268",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-27-3",
+     "severity": "Low",
+     "area": "Layout",
+     "issue": "The tile strip and the full filter toolbar still render for a single row, adding ~150 px of controls with nothing useful to do.",
+     "fix": "Hide the tiles and toolbar when there is at most one row or a noticeId scope is active.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:625-779",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "29-workqueue-inline-status",
+   "verdict": "The inline status control is a two-option select that can overwrite a workflow stage, and trigger alert emails, with a single mis-click.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-29-1",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "On a 'Reply drafted' row the select reads 'Set status' and offers only Open and Closed. Picking either replaces the stage instantly, with no confirmation, no reason for Closed and no undo.",
+     "fix": "Replace the per-row Select with a stage Badge that opens a Popover backed by the shared stage enum. Require a reason for Closed, and show a toast with Undo.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:415-426,881-901",
+     "pillar": "Data trust",
+     "links": "R-13, L-25"
+    },
+    {
+     "id": "U-29-2",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Each inline change also logs an event and immediately runs processEventAlert and flushOutbox. Once alerts work, a mis-click will send an email to the client or owner before the user can correct it.",
+     "fix": "Defer alert dispatch: queue alerts with a 2–5 minute grace period that Undo cancels, or send only on confirmed stage transitions.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:427-440",
+     "pillar": "Zero-touch"
+    }
+   ]
+  },
+  {
+   "id": "30-workqueue-edit-dialog",
+   "verdict": "The only place to record a reply is a 13-field catch-all dialog. It does not say which notice it is editing, it does not move the stage, and saving it clears the auto-close reason.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-30-1",
+     "severity": "High",
+     "area": "Content",
+     "issue": "The dialog is titled 'Log reply / order / submission' with a generic description: no client, reference, form or due date. On a list of near-identical rows, users cannot confirm they are logging against the right notice.",
+     "fix": "Use DialogTitle 'Log reply · Test Engineering Works' and DialogDescription 'ZD3308052602273 · Determination of tax · due 05 Oct 2026 · Closed (auto: closure folder)'.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:1100-1107",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-30-2",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "Thirteen flat fields mix reply, order, submission, extension, demand, FY, owner, close reason and remarks. Logging a reply does not move the stage to Filed, there is no upload for the reply or acknowledgement, and nothing is pre-filled from the portal's REPLY folder.",
+     "fix": "Split the form into sections or Tabs: 'Reply filed' (ref, date, ARN, acknowledgement upload; saving sets stage Filed) · 'Order received' · 'Extension' · 'Details'. Add a 'Fill from portal' button that uses the synced REPLY item.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:1108-1173",
+     "pillar": "Reply speed",
+     "links": "R-06, L-25"
+    },
+    {
+     "id": "U-30-3",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "Close Reason opens blank on an auto-closed notice, so saving wipes 'auto:closure'. Its placeholder invites staff to type system tags ('e.g. auto:closure'). Assign To is free text that never sets the owner.",
+     "fix": "Show an auto-close as a read-only Note ('Closed automatically: closure folder') and use a reason Select for manual closes. Replace Assign To with a staff picker that writes assign_to_user_id.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:522,1160-1168",
+     "pillar": "Data trust",
+     "links": "R-17, L-18"
+    },
+    {
+     "id": "U-30-4",
+     "severity": "Low",
+     "area": "Consistency",
+     "issue": "Field formats disagree. The FY placeholder says 'e.g. 2025-2026' while the row holds '2020-21'; Amount is a number input with spinners; and Priority sits in a bordered row styled unlike every other field.",
+     "fix": "Use an FY Select (2017-18 … 2026-27), NumberInput for the amount, and one uniform label-above-control grid.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:1109-1122,1152-1159",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "31-workqueue-bulk-update-status",
+   "verdict": "Bulk status here repeats the queue's unsafe close (U-13-1) under a different name and with fewer options. The toolbar also jumps when rows are ticked, and selections survive filtering.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-31-1",
+     "severity": "Medium",
+     "area": "Consistency",
+     "issue": "The same action has three names and two option sets: 'Update Status' (Open/Closed) here, 'Change stage ▾' (9 stages) on the dashboard queue and 'Set status' inline. The dialog titles 'Update Status' and 'Priority Update' are in Title Case while sibling dialogs use sentence case.",
+     "fix": "Build one shared BulkActions bar (Stage · Priority · Assign) for both lists, with the same labels, the same StageSelect and the U-13-1 close safeguards.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:747-764,1040-1098",
+     "pillar": "At-a-glance",
+     "links": "L-25, U-13-1"
+    },
+    {
+     "id": "U-31-2",
+     "severity": "Medium",
+     "area": "Layout",
+     "issue": "Ticking a row inserts '2 selected' and enables buttons inside the filter row, which pushes 'Download all visible PDFs' onto the second line. The toolbar reflows under the cursor (compare the unselected state on screen 20).",
+     "fix": "Use a separate bulk bar: when the selection is non-empty, show a sticky bottom bar (fixed inset-x-0 bottom-4 mx-auto w-fit rounded-full shadow-lg) with 'n selected · Stage · Priority · Assign · Clear'. The filter row then never changes.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:742-778",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-31-3",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Selections are kept by row index across pages and filter changes. After filtering, the dialog's '2 selected records' can include notices that are no longer visible, so the user can close notices they cannot see.",
+     "fix": "Clear the selection when filters or search change, or show 'n selected, m hidden by filters · View'. List the affected client · reference pairs in the dialog.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:384,452-466",
+     "pillar": "Data trust"
+    }
+   ]
+  },
+  {
+   "id": "33-workqueue-portal-no-extension",
+   "verdict": "The per-row portal and PDF actions are buried at column 25 and fail without guidance, and a missing PDF is a dead grey icon rather than a way to fetch it.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-33-1",
+     "severity": "Medium",
+     "area": "Empty/error state",
+     "issue": "Without the extension, the 'open on GST portal' icon stays enabled and only shows the toast 'GST Keeper browser extension not detected.', with no help on installing it. With the extension, the user still lands on the generic Notices & Orders list after another CAPTCHA.",
+     "fix": "Disable the button with a Tooltip 'Install/enable the GST Keeper extension (v0.3+) to open the portal' plus a link. When enabled, label it 'Open on portal' and deep-link to the case folder.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:247-254,988-998",
+     "pillar": "Fetch",
+     "links": "S-26"
+    },
+    {
+     "id": "U-33-2",
+     "severity": "Medium",
+     "area": "Layout",
+     "issue": "To reach the row actions, the user scrolls past mostly empty columns. Remarks takes ~480 px of '—', and Amount of Demand, Assign To and Issued By are '—' on most rows.",
+     "fix": "By default, hide columns that are empty for every visible row (a 'Columns ▾' menu shows them), cap Remarks with max-w-[200px] truncate, and keep Actions sticky (see U-20-2).",
+     "ref": "src/pages/AllClientsNoticesPage.tsx:201-205,219; src/components/reports/views/NoticeWorkflowListView.tsx:960-972",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-33-3",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "A notice without a captured PDF shows a faint, disabled file icon ('Not captured'), while captured PDFs use a red icon that reads as an error. There is no way to fetch the missing document from here.",
+     "fix": "For captured PDFs, use a neutral FileText button (aria-label 'Open notice PDF'). For missing ones, show a 'Fetch PDF' ghost button that queues a targeted pull for that client/case through the extension and shows its progress.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:831-851",
+     "pillar": "Fetch"
+    }
+   ]
+  },
+  {
+   "id": "34-workqueue-employee-readonly",
+   "verdict": "Read-only access is applied bluntly. Viewers lose even read actions such as opening the portal, most statuses show as '—', and the permission rules differ from the dashboard, which still lets the same user add notices and run syncs.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-34-1",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "The portal button sits inside the edit-only Actions column (shown only when canEdit), so a read-only employee cannot open a client on the portal, even though that is a read action. The PDF column remains.",
+     "fix": "Render the Actions column for everyone and gate only the pencil (log/edit) on canEdit.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:975-1002",
+     "pillar": "Fetch"
+    },
+    {
+     "id": "U-34-2",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "Without edit rights, every notice with no stored status shows a grey '—' pill, so most rows have no visible state. The tile strip repeats it as '— 34'.",
+     "fix": "Display a derived stage as a toned Badge: null becomes 'Captured', and open/closed comes from isOpen.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:903-909; src/pages/AllClientsNoticesPage.tsx:210",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-34-3",
+     "severity": "Medium",
+     "area": "Consistency",
+     "issue": "Permission handling is inconsistent across pages. The list hides Add Notice, checkboxes and bulk actions; the dashboard queue shows its bulk buttons disabled with a tooltip; and the dashboard header shows Add Notice, Send digest and Sync All to the same employee with no permission check.",
+     "fix": "Apply one rule: gate Add Notice, Sync and Digest on the same permission keys, and show disabled controls with a tooltip ('Needs Edit notice status — ask a manager') or a one-line Note at the top of read-only views.",
+     "ref": "src/pages/NoticesDashboardPage.tsx:333-341; src/pages/AllClientsNoticesPage.tsx:267; src/components/notices/NoticeWorkQueue.tsx:323-325",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-34-4",
+     "severity": "Low",
+     "area": "Interaction",
+     "issue": "'Download all visible PDFs' opens one browser tab per PDF at 150 ms intervals (up to 141 tabs), and the popup blocker stops all but the first.",
+     "fix": "Bundle the files into one ZIP (JSZip, or server-side) named Notices_<filter>_<date>.zip, with a progress toast.",
+     "ref": "src/components/reports/views/NoticeWorkflowListView.tsx:391-404",
+     "pillar": "Fetch"
+    }
+   ]
+  }
+ ],
+ "crossCutting": [
+  "House style not adopted (all screens). The module uses its own NoticesPageHeader (22 px title, solid icon tile, no md:pr-12), NoticesCardHeader, Card + border-l-4 KPI tiles with 11 px uppercase labels and 30 px numerals, shadcn tables with 10 px uppercase headers, h-7 text-[11px] buttons and four hand-rolled tab strips, while the list page next to it uses KpiTile, WS_TH and WS_BTN. Fix: use PageHeader compact for every page header; KpiTile + SectionCard + the gstr9 Badge for tiles, cards and chips; WS_TABLE / WS_TH / WS_TD for every table; WS_BTN / WS_CONTROL for toolbar controls; and WS_TABS_LIST / WS_TAB / WS_TAB_ACTIVE for the module tabs, the queue tabs, the Notices/Merged switch and the 2-weeks/Month toggle. Then delete NoticesPageHeader and NoticesCardHeader.",
+  "Colour rules broken (01, 10, 11, 13, 20, 33). Raw palette classes (amber-500, blue-500, emerald-500, violet-500, orange-500, red-50/200/600, slate-300, yellow-600) and dark: variants appear in NeedsAttentionStrip, CategorySummaryBars, Next14DaysStrip, SyncHealthCard, NoticeWorkQueue (stageColor, the Days column), NotificationBell and the list's PDF button, contrary to docs/UI-UX-REDESIGN.md. Several states are encoded by colour alone (stage squares, calendar chips, bar segments). Fix: map to semantic tokens (destructive / warning / info / success / primary / muted), remove the dark: variants, and always pair colour with a text label or icon.",
+  "Keyboard and screen-reader access (01, 10, 11, 20, 29, 33). KPI tiles are Cards with onClick, category rows and calendar days are divs, and queue rows are TableRow onClick; none can take focus or be operated with Enter/Space. Icon-only buttons (PDF, pencil, portal, pagination ‹ ›) have a title but no aria-label. Every row checkbox is labelled just 'Select row', and the status selects have no row-specific name. Segmented tabs lack role='tab' / aria-selected. Fix: use <button>/<Link> semantics with focus-visible:ring-2 ring-ring, aria-pressed on toggles, an aria-label naming client + reference on every row control, and Radix Tabs (or role='tablist') for the segmented controls.",
+  "Floating chrome covers content (01, 06, 07, 08, 20–34, mobile). The Quick-actions and Chat FABs (fixed bottom-right z-50, 56 px each) sit over the queue's Owner/Assign column and the list's Status/Actions columns, and sonner toasts (bottom-right, no offset, src/App.tsx:66) appear on top of both FABs. On a phone the FABs cover the right third of cards. (The bell's overlap with header actions is U-02-2.) Fix: hide both FABs on /notices* and /litigation* (or merge them into one), add pb-24 to data pages, and give the Toaster offset={96} so toasts never sit on the FABs.",
+  "Raw technical errors and silent failures (04, 05, 08, 09, 12). Toasts show Postgres/PostgREST text ('null value in column \"portal_key\" … violates not-null constraint'; 'column gst_case_folder_items.notice_id does not exist', twice), while other failures are invisible: an empty assignee list, a search spinner that never stops, a digest that reports 'nothing due'. Fix: add a toError(err) helper that maps codes (23502, 42703, 42501, network) to plain sentences with 'Copy details', and have every component render its own error or empty state (TableEmptyState / Note tone='warn') instead of an empty or spinning box.",
+  "Irreversible actions without confirmation, reason or undo (08, 13, 29, 31). Bulk 'Change stage → Closed', bulk 'Update Status', the inline Open/Closed select and the closing sweep all commit immediately, take at most an optional free-text reason, and cannot be undone; the inline change can also fire alert emails at once. Fix: useConfirm() listing the affected notices, a required close-reason Select, and a sonner toast action 'Undo' that restores the previous stage and close_reason (plus event logging, L-28); dispatch alerts only after the undo window.",
+  "Formats and vocabulary drift (all screens). Dates appear as '19 Oct 2026', '05/10/2026', '2026-10-09', '04/10/2026', 'Sun' and '2h ago'. Money appears as '₹ 4.23 cr', '₹ 31.6 L', '27,300' and raw numbers. Form codes appear as both 'DRC 01' and 'DRC-01'. Portal Title Case leaks into the UI ('Letter Of Undertaking', 'Determination Of Tax'), and the UI mixes 'status' with 'stage', 'Company' with 'Client', and calls notices 'matters'. Fix: one fmtDate (d MMM yyyy, IST) and one fmtINR (₹ with L/cr above 1 lakh) utility, a formCode normaliser (ASMT-10, DRC-01C), a sentence-case display mapping for portal types, and a short glossary (notice, matter, stage, client) applied to every label.",
+  "Per-notice access is fragmented (01, 02, 04, 11, 20, 27). Queue rows open a drawer that fails in production; calendar chips open the same drawer; the bell and 'Open in list' open a one-row spreadsheet; search opens the company profile; and the list opens nothing. Fix: one /notices/:id workspace following target-notice.png (stepper, ₹ tiles, issues, draft, documents, file-on-portal, key facts), with every notice reference in the module a Link to it. Keep the drawer as a quick preview with an 'Open full page' link (R-19, L-03).",
+  "Filter state is scattered and invisible (10, 20, 22, 24, 26, 27). The dashboard category filter lives in React state, drill-down filters in the URL, and toolbar filters in local state; they do not talk to each other, are echoed only as grey text, and cannot be cleared except by switching tabs. Fix: make URL search params the single source of truth for every filter on both pages, render them as a FilterChips row (label: value ✕) under the header, and carry them through the tile, calendar and category links.",
+  "Automation is exposed as manual buttons (06, 07, 08, 09). Sync All, Send digest and 'run the closing sweep' are separate buttons in the header and in a table footer, and each reports back only through a transient toast. Fix: one Autopilot health card following target-sync.png, showing last and next run, fresh GSTINs, the exceptions that need a person (login failed → Update password; CAPTCHA → Open wall), digest and sweep outcomes with 'see why' links, and a single 'Sync now' that first asks for the scope.",
+  "No responsive patterns (01, 20, 130 and every module page at 390 px). The tab bar forces a 485 px page width, tables become fixed-height boxes with a scroll inside the page scroll, KPI tiles go two to a row with labels wrapping over three lines, toolbars wrap into three rows, and actions sit off-screen. Fix: an overflow-x-auto tab rail (U-130-1), card lists instead of tables below md for the queue and the list (client, form, due chip, stage, ⋯), KPI chips in a horizontal scroll row, and a sticky bottom bar for bulk actions.",
+  "Loading and empty states are bare (01, 20, 21). Each dashboard card shows its own centred spinner, so the layout jumps as they resolve; the list shows a full-page spinner; and empty states ('No open notices in this view.', 'No rows match the current filters.') give no next step. Fix: Skeleton blocks sized like the final tiles and rows, and empty states that state the cause and offer an action ('No overdue notices · Show due this week')."
+ ]
+}

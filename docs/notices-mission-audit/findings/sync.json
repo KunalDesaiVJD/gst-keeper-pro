@@ -1,0 +1,847 @@
+{
+  "summary": "Portal data reaches GST Keeper almost entirely through the unpacked Chrome extension: it logs in once per client (a person types every CAPTCHA), calls the portal's own JSON APIs for Notices & Orders, case tasks/folders, refunds, DRC-03, ledgers and returns, and writes to Supabase with the public anon key; the Playwright agent is orphaned (no notices handler, schedule disabled, its UI removed), so nothing runs unattended and a 90-client refresh is a serial 2-4 hour babysat run that the 10-minute-idle / 3-hour caps can silently cut short. Phase 0.1 upsert + soft-delete is in place but unsafe: zero-row or partial failures mass soft-delete, a transient PDF failure nulls a good link, every PDF is re-downloaded on every run, the session GSTIN is never checked before writing, and an outdated unpacked copy (<0.3.0) still hard-deletes a client's notices. The 'new notice -> work' chain is broken end to end: no 'captured' events are emitted, Sweep queries a non-existent column (gst_case_folder_items.notice_id), alerts and the notice drawer select a hearing_date column no migration creates (verify on live DB), and the dashboard shows a hard-coded 'Next scheduled unattended sync: 06:00 IST'. Security is weak for a CA firm (plaintext portal passwords readable with the publishable key and copied into chrome.storage, a public PDF bucket anyone can overwrite or delete, a bridge that obeys any *.vercel.app page). A staged plan (safety rails -> server-side ingest RPC + run ledger -> incremental identity-checked runs -> DB-trigger alerts -> office-IP agent with a batched CAPTCHA wall on a 05:30 IST schedule -> email-triggered targeted syncs -> PDF text extraction) can cut human effort from roughly 3 h/day to about 20 min/day without auto-solving CAPTCHAs.",
+  "coverage": [
+    {
+      "portalSection": "View Notices and Orders (services/auth/api/get/notices)",
+      "fetched": "Partial",
+      "how": "POST from the logged-in portal tab with {from:'01/01/2017', to:today} - full history every run (extension/content.js:2652-2655). Runs in step 'notices' of mode 'notices_bundle' (Notices Dashboard Sync All, Company List Sync; background.js:445-482) or a single Reports Hub 'notices' pull. Manual trigger only.",
+      "captured": "noticeOrderId -> reference_number/portal_key, type, descr, dtOfIssue, dueDate, status (always null from the portal per migration 20260824100700:4-6), issuedBy (content.js:2723-2731).",
+      "dropped": "Everything else in the payload - gst_notices has no raw_json column; docId/applnId/appDefId/pdfDownloadURL used transiently and not stored; no demand amount, section, tax period, DIN or hearing data.",
+      "documents": "Downloaded: GET /document/{docId}/{applnId} -> re-uploaded to return-pdfs/notices/{client}/{ref}.pdf -> gst_notices.pdf_url (content.js:2732-2742). Re-downloaded on every run; stored as a public URL; no text extraction.",
+      "storedIn": "gst_notices (source='notices'); storage bucket return-pdfs (public)",
+      "gap": "Keep raw payload + doc ids; skip already-captured PDFs; extract text (demand by head, section, period, due/hearing dates); change detection (portal_hash)."
+    },
+    {
+      "portalSection": "GSTR-3A return-defaulter notices (u/s 46) inside the notices feed",
+      "fetched": "Partial",
+      "how": "Rows carrying pdfDownloadURL + appDefId: background worker fetches return.gst.gov.in/returns/auth/api/gstr3a/summary with a declarativeNetRequest Referer rewrite (background.js:15-39; content.js:2743-2765).",
+      "captured": "Same row fields as other notices.",
+      "dropped": "The summary JSON itself (ret_period, retTyp, orderId, cancellation details) - used only to draw a PDF.",
+      "documents": "PDF is re-drawn with jsPDF from hard-coded legal text (content.js:2958-3036), not the portal's own document; stored at return-pdfs/notices/{client}/{noticeOrderId}.pdf.",
+      "storedIn": "gst_notices.pdf_url; return-pdfs",
+      "gap": "Store the summary JSON, link the defaulted period to filing status and auto-close when the return is filed (s.46 notice deemed withdrawn); label the PDF as reconstructed."
+    },
+    {
+      "portalSection": "Case tasks / 'Additional Notices & Orders' feed (litserv/auth/api/case/task/get)",
+      "fetched": "Partial",
+      "how": "POST {gstIn, fmdt 01/01/2017, todt today} in the same notices step; any failure is swallowed to an empty list (content.js:2678-2688).",
+      "captured": "refId, caseTypeName -> notice_type, taskDesc, assignmentDt -> issue_date, arn -> case_id (content.js:2802-2809).",
+      "dropped": "due_date / status / issued_by forced to null; caseId, caseTpeCd and other task fields not stored; tasks whose refId equals a get/notices reference are skipped entirely, including their folder capture (content.js:2800).",
+      "documents": "First ORDRS-folder document via getEncrypDocIds + downloadhb -> gst_notices.pdf_url (content.js:2813-2849).",
+      "storedIn": "gst_notices (same source 'notices')",
+      "gap": "Keep caseId; never skip folder capture for overlapping refs; do not soft-delete these rows when case/task/get fails; promote due/hearing/reply/order facts."
+    },
+    {
+      "portalSection": "Case folders: INTIM / NOTCE / REPLY / ORDRS / DRC7A (case/folder + case/folder/items)",
+      "fetched": "Partial",
+      "how": "For every case-task row with caseId + arn, every folder and every item is fetched on every run, with 15-20 s timeouts (content.js:2864-2917).",
+      "captured": "Verbatim parsed itemJson as raw_json, folder code, refId/crn, attachment list (content.js:2900-2909).",
+      "dropped": "Nothing inside raw_json, but no typed columns: reply-due date (duedt / replyDuedt / sdtls.duedate), personal-hearing fields, reply type/date/ARN, order no/date/demand are only rendered by the folder page (AdditionalNoticeFolderPage.tsx:116-207) and never written to gst_notices.",
+      "documents": "Every attachment downloaded on every run to return-pdfs/notices/{client}/case-folder/{arn}/{docId}.pdf (content.js:2882-2897).",
+      "storedIn": "gst_case_folder_items (attachments jsonb, raw_json)",
+      "gap": "Incremental attachment fetch; typed extraction into notice fields; per-folder failures must not soft-delete; non-unique keys (content.js:2899-2903)."
+    },
+    {
+      "portalSection": "Refund applications (litserv case/search, caseTypeCd RFUND)",
+      "fetched": "Partial",
+      "how": "POST case/search 01/07/2017 -> today in step 'refunds' of notices_bundle (content.js:3082-3088).",
+      "captured": "ARN, refundRsn -> refund_type, source_ledger (ITC if the reason mentions ITC), caseCreationDate, ttlRfdAmt, statusDesc (content.js:3104-3115).",
+      "dropped": "sanctioned_amount always null (content.js:3112); caseJson ignored; refund period not captured.",
+      "documents": "Only through the separate per-client 'refund_docs' pull (content.js:3193-3315; src/lib/reportsCatalog.ts:660) - not in Sync All.",
+      "storedIn": "gst_refund_applications (+documents jsonb); gst_case_folder_items for refund folders",
+      "gap": "Incremental refund-folder capture for open cases inside the bundle (RFD-03 deficiency memos, RFD-08 SCNs with short reply windows); sanctioned/rejected amounts from RFD-06/RFD-04."
+    },
+    {
+      "portalSection": "DRC-03 voluntary payments (litserv case/search, caseTypeCd ADJVP)",
+      "fetched": "Yes",
+      "how": "Step 'drc03' of notices_bundle, full history every run (content.js:3352-3358).",
+      "captured": "ARN, cause, payment date, period from/to, section, FY, per-head tax, interest, late fee, penalty, cash vs credit, status (content.js:4276-4321).",
+      "dropped": "taxable_value is mis-mapped (it is the sum of tax 'tx'); 'Cash/Credit' split lines all booked to cash; link to the SCN/demand being paid not captured; raw item JSON not kept.",
+      "documents": "One PDF per filing via getEncrypDocIds + downloadhb, no timeouts (content.js:3377-3392) -> return-pdfs/drc03/{client}/{arn}.pdf.",
+      "storedIn": "gst_drc03_filings",
+      "gap": "Keep raw JSON, fix taxable_value, link payments to the notice/demand."
+    },
+    {
+      "portalSection": "LUT applications (RFD-11)",
+      "fetched": "Partial",
+      "how": "Only as case-task rows whose caseTypeName is 'LETTER OF UNDERTAKING' (content.js:2669-2675, 2775-2789).",
+      "captured": "Task description, ARN (case_id), assignment date.",
+      "dropped": "LUT financial year / validity and acknowledgement status are not structured.",
+      "documents": "RFD-11A deemed-approval order PDF from the ORDRS folder.",
+      "storedIn": "gst_notices + gst_case_folder_items",
+      "gap": "Typed LUT register (FY, ARN, date) with a renewal reminder before 31 March."
+    },
+    {
+      "portalSection": "Taxpayer profile + registration certificate (services/auth/profile/detail, api/get/regcert)",
+      "fetched": "Partial",
+      "how": "Company List 'Fetch Company' (mode taxpayerprofile), Reports Hub pull or the popup's full chain (content.js:3421-3472); not part of Sync All.",
+      "captured": "Legal name, trade name, constitution, registration date, state/centre jurisdiction, principal address, Aadhaar-authentication flag (content.js:3431-3436).",
+      "dropped": "GSTIN status (active / suspended / cancelled), taxpayer type, additional places of business, nature of business, contact details, signatories, filing frequency (verify exact payload keys).",
+      "documents": "RC PDF via /document/{docid}/{applnId} -> return-pdfs/regcert/{client}.pdf.",
+      "storedIn": "gst_taxpayer_profile",
+      "gap": "Capture status + raw JSON daily and alert on Suspended/Cancelled (REG-31 / REG-17 exposure)."
+    },
+    {
+      "portalSection": "Electronic Liability Register Part I - return liabilities (returns/auth/api/retdtl)",
+      "fetched": "Partial",
+      "how": "Per month, from a Reports Hub 'liabilityledger' pull or the popup full chain (content.js:2519-2548). Manual.",
+      "captured": "Date, description, Dr/Cr, IGST/CGST/SGST/Cess tax, running balance (content.js:4330-4342).",
+      "dropped": "Interest / penalty / fee / other sub-heads (only .tx is read); reference numbers.",
+      "documents": "None.",
+      "storedIn": "gst_liability_ledger_entries (delete-then-insert per period; failure writes a 'PULL FAILED' sentinel)",
+      "gap": "Read all sub-heads; never delete on failure."
+    },
+    {
+      "portalSection": "Electronic Liability Register Part II - demands other than returns (orders, DRC-07 / ASMT-13 etc.)",
+      "fetched": "No",
+      "how": "Not fetched anywhere (extension or agent).",
+      "captured": "-",
+      "dropped": "Confirmed demands, order references/dates, payments and adjustments against them.",
+      "documents": "-",
+      "storedIn": "-",
+      "gap": "The most direct source of 'demand outstanding' and order dates for appeal clocks (verify endpoint name before building)."
+    },
+    {
+      "portalSection": "Electronic Cash Ledger (payment/auth/api/cashdetls)",
+      "fetched": "Partial",
+      "how": "Per month, Reports Hub 'cashledger' or popup full chain (content.js:2561-2596). Manual.",
+      "captured": "Deposit date, description, Dr/Cr, per-head tax, running balance.",
+      "dropped": "Interest/penalty/fee sub-heads; CPIN cross-reference.",
+      "documents": "None.",
+      "storedIn": "gst_cash_ledger_entries (delete-then-insert)",
+      "gap": "Incremental and failure-safe writes."
+    },
+    {
+      "portalSection": "Electronic Credit Ledger (returns/auth/ledger/detailedledger - DOM scrape)",
+      "fetched": "Partial",
+      "how": "Sets the date range in the page, reads the rendered table (content.js:2176-2326, 2348-2422); from the reco pages' Pull or Reports Hub. Manual.",
+      "captured": "Opening balance per head, Dr/Cr rows (IGST/CGST/SGST), derived ITC-utilised and DRC-03 debits.",
+      "dropped": "Cess on rows, reference numbers, tax period; blocked credit (Rule 86A) and provisional credit balances.",
+      "documents": "None.",
+      "storedIn": "gst_credit_ledger_transactions, gst_receivable_reco, suspended_reco",
+      "gap": "Rule 86A blocking is a notice-like event that is never surfaced; DOM heuristics are fragile."
+    },
+    {
+      "portalSection": "Credit-reversal & re-claimed statement and RCM liability/ITC statement (returns/auth/internalapi)",
+      "fetched": "Yes",
+      "how": "Whole FY per call, Reports Hub pulls (content.js:3877-3986). Manual.",
+      "captured": "Per GSTR-3B period: 4A(5)/4B(2)/4D(1) or 3.1(d)/4A(2)/4A(3) per head and closing balances.",
+      "dropped": "-",
+      "documents": "None.",
+      "storedIn": "gst_credit_reversal_reclaim_entries, gst_rcm_liability_itc_entries",
+      "gap": "Not scheduled."
+    },
+    {
+      "portalSection": "Challan history (payment/auth/challan/getlist)",
+      "fetched": "Partial",
+      "how": "~22 windows of 150 days back to 01/07/2017 on every run (content.js:3487-3541); popup full chain or Reports Hub.",
+      "captured": "CPIN, date, mode, per-head and total amount, status.",
+      "dropped": "CIN/BRN and bank reference if the API returns them (verify); nothing links a challan to a DRC-03 or demand.",
+      "documents": "None.",
+      "storedIn": "gst_challans (delete-all-then-insert; failed windows silently lose rows)",
+      "gap": "Incremental window + upsert by CPIN."
+    },
+    {
+      "portalSection": "Filed returns: GSTR-3B/GSTR-1 summaries, GSTR-1 filed JSON, GSTR-9 system-computed, filed-return PDFs",
+      "fetched": "Partial",
+      "how": "Per client, per period from Reports Hub / Filing Status / Annual Return buttons (content.js:3559-3775, 4089-4144, 657-871). Manual.",
+      "captured": "Summary JSON, ARN, filing date, status; full GSTR-1 JSON; GSTR-9 calc JSON; return PDF + ARN into filing_status.",
+      "dropped": "-",
+      "documents": "Return PDFs captured through the createObjectURL hook (inject.js) -> return-pdfs/{client}/{period}/...",
+      "storedIn": "gst_filed_returns, filing_status, return-pdfs",
+      "gap": "Each pull is a separate login + CAPTCHA; not bundled with the notices session."
+    },
+    {
+      "portalSection": "Return filing status across all returns (Track Return Status / formdetails sweep)",
+      "fetched": "No",
+      "how": "Not in the extension (README claims it, extension/README.md:15); only the orphaned agent has PULL_FILING_STATUS (agent/src/handlers.ts:331-409).",
+      "captured": "-",
+      "dropped": "ARN / filing date / status for every return of every client.",
+      "documents": "-",
+      "storedIn": "-",
+      "gap": "Non-filing is the trigger for GSTR-3A/ASMT notices and for their deemed withdrawal; a daily status sweep in the same session would close that loop."
+    },
+    {
+      "portalSection": "GSTR-2B (gstr2b getdata JSON and Excel download) / GSTR-2A",
+      "fetched": "Partial",
+      "how": "Per client/period buttons: 2B JSON via dashboard tile + getdata (content.js:4001-4073); 2B/2A Excel via tile clicks and download capture (content.js:1916-2128); 2A B2B via api/gstr2a (content.js:3787-3839).",
+      "captured": "Full 2B document JSON (incl. ITC eligibility / IMS status per the code comment); 2A B2B invoices.",
+      "dropped": "2A CDNR/ISD/TDS/TCS sections (content.js:3784-3786).",
+      "documents": "Excel file handed to the open app tab for import.",
+      "storedIn": "gst_filed_returns (GSTR2B/GSTR2A summaries); twob_import_docs via the app's importer",
+      "gap": "Requires the app page to stay open on the same client/month; not scheduled; IMS pending actions not surfaced."
+    },
+    {
+      "portalSection": "DRC-01B / DRC-01C intimations (Rule 88C / 88D) and their Part-B replies",
+      "fetched": "Partial",
+      "how": "Only if they appear in get/notices (the category classifier matches 'DRC-01B|DRC-01C' in descriptions) - verify.",
+      "captured": "Notice row fields only.",
+      "dropped": "Mismatch amounts, Part-B reply status / ARN.",
+      "documents": "Notice PDF if docId is present.",
+      "storedIn": "gst_notices",
+      "gap": "7-day reply windows with no structured status; verify the portal endpoint for Part-B status."
+    },
+    {
+      "portalSection": "Appeals (APL-01/02/04), rectification applications, pre-deposits",
+      "fetched": "No",
+      "how": "case/search is only called with RFUND and ADJVP (content.js:3084, 3354).",
+      "captured": "-",
+      "dropped": "Appeal ARNs, stages, hearing dates, orders, pre-deposit payments.",
+      "documents": "-",
+      "storedIn": "-",
+      "gap": "Litigation module needs these for limitation and hearing tracking (verify case-type codes)."
+    },
+    {
+      "portalSection": "Personal hearings and reply acknowledgements",
+      "fetched": "Partial",
+      "how": "Only as raw_json inside REPLY / NOTCE folder items for case-task rows.",
+      "captured": "Raw JSON (reply type, against, date, personal-hearing option).",
+      "dropped": "No hearing date column on gst_notices (no migration; types.ts:4831-4869) although alerts and the drawer select one; reply ARN/date never written to reply_ref_number/reply_date.",
+      "documents": "Reply attachments in case-folder storage.",
+      "storedIn": "gst_case_folder_items.raw_json",
+      "gap": "Promote hearing and reply facts so E4 reminders and Overdue logic can use them."
+    },
+    {
+      "portalSection": "E-way bill / MOV notices (ewaybillgst.gov.in)",
+      "fetched": "No",
+      "how": "Separate system; only visible if mirrored into the GST portal notices list.",
+      "captured": "-",
+      "dropped": "MOV-07/MOV-09 etc.",
+      "documents": "-",
+      "storedIn": "-",
+      "gap": "Needs EWB API or manual intake - and manual Add Notice is currently broken (see S-15)."
+    },
+    {
+      "portalSection": "GST portal notification emails / SMS to the registered contact",
+      "fetched": "No",
+      "how": "Not used.",
+      "captured": "-",
+      "dropped": "The cheapest signal that a specific GSTIN has a new notice.",
+      "documents": "-",
+      "storedIn": "-",
+      "gap": "Could trigger a targeted sync of just that client (zero-touch Stage 5)."
+    }
+  ],
+  "humanTouchpoints": [
+    {
+      "step": "Install and keep updating the unpacked extension on each syncing PC (Developer mode -> Load unpacked -> reload after each change; dismiss Chrome's developer-mode warning)",
+      "who": "Each staff member who syncs (assume 3 PCs)",
+      "frequency": "Every extension release (20 commits touching extension/ since 15 Aug 2026) plus occasional 'Extension not detected' troubleshooting",
+      "minutesPerDay": 2,
+      "automatable": "Yes",
+      "how": "Publish as an unlisted/private Chrome Web Store item or force-install via Chrome policy (ExtensionInstallForcelist) for auto-update; server-side minimum-version gate."
+    },
+    {
+      "step": "Keep portal credentials correct (enter on onboarding; chase the client after a password change or lockout; re-enter in Edit Client)",
+      "who": "GST staff + client",
+      "frequency": "A few clients per week across ~90",
+      "minutesPerDay": 8,
+      "automatable": "Partly",
+      "how": "Credential-health list from login_failed rows; automatic client email with a secure update link; the client contact itself cannot be removed."
+    },
+    {
+      "step": "Start the sync: open the app (gst.vjdesai.com) in the Chrome profile with the extension, click Sync All or tick companies in Company List",
+      "who": "Sync operator",
+      "frequency": "Daily (when anyone remembers)",
+      "minutesPerDay": 2,
+      "automatable": "Yes",
+      "how": "pg_cron enqueue at 05:30 IST for the agent (Stage 4)."
+    },
+    {
+      "step": "Type one CAPTCHA per client and press Login (auto-submit only for scripted fills)",
+      "who": "Sync operator",
+      "frequency": "~90 per full run, one at a time as each client finishes; elapsed 2-4 h",
+      "minutesPerDay": 45,
+      "automatable": "Partly",
+      "how": "Batched 'CAPTCHA wall' (agent, per-client contexts) -> ~5-8 min/day; targeted/rotated syncs cut the count to ~20-30; full automation only with a solver, which needs a written legal/ToS decision."
+    },
+    {
+      "step": "Keep the sync tab open and avoid any other portal use or extension action in that Chrome profile during the run (they switch the session or overwrite the job)",
+      "who": "Sync operator and anyone sharing the PC",
+      "frequency": "Every run (2-4 h)",
+      "minutesPerDay": 20,
+      "automatable": "Yes",
+      "how": "Isolated Playwright contexts on an agent box; meanwhile a dedicated Chrome profile and a queued (not overwritten) job store."
+    },
+    {
+      "step": "Notice and restart stalled or silently dropped runs (idle >10 min, 3-h cap, portal down, hung request)",
+      "who": "Sync operator",
+      "frequency": "Several times a week",
+      "minutesPerDay": 10,
+      "automatable": "Yes",
+      "how": "Service-worker watchdog, resumable queue, timeouts, 'abandoned/portal_down' log rows, automatic retry with backoff."
+    },
+    {
+      "step": "Review failures (Company List vs dashboard disagree) and re-run Sync for failed clients by ticking rows page by page",
+      "who": "Sync operator / GST manager",
+      "frequency": "Daily",
+      "minutesPerDay": 10,
+      "automatable": "Partly",
+      "how": "Run ledger + client_sync_status view; 'Retry failed' and 'Sync stale' actions; automatic retries; a human only for credential problems."
+    },
+    {
+      "step": "Click Sweep after sync (auto-close + due dates) - currently errors every time",
+      "who": "GST staff",
+      "frequency": "Daily (per SOP)",
+      "minutesPerDay": 1,
+      "automatable": "Yes",
+      "how": "Server-side sweep after each client ingest."
+    },
+    {
+      "step": "Click 'Send digest' or rely on the 09:30 IST cron (currently returns 'no notices' if hearing_date is absent)",
+      "who": "GST manager",
+      "frequency": "Daily",
+      "minutesPerDay": 1,
+      "automatable": "Yes",
+      "how": "Fix the select/rule keys; 15-minute event cron."
+    },
+    {
+      "step": "Triage each new notice: open the PDF, read it, key amount of demand, FY, due date (case rows), hearing date, assign an owner, set status",
+      "who": "GST staff / manager",
+      "frequency": "Per new notice (assume ~5/day across 90 clients)",
+      "minutesPerDay": 25,
+      "automatable": "Partly",
+      "how": "Promote folder JSON facts, PDF text extraction with confidence flags, auto-assign to clients.assigned_accountant; a human verifies."
+    },
+    {
+      "step": "Run the separate per-client 'refund documents' pull to see refund memos/SCNs/orders",
+      "who": "GST staff",
+      "frequency": "Weekly per client with open refunds",
+      "minutesPerDay": 5,
+      "automatable": "Yes",
+      "how": "Incremental refund-folder capture inside the bundle for open refund cases."
+    },
+    {
+      "step": "Re-key reply ARN/date and order number/date after acting on the portal",
+      "who": "GST staff",
+      "frequency": "Per reply/order (~3/day)",
+      "minutesPerDay": 8,
+      "automatable": "Yes",
+      "how": "Map REPLY/ORDRS folder items to reply_* / order_* fields (flagged 'from portal') after a targeted re-sync."
+    },
+    {
+      "step": "Open the notice on the portal to reply: Portal icon -> CAPTCHA -> search the reference -> navigate to the case",
+      "who": "GST staff",
+      "frequency": "Per reply (~3/day)",
+      "minutesPerDay": 9,
+      "automatable": "Partly",
+      "how": "Deep-link into the case folder and reuse a live session; the reply submission itself stays human (DSC/EVC)."
+    },
+    {
+      "step": "Record notices that are not on the portal list (physical notices, summons, e-way-bill matters) via Add Notice - currently fails",
+      "who": "GST staff",
+      "frequency": "~1/day",
+      "minutesPerDay": 5,
+      "automatable": "Partly",
+      "how": "Fix the insert; email/scan intake with text extraction."
+    },
+    {
+      "step": "Monthly per-client pulls for 2B, ledgers and filed returns - each a separate login + CAPTCHA, page kept open",
+      "who": "GST staff",
+      "frequency": "Return season: ~90 clients x 3 pulls per month (~10 CAPTCHAs/day averaged)",
+      "minutesPerDay": 20,
+      "automatable": "Yes",
+      "how": "One-login bundle per client (notices + 2B + ledgers + filing status) on the agent, or GSP/ASP APIs for returns and ledgers."
+    },
+    {
+      "step": "Check the extension is the right version / connected before syncing",
+      "who": "Sync operator",
+      "frequency": "Weekly",
+      "minutesPerDay": 2,
+      "automatable": "Yes",
+      "how": "Version gate enforced by both app and extension; auto-update channel."
+    }
+  ],
+  "findings": [
+    {
+      "id": "S-01",
+      "severity": "Critical",
+      "pillar": "Zero-touch",
+      "area": "Sync orchestration",
+      "issue": "There is no unattended path. Every refresh is a human-driven serial run: one Chrome tab, one client at a time, a person types each CAPTCHA (auto-submit only for a scripted fill), and the next CAPTCHA appears only after the previous client finishes. The agent has no notices handler, the GitHub Actions schedule is disabled and no app screen enqueues agent jobs.",
+      "evidence": "extension/content.js:563-588; extension/background.js:445-482; agent/src/handlers.ts:494-503; .github/workflows/portal-agent.yml:19-23; commit 90cad45 (agent UI removed)",
+      "impact": "For ~90 clients one person is tied to the tab for 2-4 hours per refresh (~45 min of CAPTCHA attention plus babysitting). Freshness depends on someone having that time, so new notices can sit unseen for days.",
+      "fix": "Interim: incremental runs plus CAPTCHA-ready desktop notifications (Stage 2). Target: office-IP Playwright agent with per-client contexts, a 05:30 IST pg_cron enqueue and a batched in-app CAPTCHA wall, so the human step is ~5-8 minutes (Stage 4); targeted syncs to shrink the daily count (Stage 5).",
+      "effort": "L"
+    },
+    {
+      "id": "S-02",
+      "severity": "Critical",
+      "pillar": "Zero-touch",
+      "area": "Alerts and notice drawer",
+      "issue": "queue-notice-alerts, runScheduledAlerts, processEventAlert and NoticeDrawer all select gst_notices.hearing_date, but no migration creates that column and the generated types (regenerated after matter_id was added) do not have it. PostgREST rejects the whole select, so the 09:30 IST cron returns 'no notices', 'Send digest' finds nothing due, and the drawer gets null. Separately, E4/E5 look up keys 'E4_hearing' / 'E5_limitation' while the seeded keys are 'E4_hearing_reminder' / 'E5_limitation_alert'.",
+      "evidence": "supabase/functions/queue-notice-alerts/index.ts:102-106, 299, 325; src/lib/noticeAlertQueue.ts:246, 321, 408; src/components/notices/NoticeDrawer.tsx:142-144; src/integrations/supabase/types.ts:4831-4869; supabase/migrations/20260914140000_notice_alerts_phase1.sql:167-168",
+      "impact": "Overdue, due-soon and unassigned digests, and every hearing or limitation reminder, silently never send, and the per-notice drawer opens blank. Verify against the live DB in case the column was added out-of-band.",
+      "fix": "Add a migration for gst_notices.hearing_date (or read matter_hearings.scheduled_at, which exists); fix the two alert keys; make the edge function log select errors instead of returning 'no notices'.",
+      "effort": "S"
+    },
+    {
+      "id": "S-03",
+      "severity": "Critical",
+      "pillar": "Security",
+      "area": "Portal credentials",
+      "issue": "Client GST portal usernames and passwords sit in plaintext columns on clients, which anyone holding the publishable anon key can read (open SELECT policy); that key ships in the extension and the web bundle. The extension fetches every client's password over REST and copies all of them into gstk_active_job in chrome.storage.local for the whole run (up to 3 h, or indefinitely if the run is abandoned); gst-push forwards them to a third party.",
+      "evidence": "supabase/migrations/20260121202445_2ad02815-f575-4969-8c45-53b628ee2956.sql:4; supabase/migrations/20260103121605_7c8f3446-794b-4b80-acda-298745141cb1.sql:8-11; extension/config.js:3-6; extension/background.js:72-73, 473-476; extension/popup.js:37-40, 64-69; supabase/functions/gst-push/index.ts:68, 114-115",
+      "impact": "Anyone who obtains the public key can read all ~90 clients' portal credentials, and the passwords also sit unencrypted in every staff Chrome profile. This is a confidentiality and liability exposure for a CA firm.",
+      "fix": "Move credentials to a no-policy table encrypted with Vault or pgsodium, exposed only through an edge function or RPC that checks a firm-issued session token and returns one client's credentials just-in-time. The job should hold client ids only, never passwords in chrome.storage. Mask passwords in the UI and rotate all of them after the fix.",
+      "effort": "M"
+    },
+    {
+      "id": "S-04",
+      "severity": "Critical",
+      "pillar": "Data trust",
+      "area": "Extension version skew",
+      "issue": "The extension is distributed as an unpacked folder and the app does not enforce a minimum version: the Notices Dashboard only toasts below 0.3.0 and Company List's Sync never checks. A pre-0.3.0 copy still runs DELETE gst_notices?client_id=... and then INSERTs rows without portal_key, which is now NOT NULL, so the delete succeeds and the insert fails. Its failure path calls the same delete.",
+      "evidence": "extension/README.md:25-31; extension/content.js:753-759 (OneDrive Desktop folder); src/pages/NoticesDashboardPage.tsx:118, 172-179; src/pages/CompanyListPage.tsx:128, 232-245; git show 3d517e9^:extension/background.js:102-105; supabase/migrations/20260914100000_notices_upsert_sync.sql:28",
+      "impact": "One stale copy on any staff PC hard-deletes every synced client's notices and all staff work on them. The delete cascades to notice_events, notice_alert_log and matter_deadlines (ON DELETE CASCADE, 20260914140000:10, 70, 91) and cannot be undone without point-in-time recovery.",
+      "fix": "Block hard DELETE on gst_notices with a BEFORE DELETE trigger that raises or converts it to a soft delete. Keep min_extension_version in a settings row that both the app (disables Sync) and background.js (refuses to start) check. Ship the extension through an unlisted Web Store listing or a force-install policy so it auto-updates.",
+      "effort": "S"
+    },
+    {
+      "id": "S-05",
+      "severity": "High",
+      "pillar": "Zero-touch",
+      "area": "New notice -> work",
+      "issue": "Nothing turns a newly synced notice into work. The E1 'New notice captured' rule waits for notice_events of type 'captured', but no DB trigger exists and the extension never writes events. Event alerts are processed only when staff edit rows in the app, there is no 15-minute event cron (only the daily digest), and Sweep and 'Send digest' are manual buttons.",
+      "evidence": "supabase/migrations/20260914140000_notice_alerts_phase1.sql:164; src/lib/noticeEvents.ts:19-28; src/components/reports/views/NoticeWorkflowListView.tsx:434-437; supabase/migrations/20260915100000_notice_alerts_cron.sql:11-22; src/pages/NoticesDashboardPage.tsx:140-170",
+      "impact": "A new DRC-01 or ASMT-10 surfaces only when someone opens the dashboard, with no owner, no deadline and no email.",
+      "fix": "Add AFTER INSERT/UPDATE triggers on gst_notices and gst_case_folder_items that write notice_events (captured, due_changed, and reply/order/hearing item added). A 15-minute cron then drains the events into E1 and E6-E9 with signed PDF links. Auto-assign new notices to clients.assigned_accountant and run the sweep server-side after each client's ingest.",
+      "effort": "M"
+    },
+    {
+      "id": "S-06",
+      "severity": "High",
+      "pillar": "Data trust",
+      "area": "Auto-close and due-date sweep",
+      "issue": "runAutoClose and runDueDateSweep select and filter on gst_case_folder_items.notice_id, a column that does not exist (folder items link to notices by client_id + case_id), so both passes error on every run. Even once fixed, the due date they write into gst_notices.due_date is overwritten with null by the next sync for every case row. The extractor also reads only three JSON paths, while the folder page knows more (duedt, replyDuedt).",
+      "evidence": "src/lib/noticeAutoClose.ts:42-46, 136-144, 162-166; supabase/migrations/20260828160000_gst_case_folder_items.sql:14-23; src/integrations/supabase/types.ts:4305-4319; extension/content.js:2807; src/pages/AdditionalNoticeFolderPage.tsx:168",
+      "impact": "Nothing is auto-closed and case rows get no due dates, so Overdue and Due-in-7 under-count exactly the case-linked matters (scrutiny, determination of tax) that carry statutory clocks.",
+      "fix": "Join on (client_id, case_id). Keep portal_due_date (owned by sync) separate from derived_due_date (owned by the sweep), with effective due = extended ?? derived ?? portal. Widen the extraction paths and run the sweep server-side after ingest.",
+      "effort": "S"
+    },
+    {
+      "id": "S-07",
+      "severity": "High",
+      "pillar": "Data trust",
+      "area": "Soft-delete safety",
+      "issue": "replaceNotices runs the soft-delete PATCH even when the pull returned zero rows. A get/notices 200 response carrying an error body becomes list=[]. A failed case/task/get is swallowed, and its rows (same source 'notices') are then soft-deleted. A single failed folder fetch soft-deletes that folder's items.",
+      "evidence": "extension/background.js:114-122, 170-179; extension/content.js:2656-2658, 2678-2688, 2868-2874",
+      "impact": "A portal hiccup makes a client's notices vanish from every tile and list until the next good sync, and the Overdue count swings with it. The roadmap's own 0.1 rule ('a run that returns zero rows never marks anything missing') is not implemented.",
+      "fix": "Soft-delete only keys that belong to a source call which returned a validated, non-empty payload. Skip the soft-delete and raise E9 when the count drops to 0 or by more than 50% against the last run. Do the upsert and soft-delete in one transactional RPC.",
+      "effort": "S"
+    },
+    {
+      "id": "S-08",
+      "severity": "High",
+      "pillar": "Fetch",
+      "area": "Document capture",
+      "issue": "Every notice row is sent with pdf_url:null and overwritten only when a download succeeds; merge-duplicates writes the null, so one transient failure erases a link that worked yesterday. Nothing checks what is already stored: every notice PDF, every case-folder attachment and every DRC-03 PDF is downloaded and re-uploaded on every run.",
+      "evidence": "extension/content.js:2729, 2732-2742, 2813-2849, 2882-2897, 3377-3392; extension/background.js:61-69, 267-289",
+      "impact": "Broken document links on the per-notice view. Runs take minutes per client instead of seconds, and the thousands of repeat requests from one profile raise the risk of portal WAF blocks.",
+      "fix": "Omit pdf_url unless a PDF was captured (or COALESCE it in the ingest RPC). Store doc ids and attachment ids and skip ones already captured, with a full re-download only on a weekly verification pass.",
+      "effort": "S"
+    },
+    {
+      "id": "S-09",
+      "severity": "High",
+      "pillar": "Fetch",
+      "area": "Run length and job lifecycle",
+      "issue": "Each run re-reads full history (notices and cases since 2017, challans in ~22 windows) and every document, while the job is dropped when it has been idle for over 10 minutes or is older than 3 hours. The check runs only on the next page load, so a CAPTCHA left for more than 10 minutes, or a long run, silently clears the job and the remaining clients get no log row.",
+      "evidence": "extension/content.js:155-158, 585-588, 2654, 2682, 3084, 3354, 3498-3505",
+      "impact": "A 90-client Sync All can stop part-way with no record, while the header still shows 'Last sync' from whichever client finished.",
+      "fix": "Fetch incrementally; make the queue resumable (persist the next index and log 'abandoned' for unprocessed clients); add a chrome.alarms watchdog in the service worker; notify the operator when a CAPTCHA is waiting.",
+      "effort": "M"
+    },
+    {
+      "id": "S-10",
+      "severity": "High",
+      "pillar": "Data trust",
+      "area": "Session isolation (cross-client contamination)",
+      "issue": "Data is written under cur.clientId without confirming that the portal session belongs to that GSTIN. Every call uses the profile's shared portal cookies. A staff member logging into another client in a second tab, or any other extension action (every start* function overwrites the single gstk_active_job key and opens a fresh login), can switch the session mid-run, and the superseded run stops silently. Only multi-client queues log out between clients. A single pull started while the profile still holds another client's session — the 'Login' button deliberately leaves one open — skips login whenever the page already looks logged in (verify whether services/login redirects for an active session).",
+      "evidence": "extension/content.js:144-148, 169-172, 312-325, 361-364, 509-513, 2652-2655, 2680-2683; extension/background.js:307-309, 478-480, 519-521",
+      "impact": "Client B's notices, ledgers or 2B can be saved under client A, and runs are silently abandoned, in a firm where staff use the portal all day.",
+      "fix": "Read the session GSTIN (profile/detail or page header) before each write and abort on mismatch. Always log out before the first client. Queue extension jobs instead of overwriting them. Run sync in a dedicated Chrome profile now and in isolated agent contexts later.",
+      "effort": "S"
+    },
+    {
+      "id": "S-11",
+      "severity": "High",
+      "pillar": "Security",
+      "area": "Notice PDF storage",
+      "issue": "return-pdfs is a public bucket with anonymous INSERT, SELECT, UPDATE and DELETE. The extension stores notices, case-folder attachments, refund documents, DRC-03 PDFs and registration certificates there at predictable paths and saves their public URLs.",
+      "evidence": "supabase/migrations/20260321093054_e19b7266-1b9c-47f9-9fab-9341156d37e0.sql:12-27; supabase/migrations/20260819010000_return_pdfs_update_policy.sql:10-13; extension/background.js:285; extension/content.js:2738, 2894, 3266, 3386, 3456",
+      "impact": "Confidential notices and demand orders can be downloaded by URL and listed, replaced or deleted with the public key. A tampered notice PDF would mislead the reply.",
+      "fix": "Make the bucket private. Upload through an edge function (service role) and read through short-lived signed URLs; drop anon UPDATE/DELETE; store object paths instead of public URLs.",
+      "effort": "M"
+    },
+    {
+      "id": "S-12",
+      "severity": "High",
+      "pillar": "Security",
+      "area": "Extension <-> app bridge",
+      "issue": "appbridge.js is injected on, and accepts messages from, any https://*.vercel.app origin. Any Vercel-hosted page a staff member visits can trigger portal logins, a firm-wide Sync All, a GSTR-1 upload, or a GSTR-3B push carrying attacker-chosen figures that the extension types into Tables 3.1 and 4 and saves (client UUIDs are readable with the public key).",
+      "evidence": "extension/manifest.json:32; extension/appbridge.js:12, 20, 185-197; extension/background.js:573-594; extension/content.js:1261-1311, 1314-1369",
+      "impact": "Anyone can remotely start portal sessions and modify draft returns without authenticating.",
+      "fix": "Allow exact origins only (gst.vjdesai.com plus one named preview host). Require a short-lived signed token from the logged-in app, and show a confirmation prompt inside the extension for any write action.",
+      "effort": "S"
+    },
+    {
+      "id": "S-13",
+      "severity": "High",
+      "pillar": "At-a-glance",
+      "area": "Sync & alerts card and header",
+      "issue": "The card hard-codes 'Next scheduled unattended sync: 06:00 IST' (no such schedule exists) and 'Emails sent today: 0'. 'Healthy' only means the extension was detected and there are no failed 'notices' rows; it ignores staleness. 'Last sync' is the newest success of any single client. 'Changed' counts every re-pulled row because pulled_at is rewritten each sync. The 'with credentials' denominator counts every non-excluded client.",
+      "evidence": "src/components/notices/SyncHealthCard.tsx:126, 157-158, 214; src/pages/NoticesDashboardPage.tsx:253-264, 288; extension/content.js:2730",
+      "impact": "Partners see a green 'Healthy' card while most clients may be days stale, which is false assurance on the at-a-glance view.",
+      "fix": "Derive per-client freshness from the run ledger: count of clients stale over 24 h, oldest sync, failures by reason class. Remove the hard-coded rows; compute 'changed' from a portal_hash; use active credentialed clients as the denominator.",
+      "effort": "S"
+    },
+    {
+      "id": "S-14",
+      "severity": "High",
+      "pillar": "Data trust",
+      "area": "client_sync_log semantics",
+      "issue": "Login failures are logged as action 'login_failed', but the dashboard counts only action='notices'. Company List takes the newest row of any action, which after a bundle is usually the 'refunds_debug' success row, so a failed notices step is masked. Refunds and DRC-03 DB-write failures are swallowed, and refunds still logs success. Both pages read the log with no limit, so once the 1,000-row default cap is reached, active clients show as 'Never synced'.",
+      "evidence": "extension/content.js:348-350, 2935-2938, 3118-3126, 3397; src/pages/NoticesDashboardPage.tsx:100, 253; src/pages/CompanyListPage.tsx:114, 152-156, 179-180",
+      "impact": "The dashboard and the Company List it links to disagree, and real failures are hidden, so nobody knows which clients need a re-sync.",
+      "fix": "Add sync_runs / sync_run_items tables (run_id, client, step, status, reason class, rows new/changed/removed, duration, extension version) and a client_sync_status view that both pages read. Send debug output to a separate table.",
+      "effort": "M"
+    },
+    {
+      "id": "S-15",
+      "severity": "High",
+      "pillar": "Data trust",
+      "area": "Manual notices",
+      "issue": "Add Notice inserts into gst_notices without portal_key, which has been NOT NULL with no default since the upsert migration, so the insert fails. Even if it succeeded, the next sync would soft-delete the row because it has source 'notices' and is never seen on the portal.",
+      "evidence": "src/components/notices/AddNoticeDialog.tsx:73-86; supabase/migrations/20260914100000_notices_upsert_sync.sql:28; extension/background.js:118-121",
+      "impact": "Notices that arrive outside the portal list (physical notices, summons, e-way-bill matters) cannot be recorded, so the dashboard is incomplete.",
+      "fix": "Insert with source 'manual' and portal_key 'manual:'+uuid; include 'manual' in useNoticeSet and the reports; keep it outside the sync soft-delete scope.",
+      "effort": "S"
+    },
+    {
+      "id": "S-16",
+      "severity": "Medium",
+      "pillar": "Fetch",
+      "area": "Timeouts and portal outages",
+      "issue": "Several portal calls have no timeout: get/notices, the notice PDF, the refunds and DRC-03 case searches, DRC-03 getEncrypDocIds/downloadhb and the challan windows. When the login form does not load, the step returns without logging or advancing.",
+      "evidence": "extension/content.js:543, 2652, 2734, 3082, 3198, 3352, 3380-3382, 3511",
+      "impact": "A slow or down portal freezes the queue on one client with only an on-screen banner, and the remaining clients are never attempted or logged.",
+      "fix": "Use withTimeout + AbortController on every fetch, with bounded retries and backoff; log 'portal_down' and advance; add a service-worker alarm watchdog.",
+      "effort": "S"
+    },
+    {
+      "id": "S-17",
+      "severity": "Medium",
+      "pillar": "Data trust",
+      "area": "Ledger and challan pulls",
+      "issue": "Failure paths for the liability and cash ledgers, credit-ledger transactions, statements and filed returns still write 'PULL FAILED' sentinel rows via delete-then-insert, wiping the period's good data. Challans delete the client's whole history and re-insert whatever windows succeeded, so any failed window loses rows.",
+      "evidence": "extension/content.js:207-238, 2478-2486, 2534, 2582, 3507-3531; extension/background.js:99-106, 199-202, 221-228",
+      "impact": "The payment and liability context staff use when drafting replies (cash ledger, challans, liability register) can vanish after one bad run.",
+      "fix": "Never delete on failure; record failures in the run ledger; upsert on natural keys (CPIN, reference + date) and soft-delete only within windows that were fetched successfully.",
+      "effort": "M"
+    },
+    {
+      "id": "S-18",
+      "severity": "Medium",
+      "pillar": "Per-notice",
+      "area": "Structured notice facts",
+      "issue": "Reply-due dates, personal-hearing details, reply type/date/ARN and order number/date live only inside gst_case_folder_items.raw_json. The folder page displays them but nothing writes them to gst_notices. get/notices rows keep no raw payload at all, and the schema treats amount_of_demand, financial_year and extended_due_date as fields staff key in.",
+      "evidence": "src/pages/AdditionalNoticeFolderPage.tsx:116-207, 254; extension/content.js:2723-2731; supabase/migrations/20260824104900_gst_notices_extra_fields.sql:1-15",
+      "impact": "Staff re-key data the portal already provided, and hearing and reply deadlines never reach the tiles or alerts.",
+      "fix": "Add raw_json to gst_notices. A server-side extractor promotes folder fields into portal_due_date, hearing_at, reply_arn/reply_date (flagged auto), order_no/order_date and demand heads; the UI shows 'from portal' chips.",
+      "effort": "M"
+    },
+    {
+      "id": "S-19",
+      "severity": "Medium",
+      "pillar": "Fetch",
+      "area": "Case-folder capture",
+      "issue": "When a case task's refId equals a notice reference already returned by get/notices, the loop `continue`s before setting case_id and before the case-folder capture, so those notices never get their replies, orders or attachments. Verify how often references overlap.",
+      "evidence": "extension/content.js:2790-2801, 2864",
+      "impact": "The matters listed in both feeds, possibly the most important ones, may have no folder history, no auto-close and no due-date extraction.",
+      "fix": "Merge the task data into the existing row (set case_id) and always run the folder capture.",
+      "effort": "S"
+    },
+    {
+      "id": "S-20",
+      "severity": "Medium",
+      "pillar": "Data trust",
+      "area": "Upsert keys",
+      "issue": "Keys fall back to non-unique values: case rows use 'case:'+arn when refId is missing, folder items use folder+crn. PostgREST rejects a whole upsert batch that contains the same key twice ('ON CONFLICT DO UPDATE command cannot affect row a second time'), and the folder-item write swallows that error.",
+      "evidence": "extension/content.js:2804, 2899-2903, 2913-2915, 3274-3278, 3293-3295; extension/background.js:61-69",
+      "impact": "A single duplicate can silently drop a client's entire notices write or a case's whole folder. Verify how often this happens against live data.",
+      "fix": "De-duplicate and merge by key before sending, add a discriminator (item id, doc id or date) to the key, and log write errors.",
+      "effort": "S"
+    },
+    {
+      "id": "S-21",
+      "severity": "Medium",
+      "pillar": "Fetch",
+      "area": "Refund cases",
+      "issue": "Refund case folders and documents are fetched only by a separate per-client 'refund_docs' pull; Sync All reads only the refund list. sanctioned_amount is always null.",
+      "evidence": "extension/content.js:3112, 3129-3139, 3193-3315; src/lib/reportsCatalog.ts:660",
+      "impact": "Refund deficiency memos (RFD-03) and refund show-cause notices (RFD-08), which carry short reply windows, can go unseen unless they also appear in get/notices (verify).",
+      "fix": "Capture refund folders incrementally for open refund cases inside the bundle, and parse sanctioned and rejected amounts from the RFD-06/RFD-04 items.",
+      "effort": "S"
+    },
+    {
+      "id": "S-22",
+      "severity": "Medium",
+      "pillar": "Fetch",
+      "area": "Coverage gaps",
+      "issue": "Not fetched: Electronic Liability Register Part II (demands from orders and payments against them), GSTIN status from the profile payload, appeal cases, DRC-01B/DRC-01C Part-B reply status, Rule 86A blocked credit, bulk filing status, and GSTR-2A sections other than B2B. case/search is called only with RFUND and ADJVP.",
+      "evidence": "extension/content.js:2519-2548, 3431-3436, 3084, 3354, 3784-3786; extension/README.md:15 (claims a filing-status pull that does not exist)",
+      "impact": "The data that predicts notices and gives them context (non-filing, mismatches, confirmed demands, appeal clocks) still has to be checked by hand on the portal.",
+      "fix": "Add these calls inside the same logged-in session and store raw JSON; confirm each endpoint live before building (verify endpoint names).",
+      "effort": "M"
+    },
+    {
+      "id": "S-23",
+      "severity": "Medium",
+      "pillar": "Zero-touch",
+      "area": "Agent and documentation",
+      "issue": "The Playwright agent is orphaned. Its docs promise an in-app 'Sync from portal' button, a CAPTCHA prompt in the app and a 30-minute schedule; all three are gone. The code has no notices handler, claims jobs non-atomically, saves the session only after a fresh login (so a reused session is never refreshed), and has no retry. Cloud runners were already blocked by the portal per the extension README. The extension README still claims a filing-status pull and calls 2B 'the next addition'.",
+      "evidence": "agent/SETUP-CHECKLIST.md:28-34; agent/GITHUB-ACTIONS.md:30-36; agent/README.md:20-26, 62-80; agent/src/supabase.ts:34-52; agent/src/login.ts:16-21, 70; extension/README.md:13-23, 40-43",
+      "impact": "Staff following the docs hit dead ends, and the only component built for unattended runs cannot be used.",
+      "fix": "Revive it as the Stage 4 engine (notices bundle, atomic claim RPC, session refresh after every run, backoff, office-IP deployment), or archive agent/ and the workflow and mark their docs obsolete. Update extension/README.md either way.",
+      "effort": "L"
+    },
+    {
+      "id": "S-24",
+      "severity": "Medium",
+      "pillar": "Data trust",
+      "area": "Concurrency and clocks",
+      "issue": "pullTs comes from the staff PC clock. The upsert and the soft-delete are separate requests, and last_seen_at is overwritten rather than maximised. Two runs on the same client (two PCs, or a Reports Hub pull alongside Sync All) can interleave so that the later run's PATCH soft-deletes rows the earlier run just re-stamped, and clock skew shifts what counts as unseen.",
+      "evidence": "extension/content.js:2649, 2730; extension/background.js:114-122",
+      "impact": "Notices disappear intermittently in ways that are hard to diagnose.",
+      "fix": "A server-side ingest RPC using now(), GREATEST(last_seen_at), a per-client advisory lock and a soft-delete scoped to run_id.",
+      "effort": "M"
+    },
+    {
+      "id": "S-25",
+      "severity": "Medium",
+      "pillar": "Zero-touch",
+      "area": "Run scope and ordering",
+      "issue": "Sync All filters out notices_sync_excluded but not inactive_at_hand, and clients run in alphabetical order rather than by risk or staleness. Company List's select-all ticks only the visible page (10 rows by default), and there is no 'sync only stale/failed' action.",
+      "evidence": "extension/background.js:72, 446-457; src/pages/CompanyListPage.tsx:189-192",
+      "impact": "CAPTCHAs are wasted on cancelled GSTINs, and urgent clients may wait behind dozens of others.",
+      "fix": "Skip inactive clients; order by open matters due within 7 days, then the stalest first; add 'Sync stale (>24 h)' and 'Retry failed' actions.",
+      "effort": "S"
+    },
+    {
+      "id": "S-26",
+      "severity": "Medium",
+      "pillar": "Reply speed",
+      "area": "Acting on a notice",
+      "issue": "'Portal' on a notice logs in (another CAPTCHA) and stops at the Notices & Orders list, where staff search for the reference themselves. After replying on the portal, staff re-key the reply ARN and date, even though the next sync stores them in the REPLY folder.",
+      "evidence": "extension/background.js:500-523; extension/content.js:514-523; src/pages/AdditionalNoticeFolderPage.tsx:189-207",
+      "impact": "About 3 minutes of navigation per reply, plus duplicate data entry.",
+      "fix": "Deep-link to the case folder when caseId is known (verify the route). After a reply, run a targeted sync of that case and fill reply_ref_number/reply_date from the REPLY item, flagged 'from portal'.",
+      "effort": "M"
+    },
+    {
+      "id": "S-27",
+      "severity": "Medium",
+      "pillar": "Security",
+      "area": "Secrets and third-party credential flow",
+      "issue": "A value that looks like the Humonex bearer token is committed in the gst-push README. gst-push runs with verify_jwt=false and CORS *, trusts actorId from the request body, and forwards the client's portal credentials to Humonex.",
+      "evidence": "supabase/functions/gst-push/README.md:24; supabase/config.toml:8; supabase/functions/gst-push/index.ts:68, 114-115",
+      "impact": "Anyone holding the token can call Humonex as the firm, and anyone holding a client UUID can trigger a push that sends that client's credentials to a third party.",
+      "fix": "Rotate the token and purge it from git history; require a firm-issued session token on the function; record the decision to share client data with a third party.",
+      "effort": "S"
+    },
+    {
+      "id": "S-28",
+      "severity": "Medium",
+      "pillar": "Data trust",
+      "area": "Data-shape change detection",
+      "issue": "Nothing detects a change in the shape of portal data. Unknown or missing keys map silently to null or empty arrays, the E9 'sync anomaly' rule has no emitter, and the credit/reversal ledgers, 2A/2B Excel and filing flows still depend on DOM heuristics.",
+      "evidence": "extension/content.js:2658, 3088, 3358, 4330-4342, 2238-2326, 1916-2120; supabase/migrations/20260914140000_notice_alerts_phase1.sql:172",
+      "impact": "A portal release can quietly zero out data, or soft-delete it through S-07, without anyone being told.",
+      "fix": "Per-step schema checks (required keys, types), stored raw JSON, and per-client count baselines that raise E9. Prefer the JSON endpoints already found (2B getdata) over DOM flows.",
+      "effort": "M"
+    },
+    {
+      "id": "S-29",
+      "severity": "Low",
+      "pillar": "Security",
+      "area": "Portal-control circumvention and policy",
+      "issue": "A declarativeNetRequest rule rewrites the Referer header to get past the portal WAF on the GSTR-3A summary API, and the manifest keeps a fastcaptcha.org host permission reserved for auto-solving. Neither is backed by a recorded firm decision; the agent README calls automated access against GSTN terms.",
+      "evidence": "extension/background.js:15-39; extension/manifest.json:10; agent/README.md:28-33, 127-131",
+      "impact": "Increases the legal and IP-blocking exposure of all of the firm's portal access.",
+      "fix": "Record the partner's decision. Remove fastcaptcha.org until it is approved, and prefer reading data from the portal page that naturally carries the right context.",
+      "effort": "S"
+    },
+    {
+      "id": "S-30",
+      "severity": "Low",
+      "pillar": "Data trust",
+      "area": "DRC-03 parsing",
+      "issue": "taxable_value is the sum of each line's tax ('tx'), the same figure as IGST+CGST+SGST+Cess, not a taxable value. 'Cash/Credit' lines are all booked to cash_amount.",
+      "evidence": "extension/content.js:4284-4296, 4315; supabase/migrations/20260818140000_drc03_full_detail.sql:13",
+      "impact": "Reports misstate DRC-03 bases and understate payments made from the credit ledger.",
+      "fix": "Rename the column to total_tax (or drop it), keep the raw item JSON, and read the debit-entry split if the payload carries it (verify).",
+      "effort": "S"
+    },
+    {
+      "id": "S-31",
+      "severity": "Low",
+      "pillar": "Per-notice",
+      "area": "GSTR-3A notices",
+      "issue": "The GSTR-3A notice PDF is re-rendered by jsPDF from hard-coded legal text, and the summary JSON that identifies the defaulted return (ret_period, retTyp) is discarded.",
+      "evidence": "extension/content.js:2743-2765, 2958-3036",
+      "impact": "The stored 'notice' is not the portal's document, and the app cannot tell when filing the return withdraws the notice.",
+      "fix": "Label the PDF as reconstructed; store the summary JSON; auto-close when filing status shows the period filed.",
+      "effort": "S"
+    },
+    {
+      "id": "S-32",
+      "severity": "Low",
+      "pillar": "At-a-glance",
+      "area": "Diagnostics noise",
+      "issue": "Every client writes 'refunds_debug' and 'notices_gstr3a_debug' rows on every run (the DNR debug line is always added, so the GSTR-3A debug row is written for every client). On-page banners ask the user to 'tell me' what they see, and '[v3]' markers remain.",
+      "evidence": "extension/content.js:2699-2702, 2935-2938, 3126, 759, 851",
+      "impact": "Noise in the status log (it causes the masking in S-14) and confusing prompts for staff.",
+      "fix": "Move debug output to a debug table or log level, replace it with structured run summaries, and remove the developer prompts.",
+      "effort": "S"
+    }
+  ],
+  "roadmapStatus": [
+    {
+      "item": "0.1 Upsert sync",
+      "status": "Partial",
+      "evidence": "supabase/migrations/20260914100000_notices_upsert_sync.sql:15-138 adds portal_key, first_seen_at, last_seen_at, deleted_at, unique keys and updated_at triggers; extension/background.js:114-179 uses merge-duplicates upsert plus a last_seen_at soft-delete. Missing: no portal_hash column anywhere; soft-delete runs even on zero rows (background.js:114-122); pdf_url and due_date are sent as null (content.js:2729, 2807); case rows keyed 'case:'+arn without in-batch dedupe (content.js:2804).",
+      "remaining": "Zero-row and partial-failure guards; write only portal-owned columns (never null pdf_url or due_date); portal_hash for change detection; in-batch dedupe; move into a transactional server RPC that uses server time."
+    },
+    {
+      "item": "0.2 Failure path and job lifecycle",
+      "status": "Partial",
+      "evidence": "Done: the top-level catch logs and advances (content.js:289-297); login failures are detected and logged (content.js:348-350, 610-648); a failed notices step goes only to client_sync_log (content.js:2662, 2942); expiry is idle-based (content.js:155-158); the version is sent in whoami and the ready ping (background.js:720; appbridge.js:15). Not done: PULL FAILED sentinels remain for ledgers, challans and returns (content.js:207-238, 2534, 2582, 3576); no reason class or run id; idle and 3-hour drops are silent; the minimum version is only toasted (NoticesDashboardPage.tsx:118) and Company List never checks it (CompanyListPage.tsx:128); the acting user is not carried on the Sync All message (NoticesDashboardPage.tsx:172-179).",
+      "remaining": "Run ledger with reason classes, a resumable queue and watchdog, an enforced minimum version, removal of every sentinel write, and the actor id on all bridge messages."
+    },
+    {
+      "item": "0.4 Closing sweep and due dates (related)",
+      "status": "Partial",
+      "evidence": "src/lib/noticeAutoClose.ts:26-192 exists but queries gst_case_folder_items.notice_id (lines 42-46, 162-166), which the table does not have (20260828160000_gst_case_folder_items.sql:14-23; types.ts:4305-4319), so it errors on every run. It is triggered only by a manual button (NoticesDashboardPage.tsx:140-151); the closure folder code is unconfirmed (content.js:2858-2860 lists INTIM/NOTCE/REPLY/ORDRS/DRC7A); derived due dates are overwritten by the next sync (content.js:2807).",
+      "remaining": "Fix the join, separate portal from derived due dates, run the sweep server-side after ingest, and promote hearing dates and RFD-08 reply dates."
+    },
+    {
+      "item": "0.5 Security stop-gaps",
+      "status": "Partial",
+      "evidence": "Done: gst.vjdesai.com is in the manifest and the allowlist (manifest.json:32; appbridge.js:12); the role is re-read from user_roles on session restore (AuthContext.tsx:204-221); StaffGuard covers /clients, /add-client and /edit-client (App.tsx:79-81). Not done: *.vercel.app is still matched and accepted (manifest.json:32; appbridge.js:20); return-pdfs is still public with anon INSERT/SELECT/UPDATE/DELETE (20260321093054:12-27; 20260819010000:10-13); passwords are still selected with the anon key and copied into chrome.storage (background.js:72-73, 304, 475; popup.js:37-40, 64-69).",
+      "remaining": "Exact-origin bridge with a signed request token; private bucket with signed URLs; credential vault with just-in-time fetch; mask passwords."
+    },
+    {
+      "item": "1.1 Event source (related: sync -> events)",
+      "status": "Partial",
+      "evidence": "The notice_events table exists and app-side staff actions write to it (20260914140000_notice_alerts_phase1.sql:8-25; src/lib/noticeEvents.ts:19-94), but no migration defines a trigger on gst_notices, so sync never emits captured/changed/removed events.",
+      "remaining": "DB triggers on gst_notices and gst_case_folder_items, plus a 15-minute event drain."
+    },
+    {
+      "item": "4.1 Agent handler (PULL_NOTICES_BUNDLE)",
+      "status": "Not started",
+      "evidence": "agent/src/handlers.ts:494-503 has no notices/refunds/DRC-03/case-folder handler; portal_jobs is open FOR ALL to public (20260713170000_portal_agent.sql:74-77); no src/ code references portal_jobs; the agent UI was removed in commit 90cad45.",
+      "remaining": "Port the bundle to Playwright (same JSON calls inside the logged-in context), add an atomic claim RPC and RPC-only writes to portal_jobs, and verify the migration on the live project."
+    },
+    {
+      "item": "4.2 Scheduling",
+      "status": "Not started",
+      "evidence": "No pg_cron job enqueues syncs (20260915100000_notice_alerts_cron.sql schedules only alerts and the outbox); the workflow schedule is disabled (.github/workflows/portal-agent.yml:19-23); there is no needs_human UI; SyncHealthCard.tsx:214 claims a 06:00 IST run.",
+      "remaining": "Cron enqueue at 05:30 IST, retries with backoff, an in-app CAPTCHA wall for needs_human jobs, and run summaries."
+    },
+    {
+      "item": "4.3 Guardrails",
+      "status": "Not started",
+      "evidence": "No zero-row or shape anomaly checks; E9 is seeded (20260914140000:172) but nothing emits it; inactive_at_hand is ignored (background.js:446-457); portal_sessions has no expiry, rotation or encryption (20260715120000_portal_sessions.sql:15-19). The only precursor is the login_failed log (content.js:348-350).",
+      "remaining": "Portal-change detection with E9, the active flag respected, a per-client credential-health view, and expiring encrypted session cookies."
+    },
+    {
+      "item": "4.4 Retention and recovery",
+      "status": "Partial",
+      "evidence": "Soft delete exists on gst_notices, refunds, DRC-03 and case-folder items (20260914100000). Company List still hard-deletes clients (CompanyListPage.tsx:200, 209), which cascades to every notices table; notice_events, notice_alert_log and matter_deadlines cascade on a notice hard delete (20260914140000:10, 70, 91). No orphan-PDF cleanup, legal hold or documented PITR procedure.",
+      "remaining": "Archive instead of delete, a block on hard deletes, PDF lifecycle management, a legal-hold flag and a tested restore runbook."
+    }
+  ],
+  "zeroTouchDesign": [
+    {
+      "stage": "0 - Safety rails before any automation",
+      "what": "Make the write path safe first: zero-row and partial-failure guards on soft-delete; never send pdf_url or due_date as null; dedupe batch keys; a BEFORE DELETE trigger on gst_notices that blocks hard deletes (neutralises stale extension copies); a minimum-version row checked by app and extension. Also fix Add Notice (source 'manual', portal_key 'manual:'+uuid), the Sweep join (client_id + case_id), and hearing_date plus the E4/E5 keys; remove the hard-coded health text.",
+      "why": "Automation multiplies whatever the write path does. Today one bad response can erase visible data and nothing tells anyone, so scheduling it first would make things worse.",
+      "effortDays": 3,
+      "dependencies": "None. Migrations applied to gcquafqxbykxkbexcdpy and verified with the anon key (CLAUDE.md).",
+      "risks": "Low; keep RLS open-to-public per the project convention and gate in triggers/RPCs instead."
+    },
+    {
+      "stage": "1 - One server-side ingest path, run ledger and freshness view",
+      "what": "A SECURITY DEFINER RPC sync_ingest(client_id, run_id, step, rows jsonb, ext_version) that upserts portal-owned columns using server now() and GREATEST(last_seen_at), takes a per-client advisory lock, soft-deletes only keys from validated non-empty sources, and computes portal_hash to record rows_new/changed/removed in sync_run_items. A client_sync_status view (last success per step, stale over 24 h, failure reason class) feeds the dashboard and Company List. E9 fires when counts drop to zero or by more than 50%.",
+      "why": "Gives one definition of 'fresh', removes the client-clock and race problems, enables real change detection, and is what both the extension and the agent will call.",
+      "effortDays": 4,
+      "dependencies": "Stage 0.",
+      "risks": "The RPC is callable with the anon key, so inputs must be validated; chunk large case-folder payloads per case."
+    },
+    {
+      "stage": "2 - Faster, identity-checked extension runs (interim, still human CAPTCHA)",
+      "what": "Incremental fetch: skip PDFs and attachments with known doc ids, fetch folders only for new, changed or open cases, read only recent challan windows, and do a full re-verify weekly. Check the session GSTIN before every write and log out before the first client. Queue jobs instead of overwriting them. A chrome.alarms watchdog logs 'abandoned' or 'portal_down' and resumes. A desktop notification plus tab focus when a CAPTCHA is waiting. Skip inactive clients and order by risk (open matters due within 7 days, stalest first). Trigger the server-side sweep and events after each client.",
+      "why": "Cuts per-client work after login from minutes to roughly 15-30 seconds, so a 90-client run finishes in about an hour and the operator only reacts to notifications rather than watching the tab.",
+      "effortDays": 5,
+      "dependencies": "Stage 1.",
+      "risks": "Undocumented portal APIs can change; keep raw JSON so data can be re-parsed. Verify whether the portal ends other sessions when a client's own staff log in."
+    },
+    {
+      "stage": "3 - New notice -> work automatically",
+      "what": "AFTER INSERT/UPDATE triggers on gst_notices and gst_case_folder_items emit notice_events (captured, due_changed, reply/order/hearing item added). queue-notice-alerts runs every 15 minutes for E1 and E6-E9 with signed PDF links. New notices are auto-assigned to clients.assigned_accountant. matter_deadlines rows are created for reply due, hearing, and appeal clocks from order dates (statutory periods to be confirmed by the firm). The sweep runs after ingest.",
+      "why": "The owner learns of a new show-cause or scrutiny notice within about 15 minutes of it landing, with a deadline attached and no dashboard visit needed.",
+      "effortDays": 4,
+      "dependencies": "Stage 1 (events from the ingest RPC); Stage 0 alert fixes; private bucket for signed links.",
+      "risks": "Alert fatigue: use a preview week, batching and quiet hours (roadmap 1.5)."
+    },
+    {
+      "stage": "4 - Unattended engine on an office IP with a batched CAPTCHA wall",
+      "what": "Revive agent/ as the scheduled engine: PULL_NOTICES_BUNDLE (optionally profile, liability ledger and 2B) runs the same JSON calls inside a logged-in Playwright context (page.evaluate(fetch)) and writes through the Stage 1 RPC. Per-client browser contexts, an atomic claim RPC (FOR UPDATE SKIP LOCKED), and retries with backoff. storageState is re-saved after every run, encrypted with an expiry, and reused while valid. pg_cron enqueues active clients at 05:30 IST. Jobs that need a CAPTCHA park as needs_human, and the app shows them together in a 'CAPTCHA wall' (10-20 images, Tab between inputs), with a 09:00 email or push nudge. Deploy on an always-on office mini-PC, because the extension README reports the portal rejected datacenter IPs.",
+      "why": "The human step shrinks to about 5-8 minutes of focused typing each morning instead of a 2-4 hour babysat run, and the data is in place before the team arrives.",
+      "effortDays": 12,
+      "dependencies": "Stages 1-3. A written partner decision and client authorisations for automated access with stored credentials (agent/README.md:28-33).",
+      "risks": "GSTN terms and IT Act exposure for automated access, which a human-typed CAPTCHA reduces but does not remove. CAPTCHA-image expiry and session lifetime are unknown (verify; batch size depends on them). Any GSTN login MFA/OTP rollout reaching these clients would break unattended login (verify current status). Throttling: cap at 2-3 concurrent contexts per IP."
+    },
+    {
+      "stage": "5 - Targeted syncs triggered by portal notification emails",
+      "what": "A firm inbox (e.g. a notices@ alias) receives GSTN notice/order emails forwarded by clients, or receives them directly where the firm is legitimately the registered contact. An inbound-mail webhook or Gmail-watch edge function parses GSTIN, form and reference, then enqueues a high-priority job for that client (agent) or flags 'sync needed' (extension), and links the email to the notice once it lands. A full rotation still runs weekly (about 18 clients per day), plus daily syncs for clients with matters due within 7 days.",
+      "why": "On most days only a handful of clients change. Daily CAPTCHAs fall from ~90 to ~20-30, and a new notice is picked up within an hour of the portal email.",
+      "effortDays": 5,
+      "dependencies": "Stage 4 (or Stage 2 for flag-only mode); client consent to forward emails.",
+      "risks": "Not every notice type triggers an email (verify), so keep the rotation as a safety net. Email templates change, so store the raw email."
+    },
+    {
+      "stage": "6 - Notice document intelligence",
+      "what": "For every new PDF (notice, order or folder attachment): extract text (pdf.js text layer, with OCR for scans) and parse DIN, form type, section, FY/tax period, tax/interest/penalty by head, reply due date, hearing date/time/venue and officer. Store the results in extracted_fields with a confidence score, and pre-fill amount_of_demand, financial_year, due and hearing fields with an 'auto - verify' chip. Generate a reply workpack: facts table, document checklist, an E12 client request, and a first-draft reply from firm templates (LLM-assisted, always human-reviewed).",
+      "why": "Removes most re-keying and gives the drafter a largely complete starting point - the biggest lever on the time taken to furnish a reply.",
+      "effortDays": 8,
+      "dependencies": "Stage 0 private bucket and signed access; Stage 3 events.",
+      "risks": "OCR errors on scanned notices: never auto-close or auto-file from extracted values. Use an approved LLM provider under a data-processing agreement for client documents."
+    },
+    {
+      "stage": "7 - Coverage extension inside the same session",
+      "what": "Add Liability Register Part II, GSTIN status, a bulk filing-status sweep (formdetails / Track Return Status), appeal case types via case/search (verify codes), DRC-01B/01C Part-B status, Rule 86A blocked credit, incremental refund folders and IMS pending counts, storing raw JSON for each.",
+      "why": "These are the triggers and context for most notices: non-filing leads to GSTR-3A, mismatches to DRC-01B/C, and orders start appeal clocks.",
+      "effortDays": 6,
+      "dependencies": "Stage 2 or Stage 4 runner; Stage 1 RPC.",
+      "risks": "Each endpoint must be discovered from the portal's own scripts and confirmed live before shipping."
+    },
+    {
+      "stage": "8 - Official API route where it fits",
+      "what": "Evaluate a GSP/ASP for returns, 2A/2B, ledgers, filing status and payments (the taxpayer enables API access and consents by OTP for each validity window; verify the current maximum duration and how often OTP is needed). Move monthly return and ledger pulls there. Keep portal sessions for notices and case folders unless the GSP confirms APIs for them, which to my knowledge the standard taxpayer API set does not include (verify). Use the separate E-way Bill API for EWB matters. Ask Humonex whether it offers notice retrieval, since it already holds credentials for the GSTR-1 push.",
+      "why": "A sanctioned channel with no CAPTCHA for those data sets, which removes most monthly per-client logins.",
+      "effortDays": 8,
+      "dependencies": "Commercial decision; client cooperation on OTP consent.",
+      "risks": "Per-GSTIN fees; OTP consent is still a human step (by the client); likely no notices coverage."
+    },
+    {
+      "stage": "9 - CAPTCHA automation (decision-gated; default: do not build)",
+      "what": "Only after a written partner decision and client authorisations: implement the existing autoSolveCaptcha seam (agent/src/captchaSolver.ts:18) with strict rate limits, a kill switch and an audit log. Otherwise, remove the fastcaptcha.org permission now.",
+      "why": "Would make the morning run fully zero-touch.",
+      "effortDays": 3,
+      "dependencies": "Legal sign-off; Stage 4.",
+      "risks": "The repo's own agent README says GSTN terms treat automated access as unauthorised, with IT Act s.43/66 exposure. A lock or IP block would hit all ~90 clients at once. Reputational risk for a CA firm. A batched human CAPTCHA wall (Stage 4) gets close to zero-touch without this."
+    }
+  ]
+}

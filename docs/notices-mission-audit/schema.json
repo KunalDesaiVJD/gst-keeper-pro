@@ -1,0 +1,5406 @@
+{
+ "generatedFrom": [
+  "src/integrations/supabase/types.ts",
+  "supabase/migrations/*.sql"
+ ],
+ "tables": {
+  "annexure3_other_payments": {
+   "name": "annexure3_other_payments",
+   "kind": "table",
+   "columns": [
+    "amount",
+    "client_id",
+    "created_at",
+    "entered_by",
+    "financial_year",
+    "id",
+    "notes",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "financial_year"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "annual_return_carry_forward": {
+   "name": "annual_return_carry_forward",
+   "kind": "table",
+   "columns": [
+    "cess",
+    "cgst",
+    "clause_ref",
+    "client_id",
+    "created_at",
+    "direction",
+    "entered_by",
+    "financial_year",
+    "id",
+    "igst",
+    "notes",
+    "sgst",
+    "taxable_value",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "direction",
+    "financial_year"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "annual_return_change_log": {
+   "name": "annual_return_change_log",
+   "kind": "table",
+   "columns": [
+    "action",
+    "changed_at",
+    "changed_by",
+    "client_id",
+    "doc_key",
+    "financial_year",
+    "id",
+    "kind",
+    "new_value",
+    "old_value",
+    "path",
+    "row_label",
+    "version"
+   ],
+   "required": [
+    "client_id",
+    "doc_key",
+    "financial_year",
+    "kind"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "annual_return_doc_history": {
+   "name": "annual_return_doc_history",
+   "kind": "table",
+   "columns": [
+    "archived_at",
+    "client_id",
+    "data",
+    "doc_id",
+    "doc_key",
+    "financial_year",
+    "id",
+    "reason",
+    "updated_at",
+    "updated_by",
+    "version"
+   ],
+   "required": [
+    "client_id",
+    "data",
+    "doc_id",
+    "doc_key",
+    "financial_year",
+    "updated_at",
+    "version"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "annual_return_docs": {
+   "name": "annual_return_docs",
+   "kind": "table",
+   "columns": [
+    "client_id",
+    "created_at",
+    "data",
+    "doc_key",
+    "financial_year",
+    "id",
+    "updated_at",
+    "updated_by",
+    "version"
+   ],
+   "required": [
+    "client_id",
+    "doc_key",
+    "financial_year"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "annual_return_payable_setoffs": {
+   "name": "annual_return_payable_setoffs",
+   "kind": "table",
+   "columns": [
+    "cess",
+    "cgst",
+    "client_id",
+    "created_at",
+    "created_by",
+    "delete_reason",
+    "deleted_at",
+    "deleted_by",
+    "doc_date",
+    "drc03_id",
+    "evidence_name",
+    "evidence_url",
+    "financial_year",
+    "gstr3b_period",
+    "gstr3b_table",
+    "id",
+    "igst",
+    "method",
+    "note",
+    "reference",
+    "sgst",
+    "side"
+   ],
+   "required": [
+    "client_id",
+    "financial_year",
+    "method",
+    "side"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "drc03_id",
+     "refTable": "gst_drc03_filings",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "annual_return_periods": {
+   "name": "annual_return_periods",
+   "kind": "table",
+   "columns": [
+    "client_id",
+    "created_at",
+    "financial_year",
+    "id",
+    "locked_at",
+    "locked_by",
+    "notes",
+    "payables_at_lock",
+    "prepared_at",
+    "prepared_by_name",
+    "prepared_note",
+    "review_checklist",
+    "review_note",
+    "reviewed_at",
+    "reviewed_by_name",
+    "reviewed_role",
+    "prepared_by",
+    "reviewed_by",
+    "status",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "financial_year"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "audit_log": {
+   "name": "audit_log",
+   "kind": "table",
+   "columns": [
+    "action",
+    "client_id",
+    "client_name",
+    "created_at",
+    "details",
+    "financial_year",
+    "id",
+    "module",
+    "records_deleted",
+    "user_id",
+    "user_role"
+   ],
+   "required": [
+    "module",
+    "user_id",
+    "user_role"
+   ],
+   "fks": []
+  },
+  "bills_not_in_2b": {
+   "name": "bills_not_in_2b",
+   "kind": "table",
+   "columns": [
+    "client_id",
+    "date",
+    "id",
+    "input_cgst",
+    "input_igst",
+    "input_sgst",
+    "is_carried_forward",
+    "is_locked",
+    "period_month",
+    "reclaim_month",
+    "reclaim_subtype",
+    "reclaimed_via_doc_id",
+    "reversal_month",
+    "source_book_id",
+    "supplier_gstin",
+    "supplier_invoice_number",
+    "supplier_name",
+    "taxable_value",
+    "updated_at",
+    "updated_by",
+    "version"
+   ],
+   "required": [
+    "client_id",
+    "date",
+    "period_month",
+    "supplier_name"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "reclaimed_via_doc_id",
+     "refTable": "twob_import_docs",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "source_book_id",
+     "refTable": "books_register",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "bills_not_in_books": {
+   "name": "bills_not_in_books",
+   "kind": "table",
+   "columns": [
+    "bill_in_2b_month",
+    "book_entry_month",
+    "client_id",
+    "date",
+    "id",
+    "input_cgst",
+    "input_igst",
+    "input_sgst",
+    "is_carried_forward",
+    "is_locked",
+    "period_month",
+    "source_doc_id",
+    "supplier_gstin",
+    "supplier_invoice_number",
+    "supplier_name",
+    "taxable_value",
+    "updated_at",
+    "updated_by",
+    "version"
+   ],
+   "required": [
+    "client_id",
+    "date",
+    "period_month",
+    "supplier_name"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "source_doc_id",
+     "refTable": "twob_import_docs",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "books_purchase_lines": {
+   "name": "books_purchase_lines",
+   "kind": "table",
+   "columns": [
+    "cgst",
+    "client_id",
+    "created_at",
+    "entered_by",
+    "expense_head",
+    "financial_year",
+    "id",
+    "igst",
+    "ledger_head",
+    "notes",
+    "rate",
+    "sgst",
+    "taxable_value",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "financial_year",
+    "ledger_head"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "books_register": {
+   "name": "books_register",
+   "kind": "table",
+   "columns": [
+    "book_treatment",
+    "client_id",
+    "created_at",
+    "date",
+    "id",
+    "input_cgst",
+    "input_igst",
+    "input_sgst",
+    "matched_2b_id",
+    "period_month",
+    "posted_at",
+    "posted_by",
+    "supplier_gstin",
+    "supplier_invoice_number",
+    "supplier_name",
+    "taxable_value",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "client_id",
+    "period_month"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "books_turnover_lines": {
+   "name": "books_turnover_lines",
+   "kind": "table",
+   "columns": [
+    "cgst",
+    "client_id",
+    "created_at",
+    "entered_by",
+    "financial_year",
+    "id",
+    "igst",
+    "ledger_head",
+    "notes",
+    "rate",
+    "sgst",
+    "taxable_value",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "financial_year",
+    "ledger_head"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_advance_adjustments": {
+   "name": "builder_advance_adjustments",
+   "kind": "table",
+   "columns": [
+    "cgst",
+    "consideration_adjusted",
+    "created_at",
+    "created_by",
+    "id",
+    "invoice_id",
+    "period_month",
+    "rate_code",
+    "rate_pct",
+    "receipt_id",
+    "sgst",
+    "taxable_value_adjusted"
+   ],
+   "required": [
+    "invoice_id",
+    "period_month",
+    "rate_code",
+    "receipt_id"
+   ],
+   "fks": [
+    {
+     "col": "invoice_id",
+     "refTable": "builder_invoices",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "receipt_id",
+     "refTable": "builder_receipts",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_booking_members": {
+   "name": "builder_booking_members",
+   "kind": "table",
+   "columns": [
+    "booking_id",
+    "created_at",
+    "email",
+    "id",
+    "is_primary",
+    "name",
+    "ownership_ratio",
+    "pan",
+    "phone",
+    "sort_order"
+   ],
+   "required": [
+    "booking_id",
+    "name"
+   ],
+   "fks": [
+    {
+     "col": "booking_id",
+     "refTable": "builder_bookings",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_bookings": {
+   "name": "builder_bookings",
+   "kind": "table",
+   "columns": [
+    "booking_date",
+    "cancellation_reason",
+    "cancelled_on",
+    "converted_to_booking_id",
+    "created_at",
+    "created_by",
+    "id",
+    "notes",
+    "status",
+    "total_consideration",
+    "unit_id",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "booking_date",
+    "unit_id"
+   ],
+   "fks": [
+    {
+     "col": "converted_to_booking_id",
+     "refTable": "builder_bookings",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_bounce_offsets": {
+   "name": "builder_bounce_offsets",
+   "kind": "table",
+   "columns": [
+    "cgst",
+    "consideration",
+    "created_at",
+    "created_by",
+    "id",
+    "period_month",
+    "reversal_id",
+    "sgst",
+    "taxable_value"
+   ],
+   "required": [
+    "period_month",
+    "reversal_id"
+   ],
+   "fks": [
+    {
+     "col": "reversal_id",
+     "refTable": "builder_bounce_reversals",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_bounce_reversals": {
+   "name": "builder_bounce_reversals",
+   "kind": "table",
+   "columns": [
+    "adjusted_value",
+    "bounced_on",
+    "cgst",
+    "consideration",
+    "created_at",
+    "created_by",
+    "id",
+    "notes",
+    "original_period",
+    "project_id",
+    "rate_code",
+    "rate_pct",
+    "receipt_id",
+    "sgst",
+    "status",
+    "taxable_value",
+    "unit_id",
+    "updated_at"
+   ],
+   "required": [
+    "bounced_on",
+    "original_period",
+    "project_id",
+    "rate_code",
+    "receipt_id",
+    "unit_id"
+   ],
+   "fks": [
+    {
+     "col": "project_id",
+     "refTable": "builder_project_areas",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_projects",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_rcm_postings",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "receipt_id",
+     "refTable": "builder_receipts",
+     "refCol": "id",
+     "oneToOne": true,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_bu_agreement_confirmations": {
+   "name": "builder_bu_agreement_confirmations",
+   "kind": "table",
+   "columns": [
+    "agreement_value_at_request",
+    "bu_event_id",
+    "client_id",
+    "created_at",
+    "created_by",
+    "dispute_notes",
+    "id",
+    "outbox_id",
+    "responded_at",
+    "response_ip",
+    "sent_at",
+    "status",
+    "token",
+    "unit_id",
+    "updated_at"
+   ],
+   "required": [
+    "bu_event_id",
+    "client_id",
+    "unit_id"
+   ],
+   "fks": [
+    {
+     "col": "bu_event_id",
+     "refTable": "builder_bu_events",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "outbox_id",
+     "refTable": "email_outbox",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_bu_event_units": {
+   "name": "builder_bu_event_units",
+   "kind": "table",
+   "columns": [
+    "agreement_value",
+    "booked_at_cutoff",
+    "booking_id",
+    "bu_event_id",
+    "carpet_area_sqm",
+    "created_at",
+    "cut_off_date",
+    "cut_off_source",
+    "differential_cgst",
+    "differential_sgst",
+    "differential_taxable_value",
+    "differential_value",
+    "id",
+    "interest_amount",
+    "interest_days",
+    "invoice_id",
+    "invoiced_before",
+    "notes",
+    "open_advance_before",
+    "rate_code",
+    "rate_pct",
+    "received_upto_cutoff",
+    "subsumed_receipt_count",
+    "tie_out_diff",
+    "unit_id",
+    "unit_type",
+    "value_taxed_upto_opening"
+   ],
+   "required": [
+    "bu_event_id",
+    "cut_off_date",
+    "rate_code",
+    "unit_id",
+    "unit_type"
+   ],
+   "fks": [
+    {
+     "col": "booking_id",
+     "refTable": "builder_bookings",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "bu_event_id",
+     "refTable": "builder_bu_events",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "invoice_id",
+     "refTable": "builder_invoices",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": true,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": true,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": true,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_bu_events": {
+   "name": "builder_bu_events",
+   "kind": "table",
+   "columns": [
+    "bu_date",
+    "bu_ref_no",
+    "created_at",
+    "created_by",
+    "discovered_on",
+    "id",
+    "notes",
+    "posted_at",
+    "posted_by",
+    "posting_basis",
+    "posting_period",
+    "project_id",
+    "scope",
+    "status",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "bu_date",
+    "posting_period",
+    "project_id"
+   ],
+   "fks": [
+    {
+     "col": "project_id",
+     "refTable": "builder_project_areas",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_projects",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_rcm_postings",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_cancellations": {
+   "name": "builder_cancellations",
+   "kind": "table",
+   "columns": [
+    "booking_id",
+    "cancellation_charge_invoice_id",
+    "cancellation_charge_taxable",
+    "cancellation_date",
+    "correction_method",
+    "created_at",
+    "created_by",
+    "credit_note_id",
+    "forfeiture_amount",
+    "id",
+    "project_id",
+    "rate_code",
+    "rate_pct",
+    "reason",
+    "refund_paid",
+    "refund_payable",
+    "status",
+    "total_received",
+    "unit_id"
+   ],
+   "required": [
+    "booking_id",
+    "cancellation_date",
+    "correction_method",
+    "project_id",
+    "rate_code",
+    "rate_pct",
+    "unit_id"
+   ],
+   "fks": [
+    {
+     "col": "booking_id",
+     "refTable": "builder_bookings",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "cancellation_charge_invoice_id",
+     "refTable": "builder_invoices",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "credit_note_id",
+     "refTable": "builder_credit_notes",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_project_areas",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_projects",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_rcm_postings",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_client_settings": {
+   "name": "builder_client_settings",
+   "kind": "table",
+   "columns": [
+    "client_id",
+    "confirmation_document_url",
+    "confirmation_notes",
+    "confirmation_outbox_id",
+    "confirmation_received_at",
+    "confirmation_sent_at",
+    "created_at",
+    "default_fsi_treatment",
+    "default_is_metro",
+    "delay_interest_basis",
+    "excess_tax_treatment",
+    "extra_work_rate",
+    "incl_club",
+    "incl_development",
+    "incl_legal",
+    "incl_maintenance_corpus",
+    "incl_other",
+    "incl_parking",
+    "incl_plc",
+    "incl_utility_deposit",
+    "raises_invoices",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "client_id"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": true,
+     "source": "types.ts"
+    },
+    {
+     "col": "confirmation_outbox_id",
+     "refTable": "email_outbox",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_conversions": {
+   "name": "builder_conversions",
+   "kind": "table",
+   "columns": [
+    "carried_value",
+    "conversion_date",
+    "created_at",
+    "created_by",
+    "credit_note_id",
+    "differential_tax",
+    "from_booking_id",
+    "from_rate_code",
+    "from_rate_pct",
+    "from_unit_id",
+    "id",
+    "invoice_id",
+    "notes",
+    "period_month",
+    "status",
+    "to_booking_id",
+    "to_rate_code",
+    "to_rate_pct",
+    "to_unit_id"
+   ],
+   "required": [
+    "conversion_date",
+    "from_rate_code",
+    "from_unit_id",
+    "period_month",
+    "to_rate_code",
+    "to_unit_id"
+   ],
+   "fks": [
+    {
+     "col": "credit_note_id",
+     "refTable": "builder_credit_notes",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "from_booking_id",
+     "refTable": "builder_bookings",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "from_unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "from_unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "from_unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "invoice_id",
+     "refTable": "builder_invoices",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "to_booking_id",
+     "refTable": "builder_bookings",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "to_unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "to_unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "to_unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_credit_notes": {
+   "name": "builder_credit_notes",
+   "kind": "table",
+   "columns": [
+    "booking_id",
+    "cgst",
+    "consideration",
+    "created_at",
+    "created_by",
+    "doc_no",
+    "doc_series",
+    "id",
+    "note_date",
+    "note_type",
+    "original_documents",
+    "period_month",
+    "rate_code",
+    "rate_pct",
+    "reason",
+    "sgst",
+    "taxable_value",
+    "unit_id",
+    "window_expiry",
+    "within_window"
+   ],
+   "required": [
+    "note_date",
+    "period_month",
+    "rate_code",
+    "unit_id"
+   ],
+   "fks": [
+    {
+     "col": "booking_id",
+     "refTable": "builder_bookings",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_dastavej_late_interest": {
+   "name": "builder_dastavej_late_interest",
+   "kind": "table",
+   "columns": [
+    "arn",
+    "created_at",
+    "created_by",
+    "cut_off_period",
+    "dastavej_date",
+    "id",
+    "paid_date",
+    "project_id",
+    "rate_code",
+    "residual_unrecovered",
+    "shortfall_value",
+    "status",
+    "total_allocated",
+    "total_interest",
+    "tranches",
+    "unit_id"
+   ],
+   "required": [
+    "cut_off_period",
+    "dastavej_date",
+    "project_id",
+    "rate_code",
+    "unit_id"
+   ],
+   "fks": [
+    {
+     "col": "project_id",
+     "refTable": "builder_project_areas",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_projects",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_rcm_postings",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_excess_tax": {
+   "name": "builder_excess_tax",
+   "kind": "table",
+   "columns": [
+    "adjusted_value",
+    "created_at",
+    "created_by",
+    "excess_tax",
+    "id",
+    "identified_on",
+    "notes",
+    "original_consideration",
+    "original_tax",
+    "project_id",
+    "receipt_id",
+    "restated_consideration",
+    "restated_tax",
+    "status",
+    "treatment",
+    "unit_id",
+    "updated_at"
+   ],
+   "required": [
+    "project_id",
+    "receipt_id",
+    "unit_id"
+   ],
+   "fks": [
+    {
+     "col": "project_id",
+     "refTable": "builder_project_areas",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_projects",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_rcm_postings",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "receipt_id",
+     "refTable": "builder_receipts",
+     "refCol": "id",
+     "oneToOne": true,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_fsi_consents": {
+   "name": "builder_fsi_consents",
+   "kind": "table",
+   "columns": [
+    "approved_at",
+    "approved_by",
+    "client_id",
+    "confirmation_document_url",
+    "confirmation_received_at",
+    "created_at",
+    "created_by",
+    "email_sent_at",
+    "fsi_value_at_request",
+    "fsi_working_id",
+    "id",
+    "notes",
+    "outbox_id",
+    "period_month",
+    "project_id",
+    "rcm_at_request",
+    "received_by",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "fsi_working_id",
+    "period_month",
+    "project_id"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "fsi_working_id",
+     "refTable": "builder_fsi_workings",
+     "refCol": "id",
+     "oneToOne": true,
+     "source": "types.ts"
+    },
+    {
+     "col": "fsi_working_id",
+     "refTable": "builder_rcm_postings",
+     "refCol": "source_id",
+     "oneToOne": true,
+     "source": "types.ts"
+    },
+    {
+     "col": "outbox_id",
+     "refTable": "email_outbox",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_project_areas",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_projects",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_rcm_postings",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_fsi_workings": {
+   "name": "builder_fsi_workings",
+   "kind": "table",
+   "columns": [
+    "allocated_value",
+    "bu_event_id",
+    "cap_amount",
+    "cap_applied",
+    "cgst",
+    "commercial_carpet_sqm",
+    "commercial_portion",
+    "commercial_rcm",
+    "created_at",
+    "created_by",
+    "event_carpet_sqm",
+    "id",
+    "notes",
+    "period_month",
+    "posted_at",
+    "posted_by",
+    "project_carpet_sqm",
+    "project_id",
+    "residential_carpet_sqm",
+    "residential_portion",
+    "residential_rcm",
+    "residential_rcm_uncapped",
+    "sgst",
+    "status",
+    "tdr_fsi_total_value",
+    "total_rcm",
+    "treatment",
+    "unbooked_residential_carpet_sqm",
+    "unbooked_residential_value",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "bu_event_id",
+    "period_month",
+    "project_id"
+   ],
+   "fks": [
+    {
+     "col": "bu_event_id",
+     "refTable": "builder_bu_events",
+     "refCol": "id",
+     "oneToOne": true,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_project_areas",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_projects",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_rcm_postings",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_historical_receipts": {
+   "name": "builder_historical_receipts",
+   "kind": "table",
+   "columns": [
+    "amount",
+    "created_at",
+    "created_by",
+    "id",
+    "notes",
+    "receipt_date",
+    "unit_id"
+   ],
+   "required": [
+    "amount",
+    "receipt_date",
+    "unit_id"
+   ],
+   "fks": [
+    {
+     "col": "unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_invoices": {
+   "name": "builder_invoices",
+   "kind": "table",
+   "columns": [
+    "booking_id",
+    "cgst",
+    "consideration",
+    "created_at",
+    "created_by",
+    "doc_no",
+    "doc_series",
+    "id",
+    "invoice_date",
+    "invoice_type",
+    "milestone_label",
+    "notes",
+    "period_month",
+    "rate_code",
+    "rate_pct",
+    "sgst",
+    "taxable_value",
+    "unit_id",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "booking_id",
+    "invoice_date",
+    "period_month",
+    "rate_code",
+    "unit_id"
+   ],
+   "fks": [
+    {
+     "col": "booking_id",
+     "refTable": "builder_bookings",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_opening_balance_adjustments": {
+   "name": "builder_opening_balance_adjustments",
+   "kind": "table",
+   "columns": [
+    "cgst",
+    "consideration_adjusted",
+    "created_at",
+    "created_by",
+    "id",
+    "invoice_id",
+    "period_month",
+    "rate_code",
+    "rate_pct",
+    "sgst",
+    "taxable_value_adjusted",
+    "unit_id"
+   ],
+   "required": [
+    "invoice_id",
+    "period_month",
+    "rate_code",
+    "unit_id"
+   ],
+   "fks": [
+    {
+     "col": "invoice_id",
+     "refTable": "builder_invoices",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_opening_balances": {
+   "name": "builder_opening_balances",
+   "kind": "table",
+   "columns": [
+    "agreement_value",
+    "as_at_date",
+    "created_at",
+    "cumulative_cgst",
+    "cumulative_receipts",
+    "cumulative_sgst",
+    "cumulative_tds_194ia",
+    "cumulative_value_taxed",
+    "is_affordable_at_opening",
+    "notes",
+    "rate_code_at_opening",
+    "unit_id",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "as_at_date",
+    "unit_id"
+   ],
+   "fks": [
+    {
+     "col": "unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": true,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": true,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": true,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_project_groups": {
+   "name": "builder_project_groups",
+   "kind": "table",
+   "columns": [
+    "created_at",
+    "id",
+    "name",
+    "project_id",
+    "sort_order"
+   ],
+   "required": [
+    "name",
+    "project_id"
+   ],
+   "fks": [
+    {
+     "col": "project_id",
+     "refTable": "builder_project_areas",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_projects",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_rcm_postings",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_projects": {
+   "name": "builder_projects",
+   "kind": "table",
+   "columns": [
+    "carpet_area_source",
+    "city",
+    "client_id",
+    "created_at",
+    "created_by",
+    "doc_series_prefix",
+    "fsi_treatment",
+    "grouping_label",
+    "id",
+    "is_metro",
+    "manual_commercial_carpet_sqm",
+    "manual_residential_carpet_sqm",
+    "name",
+    "notes",
+    "opening_cutoff_date",
+    "rera_number",
+    "status",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "client_id",
+    "name"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_receipts": {
+   "name": "builder_receipts",
+   "kind": "table",
+   "columns": [
+    "amount_entered",
+    "amount_is_gst_inclusive",
+    "bank_credit",
+    "booking_id",
+    "bounced_on",
+    "cancelled_via_id",
+    "cgst",
+    "cheque_status",
+    "consideration",
+    "created_at",
+    "created_by",
+    "doc_no",
+    "doc_series",
+    "gst_already_discharged",
+    "id",
+    "instrument_ref",
+    "instrument_type",
+    "notes",
+    "period_month",
+    "rate_code",
+    "rate_pct",
+    "receipt_date",
+    "receipt_nature",
+    "replaces_receipt_id",
+    "sgst",
+    "subsumed_by_bu_event_id",
+    "taxable_value",
+    "tds_194ia",
+    "unit_id",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "booking_id",
+    "period_month",
+    "rate_code",
+    "receipt_date",
+    "unit_id"
+   ],
+   "fks": [
+    {
+     "col": "booking_id",
+     "refTable": "builder_bookings",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "cancelled_via_id",
+     "refTable": "builder_cancellations",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "replaces_receipt_id",
+     "refTable": "builder_receipts",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "subsumed_by_bu_event_id",
+     "refTable": "builder_bu_events",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_reclassification_periods": {
+   "name": "builder_reclassification_periods",
+   "kind": "table",
+   "columns": [
+    "created_at",
+    "differential_tax",
+    "due_date",
+    "id",
+    "interest_amount",
+    "interest_days",
+    "new_cgst",
+    "new_sgst",
+    "old_cgst",
+    "old_sgst",
+    "period_month",
+    "reclassification_id",
+    "taxable_value"
+   ],
+   "required": [
+    "period_month",
+    "reclassification_id"
+   ],
+   "fks": [
+    {
+     "col": "reclassification_id",
+     "refTable": "builder_reclassifications",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_reclassifications": {
+   "name": "builder_reclassifications",
+   "kind": "table",
+   "columns": [
+    "created_at",
+    "created_by",
+    "discharge_mode",
+    "drc03_arn",
+    "drc03_filed_by",
+    "drc03_filed_date",
+    "drc03_status",
+    "from_rate_code",
+    "from_rate_pct",
+    "gross_after",
+    "gross_before",
+    "id",
+    "posted_at",
+    "posted_by",
+    "posting_period",
+    "reason",
+    "reversal_reason",
+    "reversed_at",
+    "reversed_by",
+    "status",
+    "to_rate_code",
+    "to_rate_pct",
+    "total_differential_tax",
+    "total_interest",
+    "total_value_retaxed",
+    "triggered_on",
+    "unit_id",
+    "updated_at"
+   ],
+   "required": [
+    "from_rate_code",
+    "from_rate_pct",
+    "posting_period",
+    "to_rate_code",
+    "to_rate_pct",
+    "unit_id"
+   ],
+   "fks": [
+    {
+     "col": "unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": true,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": true,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": true,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_refund_payments": {
+   "name": "builder_refund_payments",
+   "kind": "table",
+   "columns": [
+    "amount",
+    "cancellation_id",
+    "created_at",
+    "created_by",
+    "email_outbox_id",
+    "forfeited_amount",
+    "id",
+    "instrument_ref",
+    "instrument_type",
+    "notes",
+    "offset_amount",
+    "offset_cgst",
+    "offset_sgst",
+    "offset_taxable_value",
+    "payment_date",
+    "period_month"
+   ],
+   "required": [
+    "amount",
+    "cancellation_id",
+    "payment_date",
+    "period_month"
+   ],
+   "fks": [
+    {
+     "col": "cancellation_id",
+     "refTable": "builder_cancellations",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "email_outbox_id",
+     "refTable": "email_outbox",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_unit_charges": {
+   "name": "builder_unit_charges",
+   "kind": "table",
+   "columns": [
+    "amount",
+    "charge_head",
+    "created_at",
+    "id",
+    "include_override",
+    "label",
+    "unit_id",
+    "updated_at"
+   ],
+   "required": [
+    "charge_head",
+    "unit_id"
+   ],
+   "fks": [
+    {
+     "col": "unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_unit_classification_history": {
+   "name": "builder_unit_classification_history",
+   "kind": "table",
+   "columns": [
+    "area_limit_sqm",
+    "carpet_area_sqm",
+    "created_at",
+    "created_by",
+    "effective_from",
+    "effective_rate_pct",
+    "gross_consideration",
+    "id",
+    "is_affordable",
+    "is_rrep",
+    "note",
+    "rate_code",
+    "rate_pct",
+    "reason",
+    "unit_id"
+   ],
+   "required": [
+    "effective_rate_pct",
+    "is_affordable",
+    "rate_code",
+    "rate_pct",
+    "unit_id"
+   ],
+   "fks": [
+    {
+     "col": "unit_id",
+     "refTable": "builder_dastavej_reco",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_unit_ledger",
+     "refCol": "unit_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "unit_id",
+     "refTable": "builder_units",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_units": {
+   "name": "builder_units",
+   "kind": "table",
+   "columns": [
+    "base_consideration",
+    "bu_event_id",
+    "carpet_area_sqm",
+    "created_at",
+    "created_by",
+    "dastavej_date",
+    "dastavej_value",
+    "group_id",
+    "id",
+    "notes",
+    "onboarding_status",
+    "project_id",
+    "sort_order",
+    "status",
+    "unit_no",
+    "unit_type",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "project_id",
+    "unit_no",
+    "unit_type"
+   ],
+   "fks": [
+    {
+     "col": "bu_event_id",
+     "refTable": "builder_bu_events",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "group_id",
+     "refTable": "builder_project_groups",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_project_areas",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_projects",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_rcm_postings",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "chat_channel_members": {
+   "name": "chat_channel_members",
+   "kind": "table",
+   "columns": [
+    "channel_id",
+    "id",
+    "joined_at",
+    "user_id"
+   ],
+   "required": [
+    "channel_id",
+    "user_id"
+   ],
+   "fks": [
+    {
+     "col": "channel_id",
+     "refTable": "chat_channels",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "chat_channel_messages": {
+   "name": "chat_channel_messages",
+   "kind": "table",
+   "columns": [
+    "channel_id",
+    "created_at",
+    "id",
+    "mentions",
+    "message",
+    "sender_id"
+   ],
+   "required": [
+    "channel_id",
+    "message",
+    "sender_id"
+   ],
+   "fks": [
+    {
+     "col": "channel_id",
+     "refTable": "chat_channels",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "chat_channel_read_status": {
+   "name": "chat_channel_read_status",
+   "kind": "table",
+   "columns": [
+    "channel_id",
+    "id",
+    "last_read_at",
+    "user_id"
+   ],
+   "required": [
+    "channel_id",
+    "user_id"
+   ],
+   "fks": [
+    {
+     "col": "channel_id",
+     "refTable": "chat_channels",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "chat_channels": {
+   "name": "chat_channels",
+   "kind": "table",
+   "columns": [
+    "channel_type",
+    "created_at",
+    "created_by",
+    "id",
+    "name"
+   ],
+   "required": [],
+   "fks": []
+  },
+  "chat_messages": {
+   "name": "chat_messages",
+   "kind": "table",
+   "columns": [
+    "created_at",
+    "id",
+    "mentions",
+    "message",
+    "sender_id"
+   ],
+   "required": [
+    "message",
+    "sender_id"
+   ],
+   "fks": []
+  },
+  "chat_read_status": {
+   "name": "chat_read_status",
+   "kind": "table",
+   "columns": [
+    "id",
+    "last_read_at",
+    "user_id"
+   ],
+   "required": [
+    "user_id"
+   ],
+   "fks": []
+  },
+  "client_annual_turnover": {
+   "name": "client_annual_turnover",
+   "kind": "table",
+   "columns": [
+    "aggregate_turnover",
+    "applicability_note",
+    "client_id",
+    "created_at",
+    "entered_by",
+    "exempt_turnover",
+    "financial_year",
+    "gstr9_opt_in",
+    "gstr9c_opt_in",
+    "id",
+    "itc_directly_attributable_exempt",
+    "updated_at",
+    "updated_by_name"
+   ],
+   "required": [
+    "client_id",
+    "financial_year"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "client_reminder_settings": {
+   "name": "client_reminder_settings",
+   "kind": "table",
+   "columns": [
+    "client_id",
+    "enabled",
+    "escalate",
+    "interval_days",
+    "max_reminders",
+    "send_confirmation",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "client_id"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": true,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "client_scheme_history": {
+   "name": "client_scheme_history",
+   "kind": "table",
+   "columns": [
+    "changed_at",
+    "changed_by",
+    "client_id",
+    "effective_from_date",
+    "id",
+    "new_scheme",
+    "notes",
+    "old_scheme"
+   ],
+   "required": [
+    "client_id",
+    "effective_from_date",
+    "new_scheme",
+    "old_scheme"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "client_sync_log": {
+   "name": "client_sync_log",
+   "kind": "table",
+   "columns": [
+    "action",
+    "client_id",
+    "created_at",
+    "id",
+    "message",
+    "status"
+   ],
+   "required": [
+    "action",
+    "client_id",
+    "status"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "clients": {
+   "name": "clients",
+   "kind": "table",
+   "columns": [
+    "assigned_accountant",
+    "builder_itc_type",
+    "cancellation_date",
+    "client_password",
+    "client_user_id",
+    "commercial_area",
+    "created_at",
+    "created_by",
+    "email",
+    "gst_password",
+    "gst_user_id",
+    "gstin",
+    "gstr1_import_mode",
+    "id",
+    "inactive_at_hand",
+    "is_first_login",
+    "liberal_2b_reconciliation",
+    "mobile",
+    "name",
+    "notices_sync_excluded",
+    "registration_cancellation_date",
+    "registration_date",
+    "registration_type",
+    "regular_sub_type",
+    "residential_area",
+    "selected_returns",
+    "target_date_group1",
+    "target_date_group2",
+    "updated_at"
+   ],
+   "required": [
+    "gstin",
+    "name",
+    "registration_date"
+   ],
+   "fks": []
+  },
+  "duties_taxes_input_monthly": {
+   "name": "duties_taxes_input_monthly",
+   "kind": "table",
+   "columns": [
+    "as_per_3b_cgst",
+    "as_per_3b_igst",
+    "as_per_3b_sgst",
+    "client_id",
+    "created_at",
+    "debit_note_cgst",
+    "debit_note_igst",
+    "debit_note_sgst",
+    "entered_by",
+    "financial_year",
+    "id",
+    "month",
+    "other_adjustment_cgst",
+    "other_adjustment_igst",
+    "other_adjustment_reason",
+    "other_adjustment_sgst",
+    "purchase_cgst",
+    "purchase_igst",
+    "purchase_sgst",
+    "suspended_reclaim_180d_cgst",
+    "suspended_reclaim_180d_igst",
+    "suspended_reclaim_180d_sgst",
+    "suspended_reclaim_cgst",
+    "suspended_reclaim_igst",
+    "suspended_reclaim_sgst",
+    "suspended_reversed_180d_cgst",
+    "suspended_reversed_180d_igst",
+    "suspended_reversed_180d_sgst",
+    "suspended_reversed_cgst",
+    "suspended_reversed_igst",
+    "suspended_reversed_sgst",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "financial_year",
+    "month"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "duties_taxes_output_monthly": {
+   "name": "duties_taxes_output_monthly",
+   "kind": "table",
+   "columns": [
+    "as_per_3b_cgst",
+    "as_per_3b_igst",
+    "as_per_3b_sgst",
+    "client_id",
+    "created_at",
+    "credit_note_cgst",
+    "credit_note_igst",
+    "credit_note_sgst",
+    "entered_by",
+    "financial_year",
+    "id",
+    "month",
+    "other_adjustment_cgst",
+    "other_adjustment_igst",
+    "other_adjustment_reason",
+    "other_adjustment_sgst",
+    "sales_cgst",
+    "sales_igst",
+    "sales_sgst",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "financial_year",
+    "month"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "email_outbox": {
+   "name": "email_outbox",
+   "kind": "table",
+   "columns": [
+    "body",
+    "client_id",
+    "created_at",
+    "created_by",
+    "dedupe_key",
+    "error",
+    "filing_status_id",
+    "id",
+    "kind",
+    "matter_id",
+    "notice_id",
+    "period_month",
+    "reminder_step",
+    "render_vars",
+    "return_type",
+    "sent_at",
+    "status",
+    "subject",
+    "template_key",
+    "to_email"
+   ],
+   "required": [
+    "body",
+    "kind",
+    "subject",
+    "template_key",
+    "to_email"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "filing_status_id",
+     "refTable": "filing_status",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "template_key",
+     "refTable": "email_templates",
+     "refCol": "key",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "notice_id",
+     "refTable": "gst_notices",
+     "refCol": "id",
+     "source": "20260914140000_notice_alerts_phase1.sql"
+    },
+    {
+     "col": "matter_id",
+     "refTable": "litigation_matters",
+     "refCol": "id",
+     "source": "20260914160000_litigation_core_phase3.sql"
+    }
+   ]
+  },
+  "email_templates": {
+   "name": "email_templates",
+   "kind": "table",
+   "columns": [
+    "body",
+    "is_active",
+    "key",
+    "kind",
+    "name",
+    "sort_order",
+    "step",
+    "subject",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "body",
+    "key",
+    "kind",
+    "name",
+    "subject"
+   ],
+   "fks": []
+  },
+  "expense_head_mappings": {
+   "name": "expense_head_mappings",
+   "kind": "table",
+   "columns": [
+    "client_id",
+    "expense_head",
+    "id",
+    "ledger_head",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "expense_head",
+    "ledger_head"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "filing_status": {
+   "name": "filing_status",
+   "kind": "table",
+   "columns": [
+    "arn",
+    "client_id",
+    "filed_date",
+    "id",
+    "is_locked",
+    "is_nil",
+    "period_month",
+    "remarks",
+    "return_pdf_url",
+    "return_type",
+    "status",
+    "target_date",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "client_id",
+    "period_month",
+    "return_type"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gst_case_folder_items": {
+   "name": "gst_case_folder_items",
+   "kind": "table",
+   "columns": [
+    "attachments",
+    "case_id",
+    "client_id",
+    "deleted_at",
+    "first_seen_at",
+    "folder_section",
+    "id",
+    "last_seen_at",
+    "portal_key",
+    "pulled_at",
+    "raw_json",
+    "reference_number"
+   ],
+   "required": [
+    "case_id",
+    "client_id",
+    "portal_key"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gst_cash_ledger_entries": {
+   "name": "gst_cash_ledger_entries",
+   "kind": "table",
+   "columns": [
+    "balance",
+    "cess",
+    "cgst",
+    "client_id",
+    "created_at",
+    "description",
+    "entry_date",
+    "id",
+    "igst",
+    "is_debit",
+    "period_month",
+    "pulled_at",
+    "sgst"
+   ],
+   "required": [
+    "client_id",
+    "period_month"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gst_challans": {
+   "name": "gst_challans",
+   "kind": "table",
+   "columns": [
+    "cess_amount",
+    "cgst_amount",
+    "challan_date",
+    "client_id",
+    "cpin",
+    "created_at",
+    "id",
+    "igst_amount",
+    "payment_mode",
+    "pulled_at",
+    "pulled_by",
+    "sgst_amount",
+    "status",
+    "total_amount",
+    "updated_at"
+   ],
+   "required": [
+    "client_id"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gst_credit_ledger_transactions": {
+   "name": "gst_credit_ledger_transactions",
+   "kind": "table",
+   "columns": [
+    "cgst",
+    "client_id",
+    "created_at",
+    "description",
+    "id",
+    "igst",
+    "is_debit",
+    "period_month",
+    "pulled_at",
+    "sgst"
+   ],
+   "required": [
+    "client_id",
+    "is_debit",
+    "period_month"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gst_credit_reversal_reclaim_entries": {
+   "name": "gst_credit_reversal_reclaim_entries",
+   "kind": "table",
+   "columns": [
+    "client_id",
+    "closing_balance_cess",
+    "closing_balance_cgst",
+    "closing_balance_igst",
+    "closing_balance_sgst",
+    "created_at",
+    "description",
+    "financial_year",
+    "id",
+    "is_opening_balance",
+    "itc_claimed_cess",
+    "itc_claimed_cgst",
+    "itc_claimed_igst",
+    "itc_claimed_sgst",
+    "itc_reclaimed_cess",
+    "itc_reclaimed_cgst",
+    "itc_reclaimed_igst",
+    "itc_reclaimed_sgst",
+    "itc_reversed_cess",
+    "itc_reversed_cgst",
+    "itc_reversed_igst",
+    "itc_reversed_sgst",
+    "pulled_at",
+    "reference_no",
+    "return_period",
+    "transaction_date"
+   ],
+   "required": [
+    "client_id",
+    "financial_year"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gst_drc03_filings": {
+   "name": "gst_drc03_filings",
+   "kind": "table",
+   "columns": [
+    "arn",
+    "cash_amount",
+    "cause_of_payment",
+    "cess_amount",
+    "cgst_amount",
+    "client_id",
+    "created_at",
+    "credit_amount",
+    "deleted_at",
+    "filed_date",
+    "financial_year",
+    "first_seen_at",
+    "id",
+    "igst_amount",
+    "interest_amount",
+    "last_seen_at",
+    "late_fee_amount",
+    "pdf_url",
+    "penalty_amount",
+    "period_from",
+    "period_to",
+    "portal_key",
+    "pulled_at",
+    "pulled_by",
+    "section",
+    "sgst_amount",
+    "status",
+    "taxable_value",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "portal_key"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gst_filed_returns": {
+   "name": "gst_filed_returns",
+   "kind": "table",
+   "columns": [
+    "arn",
+    "client_id",
+    "created_at",
+    "filed_date",
+    "full_json",
+    "full_json_pulled_at",
+    "id",
+    "period_month",
+    "return_type",
+    "status",
+    "summary",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "period_month",
+    "return_type"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gst_liability_ledger_entries": {
+   "name": "gst_liability_ledger_entries",
+   "kind": "table",
+   "columns": [
+    "balance",
+    "cess",
+    "cgst",
+    "client_id",
+    "created_at",
+    "description",
+    "entry_date",
+    "id",
+    "igst",
+    "is_debit",
+    "period_month",
+    "pulled_at",
+    "sgst"
+   ],
+   "required": [
+    "client_id",
+    "period_month"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gst_notices": {
+   "name": "gst_notices",
+   "kind": "table",
+   "columns": [
+    "amount_of_demand",
+    "assign_to",
+    "assign_to_user_id",
+    "case_id",
+    "client_id",
+    "created_at",
+    "deleted_at",
+    "description",
+    "due_date",
+    "extended_due_date",
+    "financial_year",
+    "first_seen_at",
+    "id",
+    "issue_date",
+    "issued_by",
+    "last_seen_at",
+    "matter_id",
+    "notice_type",
+    "order_date",
+    "order_number",
+    "pdf_url",
+    "portal_key",
+    "priority",
+    "pulled_at",
+    "pulled_by",
+    "reference_number",
+    "remarks",
+    "reply_date",
+    "reply_ref_number",
+    "source",
+    "staff_status",
+    "close_reason",
+    "status",
+    "submission_arn",
+    "submission_date",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "portal_key"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "matter_id",
+     "refTable": "litigation_matters",
+     "refCol": "id",
+     "source": "20260914160000_litigation_core_phase3.sql"
+    }
+   ]
+  },
+  "gst_rcm_liability_itc_entries": {
+   "name": "gst_rcm_liability_itc_entries",
+   "kind": "table",
+   "columns": [
+    "client_id",
+    "closing_balance_cess",
+    "closing_balance_cgst",
+    "closing_balance_igst",
+    "closing_balance_sgst",
+    "created_at",
+    "description",
+    "financial_year",
+    "id",
+    "is_opening_balance",
+    "itc_4a2_cess",
+    "itc_4a2_igst",
+    "itc_4a3_cess",
+    "itc_4a3_cgst",
+    "itc_4a3_igst",
+    "itc_4a3_sgst",
+    "liability_3_1d_cess",
+    "liability_3_1d_cgst",
+    "liability_3_1d_igst",
+    "liability_3_1d_sgst",
+    "pulled_at",
+    "reference_no",
+    "return_period",
+    "transaction_date"
+   ],
+   "required": [
+    "client_id",
+    "financial_year"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gst_receivable_reco": {
+   "name": "gst_receivable_reco",
+   "kind": "table",
+   "columns": [
+    "books_closing_cgst",
+    "books_closing_igst",
+    "books_closing_sgst",
+    "client_id",
+    "drc_cgst",
+    "drc_igst",
+    "drc_sgst",
+    "id",
+    "opening_cgst",
+    "opening_csv_period_month",
+    "opening_csv_uploaded_at",
+    "opening_csv_uploaded_by",
+    "opening_igst",
+    "opening_override_at",
+    "opening_override_by",
+    "opening_override_justification",
+    "opening_portal_pulled_at",
+    "opening_portal_pulled_by",
+    "opening_sgst",
+    "opening_source",
+    "period_month",
+    "updated_at",
+    "updated_by",
+    "utilized_cgst",
+    "utilized_igst",
+    "utilized_sgst"
+   ],
+   "required": [
+    "client_id",
+    "period_month"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gst_refund_applications": {
+   "name": "gst_refund_applications",
+   "kind": "table",
+   "columns": [
+    "arn",
+    "claimed_amount",
+    "client_id",
+    "created_at",
+    "deleted_at",
+    "documents",
+    "filed_date",
+    "first_seen_at",
+    "id",
+    "last_seen_at",
+    "portal_key",
+    "pulled_at",
+    "pulled_by",
+    "refund_type",
+    "sanctioned_amount",
+    "source_ledger",
+    "status",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "portal_key"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gst_running_updates": {
+   "name": "gst_running_updates",
+   "kind": "table",
+   "columns": [
+    "cgst",
+    "client_id",
+    "created_at",
+    "effect_month",
+    "id",
+    "igst",
+    "instructions_by_employee_id",
+    "interest",
+    "itc_section",
+    "itc_sr_no",
+    "matter_brief",
+    "remarks",
+    "sgst",
+    "taxable_value",
+    "update_effect_month",
+    "update_in_return",
+    "update_instructions_by",
+    "update_type",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "client_id",
+    "update_effect_month",
+    "update_in_return",
+    "update_type"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gst_taxpayer_profile": {
+   "name": "gst_taxpayer_profile",
+   "kind": "table",
+   "columns": [
+    "aadhaar_authentication_status",
+    "client_id",
+    "constitution_of_business",
+    "created_at",
+    "id",
+    "jurisdiction_centre",
+    "jurisdiction_state",
+    "legal_name",
+    "principal_place_address",
+    "pulled_at",
+    "pulled_by",
+    "registration_certificate_url",
+    "registration_date",
+    "trade_name",
+    "updated_at"
+   ],
+   "required": [
+    "client_id"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": true,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gst_update_row_versions": {
+   "name": "gst_update_row_versions",
+   "kind": "table",
+   "columns": [
+    "changed_at",
+    "changed_by_employee_id",
+    "field_name",
+    "group_version_id",
+    "id",
+    "new_value",
+    "old_value",
+    "row_id"
+   ],
+   "required": [
+    "field_name",
+    "row_id"
+   ],
+   "fks": []
+  },
+  "gst_update_versions": {
+   "name": "gst_update_versions",
+   "kind": "table",
+   "columns": [
+    "action_type",
+    "client_id",
+    "filter_context",
+    "id",
+    "is_current",
+    "restored_from_version_id",
+    "updated_at",
+    "updated_by",
+    "version_data",
+    "version_number"
+   ],
+   "required": [],
+   "fks": []
+  },
+  "gstr1_data": {
+   "name": "gstr1_data",
+   "kind": "table",
+   "columns": [
+    "client_id",
+    "file_name",
+    "id",
+    "imported_at",
+    "imported_by",
+    "last_push_by",
+    "last_push_message",
+    "last_push_status",
+    "last_pushed_at",
+    "last_upload_errors",
+    "last_upload_status",
+    "last_upload_summary",
+    "last_uploaded_at",
+    "last_uploaded_by",
+    "period_month",
+    "raw_json",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "period_month"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gstr1_manual_entries": {
+   "name": "gstr1_manual_entries",
+   "kind": "table",
+   "columns": [
+    "client_id",
+    "data",
+    "id",
+    "period_month",
+    "row_order",
+    "section",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "client_id",
+    "period_month",
+    "section"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gstr1_upload_versions": {
+   "name": "gstr1_upload_versions",
+   "kind": "table",
+   "columns": [
+    "action_at",
+    "action_type",
+    "actor_id",
+    "client_id",
+    "errors",
+    "file_name",
+    "id",
+    "period_month",
+    "payload",
+    "status",
+    "summary",
+    "version_number"
+   ],
+   "required": [
+    "action_type",
+    "client_id",
+    "period_month",
+    "payload",
+    "version_number"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gstr2a_import_docs": {
+   "name": "gstr2a_import_docs",
+   "kind": "table",
+   "columns": [
+    "bucket",
+    "cess",
+    "client_id",
+    "date",
+    "gstr1_filing_date",
+    "gstr1_period",
+    "id",
+    "import_batch_id",
+    "imported_at",
+    "imported_by",
+    "input_cgst",
+    "input_igst",
+    "input_sgst",
+    "invoice_type",
+    "invoice_value",
+    "irn",
+    "period_month",
+    "place_of_supply",
+    "reverse_charge",
+    "source",
+    "supplier_gstin",
+    "supplier_invoice_number",
+    "supplier_name",
+    "taxable_value",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "client_id",
+    "period_month"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gstr3b_adjustments": {
+   "name": "gstr3b_adjustments",
+   "kind": "table",
+   "columns": [
+    "cess",
+    "cgst",
+    "client_id",
+    "created_at",
+    "created_by",
+    "id",
+    "igst",
+    "label",
+    "period_month",
+    "reason",
+    "sgst",
+    "source",
+    "table_ref",
+    "taxable_value",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "client_id",
+    "label",
+    "period_month",
+    "reason",
+    "table_ref"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gstr3b_push_versions": {
+   "name": "gstr3b_push_versions",
+   "kind": "table",
+   "columns": [
+    "action_at",
+    "actor_id",
+    "client_id",
+    "filled_count",
+    "id",
+    "period_month",
+    "payload",
+    "skipped",
+    "status",
+    "summary",
+    "version_number"
+   ],
+   "required": [
+    "client_id",
+    "period_month",
+    "payload",
+    "version_number"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gstr9_output_lines": {
+   "name": "gstr9_output_lines",
+   "kind": "table",
+   "columns": [
+    "category",
+    "cgst",
+    "client_id",
+    "created_at",
+    "entered_by",
+    "financial_year",
+    "id",
+    "igst",
+    "sgst",
+    "taxable_value",
+    "updated_at"
+   ],
+   "required": [
+    "category",
+    "client_id",
+    "financial_year"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gstr9_table14_differential_tax": {
+   "name": "gstr9_table14_differential_tax",
+   "kind": "table",
+   "columns": [
+    "client_id",
+    "entered_by",
+    "financial_year",
+    "id",
+    "paid",
+    "payable",
+    "tax_head",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "financial_year",
+    "tax_head"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gstr9_table15_demands_refunds": {
+   "name": "gstr9_table15_demands_refunds",
+   "kind": "table",
+   "columns": [
+    "central_tax",
+    "cess",
+    "client_id",
+    "entered_by",
+    "financial_year",
+    "id",
+    "integrated_tax",
+    "interest",
+    "penalty",
+    "row_key",
+    "state_tax",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "financial_year",
+    "row_key"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gstr9_table16_composition_deemed_approval": {
+   "name": "gstr9_table16_composition_deemed_approval",
+   "kind": "table",
+   "columns": [
+    "central_tax",
+    "cess",
+    "client_id",
+    "entered_by",
+    "financial_year",
+    "id",
+    "integrated_tax",
+    "row_key",
+    "state_tax",
+    "taxable_value",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "financial_year",
+    "row_key"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gstr9c_table12_net_itc": {
+   "name": "gstr9c_table12_net_itc",
+   "kind": "table",
+   "columns": [
+    "client_id",
+    "entered_by",
+    "financial_year",
+    "id",
+    "itc_earlier_fy_claimed_this_fy",
+    "itc_per_financials",
+    "itc_this_fy_claimed_later_fy",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "financial_year"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gstr9c_table5_turnover_reco": {
+   "name": "gstr9c_table5_turnover_reco",
+   "kind": "table",
+   "columns": [
+    "amount",
+    "client_id",
+    "entered_by",
+    "financial_year",
+    "id",
+    "row_key",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "financial_year",
+    "row_key"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gstr9c_table7_taxable_turnover_reco": {
+   "name": "gstr9c_table7_taxable_turnover_reco",
+   "kind": "table",
+   "columns": [
+    "amount",
+    "client_id",
+    "entered_by",
+    "financial_year",
+    "id",
+    "row_key",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "financial_year",
+    "row_key"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "itc_reversal_lines": {
+   "name": "itc_reversal_lines",
+   "kind": "table",
+   "columns": [
+    "cgst",
+    "client_id",
+    "created_at",
+    "entered_by",
+    "financial_year",
+    "id",
+    "igst",
+    "notes",
+    "rule",
+    "sgst",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "financial_year",
+    "rule"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "itc_summaries": {
+   "name": "itc_summaries",
+   "kind": "table",
+   "columns": [
+    "client_id",
+    "data",
+    "edit_history",
+    "id",
+    "is_locked",
+    "period_month",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "client_id",
+    "period_month"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "itc_versions": {
+   "name": "itc_versions",
+   "kind": "table",
+   "columns": [
+    "action_type",
+    "client_id",
+    "id",
+    "is_current",
+    "period_month",
+    "restored_from_version_id",
+    "updated_at",
+    "updated_by",
+    "version_data",
+    "version_number"
+   ],
+   "required": [
+    "client_id",
+    "period_month"
+   ],
+   "fks": []
+  },
+  "Notices": {
+   "name": "Notices",
+   "kind": "table",
+   "columns": [
+    "created_at",
+    "id"
+   ],
+   "required": [],
+   "fks": []
+  },
+  "matter_deadlines": {
+   "name": "matter_deadlines",
+   "kind": "table",
+   "columns": [
+    "id",
+    "notice_id",
+    "client_id",
+    "deadline_type",
+    "deadline_date",
+    "statutory_basis",
+    "source",
+    "is_met",
+    "met_at",
+    "met_by",
+    "notes",
+    "created_at",
+    "updated_at"
+   ],
+   "required": [
+    "notice_id",
+    "client_id",
+    "deadline_type",
+    "deadline_date"
+   ],
+   "fks": [
+    {
+     "col": "notice_id",
+     "refTable": "gst_notices",
+     "refCol": "id",
+     "source": "20260914140000_notice_alerts_phase1.sql"
+    },
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "source": "20260914140000_notice_alerts_phase1.sql"
+    }
+   ]
+  },
+  "litigation_matters": {
+   "name": "litigation_matters",
+   "kind": "table",
+   "columns": [
+    "id",
+    "client_id",
+    "matter_no",
+    "lifecycle",
+    "title",
+    "section_of_law",
+    "financial_years",
+    "authority",
+    "officer",
+    "jurisdiction",
+    "stage",
+    "status",
+    "priority",
+    "owner_user_id",
+    "reviewer_user_id",
+    "demand_tax",
+    "demand_interest",
+    "demand_penalty",
+    "demand_cess",
+    "paid_total",
+    "pre_deposit_total",
+    "computed_due_date",
+    "override_due_date",
+    "limitation_date",
+    "hearing_at",
+    "next_action",
+    "closed_at",
+    "closed_reason",
+    "created_at",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "matter_no"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "source": "20260914160000_litigation_core_phase3.sql"
+    }
+   ]
+  },
+  "matter_stage_history": {
+   "name": "matter_stage_history",
+   "kind": "table",
+   "columns": [
+    "id",
+    "matter_id",
+    "from_stage",
+    "to_stage",
+    "changed_by",
+    "changed_at",
+    "note"
+   ],
+   "required": [
+    "matter_id",
+    "to_stage"
+   ],
+   "fks": [
+    {
+     "col": "matter_id",
+     "refTable": "litigation_matters",
+     "refCol": "id",
+     "source": "20260914160000_litigation_core_phase3.sql"
+    }
+   ]
+  },
+  "matter_events": {
+   "name": "matter_events",
+   "kind": "table",
+   "columns": [
+    "id",
+    "matter_id",
+    "notice_id",
+    "event_type",
+    "actor_user_id",
+    "actor_name",
+    "payload",
+    "created_at"
+   ],
+   "required": [
+    "matter_id",
+    "event_type"
+   ],
+   "fks": [
+    {
+     "col": "matter_id",
+     "refTable": "litigation_matters",
+     "refCol": "id",
+     "source": "20260914160000_litigation_core_phase3.sql"
+    },
+    {
+     "col": "notice_id",
+     "refTable": "gst_notices",
+     "refCol": "id",
+     "source": "20260914160000_litigation_core_phase3.sql"
+    }
+   ]
+  },
+  "matter_documents": {
+   "name": "matter_documents",
+   "kind": "table",
+   "columns": [
+    "id",
+    "matter_id",
+    "notice_id",
+    "kind",
+    "title",
+    "storage_path",
+    "mime",
+    "size_bytes",
+    "source",
+    "uploaded_by",
+    "created_at"
+   ],
+   "required": [
+    "matter_id",
+    "title"
+   ],
+   "fks": [
+    {
+     "col": "matter_id",
+     "refTable": "litigation_matters",
+     "refCol": "id",
+     "source": "20260914160000_litigation_core_phase3.sql"
+    },
+    {
+     "col": "notice_id",
+     "refTable": "gst_notices",
+     "refCol": "id",
+     "source": "20260914160000_litigation_core_phase3.sql"
+    }
+   ]
+  },
+  "matter_hearings": {
+   "name": "matter_hearings",
+   "kind": "table",
+   "columns": [
+    "id",
+    "matter_id",
+    "scheduled_at",
+    "mode",
+    "venue",
+    "officer",
+    "attended_by",
+    "outcome",
+    "adjourned",
+    "next_date",
+    "notes",
+    "created_at"
+   ],
+   "required": [
+    "matter_id",
+    "scheduled_at"
+   ],
+   "fks": [
+    {
+     "col": "matter_id",
+     "refTable": "litigation_matters",
+     "refCol": "id",
+     "source": "20260914160000_litigation_core_phase3.sql"
+    }
+   ]
+  },
+  "matter_payments": {
+   "name": "matter_payments",
+   "kind": "table",
+   "columns": [
+    "id",
+    "matter_id",
+    "kind",
+    "drc03_arn",
+    "tax",
+    "interest",
+    "penalty",
+    "cess",
+    "paid_on",
+    "remarks",
+    "created_at"
+   ],
+   "required": [
+    "matter_id"
+   ],
+   "fks": [
+    {
+     "col": "matter_id",
+     "refTable": "litigation_matters",
+     "refCol": "id",
+     "source": "20260914160000_litigation_core_phase3.sql"
+    }
+   ]
+  },
+  "litigation_rules": {
+   "name": "litigation_rules",
+   "kind": "table",
+   "columns": [
+    "key",
+    "value",
+    "unit",
+    "effective_from",
+    "note",
+    "created_at"
+   ],
+   "required": [
+    "key",
+    "value"
+   ],
+   "fks": []
+  },
+  "notice_alert_log": {
+   "name": "notice_alert_log",
+   "kind": "table",
+   "columns": [
+    "id",
+    "rule_id",
+    "notice_id",
+    "client_id",
+    "event_id",
+    "email_outbox_id",
+    "recipient_email",
+    "status",
+    "suppress_reason",
+    "dedupe_key",
+    "created_at"
+   ],
+   "required": [],
+   "fks": [
+    {
+     "col": "rule_id",
+     "refTable": "notice_alert_rules",
+     "refCol": "id",
+     "source": "20260914140000_notice_alerts_phase1.sql"
+    },
+    {
+     "col": "notice_id",
+     "refTable": "gst_notices",
+     "refCol": "id",
+     "source": "20260914140000_notice_alerts_phase1.sql"
+    },
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "source": "20260914140000_notice_alerts_phase1.sql"
+    },
+    {
+     "col": "event_id",
+     "refTable": "notice_events",
+     "refCol": "id",
+     "source": "20260914140000_notice_alerts_phase1.sql"
+    },
+    {
+     "col": "email_outbox_id",
+     "refTable": "email_outbox",
+     "refCol": "id",
+     "source": "20260914140000_notice_alerts_phase1.sql"
+    }
+   ]
+  },
+  "notice_alert_rules": {
+   "name": "notice_alert_rules",
+   "kind": "table",
+   "columns": [
+    "id",
+    "alert_key",
+    "name",
+    "description",
+    "event_type",
+    "schedule",
+    "template_key",
+    "recipient",
+    "is_active",
+    "priority",
+    "quiet_hours",
+    "max_repeats",
+    "cooldown_hrs",
+    "created_at",
+    "updated_at"
+   ],
+   "required": [
+    "alert_key",
+    "name",
+    "template_key"
+   ],
+   "fks": []
+  },
+  "notice_events": {
+   "name": "notice_events",
+   "kind": "table",
+   "columns": [
+    "id",
+    "notice_id",
+    "client_id",
+    "event_type",
+    "old_value",
+    "new_value",
+    "actor_id",
+    "actor_name",
+    "created_at"
+   ],
+   "required": [
+    "notice_id",
+    "client_id",
+    "event_type"
+   ],
+   "fks": [
+    {
+     "col": "notice_id",
+     "refTable": "gst_notices",
+     "refCol": "id",
+     "source": "20260914140000_notice_alerts_phase1.sql"
+    },
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "source": "20260914140000_notice_alerts_phase1.sql"
+    }
+   ]
+  },
+  "password_reset_requests": {
+   "name": "password_reset_requests",
+   "kind": "table",
+   "columns": [
+    "id",
+    "requested_at",
+    "requested_by_name",
+    "resolved_at",
+    "resolved_by",
+    "status",
+    "user_id"
+   ],
+   "required": [
+    "requested_by_name",
+    "user_id"
+   ],
+   "fks": []
+  },
+  "pl_input_lines": {
+   "name": "pl_input_lines",
+   "kind": "table",
+   "columns": [
+    "cgst",
+    "client_id",
+    "created_at",
+    "entered_by",
+    "expense_head",
+    "financial_year",
+    "id",
+    "igst",
+    "ledger_head",
+    "notes",
+    "rate",
+    "section",
+    "sgst",
+    "sr_no",
+    "taxable_value",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "financial_year",
+    "ledger_head",
+    "section"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "pl_output_lines": {
+   "name": "pl_output_lines",
+   "kind": "table",
+   "columns": [
+    "bifurcation",
+    "cgst",
+    "client_id",
+    "created_at",
+    "entered_by",
+    "financial_year",
+    "id",
+    "igst",
+    "ledger_head",
+    "notes",
+    "part",
+    "rate",
+    "sgst",
+    "sr_no",
+    "taxable_value",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "financial_year",
+    "ledger_head",
+    "part"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "portal_agent_heartbeat": {
+   "name": "portal_agent_heartbeat",
+   "kind": "table",
+   "columns": [
+    "agent_id",
+    "info",
+    "last_seen"
+   ],
+   "required": [
+    "agent_id"
+   ],
+   "fks": []
+  },
+  "portal_gstr1_category_figures": {
+   "name": "portal_gstr1_category_figures",
+   "kind": "table",
+   "columns": [
+    "category",
+    "cgst",
+    "client_id",
+    "financial_year",
+    "id",
+    "igst",
+    "sgst",
+    "source",
+    "taxable_value",
+    "updated_at"
+   ],
+   "required": [
+    "category",
+    "client_id",
+    "financial_year"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "portal_job_events": {
+   "name": "portal_job_events",
+   "kind": "table",
+   "columns": [
+    "created_at",
+    "id",
+    "job_id",
+    "level",
+    "message",
+    "screenshot_path",
+    "step"
+   ],
+   "required": [
+    "job_id"
+   ],
+   "fks": [
+    {
+     "col": "job_id",
+     "refTable": "portal_jobs",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "portal_jobs": {
+   "name": "portal_jobs",
+   "kind": "table",
+   "columns": [
+    "attempts",
+    "claimed_by",
+    "client_id",
+    "created_at",
+    "error",
+    "finished_at",
+    "human_prompt",
+    "human_response",
+    "id",
+    "job_type",
+    "mode",
+    "payload",
+    "period_month",
+    "requested_by",
+    "result",
+    "status",
+    "updated_at",
+    "verified"
+   ],
+   "required": [
+    "client_id",
+    "job_type"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "portal_sessions": {
+   "name": "portal_sessions",
+   "kind": "table",
+   "columns": [
+    "client_id",
+    "storage_state",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "storage_state"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": true,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "portal_tax_payment_entries": {
+   "name": "portal_tax_payment_entries",
+   "kind": "table",
+   "columns": [
+    "client_id",
+    "entered_by",
+    "financial_year",
+    "id",
+    "interest",
+    "late_fee",
+    "paid_cash",
+    "paid_itc",
+    "payable",
+    "penalty",
+    "tax_head",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "financial_year",
+    "tax_head"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "portal_verifications": {
+   "name": "portal_verifications",
+   "kind": "table",
+   "columns": [
+    "actual",
+    "check_type",
+    "client_id",
+    "created_at",
+    "diff",
+    "expected",
+    "id",
+    "job_id",
+    "passed",
+    "period_month"
+   ],
+   "required": [
+    "check_type",
+    "job_id",
+    "passed"
+   ],
+   "fks": [
+    {
+     "col": "job_id",
+     "refTable": "portal_jobs",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "profiles": {
+   "name": "profiles",
+   "kind": "table",
+   "columns": [
+    "created_at",
+    "email",
+    "first_name",
+    "id",
+    "password",
+    "updated_at",
+    "user_id"
+   ],
+   "required": [
+    "first_name",
+    "user_id"
+   ],
+   "fks": []
+  },
+  "rcm_annual_return_lines": {
+   "name": "rcm_annual_return_lines",
+   "kind": "table",
+   "columns": [
+    "category",
+    "cgst",
+    "client_id",
+    "created_at",
+    "entered_by",
+    "financial_year",
+    "id",
+    "igst",
+    "month",
+    "sgst",
+    "taxable_value",
+    "updated_at"
+   ],
+   "required": [
+    "category",
+    "client_id",
+    "financial_year",
+    "month"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "rcm_data": {
+   "name": "rcm_data",
+   "kind": "table",
+   "columns": [
+    "cgst_2_5",
+    "cgst_9",
+    "client_id",
+    "financial_year",
+    "id",
+    "igst_18",
+    "igst_5",
+    "is_locked",
+    "master_id",
+    "month",
+    "particulars",
+    "rate",
+    "sgst_2_5",
+    "sgst_9",
+    "supply_type",
+    "taxable_value",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "client_id",
+    "financial_year",
+    "month",
+    "particulars",
+    "rate"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "master_id",
+     "refTable": "rcm_masters",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "rcm_masters": {
+   "name": "rcm_masters",
+   "kind": "table",
+   "columns": [
+    "created_at",
+    "expense_name",
+    "id",
+    "is_active",
+    "rate",
+    "supply_type",
+    "updated_at"
+   ],
+   "required": [
+    "expense_name",
+    "rate"
+   ],
+   "fks": []
+  },
+  "rcm_versions": {
+   "name": "rcm_versions",
+   "kind": "table",
+   "columns": [
+    "action_type",
+    "client_id",
+    "financial_year",
+    "id",
+    "is_current",
+    "restored_from_version_id",
+    "updated_at",
+    "updated_by",
+    "version_data",
+    "version_number"
+   ],
+   "required": [
+    "client_id",
+    "financial_year"
+   ],
+   "fks": []
+  },
+  "reconciliation_reasons": {
+   "name": "reconciliation_reasons",
+   "kind": "table",
+   "columns": [
+    "client_id",
+    "created_at",
+    "entered_by",
+    "financial_year",
+    "id",
+    "line_key",
+    "reason",
+    "updated_at"
+   ],
+   "required": [
+    "client_id",
+    "financial_year",
+    "line_key",
+    "reason"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "return_reminder_schedules": {
+   "name": "return_reminder_schedules",
+   "kind": "table",
+   "columns": [
+    "due_day",
+    "reminder_1_day",
+    "reminder_2_day",
+    "reminder_final_day",
+    "return_type",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "due_day",
+    "reminder_1_day",
+    "reminder_2_day",
+    "reminder_final_day",
+    "return_type"
+   ],
+   "fks": []
+  },
+  "staff_notification_prefs": {
+   "name": "staff_notification_prefs",
+   "kind": "table",
+   "columns": [
+    "id",
+    "user_id",
+    "channel",
+    "alert_kind",
+    "enabled",
+    "created_at",
+    "updated_at"
+   ],
+   "required": [
+    "user_id",
+    "alert_kind"
+   ],
+   "fks": []
+  },
+  "staff_task_reminders": {
+   "name": "staff_task_reminders",
+   "kind": "table",
+   "columns": [
+    "allocated_to",
+    "client",
+    "created_at",
+    "deadline",
+    "id",
+    "is_done",
+    "received_from",
+    "reminder_frequency",
+    "sort_order",
+    "task",
+    "ticket_status",
+    "updated_at",
+    "user_id"
+   ],
+   "required": [
+    "user_id"
+   ],
+   "fks": []
+  },
+  "suspended_reco": {
+   "name": "suspended_reco",
+   "kind": "table",
+   "columns": [
+    "client_id",
+    "id",
+    "opening_cgst",
+    "opening_csv_period_month",
+    "opening_csv_uploaded_at",
+    "opening_csv_uploaded_by",
+    "opening_igst",
+    "opening_override_at",
+    "opening_override_by",
+    "opening_override_justification",
+    "opening_portal_pulled_at",
+    "opening_portal_pulled_by",
+    "opening_sgst",
+    "opening_source",
+    "period_month",
+    "portal_cgst",
+    "portal_igst",
+    "portal_sgst",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "client_id",
+    "period_month"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "twob_import_docs": {
+   "name": "twob_import_docs",
+   "kind": "table",
+   "columns": [
+    "bucket",
+    "cess",
+    "client_id",
+    "date",
+    "gstr1_filing_date",
+    "gstr1_period",
+    "id",
+    "import_batch_id",
+    "imported_at",
+    "imported_by",
+    "input_cgst",
+    "input_igst",
+    "input_sgst",
+    "invoice_type",
+    "invoice_value",
+    "irn",
+    "itc_action",
+    "itc_available",
+    "itc_reason",
+    "matched_book_id",
+    "period_month",
+    "place_of_supply",
+    "posted_at",
+    "posted_by",
+    "reverse_charge",
+    "source",
+    "source_sheet",
+    "supplier_gstin",
+    "supplier_invoice_number",
+    "supplier_name",
+    "taxable_value",
+    "updated_at",
+    "updated_by"
+   ],
+   "required": [
+    "client_id",
+    "period_month"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "twob_versions": {
+   "name": "twob_versions",
+   "kind": "table",
+   "columns": [
+    "action_type",
+    "client_id",
+    "id",
+    "is_current",
+    "period_month",
+    "restored_from_version_id",
+    "table_type",
+    "updated_at",
+    "updated_by",
+    "version_data",
+    "version_number"
+   ],
+   "required": [
+    "client_id",
+    "period_month",
+    "table_type"
+   ],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "restored_from_version_id",
+     "refTable": "twob_versions",
+     "refCol": "id",
+     "source": "20260206095416_87b30ba0-637c-4bae-87a9-b11ddcc72865.sql"
+    }
+   ]
+  },
+  "user_permissions": {
+   "name": "user_permissions",
+   "kind": "table",
+   "columns": [
+    "granted_at",
+    "granted_by",
+    "id",
+    "permission_key",
+    "user_id"
+   ],
+   "required": [
+    "permission_key",
+    "user_id"
+   ],
+   "fks": []
+  },
+  "user_roles": {
+   "name": "user_roles",
+   "kind": "table",
+   "columns": [
+    "id",
+    "is_first_login",
+    "role",
+    "user_id"
+   ],
+   "required": [
+    "user_id"
+   ],
+   "fks": []
+  },
+  "annual_return_activity": {
+   "name": "annual_return_activity",
+   "kind": "view",
+   "columns": [
+    "client_id",
+    "financial_year",
+    "last_saved_at",
+    "sheets"
+   ],
+   "required": [],
+   "fks": []
+  },
+  "builder_dastavej_reco": {
+   "name": "builder_dastavej_reco",
+   "kind": "view",
+   "columns": [
+    "booked_at_cutoff",
+    "bu_date",
+    "bu_event_id",
+    "client_id",
+    "cut_off_source",
+    "dastavej_date",
+    "dastavej_value",
+    "opening_agreement_value",
+    "project_id",
+    "project_name",
+    "unit_id",
+    "unit_no",
+    "unit_status",
+    "unit_type",
+    "value_taxed",
+    "variance"
+   ],
+   "required": [],
+   "fks": [
+    {
+     "col": "bu_event_id",
+     "refTable": "builder_bu_events",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_project_areas",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_projects",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_rcm_postings",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_period_postings": {
+   "name": "builder_period_postings",
+   "kind": "view",
+   "columns": [
+    "booking_id",
+    "cgst",
+    "client_id",
+    "consideration",
+    "doc_date",
+    "doc_no",
+    "gstr1_table",
+    "land_deduction",
+    "original_period",
+    "period_month",
+    "project_id",
+    "rate_code",
+    "rate_pct",
+    "sgst",
+    "source_id",
+    "source_type",
+    "taxable_value",
+    "unit_id",
+    "unit_no"
+   ],
+   "required": [],
+   "fks": []
+  },
+  "builder_project_areas": {
+   "name": "builder_project_areas",
+   "kind": "view",
+   "columns": [
+    "carpet_area_source",
+    "client_id",
+    "commercial_sqm",
+    "derived_commercial_sqm",
+    "derived_residential_sqm",
+    "project_id",
+    "residential_sqm",
+    "unit_count"
+   ],
+   "required": [],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_rcm_postings": {
+   "name": "builder_rcm_postings",
+   "kind": "view",
+   "columns": [
+    "allocated_value",
+    "bu_date",
+    "bu_event_id",
+    "cgst",
+    "client_id",
+    "commercial_rcm",
+    "gstr3b_table",
+    "period_month",
+    "project_id",
+    "project_name",
+    "residential_rcm",
+    "sgst",
+    "source_id",
+    "source_type",
+    "taxable_tax",
+    "taxable_value"
+   ],
+   "required": [],
+   "fks": [
+    {
+     "col": "bu_event_id",
+     "refTable": "builder_bu_events",
+     "refCol": "id",
+     "oneToOne": true,
+     "source": "types.ts"
+    },
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "builder_unit_ledger": {
+   "name": "builder_unit_ledger",
+   "kind": "view",
+   "columns": [
+    "cgst_discharged",
+    "client_id",
+    "open_advance",
+    "opening_agreement_value",
+    "opening_value_taxed",
+    "project_id",
+    "sgst_discharged",
+    "total_received",
+    "total_tds_194ia",
+    "unit_id",
+    "unit_no",
+    "value_taxed"
+   ],
+   "required": [],
+   "fks": [
+    {
+     "col": "client_id",
+     "refTable": "clients",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_project_areas",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_projects",
+     "refCol": "id",
+     "oneToOne": false,
+     "source": "types.ts"
+    },
+    {
+     "col": "project_id",
+     "refTable": "builder_rcm_postings",
+     "refCol": "project_id",
+     "oneToOne": false,
+     "source": "types.ts"
+    }
+   ]
+  },
+  "gstr9c_table9_rate_wise_liability_reco": {
+   "name": "gstr9c_table9_rate_wise_liability_reco",
+   "kind": "table",
+   "columns": [
+    "id",
+    "client_id",
+    "financial_year",
+    "row_key",
+    "taxable_value",
+    "central_tax",
+    "state_tax",
+    "integrated_tax",
+    "cess",
+    "entered_by",
+    "updated_at"
+   ],
+   "required": [],
+   "fks": [],
+   "source": "migrations-only"
+  },
+  "gstr9c_table11_additional_liability": {
+   "name": "gstr9c_table11_additional_liability",
+   "kind": "table",
+   "columns": [
+    "id",
+    "client_id",
+    "financial_year",
+    "row_key",
+    "taxable_value",
+    "central_tax",
+    "state_tax",
+    "integrated_tax",
+    "cess",
+    "entered_by",
+    "updated_at"
+   ],
+   "required": [],
+   "fks": [],
+   "source": "migrations-only"
+  },
+  "gstr9c_table16_tax_payable_unreconciled_itc": {
+   "name": "gstr9c_table16_tax_payable_unreconciled_itc",
+   "kind": "table",
+   "columns": [
+    "id",
+    "client_id",
+    "financial_year",
+    "row_key",
+    "amount",
+    "entered_by",
+    "updated_at"
+   ],
+   "required": [],
+   "fks": [],
+   "source": "migrations-only"
+  },
+  "gstr9c_part_v_additional_liability": {
+   "name": "gstr9c_part_v_additional_liability",
+   "kind": "table",
+   "columns": [
+    "id",
+    "client_id",
+    "financial_year",
+    "row_key",
+    "taxable_value",
+    "central_tax",
+    "state_tax",
+    "integrated_tax",
+    "cess",
+    "entered_by",
+    "updated_at"
+   ],
+   "required": [],
+   "fks": [],
+   "source": "migrations-only"
+  },
+  "gstr9c_certification": {
+   "name": "gstr9c_certification",
+   "kind": "table",
+   "columns": [
+    "id",
+    "client_id",
+    "financial_year",
+    "place",
+    "signatory_name",
+    "membership_no",
+    "signature_date",
+    "building_no",
+    "floor_number",
+    "premises_name",
+    "road_street",
+    "city_town_locality",
+    "district",
+    "state",
+    "pin_code",
+    "pan",
+    "entered_by",
+    "updated_at"
+   ],
+   "required": [],
+   "fks": [],
+   "source": "migrations-only"
+  },
+  "annual_return_bs_pl_uploads": {
+   "name": "annual_return_bs_pl_uploads",
+   "kind": "table",
+   "columns": [
+    "id",
+    "client_id",
+    "financial_year",
+    "doc_type",
+    "file_name",
+    "file_url",
+    "file_size",
+    "description",
+    "uploaded_by",
+    "uploaded_at"
+   ],
+   "required": [],
+   "fks": [],
+   "source": "migrations-only"
+  },
+  "advance_opening_balances": {
+   "name": "advance_opening_balances",
+   "kind": "table",
+   "columns": [
+    "id",
+    "client_id",
+    "as_on_period",
+    "pos",
+    "rate_pct",
+    "sply_ty",
+    "taxable",
+    "igst",
+    "cgst",
+    "sgst",
+    "cess",
+    "notes",
+    "entered_by",
+    "entered_by_name",
+    "created_at",
+    "updated_at"
+   ],
+   "required": [],
+   "fks": [],
+   "source": "migrations-only"
+  },
+  "advance_setoff_overrides": {
+   "name": "advance_setoff_overrides",
+   "kind": "table",
+   "columns": [
+    "id",
+    "client_id",
+    "period_month",
+    "return_type",
+    "severity",
+    "findings",
+    "findings_fingerprint",
+    "requested_by",
+    "requested_by_name",
+    "requested_at",
+    "request_reason",
+    "status",
+    "decided_by",
+    "decided_by_name",
+    "decided_at",
+    "decision_note",
+    "filed_after_override",
+    "arn",
+    "created_at",
+    "updated_at"
+   ],
+   "required": [],
+   "fks": [],
+   "source": "migrations-only"
+  },
+  "advance_receipts": {
+   "name": "advance_receipts",
+   "kind": "table",
+   "columns": [
+    "id",
+    "client_id",
+    "project_id",
+    "receipt_no",
+    "receipt_date",
+    "period_month",
+    "party_gstin",
+    "party_name",
+    "pos",
+    "rate_pct",
+    "sply_ty",
+    "gross_amount",
+    "taxable_value",
+    "igst",
+    "cgst",
+    "sgst",
+    "cess",
+    "supply_nature",
+    "status",
+    "source",
+    "notes",
+    "created_by",
+    "created_by_name",
+    "created_at",
+    "updated_at"
+   ],
+   "required": [],
+   "fks": [],
+   "source": "migrations-only"
+  },
+  "advance_adjustments": {
+   "name": "advance_adjustments",
+   "kind": "table",
+   "columns": [
+    "id",
+    "receipt_id",
+    "client_id",
+    "project_id",
+    "invoice_no",
+    "invoice_date",
+    "period_month",
+    "rate_pct",
+    "consideration_adjusted",
+    "taxable_value_adjusted",
+    "igst",
+    "cgst",
+    "sgst",
+    "cess",
+    "reason",
+    "amends_adjustment_id",
+    "original_period",
+    "amendment_reason",
+    "created_by",
+    "created_by_name",
+    "created_at",
+    "updated_at",
+    "ra_bill_id"
+   ],
+   "required": [],
+   "fks": [],
+   "source": "migrations-only"
+  },
+  "contract_projects": {
+   "name": "contract_projects",
+   "kind": "table",
+   "columns": [
+    "id",
+    "client_id",
+    "code",
+    "name",
+    "department",
+    "work_order_no",
+    "work_order_date",
+    "contract_value",
+    "pos_state",
+    "rate_pct",
+    "mobilisation_advance_pct",
+    "recovery_rule",
+    "recovery_pct",
+    "recovery_at_bill_no",
+    "bg_no",
+    "bg_amount",
+    "bg_expiry",
+    "retention_pct",
+    "status",
+    "notes",
+    "created_by",
+    "created_by_name",
+    "created_at",
+    "updated_at"
+   ],
+   "required": [],
+   "fks": [],
+   "source": "migrations-only"
+  },
+  "contract_ra_bills": {
+   "name": "contract_ra_bills",
+   "kind": "table",
+   "columns": [
+    "id",
+    "project_id",
+    "client_id",
+    "bill_no",
+    "bill_ref",
+    "bill_date",
+    "period_month",
+    "gross_value",
+    "taxable_value",
+    "rate_pct",
+    "igst",
+    "cgst",
+    "sgst",
+    "retention_held",
+    "notes",
+    "created_by",
+    "created_by_name",
+    "created_at",
+    "updated_at"
+   ],
+   "required": [],
+   "fks": [],
+   "source": "migrations-only"
+  }
+ },
+ "report": {
+  "onlyInMigrations": {
+   "gstr9c_table9_rate_wise_liability_reco": [
+    "(whole table)"
+   ],
+   "gstr9c_table11_additional_liability": [
+    "(whole table)"
+   ],
+   "gstr9c_table16_tax_payable_unreconciled_itc": [
+    "(whole table)"
+   ],
+   "gstr9c_part_v_additional_liability": [
+    "(whole table)"
+   ],
+   "gstr9c_certification": [
+    "(whole table)"
+   ],
+   "annual_return_bs_pl_uploads": [
+    "(whole table)"
+   ],
+   "advance_opening_balances": [
+    "(whole table)"
+   ],
+   "advance_setoff_overrides": [
+    "(whole table)"
+   ],
+   "advance_receipts": [
+    "(whole table)"
+   ],
+   "advance_adjustments": [
+    "(whole table)"
+   ],
+   "contract_projects": [
+    "(whole table)"
+   ],
+   "contract_ra_bills": [
+    "(whole table)"
+   ]
+  },
+  "onlyInTypes": {
+   "builder_reclassifications": [
+    "discharge_mode",
+    "drc03_status"
+   ]
+  }
+ }
+}
