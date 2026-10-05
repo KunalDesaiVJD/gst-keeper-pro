@@ -42,6 +42,9 @@
     /* Success - Green */
     --success: 142 76% 36%;
     --success-foreground: 0 0% 100%;
+    /* Text-strength tones (≥ 4.5:1 on card/background) for small coloured text */
+    --success-strong: 142 72% 26%;
+    --destructive-strong: 0 72% 42%;
     
     /* Warning - Amber/Orange */
     --warning: 38 92% 50%;
@@ -97,6 +100,8 @@
     --accent-foreground: 0 0% 100%;
     --destructive: 0 63% 31%;
     --destructive-foreground: 210 40% 98%;
+    --success-strong: 142 69% 58%;
+    --destructive-strong: 0 91% 71%;
     --border: 217 33% 17%;
     --input: 217 33% 17%;
     --ring: 212 27% 84%;

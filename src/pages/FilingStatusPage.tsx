@@ -1,14 +1,18 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, Note } from '@/components/gstr9/ui';
+import { TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepTabs';
+import { WS_BTN, WS_CONTROL, WS_FILTER_LABEL, WS_PAGE, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_TR } from '@/components/workspace/theme';
+import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Download, FileText, Lock, Unlock, Search, Filter, ChevronDown, Info, Upload, Eye, Trash2, LogIn, AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
+import { Download, ClipboardCheck, Lock, Unlock, Search, X, ChevronDown, Info, Upload, Eye, Trash2, LogIn, AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
 import { FilingStatusType, ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth, RegistrationType, RETURN_TYPES_BY_REGISTRATION, filingStatusDisplayLabel, isSystemOnlyFilingStatus, PENDING_FILING_STATUSES } from '@/types';
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
@@ -87,6 +91,25 @@ const RETURN_DUE_DATES: Record<string, number> = {
   'ITC-04': 25,
   'CMP-08': 18,
 };
+
+// The return-type tabs, in display order.
+const FILING_TABS: { value: string; type: ReturnType }[] = [
+  { value: 'gstr1', type: 'GSTR-1' },
+  { value: 'gstr3b', type: 'GSTR-3B' },
+  { value: 'itc04', type: 'ITC-04' },
+  { value: 'gstr6', type: 'GSTR-6' },
+  { value: 'gstr7', type: 'GSTR-7' },
+  { value: 'cmp08', type: 'CMP-08' },
+];
+
+// A column-header filter trigger: reads as header text (muted, semibold) with a caret.
+const HEADER_FILTER_BTN = 'h-auto gap-1 p-0 text-xs font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground';
+// A body cell holding a control (select / input / textarea): tighter padding than WS_TD.
+const CELL_CONTROL = cn(WS_TD, 'px-1.5 py-1');
+
+const MISMATCH_STATUSES: readonly FilingStatusType[] = ['Mismatch in Data'];
+const DATA_PENDING_STATUSES: readonly FilingStatusType[] = ['Data Pending'];
+const FILED_STATUSES: readonly FilingStatusType[] = ['Filed'];
 
 interface Client {
   id: string;
@@ -1257,7 +1280,9 @@ const FilingStatusPage: React.FC = () => {
   }, [clients]);
 
   // Apply filters to records
-  const applyFilters = (records: FilingRecord[]): FilingRecord[] => {
+  // `ignoreStatus` is for the headline tiles only: they count every status
+  // under the other filters, so clicking one status tile doesn't zero the rest.
+  const applyFilters = (records: FilingRecord[], opts?: { ignoreStatus?: boolean }): FilingRecord[] => {
     return records.filter(record => {
       // Client name filter
       if (clientNameFilter && !record.clientName?.toLowerCase().includes(clientNameFilter.toLowerCase())) {
@@ -1272,7 +1297,7 @@ const FilingStatusPage: React.FC = () => {
         return false;
       }
       // Multi-select status filter
-      if (selectedStatuses.length > 0 && !selectedStatuses.includes(record.status)) {
+      if (!opts?.ignoreStatus && selectedStatuses.length > 0 && !selectedStatuses.includes(record.status)) {
         return false;
       }
       // Multi-select frequency filter (Monthly / Quarterly / IFF)
@@ -1511,28 +1536,24 @@ const FilingStatusPage: React.FC = () => {
     const remarkMatches = uniqueRemarks.filter(r => r.toLowerCase().includes(remarkSearch.toLowerCase()));
     
     return (
-      <div className="relative">
-        <div className="overflow-x-auto">
-          <div className="overflow-y-auto max-h-[75vh]">
+      // One scroll box for both axes, so the muted header stays pinned while
+      // the grid scrolls sideways too.
+      <div className={cn(WS_TABLE_WRAP, 'max-h-[72vh]')}>
         {/* Fixed layout + an explicit width on every column, and a min-width so the
-            grid scrolls horizontally instead of crushing columns into each other.
-            Tighter px-3/py-2 density (vs .gst-table's roomy px-4/py-3) to fit 11 columns. */}
-        <table
-          className="gst-table min-w-[1320px] [&_th]:px-3 [&_th]:py-2 [&_th]:whitespace-nowrap [&_td]:px-3 [&_td]:py-2"
-          style={{ tableLayout: 'fixed' }}
-        >
-          <thead className="sticky top-0 z-10">
+            grid scrolls horizontally instead of crushing columns into each other. */}
+        <table className={cn(WS_TABLE, 'min-w-[1320px] table-fixed')} aria-label={`${returnType} filing status`}>
+          <thead>
             <tr>
-              <th className="w-12">No.</th>
-              <th className="w-52">Client Name</th>
-              <th className="w-28">
+              <th className={cn(WS_TH, 'w-12 text-center')}>No.</th>
+              <th className={cn(WS_TH, 'w-52')}>Client name</th>
+              <th className={cn(WS_TH, 'w-28')}>
                 <Popover>
                   <PopoverTrigger asChild>
-                    <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
+                    <Button variant="ghost" className={HEADER_FILTER_BTN}>
                       Frequency
                       <ChevronDown className="h-3 w-3" />
                       {selectedFrequencies.length > 0 && (
-                        <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">{selectedFrequencies.length}</Badge>
+                        <Badge variant="info" className="ml-0.5 h-4 px-1 text-[10px] font-medium tabular-nums">{selectedFrequencies.length}</Badge>
                       )}
                     </Button>
                   </PopoverTrigger>
@@ -1552,14 +1573,14 @@ const FilingStatusPage: React.FC = () => {
                   </PopoverContent>
                 </Popover>
               </th>
-              <th className="w-40">
+              <th className={cn(WS_TH, 'w-40')}>
                 <Popover>
                   <PopoverTrigger asChild>
-                    <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
+                    <Button variant="ghost" className={HEADER_FILTER_BTN}>
                       Status
                       <ChevronDown className="h-3 w-3" />
                       {selectedStatuses.length > 0 && (
-                        <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                        <Badge variant="info" className="ml-0.5 h-4 px-1 text-[10px] font-medium tabular-nums">
                           {selectedStatuses.length}
                         </Badge>
                       )}
@@ -1597,16 +1618,16 @@ const FilingStatusPage: React.FC = () => {
                   </PopoverContent>
                 </Popover>
               </th>
-              <th className="w-36">ARN</th>
-              <th className="w-28">Return PDF</th>
-              <th className="w-24">
+              <th className={cn(WS_TH, 'w-36')}>ARN</th>
+              <th className={cn(WS_TH, 'w-28 text-center')}>Return PDF</th>
+              <th className={cn(WS_TH, 'w-24')}>
                 <Popover>
                   <PopoverTrigger asChild>
-                    <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
+                    <Button variant="ghost" className={HEADER_FILTER_BTN}>
                       Target
                       <ChevronDown className="h-3 w-3" />
                       {selectedTargetDates.length > 0 && (
-                        <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                        <Badge variant="info" className="ml-0.5 h-4 px-1 text-[10px] font-medium tabular-nums">
                           {selectedTargetDates.length}
                         </Badge>
                       )}
@@ -1646,15 +1667,15 @@ const FilingStatusPage: React.FC = () => {
                   </PopoverContent>
                 </Popover>
               </th>
-              <th className="w-28">Filed Date</th>
-              <th className="w-48">
+              <th className={cn(WS_TH, 'w-28')}>Filed date</th>
+              <th className={cn(WS_TH, 'w-48')}>
                 <Popover>
                   <PopoverTrigger asChild>
-                    <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
+                    <Button variant="ghost" className={HEADER_FILTER_BTN}>
                       Remarks
                       <ChevronDown className="h-3 w-3" />
                       {selectedRemarks.length > 0 && (
-                        <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">{selectedRemarks.length}</Badge>
+                        <Badge variant="info" className="ml-0.5 h-4 px-1 text-[10px] font-medium tabular-nums">{selectedRemarks.length}</Badge>
                       )}
                     </Button>
                   </PopoverTrigger>
@@ -1689,39 +1710,39 @@ const FilingStatusPage: React.FC = () => {
                   </PopoverContent>
                 </Popover>
               </th>
-              <th className="w-16">Login</th>
-              {canUnlockSheets() && <th className="w-16">Unlock</th>}
+              <th className={cn(WS_TH, 'w-16 text-center', !canUnlockSheets() && 'border-r-0')}>Login</th>
+              {canUnlockSheets() && <th className={cn(WS_TH, 'w-16 border-r-0 text-center')}>Unlock</th>}
             </tr>
           </thead>
           <tbody>
             {filteredRecords.map((record, idx) => (
-              <tr key={record.id} className={record.is_locked ? 'bg-muted/30' : ''}>
-                <td>{idx + 1}</td>
-                <td>
+              <tr key={record.id} className={cn(WS_TR, record.is_locked && 'bg-muted/30')}>
+                <td className={cn(WS_TD, 'text-center tabular-nums text-muted-foreground')}>{idx + 1}</td>
+                <td className={cn(WS_TD, 'truncate')}>
                   <ClientHoverDetails
                     clientName={record.clientName || ''}
                     accountant={record.accountantName || '-'}
                     contact={record.contactNumber || '-'}
                     email={record.clientEmail || '-'}
-                    lockIcon={record.is_locked ? <Lock className="h-3 w-3 inline ml-2 text-muted-foreground" /> : undefined}
+                    lockIcon={record.is_locked ? <Lock className="ml-1.5 inline h-3 w-3 text-muted-foreground" aria-label="Locked" /> : undefined}
                   />
                 </td>
-                <td>
+                <td className={WS_TD}>
                   <Badge
                     variant={record.filingFrequency === 'Quarterly' ? 'warning' : record.filingFrequency === 'IFF' ? 'info' : 'outline'}
-                    className="text-xs"
+                    className="px-1.5 text-[10px] font-medium"
                   >
                     {record.filingFrequency === 'Quarterly' ? 'Q' : record.filingFrequency === 'IFF' ? 'IFF' : 'M'}
                   </Badge>
                 </td>
-                <td>
+                <td className={CELL_CONTROL}>
                   <div className="flex items-center gap-1">
                     <Select
                       value={record.status}
                       disabled={record.is_locked && !canUnlockSheets()}
                       onValueChange={(value) => handleStatusChange(record, value as FilingStatusType, editingArn[record.id])}
                     >
-                      <SelectTrigger className={`w-full h-8 text-xs [appearance:none] ${filingStatusAccent(record.status)}`}>
+                      <SelectTrigger className={cn('h-7 w-full px-2 text-xs [appearance:none]', filingStatusAccent(record.status))}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -1749,11 +1770,11 @@ const FilingStatusPage: React.FC = () => {
                       <Popover>
                         <PopoverTrigger asChild>
                           <button className="shrink-0" title="GSTR-1 data not imported">
-                            <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                            <AlertTriangle className="h-3.5 w-3.5 text-warning" />
                           </button>
                         </PopoverTrigger>
                         <PopoverContent side="left" className="w-[260px] p-3 text-xs">
-                          <p className="text-amber-600 dark:text-amber-400 font-medium">GSTR-1 data not imported</p>
+                          <p className="font-medium text-foreground">GSTR-1 data not imported</p>
                           <p className="text-muted-foreground mt-1">
                             Marked Filed, but no GSTR-1 data has been imported into GST Keeper for this period — the GSTR-3B draft will show ₹0 outward tax until this is imported.
                           </p>
@@ -1782,11 +1803,11 @@ const FilingStatusPage: React.FC = () => {
                       <Popover>
                         <PopoverTrigger asChild>
                           <button className="shrink-0" title="NIL not carried forward from GSTR-1">
-                            <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                            <AlertTriangle className="h-3.5 w-3.5 text-warning" />
                           </button>
                         </PopoverTrigger>
                         <PopoverContent side="left" className="w-[260px] p-3 text-xs">
-                          <p className="text-amber-600 dark:text-amber-400 font-medium">NIL not carried forward</p>
+                          <p className="font-medium text-foreground">NIL not carried forward</p>
                           <p className="text-muted-foreground mt-1">
                             GSTR-1 for this period is marked NIL — consider marking GSTR-3B NIL too (see the NIL Return checkbox on the GSTR-3B page).
                           </p>
@@ -1795,7 +1816,7 @@ const FilingStatusPage: React.FC = () => {
                     )}
                   </div>
                 </td>
-                <td>
+                <td className={CELL_CONTROL}>
                   <Input
                     value={editingArn[record.id] ?? record.arn ?? ''}
                     onChange={(e) => {
@@ -1806,12 +1827,12 @@ const FilingStatusPage: React.FC = () => {
                       // ARN is kept local only - it will be saved when status is changed to "Filed"
                     }}
                     placeholder="AA1234567890123"
-                    className="w-full h-7 text-xs font-mono"
+                    className="h-7 w-full px-2 font-mono text-xs md:text-xs"
                     maxLength={15}
                     disabled={record.is_locked && !canUnlockSheets()}
                   />
                 </td>
-                <td className="text-center">
+                <td className={cn(WS_TD, 'text-center')}>
                   {record.return_pdf_url ? (
                     <div className="flex items-center justify-center gap-1">
                       <a
@@ -1821,7 +1842,7 @@ const FilingStatusPage: React.FC = () => {
                         className="text-primary hover:text-primary/80"
                         title="View PDF"
                       >
-                        <Eye className="h-4 w-4" />
+                        <Eye className="h-3.5 w-3.5" />
                       </a>
                       {(!record.is_locked || canUnlockSheets()) && (
                         <button
@@ -1872,10 +1893,10 @@ const FilingStatusPage: React.FC = () => {
                     </div>
                   )}
                 </td>
-                <td className="text-center font-mono text-sm">{record.target_date}</td>
-                <td>
+                <td className={cn(WS_TD, 'text-center tabular-nums')}>{record.target_date ?? <span className="text-muted-foreground">—</span>}</td>
+                <td className={WS_TD}>
                   <div className="flex items-center gap-1">
-                    <span>
+                    <span className="tabular-nums">
                       {record.filed_date 
                         ? new Date(record.filed_date).toLocaleDateString('en-IN')
                         : '-'
@@ -1900,7 +1921,7 @@ const FilingStatusPage: React.FC = () => {
                     )}
                   </div>
                 </td>
-                <td>
+                <td className={CELL_CONTROL}>
                   <div className="flex items-start gap-1">
                     <textarea
                       value={editingRemarks[record.id] ?? record.remarks ?? ''}
@@ -1912,24 +1933,24 @@ const FilingStatusPage: React.FC = () => {
                         }
                       }}
                       placeholder="Add remarks..."
-                      className="w-full min-h-[28px] max-h-[80px] text-xs px-2 py-1 rounded border border-input bg-background resize-y"
+                      className="block min-h-[28px] max-h-[80px] w-full resize-y rounded border border-input bg-background px-2 py-1 text-xs leading-snug focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
                       disabled={record.is_locked && !canUnlockSheets()}
                     />
                   </div>
                 </td>
-                <td className="text-center">
+                <td className={cn(WS_TD, 'py-1 text-center', !canUnlockSheets() && 'border-r-0')}>
                   <button
                     onClick={() => openFilingOnPortal(record)}
-                    className={`inline-flex items-center justify-center h-7 w-7 rounded ${extReady ? 'text-primary hover:bg-primary/10' : 'text-muted-foreground hover:bg-muted'}`}
+                    className={`inline-flex h-7 w-7 items-center justify-center rounded ${extReady ? 'text-primary hover:bg-primary/10' : 'text-muted-foreground hover:bg-muted'}`}
                     title={extReady
                       ? `Log ${record.clientName || 'this client'} in and open the ${record.return_type} filing page — you do the CAPTCHA & submit with OTP/DSC`
                       : 'GST Keeper extension not detected yet — install/enable it and reload this page'}
                   >
-                    <LogIn className="h-4 w-4" />
+                    <LogIn className="h-3.5 w-3.5" />
                   </button>
                 </td>
                 {canUnlockSheets() && (
-                  <td className="text-center">
+                  <td className={cn(WS_TD, 'border-r-0 py-1 text-center')}>
                     {record.is_locked && (
                       <Button 
                         variant="ghost" 
@@ -1947,7 +1968,9 @@ const FilingStatusPage: React.FC = () => {
             ))}
             {filteredRecords.length === 0 && (
               <tr>
-                <td colSpan={canUnlockSheets() ? 11 : 10} className="text-center py-8 text-muted-foreground">
+                <td colSpan={canUnlockSheets() ? 11 : 10} className="px-3 py-10 text-center text-muted-foreground">
+                  <ClipboardCheck className="mx-auto mb-1.5 h-5 w-5" />
+                  <div className="font-medium text-foreground">No records</div>
                   {records.length === 0 
                     ? `No clients have ${returnType} selected.`
                     : 'No records match your filters.'}
@@ -1956,16 +1979,18 @@ const FilingStatusPage: React.FC = () => {
             )}
           </tbody>
         </table>
-          </div>
-        </div>
       </div>
     );
   };
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">Loading...</p>
+      <div className={WS_PAGE}>
+        <Card>
+          <CardContent className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading filing status…
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -2013,124 +2038,202 @@ const FilingStatusPage: React.FC = () => {
 
   const months = generateMonths();
 
+  // Every tab's rows, built once per render (the tab strip shows their counts).
+  const recordsByTab: Record<string, FilingRecord[]> = Object.fromEntries(
+    FILING_TABS.map(t => [t.value, generateAllFilingRecords(t.type)]),
+  );
+  // Headline tiles: the open tab's rows under every filter except status, so
+  // the status tiles can double as the status filter without zeroing each other.
+  const tabRowsInView = applyFilters(recordsByTab[selectedTab] || [], { ignoreStatus: true });
+  const stats = {
+    total: tabRowsInView.length,
+    filed: tabRowsInView.filter(r => r.status === 'Filed').length,
+    pending: tabRowsInView.filter(r => PENDING_FILING_STATUSES.includes(r.status)).length,
+    mismatch: tabRowsInView.filter(r => r.status === 'Mismatch in Data').length,
+    dataPending: tabRowsInView.filter(r => r.status === 'Data Pending').length,
+    locked: tabRowsInView.filter(r => r.is_locked).length,
+  };
+  const statusFilterIs = (set: readonly FilingStatusType[]) =>
+    selectedStatuses.length === set.length && set.every(st => selectedStatuses.includes(st));
+  const toggleStatusTile = (set: readonly FilingStatusType[]) =>
+    setSelectedStatuses(statusFilterIs(set) ? [] : [...set]);
+  const activeFilterCount = [
+    clientNameFilter,
+    selectedAccountants.length,
+    selectedTargetDates.length,
+    selectedStatuses.length,
+    selectedFrequencies.length,
+    selectedRemarks.length,
+  ].filter(Boolean).length;
+  const currentTabLabel = FILING_TABS.find(t => t.value === selectedTab)?.type ?? '';
+
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
         title="Filing Status"
-        subtitle="Track GST return filing status for all clients"
+        subtitle="GST return filing status for all clients"
+        icon={<ClipboardCheck />}
         actions={
-          <Button variant="outline" className="flex items-center gap-2" onClick={handleExportPDF}>
-            <Download className="h-4 w-4" />
+          <Button variant="outline" size="sm" className={WS_BTN} onClick={handleExportPDF}>
+            <Download className="h-3.5 w-3.5" />
             Export PDF
           </Button>
         }
       />
 
-      {/* Filters */}
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-medium">Filters:</span>
-            </div>
-            
-            {/* Month Selector */}
-            <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-              <SelectTrigger className="w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {months.map((month) => (
-                  <SelectItem key={month.value} value={month.value}>
-                    {month.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+      {/* Headline tiles for the open tab; the status tiles double as the status filter. */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+        <TileButton active={selectedStatuses.length === 0} onClick={() => setSelectedStatuses([])} title="Show every status">
+          <KpiTile
+            label={`${currentTabLabel} returns in view`}
+            value={stats.total}
+            hint={[
+              activeFilterCount ? `${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'} on` : 'No filters',
+              stats.locked ? `${stats.locked} locked` : null,
+            ].filter(Boolean).join(' · ')}
+          />
+        </TileButton>
+        <TileButton active={statusFilterIs(FILED_STATUSES)} onClick={() => toggleStatusTile(FILED_STATUSES)} title="Show filed returns only">
+          <KpiTile label="Filed" value={stats.filed} hint={stats.total ? `${Math.round((stats.filed / stats.total) * 100)}% of returns in view` : '—'} tone={stats.filed ? 'ok' : 'neutral'} />
+        </TileButton>
+        <TileButton active={statusFilterIs(PENDING_FILING_STATUSES)} onClick={() => toggleStatusTile(PENDING_FILING_STATUSES)} title="Show every status short of Filed">
+          <KpiTile label="Pending" value={stats.pending} hint="Every status short of Filed" tone={stats.pending ? 'warn' : 'ok'} />
+        </TileButton>
+        <TileButton active={statusFilterIs(DATA_PENDING_STATUSES)} onClick={() => toggleStatusTile(DATA_PENDING_STATUSES)} title="Show Data Pending only">
+          <KpiTile label="Data pending" value={stats.dataPending} hint="Waiting on the client" tone={stats.dataPending ? 'warn' : 'neutral'} />
+        </TileButton>
+        <TileButton active={statusFilterIs(MISMATCH_STATUSES)} onClick={() => toggleStatusTile(MISMATCH_STATUSES)} title="Show Mismatch in Data only">
+          <KpiTile label="Mismatch in data" value={stats.mismatch} hint="Needs a look before filing" tone={stats.mismatch ? 'error' : 'neutral'} />
+        </TileButton>
+      </div>
 
-            {/* Client Name Search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search client..."
-                value={clientNameFilter}
-                onChange={(e) => setClientNameFilter(e.target.value)}
-                className="pl-9 w-48"
+      {/* Filters: one labelled toolbar. Status, frequency, target and remarks filter from the column headers. */}
+      <Card>
+        <CardContent className="px-3 py-2">
+          <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-3 lg:grid-cols-[minmax(0,10rem)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+            <label className="min-w-0 space-y-0.5">
+              <span className={WS_FILTER_LABEL}>Return period</span>
+              <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+                <SelectTrigger className={WS_CONTROL} aria-label="Return period">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {months.map((month) => (
+                    <SelectItem key={month.value} value={month.value}>
+                      {month.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+
+            <label className="min-w-0 space-y-0.5">
+              <span className={WS_FILTER_LABEL}>Client</span>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Search client…"
+                  value={clientNameFilter}
+                  onChange={(e) => setClientNameFilter(e.target.value)}
+                  className={cn(WS_CONTROL, 'pl-8 md:text-xs')}
+                />
+              </div>
+            </label>
+
+            {/* Accountant filter — Excel-style multi-select with search + Select All */}
+            <div className="col-span-2 min-w-0 space-y-0.5 sm:col-span-1">
+              <span className={WS_FILTER_LABEL}>Accountant</span>
+              <MultiSelectPopover
+                options={accountantOptions.map(opt => ({ value: opt.name, label: `${opt.name} (${opt.count})` }))}
+                selectedValues={selectedAccountants}
+                onSelectionChange={setSelectedAccountants}
+                placeholder={`All accountants (${clients.length})`}
+                className="w-full"
+                contentClassName="w-72"
+                searchable
+                showSelectAll
+                searchPlaceholder="Search accountant..."
               />
             </div>
 
-            {/* Accountant Filter — Excel-style multi-select with search + Select All */}
-            <MultiSelectPopover
-              options={accountantOptions.map(opt => ({ value: opt.name, label: `${opt.name} (${opt.count})` }))}
-              selectedValues={selectedAccountants}
-              onSelectionChange={setSelectedAccountants}
-              placeholder={`All Accountants (${clients.length})`}
-              className="w-64"
-              contentClassName="w-72"
-              searchable
-              showSelectAll
-              searchPlaceholder="Search accountant..."
-            />
-
-            {(clientNameFilter || selectedAccountants.length > 0 || selectedTargetDates.length > 0 || selectedStatuses.length > 0 || selectedFrequencies.length > 0 || selectedRemarks.length > 0) && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setClientNameFilter('');
-                  setSelectedAccountants([]);
-                  setSelectedTargetDates([]);
-                  setSelectedStatuses([]);
-                  setSelectedFrequencies([]);
-                  setSelectedRemarks([]);
-                }}
-              >
-                Clear All Filters
-              </Button>
-            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1 px-2 text-xs"
+              disabled={!activeFilterCount}
+              onClick={() => {
+                setClientNameFilter('');
+                setSelectedAccountants([]);
+                setSelectedTargetDates([]);
+                setSelectedStatuses([]);
+                setSelectedFrequencies([]);
+                setSelectedRemarks([]);
+              }}
+            >
+              <X className="h-3.5 w-3.5" /> Clear
+            </Button>
           </div>
+          {lateFilingsFilter && (
+            <div className="mt-2 flex items-center gap-1.5">
+              <Badge variant="warning" className="gap-1 px-1.5 text-[10px] font-medium">
+                Late filings only — filed after the due date
+                <button
+                  type="button"
+                  onClick={() => setLateFilingsFilter(false)}
+                  className="-mr-0.5 rounded-sm hover:bg-foreground/10"
+                  aria-label="Show all filings"
+                  title="Show all filings"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* Return Type Tabs */}
-      <Card>
-        <CardContent className="p-4">
-          <Tabs value={selectedTab} onValueChange={setSelectedTab}>
-            <TabsList className="grid grid-cols-6 w-full mb-4">
-              <TabsTrigger value="gstr1">GSTR-1</TabsTrigger>
-              <TabsTrigger value="gstr3b">GSTR-3B</TabsTrigger>
-              <TabsTrigger value="itc04">ITC-04</TabsTrigger>
-              <TabsTrigger value="gstr6">GSTR-6</TabsTrigger>
-              <TabsTrigger value="gstr7">GSTR-7</TabsTrigger>
-              <TabsTrigger value="cmp08">CMP-08</TabsTrigger>
-            </TabsList>
+      <Note>
+        Status, frequency, target date and remarks filter from their column headers. Hover a client's name for the accountant and contact details. A typed ARN is saved when the status is set to Filed; remarks save when you leave the box.
+      </Note>
 
-            <TabsContent value="gstr1">
-              <FilingTable records={generateAllFilingRecords('GSTR-1')} returnType="GSTR-1" />
-            </TabsContent>
-            <TabsContent value="gstr3b">
-              <FilingTable records={generateAllFilingRecords('GSTR-3B')} returnType="GSTR-3B" />
-            </TabsContent>
-            <TabsContent value="itc04">
-              <FilingTable records={generateAllFilingRecords('ITC-04')} returnType="ITC-04" />
-            </TabsContent>
-            <TabsContent value="gstr6">
-              <FilingTable records={generateAllFilingRecords('GSTR-6')} returnType="GSTR-6" />
-            </TabsContent>
-            <TabsContent value="gstr7">
-              <FilingTable records={generateAllFilingRecords('GSTR-7')} returnType="GSTR-7" />
-            </TabsContent>
-            <TabsContent value="cmp08">
-              <FilingTable records={generateAllFilingRecords('CMP-08')} returnType="CMP-08" />
-            </TabsContent>
-          </Tabs>
-        </CardContent>
-      </Card>
+      {/* Return type tabs */}
+      <Tabs value={selectedTab} onValueChange={setSelectedTab} className="space-y-2">
+        <TabsList className={TAB_LIST_CLASS} aria-label="Return type">
+          {FILING_TABS.map(t => (
+            <TabsTrigger key={t.value} value={t.value} className={TAB_TRIGGER_CLASS}>
+              {t.type}
+              <span className="tabular-nums text-muted-foreground">{recordsByTab[t.value].length}</span>
+            </TabsTrigger>
+          ))}
+        </TabsList>
+
+        {FILING_TABS.map(t => (
+          <TabsContent key={t.value} value={t.value} className="mt-0">
+            <FilingTable records={recordsByTab[t.value]} returnType={t.type} />
+          </TabsContent>
+        ))}
+      </Tabs>
 
       <AdvanceSetoffGateDialog {...advanceGate.dialogProps} />
     </div>
   );
 };
+
+/** A KPI tile that also acts as a filter toggle. */
+const TileButton: React.FC<{ active: boolean; onClick: () => void; title: string; children: React.ReactNode }> = ({ active, onClick, title, children }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={title}
+    aria-pressed={active}
+    className={cn(
+      'rounded-lg text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:h-full',
+      active && 'ring-2 ring-primary/60',
+    )}
+  >
+    {children}
+  </button>
+);
 
 export default FilingStatusPage;

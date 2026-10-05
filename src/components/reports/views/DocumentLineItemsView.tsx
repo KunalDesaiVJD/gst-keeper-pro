@@ -18,7 +18,9 @@ import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { REPORT_STATUS_META } from '@/lib/reportRegistry';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile } from '@/components/gstr9/ui';
+import { WS_TABLE, WS_TH, WS_TD, WS_TR_HEADING, WS_TR_TOTAL } from '@/components/workspace/theme';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Table, TableHeader, TableBody, TableFooter, TableRow, TableHead, TableCell } from '@/components/ui/table';
@@ -179,7 +181,7 @@ export const DocumentLineItemsView: React.FC<DocumentLineItemsViewProps> = ({ ta
     }
     if (colIdx === statusIdx && String(cell).trim() !== '') {
       return (
-        <Badge variant={STATUS_VARIANT(String(cell))} className="text-[10px] py-0">
+        <Badge variant={STATUS_VARIANT(String(cell))} className="text-[10px] py-0 font-medium">
           {String(cell)}
         </Badge>
       );
@@ -196,18 +198,18 @@ export const DocumentLineItemsView: React.FC<DocumentLineItemsViewProps> = ({ ta
 
   return (
     <Card className="flex flex-col">
-      <CardHeader className="pb-4">
+      <CardHeader className="space-y-0 px-4 pb-2 pt-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <report.icon className="h-5 w-5 text-primary shrink-0" />
-              <CardTitle className="text-xl">{table.title || report.title}</CardTitle>
-              <Badge variant={REPORT_STATUS_META[report.status].badgeVariant} className="text-[10px]">
+              <report.icon className="h-4 w-4 text-primary shrink-0" />
+              <CardTitle className="text-[15px] leading-snug">{table.title || report.title}</CardTitle>
+              <Badge variant={REPORT_STATUS_META[report.status].badgeVariant} className="text-[10px] font-medium">
                 {REPORT_STATUS_META[report.status].shortLabel}
               </Badge>
             </div>
             {subtitleParts.length > 0 && (
-              <CardDescription className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <CardDescription className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
                 {subtitleParts.map((part, i) => (
                   <span key={i} className="flex items-center gap-2">
                     {i > 0 && <span className="text-muted-foreground/40">•</span>}
@@ -220,10 +222,10 @@ export const DocumentLineItemsView: React.FC<DocumentLineItemsViewProps> = ({ ta
         </div>
       </CardHeader>
 
-      <CardContent className="flex flex-col gap-4">
+      <CardContent className="flex flex-col gap-2.5 px-4 pb-3">
         {!hasAnyData && (
-          <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">
-            <Inbox className="h-8 w-8" />
+          <div className="flex flex-col items-center justify-center gap-1.5 py-8 text-center text-muted-foreground">
+            <Inbox className="h-5 w-5 opacity-60" />
             <p className="text-sm">No rows in this report for the selected client and period.</p>
           </div>
         )}
@@ -232,37 +234,29 @@ export const DocumentLineItemsView: React.FC<DocumentLineItemsViewProps> = ({ ta
           <>
             {/* Summary strip — grand totals, readable before scrolling */}
             {numericIdxs.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                <div className="rounded-md border bg-muted/40 px-3 py-2">
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Rows</p>
-                  <p className="text-base font-semibold tabular-nums">{dataRows.length.toLocaleString('en-IN')}</p>
-                </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
+                <KpiTile label="Rows" value={dataRows.length.toLocaleString('en-IN')} />
                 {numericIdxs.map((idx) => (
-                  <div key={idx} className="rounded-md border bg-primary/5 px-3 py-2">
-                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground truncate" title={headers[idx]}>
-                      {headers[idx]}
-                    </p>
-                    <p className="text-base font-semibold tabular-nums">{formatNumber(summaryValues.get(idx) ?? 0)}</p>
-                  </div>
+                  <KpiTile key={idx} label={headers[idx]} value={formatNumber(summaryValues.get(idx) ?? 0)} />
                 ))}
               </div>
             )}
 
             {/* Controls: search + group-by */}
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2">
               <div className="relative flex-1 min-w-[220px] max-w-sm">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search supplier, GSTIN, invoice no…"
-                  className="pl-8 pr-8 h-9 text-sm"
+                  className="pl-8 pr-8 h-8 text-xs"
                 />
                 {search && (
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="absolute right-0.5 top-1/2 -translate-y-1/2 h-8 w-8"
+                    className="absolute right-0.5 top-1/2 -translate-y-1/2 h-7 w-7"
                     onClick={() => setSearch('')}
                   >
                     <X className="h-3.5 w-3.5" />
@@ -285,11 +279,11 @@ export const DocumentLineItemsView: React.FC<DocumentLineItemsViewProps> = ({ ta
                   onValueChange={(val) => setGroupByIdx(val === '' || val === undefined ? null : Number(val))}
                   className="justify-end"
                 >
-                  <ToggleGroupItem value="" aria-label="Flat view" className="gap-1.5 text-xs px-2.5">
+                  <ToggleGroupItem value="" aria-label="Flat view" className="h-8 gap-1.5 text-xs px-2.5">
                     <ListIcon className="h-3.5 w-3.5" /> Flat
                   </ToggleGroupItem>
                   {groupOptions.map((opt) => (
-                    <ToggleGroupItem key={opt.idx} value={String(opt.idx)} aria-label={`Group by ${opt.label}`} className="gap-1.5 text-xs px-2.5">
+                    <ToggleGroupItem key={opt.idx} value={String(opt.idx)} aria-label={`Group by ${opt.label}`} className="h-8 gap-1.5 text-xs px-2.5">
                       <Layers className="h-3.5 w-3.5" /> {opt.label}
                     </ToggleGroupItem>
                   ))}
@@ -298,15 +292,15 @@ export const DocumentLineItemsView: React.FC<DocumentLineItemsViewProps> = ({ ta
             </div>
 
             {/* Table */}
-            <div className="border rounded-md overflow-auto max-h-[65vh]">
-              <Table>
-                <TableHeader className="sticky top-0 z-20 bg-background">
+            <div className="border rounded-md bg-card overflow-auto max-h-[65vh]">
+              <Table className={WS_TABLE}>
+                <TableHeader className="sticky top-0 z-20">
                   <TableRow>
                     {headers.map((h, i) => (
                       <TableHead
                         key={i}
                         className={cn(
-                          'h-10 px-3 py-2 text-xs font-semibold whitespace-nowrap bg-muted/60',
+                          WS_TH, 'h-8 py-0',
                           NUMERIC_HEADER_RE.test(h) && 'text-right',
                         )}
                       >
@@ -319,7 +313,7 @@ export const DocumentLineItemsView: React.FC<DocumentLineItemsViewProps> = ({ ta
                 <TableBody>
                   {filteredRows.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={headers.length} className="text-center text-sm text-muted-foreground py-10">
+                      <TableCell colSpan={headers.length} className="border-b text-center text-sm text-muted-foreground py-6">
                         No rows match "{search}".
                       </TableCell>
                     </TableRow>
@@ -327,12 +321,12 @@ export const DocumentLineItemsView: React.FC<DocumentLineItemsViewProps> = ({ ta
 
                   {groups === null &&
                     filteredRows.map((row, ri) => (
-                      <TableRow key={ri}>
+                      <TableRow key={ri} className="hover:bg-muted/30">
                         {row.map((cell, ci) => (
                           <TableCell
                             key={ci}
                             className={cn(
-                              'px-3 py-1.5 text-xs',
+                              WS_TD,
                               NUMERIC_HEADER_RE.test(headers[ci]) ? 'text-right whitespace-nowrap tabular-nums' : 'max-w-[280px] truncate',
                             )}
                             title={typeof row[ci] === 'string' ? (row[ci] as string) : undefined}
@@ -346,11 +340,11 @@ export const DocumentLineItemsView: React.FC<DocumentLineItemsViewProps> = ({ ta
                   {groups !== null &&
                     groups.map((group) => (
                       <React.Fragment key={group.key}>
-                        <TableRow className="sticky top-10 z-[5] bg-muted/70 backdrop-blur-sm border-y">
+                        <TableRow className={cn('sticky top-8 z-[5] backdrop-blur-sm hover:bg-muted/50', WS_TR_HEADING)}>
                           {headers.map((h, ci) => {
                             if (ci === group.idx) {
                               return (
-                                <TableCell key={ci} className="px-3 py-1.5 text-xs font-semibold whitespace-nowrap">
+                                <TableCell key={ci} className={cn(WS_TD, 'font-semibold whitespace-nowrap')}>
                                   {group.key || '(blank)'}{' '}
                                   <span className="font-normal text-muted-foreground">
                                     ({group.rows.length} doc{group.rows.length === 1 ? '' : 's'})
@@ -360,21 +354,21 @@ export const DocumentLineItemsView: React.FC<DocumentLineItemsViewProps> = ({ ta
                             }
                             if (numericIdxs.includes(ci)) {
                               return (
-                                <TableCell key={ci} className="px-3 py-1.5 text-xs font-semibold text-right whitespace-nowrap tabular-nums">
+                                <TableCell key={ci} className={cn(WS_TD, 'font-semibold text-right whitespace-nowrap tabular-nums')}>
                                   {formatNumber(group.subtotals.get(ci) ?? 0)}
                                 </TableCell>
                               );
                             }
-                            return <TableCell key={ci} className="px-3 py-1.5 text-xs" />;
+                            return <TableCell key={ci} className={WS_TD} />;
                           })}
                         </TableRow>
                         {group.rows.map((row, ri) => (
-                          <TableRow key={`${group.key}-${ri}`}>
+                          <TableRow key={`${group.key}-${ri}`} className="hover:bg-muted/30">
                             {row.map((cell, ci) => (
                               <TableCell
                                 key={ci}
                                 className={cn(
-                                  'px-3 py-1.5 text-xs',
+                                  WS_TD,
                                   NUMERIC_HEADER_RE.test(headers[ci]) ? 'text-right whitespace-nowrap tabular-nums' : 'max-w-[280px] truncate',
                                 )}
                                 title={typeof row[ci] === 'string' ? (row[ci] as string) : undefined}
@@ -389,13 +383,13 @@ export const DocumentLineItemsView: React.FC<DocumentLineItemsViewProps> = ({ ta
                 </TableBody>
 
                 {totalRow && (
-                  <TableFooter className="sticky bottom-0 z-10 bg-muted/90 backdrop-blur-sm">
-                    <TableRow className="hover:bg-transparent">
+                  <TableFooter className="sticky bottom-0 z-10 border-t-0 bg-muted">
+                    <TableRow className={cn(WS_TR_TOTAL, 'hover:bg-muted')}>
                       {totalRow.map((cell, ci) => (
                         <TableCell
                           key={ci}
                           className={cn(
-                            'px-3 py-2 text-xs font-bold',
+                            WS_TD, 'border-t font-bold',
                             NUMERIC_HEADER_RE.test(headers[ci]) ? 'text-right whitespace-nowrap tabular-nums' : '',
                           )}
                         >

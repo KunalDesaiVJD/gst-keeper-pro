@@ -1,7 +1,9 @@
 import React, { useState, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { cn } from '@/lib/utils';
+import { WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR } from '@/components/workspace/theme';
 import { Upload, Download, CheckCircle2, XCircle, AlertTriangle, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
@@ -341,8 +343,8 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess, 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" className={`flex items-center gap-2 ${triggerClassName || ''}`}>
-          <Upload className="h-4 w-4" />
+        <Button variant="outline" size="sm" className={cn('h-8 gap-1.5 text-xs', triggerClassName)}>
+          <Upload className="h-3.5 w-3.5" />
           {triggerLabel || 'Bulk Add Clients'}
         </Button>
       </DialogTrigger>
@@ -411,40 +413,40 @@ const BulkAddClientsDialog: React.FC<BulkAddClientsDialogProps> = ({ onSuccess, 
               </h3>
               
               <div className="ml-8 flex items-center gap-4">
-                <Badge variant="outline" className="flex items-center gap-1">
+                <Badge variant="success" className="flex items-center gap-1 text-[10px] font-medium">
                   <CheckCircle2 className="h-3 w-3 text-success" />
                   {validCount} Valid
                 </Badge>
                 {invalidCount > 0 && (
-                  <Badge variant="destructive" className="flex items-center gap-1">
-                    <XCircle className="h-3 w-3" />
+                  <Badge variant="destructive" className="flex items-center gap-1 text-[10px] font-medium">
+                    <XCircle className="h-3 w-3 text-destructive" />
                     {invalidCount} Errors
                   </Badge>
                 )}
               </div>
 
-              <div className="ml-8 max-h-60 overflow-y-auto overflow-x-auto border rounded-lg">
-                <table className="w-full text-sm">
-                  <thead className="bg-primary text-primary-foreground sticky top-0 z-10">
+              <div className={cn(WS_TABLE_WRAP, 'ml-8 max-h-60')}>
+                <table className={WS_TABLE}>
+                  <thead>
                     <tr>
-                      <th className="px-3 py-2 text-right font-medium">Row</th>
-                      <th className="px-3 py-2 text-left font-medium">GSTIN</th>
-                      <th className="px-3 py-2 text-left font-medium">Name</th>
-                      <th className="px-3 py-2 text-left font-medium">Status</th>
+                      <th className={cn(WS_TH, 'text-right')}>Row</th>
+                      <th className={WS_TH}>GSTIN</th>
+                      <th className={WS_TH}>Name</th>
+                      <th className={WS_TH}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {validationResults.map((result, idx) => (
-                      <tr key={idx} className={result.isValid ? '' : 'bg-destructive/5'}>
-                        <td className="px-3 py-2 text-right tabular-nums">{result.row}</td>
-                        <td className="px-3 py-2 font-mono text-xs">{result.data.gstin}</td>
-                        <td className="px-3 py-2">{result.data.name}</td>
-                        <td className="px-3 py-2">
+                      <tr key={idx} className={result.isValid ? WS_TR : 'bg-destructive/5'}>
+                        <td className={WS_TD_NUM}>{result.row}</td>
+                        <td className={cn(WS_TD, 'font-mono')}>{result.data.gstin}</td>
+                        <td className={WS_TD}>{result.data.name}</td>
+                        <td className={WS_TD}>
                           {result.isValid ? (
-                            <CheckCircle2 className="h-4 w-4 text-success" />
+                            <CheckCircle2 className="h-3.5 w-3.5 text-success" />
                           ) : (
                             <div className="flex items-start gap-1">
-                              <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                              <AlertTriangle className="h-3.5 w-3.5 text-destructive shrink-0 mt-px" />
                               <span className="text-xs text-destructive">{result.errors.join('; ')}</span>
                             </div>
                           )}

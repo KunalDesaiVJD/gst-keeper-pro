@@ -111,10 +111,8 @@ export const exportITCSummaryToPDF = (params: ITCExportParams) => {
   });
   tableData.push(['', 'Total (4A)', formatNum(total4A.igst), formatNum(total4A.cgst), formatNum(total4A.sgst), formatNum(total4A.igst + total4A.cgst + total4A.sgst), '']);
 
-  // Section 4B — a Builder client under apportionment (partialITC set) gets
-  // the same reclassification the on-screen table applies: (1)/(2) show the
-  // reclassified totals, and two reconciling lines make each foot from its
-  // own visible rows, instead of silently disagreeing with Total (4B) below.
+  // Section 4B — a Partial ITC builder client uses the calculated split:
+  // (1) = Rule 42/43 reversal, (2) = 2B-reco / 180-day reversal.
   tableData.push(['4 (B)', 'ITC Reversed', '', '', '', '', '']);
   itcData.section4B.forEach(row => {
     if (partialITC && row.srNo === '(1)' && row.particular.includes('Calculation of Ineligible ITC')) {
@@ -130,8 +128,6 @@ export const exportITCSummaryToPDF = (params: ITCExportParams) => {
     if (partialITC && row.particular.includes('On Other reversal')) {
       const v = partialITC.onOtherReversal;
       tableData.push([row.srNo, row.particular + ' [Auto-calculated]', formatNum(v.igst), formatNum(v.cgst), formatNum(v.sgst), formatNum(v.igst + v.cgst + v.sgst), row.reasons || '']);
-      const r = partialITC.row2Calculated;
-      tableData.push(['', 'iv) Reclassified from "Others" below (2B RECO / 180-day reversal) [Auto-calculated]', formatNum(r.igst), formatNum(r.cgst), formatNum(r.sgst), formatNum(r.igst + r.cgst + r.sgst), '']);
       return;
     }
     if (partialITC && row.srNo === '(2)' && row.particular === 'Others') {
@@ -141,8 +137,6 @@ export const exportITCSummaryToPDF = (params: ITCExportParams) => {
     }
     if (partialITC && row.particular === 'ITC Reversal for the previous months, if any.') {
       tableData.push([row.srNo, row.particular + (row.isAutoLinked ? ' [Auto-linked]' : ''), formatNum(row.igst), formatNum(row.cgst), formatNum(row.sgst), formatNum(calcTotal(row)), row.reasons || '']);
-      const r = partialITC.row2Calculated;
-      tableData.push(['', 'Less: reclassified to (1) above [Auto-calculated]', formatNum(-r.igst), formatNum(-r.cgst), formatNum(-r.sgst), formatNum(-(r.igst + r.cgst + r.sgst)), '']);
       return;
     }
     tableData.push([

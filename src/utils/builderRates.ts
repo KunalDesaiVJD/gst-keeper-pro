@@ -500,7 +500,11 @@ export const formatINR = (n: number): string =>
   new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 })
     .format(Number(n) || 0);
 
-export const formatSqM = (n: number): string =>
-  `${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 3 }).format(Number(n) || 0)} sq m`;
+// Carpet area is shown to at most 2 decimals; stored values (and every
+// calculation) keep full precision.
+const SQM = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 });
+/** Carpet area as a bare number, e.g. 38.73 (no unit). */
+export const formatCarpet = (n: number | string | null | undefined): string => SQM.format(Number(n) || 0);
+export const formatSqM = (n: number): string => `${formatCarpet(n)} sq m`;
 
 export const formatPct = (share: number): string => `${(share * 100).toFixed(2)}%`;

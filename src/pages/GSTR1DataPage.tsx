@@ -14,6 +14,13 @@ import {
 import { buildGstr1Summary } from '@/utils/buildGstr1Summary';
 import { exportGstr1SummaryToPDF } from '@/utils/gstr1SummaryPdf';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, Note } from '@/components/gstr9/ui';
+import {
+  WS_PAGE, WS_BTN, WS_TABLE_WRAP, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR, WS_TR_TOTAL,
+  WS_FILTER_LABEL, WS_CONTROL, WS_CELL_INPUT,
+} from '@/components/workspace/theme';
+import { cn } from '@/lib/utils';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import {
@@ -147,8 +154,20 @@ interface GSTR1Record {
 
 // Shared scroll shell for the eleven tab tables. shadcn's <Table> renders its
 // own `overflow-auto` div, so the height cap has to land on that child for the
-// sticky header to have a scroll container to stick to.
-const TABLE_SHELL = 'rounded-md border border-border [&>div]:max-h-[70vh] [&>div]:overflow-auto';
+// sticky header (and the sticky totals row) to have a scroll container to stick to.
+const TABLE_SHELL = 'overflow-hidden rounded-md border bg-card [&>div]:max-h-[70vh] [&>div]:overflow-auto';
+
+// The Annual Return grid look for the shadcn <Table> parts (TableHead/TableCell
+// merge these over their own h-12 / p-4 defaults).
+const TH = `h-auto ${WS_TH}`;
+const TD = WS_TD;
+const TD_NUM = WS_TD_NUM;
+const TR_TOTAL = `${WS_TR_TOTAL} border-0 hover:bg-muted`;
+const TFOOT = 'sticky bottom-0 z-10 border-t-0 bg-transparent';
+// Header for a table nested inside another scroll area (no sticky — it would
+// pin to the outer container).
+const TH_STATIC = `${TH} static`;
+const CELL_SELECT = 'h-9 rounded-none border-0 bg-transparent px-2 text-sm shadow-none focus:ring-1 focus:ring-inset focus:ring-primary focus:ring-offset-0';
 
 // GSTR-1 JSON section types
 interface B2BInvoice {
@@ -1030,7 +1049,7 @@ const GSTR1DataPage: React.FC = () => {
   // Column total for a detail table (sums a numeric field across its rows).
   const sumBy = (rows: any[], key: string) =>
     rows.reduce((s, r) => s + (Number(r[key]) || 0), 0);
-  const footTd = 'border border-border text-right tabular-nums font-semibold';
+  const footTd = `${WS_TD_NUM} font-semibold`;
 
   // Consolidated summary + section tile counts, derived entirely from the
   // imported JSON (see buildGstr1Summary). Drives both the tile grid and the
@@ -1458,29 +1477,15 @@ const GSTR1DataPage: React.FC = () => {
   const selectedClientName = selectedClientData?.name || '';
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
+    <div className={WS_PAGE}>
+      {/* One compact row: what this is and the return's actions (the bell is fixed top-right). */}
       <PageHeader
+        compact
         title="GSTR-1"
-        subtitle="Import and view GSTR-1 JSON data client-wise & month-wise"
-        icon={<FileJson className="h-6 w-6" />}
+        subtitle="import and view GSTR-1 JSON client-wise & month-wise"
+        icon={<FileJson />}
         actions={isStaff ? (
           <>
-            {isBuilderClient ? (
-              <Button variant="outline" onClick={() => navigate('/builder-returns')}>
-                <FileSpreadsheet className="h-4 w-4 mr-2" />
-                Prepare in Builder Returns
-              </Button>
-            ) : isManualClient ? null : (
-              <Button
-                onClick={handleImportClick}
-                disabled={isImporting || !selectedClient || !selectedMonth || isFiled}
-                title={isFiled ? 'GSTR-1 already Filed — import locked to preserve the filed record' : undefined}
-              >
-                {isImporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
-                Import JSON
-              </Button>
-            )}
             {/* Version History — every Import / Upload / Refresh_Errors action
                 is recorded, so operators can audit who touched what and see
                 per-attempt error reports. Always visible when a client + month
@@ -1489,22 +1494,83 @@ const GSTR1DataPage: React.FC = () => {
             {selectedClient && selectedMonth && (
               <Button
                 variant="outline"
+                size="sm"
+                className={WS_BTN}
                 onClick={() => setVersionHistoryOpen(true)}
                 title={versions.length === 0
                   ? 'No upload history yet for this return — imports and uploads from now on are tracked here'
                   : `${versions.length} recorded action(s) for this return`}
               >
-                <History className="h-4 w-4 mr-2" />
-                Version History{versions.length > 0 ? ` (${versions.length})` : ''}
+                <History className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Version History</span>
+                {versions.length > 0 && <span className="tabular-nums text-muted-foreground">({versions.length})</span>}
+              </Button>
+            )}
+            {/* Only meaningful right after a "Processed with Error" upload,
+                while GSTN is still generating the per-invoice Error Report. */}
+            {gstr1Data && canEditFilingStatus() && gstr1Data.last_upload_status === 'partial' && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={WS_BTN}
+                  onClick={handleRefreshErrors}
+                  disabled={isUploading || !extReady}
+                  title="Re-open the portal and fetch the per-invoice Error Report (GSTN takes up to 20 min to generate it)"
+                >
+                  {isUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                  Refresh errors
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={WS_BTN}
+                  onClick={handleImportErrorReport}
+                  title="Manually import the Error Report JSON you downloaded from the portal's Download tab"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  Import Error Report
+                </Button>
+              </>
+            )}
+            {gstr1Data && (
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn(WS_BTN, 'text-destructive hover:bg-destructive/10 hover:text-destructive')}
+                onClick={handleDelete}
+                disabled={isUploading || isFiled}
+                title={isFiled ? 'GSTR-1 already Filed — delete is locked' : undefined}
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Delete
+              </Button>
+            )}
+            {isBuilderClient ? (
+              <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate('/builder-returns')}>
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+                Prepare in Builder Returns
+              </Button>
+            ) : isManualClient ? null : (
+              <Button
+                size="sm"
+                variant={gstr1Data ? 'outline' : 'default'}
+                className={WS_BTN}
+                onClick={handleImportClick}
+                disabled={isImporting || !selectedClient || !selectedMonth || isFiled}
+                title={isFiled ? 'GSTR-1 already Filed — import locked to preserve the filed record' : undefined}
+              >
+                {isImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                Import JSON
               </Button>
             )}
             {/* Once a manual client's JSON has been generated via Prepare
                 Manually, it uploads exactly like an imported return. */}
             {gstr1Data && canEditFilingStatus() && (
               <Button
+                size="sm"
                 onClick={() => { setUploadResult(null); setUploadDialogOpen(true); }}
                 disabled={isUploading || !extReady || !!gstinMismatch || isFiled}
-                className="bg-success text-success-foreground hover:bg-success/90"
+                className={cn(WS_BTN, 'px-3 bg-success text-success-foreground hover:bg-success/90')}
                 title={
                   isFiled
                     ? 'GSTR-1 already Filed — portal upload is locked to preserve the filed record'
@@ -1515,41 +1581,8 @@ const GSTR1DataPage: React.FC = () => {
                         : 'GST Keeper browser extension not detected — install / enable it and reload this page'
                 }
               >
-                {isUploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+                {isUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                 Upload to GST Portal
-              </Button>
-            )}
-            {/* Only meaningful right after a "Processed with Error" upload,
-                while GSTN is still generating the per-invoice Error Report. */}
-            {gstr1Data && canEditFilingStatus() && gstr1Data.last_upload_status === 'partial' && (
-              <>
-                <Button
-                  variant="outline"
-                  onClick={handleRefreshErrors}
-                  disabled={isUploading || !extReady}
-                  title="Re-open the portal and fetch the per-invoice Error Report (GSTN takes up to 20 min to generate it)"
-                >
-                  {isUploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
-                  Refresh errors
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleImportErrorReport}
-                  title="Manually import the Error Report JSON you downloaded from the portal's Download tab"
-                >
-                  <Upload className="h-4 w-4 mr-2" />
-                  Import Error Report
-                </Button>
-              </>
-            )}
-            {gstr1Data && (
-              <Button
-                variant="destructive"
-                onClick={handleDelete}
-                disabled={isUploading || isFiled}
-                title={isFiled ? 'GSTR-1 already Filed — delete is locked' : undefined}
-              >
-                <Trash2 className="h-4 w-4 mr-2" /> Delete
               </Button>
             )}
           </>
@@ -1570,69 +1603,78 @@ const GSTR1DataPage: React.FC = () => {
         onChange={handleErrorReportChange}
       />
 
-      {/* Filters */}
+      {/* Filters: one labelled toolbar, with the loaded file's provenance and
+          last portal upload on the right. */}
       <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Client:</span>
-              <div className="w-56">
-                <SearchableSelect
-                  options={clients.map(c => ({ value: c.id, label: c.name }))}
-                  value={selectedClient}
-                  onValueChange={setSelectedClient}
-                  placeholder="Select Client"
-                />
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Month:</span>
-              <div className="w-32">
-                <SearchableMonthSelect
-                  options={monthOptions}
-                  value={selectedMonth}
-                  onValueChange={setSelectedMonth}
-                  placeholder="Select Month"
-                />
-              </div>
-            </div>
+        <CardContent className="px-3 py-2">
+          <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
+            <label className="w-full min-w-0 space-y-0.5 sm:w-56">
+              <span className={WS_FILTER_LABEL}>Client</span>
+              <SearchableSelect
+                options={clients.map(c => ({ value: c.id, label: c.name }))}
+                value={selectedClient}
+                onValueChange={setSelectedClient}
+                placeholder="Select Client"
+                className={WS_CONTROL}
+              />
+            </label>
+            <label className="w-full min-w-0 space-y-0.5 sm:w-36">
+              <span className={WS_FILTER_LABEL}>Month</span>
+              <SearchableMonthSelect
+                options={monthOptions}
+                value={selectedMonth}
+                onValueChange={setSelectedMonth}
+                placeholder="Select Month"
+                className={WS_CONTROL}
+              />
+            </label>
             {isStaff && selectedClient && selectedMonth && (
               <div
-                className="flex items-center gap-2"
+                className="min-w-0 space-y-0.5"
                 title="This period had zero activity — Documents Issued (Table 13) will not be required before uploading to the portal."
               >
-                <Checkbox
-                  id="gstr1-nil-return"
-                  checked={isNilReturn}
-                  disabled={!canEditFilingStatus() || isFiled || isTogglingNil}
-                  onCheckedChange={(v) => handleToggleNilReturn(!!v)}
-                />
-                <label htmlFor="gstr1-nil-return" className="text-sm font-medium cursor-pointer select-none">
-                  NIL Return
-                </label>
+                <span className={WS_FILTER_LABEL}>Return type</span>
+                <div className="flex h-8 items-center gap-2 rounded-md border bg-background px-2.5">
+                  <Checkbox
+                    id="gstr1-nil-return"
+                    checked={isNilReturn}
+                    disabled={!canEditFilingStatus() || isFiled || isTogglingNil}
+                    onCheckedChange={(v) => handleToggleNilReturn(!!v)}
+                  />
+                  <label htmlFor="gstr1-nil-return" className="cursor-pointer select-none text-xs font-medium">
+                    NIL Return
+                  </label>
+                  {isTogglingNil && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+                </div>
               </div>
             )}
             {gstr1Data && (
-              <div className="ml-auto flex flex-col items-end gap-0.5">
-                <div className="text-xs text-muted-foreground">
-                  File: <span className="font-medium">{gstr1Data.file_name}</span> • Imported: {new Date(gstr1Data.imported_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+              <div className="ml-auto flex min-w-0 flex-col items-start gap-1 sm:items-end">
+                <div className="max-w-full truncate text-[11px] text-muted-foreground" title={gstr1Data.file_name}>
+                  File: <span className="font-medium text-foreground">{gstr1Data.file_name}</span> · Imported {new Date(gstr1Data.imported_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                 </div>
                 {gstr1Data.last_uploaded_at ? (
-                  <div className={`text-xs flex items-center gap-1 font-medium ${gstr1Data.last_upload_status === 'accepted' ? 'text-success' : 'text-destructive'}`}>
-                    {gstr1Data.last_upload_status === 'accepted'
-                      ? <CheckCircle2 className="h-3.5 w-3.5" />
-                      : <XCircle className="h-3.5 w-3.5" />}
-                    {gstr1Data.last_upload_summary || (gstr1Data.last_upload_status === 'accepted'
-                      ? 'Uploaded to portal'
-                      : gstr1Data.last_upload_status === 'partial'
-                        ? 'Uploaded with errors'
-                        : 'Upload failed')}
-                    {' · '}
-                    {new Date(gstr1Data.last_uploaded_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge
+                      variant={gstr1Data.last_upload_status === 'accepted' ? 'success' : gstr1Data.last_upload_status === 'partial' ? 'warning' : 'destructive'}
+                      className="gap-1 px-1.5 text-[10px] font-medium"
+                    >
+                      {gstr1Data.last_upload_status === 'accepted'
+                        ? <CheckCircle2 className="h-3 w-3 text-success-strong" />
+                        : <XCircle className={cn('h-3 w-3', gstr1Data.last_upload_status === 'partial' ? 'text-warning' : 'text-destructive')} />}
+                      {gstr1Data.last_upload_summary || (gstr1Data.last_upload_status === 'accepted'
+                        ? 'Uploaded to portal'
+                        : gstr1Data.last_upload_status === 'partial'
+                          ? 'Uploaded with errors'
+                          : 'Upload failed')}
+                    </Badge>
+                    <span className="text-[11px] tabular-nums text-muted-foreground">
+                      {new Date(gstr1Data.last_uploaded_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </span>
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-5 px-1.5 text-[10px]"
+                      className="h-6 px-1.5 text-[11px]"
                       onClick={() => setShowUploadReport((v) => !v)}
                     >
                       {showUploadReport ? 'Hide report' : 'View report'}
@@ -1641,7 +1683,7 @@ const GSTR1DataPage: React.FC = () => {
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-5 px-1.5 text-[10px]"
+                        className="h-6 px-1.5 text-[11px]"
                         onClick={() => {
                           setUploadResult({ ok: false, message: gstr1Data.last_upload_summary || 'Upload had errors.', errors: gstr1Data.last_upload_errors || [] });
                           setErrorsDialogOpen(true);
@@ -1652,13 +1694,19 @@ const GSTR1DataPage: React.FC = () => {
                     )}
                   </div>
                 ) : gstr1Data.last_pushed_at && (
-                  <div className={`text-xs flex items-center gap-1 font-medium ${gstr1Data.last_push_status === 'success' ? 'text-success' : 'text-destructive'}`}>
-                    {gstr1Data.last_push_status === 'success'
-                      ? <CheckCircle2 className="h-3.5 w-3.5" />
-                      : <XCircle className="h-3.5 w-3.5" />}
-                    {gstr1Data.last_push_status === 'success' ? 'Pushed to GST portal (legacy)' : 'Last push failed (legacy)'}
-                    {' · '}
-                    {new Date(gstr1Data.last_pushed_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge
+                      variant={gstr1Data.last_push_status === 'success' ? 'success' : 'destructive'}
+                      className="gap-1 px-1.5 text-[10px] font-medium"
+                    >
+                      {gstr1Data.last_push_status === 'success'
+                        ? <CheckCircle2 className="h-3 w-3 text-success-strong" />
+                        : <XCircle className="h-3 w-3 text-destructive" />}
+                      {gstr1Data.last_push_status === 'success' ? 'Pushed to GST portal (legacy)' : 'Last push failed (legacy)'}
+                    </Badge>
+                    <span className="text-[11px] tabular-nums text-muted-foreground">
+                      {new Date(gstr1Data.last_pushed_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </span>
                   </div>
                 )}
               </div>
@@ -1670,14 +1718,12 @@ const GSTR1DataPage: React.FC = () => {
       {/* Return is Filed — hard lock on Import / Upload / Delete so nobody can
           alter the JSON that backs a filed return retroactively. */}
       {isFiled && (
-        <div className="flex items-start gap-2 rounded-lg border border-success/40 bg-success/10 p-3 text-sm text-success-foreground">
-          <Lock className="h-4 w-4 mt-0.5 shrink-0 text-success" />
-          <div className="flex-1">
-            <p className="font-medium text-success">GSTR-1 already Filed for this period</p>
-            <p className="text-xs mt-0.5 text-foreground/80">
-              Import JSON, Upload to Portal and Delete are locked to preserve the record of what was actually filed
-              with GSTN. Version History and Error Reports remain viewable.
-            </p>
+        <div className="flex items-start gap-2 rounded-md border border-success/40 bg-success/10 px-2.5 py-1.5 text-xs text-foreground">
+          <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-strong" />
+          <div className="min-w-0 flex-1">
+            <span className="font-semibold">GSTR-1 already Filed for this period.</span>{' '}
+            Import JSON, Upload to Portal and Delete are locked to preserve the record of what was actually filed
+            with GSTN. Version History and Error Reports remain viewable.
           </div>
         </div>
       )}
@@ -1685,15 +1731,13 @@ const GSTR1DataPage: React.FC = () => {
       {/* Loaded JSON is for a different taxpayer — refuse Upload and surface
           the mismatch so the operator can delete + re-import the right file. */}
       {gstinMismatch && (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-          <XCircle className="h-4 w-4 mt-0.5 shrink-0" />
-          <div className="flex-1">
-            <p className="font-medium">GSTIN mismatch — this file belongs to a different taxpayer.</p>
-            <p className="text-xs mt-0.5 text-destructive/90">
-              File GSTIN: <span className="font-mono">{gstinMismatch.jsonGstin}</span> · Client GSTIN:{' '}
-              <span className="font-mono">{gstinMismatch.clientGstin}</span>. Upload is blocked. Delete this
-              import and re-import the correct client's JSON.
-            </p>
+        <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-2.5 py-1.5 text-xs text-foreground">
+          <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
+          <div className="min-w-0 flex-1">
+            <span className="font-semibold text-destructive">GSTIN mismatch — this file belongs to a different taxpayer.</span>{' '}
+            File GSTIN: <span className="font-mono">{gstinMismatch.jsonGstin}</span> · Client GSTIN:{' '}
+            <span className="font-mono">{gstinMismatch.clientGstin}</span>. Upload is blocked. Delete this
+            import and re-import the correct client's JSON.
           </div>
         </div>
       )}
@@ -1709,34 +1753,34 @@ const GSTR1DataPage: React.FC = () => {
         <Card
           className={
             gstr1Data.last_upload_status === 'accepted'
-              ? 'border-success/40 bg-success/5'
+              ? 'border-success/40'
               : gstr1Data.last_upload_status === 'partial'
-                ? 'border-warning/40 bg-warning/5'
-                : 'border-destructive/40 bg-destructive/5'
+                ? 'border-warning/50'
+                : 'border-destructive/40'
           }
         >
-          <CardContent className="p-4 space-y-3">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex items-start gap-2">
+          <CardContent className="space-y-2.5 px-4 py-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-2">
                 {gstr1Data.last_upload_status === 'accepted' ? (
-                  <CheckCircle2 className="h-5 w-5 mt-0.5 text-success shrink-0" />
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success-strong" />
                 ) : (
                   <XCircle
-                    className={`h-5 w-5 mt-0.5 shrink-0 ${gstr1Data.last_upload_status === 'partial' ? 'text-warning' : 'text-destructive'}`}
+                    className={`mt-0.5 h-4 w-4 shrink-0 ${gstr1Data.last_upload_status === 'partial' ? 'text-warning' : 'text-destructive'}`}
                   />
                 )}
-                <div>
-                  <p className="text-sm font-semibold">
+                <div className="min-w-0">
+                  <p className="text-[15px] font-semibold leading-snug">
                     Portal Upload Report — {gstr1Data.last_upload_status === 'accepted'
                       ? 'All records accepted'
                       : gstr1Data.last_upload_status === 'partial'
                         ? 'Some records rejected by GSTN'
                         : 'Upload rejected by GSTN'}
                   </p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
+                  <p className="mt-0.5 text-xs text-muted-foreground">
                     {gstr1Data.last_upload_summary || '—'}
                   </p>
-                  <p className="text-[10px] text-muted-foreground mt-1">
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">
                     Last uploaded: {new Date(gstr1Data.last_uploaded_at).toLocaleString('en-IN', {
                       day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
                     })}
@@ -1750,6 +1794,7 @@ const GSTR1DataPage: React.FC = () => {
                 <Button
                   variant="outline"
                   size="sm"
+                  className={WS_BTN}
                   onClick={() => {
                     if (!gstr1Data?.last_upload_errors?.length) return;
                     const text = gstr1Data.last_upload_errors
@@ -1767,23 +1812,23 @@ const GSTR1DataPage: React.FC = () => {
             {/* Inline per-invoice error table — the reason each rejection
                 happened, no clicking required. */}
             {gstr1Data.last_upload_errors && gstr1Data.last_upload_errors.length > 0 && (
-              <div className="rounded-md border bg-background max-h-[50vh] overflow-auto">
-                <Table>
-                  <TableHeader className="sticky top-0 bg-muted">
-                    <TableRow>
-                      <TableHead className="w-12">#</TableHead>
-                      <TableHead>Invoice No.</TableHead>
-                      <TableHead>Customer GSTIN</TableHead>
-                      <TableHead>Reason (portal message)</TableHead>
+              <div className={cn(TABLE_SHELL, '[&>div]:max-h-[50vh]')}>
+                <Table className={WS_TABLE}>
+                  <TableHeader>
+                    <TableRow className="border-0 hover:bg-transparent">
+                      <TableHead className={`${TH} w-12`}>#</TableHead>
+                      <TableHead className={TH}>Invoice No.</TableHead>
+                      <TableHead className={TH}>Customer GSTIN</TableHead>
+                      <TableHead className={TH}>Reason (portal message)</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {gstr1Data.last_upload_errors.map((e, i) => (
-                      <TableRow key={i}>
-                        <TableCell className="text-muted-foreground">{i + 1}</TableCell>
-                        <TableCell className="font-mono text-xs">{e.invoiceNo || '—'}</TableCell>
-                        <TableCell className="font-mono text-xs">{e.gstin || '—'}</TableCell>
-                        <TableCell className="text-sm">{e.reason}</TableCell>
+                      <TableRow key={i} className={WS_TR}>
+                        <TableCell className={`${TD} tabular-nums text-muted-foreground`}>{i + 1}</TableCell>
+                        <TableCell className={`${TD} font-mono`}>{e.invoiceNo || '—'}</TableCell>
+                        <TableCell className={`${TD} font-mono`}>{e.gstin || '—'}</TableCell>
+                        <TableCell className={TD}>{e.reason}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -1795,11 +1840,11 @@ const GSTR1DataPage: React.FC = () => {
                 per-invoice report yet (or it didn't parse), tell the operator
                 what to do next. */}
             {gstr1Data.last_upload_status === 'partial' && (!gstr1Data.last_upload_errors || gstr1Data.last_upload_errors.length === 0) && (
-              <p className="text-xs text-warning">
+              <Note tone="warn">
                 GSTN accepted the file but flagged some records. The per-invoice reasons haven't been fetched
                 yet — click <span className="font-medium">Refresh errors</span> (fetches from the portal) or{' '}
                 <span className="font-medium">Import Error Report</span> (paste the JSON you download manually).
-              </p>
+              </Note>
             )}
           </CardContent>
         </Card>
@@ -1808,23 +1853,23 @@ const GSTR1DataPage: React.FC = () => {
       {/* Last upload result banner */}
       {uploadResult && (
         <div
-          className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${
+          className={`flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-xs text-foreground ${
             uploadResult.ok
-              ? 'border-success/30 bg-success/10 text-success'
-              : 'border-destructive/30 bg-destructive/10 text-destructive'
+              ? 'border-success/40 bg-success/10'
+              : 'border-destructive/40 bg-destructive/10'
           }`}
         >
           {uploadResult.ok ? (
-            <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-success" />
+            <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-strong" />
           ) : (
-            <XCircle className="h-4 w-4 mt-0.5 shrink-0" />
+            <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
           )}
-          <span className="break-words flex-1">{uploadResult.message}</span>
+          <span className="flex-1 break-words">{uploadResult.message}</span>
           {uploadResult.errors && uploadResult.errors.length > 0 && (
             <Button
               variant="ghost"
               size="sm"
-              className="h-6 text-xs"
+              className="h-6 px-1.5 text-[11px]"
               onClick={() => setErrorsDialogOpen(true)}
             >
               View {uploadResult.errors.length} error{uploadResult.errors.length === 1 ? '' : 's'}
@@ -1835,12 +1880,14 @@ const GSTR1DataPage: React.FC = () => {
 
       {/* Data Display */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
+        <Card>
+          <CardContent className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading GSTR-1…
+          </CardContent>
+        </Card>
       ) : !selectedClient || !selectedMonth ? (
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-3">
             <TableEmptyState
               icon={<FileJson className="h-6 w-6" />}
               title="No client or month selected"
@@ -1849,7 +1896,7 @@ const GSTR1DataPage: React.FC = () => {
           </CardContent>
         </Card>
       ) : !gstr1Data ? (
-        <div className="space-y-6">
+        <div className="space-y-3">
           {/* Manual clients: the entry grid IS the primary GSTR-1 workflow,
               shown directly — no extra click, no separate page. Once Generate
               JSON runs, gstr1Data appears and the normal parsed-sections view
@@ -1869,22 +1916,22 @@ const GSTR1DataPage: React.FC = () => {
             />
           )}
           <Card>
-          <CardContent className="p-4">
-            <TableEmptyState
-              icon={isBuilderClient ? <FileSpreadsheet className="h-6 w-6" /> : <Upload className="h-6 w-6" />}
-              title={`No GSTR-1 data for ${selectedClientName} — ${mmYyyyToShort(selectedMonth)}`}
-              description={!isStaff ? undefined : isBuilderClient
-                ? 'This is a builder client. Open Builder Returns and generate the period — the '
-                  + 'figures are computed from bookings, receipts and BU events, not uploaded.'
-                : isManualClient
-                  ? 'Enter invoices above, then click Generate JSON.'
-                  : 'Click "Import JSON" above to upload the GSTR-1 file for this period.'}
-            />
-          </CardContent>
+            <CardContent className="p-3">
+              <TableEmptyState
+                icon={isBuilderClient ? <FileSpreadsheet className="h-6 w-6" /> : <Upload className="h-6 w-6" />}
+                title={`No GSTR-1 data for ${selectedClientName} — ${mmYyyyToShort(selectedMonth)}`}
+                description={!isStaff ? undefined : isBuilderClient
+                  ? 'This is a builder client. Open Builder Returns and generate the period — the '
+                    + 'figures are computed from bookings, receipts and BU events, not uploaded.'
+                  : isManualClient
+                    ? 'Enter invoices above, then click Generate JSON.'
+                    : 'Click "Import JSON" above to upload the GSTR-1 file for this period.'}
+              />
+            </CardContent>
           </Card>
         </div>
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-3">
           {/* Builder clients land here too, once Builder Returns has generated
               a JSON: the grid hydrates from it (prefilled Table 7/11A/11B,
               Table 13 always blank — see hydrateManualEntriesFromJson) so
@@ -1906,180 +1953,180 @@ const GSTR1DataPage: React.FC = () => {
               onGenerated={() => { fetchGSTR1Data(); fetchVersions(); }}
             />
           )}
-        <Card>
-          <CardContent className="p-4">
-            {/* Provenance. A computed return and an uploaded one look identical
-                once stored, so say which this is before anyone reconciles it. */}
-            {isBuilderGenerated && (
-              <div className="mb-4 flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
-                <FileSpreadsheet className="h-4 w-4 shrink-0 mt-0.5 text-primary" />
-                <p className="text-xs text-muted-foreground">
-                  <span className="font-medium text-foreground">Generated from Builder Returns.</span>{' '}
-                  These figures were computed from bookings, receipts, BU events and adjustments —
-                  not uploaded. To change them, correct the underlying records and regenerate.
-                  {' '}
-                  <button
-                    type="button"
-                    className="text-primary underline underline-offset-2"
-                    onClick={() => navigate('/builder-returns')}
-                  >
-                    Open Builder Returns
-                  </button>
-                  {(json as { b2csa?: unknown[] }).b2csa?.length ? (
-                    <>
-                      {' '}This return also carries {(json as { b2csa: unknown[] }).b2csa.length}{' '}
-                      Table 10 amendment line(s) from a retrospective re-rating. They are included
-                      in the JSON and in the portal push, but there is no Table 10 tile below yet.
-                    </>
-                  ) : null}
-                </p>
-              </div>
-            )}
 
-            {/* Portal-style section overview — click a tile to jump to its detail tab */}
-            <div className="mb-6">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-muted-foreground">Sections in this return</h3>
-                <Button variant="outline" size="sm" onClick={() => setSummaryOpen(true)}>
-                  <BarChart3 className="h-3.5 w-3.5 mr-1.5" /> Generate Summary
-                </Button>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                {summary.tiles.map((t) => {
-                  const isActive = activeTab === t.key;
-                  return (
-                    <button
-                      key={t.key}
-                      onClick={() => setActiveTab(t.key)}
-                      className={`text-left rounded-lg border p-3 transition-colors hover:border-primary/50 hover:bg-primary/5 ${
-                        isActive ? 'border-primary bg-primary/5' : 'border-border'
-                      }`}
-                    >
-                      <div className="text-xs font-medium text-foreground leading-snug min-h-[32px]">{t.label}</div>
-                      <div className="mt-2 flex items-end justify-between gap-2">
-                        <span className="text-lg font-bold text-primary tabular-nums">{t.count.toLocaleString('en-IN')}</span>
-                        {t.value > 0 && (
-                          <span className="text-[11px] text-muted-foreground tabular-nums">₹{fmt2(t.value)}</span>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+          {/* Provenance. A computed return and an uploaded one look identical
+              once stored, so say which this is before anyone reconciles it. */}
+          {isBuilderGenerated && (
+            <Note tone="position" open>
+              <span className="font-medium">Generated from Builder Returns.</span>{' '}
+              These figures were computed from bookings, receipts, BU events and adjustments —
+              not uploaded. To change them, correct the underlying records and regenerate.
+              {' '}
+              <button
+                type="button"
+                className="font-medium text-primary underline underline-offset-2"
+                onClick={() => navigate('/builder-returns')}
+              >
+                Open Builder Returns
+              </button>
+              {(json as { b2csa?: unknown[] }).b2csa?.length ? (
+                <>
+                  {' '}This return also carries {(json as { b2csa: unknown[] }).b2csa.length}{' '}
+                  Table 10 amendment line(s) from a retrospective re-rating. They are included
+                  in the JSON and in the portal push, but there is no Table 10 tile below yet.
+                </>
+              ) : null}
+            </Note>
+          )}
+
+          {/* Headline liability for the return (the summary's totals, excl. HSN & Docs). */}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+            <KpiTile label="Total value (excl. HSN & Docs)" value={`₹${fmt2(summary.totals.value)}`} hint={`${summary.tiles.reduce((n, t) => n + (t.count > 0 ? 1 : 0), 0)} section(s) with data`} />
+            <KpiTile label="Integrated tax" value={`₹${fmt2(summary.totals.igst)}`} />
+            <KpiTile label="Central tax" value={`₹${fmt2(summary.totals.cgst)}`} />
+            <KpiTile label="State / UT tax" value={`₹${fmt2(summary.totals.sgst)}`} />
+            <KpiTile label="Cess" value={`₹${fmt2(summary.totals.cess)}`} />
+          </div>
+
+          {/* Portal-style section overview — click a tile to jump to its detail tab */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold text-muted-foreground">Sections in this return</h3>
+              <Button variant="outline" size="sm" className={WS_BTN} onClick={() => setSummaryOpen(true)}>
+                <BarChart3 className="h-3.5 w-3.5" /> Generate Summary
+              </Button>
             </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-7">
+              {summary.tiles.map((t) => (
+                <SectionTile
+                  key={t.key}
+                  label={t.label}
+                  count={t.count}
+                  value={t.value > 0 ? `₹${fmt2(t.value)}` : undefined}
+                  active={activeTab === t.key}
+                  onClick={() => setActiveTab(t.key)}
+                />
+              ))}
+            </div>
+          </div>
 
+          <Card>
             <Tabs value={activeTab} onValueChange={setActiveTab}>
               {/* The tiles above are the section navigation; this header names the
                   section whose table is shown and carries the collapse toggle. */}
-              <div className="flex items-center justify-between gap-3 mb-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-sm font-semibold text-foreground truncate">
-                    {SECTION_LABELS[activeTab] ?? activeTab.toUpperCase()}
-                  </span>
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary tabular-nums shrink-0">
-                    {(docCount[activeTab] ?? 0).toLocaleString('en-IN')}
-                  </span>
+              <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5 px-4 pb-2 pt-3">
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-[15px] font-semibold leading-snug text-foreground">
+                      {SECTION_LABELS[activeTab] ?? activeTab.toUpperCase()}
+                    </span>
+                    <Badge variant="secondary" className="shrink-0 px-1.5 text-[10px] font-medium tabular-nums">
+                      {(docCount[activeTab] ?? 0).toLocaleString('en-IN')}
+                    </Badge>
+                  </div>
+                  <p className="text-xs leading-snug text-muted-foreground">
+                    Counts are documents (invoices / notes) like the GST portal; the table lists each tax-rate line, so it can have more rows than the count.
+                  </p>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
                   {activeTab === 'hsn' && !isFiled && (
                     hsnEditMode ? (
                       <>
-                        <Button variant="ghost" size="sm" onClick={cancelHsnEdit} disabled={isSavingHsn}>
-                          <X className="h-3.5 w-3.5 mr-1.5" /> Cancel
+                        <Button variant="ghost" size="sm" className={WS_BTN} onClick={cancelHsnEdit} disabled={isSavingHsn}>
+                          <X className="h-3.5 w-3.5" /> Cancel
                         </Button>
-                        <Button size="sm" onClick={saveHsnEdits} disabled={isSavingHsn}>
-                          {isSavingHsn ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+                        <Button size="sm" className={WS_BTN} onClick={saveHsnEdits} disabled={isSavingHsn}>
+                          {isSavingHsn ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                           Save
                         </Button>
                       </>
                     ) : (
-                      <Button variant="outline" size="sm" onClick={startHsnEdit}>
-                        <Pencil className="h-3.5 w-3.5 mr-1.5" /> Edit HSN Summary
+                      <Button variant="outline" size="sm" className={WS_BTN} onClick={startHsnEdit}>
+                        <Pencil className="h-3.5 w-3.5" /> Edit HSN Summary
                       </Button>
                     )
                   )}
                   {activeTab === 'doc' && !isFiled && (
                     docEditMode ? (
                       <>
-                        <Button variant="ghost" size="sm" onClick={cancelDocEdit} disabled={isSavingDoc}>
-                          <X className="h-3.5 w-3.5 mr-1.5" /> Cancel
+                        <Button variant="ghost" size="sm" className={WS_BTN} onClick={cancelDocEdit} disabled={isSavingDoc}>
+                          <X className="h-3.5 w-3.5" /> Cancel
                         </Button>
-                        <Button size="sm" onClick={saveDocEdits} disabled={isSavingDoc}>
-                          {isSavingDoc ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+                        <Button size="sm" className={WS_BTN} onClick={saveDocEdits} disabled={isSavingDoc}>
+                          {isSavingDoc ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                           Save
                         </Button>
                       </>
                     ) : (
-                      <Button variant="outline" size="sm" onClick={startDocEdit}>
-                        <Pencil className="h-3.5 w-3.5 mr-1.5" /> Edit Documents Issued
+                      <Button variant="outline" size="sm" className={WS_BTN} onClick={startDocEdit}>
+                        <Pencil className="h-3.5 w-3.5" /> Edit Documents Issued
                       </Button>
                     )
                   )}
                   <Button
                     variant="outline"
                     size="sm"
+                    className={WS_BTN}
                     onClick={() => toggleCollapse(activeTab)}
                   >
                     {isCollapsed(activeTab) ? (
-                      <><ChevronsUpDown className="h-3.5 w-3.5 mr-1.5" /> Show all rows</>
+                      <><ChevronsUpDown className="h-3.5 w-3.5" /> Show all rows</>
                     ) : (
-                      <><ChevronsDownUp className="h-3.5 w-3.5 mr-1.5" /> Show only total</>
+                      <><ChevronsDownUp className="h-3.5 w-3.5" /> Show only total</>
                     )}
                   </Button>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground mb-3">
-                Counts are documents (invoices / notes) like the GST portal; the table lists each tax-rate line, so it can have more rows than the count.
-              </p>
+              <div className="px-4 pb-3 [&_[role=tabpanel]]:mt-0">
 
               {/* B2B Tab */}
               <TabsContent value="b2b">
                 {b2bRows.length === 0 ? renderEmptyState('B2B') : (
                   <div className={TABLE_SHELL}>
-                    <Table className="min-w-[1200px]">
+                    <Table className={`${WS_TABLE} min-w-[1200px]`}>
                       <TableHeader className="sticky top-0 z-10">
-                        <TableRow className="bg-primary hover:bg-primary">
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">GSTIN</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Invoice No.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Date</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Value</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Rev. Chrg</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Type</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Taxable Value</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        <TableRow className="border-0 hover:bg-transparent">
+                          <TableHead className={`${TH} w-12`}>Sr.</TableHead>
+                          <TableHead className={TH}>GSTIN</TableHead>
+                          <TableHead className={TH}>Invoice No.</TableHead>
+                          <TableHead className={TH}>Date</TableHead>
+                          <TableHead className={`${TH} text-right`}>Value</TableHead>
+                          <TableHead className={TH}>POS</TableHead>
+                          <TableHead className={TH}>Rev. Chrg</TableHead>
+                          <TableHead className={TH}>Type</TableHead>
+                          <TableHead className={`${TH} text-right`}>Rate</TableHead>
+                          <TableHead className={`${TH} text-right`}>Taxable Value</TableHead>
+                          <TableHead className={`${TH} text-right`}>IGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>CGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>SGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>Cess</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {!isCollapsed('b2b') && b2bRows.map((row, i) => (
-                          <TableRow key={i}>
-                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                            <TableCell className="border border-border font-mono text-xs">{row.ctin}</TableCell>
-                            <TableCell className="border border-border">{row.inum}</TableCell>
-                            <TableCell className="border border-border">{row.idt}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.val)}</TableCell>
-                            <TableCell className="border border-border">{row.pos}</TableCell>
-                            <TableCell className="border border-border">{row.rchrg}</TableCell>
-                            <TableCell className="border border-border">{row.inv_typ}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.txval)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          <TableRow key={i} className={WS_TR}>
+                            <TableCell className={`${TD} text-center`}>{i + 1}</TableCell>
+                            <TableCell className={`${TD} font-mono text-xs`}>{row.ctin}</TableCell>
+                            <TableCell className={TD}>{row.inum}</TableCell>
+                            <TableCell className={TD}>{row.idt}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.val)}</TableCell>
+                            <TableCell className={TD}>{row.pos}</TableCell>
+                            <TableCell className={TD}>{row.rchrg}</TableCell>
+                            <TableCell className={TD}>{row.inv_typ}</TableCell>
+                            <TableCell className={TD_NUM}>{row.rt}%</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.txval)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.camt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.samt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
-                      <TableFooter>
-                        <TableRow className="bg-muted hover:bg-muted">
-                          <TableCell className="border border-border font-semibold" colSpan={4}>Total ({b2bRows.length} rows)</TableCell>
+                      <TableFooter className={TFOOT}>
+                        <TableRow className={TR_TOTAL}>
+                          <TableCell className={`${TD} font-semibold`} colSpan={4}>Total ({b2bRows.length} rows)</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2bRows, 'val'))}</TableCell>
-                          <TableCell className="border border-border" colSpan={4} />
+                          <TableCell className={TD} colSpan={4} />
                           <TableCell className={footTd}>{formatNumber(sumBy(b2bRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2bRows, 'iamt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2bRows, 'camt'))}</TableCell>
@@ -2096,40 +2143,40 @@ const GSTR1DataPage: React.FC = () => {
               <TabsContent value="b2cl">
                 {b2clRows.length === 0 ? renderEmptyState('B2CL') : (
                   <div className={TABLE_SHELL}>
-                    <Table>
+                    <Table className={WS_TABLE}>
                       <TableHeader className="sticky top-0 z-10">
-                        <TableRow className="bg-primary hover:bg-primary">
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Invoice No.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Date</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Value</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Taxable Value</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        <TableRow className="border-0 hover:bg-transparent">
+                          <TableHead className={`${TH} w-12`}>Sr.</TableHead>
+                          <TableHead className={TH}>POS</TableHead>
+                          <TableHead className={TH}>Invoice No.</TableHead>
+                          <TableHead className={TH}>Date</TableHead>
+                          <TableHead className={`${TH} text-right`}>Value</TableHead>
+                          <TableHead className={`${TH} text-right`}>Rate</TableHead>
+                          <TableHead className={`${TH} text-right`}>Taxable Value</TableHead>
+                          <TableHead className={`${TH} text-right`}>IGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>Cess</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {!isCollapsed('b2cl') && b2clRows.map((row, i) => (
-                          <TableRow key={i}>
-                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                            <TableCell className="border border-border">{row.pos}</TableCell>
-                            <TableCell className="border border-border">{row.inum}</TableCell>
-                            <TableCell className="border border-border">{row.idt}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.val)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.txval)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          <TableRow key={i} className={WS_TR}>
+                            <TableCell className={`${TD} text-center`}>{i + 1}</TableCell>
+                            <TableCell className={TD}>{row.pos}</TableCell>
+                            <TableCell className={TD}>{row.inum}</TableCell>
+                            <TableCell className={TD}>{row.idt}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.val)}</TableCell>
+                            <TableCell className={TD_NUM}>{row.rt}%</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.txval)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
-                      <TableFooter>
-                        <TableRow className="bg-muted hover:bg-muted">
-                          <TableCell className="border border-border font-semibold" colSpan={4}>Total ({b2clRows.length} rows)</TableCell>
+                      <TableFooter className={TFOOT}>
+                        <TableRow className={TR_TOTAL}>
+                          <TableCell className={`${TD} font-semibold`} colSpan={4}>Total ({b2clRows.length} rows)</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2clRows, 'val'))}</TableCell>
-                          <TableCell className="border border-border" />
+                          <TableCell className={TD} />
                           <TableCell className={footTd}>{formatNumber(sumBy(b2clRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2clRows, 'iamt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2clRows, 'csamt'))}</TableCell>
@@ -2144,38 +2191,38 @@ const GSTR1DataPage: React.FC = () => {
               <TabsContent value="b2cs">
                 {b2csRows.length === 0 ? renderEmptyState('B2CS') : (
                   <div className={TABLE_SHELL}>
-                    <Table>
+                    <Table className={WS_TABLE}>
                       <TableHeader className="sticky top-0 z-10">
-                        <TableRow className="bg-primary hover:bg-primary">
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Type</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Taxable Value</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        <TableRow className="border-0 hover:bg-transparent">
+                          <TableHead className={`${TH} w-12`}>Sr.</TableHead>
+                          <TableHead className={TH}>POS</TableHead>
+                          <TableHead className={TH}>Type</TableHead>
+                          <TableHead className={`${TH} text-right`}>Rate</TableHead>
+                          <TableHead className={`${TH} text-right`}>Taxable Value</TableHead>
+                          <TableHead className={`${TH} text-right`}>IGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>CGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>SGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>Cess</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {!isCollapsed('b2cs') && b2csRows.map((row: any, i: number) => (
-                          <TableRow key={i}>
-                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                            <TableCell className="border border-border">{row.pos}</TableCell>
-                            <TableCell className="border border-border">{row.typ}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.txval)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          <TableRow key={i} className={WS_TR}>
+                            <TableCell className={`${TD} text-center`}>{i + 1}</TableCell>
+                            <TableCell className={TD}>{row.pos}</TableCell>
+                            <TableCell className={TD}>{row.typ}</TableCell>
+                            <TableCell className={TD_NUM}>{row.rt}%</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.txval)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.camt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.samt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
-                      <TableFooter>
-                        <TableRow className="bg-muted hover:bg-muted">
-                          <TableCell className="border border-border font-semibold" colSpan={4}>Total ({b2csRows.length} rows)</TableCell>
+                      <TableFooter className={TFOOT}>
+                        <TableRow className={TR_TOTAL}>
+                          <TableCell className={`${TD} font-semibold`} colSpan={4}>Total ({b2csRows.length} rows)</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2csRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2csRows, 'iamt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2csRows, 'camt'))}</TableCell>
@@ -2192,40 +2239,40 @@ const GSTR1DataPage: React.FC = () => {
               <TabsContent value="b2csa">
                 {b2csaRows.length === 0 ? renderEmptyState('B2CSA') : (
                   <div className={TABLE_SHELL}>
-                    <Table>
+                    <Table className={WS_TABLE}>
                       <TableHeader className="sticky top-0 z-10">
-                        <TableRow className="bg-primary hover:bg-primary">
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Original Month</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Type</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Taxable Value</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        <TableRow className="border-0 hover:bg-transparent">
+                          <TableHead className={`${TH} w-12`}>Sr.</TableHead>
+                          <TableHead className={TH}>Original Month</TableHead>
+                          <TableHead className={TH}>POS</TableHead>
+                          <TableHead className={TH}>Type</TableHead>
+                          <TableHead className={`${TH} text-right`}>Rate</TableHead>
+                          <TableHead className={`${TH} text-right`}>Taxable Value</TableHead>
+                          <TableHead className={`${TH} text-right`}>IGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>CGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>SGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>Cess</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {!isCollapsed('b2csa') && b2csaRows.map((row: any, i: number) => (
-                          <TableRow key={i}>
-                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                            <TableCell className="border border-border">{row.omon}</TableCell>
-                            <TableCell className="border border-border">{row.pos}</TableCell>
-                            <TableCell className="border border-border">{row.typ}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.txval)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          <TableRow key={i} className={WS_TR}>
+                            <TableCell className={`${TD} text-center`}>{i + 1}</TableCell>
+                            <TableCell className={TD}>{row.omon}</TableCell>
+                            <TableCell className={TD}>{row.pos}</TableCell>
+                            <TableCell className={TD}>{row.typ}</TableCell>
+                            <TableCell className={TD_NUM}>{row.rt}%</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.txval)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.camt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.samt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
-                      <TableFooter>
-                        <TableRow className="bg-muted hover:bg-muted">
-                          <TableCell className="border border-border font-semibold" colSpan={5}>Total ({b2csaRows.length} rows)</TableCell>
+                      <TableFooter className={TFOOT}>
+                        <TableRow className={TR_TOTAL}>
+                          <TableCell className={`${TD} font-semibold`} colSpan={5}>Total ({b2csaRows.length} rows)</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2csaRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2csaRows, 'iamt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2csaRows, 'camt'))}</TableCell>
@@ -2242,46 +2289,46 @@ const GSTR1DataPage: React.FC = () => {
               <TabsContent value="cdnr">
                 {cdnrRows.length === 0 ? renderEmptyState('CDNR') : (
                   <div className={TABLE_SHELL}>
-                    <Table className="min-w-[1200px]">
+                    <Table className={`${WS_TABLE} min-w-[1200px]`}>
                       <TableHeader className="sticky top-0 z-10">
-                        <TableRow className="bg-primary hover:bg-primary">
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">GSTIN</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Note No.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Date</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Type</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Value</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Taxable Value</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        <TableRow className="border-0 hover:bg-transparent">
+                          <TableHead className={`${TH} w-12`}>Sr.</TableHead>
+                          <TableHead className={TH}>GSTIN</TableHead>
+                          <TableHead className={TH}>Note No.</TableHead>
+                          <TableHead className={TH}>Date</TableHead>
+                          <TableHead className={TH}>Type</TableHead>
+                          <TableHead className={`${TH} text-right`}>Value</TableHead>
+                          <TableHead className={`${TH} text-right`}>Rate</TableHead>
+                          <TableHead className={`${TH} text-right`}>Taxable Value</TableHead>
+                          <TableHead className={`${TH} text-right`}>IGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>CGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>SGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>Cess</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {!isCollapsed('cdnr') && cdnrRows.map((row, i) => (
-                          <TableRow key={i}>
-                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                            <TableCell className="border border-border font-mono text-xs">{row.ctin}</TableCell>
-                            <TableCell className="border border-border">{row.ntNum}</TableCell>
-                            <TableCell className="border border-border">{row.ntDt}</TableCell>
-                            <TableCell className="border border-border">{row.ntTyp}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.val)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.txval)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          <TableRow key={i} className={WS_TR}>
+                            <TableCell className={`${TD} text-center`}>{i + 1}</TableCell>
+                            <TableCell className={`${TD} font-mono text-xs`}>{row.ctin}</TableCell>
+                            <TableCell className={TD}>{row.ntNum}</TableCell>
+                            <TableCell className={TD}>{row.ntDt}</TableCell>
+                            <TableCell className={TD}>{row.ntTyp}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.val)}</TableCell>
+                            <TableCell className={TD_NUM}>{row.rt}%</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.txval)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.camt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.samt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
-                      <TableFooter>
-                        <TableRow className="bg-muted hover:bg-muted">
-                          <TableCell className="border border-border font-semibold" colSpan={5}>Total ({cdnrRows.length} rows)</TableCell>
+                      <TableFooter className={TFOOT}>
+                        <TableRow className={TR_TOTAL}>
+                          <TableCell className={`${TD} font-semibold`} colSpan={5}>Total ({cdnrRows.length} rows)</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(cdnrRows, 'val'))}</TableCell>
-                          <TableCell className="border border-border" />
+                          <TableCell className={TD} />
                           <TableCell className={footTd}>{formatNumber(sumBy(cdnrRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(cdnrRows, 'iamt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(cdnrRows, 'camt'))}</TableCell>
@@ -2298,42 +2345,42 @@ const GSTR1DataPage: React.FC = () => {
               <TabsContent value="cdnur">
                 {cdnurRows.length === 0 ? renderEmptyState('CDNUR') : (
                   <div className={TABLE_SHELL}>
-                    <Table>
+                    <Table className={WS_TABLE}>
                       <TableHeader className="sticky top-0 z-10">
-                        <TableRow className="bg-primary hover:bg-primary">
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Note No.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Date</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Type</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Value</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Taxable Value</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        <TableRow className="border-0 hover:bg-transparent">
+                          <TableHead className={`${TH} w-12`}>Sr.</TableHead>
+                          <TableHead className={TH}>Note No.</TableHead>
+                          <TableHead className={TH}>Date</TableHead>
+                          <TableHead className={TH}>Type</TableHead>
+                          <TableHead className={`${TH} text-right`}>Value</TableHead>
+                          <TableHead className={TH}>POS</TableHead>
+                          <TableHead className={`${TH} text-right`}>Rate</TableHead>
+                          <TableHead className={`${TH} text-right`}>Taxable Value</TableHead>
+                          <TableHead className={`${TH} text-right`}>IGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>Cess</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {!isCollapsed('cdnur') && cdnurRows.map((row, i) => (
-                          <TableRow key={i}>
-                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                            <TableCell className="border border-border">{row.ntNum}</TableCell>
-                            <TableCell className="border border-border">{row.ntDt}</TableCell>
-                            <TableCell className="border border-border">{row.ntTyp}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.val)}</TableCell>
-                            <TableCell className="border border-border">{row.pos}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.txval)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          <TableRow key={i} className={WS_TR}>
+                            <TableCell className={`${TD} text-center`}>{i + 1}</TableCell>
+                            <TableCell className={TD}>{row.ntNum}</TableCell>
+                            <TableCell className={TD}>{row.ntDt}</TableCell>
+                            <TableCell className={TD}>{row.ntTyp}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.val)}</TableCell>
+                            <TableCell className={TD}>{row.pos}</TableCell>
+                            <TableCell className={TD_NUM}>{row.rt}%</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.txval)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
-                      <TableFooter>
-                        <TableRow className="bg-muted hover:bg-muted">
-                          <TableCell className="border border-border font-semibold" colSpan={4}>Total ({cdnurRows.length} rows)</TableCell>
+                      <TableFooter className={TFOOT}>
+                        <TableRow className={TR_TOTAL}>
+                          <TableCell className={`${TD} font-semibold`} colSpan={4}>Total ({cdnurRows.length} rows)</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(cdnurRows, 'val'))}</TableCell>
-                          <TableCell className="border border-border" colSpan={2} />
+                          <TableCell className={TD} colSpan={2} />
                           <TableCell className={footTd}>{formatNumber(sumBy(cdnurRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(cdnurRows, 'iamt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(cdnurRows, 'csamt'))}</TableCell>
@@ -2348,46 +2395,46 @@ const GSTR1DataPage: React.FC = () => {
               <TabsContent value="exp">
                 {expRows.length === 0 ? renderEmptyState('Export') : (
                   <div className={TABLE_SHELL}>
-                    <Table className="min-w-[1100px]">
+                    <Table className={`${WS_TABLE} min-w-[1100px]`}>
                       <TableHeader className="sticky top-0 z-10">
-                        <TableRow className="bg-primary hover:bg-primary">
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Export Type</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Invoice No.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Date</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Value</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Port Code</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">SB No.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">SB Date</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Taxable Value</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        <TableRow className="border-0 hover:bg-transparent">
+                          <TableHead className={`${TH} w-12`}>Sr.</TableHead>
+                          <TableHead className={TH}>Export Type</TableHead>
+                          <TableHead className={TH}>Invoice No.</TableHead>
+                          <TableHead className={TH}>Date</TableHead>
+                          <TableHead className={`${TH} text-right`}>Value</TableHead>
+                          <TableHead className={TH}>Port Code</TableHead>
+                          <TableHead className={TH}>SB No.</TableHead>
+                          <TableHead className={TH}>SB Date</TableHead>
+                          <TableHead className={`${TH} text-right`}>Rate</TableHead>
+                          <TableHead className={`${TH} text-right`}>Taxable Value</TableHead>
+                          <TableHead className={`${TH} text-right`}>IGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>Cess</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {!isCollapsed('exp') && expRows.map((row, i) => (
-                          <TableRow key={i}>
-                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                            <TableCell className="border border-border">{row.expTyp}</TableCell>
-                            <TableCell className="border border-border">{row.inum}</TableCell>
-                            <TableCell className="border border-border">{row.idt}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.val)}</TableCell>
-                            <TableCell className="border border-border">{row.sbpcode}</TableCell>
-                            <TableCell className="border border-border">{row.sbnum}</TableCell>
-                            <TableCell className="border border-border">{row.sbdt}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.txval)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          <TableRow key={i} className={WS_TR}>
+                            <TableCell className={`${TD} text-center`}>{i + 1}</TableCell>
+                            <TableCell className={TD}>{row.expTyp}</TableCell>
+                            <TableCell className={TD}>{row.inum}</TableCell>
+                            <TableCell className={TD}>{row.idt}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.val)}</TableCell>
+                            <TableCell className={TD}>{row.sbpcode}</TableCell>
+                            <TableCell className={TD}>{row.sbnum}</TableCell>
+                            <TableCell className={TD}>{row.sbdt}</TableCell>
+                            <TableCell className={TD_NUM}>{row.rt}%</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.txval)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
-                      <TableFooter>
-                        <TableRow className="bg-muted hover:bg-muted">
-                          <TableCell className="border border-border font-semibold" colSpan={4}>Total ({expRows.length} rows)</TableCell>
+                      <TableFooter className={TFOOT}>
+                        <TableRow className={TR_TOTAL}>
+                          <TableCell className={`${TD} font-semibold`} colSpan={4}>Total ({expRows.length} rows)</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(expRows, 'val'))}</TableCell>
-                          <TableCell className="border border-border" colSpan={4} />
+                          <TableCell className={TD} colSpan={4} />
                           <TableCell className={footTd}>{formatNumber(sumBy(expRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(expRows, 'iamt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(expRows, 'csamt'))}</TableCell>
@@ -2402,64 +2449,64 @@ const GSTR1DataPage: React.FC = () => {
               <TabsContent value="hsn">
                 {hsnEditMode ? (
                   <div className={TABLE_SHELL}>
-                    <Table className="min-w-[1100px]">
+                    <Table className={`${WS_TABLE} min-w-[1100px]`}>
                       <TableHeader className="sticky top-0 z-10">
-                        <TableRow className="bg-primary hover:bg-primary">
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-32">HSN Code</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-44">Type</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-40">UQC</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-24 text-right">Qty</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-20 text-right">Rate</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-32 text-right">Taxable Value</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-28 text-right">IGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-28 text-right">CGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-28 text-right">SGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-24 text-right">Cess</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12" />
+                        <TableRow className="border-0 hover:bg-transparent">
+                          <TableHead className={`${TH} w-12`}>Sr.</TableHead>
+                          <TableHead className={`${TH} w-32`}>HSN Code</TableHead>
+                          <TableHead className={`${TH} w-44`}>Type</TableHead>
+                          <TableHead className={`${TH} w-40`}>UQC</TableHead>
+                          <TableHead className={`${TH} w-24 text-right`}>Qty</TableHead>
+                          <TableHead className={`${TH} w-20 text-right`}>Rate</TableHead>
+                          <TableHead className={`${TH} w-32 text-right`}>Taxable Value</TableHead>
+                          <TableHead className={`${TH} w-28 text-right`}>IGST</TableHead>
+                          <TableHead className={`${TH} w-28 text-right`}>CGST</TableHead>
+                          <TableHead className={`${TH} w-28 text-right`}>SGST</TableHead>
+                          <TableHead className={`${TH} w-24 text-right`}>Cess</TableHead>
+                          <TableHead className={`${TH} w-12`} />
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {hsnEditRows.map((row: any, i: number) => (
-                          <TableRow key={row._id}>
-                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                            <TableCell className="border border-border p-1">
-                              <Input className="h-8" value={row.hsn_sc || ''} onChange={(e) => updateHsnCell(row._id, 'hsn_sc', e.target.value)} />
+                          <TableRow key={row._id} className={WS_TR}>
+                            <TableCell className={`${TD} text-center`}>{i + 1}</TableCell>
+                            <TableCell className={`${TD} p-0`}>
+                              <Input className={WS_CELL_INPUT} value={row.hsn_sc || ''} onChange={(e) => updateHsnCell(row._id, 'hsn_sc', e.target.value)} />
                             </TableCell>
-                            <TableCell className="border border-border p-1">
+                            <TableCell className={`${TD} p-0`}>
                               <Select value={row._src || 'hsn_b2b'} onValueChange={(v) => updateHsnCell(row._id, '_src', v)}>
-                                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                                <SelectTrigger className={CELL_SELECT}><SelectValue /></SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="hsn_b2b">B2B / CDNR (registered)</SelectItem>
                                   <SelectItem value="hsn_b2c">Other (B2C / Exports)</SelectItem>
                                 </SelectContent>
                               </Select>
                             </TableCell>
-                            <TableCell className="border border-border p-1">
-                              <Input className="h-8" value={row.uqc || ''} onChange={(e) => updateHsnCell(row._id, 'uqc', e.target.value)} />
+                            <TableCell className={`${TD} p-0`}>
+                              <Input className={WS_CELL_INPUT} value={row.uqc || ''} onChange={(e) => updateHsnCell(row._id, 'uqc', e.target.value)} />
                             </TableCell>
-                            <TableCell className="border border-border p-1">
-                              <Input className="h-8 text-right" type="number" value={row.qty ?? 0} onChange={(e) => updateHsnCell(row._id, 'qty', e.target.value)} />
+                            <TableCell className={`${TD} p-0`}>
+                              <Input className={`${WS_CELL_INPUT} text-right`} type="number" value={row.qty ?? 0} onChange={(e) => updateHsnCell(row._id, 'qty', e.target.value)} />
                             </TableCell>
-                            <TableCell className="border border-border p-1">
-                              <Input className="h-8 text-right" type="number" value={row.rt ?? 0} onChange={(e) => updateHsnCell(row._id, 'rt', e.target.value)} />
+                            <TableCell className={`${TD} p-0`}>
+                              <Input className={`${WS_CELL_INPUT} text-right`} type="number" value={row.rt ?? 0} onChange={(e) => updateHsnCell(row._id, 'rt', e.target.value)} />
                             </TableCell>
-                            <TableCell className="border border-border p-1">
-                              <Input className="h-8 text-right" type="number" value={row.txval ?? 0} onChange={(e) => updateHsnCell(row._id, 'txval', e.target.value)} />
+                            <TableCell className={`${TD} p-0`}>
+                              <Input className={`${WS_CELL_INPUT} text-right`} type="number" value={row.txval ?? 0} onChange={(e) => updateHsnCell(row._id, 'txval', e.target.value)} />
                             </TableCell>
-                            <TableCell className="border border-border p-1">
-                              <Input className="h-8 text-right" type="number" value={row.iamt ?? 0} onChange={(e) => updateHsnCell(row._id, 'iamt', e.target.value)} />
+                            <TableCell className={`${TD} p-0`}>
+                              <Input className={`${WS_CELL_INPUT} text-right`} type="number" value={row.iamt ?? 0} onChange={(e) => updateHsnCell(row._id, 'iamt', e.target.value)} />
                             </TableCell>
-                            <TableCell className="border border-border p-1">
-                              <Input className="h-8 text-right" type="number" value={row.camt ?? 0} onChange={(e) => updateHsnCell(row._id, 'camt', e.target.value)} />
+                            <TableCell className={`${TD} p-0`}>
+                              <Input className={`${WS_CELL_INPUT} text-right`} type="number" value={row.camt ?? 0} onChange={(e) => updateHsnCell(row._id, 'camt', e.target.value)} />
                             </TableCell>
-                            <TableCell className="border border-border p-1">
-                              <Input className="h-8 text-right" type="number" value={row.samt ?? 0} onChange={(e) => updateHsnCell(row._id, 'samt', e.target.value)} />
+                            <TableCell className={`${TD} p-0`}>
+                              <Input className={`${WS_CELL_INPUT} text-right`} type="number" value={row.samt ?? 0} onChange={(e) => updateHsnCell(row._id, 'samt', e.target.value)} />
                             </TableCell>
-                            <TableCell className="border border-border p-1">
-                              <Input className="h-8 text-right" type="number" value={row.csamt ?? 0} onChange={(e) => updateHsnCell(row._id, 'csamt', e.target.value)} />
+                            <TableCell className={`${TD} p-0`}>
+                              <Input className={`${WS_CELL_INPUT} text-right`} type="number" value={row.csamt ?? 0} onChange={(e) => updateHsnCell(row._id, 'csamt', e.target.value)} />
                             </TableCell>
-                            <TableCell className="border border-border p-1 text-center">
+                            <TableCell className={`${TD} p-0 text-center`}>
                               <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive" onClick={() => removeHsnRow(row._id)}>
                                 <Trash2 className="h-4 w-4" />
                               </Button>
@@ -2467,9 +2514,9 @@ const GSTR1DataPage: React.FC = () => {
                           </TableRow>
                         ))}
                       </TableBody>
-                      <TableFooter>
-                        <TableRow className="bg-muted hover:bg-muted">
-                          <TableCell className="border border-border" colSpan={12}>
+                      <TableFooter className={TFOOT}>
+                        <TableRow className={TR_TOTAL}>
+                          <TableCell className={TD} colSpan={12}>
                             <div className="flex items-center gap-2">
                               <Button variant="ghost" size="sm" onClick={addHsnRow}>
                                 <Plus className="h-3.5 w-3.5 mr-1.5" /> Add Row
@@ -2490,44 +2537,44 @@ const GSTR1DataPage: React.FC = () => {
                   </div>
                 ) : hsnRows.length === 0 ? renderEmptyState('HSN') : (
                   <div className={TABLE_SHELL}>
-                    <Table className="min-w-[1000px]">
+                    <Table className={`${WS_TABLE} min-w-[1000px]`}>
                       <TableHeader className="sticky top-0 z-10">
-                        <TableRow className="bg-primary hover:bg-primary">
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">HSN Code</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Description</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">UQC</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Qty</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Taxable Value</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        <TableRow className="border-0 hover:bg-transparent">
+                          <TableHead className={`${TH} w-12`}>Sr.</TableHead>
+                          <TableHead className={TH}>HSN Code</TableHead>
+                          <TableHead className={TH}>Description</TableHead>
+                          <TableHead className={TH}>UQC</TableHead>
+                          <TableHead className={`${TH} text-right`}>Qty</TableHead>
+                          <TableHead className={`${TH} text-right`}>Rate</TableHead>
+                          <TableHead className={`${TH} text-right`}>Taxable Value</TableHead>
+                          <TableHead className={`${TH} text-right`}>IGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>CGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>SGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>Cess</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {!isCollapsed('hsn') && hsnRows.map((row: any, i: number) => (
-                          <TableRow key={i}>
-                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                            <TableCell className="border border-border font-mono">{row.hsn_sc}</TableCell>
-                            <TableCell className="border border-border">{row.desc}</TableCell>
-                            <TableCell className="border border-border">{row.uqc}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.qty)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.txval)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          <TableRow key={i} className={WS_TR}>
+                            <TableCell className={`${TD} text-center`}>{i + 1}</TableCell>
+                            <TableCell className={`${TD} font-mono`}>{row.hsn_sc}</TableCell>
+                            <TableCell className={TD}>{row.desc}</TableCell>
+                            <TableCell className={TD}>{row.uqc}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.qty)}</TableCell>
+                            <TableCell className={TD_NUM}>{row.rt}%</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.txval)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.camt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.samt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
-                      <TableFooter>
-                        <TableRow className="bg-muted hover:bg-muted">
-                          <TableCell className="border border-border font-semibold" colSpan={4}>Total ({hsnRows.length} rows)</TableCell>
+                      <TableFooter className={TFOOT}>
+                        <TableRow className={TR_TOTAL}>
+                          <TableCell className={`${TD} font-semibold`} colSpan={4}>Total ({hsnRows.length} rows)</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(hsnRows, 'qty'))}</TableCell>
-                          <TableCell className="border border-border" />
+                          <TableCell className={TD} />
                           <TableCell className={footTd}>{formatNumber(sumBy(hsnRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(hsnRows, 'iamt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(hsnRows, 'camt'))}</TableCell>
@@ -2544,28 +2591,28 @@ const GSTR1DataPage: React.FC = () => {
               <TabsContent value="nil">
                 {!nilData.inv ? renderEmptyState('Nil Rated') : (
                   <div className={TABLE_SHELL}>
-                    <Table>
+                    <Table className={WS_TABLE}>
                       <TableHeader className="sticky top-0 z-10">
-                        <TableRow className="bg-primary hover:bg-primary">
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Description</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Nil Rated</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Exempted</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Non-GST</TableHead>
+                        <TableRow className="border-0 hover:bg-transparent">
+                          <TableHead className={TH}>Description</TableHead>
+                          <TableHead className={`${TH} text-right`}>Nil Rated</TableHead>
+                          <TableHead className={`${TH} text-right`}>Exempted</TableHead>
+                          <TableHead className={`${TH} text-right`}>Non-GST</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {!isCollapsed('nil') && (nilData.inv || []).map((item: any, i: number) => (
-                          <TableRow key={i}>
-                            <TableCell className="border border-border">{item.sply_ty === 'INTRB2B' ? 'Inter-State B2B' : item.sply_ty === 'INTRAB2B' ? 'Intra-State B2B' : item.sply_ty === 'INTRB2C' ? 'Inter-State B2C' : item.sply_ty === 'INTRAB2C' ? 'Intra-State B2C' : item.sply_ty}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(item.nil_amt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(item.expt_amt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(item.ngsup_amt)}</TableCell>
+                          <TableRow key={i} className={WS_TR}>
+                            <TableCell className={TD}>{item.sply_ty === 'INTRB2B' ? 'Inter-State B2B' : item.sply_ty === 'INTRAB2B' ? 'Intra-State B2B' : item.sply_ty === 'INTRB2C' ? 'Inter-State B2C' : item.sply_ty === 'INTRAB2C' ? 'Intra-State B2C' : item.sply_ty}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(item.nil_amt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(item.expt_amt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(item.ngsup_amt)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
-                      <TableFooter>
-                        <TableRow className="bg-muted hover:bg-muted">
-                          <TableCell className="border border-border font-semibold">Total</TableCell>
+                      <TableFooter className={TFOOT}>
+                        <TableRow className={TR_TOTAL}>
+                          <TableCell className={`${TD} font-semibold`}>Total</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(nilData.inv || [], 'nil_amt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(nilData.inv || [], 'expt_amt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(nilData.inv || [], 'ngsup_amt'))}</TableCell>
@@ -2580,38 +2627,38 @@ const GSTR1DataPage: React.FC = () => {
               <TabsContent value="at">
                 {atRows.length === 0 ? renderEmptyState('Advance Tax') : (
                   <div className={TABLE_SHELL}>
-                    <Table>
+                    <Table className={WS_TABLE}>
                       <TableHeader className="sticky top-0 z-10">
-                        <TableRow className="bg-primary hover:bg-primary">
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Supply Type</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Advance Amount</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        <TableRow className="border-0 hover:bg-transparent">
+                          <TableHead className={`${TH} w-12`}>Sr.</TableHead>
+                          <TableHead className={TH}>POS</TableHead>
+                          <TableHead className={TH}>Supply Type</TableHead>
+                          <TableHead className={`${TH} text-right`}>Rate</TableHead>
+                          <TableHead className={`${TH} text-right`}>Advance Amount</TableHead>
+                          <TableHead className={`${TH} text-right`}>IGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>CGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>SGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>Cess</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {!isCollapsed('at') && atRows.map((row: any, i: number) => (
-                          <TableRow key={i}>
-                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                            <TableCell className="border border-border">{row.pos}</TableCell>
-                            <TableCell className="border border-border">{row.sply_ty}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.ad_amt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          <TableRow key={i} className={WS_TR}>
+                            <TableCell className={`${TD} text-center`}>{i + 1}</TableCell>
+                            <TableCell className={TD}>{row.pos}</TableCell>
+                            <TableCell className={TD}>{row.sply_ty}</TableCell>
+                            <TableCell className={TD_NUM}>{row.rt}%</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.ad_amt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.camt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.samt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
-                      <TableFooter>
-                        <TableRow className="bg-muted hover:bg-muted">
-                          <TableCell className="border border-border font-semibold" colSpan={4}>Total ({atRows.length} rows)</TableCell>
+                      <TableFooter className={TFOOT}>
+                        <TableRow className={TR_TOTAL}>
+                          <TableCell className={`${TD} font-semibold`} colSpan={4}>Total ({atRows.length} rows)</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(atRows, 'ad_amt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(atRows, 'iamt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(atRows, 'camt'))}</TableCell>
@@ -2628,38 +2675,38 @@ const GSTR1DataPage: React.FC = () => {
               <TabsContent value="txpd">
                 {txpdRows.length === 0 ? renderEmptyState('Advance Adjustment') : (
                   <div className={TABLE_SHELL}>
-                    <Table>
+                    <Table className={WS_TABLE}>
                       <TableHeader className="sticky top-0 z-10">
-                        <TableRow className="bg-primary hover:bg-primary">
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Supply Type</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Advance Amount</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        <TableRow className="border-0 hover:bg-transparent">
+                          <TableHead className={`${TH} w-12`}>Sr.</TableHead>
+                          <TableHead className={TH}>POS</TableHead>
+                          <TableHead className={TH}>Supply Type</TableHead>
+                          <TableHead className={`${TH} text-right`}>Rate</TableHead>
+                          <TableHead className={`${TH} text-right`}>Advance Amount</TableHead>
+                          <TableHead className={`${TH} text-right`}>IGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>CGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>SGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>Cess</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {!isCollapsed('txpd') && txpdRows.map((row: any, i: number) => (
-                          <TableRow key={i}>
-                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                            <TableCell className="border border-border">{row.pos}</TableCell>
-                            <TableCell className="border border-border">{row.sply_ty}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.ad_amt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          <TableRow key={i} className={WS_TR}>
+                            <TableCell className={`${TD} text-center`}>{i + 1}</TableCell>
+                            <TableCell className={TD}>{row.pos}</TableCell>
+                            <TableCell className={TD}>{row.sply_ty}</TableCell>
+                            <TableCell className={TD_NUM}>{row.rt}%</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.ad_amt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.camt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.samt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
-                      <TableFooter>
-                        <TableRow className="bg-muted hover:bg-muted">
-                          <TableCell className="border border-border font-semibold" colSpan={4}>Total ({txpdRows.length} rows)</TableCell>
+                      <TableFooter className={TFOOT}>
+                        <TableRow className={TR_TOTAL}>
+                          <TableCell className={`${TD} font-semibold`} colSpan={4}>Total ({txpdRows.length} rows)</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(txpdRows, 'ad_amt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(txpdRows, 'iamt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(txpdRows, 'camt'))}</TableCell>
@@ -2677,40 +2724,40 @@ const GSTR1DataPage: React.FC = () => {
               <TabsContent value="ata">
                 {ataRows.length === 0 ? renderEmptyState('Amended Advances') : (
                   <div className={TABLE_SHELL}>
-                    <Table>
+                    <Table className={WS_TABLE}>
                       <TableHeader className="sticky top-0 z-10">
-                        <TableRow className="bg-primary hover:bg-primary">
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Original Period</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Supply Type</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Revised Advance Amount</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        <TableRow className="border-0 hover:bg-transparent">
+                          <TableHead className={`${TH} w-12`}>Sr.</TableHead>
+                          <TableHead className={TH}>Original Period</TableHead>
+                          <TableHead className={TH}>POS</TableHead>
+                          <TableHead className={TH}>Supply Type</TableHead>
+                          <TableHead className={`${TH} text-right`}>Rate</TableHead>
+                          <TableHead className={`${TH} text-right`}>Revised Advance Amount</TableHead>
+                          <TableHead className={`${TH} text-right`}>IGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>CGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>SGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>Cess</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {!isCollapsed('ata') && ataRows.map((row: any, i: number) => (
-                          <TableRow key={i}>
-                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                            <TableCell className="border border-border tabular-nums">{row.omon}</TableCell>
-                            <TableCell className="border border-border">{row.pos}</TableCell>
-                            <TableCell className="border border-border">{row.sply_ty}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.ad_amt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          <TableRow key={i} className={WS_TR}>
+                            <TableCell className={`${TD} text-center`}>{i + 1}</TableCell>
+                            <TableCell className={`${TD} tabular-nums`}>{row.omon}</TableCell>
+                            <TableCell className={TD}>{row.pos}</TableCell>
+                            <TableCell className={TD}>{row.sply_ty}</TableCell>
+                            <TableCell className={TD_NUM}>{row.rt}%</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.ad_amt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.camt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.samt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
-                      <TableFooter>
-                        <TableRow className="bg-muted hover:bg-muted">
-                          <TableCell className="border border-border font-semibold" colSpan={5}>Total ({ataRows.length} rows)</TableCell>
+                      <TableFooter className={TFOOT}>
+                        <TableRow className={TR_TOTAL}>
+                          <TableCell className={`${TD} font-semibold`} colSpan={5}>Total ({ataRows.length} rows)</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(ataRows, 'ad_amt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(ataRows, 'iamt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(ataRows, 'camt'))}</TableCell>
@@ -2728,40 +2775,40 @@ const GSTR1DataPage: React.FC = () => {
               <TabsContent value="txpda">
                 {txpdaRows.length === 0 ? renderEmptyState('Amended Advance Adjustment') : (
                   <div className={TABLE_SHELL}>
-                    <Table>
+                    <Table className={WS_TABLE}>
                       <TableHeader className="sticky top-0 z-10">
-                        <TableRow className="bg-primary hover:bg-primary">
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Original Period</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">POS</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Supply Type</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Rate</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Revised Advance Adjusted</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">IGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">CGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">SGST</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cess</TableHead>
+                        <TableRow className="border-0 hover:bg-transparent">
+                          <TableHead className={`${TH} w-12`}>Sr.</TableHead>
+                          <TableHead className={TH}>Original Period</TableHead>
+                          <TableHead className={TH}>POS</TableHead>
+                          <TableHead className={TH}>Supply Type</TableHead>
+                          <TableHead className={`${TH} text-right`}>Rate</TableHead>
+                          <TableHead className={`${TH} text-right`}>Revised Advance Adjusted</TableHead>
+                          <TableHead className={`${TH} text-right`}>IGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>CGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>SGST</TableHead>
+                          <TableHead className={`${TH} text-right`}>Cess</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {!isCollapsed('txpda') && txpdaRows.map((row: any, i: number) => (
-                          <TableRow key={i}>
-                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                            <TableCell className="border border-border tabular-nums">{row.omon}</TableCell>
-                            <TableCell className="border border-border">{row.pos}</TableCell>
-                            <TableCell className="border border-border">{row.sply_ty}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{row.rt}%</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.ad_amt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.iamt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.camt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.samt)}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{formatNumber(row.csamt)}</TableCell>
+                          <TableRow key={i} className={WS_TR}>
+                            <TableCell className={`${TD} text-center`}>{i + 1}</TableCell>
+                            <TableCell className={`${TD} tabular-nums`}>{row.omon}</TableCell>
+                            <TableCell className={TD}>{row.pos}</TableCell>
+                            <TableCell className={TD}>{row.sply_ty}</TableCell>
+                            <TableCell className={TD_NUM}>{row.rt}%</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.ad_amt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.iamt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.camt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.samt)}</TableCell>
+                            <TableCell className={TD_NUM}>{formatNumber(row.csamt)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
-                      <TableFooter>
-                        <TableRow className="bg-muted hover:bg-muted">
-                          <TableCell className="border border-border font-semibold" colSpan={5}>Total ({txpdaRows.length} rows)</TableCell>
+                      <TableFooter className={TFOOT}>
+                        <TableRow className={TR_TOTAL}>
+                          <TableCell className={`${TD} font-semibold`} colSpan={5}>Total ({txpdaRows.length} rows)</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(txpdaRows, 'ad_amt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(txpdaRows, 'iamt'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(txpdaRows, 'camt'))}</TableCell>
@@ -2778,47 +2825,47 @@ const GSTR1DataPage: React.FC = () => {
               <TabsContent value="doc">
                 {docEditMode ? (
                   <div className={TABLE_SHELL}>
-                    <Table>
+                    <Table className={WS_TABLE}>
                       <TableHeader className="sticky top-0 z-10">
-                        <TableRow className="bg-primary hover:bg-primary">
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-56">Doc Type</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-32">From</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-32">To</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-24 text-right">Total</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-24 text-right">Cancelled</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-24 text-right">Net Issued</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12" />
+                        <TableRow className="border-0 hover:bg-transparent">
+                          <TableHead className={`${TH} w-12`}>Sr.</TableHead>
+                          <TableHead className={`${TH} w-56`}>Doc Type</TableHead>
+                          <TableHead className={`${TH} w-32`}>From</TableHead>
+                          <TableHead className={`${TH} w-32`}>To</TableHead>
+                          <TableHead className={`${TH} w-24 text-right`}>Total</TableHead>
+                          <TableHead className={`${TH} w-24 text-right`}>Cancelled</TableHead>
+                          <TableHead className={`${TH} w-24 text-right`}>Net Issued</TableHead>
+                          <TableHead className={`${TH} w-12`} />
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {docEditRows.map((row: any, i: number) => (
-                          <TableRow key={row._id}>
-                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                            <TableCell className="border border-border p-1">
+                          <TableRow key={row._id} className={WS_TR}>
+                            <TableCell className={`${TD} text-center`}>{i + 1}</TableCell>
+                            <TableCell className={`${TD} p-0`}>
                               <Select value={row.doc_typ || ''} onValueChange={(v) => updateDocCell(row._id, 'doc_typ', v)}>
-                                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                                <SelectTrigger className={CELL_SELECT}><SelectValue /></SelectTrigger>
                                 <SelectContent>
                                   {DOC_TYPES.map((d) => <SelectItem key={d.value} value={d.value}>{d.value}</SelectItem>)}
                                 </SelectContent>
                               </Select>
                             </TableCell>
-                            <TableCell className="border border-border p-1">
-                              <Input className="h-8" value={row.from || ''} onChange={(e) => updateDocCell(row._id, 'from', e.target.value)} />
+                            <TableCell className={`${TD} p-0`}>
+                              <Input className={WS_CELL_INPUT} value={row.from || ''} onChange={(e) => updateDocCell(row._id, 'from', e.target.value)} />
                             </TableCell>
-                            <TableCell className="border border-border p-1">
-                              <Input className="h-8" value={row.to || ''} onChange={(e) => updateDocCell(row._id, 'to', e.target.value)} />
+                            <TableCell className={`${TD} p-0`}>
+                              <Input className={WS_CELL_INPUT} value={row.to || ''} onChange={(e) => updateDocCell(row._id, 'to', e.target.value)} />
                             </TableCell>
-                            <TableCell className="border border-border p-1">
-                              <Input className="h-8 text-right" type="number" value={row.totnum ?? 0} onChange={(e) => updateDocCell(row._id, 'totnum', e.target.value)} />
+                            <TableCell className={`${TD} p-0`}>
+                              <Input className={`${WS_CELL_INPUT} text-right`} type="number" value={row.totnum ?? 0} onChange={(e) => updateDocCell(row._id, 'totnum', e.target.value)} />
                             </TableCell>
-                            <TableCell className="border border-border p-1">
-                              <Input className="h-8 text-right" type="number" value={row.cancel ?? 0} onChange={(e) => updateDocCell(row._id, 'cancel', e.target.value)} />
+                            <TableCell className={`${TD} p-0`}>
+                              <Input className={`${WS_CELL_INPUT} text-right`} type="number" value={row.cancel ?? 0} onChange={(e) => updateDocCell(row._id, 'cancel', e.target.value)} />
                             </TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">
+                            <TableCell className={TD_NUM}>
                               {(Number(row.totnum) || 0) - (Number(row.cancel) || 0)}
                             </TableCell>
-                            <TableCell className="border border-border p-1 text-center">
+                            <TableCell className={`${TD} p-0 text-center`}>
                               <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive" onClick={() => removeDocRow(row._id)}>
                                 <Trash2 className="h-4 w-4" />
                               </Button>
@@ -2826,9 +2873,9 @@ const GSTR1DataPage: React.FC = () => {
                           </TableRow>
                         ))}
                       </TableBody>
-                      <TableFooter>
-                        <TableRow className="bg-muted hover:bg-muted">
-                          <TableCell className="border border-border" colSpan={8}>
+                      <TableFooter className={TFOOT}>
+                        <TableRow className={TR_TOTAL}>
+                          <TableCell className={TD} colSpan={8}>
                             <Button variant="ghost" size="sm" onClick={addDocRow}>
                               <Plus className="h-3.5 w-3.5 mr-1.5" /> Add Row
                             </Button>
@@ -2839,36 +2886,36 @@ const GSTR1DataPage: React.FC = () => {
                   </div>
                 ) : docRows.length === 0 ? renderEmptyState('Document Issued') : (
                   <div className={TABLE_SHELL}>
-                    <Table>
+                    <Table className={WS_TABLE}>
                       <TableHeader className="sticky top-0 z-10">
-                        <TableRow className="bg-primary hover:bg-primary">
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 w-12">Sr.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Doc Type</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">Sr. No.</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">From</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20">To</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Total</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Cancelled</TableHead>
-                          <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 text-right">Net Issued</TableHead>
+                        <TableRow className="border-0 hover:bg-transparent">
+                          <TableHead className={`${TH} w-12`}>Sr.</TableHead>
+                          <TableHead className={TH}>Doc Type</TableHead>
+                          <TableHead className={TH}>Sr. No.</TableHead>
+                          <TableHead className={TH}>From</TableHead>
+                          <TableHead className={TH}>To</TableHead>
+                          <TableHead className={`${TH} text-right`}>Total</TableHead>
+                          <TableHead className={`${TH} text-right`}>Cancelled</TableHead>
+                          <TableHead className={`${TH} text-right`}>Net Issued</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {!isCollapsed('doc') && docRows.map((row, i) => (
-                          <TableRow key={i}>
-                            <TableCell className="border border-border text-center">{i + 1}</TableCell>
-                            <TableCell className="border border-border">{row.doc_typ}</TableCell>
-                            <TableCell className="border border-border">{row.doc_num}</TableCell>
-                            <TableCell className="border border-border">{row.from}</TableCell>
-                            <TableCell className="border border-border">{row.to}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{row.totnum}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{row.cancel}</TableCell>
-                            <TableCell className="border border-border text-right tabular-nums">{row.net_issue}</TableCell>
+                          <TableRow key={i} className={WS_TR}>
+                            <TableCell className={`${TD} text-center`}>{i + 1}</TableCell>
+                            <TableCell className={TD}>{row.doc_typ}</TableCell>
+                            <TableCell className={TD}>{row.doc_num}</TableCell>
+                            <TableCell className={TD}>{row.from}</TableCell>
+                            <TableCell className={TD}>{row.to}</TableCell>
+                            <TableCell className={TD_NUM}>{row.totnum}</TableCell>
+                            <TableCell className={TD_NUM}>{row.cancel}</TableCell>
+                            <TableCell className={TD_NUM}>{row.net_issue}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
-                      <TableFooter>
-                        <TableRow className="bg-muted hover:bg-muted">
-                          <TableCell className="border border-border font-semibold" colSpan={5}>Total ({docRows.length} rows)</TableCell>
+                      <TableFooter className={TFOOT}>
+                        <TableRow className={TR_TOTAL}>
+                          <TableCell className={`${TD} font-semibold`} colSpan={5}>Total ({docRows.length} rows)</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(docRows, 'totnum'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(docRows, 'cancel'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(docRows, 'net_issue'))}</TableCell>
@@ -2878,9 +2925,9 @@ const GSTR1DataPage: React.FC = () => {
                   </div>
                 )}
               </TabsContent>
+              </div>
             </Tabs>
-          </CardContent>
-        </Card>
+          </Card>
         </div>
       )}
 
@@ -2899,12 +2946,13 @@ const GSTR1DataPage: React.FC = () => {
                 </DialogDescription>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <Button variant="outline" size="sm" onClick={handleDownloadJson}>
-                  <FileJson className="h-3.5 w-3.5 mr-1.5" /> Download JSON
+                <Button variant="outline" size="sm" className={WS_BTN} onClick={handleDownloadJson}>
+                  <FileJson className="h-3.5 w-3.5" /> Download JSON
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
+                  className={WS_BTN}
                   onClick={() =>
                     exportGstr1SummaryToPDF({
                       summary,
@@ -2915,59 +2963,59 @@ const GSTR1DataPage: React.FC = () => {
                     })
                   }
                 >
-                  <Download className="h-3.5 w-3.5 mr-1.5" /> Download PDF
+                  <Download className="h-3.5 w-3.5" /> Download PDF
                 </Button>
               </div>
             </div>
           </DialogHeader>
-          <div className="overflow-auto rounded-md border border-border">
-            <table className="w-full text-sm border-collapse min-w-[900px]">
-              <thead className="sticky top-0 z-10">
-                <tr className="bg-primary text-primary-foreground">
-                  <th className="border border-primary-foreground/20 p-2 text-left font-bold">Description</th>
-                  <th className="border border-primary-foreground/20 p-2 text-center font-bold whitespace-nowrap">No. of records</th>
-                  <th className="border border-primary-foreground/20 p-2 text-center font-bold whitespace-nowrap">Document Type</th>
-                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">Value (₹)</th>
-                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">Integrated Tax (₹)</th>
-                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">Central Tax (₹)</th>
-                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">State/UT Tax (₹)</th>
-                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">Cess (₹)</th>
+          <div className={cn(WS_TABLE_WRAP, 'min-h-0')}>
+            <table className={`${WS_TABLE} min-w-[900px]`}>
+              <thead>
+                <tr>
+                  <th className={WS_TH}>Description</th>
+                  <th className={`${WS_TH} text-center`}>No. of records</th>
+                  <th className={`${WS_TH} text-center`}>Document Type</th>
+                  <th className={`${WS_TH} text-right`}>Value (₹)</th>
+                  <th className={`${WS_TH} text-right`}>Integrated Tax (₹)</th>
+                  <th className={`${WS_TH} text-right`}>Central Tax (₹)</th>
+                  <th className={`${WS_TH} text-right`}>State/UT Tax (₹)</th>
+                  <th className={`${WS_TH} text-right`}>Cess (₹)</th>
                 </tr>
               </thead>
               <tbody>
                 {summary.sections.map((s, i) => (
-                  <tr key={`${s.code}-${i}`} className="odd:bg-muted/30">
-                    <td className="border border-border p-2">
+                  <tr key={`${s.code}-${i}`} className={WS_TR}>
+                    <td className={WS_TD}>
                       <span className="font-semibold text-foreground">{s.code}</span>
                       <span className="text-muted-foreground"> — {s.title}</span>
                     </td>
-                    <td className="border border-border p-2 text-center tabular-nums">{s.count.toLocaleString('en-IN')}</td>
-                    <td className="border border-border p-2 text-center text-muted-foreground">{s.docType}</td>
-                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.value)}</td>
-                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.igst)}</td>
-                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.cgst)}</td>
-                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.sgst)}</td>
-                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.cess)}</td>
+                    <td className={`${WS_TD} text-center tabular-nums`}>{s.count.toLocaleString('en-IN')}</td>
+                    <td className={`${WS_TD} text-center text-muted-foreground`}>{s.docType}</td>
+                    <td className={WS_TD_NUM}>{fmt2(s.value)}</td>
+                    <td className={WS_TD_NUM}>{fmt2(s.igst)}</td>
+                    <td className={WS_TD_NUM}>{fmt2(s.cgst)}</td>
+                    <td className={WS_TD_NUM}>{fmt2(s.sgst)}</td>
+                    <td className={WS_TD_NUM}>{fmt2(s.cess)}</td>
                   </tr>
                 ))}
               </tbody>
-              <tfoot>
-                <tr className="bg-muted font-semibold">
-                  <td className="border border-border p-2 text-right" colSpan={3}>Total liability (excl. HSN &amp; Docs)</td>
-                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(summary.totals.value)}</td>
-                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(summary.totals.igst)}</td>
-                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(summary.totals.cgst)}</td>
-                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(summary.totals.sgst)}</td>
-                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(summary.totals.cess)}</td>
+              <tfoot className="sticky bottom-0 z-10">
+                <tr className={WS_TR_TOTAL}>
+                  <td className={`${WS_TD} text-right`} colSpan={3}>Total liability (excl. HSN &amp; Docs)</td>
+                  <td className={WS_TD_NUM}>{fmt2(summary.totals.value)}</td>
+                  <td className={WS_TD_NUM}>{fmt2(summary.totals.igst)}</td>
+                  <td className={WS_TD_NUM}>{fmt2(summary.totals.cgst)}</td>
+                  <td className={WS_TD_NUM}>{fmt2(summary.totals.sgst)}</td>
+                  <td className={WS_TD_NUM}>{fmt2(summary.totals.cess)}</td>
                 </tr>
               </tfoot>
             </table>
           </div>
-          <p className="text-xs text-muted-foreground">
+          <Note open>
             "No. of records" counts documents (invoices / notes) like the GST portal, so it can be lower
             than a detail tab's row count when one document has multiple tax rates. 9B notes are shown net
             (Debit − Credit), so credit notes reduce the value.
-          </p>
+          </Note>
         </DialogContent>
       </Dialog>
 
@@ -3036,28 +3084,28 @@ const GSTR1DataPage: React.FC = () => {
               {uploadResult?.message || 'The portal returned validation errors for the invoices listed below.'}
             </DialogDescription>
           </DialogHeader>
-          <div className="max-h-[60vh] overflow-auto rounded-md border">
-            <Table>
-              <TableHeader className="sticky top-0 bg-muted">
+          <div className={cn(TABLE_SHELL, '[&>div]:max-h-[60vh]')}>
+            <Table className={WS_TABLE}>
+              <TableHeader>
                 <TableRow>
-                  <TableHead className="w-16">#</TableHead>
-                  <TableHead>Invoice No.</TableHead>
-                  <TableHead>GSTIN</TableHead>
-                  <TableHead>Reason</TableHead>
+                  <TableHead className={`${TH} w-16`}>#</TableHead>
+                  <TableHead className={TH}>Invoice No.</TableHead>
+                  <TableHead className={TH}>GSTIN</TableHead>
+                  <TableHead className={TH}>Reason</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {(uploadResult?.errors || []).map((e, i) => (
-                  <TableRow key={i}>
-                    <TableCell className="text-muted-foreground">{i + 1}</TableCell>
-                    <TableCell className="font-mono text-xs">{e.invoiceNo || '—'}</TableCell>
-                    <TableCell className="font-mono text-xs">{e.gstin || '—'}</TableCell>
-                    <TableCell className="text-sm">{e.reason}</TableCell>
+                  <TableRow key={i} className={WS_TR}>
+                    <TableCell className={`${TD} tabular-nums text-muted-foreground`}>{i + 1}</TableCell>
+                    <TableCell className={`${TD} font-mono`}>{e.invoiceNo || '—'}</TableCell>
+                    <TableCell className={`${TD} font-mono`}>{e.gstin || '—'}</TableCell>
+                    <TableCell className={TD}>{e.reason}</TableCell>
                   </TableRow>
                 ))}
                 {(!uploadResult?.errors || uploadResult.errors.length === 0) && (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground py-6">
+                    <TableCell colSpan={4} className={`${TD} py-6 text-center text-muted-foreground`}>
                       No per-invoice errors captured.
                     </TableCell>
                   </TableRow>
@@ -3065,13 +3113,14 @@ const GSTR1DataPage: React.FC = () => {
               </TableBody>
             </Table>
           </div>
-          <div className="flex justify-between items-center pt-2">
+          <div className="flex items-center justify-between gap-2">
             <p className="text-xs text-muted-foreground">
               Fix the offending invoices in your source (Tally / accounts), regenerate the JSON, re-import here, then upload again.
             </p>
             <Button
               variant="outline"
               size="sm"
+              className={cn(WS_BTN, 'shrink-0')}
               onClick={() => {
                 if (!uploadResult?.errors?.length) return;
                 const text = uploadResult.errors
@@ -3099,26 +3148,26 @@ const GSTR1DataPage: React.FC = () => {
               number can be traced to the version that introduced it and the person who made it.
             </DialogDescription>
           </DialogHeader>
-          <div className="max-h-[65vh] overflow-auto rounded-md border">
-            <Table>
-              <TableHeader className="sticky top-0 bg-muted">
+          <div className={cn(TABLE_SHELL, '[&>div]:max-h-[65vh]')}>
+            <Table className={WS_TABLE}>
+              <TableHeader>
                 <TableRow>
-                  <TableHead className="w-16">V#</TableHead>
-                  <TableHead>Action</TableHead>
-                  <TableHead>By</TableHead>
-                  <TableHead>When</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Summary</TableHead>
-                  <TableHead className="w-24">Errors</TableHead>
-                  <TableHead className="w-32">Changes</TableHead>
+                  <TableHead className={`${TH} w-16`}>V#</TableHead>
+                  <TableHead className={TH}>Action</TableHead>
+                  <TableHead className={TH}>By</TableHead>
+                  <TableHead className={TH}>When</TableHead>
+                  <TableHead className={TH}>Status</TableHead>
+                  <TableHead className={TH}>Summary</TableHead>
+                  <TableHead className={`${TH} w-24`}>Errors</TableHead>
+                  <TableHead className={`${TH} w-32`}>Changes</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {versions.map((v, idx) => (
                   <React.Fragment key={v.id}>
                     <TableRow>
-                      <TableCell className="font-mono">v{v.version_number}</TableCell>
-                      <TableCell>
+                      <TableCell className={`${TD} font-mono`}>v{v.version_number}</TableCell>
+                      <TableCell className={TD}>
                         {v.action_type === 'IMPORT' && 'Imported'}
                         {v.action_type === 'UPLOAD' && 'Uploaded to portal'}
                         {v.action_type === 'REFRESH_ERRORS' && 'Errors report'}
@@ -3126,29 +3175,36 @@ const GSTR1DataPage: React.FC = () => {
                           <div className="text-[10px] text-muted-foreground font-mono truncate max-w-xs">{v.file_name}</div>
                         )}
                       </TableCell>
-                      <TableCell>{v.actor_name || '—'}</TableCell>
-                      <TableCell className="text-xs whitespace-nowrap">
+                      <TableCell className={TD}>{v.actor_name || '—'}</TableCell>
+                      <TableCell className={`${TD} whitespace-nowrap`}>
                         {new Date(v.action_at).toLocaleString('en-IN', {
                           day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
                         })}
                       </TableCell>
-                      <TableCell>
-                        <span className={
-                          v.status === 'accepted' ? 'text-success font-medium' :
-                          v.status === 'partial' ? 'text-warning font-medium' :
-                          v.status === 'failed' ? 'text-destructive font-medium' :
-                          'text-muted-foreground'
-                        }>
-                          {v.status || '—'}
-                        </span>
+                      <TableCell className={TD}>
+                        {v.status ? (
+                          <Badge
+                            variant={
+                              v.status === 'accepted' ? 'success' :
+                              v.status === 'partial' ? 'warning' :
+                              v.status === 'failed' ? 'destructive' :
+                              'secondary'
+                            }
+                            className="px-1.5 text-[10px] font-medium capitalize"
+                          >
+                            {v.status}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </TableCell>
-                      <TableCell className="text-xs max-w-md">{v.summary || '—'}</TableCell>
-                      <TableCell>
+                      <TableCell className={`${TD} max-w-md`}>{v.summary || '—'}</TableCell>
+                      <TableCell className={TD}>
                         {v.errors && v.errors.length > 0 ? (
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-7 text-xs"
+                            className="h-6 px-1.5 text-[11px]"
                             onClick={() => setExpandedVersionId(expandedVersionId === v.id ? null : v.id)}
                           >
                             {expandedVersionId === v.id ? 'Hide' : `View (${v.errors.length})`}
@@ -3157,12 +3213,12 @@ const GSTR1DataPage: React.FC = () => {
                           <span className="text-muted-foreground text-xs">—</span>
                         )}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className={TD}>
                         {v.payload && versions[idx + 1]?.payload ? (
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-7 text-xs"
+                            className="h-6 px-1.5 text-[11px]"
                             onClick={() => setExpandedDiffId(expandedDiffId === v.id ? null : v.id)}
                             title={`Compare against v${versions[idx + 1].version_number}`}
                           >
@@ -3182,7 +3238,7 @@ const GSTR1DataPage: React.FC = () => {
                     </TableRow>
                     {expandedDiffId === v.id && (
                       <TableRow>
-                        <TableCell colSpan={8} className="bg-muted/40 p-3">
+                        <TableCell colSpan={8} className={`${TD} bg-muted/40 p-3`}>
                           {expandedDiff ? (
                             <>
                               <p className="text-xs text-muted-foreground mb-2">
@@ -3203,24 +3259,24 @@ const GSTR1DataPage: React.FC = () => {
                     )}
                     {expandedVersionId === v.id && v.errors && v.errors.length > 0 && (
                       <TableRow>
-                        <TableCell colSpan={8} className="bg-muted/40 p-3">
-                          <div className="rounded border bg-background">
-                            <Table>
+                        <TableCell colSpan={8} className={`${TD} bg-muted/40 p-3`}>
+                          <div className="overflow-hidden rounded-md border bg-card">
+                            <Table className={WS_TABLE}>
                               <TableHeader>
                                 <TableRow>
-                                  <TableHead className="w-12">#</TableHead>
-                                  <TableHead>Invoice No.</TableHead>
-                                  <TableHead>Customer GSTIN</TableHead>
-                                  <TableHead>Reason</TableHead>
+                                  <TableHead className={`${TH_STATIC} w-12`}>#</TableHead>
+                                  <TableHead className={TH_STATIC}>Invoice No.</TableHead>
+                                  <TableHead className={TH_STATIC}>Customer GSTIN</TableHead>
+                                  <TableHead className={TH_STATIC}>Reason</TableHead>
                                 </TableRow>
                               </TableHeader>
                               <TableBody>
                                 {v.errors.map((e, i) => (
-                                  <TableRow key={i}>
-                                    <TableCell className="text-muted-foreground text-xs">{i + 1}</TableCell>
-                                    <TableCell className="font-mono text-xs">{e.invoiceNo || '—'}</TableCell>
-                                    <TableCell className="font-mono text-xs">{e.gstin || '—'}</TableCell>
-                                    <TableCell className="text-xs">{e.reason}</TableCell>
+                                  <TableRow key={i} className={WS_TR}>
+                                    <TableCell className={`${TD} tabular-nums text-muted-foreground`}>{i + 1}</TableCell>
+                                    <TableCell className={`${TD} font-mono`}>{e.invoiceNo || '—'}</TableCell>
+                                    <TableCell className={`${TD} font-mono`}>{e.gstin || '—'}</TableCell>
+                                    <TableCell className={TD}>{e.reason}</TableCell>
                                   </TableRow>
                                 ))}
                               </TableBody>
@@ -3233,7 +3289,7 @@ const GSTR1DataPage: React.FC = () => {
                 ))}
                 {versions.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground py-6">
+                    <TableCell colSpan={7} className={`${TD} py-6 text-center text-muted-foreground`}>
                       No upload history yet for this return.
                     </TableCell>
                   </TableRow>
@@ -3248,5 +3304,27 @@ const GSTR1DataPage: React.FC = () => {
     </div>
   );
 };
+
+/**
+ * A section tile: the KpiTile look (label, figure, hint) as a button that opens
+ * the section's table. The label wraps to two lines — the portal's table names
+ * are long and are the point of the tile.
+ */
+const SectionTile: React.FC<{ label: string; count: number; value?: string; active: boolean; onClick: () => void }> = ({ label, count, value, active, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={label}
+    aria-pressed={active}
+    className={cn(
+      'flex flex-col rounded-lg border bg-card px-3 py-1.5 text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+      active && 'border-primary/60 ring-2 ring-primary/60',
+    )}
+  >
+    <span className="line-clamp-2 min-h-[2.2em] text-[11px] font-medium leading-tight text-muted-foreground">{label}</span>
+    <span className={cn('text-[15px] font-semibold leading-tight tabular-nums', count === 0 && 'text-muted-foreground')}>{count.toLocaleString('en-IN')}</span>
+    <span className="truncate text-[11px] leading-tight tabular-nums text-muted-foreground">{value ?? '\u00A0'}</span>
+  </button>
+);
 
 export default GSTR1DataPage;

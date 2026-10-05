@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, SectionCard } from '@/components/gstr9/ui';
+import { WS_BTN } from '@/components/workspace/theme';
+import { cn } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import {
@@ -286,78 +288,66 @@ const UserManagementSection: React.FC = () => {
     {
       label: 'Total Staff',
       value: metrics.totalStaff,
-      icon: <Users className="h-6 w-6 text-primary" />,
       filterValue: 'all' as const,
     },
     {
       label: 'GST Managers',
       value: metrics.gstManagers,
-      icon: <Shield className="h-6 w-6 text-primary" />,
       filterValue: 'gst_manager' as const,
     },
     {
       label: 'Employees',
       value: metrics.employees,
-      icon: <Users className="h-6 w-6 text-muted-foreground" />,
       filterValue: 'employee' as const,
     },
   ];
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5 text-primary" />
-              User Management
-            </CardTitle>
-            <CardDescription>Manage staff members and their roles</CardDescription>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={fetchEmployees}
-            disabled={isLoading}
-            title="Refresh staff list"
-            aria-label="Refresh staff list"
-          >
-            <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent className="pt-4">
-        {/* Metric Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          {metricCards.map((card, index) => (
-            <Card 
-              key={index}
-              className={`border cursor-pointer transition-all duration-200 ${
-                selectedFilter === card.filterValue 
-                  ? 'ring-2 ring-primary bg-primary/5' 
-                  : 'hover:bg-muted/30'
-              }`}
+    <SectionCard
+      title={
+        <span className="flex items-center gap-2">
+          <Users className="h-4 w-4 text-primary" />
+          User Management
+        </span>
+      }
+      description="Manage staff members and their roles"
+      actions={
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={fetchEmployees}
+          disabled={isLoading}
+          title="Refresh staff list"
+          aria-label="Refresh staff list"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+        </Button>
+      }
+    >
+        {/* Metric tiles double as the role filter */}
+        <div className="grid grid-cols-3 gap-2">
+          {metricCards.map((card) => (
+            <button
+              key={card.filterValue}
+              type="button"
               onClick={() => setSelectedFilter(card.filterValue)}
+              title={`Show: ${card.label}`}
+              aria-pressed={selectedFilter === card.filterValue}
+              className={cn(
+                'rounded-lg text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:h-full',
+                selectedFilter === card.filterValue && 'ring-2 ring-primary/60',
+              )}
             >
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-full bg-primary/5">
-                    {card.icon}
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">{card.label}</p>
-                    <p className="text-2xl font-bold tabular-nums">{isLoading ? '—' : card.value}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+              <KpiTile label={card.label} value={isLoading ? '—' : card.value} />
+            </button>
           ))}
         </div>
 
         {/* Staff List Header */}
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between gap-2">
           <div>
-            <h3 className="text-base font-medium flex items-center gap-2">
+            <h3 className="text-sm font-semibold">
               {selectedFilter === 'gst_manager' ? 'GST Managers' : selectedFilter === 'employee' ? 'Employees' : 'All Staff'}
             </h3>
             <p className="text-xs text-muted-foreground">
@@ -366,8 +356,8 @@ const UserManagementSection: React.FC = () => {
           </div>
           <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
             <DialogTrigger asChild>
-              <Button size="sm" className="flex items-center gap-2">
-                <UserPlus className="h-4 w-4" />
+              <Button size="sm" className={WS_BTN}>
+                <UserPlus className="h-3.5 w-3.5" />
                 Add Employee
               </Button>
             </DialogTrigger>
@@ -422,10 +412,10 @@ const UserManagementSection: React.FC = () => {
         </div>
 
         {/* Staff List */}
-        <div className="space-y-2 max-h-80 overflow-y-auto">
+        <div className="max-h-80 overflow-y-auto rounded-md border">
           {isLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
             </div>
           ) : filteredEmployees.length === 0 ? (
             <TableEmptyState
@@ -437,28 +427,28 @@ const UserManagementSection: React.FC = () => {
             filteredEmployees.map((emp) => (
               <div
                 key={emp.user_id}
-                className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/30 transition-colors"
+                className="flex items-center justify-between gap-2 border-b px-3 py-1.5 transition-colors last:border-b-0 hover:bg-muted/30"
               >
-                <div className="flex items-center gap-3">
-                  <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center">
-                    <span className="font-semibold text-primary">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10">
+                    <span className="text-xs font-semibold text-primary">
                       {emp.first_name.charAt(0).toUpperCase()}
                     </span>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="font-medium">{emp.first_name}</p>
+                      <p className="truncate text-sm font-medium">{emp.first_name}</p>
                       {emp.role === 'gst_manager' ? (
-                        <Badge className="bg-primary/10 text-primary border-0 text-xs flex items-center gap-1">
+                        <Badge variant="info" className="flex items-center gap-1 text-[10px] font-medium">
                           <Shield className="h-3 w-3" />
                           Manager
                         </Badge>
                       ) : (
-                        <Badge variant="secondary" className="text-xs">Employee</Badge>
+                        <Badge variant="secondary" className="text-[10px] font-medium">Employee</Badge>
                       )}
                     </div>
                     {emp.email && (
-                      <p className="text-xs text-muted-foreground">{emp.email}</p>
+                      <p className="truncate text-xs text-muted-foreground">{emp.email}</p>
                     )}
                   </div>
                 </div>
@@ -466,12 +456,12 @@ const UserManagementSection: React.FC = () => {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                    className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10"
                     onClick={() => handleEditEmployee(emp)}
                     title="Edit role"
                     aria-label={`Edit role for ${emp.first_name}`}
                   >
-                    <Pencil className="h-4 w-4" />
+                    <Pencil className="h-3.5 w-3.5" />
                   </Button>
                   <Button
                     variant="ghost"
@@ -481,7 +471,7 @@ const UserManagementSection: React.FC = () => {
                     title="Remove staff member"
                     aria-label={`Remove staff member ${emp.first_name}`}
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </div>
               </div>
@@ -526,8 +516,7 @@ const UserManagementSection: React.FC = () => {
             )}
           </DialogContent>
         </Dialog>
-      </CardContent>
-    </Card>
+    </SectionCard>
   );
 };
 

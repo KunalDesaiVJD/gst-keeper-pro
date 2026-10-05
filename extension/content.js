@@ -191,7 +191,7 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4'];
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || job.step === 'gstr1_json_pull' || job.step === 'revrclm_pull' || job.step === 'rcmliab_pull' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr9_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || job.step === 'gstr1_json_pull' || job.step === 'revrclm_pull' || job.step === 'rcmliab_pull' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       // 'filing' jobs run on a backgrounded tab (see startFilingOpen in
@@ -217,6 +217,9 @@
         try { await GSTKdb.replaceChallans(cur.clientId, [{ client_id: cur.clientId, status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Challan Summary' }]); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'gstr3b_pull') {
         try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR3B', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading GSTR-3B' }); } catch (e2) { /* diagnostic only */ }
+      } else if (job.step === 'gstr9_pull') {
+        // updated_at too: the Annual Return page polls for a row newer than its click.
+        try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_CALC', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading GSTR-9', updated_at: new Date().toISOString() }); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'gstr1_pull') {
         try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading GSTR-1' }); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'gstr2a_pull') {
@@ -260,6 +263,7 @@
     else if (job.step === 'taxpayerprofile') await handleTaxpayerProfile(job, cur, progress);
     else if (job.step === 'challans') await handleChallans(job, cur, progress);
     else if (job.step === 'gstr3b_pull') await handleGstr3bPull(job, cur, progress);
+    else if (job.step === 'gstr9_pull') await handleGstr9Pull(job, cur, progress);
     else if (job.step === 'gstr1_pull') await handleGstr1Pull(job, cur, progress);
     else if (job.step === 'gstr2a_pull') await handleGstr2aPull(job, cur, progress);
     else if (job.step === 'creditledgertxn') await handleCreditLedgerTxnOnly(job, cur, progress);
@@ -460,6 +464,11 @@
       } else if (job.mode === 'gstr3b_pull') {
         banner('Logged in — reading filed GSTR-3B…' + progress);
         job.step = 'gstr3b_pull';
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      } else if (job.mode === 'gstr9_pull') {
+        banner('Logged in — reading the GSTR-9 system-computed figures…' + progress);
+        job.step = 'gstr9_pull';
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
       } else if (job.mode === 'gstr1_pull') {
@@ -3592,6 +3601,115 @@
       'status            : ' + (patchObj.status || '(unknown)'),
     ]);
     banner('GSTR-3B ' + job.period + ' → saved ✓.' + progress, '#16a34a');
+    await sleep(800);
+    await advance(job);
+  }
+
+  // GSTR-9 system-computed (annual) — for the Annual Return workspace's
+  // "Portal data" step (mode 'gstr9_pull', started with __gstkPullSection,
+  // period '03/YYYY' = the FY's closing March). The endpoint is the one the
+  // portal's own GSTR-9 page calls — gstr9ctrl.js getSumData():
+  //   ajax.get("/returns2/auth/api/gstr9/details/calc", { ret_period, gstin })
+  // answering { status: 1, data: { table4, table5, table6, table8, table9, … } }.
+  // It was read from that script, NOT yet exercised live. formdetails
+  // (rtn_typ=GSTR9) gives the ARN / filed date / status, same as GSTR-3B.
+  // GET only — this never calls any save / submit / compute / file endpoint.
+  // On a cold session the returns2 app can answer with HTML / 403 until its
+  // own page has been opened once, so the first failure opens the Annual
+  // Return page (guarded by job.gstr9Warmed, so only once) and retries on
+  // that page's load; a second failure is recorded as 'PULL FAILED: …' so the
+  // app stops waiting and offers Upload instead. The raw JSON is kept as-is
+  // (return_type 'GSTR9_CALC'); the app parses and previews it before use.
+  async function handleGstr9Pull(job, cur, progress) {
+    if (!/return\.gst\.gov\.in/.test(location.hostname)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
+    const failGstr9 = async (reason) => {
+      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_CALC', { status: 'PULL FAILED: ' + reason, updated_at: new Date().toISOString() }); } catch (e2) { /* diagnostic only */ }
+    };
+    const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
+    if (mm !== 3 || !yyyy) {
+      banner('Bad GSTR-9 period "' + job.period + '" (expected 03/YYYY).', '#dc2626');
+      await sleep(1500);
+      await advance(job);
+      return;
+    }
+    const retPeriod = '03' + yyyy;
+    const fyLabel = (yyyy - 1) + '-' + String(yyyy).slice(-2);
+    const gstin = cur.creds && cur.creds.gstin;
+    if (!gstin) {
+      banner('No GSTIN on record for ' + cur.creds.name + ' — GSTR-9 skipped.' + progress, '#dc2626');
+      await failGstr9('no GSTIN on record for this client');
+      await sleep(1500);
+      await advance(job);
+      return;
+    }
+    // Second attempt, on the Annual Return page: let its own scripts set the session up first.
+    if (job.gstr9Warmed) await sleep(3000);
+    banner('Reading GSTR-9 system-computed figures for FY ' + fyLabel + '…' + progress);
+
+    let calc = null;
+    let calcErr = '';
+    try {
+      const r = await fetch('https://return.gst.gov.in/returns2/auth/api/gstr9/details/calc?ret_period=' + retPeriod + '&gstin=' + encodeURIComponent(gstin), { credentials: 'include', headers: { Accept: 'application/json' } });
+      const text = await r.text();
+      let j = null;
+      try { j = JSON.parse(text); } catch (e) { /* HTML (login / error page) */ }
+      if (r.ok && j && j.status === 1 && j.data && typeof j.data === 'object') calc = j.data;
+      else if (j && j.error) calcErr = String(j.error.message || j.error.errorCode || JSON.stringify(j.error)).slice(0, 200);
+      else calcErr = 'HTTP ' + r.status + (j ? ' (status ' + j.status + ')' : ', not JSON');
+    } catch (e) {
+      calcErr = (e && e.message) || 'network error';
+    }
+
+    if (!calc) {
+      if (!job.gstr9Warmed) {
+        job.gstr9Warmed = true;
+        await setJob(job);
+        banner('GSTR-9 not ready on this session yet (' + calcErr + ') — opening the Annual Return page once and retrying…' + progress, '#f59e0b');
+        location.href = 'https://return.gst.gov.in/returns2/auth/annualreturn';
+        return;
+      }
+      delete job.gstr9Warmed;
+      await setJob(job);
+      banner('GSTR-9: could not read the system-computed figures (' + calcErr + ') — use Upload in GST Keeper instead.' + progress, '#dc2626');
+      await failGstr9(calcErr);
+      await sleep(1500);
+      await advance(job);
+      return;
+    }
+
+    let form = null;
+    try {
+      const fr = await fetch('https://return.gst.gov.in/returns/auth/api/formdetails?rtn_prd=' + retPeriod + '&rtn_typ=GSTR9', { credentials: 'include' });
+      if (fr.ok) { const fj = await fr.json(); if (fj && fj.status === 1) form = fj.data; }
+    } catch (e) { /* non-fatal: only ARN / filed date / status come from here */ }
+
+    const arn = (form && form.arn) || (typeof calc.arn === 'string' && calc.arn) || null;
+    const filedOn = (form && form.fil_dt) || (typeof calc.arn_dt === 'string' && calc.arn_dt) || null;
+    const patchObj = {
+      summary: calc,
+      arn,
+      filed_date: filedOn ? ddmmyyyyToIso(String(filedOn).replace(/-/g, '/')) : null,
+      status: form ? (form.status === 'FIL' ? 'Filed' : (form.status ? String(form.status) : 'Not filed')) : (arn ? 'Filed' : 'Not filed'),
+      updated_at: new Date().toISOString(),
+    };
+    delete job.gstr9Warmed;
+    await setJob(job);
+    try {
+      await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_CALC', patchObj);
+    } catch (e) {
+      banner('GSTR-9: read from the portal but could not be saved (' + ((e && e.message) || 'unknown error') + ').' + progress, '#dc2626');
+      await sleep(2000);
+      await advance(job);
+      return;
+    }
+    debugPanel([
+      'STEP: GSTR-9 system computed  (' + location.pathname + ')',
+      'ret_period        : ' + retPeriod,
+      'tables            : ' + ['table4', 'table5', 'table6', 'table8', 'table9'].filter((k) => calc[k]).join(', '),
+      'ARN               : ' + (patchObj.arn || '(none)'),
+      'status            : ' + patchObj.status,
+    ]);
+    banner('GSTR-9 FY ' + fyLabel + ' → saved ✓. Review and apply it in GST Keeper (Annual Return → Portal data).' + progress, '#16a34a');
     await sleep(800);
     await advance(job);
   }

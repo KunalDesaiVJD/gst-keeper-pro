@@ -4,9 +4,13 @@ import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorks
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, Note, SectionCard } from '@/components/gstr9/ui';
+import { WS_BTN, WS_PAGE, WS_TABLE_WRAP } from '@/components/workspace/theme';
+import { B_TABLE, B_TD, B_TD_NUM, B_TH, B_TH_NUM, B_TR, B_TR_HEAD } from '@/components/builder/theme';
+import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -19,7 +23,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
 import {
-  ArrowLeft, Loader2, Plus, CalendarCheck, AlertTriangle, Send, Undo2, Trash2, Info,
+  ArrowLeft, Loader2, Plus, CalendarCheck, Send, Undo2, Trash2,
 } from 'lucide-react';
 import {
   DEFAULT_CHARGE_INCLUSIONS, classifyUnit, formatINR, formatSqM, testRrep,
@@ -414,60 +418,61 @@ const BuilderBuEventsPage: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="flex items-center gap-2 text-muted-foreground text-sm p-6">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading BU events…
-      </div>
+      <Card>
+        <CardContent className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading BU events…
+        </CardContent>
+      </Card>
     );
   }
   if (!project) return null;
 
   return (
-    <div className="space-y-6">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
+        embedded={embedded}
         title={`${project.name} — BU Events`}
         subtitle="The whole balance on every unit booked before its cut-off becomes taxable in the BU month"
-        icon={<CalendarCheck className="h-5 w-5" />}
+        icon={<CalendarCheck />}
         actions={
-          <div className="flex gap-2">
+          <>
             {!embedded && (
-              <Button variant="outline" onClick={() => navigate(`/builder-projects/${projectId}`)}>
-                <ArrowLeft className="h-4 w-4 mr-2" /> Project
+              <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate(`/builder-projects/${projectId}`)}>
+                <ArrowLeft className="h-3.5 w-3.5" /> Project
               </Button>
             )}
             {canPost && availableUnits.length > 0 && (
-              <Button onClick={() => { setForm(emptyEvent); setSelectedUnits(new Set()); setDialog(true); }}>
-                <Plus className="h-4 w-4 mr-2" /> New BU event
+              <Button size="sm" className={WS_BTN} onClick={() => { setForm(emptyEvent); setSelectedUnits(new Set()); setDialog(true); }}>
+                <Plus className="h-3.5 w-3.5" /> New BU event
               </Button>
             )}
-          </div>
+          </>
         }
       />
 
-      <div className="flex gap-2 rounded-lg border bg-muted/30 p-3 text-muted-foreground">
-        <Info className="h-4 w-4 shrink-0 mt-0.5" />
-        <p className="text-xs">
-          A unit's cut-off is the <strong>earlier</strong> of the BU date and its dastavej date. Units
-          booked before it are taxed on their entire balance; units unbooked at cut-off fall under
-          Schedule III and are omitted from GSTR-1 and 3B altogether, feeding the TDR/FSI working instead.
-          {availableUnits.length < units.length && (
-            <>
-              {' '}{units.filter((u) => !!u.bu_event_id).length} of {units.length} units are already closed
-              against an earlier event
-              {closedPreOnboardingCount > 0 && (
-                <>, and {closedPreOnboardingCount} {closedPreOnboardingCount === 1 ? 'is' : 'are'} flagged
-                closed before onboarding — resolved under the firm's earlier records, so this software
-                never sweeps them</>
-              )}.
-            </>
-          )}
-        </p>
-      </div>
+      <Note>
+        A unit's cut-off is the <strong>earlier</strong> of the BU date and its dastavej date. Units
+        booked before it are taxed on their entire balance; units unbooked at cut-off fall under
+        Schedule III and are omitted from GSTR-1 and 3B altogether, feeding the TDR/FSI working instead.
+        {availableUnits.length < units.length && (
+          <>
+            {' '}{units.filter((u) => !!u.bu_event_id).length} of {units.length} units are already closed
+            against an earlier event
+            {closedPreOnboardingCount > 0 && (
+              <>, and {closedPreOnboardingCount} {closedPreOnboardingCount === 1 ? 'is' : 'are'} flagged
+              closed before onboarding — resolved under the firm's earlier records, so this software
+              never sweeps them</>
+            )}.
+          </>
+        )}
+      </Note>
 
       {events.length === 0 ? (
         <Card>
-          <CardContent className="p-10 text-center text-muted-foreground">
-            <CalendarCheck className="h-8 w-8 mx-auto mb-3 opacity-40" />
-            <p className="text-sm">No BU events yet for this project.</p>
+          <CardContent className="px-4 py-8 text-center text-sm text-muted-foreground">
+            <CalendarCheck className="mx-auto mb-2 h-6 w-6 opacity-40" />
+            No BU events yet for this project.
           </CardContent>
         </Card>
       ) : (
@@ -489,217 +494,184 @@ const BuilderBuEventsPage: React.FC = () => {
           const cfOutstanding = taxable.length - cfConfirmed;
 
           return (
-            <Card key={ev.id}>
-              <CardHeader>
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <CardTitle className="text-base flex items-center gap-2">
-                      {rows.length === 1 && rows[0].cut_off_source === 'DASTAVEJ' ? 'Dastavej' : 'BU'} dated {ev.bu_date}
-                      {ev.bu_ref_no && <span className="text-muted-foreground font-normal">· {ev.bu_ref_no}</span>}
-                      <Badge
-                        className={
-                          ev.status === 'POSTED'
-                            ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                            : 'bg-amber-100 text-amber-800 border-amber-200'
-                        }
-                      >
-                        {ev.status}
-                      </Badge>
-                      {ev.status !== 'POSTED' && taxable.length > 0 && (
-                        <Badge
-                          variant="outline"
-                          className={cfOutstanding === 0 ? 'text-emerald-700 border-emerald-200' : 'text-amber-700 border-amber-200'}
-                        >
-                          Agreement value: {cfConfirmed}/{taxable.length} confirmed
-                        </Badge>
-                      )}
-                    </CardTitle>
-                    <CardDescription>
-                      {ev.scope === 'FULL' ? 'Full project' : `${rows.length} selected unit(s)`}
-                      {' · posts to '}{prettyPeriodLabel(ev.posting_period)}
-                      {' · '}{POSTING_BASIS_LABEL[ev.posting_basis]}
-                    </CardDescription>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setOpenEvent(isOpen ? null : ev.id)}>
-                      {isOpen ? 'Hide working' : 'Show working'}
+            <SectionCard
+              key={ev.id}
+              title={(
+                <span className="flex flex-wrap items-center gap-1.5">
+                  {rows.length === 1 && rows[0].cut_off_source === 'DASTAVEJ' ? 'Dastavej' : 'BU'} dated {ev.bu_date}
+                  {ev.bu_ref_no && <span className="font-normal text-muted-foreground">· {ev.bu_ref_no}</span>}
+                  <Badge variant={ev.status === 'POSTED' ? 'success' : 'warning'} className="text-[10px] font-medium">
+                    {ev.status}
+                  </Badge>
+                  {ev.status !== 'POSTED' && taxable.length > 0 && (
+                    <Badge variant={cfOutstanding === 0 ? 'success' : 'warning'} className="text-[10px] font-medium">
+                      Agreement value: {cfConfirmed}/{taxable.length} confirmed
+                    </Badge>
+                  )}
+                </span>
+              )}
+              description={(
+                <>
+                  {ev.scope === 'FULL' ? 'Full project' : `${rows.length} selected unit(s)`}
+                  {' · posts to '}{prettyPeriodLabel(ev.posting_period)}
+                  {' · '}{POSTING_BASIS_LABEL[ev.posting_basis]}
+                </>
+              )}
+              actions={(
+                <>
+                  <Button variant="outline" size="sm" className={WS_BTN} onClick={() => setOpenEvent(isOpen ? null : ev.id)}>
+                    {isOpen ? 'Hide working' : 'Show working'}
+                  </Button>
+                  {canPost && ev.status !== 'POSTED' && taxable.length > 0 && (
+                    <Button
+                      variant="outline" size="sm" className={WS_BTN}
+                      onClick={() => void handleSendConfirmations(ev)}
+                      disabled={isSendingConfirm === ev.id}
+                    >
+                      {isSendingConfirm === ev.id
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : <Send className="h-3.5 w-3.5" />}
+                      {cfRows.length ? 'Re-send confirmations' : 'Send confirmation requests'}
                     </Button>
-                    {canPost && ev.status !== 'POSTED' && taxable.length > 0 && (
+                  )}
+                  {canPost && ev.status !== 'POSTED' && (
+                    <>
                       <Button
-                        variant="outline" size="sm"
-                        onClick={() => void handleSendConfirmations(ev)}
-                        disabled={isSendingConfirm === ev.id}
+                        size="sm" className={WS_BTN} onClick={() => void handlePost(ev)} disabled={isSaving}
+                        title={cfOutstanding > 0 ? `${cfOutstanding} unit(s) still awaiting client confirmation` : undefined}
                       >
-                        {isSendingConfirm === ev.id
-                          ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          : <Send className="h-4 w-4 mr-2" />}
-                        {cfRows.length ? 'Re-send confirmations' : 'Send confirmation requests'}
+                        <Send className="h-3.5 w-3.5" /> Post
                       </Button>
-                    )}
-                    {canPost && ev.status !== 'POSTED' && (
-                      <>
-                        <Button
-                          size="sm" onClick={() => void handlePost(ev)} disabled={isSaving}
-                          title={cfOutstanding > 0 ? `${cfOutstanding} unit(s) still awaiting client confirmation` : undefined}
-                        >
-                          <Send className="h-4 w-4 mr-2" /> Post
-                        </Button>
-                        <Button variant="ghost" size="icon" onClick={() => handleDelete(ev)}>
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </>
-                    )}
-                    {canPost && ev.status === 'POSTED' && (
-                      <Button variant="outline" size="sm" onClick={() => handleUnpost(ev)} disabled={isSaving}>
-                        <Undo2 className="h-4 w-4 mr-2" /> Unpost
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDelete(ev)} aria-label="Delete event">
+                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
                       </Button>
-                    )}
-                  </div>
-                </div>
-              </CardHeader>
+                    </>
+                  )}
+                  {canPost && ev.status === 'POSTED' && (
+                    <Button variant="outline" size="sm" className={WS_BTN} onClick={() => handleUnpost(ev)} disabled={isSaving}>
+                      <Undo2 className="h-3.5 w-3.5" /> Unpost
+                    </Button>
+                  )}
+                </>
+              )}
+            >
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+                <KpiTile label="Taxable units" value={taxable.length} />
+                <KpiTile label="Unbooked (Sch. III)" value={unbooked.length} />
+                <KpiTile label="Differential value" value={formatINR(tot.diff)} />
+                <KpiTile label="Taxable value" value={formatINR(tot.taxable)} />
+                <KpiTile label="CGST + SGST" value={formatINR(tot.cgst + tot.sgst)} />
+                <KpiTile label="Interest u/s 50" value={tot.interest > 0 ? formatINR(tot.interest) : '—'} tone={tot.interest > 0 ? 'warn' : 'neutral'} />
+              </div>
 
-              <CardContent className="space-y-4">
-                <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Taxable units</p>
-                    <p className="text-sm font-semibold">{taxable.length}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Unbooked (Sch. III)</p>
-                    <p className="text-sm font-semibold">{unbooked.length}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Differential value</p>
-                    <p className="text-sm font-semibold">{formatINR(tot.diff)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Taxable value</p>
-                    <p className="text-sm font-semibold">{formatINR(tot.taxable)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">CGST + SGST</p>
-                    <p className="text-sm font-semibold">{formatINR(tot.cgst + tot.sgst)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Interest u/s 50</p>
-                    <p className="text-sm font-semibold">{tot.interest > 0 ? formatINR(tot.interest) : '—'}</p>
-                  </div>
-                </div>
+              {ev.status === 'POSTED' && (
+                <Note tone="warn">
+                  These units are taxed in full. GST law gives no bad-debt relief, so if a booking
+                  cancels the tax is recoverable only through a credit note u/s 34 — deadline{' '}
+                  <strong>{creditNoteDeadline(ev.posting_period)}</strong>.
+                </Note>
+              )}
 
-                {ev.status === 'POSTED' && (
-                  <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
-                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                    <p className="text-xs">
-                      These units are taxed in full. GST law gives no bad-debt relief, so if a booking
-                      cancels the tax is recoverable only through a credit note u/s 34 — deadline{' '}
-                      <strong>{creditNoteDeadline(ev.posting_period)}</strong>.
-                    </p>
-                  </div>
-                )}
-
-                {isOpen && (
-                  <div className="overflow-x-auto rounded border">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Unit</TableHead>
-                          <TableHead>Cut-off</TableHead>
-                          <TableHead>Status at cut-off</TableHead>
-                          <TableHead className="text-right">Rate</TableHead>
-                          <TableHead className="text-right">Agreement</TableHead>
-                          <TableHead>Confirmed?</TableHead>
-                          <TableHead className="text-right">Taxed to opening</TableHead>
-                          <TableHead className="text-right">Differential</TableHead>
-                          <TableHead className="text-right">Taxable value</TableHead>
-                          <TableHead className="text-right">CGST</TableHead>
-                          <TableHead className="text-right">SGST</TableHead>
-                          <TableHead className="text-right">Interest</TableHead>
-                          <TableHead className="text-right">Tie-out</TableHead>
+              {isOpen && (
+                <Table className={B_TABLE} containerClassName={cn(WS_TABLE_WRAP, 'max-h-[70vh]')}>
+                  <TableHeader>
+                    <TableRow className={B_TR_HEAD}>
+                      <TableHead className={B_TH}>Unit</TableHead>
+                      <TableHead className={B_TH}>Cut-off</TableHead>
+                      <TableHead className={B_TH}>Status at cut-off</TableHead>
+                      <TableHead className={B_TH_NUM}>Rate</TableHead>
+                      <TableHead className={B_TH_NUM}>Agreement</TableHead>
+                      <TableHead className={B_TH}>Confirmed?</TableHead>
+                      <TableHead className={B_TH_NUM}>Taxed to opening</TableHead>
+                      <TableHead className={B_TH_NUM}>Differential</TableHead>
+                      <TableHead className={B_TH_NUM}>Taxable value</TableHead>
+                      <TableHead className={B_TH_NUM}>CGST</TableHead>
+                      <TableHead className={B_TH_NUM}>SGST</TableHead>
+                      <TableHead className={B_TH_NUM}>Interest</TableHead>
+                      <TableHead className={B_TH_NUM}>Tie-out</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rows.map((r) => {
+                      const u = units.find((x) => x.id === r.unit_id);
+                      return (
+                        <TableRow key={r.id} className={cn(B_TR, !r.booked_at_cutoff && 'opacity-60')}>
+                          <TableCell className={cn(B_TD, 'font-medium')}>{u?.unit_no || '—'}</TableCell>
+                          <TableCell className={cn(B_TD, 'whitespace-nowrap')}>
+                            {r.cut_off_date}
+                            <span className="block text-[11px] text-muted-foreground">
+                              via {r.cut_off_source === 'DASTAVEJ' ? 'dastavej' : 'BU'}
+                            </span>
+                          </TableCell>
+                          <TableCell className={B_TD}>
+                            {r.booked_at_cutoff ? (
+                              <Badge variant="success" className="text-[10px] font-medium">Booked</Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-[10px] font-medium">Unbooked — Sch. III</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className={B_TD_NUM}>{r.rate_pct}%</TableCell>
+                          <TableCell className={B_TD_NUM}>{formatINR(r.agreement_value)}</TableCell>
+                          <TableCell className={B_TD}>
+                            {!r.booked_at_cutoff ? (
+                              <span className="text-muted-foreground">—</span>
+                            ) : (() => {
+                              const cf = cfByUnit.get(r.unit_id);
+                              const status = cf?.status || 'NOT_SENT';
+                              const variant = status === 'CONFIRMED'
+                                ? 'success'
+                                : status === 'DISPUTED'
+                                  ? 'destructive'
+                                  : status === 'PENDING'
+                                    ? 'warning'
+                                    : 'secondary';
+                              return (
+                                <>
+                                  <Badge variant={variant} className="text-[10px] font-medium">{status === 'NOT_SENT' ? 'Not sent' : status}</Badge>
+                                  {status === 'DISPUTED' && cf?.disputeNotes && (
+                                    <span className="mt-0.5 block text-[11px] text-muted-foreground" title={cf.disputeNotes}>
+                                      {cf.disputeNotes}
+                                    </span>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </TableCell>
+                          <TableCell className={B_TD_NUM}>{formatINR(r.value_taxed_upto_opening)}</TableCell>
+                          <TableCell className={cn(B_TD_NUM, 'font-medium')}>
+                            {r.booked_at_cutoff ? formatINR(r.differential_value) : '—'}
+                          </TableCell>
+                          <TableCell className={B_TD_NUM}>
+                            {r.booked_at_cutoff ? formatINR(r.differential_taxable_value) : '—'}
+                          </TableCell>
+                          <TableCell className={B_TD_NUM}>
+                            {r.booked_at_cutoff ? formatINR(r.differential_cgst) : '—'}
+                          </TableCell>
+                          <TableCell className={B_TD_NUM}>
+                            {r.booked_at_cutoff ? formatINR(r.differential_sgst) : '—'}
+                          </TableCell>
+                          <TableCell className={B_TD_NUM}>
+                            {r.interest_amount > 0 ? (
+                              <>
+                                {formatINR(r.interest_amount)}
+                                <span className="block text-[11px] text-muted-foreground">{r.interest_days}d</span>
+                              </>
+                            ) : '—'}
+                          </TableCell>
+                          <TableCell className={B_TD_NUM}>
+                            {Math.abs(Number(r.tie_out_diff) || 0) < 1 ? (
+                              <span className="text-muted-foreground">OK</span>
+                            ) : (
+                              <span className="text-destructive-strong">{formatINR(r.tie_out_diff)}</span>
+                            )}
+                          </TableCell>
                         </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {rows.map((r) => {
-                          const u = units.find((x) => x.id === r.unit_id);
-                          return (
-                            <TableRow key={r.id} className={r.booked_at_cutoff ? '' : 'opacity-60'}>
-                              <TableCell className="font-medium">{u?.unit_no || '—'}</TableCell>
-                              <TableCell className="text-sm">
-                                {r.cut_off_date}
-                                <span className="block text-xs text-muted-foreground">
-                                  via {r.cut_off_source === 'DASTAVEJ' ? 'dastavej' : 'BU'}
-                                </span>
-                              </TableCell>
-                              <TableCell>
-                                {r.booked_at_cutoff ? (
-                                  <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">Booked</Badge>
-                                ) : (
-                                  <Badge variant="outline">Unbooked — Sch. III</Badge>
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right text-sm">{r.rate_pct}%</TableCell>
-                              <TableCell className="text-right text-sm">{formatINR(r.agreement_value)}</TableCell>
-                              <TableCell>
-                                {!r.booked_at_cutoff ? (
-                                  <span className="text-muted-foreground text-xs">—</span>
-                                ) : (() => {
-                                  const cf = cfByUnit.get(r.unit_id);
-                                  const status = cf?.status || 'NOT_SENT';
-                                  const cls = status === 'CONFIRMED'
-                                    ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                                    : status === 'DISPUTED'
-                                      ? 'bg-red-100 text-red-800 border-red-200'
-                                      : status === 'PENDING'
-                                        ? 'bg-amber-100 text-amber-800 border-amber-200'
-                                        : 'bg-slate-100 text-slate-600 border-slate-200';
-                                  return (
-                                    <>
-                                      <Badge className={cls}>{status === 'NOT_SENT' ? 'Not sent' : status}</Badge>
-                                      {status === 'DISPUTED' && cf?.disputeNotes && (
-                                        <span className="block text-xs text-muted-foreground mt-0.5" title={cf.disputeNotes}>
-                                          {cf.disputeNotes}
-                                        </span>
-                                      )}
-                                    </>
-                                  );
-                                })()}
-                              </TableCell>
-                              <TableCell className="text-right text-sm">{formatINR(r.value_taxed_upto_opening)}</TableCell>
-                              <TableCell className="text-right text-sm font-medium">
-                                {r.booked_at_cutoff ? formatINR(r.differential_value) : '—'}
-                              </TableCell>
-                              <TableCell className="text-right text-sm">
-                                {r.booked_at_cutoff ? formatINR(r.differential_taxable_value) : '—'}
-                              </TableCell>
-                              <TableCell className="text-right text-sm">
-                                {r.booked_at_cutoff ? formatINR(r.differential_cgst) : '—'}
-                              </TableCell>
-                              <TableCell className="text-right text-sm">
-                                {r.booked_at_cutoff ? formatINR(r.differential_sgst) : '—'}
-                              </TableCell>
-                              <TableCell className="text-right text-sm">
-                                {r.interest_amount > 0 ? (
-                                  <>
-                                    {formatINR(r.interest_amount)}
-                                    <span className="block text-xs text-muted-foreground">{r.interest_days}d</span>
-                                  </>
-                                ) : '—'}
-                              </TableCell>
-                              <TableCell className="text-right text-sm">
-                                {Math.abs(Number(r.tie_out_diff) || 0) < 1 ? (
-                                  <span className="text-muted-foreground">OK</span>
-                                ) : (
-                                  <span className="text-destructive">{formatINR(r.tie_out_diff)}</span>
-                                )}
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </SectionCard>
           );
         })
       )}
@@ -782,14 +754,11 @@ const BuilderBuEventsPage: React.FC = () => {
           </div>
 
           {form.posting_basis === 'BU_MONTH' && (
-            <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
-              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-              <p className="text-xs">
-                Posting into {prettyPeriodLabel(periodOfDate(form.bu_date))}. If that return is already
-                filed it cannot be revised — the liability would have to be declared in a later return
-                instead, which is what the interest basis does.
-              </p>
-            </div>
+            <Note tone="warn">
+              Posting into {prettyPeriodLabel(periodOfDate(form.bu_date))}. If that return is already
+              filed it cannot be revised — the liability would have to be declared in a later return
+              instead, which is what the interest basis does.
+            </Note>
           )}
 
           {form.scope === 'UNITS' && (

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileSpreadsheet } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { WS_PAGE } from '@/components/workspace/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
@@ -229,11 +230,12 @@ const ReportsPage: React.FC = () => {
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
         title="Reports"
         subtitle={`${REPORTS_CATALOG.length} reports — search, browse by category, or pin the ones you run every month`}
-        icon={<FileSpreadsheet className="h-6 w-6" />}
+        icon={<FileSpreadsheet className="h-4 w-4" />}
       />
       <ReportsBrowser
         reports={REPORTS_CATALOG}

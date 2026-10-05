@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -7,7 +7,13 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Plus, Trash2, Save, Send, Loader2, Lock, BarChart3, Download } from 'lucide-react';
+import { Plus, Trash2, Save, Send, Loader2, Lock, BarChart3, Download, AlertTriangle, Pencil, ChevronUp } from 'lucide-react';
+import { Badge } from '@/components/gstr9/badge';
+import { Note } from '@/components/gstr9/ui';
+import {
+  WS_BTN, WS_TABLE_WRAP, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR, WS_TR_TOTAL, WS_CELL_INPUT,
+} from '@/components/workspace/theme';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import {
@@ -27,6 +33,14 @@ const SECTION_LABELS: Record<Gstr1Section, string> = {
   ata: '11(2) — Amended Advances Received', txpda: '11(2) — Amended Advance Adjustment',
   nil: '8 — Nil Rated / Exempted', hsn: '12 — HSN-wise Summary', doc: '13 — Documents Issued',
 };
+
+// The Annual Return grid look for the shadcn <Table> parts (TableHead/TableCell
+// merge these over their own h-12 / p-4 defaults).
+const TH = `h-auto ${WS_TH}`;
+const TD = WS_TD;
+const CELL_SELECT = 'h-9 w-full justify-between rounded-none border-0 bg-transparent px-2 text-sm font-normal shadow-none focus:ring-1 focus:ring-inset focus:ring-primary focus:ring-offset-0';
+const READ_CELL = 'block px-2 py-1.5 text-sm';
+const READ_NUM = 'block px-2 py-1.5 text-right text-sm tabular-nums';
 
 let _localIdSeq = 0;
 const newRowId = () => `new_${Date.now()}_${_localIdSeq++}`;
@@ -340,7 +354,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
 
   const renderCell = (section: Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, row: ManualRow, col: ColumnDef) => {
     const value = row[col.key] ?? '';
-    if (!canEdit || isFiled) return <span className="text-xs px-1 tabular-nums">{value}</span>;
+    if (!canEdit || isFiled) return <span className={cn('block px-2 py-1.5 text-xs', col.type === 'number' && 'text-right tabular-nums')}>{value}</span>;
     // Auto-computed tax columns (IGST/CGST/SGST) are pre-filled from rate +
     // taxable value + POS, rounded to the nearest rupee, but remain plain
     // editable number inputs — typing over one sticks until rt/txval/pos
@@ -352,14 +366,14 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
           value={value}
           onValueChange={(v) => updateRow(section, row.id, col.key, v)}
           placeholder="POS"
-          className="h-8 text-xs w-full"
+          className={CELL_SELECT}
         />
       );
     }
     if (col.type === 'select') {
       return (
         <Select value={value || undefined} onValueChange={(v) => updateRow(section, row.id, col.key, v)}>
-          <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="—" /></SelectTrigger>
+          <SelectTrigger className={CELL_SELECT}><SelectValue placeholder="—" /></SelectTrigger>
           <SelectContent>{(col.options || []).map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
         </Select>
       );
@@ -369,313 +383,303 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
         type={col.type === 'number' ? 'number' : col.type === 'date' ? 'date' : 'text'}
         value={value}
         onChange={(e) => updateRow(section, row.id, col.key, col.type === 'number' ? (parseFloat(e.target.value) || 0) : e.target.value)}
-        className="h-8 text-xs"
+        className={cn(WS_CELL_INPUT, col.type === 'number' && 'text-right tabular-nums')}
       />
     );
   };
 
+  const editable = canEdit && !isFiled;
+
+  /** Hover-revealed row delete, as on the GST Update Sheet. */
+  const deleteCell = (section: Gstr1Section, id: string) => (
+    <TableCell className={`${TD} p-0 text-center`}>
+      <Button
+        size="icon"
+        variant="ghost"
+        className="h-7 w-7 text-destructive opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+        onClick={() => deleteRow(section, id)}
+        aria-label="Delete row"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </Button>
+    </TableCell>
+  );
+
+  const emptyRow = (colSpan: number) => (
+    <TableRow className="hover:bg-transparent">
+      <TableCell colSpan={colSpan} className={`${TD} py-6 text-center text-xs text-muted-foreground`}>No rows yet.</TableCell>
+    </TableRow>
+  );
+
+  const addRowButton = (section: Gstr1Section, disabled = false) => (
+    <Button size="sm" variant="outline" className={WS_BTN} onClick={() => addRow(section)} disabled={disabled}>
+      <Plus className="h-3.5 w-3.5" /> Add row
+    </Button>
+  );
+
   return (
     <Card className="border-primary/30">
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h3 className="text-sm font-semibold flex items-center gap-2">
-              Manual GSTR-1 Entry
-              {!isFiled && docRows.length === 0 && (
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-destructive bg-destructive/10 rounded px-1.5 py-0.5">
-                  Documents Issued required
-                </span>
-              )}
-            </h3>
-            <p className="text-xs text-muted-foreground">Key in invoices directly — Generate JSON produces the same file an imported return would have.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            {!collapsed && (
-              <Button variant="outline" size="sm" onClick={() => setSummaryOpen(true)}>
-                <BarChart3 className="h-3.5 w-3.5 mr-1.5" /> Generate Summary
-              </Button>
+      <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-x-3 gap-y-1.5 space-y-0 px-4 pb-2 pt-3">
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <CardTitle className="flex flex-wrap items-center gap-2 text-[15px] leading-snug">
+            Manual GSTR-1 Entry
+            {!isFiled && docRows.length === 0 && (
+              <Badge variant="destructive" className="gap-1 px-1.5 text-[10px] font-medium">
+                <AlertTriangle className="h-3 w-3 text-destructive" /> Documents Issued required
+              </Badge>
             )}
-            {hasGeneratedJson && (
-              <Button variant="ghost" size="sm" onClick={() => setCollapsed((c) => !c)}>
-                {collapsed ? 'Edit Entries' : 'Hide'}
-              </Button>
+            {isFiled && (
+              <Badge variant="success" className="gap-1 px-1.5 text-[10px] font-medium">
+                <Lock className="h-3 w-3" /> Filed · view-only
+              </Badge>
             )}
-            {canEdit && !isFiled && !collapsed && (
-              <>
-                <Button variant="outline" size="sm" onClick={handleSave} disabled={isSaving || isGenerating}>
-                  {isSaving ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
-                  Save
-                </Button>
-                <Button size="sm" onClick={handleGenerate} disabled={isSaving || isGenerating} className="bg-success text-success-foreground hover:bg-success/90">
-                  {isGenerating ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Send className="h-3.5 w-3.5 mr-1.5" />}
-                  Generate JSON
-                </Button>
-              </>
-            )}
-          </div>
+          </CardTitle>
+          <CardDescription className="text-xs leading-snug">Key in invoices directly — Generate JSON produces the same file an imported return would have.</CardDescription>
         </div>
-
+        <div className="flex flex-wrap items-center gap-2">
+          {!collapsed && (
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={() => setSummaryOpen(true)}>
+              <BarChart3 className="h-3.5 w-3.5" /> Generate Summary
+            </Button>
+          )}
+          {hasGeneratedJson && (
+            <Button variant="ghost" size="sm" className={WS_BTN} onClick={() => setCollapsed((c) => !c)}>
+              {collapsed ? <><Pencil className="h-3.5 w-3.5" /> Edit Entries</> : <><ChevronUp className="h-3.5 w-3.5" /> Hide</>}
+            </Button>
+          )}
+          {canEdit && !isFiled && !collapsed && (
+            <>
+              <Button variant="outline" size="sm" className={WS_BTN} onClick={handleSave} disabled={isSaving || isGenerating}>
+                {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                Save
+              </Button>
+              <Button size="sm" onClick={handleGenerate} disabled={isSaving || isGenerating} className={cn(WS_BTN, 'px-3 bg-success text-success-foreground hover:bg-success/90')}>
+                {isGenerating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                Generate JSON
+              </Button>
+            </>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className={cn('space-y-2.5 px-4', collapsed && !isFiled ? 'pb-0' : 'pb-3')}>
         {isFiled && (
-          <div className="flex items-start gap-2 rounded-lg border border-success/40 bg-success/10 p-3 text-sm mb-3">
-            <Lock className="h-4 w-4 mt-0.5 shrink-0 text-success" />
-            <p className="text-foreground/80">GSTR-1 already Filed for this period — manual entries are locked (view-only).</p>
+          <div className="flex items-start gap-2 rounded-md border border-success/40 bg-success/10 px-2.5 py-1.5 text-xs text-foreground">
+            <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-strong" />
+            <p>GSTR-1 already Filed for this period — manual entries are locked (view-only).</p>
           </div>
         )}
 
         {collapsed ? null : isLoading ? (
-          <div className="py-8 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" /></div>
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading entries…
+          </div>
         ) : (
           <>
             {/* Section picker — same tile-grid style as the imported-JSON page's
                 "Sections in this return": click a tile to open that section's
                 editable table below. Counts/values are live, computed from
                 whatever is currently in the grid. */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mb-4">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
               {(['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp', 'at', 'txpd', 'nil', 'hsn', 'doc'] as Gstr1Section[]).map((s) => {
-                const isActive = activeTab === s;
                 const tile = tileFor(s);
                 return (
-                  <button
+                  <SectionTile
                     key={s}
-                    type="button"
+                    label={SECTION_LABELS[s]}
+                    count={tile?.count ?? 0}
+                    value={tile?.value ? `₹${fmt2(tile.value)}` : undefined}
+                    active={activeTab === s}
                     onClick={() => setActiveTab(s)}
-                    className={`text-left rounded-lg border p-3 transition-colors hover:border-primary/50 hover:bg-primary/5 ${
-                      isActive ? 'border-primary bg-primary/5' : 'border-border'
-                    }`}
-                  >
-                    <div className="text-xs font-medium text-foreground leading-snug min-h-[32px]">{SECTION_LABELS[s]}</div>
-                    <div className="mt-2 flex items-end justify-between gap-2">
-                      <span className="text-lg font-bold text-primary tabular-nums">{(tile?.count ?? 0).toLocaleString('en-IN')}</span>
-                      {!!tile?.value && (
-                        <span className="text-[11px] text-muted-foreground tabular-nums">₹{fmt2(tile.value)}</span>
-                      )}
-                    </div>
-                  </button>
+                  />
                 );
               })}
             </div>
 
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Gstr1Section)}>
             {INVOICE_SECTIONS.map((section) => (
-              <TabsContent key={section} value={section} className="mt-4">
-                <div className="flex items-center justify-between mb-2">
+              <TabsContent key={section} value={section} className="mt-0 space-y-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs text-muted-foreground">
-                    {rowsBySection[section].length} row(s) · Taxable total ₹{sectionTotal(rowsBySection[section]).toLocaleString('en-IN')}
+                    <span className="font-semibold text-foreground">{SECTION_LABELS[section]}</span>
+                    {' · '}{rowsBySection[section].length} row(s) · Taxable total <span className="tabular-nums">₹{sectionTotal(rowsBySection[section]).toLocaleString('en-IN')}</span>
                   </p>
-                  {canEdit && !isFiled && (
-                    <Button size="sm" variant="outline" onClick={() => addRow(section)}>
-                      <Plus className="h-3.5 w-3.5 mr-1.5" /> Add Row
-                    </Button>
-                  )}
+                  {editable && addRowButton(section)}
                 </div>
-                <div className="rounded-md border overflow-auto max-h-[60vh]">
-                  <Table>
-                    <TableHeader className="sticky top-0 bg-muted z-10">
-                      <TableRow>
-                        {SECTION_COLUMNS[section].map((col) => <TableHead key={col.key} className={`text-xs ${col.width || ''}`}>{col.label}</TableHead>)}
-                        {canEdit && !isFiled && <TableHead className="w-10" />}
+                <div className={cn(WS_TABLE_WRAP, 'max-h-[60vh]')}>
+                  <Table className={WS_TABLE} containerClassName="overflow-visible">
+                    <TableHeader>
+                      <TableRow className="border-0 hover:bg-transparent">
+                        {SECTION_COLUMNS[section].map((col) => (
+                          <TableHead key={col.key} className={cn(TH, col.width, col.type === 'number' && 'text-right')}>{col.label}</TableHead>
+                        ))}
+                        {editable && <TableHead className={`${TH} w-9`} />}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {rowsBySection[section].map((row) => (
-                        <TableRow key={row.id}>
-                          {SECTION_COLUMNS[section].map((col) => <TableCell key={col.key} className="p-1">{renderCell(section, row, col)}</TableCell>)}
-                          {canEdit && !isFiled && (
-                            <TableCell className="p-1">
-                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => deleteRow(section, row.id)}>
-                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                              </Button>
-                            </TableCell>
-                          )}
+                        <TableRow key={row.id} className={WS_TR}>
+                          {SECTION_COLUMNS[section].map((col) => <TableCell key={col.key} className={`${TD} p-0`}>{renderCell(section, row, col)}</TableCell>)}
+                          {editable && deleteCell(section, row.id)}
                         </TableRow>
                       ))}
-                      {rowsBySection[section].length === 0 && (
-                        <TableRow><TableCell colSpan={SECTION_COLUMNS[section].length + 1} className="text-center text-muted-foreground py-6 text-sm">No rows yet.</TableCell></TableRow>
-                      )}
+                      {rowsBySection[section].length === 0 && emptyRow(SECTION_COLUMNS[section].length + 1)}
                     </TableBody>
                   </Table>
                 </div>
               </TabsContent>
             ))}
 
-            <TabsContent value="nil" className="mt-4">
-              <div className="flex items-center justify-between mb-2">
-                {canEdit && !isFiled && (
-                  <Button size="sm" variant="outline" onClick={() => addRow('nil')} disabled={nilRows.length >= NIL_SUPPLY_TYPES.length}>
-                    <Plus className="h-3.5 w-3.5 mr-1.5" /> Add Row
-                  </Button>
-                )}
+            <TabsContent value="nil" className="mt-0 space-y-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold">{SECTION_LABELS.nil}</p>
+                {editable && addRowButton('nil', nilRows.length >= NIL_SUPPLY_TYPES.length)}
               </div>
-              <div className="rounded-md border overflow-auto">
-                <Table>
-                  <TableHeader><TableRow>
-                    <TableHead className="text-xs">Supply Type</TableHead>
-                    <TableHead className="text-xs">Nil Rated</TableHead>
-                    <TableHead className="text-xs">Exempted</TableHead>
-                    <TableHead className="text-xs">Non-GST</TableHead>
-                    {canEdit && !isFiled && <TableHead className="w-10" />}
+              <div className={WS_TABLE_WRAP}>
+                <Table className={WS_TABLE} containerClassName="overflow-visible">
+                  <TableHeader><TableRow className="border-0 hover:bg-transparent">
+                    <TableHead className={TH}>Supply Type</TableHead>
+                    <TableHead className={`${TH} text-right`}>Nil Rated</TableHead>
+                    <TableHead className={`${TH} text-right`}>Exempted</TableHead>
+                    <TableHead className={`${TH} text-right`}>Non-GST</TableHead>
+                    {editable && <TableHead className={`${TH} w-9`} />}
                   </TableRow></TableHeader>
                   <TableBody>
                     {nilRows.map((row) => (
-                      <TableRow key={row.id}>
-                        <TableCell className="p-1">
-                          {canEdit && !isFiled ? (
+                      <TableRow key={row.id} className={WS_TR}>
+                        <TableCell className={`${TD} p-0`}>
+                          {editable ? (
                             <Select value={row.sply_ty} onValueChange={(v) => updateNilRow(row.id, 'sply_ty', v)}>
-                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectTrigger className={CELL_SELECT}><SelectValue /></SelectTrigger>
                               <SelectContent>{NIL_SUPPLY_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}</SelectContent>
                             </Select>
-                          ) : <span className="text-xs">{NIL_SUPPLY_TYPES.find((t) => t.value === row.sply_ty)?.label || row.sply_ty}</span>}
+                          ) : <span className={READ_CELL}>{NIL_SUPPLY_TYPES.find((t) => t.value === row.sply_ty)?.label || row.sply_ty}</span>}
                         </TableCell>
                         {(['nil_amt', 'expt_amt', 'ngsup_amt'] as const).map((f) => (
-                          <TableCell key={f} className="p-1">
-                            {canEdit && !isFiled ? (
-                              <Input type="number" value={row[f] ?? 0} onChange={(e) => updateNilRow(row.id, f, parseFloat(e.target.value) || 0)} className="h-8 text-xs" />
-                            ) : <span className="text-xs tabular-nums">{Number(row[f] || 0).toLocaleString('en-IN')}</span>}
+                          <TableCell key={f} className={`${TD} p-0`}>
+                            {editable ? (
+                              <Input type="number" value={row[f] ?? 0} onChange={(e) => updateNilRow(row.id, f, parseFloat(e.target.value) || 0)} className={`${WS_CELL_INPUT} text-right tabular-nums`} />
+                            ) : <span className={READ_NUM}>{Number(row[f] || 0).toLocaleString('en-IN')}</span>}
                           </TableCell>
                         ))}
-                        {canEdit && !isFiled && (
-                          <TableCell className="p-1">
-                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => deleteRow('nil', row.id)}>
-                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                            </Button>
-                          </TableCell>
-                        )}
+                        {editable && deleteCell('nil', row.id)}
                       </TableRow>
                     ))}
-                    {nilRows.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-6 text-sm">No rows yet.</TableCell></TableRow>}
+                    {nilRows.length === 0 && emptyRow(5)}
                   </TableBody>
                 </Table>
               </div>
             </TabsContent>
 
-            <TabsContent value="hsn" className="mt-4">
-              <p className="text-xs text-muted-foreground mb-2">
+            <TabsContent value="hsn" className="mt-0 space-y-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold">{SECTION_LABELS.hsn}</p>
+                {editable && addRowButton('hsn')}
+              </div>
+              <Note>
                 One row per HSN/SAC + rate combination — this is the aggregate the portal expects, not a per-invoice
                 breakdown. Counts (Qty) are optional for services (leave UQC as NA).
-              </p>
-              <div className="flex items-center justify-between mb-2">
-                {canEdit && !isFiled && (
-                  <Button size="sm" variant="outline" onClick={() => addRow('hsn')}>
-                    <Plus className="h-3.5 w-3.5 mr-1.5" /> Add Row
-                  </Button>
-                )}
-              </div>
-              <div className="rounded-md border overflow-auto">
-                <Table>
-                  <TableHeader><TableRow>
-                    <TableHead className="text-xs">HSN Code</TableHead>
-                    <TableHead className="text-xs">Type</TableHead>
-                    <TableHead className="text-xs">UQC</TableHead>
-                    <TableHead className="text-xs">Qty</TableHead>
-                    <TableHead className="text-xs">Rate %</TableHead>
-                    <TableHead className="text-xs">Taxable Value</TableHead>
-                    <TableHead className="text-xs">IGST</TableHead>
-                    <TableHead className="text-xs">CGST</TableHead>
-                    <TableHead className="text-xs">SGST</TableHead>
-                    <TableHead className="text-xs">Cess</TableHead>
-                    {canEdit && !isFiled && <TableHead className="w-10" />}
+              </Note>
+              <div className={WS_TABLE_WRAP}>
+                <Table className={WS_TABLE} containerClassName="overflow-visible">
+                  <TableHeader><TableRow className="border-0 hover:bg-transparent">
+                    <TableHead className={TH}>HSN Code</TableHead>
+                    <TableHead className={TH}>Type</TableHead>
+                    <TableHead className={TH}>UQC</TableHead>
+                    <TableHead className={`${TH} text-right`}>Qty</TableHead>
+                    <TableHead className={`${TH} text-right`}>Rate %</TableHead>
+                    <TableHead className={`${TH} text-right`}>Taxable Value</TableHead>
+                    <TableHead className={`${TH} text-right`}>IGST</TableHead>
+                    <TableHead className={`${TH} text-right`}>CGST</TableHead>
+                    <TableHead className={`${TH} text-right`}>SGST</TableHead>
+                    <TableHead className={`${TH} text-right`}>Cess</TableHead>
+                    {editable && <TableHead className={`${TH} w-9`} />}
                   </TableRow></TableHeader>
                   <TableBody>
                     {hsnRows.map((row) => (
-                      <TableRow key={row.id}>
-                        <TableCell className="p-1">
-                          {canEdit && !isFiled ? (
-                            <Input value={row.hsn_sc || ''} onChange={(e) => updateHsnRow(row.id, 'hsn_sc', e.target.value)} className="h-8 text-xs" />
-                          ) : <span className="text-xs font-mono">{row.hsn_sc}</span>}
+                      <TableRow key={row.id} className={WS_TR}>
+                        <TableCell className={`${TD} p-0`}>
+                          {editable ? (
+                            <Input value={row.hsn_sc || ''} onChange={(e) => updateHsnRow(row.id, 'hsn_sc', e.target.value)} className={WS_CELL_INPUT} />
+                          ) : <span className={`${READ_CELL} font-mono`}>{row.hsn_sc}</span>}
                         </TableCell>
-                        <TableCell className="p-1">
-                          {canEdit && !isFiled ? (
+                        <TableCell className={`${TD} p-0`}>
+                          {editable ? (
                             <Select value={row._src || 'hsn_b2b'} onValueChange={(v) => updateHsnRow(row.id, '_src', v)}>
-                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectTrigger className={CELL_SELECT}><SelectValue /></SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="hsn_b2b">B2B / CDNR (registered)</SelectItem>
                                 <SelectItem value="hsn_b2c">Other (B2C / Exports)</SelectItem>
                               </SelectContent>
                             </Select>
-                          ) : <span className="text-xs">{row._src === 'hsn_b2c' ? 'Other (B2C / Exports)' : 'B2B / CDNR (registered)'}</span>}
+                          ) : <span className={READ_CELL}>{row._src === 'hsn_b2c' ? 'Other (B2C / Exports)' : 'B2B / CDNR (registered)'}</span>}
                         </TableCell>
                         {(['uqc'] as const).map((f) => (
-                          <TableCell key={f} className="p-1">
-                            {canEdit && !isFiled ? (
-                              <Input value={row[f] || ''} onChange={(e) => updateHsnRow(row.id, f, e.target.value)} className="h-8 text-xs" />
-                            ) : <span className="text-xs">{row[f]}</span>}
+                          <TableCell key={f} className={`${TD} p-0`}>
+                            {editable ? (
+                              <Input value={row[f] || ''} onChange={(e) => updateHsnRow(row.id, f, e.target.value)} className={WS_CELL_INPUT} />
+                            ) : <span className={READ_CELL}>{row[f]}</span>}
                           </TableCell>
                         ))}
                         {(['qty', 'rt', 'txval', 'iamt', 'camt', 'samt', 'csamt'] as const).map((f) => (
-                          <TableCell key={f} className="p-1">
-                            {canEdit && !isFiled ? (
-                              <Input type="number" value={row[f] ?? 0} onChange={(e) => updateHsnRow(row.id, f, parseFloat(e.target.value) || 0)} className="h-8 text-xs" />
-                            ) : <span className="text-xs tabular-nums">{Number(row[f] || 0).toLocaleString('en-IN')}</span>}
+                          <TableCell key={f} className={`${TD} p-0`}>
+                            {editable ? (
+                              <Input type="number" value={row[f] ?? 0} onChange={(e) => updateHsnRow(row.id, f, parseFloat(e.target.value) || 0)} className={`${WS_CELL_INPUT} text-right tabular-nums`} />
+                            ) : <span className={READ_NUM}>{Number(row[f] || 0).toLocaleString('en-IN')}</span>}
                           </TableCell>
                         ))}
-                        {canEdit && !isFiled && (
-                          <TableCell className="p-1">
-                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => deleteRow('hsn', row.id)}>
-                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                            </Button>
-                          </TableCell>
-                        )}
+                        {editable && deleteCell('hsn', row.id)}
                       </TableRow>
                     ))}
-                    {hsnRows.length === 0 && <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-6 text-sm">No rows yet.</TableCell></TableRow>}
+                    {hsnRows.length === 0 && emptyRow(11)}
                   </TableBody>
                 </Table>
               </div>
             </TabsContent>
 
-            <TabsContent value="doc" className="mt-4">
-              <div className="flex items-center justify-between mb-2">
-                {canEdit && !isFiled && (
-                  <Button size="sm" variant="outline" onClick={() => addRow('doc')}>
-                    <Plus className="h-3.5 w-3.5 mr-1.5" /> Add Row
-                  </Button>
-                )}
+            <TabsContent value="doc" className="mt-0 space-y-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold">{SECTION_LABELS.doc}</p>
+                {editable && addRowButton('doc')}
               </div>
-              <div className="rounded-md border overflow-auto">
-                <Table>
-                  <TableHeader><TableRow>
-                    <TableHead className="text-xs">Document Type</TableHead>
-                    <TableHead className="text-xs">From</TableHead>
-                    <TableHead className="text-xs">To</TableHead>
-                    <TableHead className="text-xs">Total Issued</TableHead>
-                    <TableHead className="text-xs">Cancelled</TableHead>
-                    {canEdit && !isFiled && <TableHead className="w-10" />}
+              <div className={WS_TABLE_WRAP}>
+                <Table className={WS_TABLE} containerClassName="overflow-visible">
+                  <TableHeader><TableRow className="border-0 hover:bg-transparent">
+                    <TableHead className={TH}>Document Type</TableHead>
+                    <TableHead className={`${TH} w-28`}>From</TableHead>
+                    <TableHead className={`${TH} w-28`}>To</TableHead>
+                    <TableHead className={`${TH} w-24 text-right`}>Total Issued</TableHead>
+                    <TableHead className={`${TH} w-24 text-right`}>Cancelled</TableHead>
+                    {editable && <TableHead className={`${TH} w-9`} />}
                   </TableRow></TableHeader>
                   <TableBody>
                     {docRows.map((row) => (
-                      <TableRow key={row.id}>
-                        <TableCell className="p-1">
-                          {canEdit && !isFiled ? (
+                      <TableRow key={row.id} className={WS_TR}>
+                        <TableCell className={`${TD} p-0`}>
+                          {editable ? (
                             <Select value={row.doc_typ} onValueChange={(v) => updateDocRow(row.id, 'doc_typ', v)}>
-                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectTrigger className={CELL_SELECT}><SelectValue /></SelectTrigger>
                               <SelectContent>{DOC_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.value}</SelectItem>)}</SelectContent>
                             </Select>
-                          ) : <span className="text-xs">{row.doc_typ}</span>}
+                          ) : <span className={READ_CELL}>{row.doc_typ}</span>}
                         </TableCell>
                         {(['from', 'to'] as const).map((f) => (
-                          <TableCell key={f} className="p-1">
-                            {canEdit && !isFiled ? (
-                              <Input value={row[f] ?? ''} onChange={(e) => updateDocRow(row.id, f, e.target.value)} className="h-8 text-xs w-28" />
-                            ) : <span className="text-xs">{row[f]}</span>}
+                          <TableCell key={f} className={`${TD} p-0`}>
+                            {editable ? (
+                              <Input value={row[f] ?? ''} onChange={(e) => updateDocRow(row.id, f, e.target.value)} className={WS_CELL_INPUT} />
+                            ) : <span className={READ_CELL}>{row[f]}</span>}
                           </TableCell>
                         ))}
                         {(['totnum', 'cancel'] as const).map((f) => (
-                          <TableCell key={f} className="p-1">
-                            {canEdit && !isFiled ? (
-                              <Input type="number" value={row[f] ?? 0} onChange={(e) => updateDocRow(row.id, f, parseInt(e.target.value) || 0)} className="h-8 text-xs w-20" />
-                            ) : <span className="text-xs tabular-nums">{row[f]}</span>}
+                          <TableCell key={f} className={`${TD} p-0`}>
+                            {editable ? (
+                              <Input type="number" value={row[f] ?? 0} onChange={(e) => updateDocRow(row.id, f, parseInt(e.target.value) || 0)} className={`${WS_CELL_INPUT} text-right tabular-nums`} />
+                            ) : <span className={READ_NUM}>{row[f]}</span>}
                           </TableCell>
                         ))}
-                        {canEdit && !isFiled && (
-                          <TableCell className="p-1">
-                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => deleteRow('doc', row.id)}>
-                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                            </Button>
-                          </TableCell>
-                        )}
+                        {editable && deleteCell('doc', row.id)}
                       </TableRow>
                     ))}
-                    {docRows.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-6 text-sm">No rows yet.</TableCell></TableRow>}
+                    {docRows.length === 0 && emptyRow(6)}
                   </TableBody>
                 </Table>
               </div>
@@ -700,6 +704,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
               <Button
                 variant="outline"
                 size="sm"
+                className={cn(WS_BTN, 'shrink-0')}
                 onClick={() => {
                   const blob = new Blob([JSON.stringify(liveJson)], { type: 'application/json' });
                   const url = URL.createObjectURL(blob);
@@ -712,49 +717,49 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
                   URL.revokeObjectURL(url);
                 }}
               >
-                <Download className="h-3.5 w-3.5 mr-1.5" /> Download JSON (preview)
+                <Download className="h-3.5 w-3.5" /> Download JSON (preview)
               </Button>
             </div>
           </DialogHeader>
-          <div className="overflow-auto rounded-md border border-border">
-            <table className="w-full text-sm border-collapse min-w-[900px]">
-              <thead className="sticky top-0 z-10">
-                <tr className="bg-primary text-primary-foreground">
-                  <th className="border border-primary-foreground/20 p-2 text-left font-bold">Description</th>
-                  <th className="border border-primary-foreground/20 p-2 text-center font-bold whitespace-nowrap">No. of records</th>
-                  <th className="border border-primary-foreground/20 p-2 text-center font-bold whitespace-nowrap">Document Type</th>
-                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">Value (₹)</th>
-                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">Integrated Tax (₹)</th>
-                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">Central Tax (₹)</th>
-                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">State/UT Tax (₹)</th>
-                  <th className="border border-primary-foreground/20 p-2 text-right font-bold whitespace-nowrap">Cess (₹)</th>
+          <div className={cn(WS_TABLE_WRAP, 'min-h-0')}>
+            <table className={`${WS_TABLE} min-w-[900px]`}>
+              <thead>
+                <tr>
+                  <th className={WS_TH}>Description</th>
+                  <th className={`${WS_TH} text-center`}>No. of records</th>
+                  <th className={`${WS_TH} text-center`}>Document Type</th>
+                  <th className={`${WS_TH} text-right`}>Value (₹)</th>
+                  <th className={`${WS_TH} text-right`}>Integrated Tax (₹)</th>
+                  <th className={`${WS_TH} text-right`}>Central Tax (₹)</th>
+                  <th className={`${WS_TH} text-right`}>State/UT Tax (₹)</th>
+                  <th className={`${WS_TH} text-right`}>Cess (₹)</th>
                 </tr>
               </thead>
               <tbody>
                 {liveSummary.sections.map((s, i) => (
-                  <tr key={`${s.code}-${i}`} className="odd:bg-muted/30">
-                    <td className="border border-border p-2">
+                  <tr key={`${s.code}-${i}`} className={WS_TR}>
+                    <td className={WS_TD}>
                       <span className="font-semibold text-foreground">{s.code}</span>
                       <span className="text-muted-foreground"> — {s.title}</span>
                     </td>
-                    <td className="border border-border p-2 text-center tabular-nums">{s.count.toLocaleString('en-IN')}</td>
-                    <td className="border border-border p-2 text-center text-muted-foreground">{s.docType}</td>
-                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.value)}</td>
-                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.igst)}</td>
-                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.cgst)}</td>
-                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.sgst)}</td>
-                    <td className="border border-border p-2 text-right tabular-nums">{fmt2(s.cess)}</td>
+                    <td className={`${WS_TD} text-center tabular-nums`}>{s.count.toLocaleString('en-IN')}</td>
+                    <td className={`${WS_TD} text-center text-muted-foreground`}>{s.docType}</td>
+                    <td className={WS_TD_NUM}>{fmt2(s.value)}</td>
+                    <td className={WS_TD_NUM}>{fmt2(s.igst)}</td>
+                    <td className={WS_TD_NUM}>{fmt2(s.cgst)}</td>
+                    <td className={WS_TD_NUM}>{fmt2(s.sgst)}</td>
+                    <td className={WS_TD_NUM}>{fmt2(s.cess)}</td>
                   </tr>
                 ))}
               </tbody>
-              <tfoot>
-                <tr className="bg-muted font-semibold">
-                  <td className="border border-border p-2 text-right" colSpan={3}>Total liability (excl. HSN &amp; Docs)</td>
-                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(liveSummary.totals.value)}</td>
-                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(liveSummary.totals.igst)}</td>
-                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(liveSummary.totals.cgst)}</td>
-                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(liveSummary.totals.sgst)}</td>
-                  <td className="border border-border p-2 text-right tabular-nums">{fmt2(liveSummary.totals.cess)}</td>
+              <tfoot className="sticky bottom-0 z-10">
+                <tr className={WS_TR_TOTAL}>
+                  <td className={`${WS_TD} text-right`} colSpan={3}>Total liability (excl. HSN &amp; Docs)</td>
+                  <td className={WS_TD_NUM}>{fmt2(liveSummary.totals.value)}</td>
+                  <td className={WS_TD_NUM}>{fmt2(liveSummary.totals.igst)}</td>
+                  <td className={WS_TD_NUM}>{fmt2(liveSummary.totals.cgst)}</td>
+                  <td className={WS_TD_NUM}>{fmt2(liveSummary.totals.sgst)}</td>
+                  <td className={WS_TD_NUM}>{fmt2(liveSummary.totals.cess)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -764,5 +769,23 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
     </Card>
   );
 };
+
+/** A section tile in the KpiTile look, as a button that opens the section's grid (same as the GSTR-1 page's). */
+const SectionTile: React.FC<{ label: string; count: number; value?: string; active: boolean; onClick: () => void }> = ({ label, count, value, active, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={label}
+    aria-pressed={active}
+    className={cn(
+      'flex flex-col rounded-lg border bg-card px-3 py-1.5 text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+      active && 'border-primary/60 ring-2 ring-primary/60',
+    )}
+  >
+    <span className="line-clamp-2 min-h-[2.2em] text-[11px] font-medium leading-tight text-muted-foreground">{label}</span>
+    <span className={cn('text-[15px] font-semibold leading-tight tabular-nums', count === 0 && 'text-muted-foreground')}>{count.toLocaleString('en-IN')}</span>
+    <span className="truncate text-[11px] leading-tight tabular-nums text-muted-foreground">{value ?? '\u00A0'}</span>
+  </button>
+);
 
 export default Gstr1ManualEntryPanel;

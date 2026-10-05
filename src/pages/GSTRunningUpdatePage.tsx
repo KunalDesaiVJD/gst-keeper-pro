@@ -3,12 +3,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Checkbox } from '@/components/ui/checkbox';
-import { ClipboardList, Plus, Save, Loader2, Trash2, FileText, History, Clock } from 'lucide-react';
-import { PageHeader } from '@/components/layout/PageHeader';
-import { TableEmptyState } from '@/components/ui/table-empty-state';
+import { AlertCircle, Check, CheckCircle2, CircleDot, ClipboardList, Plus, Save, Loader2, Trash2, FileText, History, Clock, X } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, Money, Note } from '@/components/gstr9/ui';
+import { fmtMoney } from '@/components/gstr9/grid/money';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { supabase } from '@/integrations/supabase/client';
@@ -89,6 +89,8 @@ const ITC_SR_NO_BY_SECTION: Record<string, { value: string; label: string }[]> =
 };
 // ITC Sr No is mandatory (once remarks are written) for these correction types.
 const ITC_SR_NO_REQUIRED_TYPES = ['Reversal ITC', 'Claim ITC', 'Reclaim', 'Reclaim (Expense out)'];
+const needsItcSrNo = (u: { update_type: string; remarks: string; itc_section: string; itc_sr_no: string }) =>
+  ITC_SR_NO_REQUIRED_TYPES.includes(u.update_type) && !!u.remarks?.trim() && (!u.itc_section || !u.itc_sr_no);
 
 const GSTRunningUpdatePage: React.FC = () => {
   const { user, isStaffRole, canEditUpdateSheet } = useAuth();
@@ -531,7 +533,7 @@ const GSTRunningUpdatePage: React.FC = () => {
 
   const ResizeHandle = ({ colKey }: { colKey: string }) => (
     <div
-      className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary-foreground/30 active:bg-primary-foreground/50 z-20"
+      className="absolute right-0 top-0 bottom-0 z-20 w-1.5 cursor-col-resize hover:bg-primary/30 active:bg-primary/50"
       onMouseDown={(e) => {
         e.preventDefault();
         handleResizeStart(colKey, e.clientX);
@@ -539,176 +541,177 @@ const GSTRunningUpdatePage: React.FC = () => {
     />
   );
 
+  const activeFilterCount = [filterClient, filterUpdateEffectMonth, filterEffectMonth, filterReturn, filterUpdateType, filterInstructionsBy, filterStatus].filter(Boolean).length;
+  const clearFilters = () => {
+    setFilterClient('');
+    setFilterUpdateEffectMonth('');
+    setFilterEffectMonth('');
+    setFilterReturn('');
+    setFilterUpdateType('');
+    setFilterInstructionsBy('');
+    setFilterStatus('');
+  };
+
+  // Headline figures for the rows in view (after filters).
+  const stats = useMemo(() => {
+    const sum = (k: 'taxable_value' | 'cgst' | 'sgst' | 'igst' | 'interest') => filteredUpdates.reduce((s, u) => s + (Number(u[k]) || 0), 0);
+    const pending = filteredUpdates.filter(u => !u.remarks_checked).length;
+    return {
+      total: filteredUpdates.length,
+      pending,
+      given: filteredUpdates.length - pending,
+      missingSrNo: filteredUpdates.filter(needsItcSrNo).length,
+      taxable: sum('taxable_value'),
+      cgst: sum('cgst'),
+      sgst: sum('sgst'),
+      igst: sum('igst'),
+      interest: sum('interest'),
+    };
+  }, [filteredUpdates]);
+
+  const colSpan = 17 + (canDeleteGSTRows ? 1 : 0);
+  const TH = 'sticky top-0 z-10 border-b border-r bg-muted px-2 py-1.5 text-left text-[13px] font-semibold text-muted-foreground whitespace-nowrap';
+  const CELL_INPUT = 'h-9 rounded-none border-0 bg-transparent px-2 text-sm md:text-sm shadow-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary focus-visible:ring-offset-0';
+  const CELL_SELECT = 'h-9 rounded-none border-0 bg-transparent px-2 text-sm shadow-none';
+  const FILTER_LABEL = 'text-[11px] font-medium text-muted-foreground';
+
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="space-y-1">
-        <PageHeader
-          title="GST Update Sheet"
-          subtitle="Track GST updates and changes"
-          icon={<ClipboardList className="h-6 w-6" />}
-          actions={
-            canEdit ? (
-              <>
-                <Button
-                  variant="outline"
-                  className="gap-2"
-                  onClick={() => {
-                    exportGSTUpdateToPDF(filteredUpdates, {
-                      client: filterClient ? clients.find(c => c.id === filterClient)?.name : undefined,
-                      updateEffectMonth: filterUpdateEffectMonth || undefined,
-                      effectMonth: filterEffectMonth || undefined,
-                    });
-                    toast.success('PDF exported successfully');
-                  }}
-                >
-                  <FileText className="h-4 w-4" />
-                  Export PDF
-                </Button>
-                {canViewVersions && (
-                  <Button variant="outline" className="gap-2" onClick={() => setShowVersionHistory(true)}>
-                    <History className="h-4 w-4" />
-                    View Versions
-                  </Button>
-                )}
-                <Button onClick={handleAddRow} variant="outline" className="gap-2">
-                  <Plus className="h-4 w-4" />
-                  Add Row
-                </Button>
-                <Button onClick={handleSave} disabled={isSaving || !hasChanges} className="gap-2">
-                  {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  Save Changes
-                </Button>
-              </>
-            ) : undefined
-          }
-        />
-        {lastSavedBy && (
-          <p className="text-xs text-muted-foreground">
-            Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
-            {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
-            {' '}on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-            {' '}• v{lastSavedBy.version}
-          </p>
+    <div className="space-y-3 animate-fade-in">
+      {/* One compact row: what this is, save state, and the sheet's actions (the bell is fixed top-right). */}
+      <div className="flex flex-wrap items-center gap-2 md:pr-12">
+        <div className="mr-auto flex min-w-0 items-center gap-2">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary"><ClipboardList className="h-4 w-4" /></div>
+          <h1 className="truncate font-heading text-lg font-bold leading-tight">
+            GST Update Sheet <span className="font-semibold text-muted-foreground">· corrections to carry into returns</span>
+          </h1>
+        </div>
+        <SaveState isSaving={isSaving} hasChanges={hasChanges} lastSavedBy={lastSavedBy} />
+        {canEdit && (
+          <div className="flex flex-wrap items-center gap-2">
+            {canViewVersions && (
+              <Button variant="outline" size="sm" className="h-8 gap-1 px-2.5 text-xs" onClick={() => setShowVersionHistory(true)} aria-label="Version history">
+                <History className="h-3.5 w-3.5" /> <span className="hidden sm:inline">History</span>
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1 px-2.5 text-xs"
+              onClick={() => {
+                exportGSTUpdateToPDF(filteredUpdates, {
+                  client: filterClient ? clients.find(c => c.id === filterClient)?.name : undefined,
+                  updateEffectMonth: filterUpdateEffectMonth || undefined,
+                  effectMonth: filterEffectMonth || undefined,
+                });
+                toast.success('PDF exported successfully');
+              }}
+            >
+              <FileText className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Export PDF</span>
+            </Button>
+            <Button variant="outline" size="sm" className="h-8 gap-1 px-2.5 text-xs" onClick={handleAddRow}>
+              <Plus className="h-3.5 w-3.5" /> Add row
+            </Button>
+            <Button size="sm" className="h-8 gap-1 px-3 text-xs" onClick={handleSave} disabled={isSaving || !hasChanges}>
+              {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              Save changes
+            </Button>
+          </div>
         )}
       </div>
 
-      {/* Filters */}
+      {/* Headline tiles for the rows in view; the status tiles double as the status filter. */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+        <TileButton active={!filterStatus} onClick={() => setFilterStatus('')} title="Show all rows">
+          <KpiTile label="Rows in view" value={stats.total} hint={activeFilterCount ? `${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'} on` : 'No filters'} />
+        </TileButton>
+        <TileButton active={filterStatus === 'pending'} onClick={() => setFilterStatus(filterStatus === 'pending' ? '' : 'pending')} title="Show pending rows only">
+          <KpiTile label="Pending" value={stats.pending} hint="Effect not yet given" tone={stats.pending ? 'warn' : 'ok'} />
+        </TileButton>
+        <TileButton active={filterStatus === 'given'} onClick={() => setFilterStatus(filterStatus === 'given' ? '' : 'given')} title="Show given rows only">
+          <KpiTile label="Effect given" value={stats.given} hint="Remarks written and ticked" tone={stats.given ? 'ok' : 'neutral'} />
+        </TileButton>
+        <KpiTile label="ITC Sr No. not picked" value={stats.missingSrNo} hint="Claim / reversal / reclaim rows with remarks — required when such a row is edited" tone={stats.missingSrNo ? 'warn' : 'ok'} />
+        <KpiTile
+          label="Tax effect · CGST + SGST + IGST"
+          value={<Money value={stats.cgst + stats.sgst + stats.igst} />}
+          hint={`Taxable ${fmtMoney(stats.taxable)} · Interest ${fmtMoney(stats.interest)}`}
+        />
+      </div>
+
+      {/* Filters: one labelled toolbar. */}
       <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Update Effect Month:</span>
-              <div className="w-32">
-                <SearchableMonthSelect
-                  options={monthOptions}
-                  value={filterUpdateEffectMonth}
-                  onValueChange={setFilterUpdateEffectMonth}
-                  placeholder="All"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Mistake Month:</span>
-              <div className="w-32">
-                <SearchableMonthSelect
-                  options={monthOptions}
-                  value={filterEffectMonth}
-                  onValueChange={setFilterEffectMonth}
-                  placeholder="All"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Client:</span>
-              <div className="w-48">
-                <SearchableSelect
-                  options={[{ value: '', label: 'All Clients' }, ...clients.map(c => ({ value: c.id, label: c.name }))]}
-                  value={filterClient}
-                  onValueChange={setFilterClient}
-                  placeholder="All Clients"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Return:</span>
+        <CardContent className="px-3 py-2">
+          <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-[repeat(7,minmax(0,1fr))_auto]">
+            <label className="min-w-0 space-y-0.5">
+              <span className={FILTER_LABEL}>Client</span>
+              <SearchableSelect
+                options={[{ value: '', label: 'All clients' }, ...clients.map(c => ({ value: c.id, label: c.name, sublabel: c.gstin }))]}
+                value={filterClient}
+                onValueChange={setFilterClient}
+                placeholder="All clients"
+                searchPlaceholder="Search client or GSTIN…"
+                className="h-8 text-xs"
+              />
+            </label>
+            <label className="min-w-0 space-y-0.5">
+              <span className={FILTER_LABEL}>Update effect month</span>
+              <SearchableMonthSelect options={monthOptions} value={filterUpdateEffectMonth} onValueChange={setFilterUpdateEffectMonth} placeholder="All" className="h-8 text-xs" />
+            </label>
+            <label className="min-w-0 space-y-0.5">
+              <span className={FILTER_LABEL}>Mistake month</span>
+              <SearchableMonthSelect options={monthOptions} value={filterEffectMonth} onValueChange={setFilterEffectMonth} placeholder="All" className="h-8 text-xs" />
+            </label>
+            <label className="min-w-0 space-y-0.5">
+              <span className={FILTER_LABEL}>Return</span>
               <Select value={filterReturn || '__all__'} onValueChange={(val) => setFilterReturn(val === '__all__' ? '' : val)}>
-                <SelectTrigger className="w-32">
-                  <SelectValue placeholder="All" />
-                </SelectTrigger>
+                <SelectTrigger className="h-8 text-xs" aria-label="Return"><SelectValue placeholder="All" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">All</SelectItem>
-                  {RETURN_OPTIONS.map(opt => (
-                    <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                  ))}
+                  {RETURN_OPTIONS.map(opt => <SelectItem key={opt} value={opt}>{opt}</SelectItem>)}
                 </SelectContent>
               </Select>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Correction Type:</span>
+            </label>
+            <label className="min-w-0 space-y-0.5">
+              <span className={FILTER_LABEL}>Correction type</span>
               <Select value={filterUpdateType || '__all__'} onValueChange={(val) => setFilterUpdateType(val === '__all__' ? '' : val)}>
-                <SelectTrigger className="w-44">
-                  <SelectValue placeholder="All" />
-                </SelectTrigger>
+                <SelectTrigger className="h-8 text-xs" aria-label="Correction type"><SelectValue placeholder="All" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">All</SelectItem>
-                  {UPDATE_TYPE_OPTIONS.map(opt => (
-                    <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                  ))}
+                  {UPDATE_TYPE_OPTIONS.map(opt => <SelectItem key={opt} value={opt}>{opt}</SelectItem>)}
                 </SelectContent>
               </Select>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Instructions By:</span>
-              <div className="w-48">
-                <SearchableSelect
-                  options={[{ value: '', label: 'All' }, ...staffUsers.map(u => ({ value: u.id, label: u.name, sublabel: u.role }))]}
-                  value={filterInstructionsBy}
-                  onValueChange={setFilterInstructionsBy}
-                  placeholder="All"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Status:</span>
+            </label>
+            <label className="min-w-0 space-y-0.5">
+              <span className={FILTER_LABEL}>Instructions by</span>
+              <SearchableSelect
+                options={[{ value: '', label: 'All' }, ...staffUsers.map(u => ({ value: u.id, label: u.name, sublabel: u.role }))]}
+                value={filterInstructionsBy}
+                onValueChange={setFilterInstructionsBy}
+                placeholder="All"
+                className="h-8 text-xs"
+              />
+            </label>
+            <label className="min-w-0 space-y-0.5">
+              <span className={FILTER_LABEL}>Status</span>
               <Select value={filterStatus || '__all__'} onValueChange={(val) => setFilterStatus(val === '__all__' ? '' : (val as 'pending' | 'given'))}>
-                <SelectTrigger className="w-36">
-                  <SelectValue placeholder="All" />
-                </SelectTrigger>
+                <SelectTrigger className="h-8 text-xs" aria-label="Status"><SelectValue placeholder="All" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">All</SelectItem>
                   <SelectItem value="pending">Pending</SelectItem>
                   <SelectItem value="given">Given</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
-
-            {(filterClient || filterUpdateEffectMonth || filterEffectMonth || filterReturn || filterUpdateType || filterInstructionsBy || filterStatus) && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setFilterClient('');
-                  setFilterUpdateEffectMonth('');
-                  setFilterEffectMonth('');
-                  setFilterReturn('');
-                  setFilterUpdateType('');
-                  setFilterInstructionsBy('');
-                  setFilterStatus('');
-                }}
-              >
-                Clear Filters
-              </Button>
-            )}
+            </label>
+            <Button variant="ghost" size="sm" className="h-8 gap-1 px-2 text-xs" onClick={clearFilters} disabled={!activeFilterCount}>
+              <X className="h-3.5 w-3.5" /> Clear
+            </Button>
           </div>
         </CardContent>
       </Card>
+
+      <Note>
+        Pending rows float to the top. Tick <span className="font-medium">Given</span> once the remarks say how the effect was carried into the return. Claim, reversal and reclaim rows also need the ITC Summary section and row (ITC Sr No.) once remarks are written — that cell is tinted red until it is picked, and a new or edited row can't be saved without it.
+      </Note>
 
       {/* Version History Dialog */}
       <GenericVersionHistoryDialog
@@ -764,306 +767,280 @@ const GSTRunningUpdatePage: React.FC = () => {
         tableName="gst_update_versions"
       />
 
-      {/* Data Table */}
-      <Card>
-        <CardContent className="p-4">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
-          ) : (
-             <ScrollArea className="w-full max-h-[70vh]">
-              <div className="min-w-[1600px]">
-                <Table className="table-fixed">
-                  <colgroup>
-                    <col style={{ width: columnWidths['sr'] || 48 }} />
-                    <col style={{ width: columnWidths['client'] || 160 }} />
-                    <col style={{ width: columnWidths['mistake'] || 96 }} />
-                    <col style={{ width: columnWidths['effect'] || 112 }} />
-                    <col style={{ width: columnWidths['return'] || 112 }} />
-                    <col style={{ width: columnWidths['type'] || 144 }} />
-                    <col style={{ width: columnWidths['instructions'] || 128 }} />
-                    <col style={{ width: columnWidths['brief'] || 250 }} />
-                    <col style={{ width: columnWidths['taxable'] || 96 }} />
-                    <col style={{ width: columnWidths['cgst'] || 100 }} />
-                    <col style={{ width: columnWidths['sgst'] || 100 }} />
-                    <col style={{ width: columnWidths['igst'] || 100 }} />
-                    <col style={{ width: columnWidths['interest'] || 80 }} />
-                    <col style={{ width: columnWidths['remarks'] || 200 }} />
-                    <col style={{ width: columnWidths['itcsr'] || 180 }} />
-                    <col style={{ width: columnWidths['check'] || 40 }} />
-                    {canDeleteGSTRows && <col style={{ width: columnWidths['delete'] || 48 }} />}
-                    <col style={{ width: 40 }} />
-                  </colgroup>
-                  <TableHeader>
-                    <TableRow className="bg-primary hover:bg-primary">
-                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">Sr.No.<ResizeHandle colKey="sr" /></TableHead>
-                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">CLIENT<ResizeHandle colKey="client" /></TableHead>
-                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">Mistake Month<ResizeHandle colKey="mistake" /></TableHead>
-                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">Update Effect Month<ResizeHandle colKey="effect" /></TableHead>
-                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">Update in GSTR<ResizeHandle colKey="return" /></TableHead>
-                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">Correction Type<ResizeHandle colKey="type" /></TableHead>
-                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">Instructions By<ResizeHandle colKey="instructions" /></TableHead>
-                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">Matter Brief<ResizeHandle colKey="brief" /></TableHead>
-                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-right relative">Taxable Value<ResizeHandle colKey="taxable" /></TableHead>
-                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-right relative">CGST<ResizeHandle colKey="cgst" /></TableHead>
-                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-right relative">SGST<ResizeHandle colKey="sgst" /></TableHead>
-                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-right relative">IGST<ResizeHandle colKey="igst" /></TableHead>
-                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-right relative">Interest<ResizeHandle colKey="interest" /></TableHead>
-                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">Remarks<ResizeHandle colKey="remarks" /></TableHead>
-                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary relative">ITC Sr No.<ResizeHandle colKey="itcsr" /></TableHead>
-                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-center relative">✓<ResizeHandle colKey="check" /></TableHead>
-                      {canDeleteGSTRows && <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary"></TableHead>}
-                      <TableHead className="font-bold text-primary-foreground border border-primary-foreground/20 sticky top-0 z-10 bg-primary text-center">
-                        <Clock className="h-3.5 w-3.5 mx-auto" />
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredUpdates.map((update, index) => {
-                      const originalIndex = updates.indexOf(update);
-                      return (
-                        <TableRow key={update.id || `new-${index}`}>
-                          <TableCell className="border border-border text-center tabular-nums">{index + 1}</TableCell>
-                          <TableCell className="p-0 border border-border">
-                            {canEdit ? (
-                              <SearchableSelect
-                                options={clients.map(c => ({ value: c.id, label: c.name }))}
-                                value={update.client_id}
-                                onValueChange={(val) => handleFieldChange(originalIndex, 'client_id', val)}
-                                placeholder="Select..."
-                              />
-                            ) : (
-                              <span className="px-2">{update.client_name}</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="p-0 border border-border">
-                            {canEdit ? (
-                              <SearchableMonthSelect
-                                options={effectMonthOptions}
-                                value={update.effect_month === '' ? '__blank__' : update.effect_month}
-                                onValueChange={(val) => handleFieldChange(originalIndex, 'effect_month', val === '__blank__' ? '' : val)}
-                                placeholder="Select..."
-                              />
-                            ) : (
-                              <span className="px-2">{update.effect_month || '(Blank)'}</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="p-0 border border-border">
-                            {canEdit ? (
-                              <SearchableMonthSelect
-                                options={monthOptions}
-                                value={update.update_effect_month}
-                                onValueChange={(val) => handleFieldChange(originalIndex, 'update_effect_month', val)}
-                                placeholder="Select..."
-                              />
-                            ) : (
-                              <span className="px-2">{update.update_effect_month}</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="p-0 border border-border">
-                            {canEdit ? (
-                              <Select
-                                value={update.update_in_return}
-                                onValueChange={(val) => handleFieldChange(originalIndex, 'update_in_return', val)}
-                              >
-                                <SelectTrigger className="border-0 shadow-none">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {RETURN_OPTIONS.map(opt => (
-                                    <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            ) : (
-                              <span className="px-2">{update.update_in_return}</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="p-0 border border-border">
-                            {canEdit ? (
-                              <Select
-                                value={update.update_type}
-                                onValueChange={(val) => handleFieldChange(originalIndex, 'update_type', val)}
-                              >
-                                <SelectTrigger className="border-0 shadow-none w-full">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {UPDATE_TYPE_OPTIONS.map(opt => (
-                                    <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            ) : (
-                              <span className="px-2">{update.update_type}</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="p-0 border border-border">
-                            {canEdit ? (
-                              <SearchableSelect
-                                options={staffUsers.map(u => ({ value: u.id, label: u.name, sublabel: u.role }))}
-                                value={update.instructions_by_employee_id}
-                                onValueChange={(val) => {
-                                  const staffUser = staffUsers.find(u => u.id === val);
-                                  handleFieldChange(originalIndex, 'instructions_by_employee_id', val);
-                                  handleFieldChange(originalIndex, 'update_instructions_by', staffUser?.name || '');
-                                }}
-                                placeholder="Select..."
-                              />
-                            ) : (
-                              <span className="px-2">{update.update_instructions_by}</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="p-0 border border-border">
-                            <Input
-                              value={update.matter_brief}
-                              onChange={(e) => handleFieldChange(originalIndex, 'matter_brief', e.target.value)}
-                              className="h-8 border-0 shadow-none"
-                              disabled={!canEdit}
-                            />
-                          </TableCell>
-                          <TableCell className="p-0 border border-border">
-                            <Input
-                              type="number"
-                              value={update.taxable_value || ''}
-                              onChange={(e) => handleFieldChange(originalIndex, 'taxable_value', parseFloat(e.target.value) || 0)}
-                              className="h-8 text-right tabular-nums border-0 shadow-none"
-                              disabled={!canEdit}
-                            />
-                          </TableCell>
-                          <TableCell className="p-0 border border-border">
-                            <Input
-                              type="number"
-                              value={update.cgst || ''}
-                              onChange={(e) => handleFieldChange(originalIndex, 'cgst', parseFloat(e.target.value) || 0)}
-                              className="h-8 text-right tabular-nums border-0 shadow-none"
-                              disabled={!canEdit}
-                            />
-                          </TableCell>
-                          <TableCell className="p-0 border border-border">
-                            <Input
-                              type="number"
-                              value={update.sgst || ''}
-                              onChange={(e) => handleFieldChange(originalIndex, 'sgst', parseFloat(e.target.value) || 0)}
-                              className="h-8 text-right tabular-nums border-0 shadow-none"
-                              disabled={!canEdit}
-                            />
-                          </TableCell>
-                          <TableCell className="p-0 border border-border">
-                            <Input
-                              type="number"
-                              value={update.igst || ''}
-                              onChange={(e) => handleFieldChange(originalIndex, 'igst', parseFloat(e.target.value) || 0)}
-                              className="h-8 text-right tabular-nums border-0 shadow-none"
-                              disabled={!canEdit}
-                            />
-                          </TableCell>
-                          <TableCell className="p-0 border border-border">
-                            <Input
-                              type="number"
-                              value={update.interest || ''}
-                              onChange={(e) => handleFieldChange(originalIndex, 'interest', parseFloat(e.target.value) || 0)}
-                              className="h-8 text-right tabular-nums border-0 shadow-none"
-                              disabled={!canEdit}
-                            />
-                          </TableCell>
-                          <TableCell className="p-0 border border-border min-w-[150px]">
-                            <textarea
-                              value={update.remarks}
-                              onChange={(e) => handleFieldChange(originalIndex, 'remarks', e.target.value)}
-                              className="w-full min-h-[32px] max-h-[80px] text-xs px-2 py-1 border-0 shadow-none bg-transparent resize-y"
-                              disabled={!canEdit}
-                            />
-                          </TableCell>
-                          <TableCell className="p-0 border border-border align-top">
-                            {(() => {
-                              const needsItcSrNo = ITC_SR_NO_REQUIRED_TYPES.includes(update.update_type)
-                                && !!(update.remarks && update.remarks.trim().length > 0)
-                                && (!update.itc_section || !update.itc_sr_no);
-                              if (!canEdit) {
-                                return <span className="px-2 text-xs">{update.itc_section && update.itc_sr_no ? `${update.itc_section} ${update.itc_sr_no}` : ''}</span>;
-                              }
-                              return (
-                                <div className={`flex flex-col gap-1 p-1 ${needsItcSrNo ? 'bg-destructive/5' : ''}`}>
-                                  <Select value={update.itc_section} onValueChange={(val) => handleItcSectionChange(originalIndex, val)}>
-                                    <SelectTrigger className="h-7 text-xs w-full"><SelectValue placeholder="Section" /></SelectTrigger>
-                                    <SelectContent>
-                                      {ITC_SECTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                                    </SelectContent>
-                                  </Select>
-                                  <Select
-                                    value={update.itc_sr_no}
-                                    onValueChange={(val) => handleFieldChange(originalIndex, 'itc_sr_no', val)}
-                                    disabled={!update.itc_section}
-                                  >
-                                    <SelectTrigger className="h-7 text-xs w-full"><SelectValue placeholder="Sr No" /></SelectTrigger>
-                                    <SelectContent>
-                                      {(ITC_SR_NO_BY_SECTION[update.itc_section] || []).map(o => (
-                                        <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                              );
-                            })()}
-                          </TableCell>
-                          <TableCell className="border border-border text-center">
-                            <Checkbox
-                              checked={update.remarks_checked}
-                              onCheckedChange={(checked) => handleFieldChange(originalIndex, 'remarks_checked', !!checked)}
-                              disabled={!canEdit}
-                            />
-                          </TableCell>
-                          {canDeleteGSTRows && (
-                            <TableCell className="border border-border text-center">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleDeleteRow(originalIndex)}
-                                aria-label="Delete row"
-                                className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </TableCell>
-                          )}
-                          <TableCell className="border border-border text-center">
-                            {update.id && !update.isNew && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  setRowHistoryId(update.id!);
-                                  setRowHistoryLabel(update.client_name || '');
-                                }}
-                                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
-                                aria-label="View row change history"
-                                title="View row change history"
-                              >
-                                <Clock className="h-3.5 w-3.5" />
-                              </Button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                    {filteredUpdates.length === 0 && (
-                      <TableEmptyState
-                        colSpan={canDeleteGSTRows ? 17 : 16}
-                        icon={<ClipboardList className="h-6 w-6" />}
-                        title="No records found"
-                        description={isStaff ? 'Click "Add Row" to create a new entry.' : undefined}
-                      />
+      {/* Data table */}
+      {isLoading ? (
+        <Card>
+          <CardContent className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading updates…
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="relative max-h-[70vh] overflow-auto rounded-md border bg-card">
+          <table className="w-full min-w-[1650px] table-fixed border-separate border-spacing-0 text-sm" aria-label="GST update sheet">
+            <colgroup>
+              <col style={{ width: columnWidths['sr'] || 48 }} />
+              <col style={{ width: columnWidths['client'] || 180 }} />
+              <col style={{ width: columnWidths['mistake'] || 104 }} />
+              <col style={{ width: columnWidths['effect'] || 136 }} />
+              <col style={{ width: columnWidths['return'] || 112 }} />
+              <col style={{ width: columnWidths['type'] || 150 }} />
+              <col style={{ width: columnWidths['instructions'] || 128 }} />
+              <col style={{ width: columnWidths['brief'] || 250 }} />
+              <col style={{ width: columnWidths['taxable'] || 110 }} />
+              <col style={{ width: columnWidths['cgst'] || 100 }} />
+              <col style={{ width: columnWidths['sgst'] || 100 }} />
+              <col style={{ width: columnWidths['igst'] || 100 }} />
+              <col style={{ width: columnWidths['interest'] || 90 }} />
+              <col style={{ width: columnWidths['remarks'] || 220 }} />
+              <col style={{ width: columnWidths['itcsr'] || 180 }} />
+              <col style={{ width: columnWidths['check'] || 104 }} />
+              {canDeleteGSTRows && <col style={{ width: 36 }} />}
+              <col style={{ width: 36 }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th className={cn(TH, 'text-center')}>No.<ResizeHandle colKey="sr" /></th>
+                <th className={TH}>Client<ResizeHandle colKey="client" /></th>
+                <th className={TH}>Mistake month<ResizeHandle colKey="mistake" /></th>
+                <th className={TH}>Update effect month<ResizeHandle colKey="effect" /></th>
+                <th className={TH}>Update in GSTR<ResizeHandle colKey="return" /></th>
+                <th className={TH}>Correction type<ResizeHandle colKey="type" /></th>
+                <th className={TH}>Instructions by<ResizeHandle colKey="instructions" /></th>
+                <th className={TH}>Matter brief<ResizeHandle colKey="brief" /></th>
+                <th className={cn(TH, 'text-right')}>Taxable value<ResizeHandle colKey="taxable" /></th>
+                <th className={cn(TH, 'text-right')}>CGST<ResizeHandle colKey="cgst" /></th>
+                <th className={cn(TH, 'text-right')}>SGST<ResizeHandle colKey="sgst" /></th>
+                <th className={cn(TH, 'text-right')}>IGST<ResizeHandle colKey="igst" /></th>
+                <th className={cn(TH, 'text-right')}>Interest<ResizeHandle colKey="interest" /></th>
+                <th className={TH}>Remarks<ResizeHandle colKey="remarks" /></th>
+                <th className={TH}>ITC Sr No.<ResizeHandle colKey="itcsr" /></th>
+                <th className={cn(TH, 'text-center')}>Status<ResizeHandle colKey="check" /></th>
+                {canDeleteGSTRows && <th className={TH} aria-label="Delete row" />}
+                <th className={cn(TH, 'border-r-0 text-center')} aria-label="Row history"><Clock className="mx-auto h-3.5 w-3.5" /></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredUpdates.map((update, index) => {
+                const originalIndex = updates.indexOf(update);
+                const missingSr = needsItcSrNo(update);
+                return (
+                  <tr
+                    key={update.id || `new-${index}`}
+                    className={cn(
+                      'group transition-colors hover:bg-muted/30',
+                      update.isNew && 'bg-info/5',
                     )}
-                  </TableBody>
-                </Table>
-              </div>
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
-          )}
-        </CardContent>
-      </Card>
+                  >
+                    <td className="border-b border-r px-2 text-center tabular-nums text-muted-foreground">{index + 1}</td>
+                    <td className="border-b border-r p-0">
+                      {canEdit ? (
+                        <SearchableSelect
+                          options={clients.map(c => ({ value: c.id, label: c.name, sublabel: c.gstin }))}
+                          value={update.client_id}
+                          onValueChange={(val) => handleFieldChange(originalIndex, 'client_id', val)}
+                          placeholder="Select…"
+                          searchPlaceholder="Search client or GSTIN…"
+                          className={CELL_SELECT}
+                        />
+                      ) : (
+                        <span className="block truncate px-2">{update.client_name}</span>
+                      )}
+                    </td>
+                    <td className="border-b border-r p-0">
+                      {canEdit ? (
+                        <SearchableMonthSelect
+                          options={effectMonthOptions}
+                          value={update.effect_month === '' ? '__blank__' : update.effect_month}
+                          onValueChange={(val) => handleFieldChange(originalIndex, 'effect_month', val === '__blank__' ? '' : val)}
+                          placeholder="Select…"
+                          className={CELL_SELECT}
+                        />
+                      ) : (
+                        <span className="px-2">{update.effect_month || <span className="text-muted-foreground">—</span>}</span>
+                      )}
+                    </td>
+                    <td className="border-b border-r p-0">
+                      {canEdit ? (
+                        <SearchableMonthSelect
+                          options={monthOptions}
+                          value={update.update_effect_month}
+                          onValueChange={(val) => handleFieldChange(originalIndex, 'update_effect_month', val)}
+                          placeholder="Select…"
+                          className={cn(CELL_SELECT, !update.update_effect_month && 'text-destructive-strong')}
+                        />
+                      ) : (
+                        <span className="px-2">{update.update_effect_month}</span>
+                      )}
+                    </td>
+                    <td className="border-b border-r p-0">
+                      {canEdit ? (
+                        <Select value={update.update_in_return} onValueChange={(val) => handleFieldChange(originalIndex, 'update_in_return', val)}>
+                          <SelectTrigger className={CELL_SELECT}><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {RETURN_OPTIONS.map(opt => <SelectItem key={opt} value={opt}>{opt}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <span className="px-2">{update.update_in_return}</span>
+                      )}
+                    </td>
+                    <td className="border-b border-r p-0">
+                      {canEdit ? (
+                        <Select value={update.update_type} onValueChange={(val) => handleFieldChange(originalIndex, 'update_type', val)}>
+                          <SelectTrigger className={cn(CELL_SELECT, 'w-full')}><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {UPDATE_TYPE_OPTIONS.map(opt => <SelectItem key={opt} value={opt}>{opt}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <span className="px-2">{update.update_type}</span>
+                      )}
+                    </td>
+                    <td className="border-b border-r p-0">
+                      {canEdit ? (
+                        <SearchableSelect
+                          options={staffUsers.map(u => ({ value: u.id, label: u.name, sublabel: u.role }))}
+                          value={update.instructions_by_employee_id}
+                          onValueChange={(val) => {
+                            const staffUser = staffUsers.find(u => u.id === val);
+                            handleFieldChange(originalIndex, 'instructions_by_employee_id', val);
+                            handleFieldChange(originalIndex, 'update_instructions_by', staffUser?.name || '');
+                          }}
+                          placeholder="Select…"
+                          className={CELL_SELECT}
+                        />
+                      ) : (
+                        <span className="px-2">{update.update_instructions_by}</span>
+                      )}
+                    </td>
+                    <td className="border-b border-r p-0">
+                      <Input
+                        value={update.matter_brief}
+                        onChange={(e) => handleFieldChange(originalIndex, 'matter_brief', e.target.value)}
+                        className={CELL_INPUT}
+                        disabled={!canEdit}
+                        aria-label="Matter brief"
+                      />
+                    </td>
+                    {(['taxable_value', 'cgst', 'sgst', 'igst', 'interest'] as const).map((k) => (
+                      <td key={k} className="border-b border-r p-0">
+                        <Input
+                          type="number"
+                          value={update[k] || ''}
+                          onChange={(e) => handleFieldChange(originalIndex, k, parseFloat(e.target.value) || 0)}
+                          className={cn(CELL_INPUT, 'text-right tabular-nums', update[k] < 0 && 'text-destructive-strong')}
+                          disabled={!canEdit}
+                          aria-label={k === 'taxable_value' ? 'Taxable value' : k.toUpperCase()}
+                        />
+                      </td>
+                    ))}
+                    <td className="border-b border-r p-0">
+                      <textarea
+                        value={update.remarks}
+                        onChange={(e) => handleFieldChange(originalIndex, 'remarks', e.target.value)}
+                        className="block min-h-[36px] max-h-[96px] w-full resize-y [field-sizing:content] border-0 bg-transparent px-2 py-1.5 text-sm leading-snug shadow-none outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={!canEdit}
+                        placeholder={canEdit ? 'How the effect was given…' : undefined}
+                        rows={1}
+                        aria-label="Remarks"
+                      />
+                    </td>
+                    <td className={cn('border-b border-r p-0', missingSr && 'bg-destructive/5')}>
+                      {!canEdit ? (
+                        <span className="px-2">{update.itc_section && update.itc_sr_no ? `${update.itc_section} ${update.itc_sr_no}` : ''}</span>
+                      ) : (
+                        <div className="flex gap-1 p-1">
+                          <Select value={update.itc_section} onValueChange={(val) => handleItcSectionChange(originalIndex, val)}>
+                            <SelectTrigger className={cn('h-7 w-16 shrink-0 px-2 text-xs', missingSr && !update.itc_section && 'border-destructive')} aria-label="ITC section">
+                              <SelectValue placeholder="Sec." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {ITC_SECTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                          <Select value={update.itc_sr_no} onValueChange={(val) => handleFieldChange(originalIndex, 'itc_sr_no', val)} disabled={!update.itc_section}>
+                            <SelectTrigger className={cn('h-7 min-w-0 flex-1 px-2 text-xs', missingSr && update.itc_section && 'border-destructive')} aria-label="ITC Sr No">
+                              <SelectValue placeholder="Sr No" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {(ITC_SR_NO_BY_SECTION[update.itc_section] || []).map(o => (
+                                <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                    </td>
+                    <td className="border-b border-r px-2">
+                      <label className="flex items-center justify-center gap-1.5">
+                        <Checkbox
+                          checked={update.remarks_checked}
+                          onCheckedChange={(checked) => handleFieldChange(originalIndex, 'remarks_checked', !!checked)}
+                          disabled={!canEdit}
+                          aria-label="Effect given"
+                        />
+                        <Badge variant={update.remarks_checked ? 'success' : 'warning'} className="gap-1 whitespace-nowrap px-1.5 text-[10px] font-medium">
+                          {update.remarks_checked ? <CheckCircle2 className="h-3 w-3" /> : <CircleDot className="h-3 w-3" />}
+                          {update.remarks_checked ? 'Given' : 'Pending'}
+                        </Badge>
+                      </label>
+                    </td>
+                    {canDeleteGSTRows && (
+                      <td className="border-b border-r px-1 text-center">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRow(originalIndex)}
+                          aria-label="Delete row"
+                          title="Delete row"
+                          className="rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive-strong focus:opacity-100 group-hover:opacity-100"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
+                    )}
+                    <td className="border-b px-1 text-center">
+                      {update.id && !update.isNew && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRowHistoryId(update.id!);
+                            setRowHistoryLabel(update.client_name || '');
+                          }}
+                          aria-label="View row change history"
+                          title="View row change history"
+                          className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        >
+                          <Clock className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {filteredUpdates.length === 0 && (
+                <tr>
+                  <td colSpan={colSpan} className="px-3 py-10 text-center text-muted-foreground">
+                    <ClipboardList className="mx-auto mb-1.5 h-5 w-5" />
+                    <div className="font-medium text-foreground">No records found</div>
+                    {activeFilterCount ? 'No row matches the filters.' : canEdit ? 'Click “Add row” to create a new entry.' : null}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+            {filteredUpdates.length > 0 && (
+              <tfoot className="sticky bottom-0 z-10">
+                <tr className="bg-muted font-semibold">
+                  <td colSpan={8} className="h-8 border-t border-r px-2">Total · {stats.total} row{stats.total === 1 ? '' : 's'} in view</td>
+                  {([stats.taxable, stats.cgst, stats.sgst, stats.igst, stats.interest]).map((v, i) => (
+                    <td key={i} className="h-8 border-t border-r px-2 text-right whitespace-nowrap"><Money value={v} signed /></td>
+                  ))}
+                  <td colSpan={colSpan - 13} className="h-8 border-t" />
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      )}
 
       {/* Row Version History Dialog */}
       <RowVersionHistoryDialog
@@ -1073,6 +1050,42 @@ const GSTRunningUpdatePage: React.FC = () => {
         rowLabel={rowHistoryLabel}
       />
     </div>
+  );
+};
+
+/** A KPI tile that also acts as a filter toggle. */
+const TileButton: React.FC<{ active: boolean; onClick: () => void; title: string; children: React.ReactNode }> = ({ active, onClick, title, children }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={title}
+    aria-pressed={active}
+    className={cn(
+      'rounded-lg text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:h-full',
+      active && 'ring-2 ring-primary/60',
+    )}
+  >
+    {children}
+  </button>
+);
+
+/** Save state, in the Annual Return workspace's words: unsaved edits outrank the last save. */
+const SaveState: React.FC<{
+  isSaving: boolean;
+  hasChanges: boolean;
+  lastSavedBy: { name: string; role: string; time: string; version: number } | null;
+}> = ({ isSaving, hasChanges, lastSavedBy }) => {
+  if (isSaving) return <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</span>;
+  if (hasChanges) return <span className="inline-flex items-center gap-1 rounded-full bg-warning/20 px-2 py-0.5 text-xs font-medium text-foreground"><AlertCircle className="h-3.5 w-3.5 text-warning" /> Unsaved changes</span>;
+  if (!lastSavedBy) return null;
+  const at = new Date(lastSavedBy.time);
+  const when = `${at.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} ${at.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`;
+  const full = `Saved by ${lastSavedBy.name}${lastSavedBy.role ? ` (${lastSavedBy.role})` : ''} on ${when} · v${lastSavedBy.version}`;
+  return (
+    <span title={full} className="inline-flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+      <Check className="h-3.5 w-3.5 shrink-0 text-success-strong" />
+      <span className="truncate">Saved by <span className="font-medium text-foreground">{lastSavedBy.name}</span> · {when} · v{lastSavedBy.version}</span>
+    </span>
   );
 };
 

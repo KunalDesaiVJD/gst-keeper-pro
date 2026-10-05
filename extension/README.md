@@ -14,6 +14,12 @@ Your browser (normal IP) ──logs in + reads──▶ GST portal
 - Logs into the portal for a chosen client (you type the CAPTCHA once, in an overlay).
 - Pulls **Filing status** (ARN + filed date + status → `filing_status`).
 - Pulls **Credit-ledger opening balance** (per head → Suspended Reco / GST Receivable Reco).
+- For the **Annual Return (GSTR-9 / 9C)** workspace (Portal data step):
+  - **As-filed GSTR-3B**, all 12 months of a year in one login (`gstr3b_pull`);
+  - **GSTR-9 system-computed** figures (`gstr9_pull`, v0.3.3+) — the portal's own
+    `returns2/auth/api/gstr9/details/calc`, saved raw as `GSTR9_CALC`. Read-only
+    (GET); not yet confirmed against a live return — if it fails, upload the JSON
+    saved from the portal instead.
 - *(GSTR-2B pull is the next addition — it needs file-download handling.)*
 
 ## Install it once per browser (free, ~1 minute)

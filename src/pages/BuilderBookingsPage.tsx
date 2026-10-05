@@ -7,7 +7,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile } from '@/components/gstr9/ui';
+import {
+  WS_BTN, WS_PAGE, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR, WS_TR_TOTAL,
+} from '@/components/workspace/theme';
+import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -18,9 +23,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import {
-  Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table';
+
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { toast } from 'sonner';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -31,7 +34,7 @@ import {
 import BuilderProjectDetailPage from './BuilderProjectDetailPage';
 import BuilderAdjustmentsPage from './BuilderAdjustmentsPage';
 import BuilderDastavejPage from './BuilderDastavejPage';
-import { AFFORDABLE_VALUE_LIMIT } from '@/utils/builderRates';
+import { AFFORDABLE_VALUE_LIMIT, formatCarpet } from '@/utils/builderRates';
 import BulkReceiptsDialog, { type BulkReceiptUnit } from '@/components/builder/BulkReceiptsDialog';
 import {
   ArrowLeft, Loader2, ChevronDown, ChevronRight, Plus, Receipt, FileText,
@@ -1343,61 +1346,63 @@ const BuilderBookingsPage: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="flex items-center gap-2 text-muted-foreground text-sm p-6">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading bookings…
-      </div>
+      <Card>
+        <CardContent className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading bookings…
+        </CardContent>
+      </Card>
     );
   }
   if (!project) return null;
 
   return (
-    <div className="space-y-6">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
+        embedded
         title={`${project.name} — Bookings & Receipts`}
         subtitle="Advances bear tax on receipt (Table 11A); milestone invoices absorb them (Table 11B)"
-        icon={<Receipt className="h-5 w-5" />}
+        icon={<Receipt />}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            {canEdit && bulkReceiptUnits.length > 0 && (
-              <Button onClick={() => setBulkReceipts(true)}>
-                <Wallet className="mr-2 h-4 w-4" /> Record receipts
-              </Button>
-            )}
-            <div className="flex rounded-md border p-0.5">
+            <div className="flex rounded-md border border-primary/20 bg-primary/[0.08] p-0.5" role="group" aria-label="View">
               <Button
-                variant={viewMode === 'upto' ? 'secondary' : 'ghost'} size="sm" className="h-8"
+                variant={viewMode === 'upto' ? 'default' : 'ghost'} size="sm" className="h-9 gap-1.5 px-4 text-sm"
+                aria-pressed={viewMode === 'upto'}
                 onClick={() => setViewMode('upto')}
                 title="Cumulative position as of the end of the selected period"
               >
-                <History className="mr-1.5 h-3.5 w-3.5" /> Up to {prettyPeriodLabel(selectedMonth)}
+                <History className="h-3.5 w-3.5" /> Up to {prettyPeriodLabel(selectedMonth)}
               </Button>
               <Button
-                variant={viewMode === 'month' ? 'secondary' : 'ghost'} size="sm" className="h-8"
+                variant={viewMode === 'month' ? 'default' : 'ghost'} size="sm" className="h-9 gap-1.5 px-4 text-sm"
+                aria-pressed={viewMode === 'month'}
                 onClick={() => setViewMode('month')}
                 title="Every receipt and invoice dated in this period, across all units — tally against your bank statement or Tally"
               >
-                <ListChecks className="mr-1.5 h-3.5 w-3.5" /> {prettyPeriodLabel(selectedMonth)} register
+                <ListChecks className="h-3.5 w-3.5" /> {prettyPeriodLabel(selectedMonth)} register
               </Button>
             </div>
             {viewMode === 'upto' && (
               <Button
-                variant={byHeadroom ? 'default' : 'outline'}
+                variant={byHeadroom ? 'secondary' : 'outline'} size="sm" className={WS_BTN}
+                aria-pressed={byHeadroom}
                 onClick={() => setByHeadroom((v) => !v)}
                 title="Put the units closest to the ₹45 lakh limit first"
               >
-                <ArrowUpDown className="mr-2 h-4 w-4" />
+                <ArrowUpDown className="h-3.5 w-3.5" />
                 ₹45L headroom
               </Button>
             )}
-            {viewMode === 'upto' && atRisk > 0 && (
-              <Badge variant="outline" className="gap-1 self-center border-amber-500/50 text-amber-700 dark:text-amber-500">
-                <AlertTriangle className="h-3 w-3" />
-                {atRisk} within ₹1 lakh of the limit
-              </Badge>
-            )}
+            
             {!embedded && (
-              <Button variant="outline" onClick={() => navigate(`/builder-projects/${projectId}`)}>
-                <ArrowLeft className="h-4 w-4 mr-2" /> Project
+              <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate(`/builder-projects/${projectId}`)}>
+                <ArrowLeft className="h-3.5 w-3.5" /> Project
+              </Button>
+            )}
+            {canEdit && bulkReceiptUnits.length > 0 && (
+              <Button size="sm" className={WS_BTN} onClick={() => setBulkReceipts(true)}>
+                <Wallet className="h-3.5 w-3.5" /> Record receipts
               </Button>
             )}
           </div>
@@ -1409,9 +1414,9 @@ const BuilderBookingsPage: React.FC = () => {
           is only visible in the brief window before that finishes, or if it
           failed and needs a manual look on the Adjustments tab. */}
       {canEdit && reRatingDue.length > 0 && (
-        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-400 bg-amber-50 px-3 py-2 text-amber-900">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          <span className="text-sm">
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-foreground">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" />
+          <span className="text-xs">
             <strong>{reRatingDue.length} unit{reRatingDue.length === 1 ? '' : 's'}</strong>
             {' '}crossed ₹45,00,000 while taxed as affordable
             {' '}({reRatingDue.map((u) => u.unit_no).join(', ')}). The concession never applied — everything
@@ -1419,7 +1424,7 @@ const BuilderBookingsPage: React.FC = () => {
             check the Adjustments tab.
           </span>
           <Button
-            variant="outline" size="sm" className="ml-auto h-7"
+            variant="outline" size="sm" className="ml-auto h-7 px-2 text-xs"
             onClick={() => setSurface({ type: 'corrections', unitId: reRatingDue[0].id, action: 'reRate' })}
           >
             View in Adjustments
@@ -1430,22 +1435,68 @@ const BuilderBookingsPage: React.FC = () => {
       {/* Appears only once something is selected, so it never occupies space
           during ordinary entry. */}
       {selected.size > 0 && (
-        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2">
-          <CheckSquare className="h-4 w-4 text-primary" />
-          <span className="text-sm font-medium">
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-primary/40 bg-primary/5 px-2.5 py-1">
+          <CheckSquare className="h-3.5 w-3.5 text-primary" />
+          <span className="text-xs font-medium">
             {selected.size} receipt{selected.size === 1 ? '' : 's'} selected
           </span>
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
-          <Button variant="destructive" size="sm" className="ml-auto" onClick={handleDeleteSelected}>
-            <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete selected
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => setSelected(new Set())}>Clear</Button>
+          <Button variant="destructive" size="sm" className="ml-auto h-7 gap-1 px-2.5 text-xs" onClick={handleDeleteSelected}>
+            <Trash2 className="h-3.5 w-3.5" /> Delete selected
           </Button>
         </div>
       )}
 
+      {viewMode === 'upto' && units.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+          <KpiTile
+            label="Units in view"
+            value={filteredUnits.length}
+            hint={filteredUnits.length === units.length ? 'No filters' : `of ${units.length} units`}
+          />
+          <KpiTile label="Agreement value" value={formatINR(unitTotals.agreement)} />
+          <KpiTile
+            label={`Value taxed · up to ${prettyPeriodLabel(selectedMonth)}`}
+            value={formatINR(unitTotals.closing)}
+            hint={`This period ${formatINR(unitTotals.received)}`}
+          />
+          <KpiTile label="Open advance" value={unitTotals.openAdvance > 0 ? formatINR(unitTotals.openAdvance) : '—'} />
+          <button
+            type="button"
+            onClick={() => setByHeadroom((v) => !v)}
+            title="Put the units closest to the ₹45 lakh limit first"
+            aria-pressed={byHeadroom}
+            className={cn(
+              'rounded-lg text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:h-full',
+              byHeadroom && 'ring-2 ring-primary/60',
+            )}
+          >
+            <KpiTile
+              label="Within ₹1 lakh of ₹45L"
+              value={atRisk}
+              hint={byHeadroom ? 'Sorted by headroom' : 'Click to sort by headroom'}
+              tone={atRisk ? 'warn' : 'neutral'}
+            />
+          </button>
+        </div>
+      )}
+      {viewMode === 'month' && monthRegisterGroups.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <KpiTile label="Units with postings" value={monthRegisterGroups.length} />
+          <KpiTile label="Bank amount" value={formatINR(registerTotals.bank)} hint="Tally against the statement" />
+          <KpiTile label="Taxable" value={formatINR(registerTotals.taxable)} />
+          <KpiTile
+            label="GST tax posted"
+            value={formatINR(registerTotals.cgst + registerTotals.sgst)}
+            hint={`CGST ${formatINR(registerTotals.cgst)} · SGST ${formatINR(registerTotals.sgst)}`}
+          />
+        </div>
+      )}
+
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{viewMode === 'upto' ? 'Units' : `${prettyPeriodLabel(selectedMonth)} register`}</CardTitle>
-          <CardDescription>
+        <CardHeader className="space-y-0.5 px-4 pb-2 pt-3">
+          <CardTitle className="text-[15px] leading-snug">{viewMode === 'upto' ? 'Units' : `${prettyPeriodLabel(selectedMonth)} register`}</CardTitle>
+          <CardDescription className="text-xs leading-snug">
             {viewMode === 'upto' ? (
               <>
                 "Value taxed" is what a BU event will deduct from — the value offered to tax, not the
@@ -1461,31 +1512,31 @@ const BuilderBookingsPage: React.FC = () => {
             )}
           </CardDescription>
         </CardHeader>
-        <CardContent className="p-0">
+        <CardContent className="px-4 pb-3">
           {viewMode === 'month' ? (
             monthRegisterGroups.length === 0 ? (
-              <div className="p-10 text-center text-muted-foreground">
-                <ListChecks className="h-8 w-8 mx-auto mb-3 opacity-40" />
-                <p className="text-sm">No receipts or invoices dated in {prettyPeriodLabel(selectedMonth)}.</p>
+              <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+                <ListChecks className="h-4 w-4 opacity-60" />
+                <p>No receipts or invoices dated in {prettyPeriodLabel(selectedMonth)}.</p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Unit</TableHead>
-                      <TableHead>Document</TableHead>
-                      <TableHead>Reference</TableHead>
-                      <TableHead>Table</TableHead>
-                      <TableHead className="text-right">Bank amount</TableHead>
-                      <TableHead className="text-right">Taxable</TableHead>
-                      <TableHead className="text-right">CGST</TableHead>
-                      <TableHead className="text-right">SGST</TableHead>
-                      <TableHead className="w-24" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
+              <div className={WS_TABLE_WRAP}>
+                <table className={WS_TABLE}>
+                  <thead>
+                    <tr>
+                      <th className={WS_TH}>Date</th>
+                      <th className={WS_TH}>Unit</th>
+                      <th className={WS_TH}>Document</th>
+                      <th className={WS_TH}>Reference</th>
+                      <th className={WS_TH}>Table</th>
+                      <th className={cn(WS_TH, 'text-right')}>Bank amount</th>
+                      <th className={cn(WS_TH, 'text-right')}>Taxable</th>
+                      <th className={cn(WS_TH, 'text-right')}>CGST</th>
+                      <th className={cn(WS_TH, 'text-right')}>SGST</th>
+                      <th className={cn(WS_TH, 'w-24')} />
+                    </tr>
+                  </thead>
+                  <tbody>
                     {monthRegisterGroups.map((g) => {
                       const isMulti = g.rows.length > 1;
                       const lineActions = (r: RegisterRow) => (
@@ -1511,24 +1562,24 @@ const BuilderBookingsPage: React.FC = () => {
                       if (!isMulti) {
                         const r = g.rows[0];
                         return (
-                          <TableRow key={r.key}>
-                            <TableCell className="text-sm tabular-nums">{r.date}</TableCell>
-                            <TableCell className="text-sm">
+                          <tr className={WS_TR} key={r.key}>
+                            <td className={WS_TD}>{r.date}</td>
+                            <td className={WS_TD}>
                               {r.unitNo}
                               <span className="block text-xs text-muted-foreground">{r.memberLabel}</span>
-                            </TableCell>
-                            <TableCell className="text-sm">{r.docType}</TableCell>
-                            <TableCell className="text-xs text-muted-foreground">{r.ref || '—'}</TableCell>
-                            <TableCell>
-                              <Badge variant="outline" className="text-xs">{r.tableTag}</Badge>
-                            </TableCell>
-                            <TableCell className="text-right text-sm tabular-nums">
+                            </td>
+                            <td className={WS_TD}>{r.docType}</td>
+                            <td className={cn(WS_TD, 'text-muted-foreground')}>{r.ref || '—'}</td>
+                            <td className={WS_TD}>
+                              <Badge variant="outline" className="text-[10px] font-medium">{r.tableTag}</Badge>
+                            </td>
+                            <td className={WS_TD_NUM}>
                               {r.bankAmount === null ? <span className="text-muted-foreground">—</span> : formatINR(r.bankAmount)}
-                            </TableCell>
-                            <TableCell className="text-right text-sm tabular-nums">{formatINR(r.taxableValue)}</TableCell>
-                            <TableCell className="text-right text-sm tabular-nums">{formatINR(r.cgst)}</TableCell>
-                            <TableCell className="text-right text-sm tabular-nums">{formatINR(r.sgst)}</TableCell>
-                            <TableCell>
+                            </td>
+                            <td className={WS_TD_NUM}>{formatINR(r.taxableValue)}</td>
+                            <td className={WS_TD_NUM}>{formatINR(r.cgst)}</td>
+                            <td className={WS_TD_NUM}>{formatINR(r.sgst)}</td>
+                            <td className={WS_TD}>
                               <div className="flex items-center gap-0.5">
                                 {lineActions(r)}
                                 {canEdit && g.booking && g.booking.status === 'Active' && (
@@ -1540,41 +1591,41 @@ const BuilderBookingsPage: React.FC = () => {
                                   </Button>
                                 )}
                               </div>
-                            </TableCell>
-                          </TableRow>
+                            </td>
+                          </tr>
                         );
                       }
                       const isOpen = registerExpanded.has(g.unitId);
                       const tags = [...new Set(g.rows.map((r) => r.tableTag))];
                       return (
                         <React.Fragment key={g.unitId}>
-                          <TableRow
-                            className="cursor-pointer bg-muted/30 hover:bg-muted/40"
+                          <tr className={cn(WS_TR, 'cursor-pointer bg-muted/30 hover:bg-muted/40')}
+                           
                             onClick={() => toggleRegisterExpanded(g.unitId)}
                           >
-                            <TableCell className="text-sm">
+                            <td className={WS_TD}>
                               <span className="flex items-center gap-1">
                                 {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                                 {g.rows.length} postings
                               </span>
-                            </TableCell>
-                            <TableCell className="text-sm font-medium">
+                            </td>
+                            <td className={cn(WS_TD, 'font-medium')}>
                               {g.unitNo}
                               <span className="block text-xs font-normal text-muted-foreground">{g.memberLabel}</span>
-                            </TableCell>
-                            <TableCell colSpan={2} />
-                            <TableCell>
+                            </td>
+                            <td className={WS_TD} colSpan={2} />
+                            <td className={WS_TD}>
                               <div className="flex flex-wrap gap-1">
                                 {tags.map((t) => <Badge key={t} variant="outline" className="text-xs">{t}</Badge>)}
                               </div>
-                            </TableCell>
-                            <TableCell className="text-right text-sm font-semibold tabular-nums">
+                            </td>
+                            <td className={cn(WS_TD_NUM, 'font-semibold')}>
                               {g.bank ? formatINR(g.bank) : <span className="text-muted-foreground">—</span>}
-                            </TableCell>
-                            <TableCell className="text-right text-sm font-semibold tabular-nums">{formatINR(g.taxable)}</TableCell>
-                            <TableCell className="text-right text-sm font-semibold tabular-nums">{formatINR(g.cgst)}</TableCell>
-                            <TableCell className="text-right text-sm font-semibold tabular-nums">{formatINR(g.sgst)}</TableCell>
-                            <TableCell onClick={(e) => e.stopPropagation()}>
+                            </td>
+                            <td className={cn(WS_TD_NUM, 'font-semibold')}>{formatINR(g.taxable)}</td>
+                            <td className={cn(WS_TD_NUM, 'font-semibold')}>{formatINR(g.cgst)}</td>
+                            <td className={cn(WS_TD_NUM, 'font-semibold')}>{formatINR(g.sgst)}</td>
+                            <td className={WS_TD} onClick={(e) => e.stopPropagation()}>
                               {canEdit && g.booking && g.booking.status === 'Active' && (
                                 <Button
                                   variant="ghost" size="icon" className="h-6 w-6" title="Add receipt"
@@ -1583,77 +1634,76 @@ const BuilderBookingsPage: React.FC = () => {
                                   <Plus className="h-3 w-3" />
                                 </Button>
                               )}
-                            </TableCell>
-                          </TableRow>
+                            </td>
+                          </tr>
                           {isOpen && g.rows.map((r) => (
-                            <TableRow key={r.key} className="bg-muted/10">
-                              <TableCell className="pl-8 text-sm tabular-nums">{r.date}</TableCell>
-                              <TableCell />
-                              <TableCell className="text-sm">{r.docType}</TableCell>
-                              <TableCell className="text-xs text-muted-foreground">{r.ref || '—'}</TableCell>
-                              <TableCell>
-                                <Badge variant="outline" className="text-xs">{r.tableTag}</Badge>
-                              </TableCell>
-                              <TableCell className="text-right text-sm tabular-nums">
+                            <tr className={cn(WS_TR, 'bg-muted/10')} key={r.key}>
+                              <td className={cn(WS_TD, 'pl-8')}>{r.date}</td>
+                              <td className={WS_TD} />
+                              <td className={WS_TD}>{r.docType}</td>
+                              <td className={cn(WS_TD, 'text-muted-foreground')}>{r.ref || '—'}</td>
+                              <td className={WS_TD}>
+                                <Badge variant="outline" className="text-[10px] font-medium">{r.tableTag}</Badge>
+                              </td>
+                              <td className={WS_TD_NUM}>
                                 {r.bankAmount === null ? <span className="text-muted-foreground">—</span> : formatINR(r.bankAmount)}
-                              </TableCell>
-                              <TableCell className="text-right text-sm tabular-nums">{formatINR(r.taxableValue)}</TableCell>
-                              <TableCell className="text-right text-sm tabular-nums">{formatINR(r.cgst)}</TableCell>
-                              <TableCell className="text-right text-sm tabular-nums">{formatINR(r.sgst)}</TableCell>
-                              <TableCell>{lineActions(r)}</TableCell>
-                            </TableRow>
+                              </td>
+                              <td className={WS_TD_NUM}>{formatINR(r.taxableValue)}</td>
+                              <td className={WS_TD_NUM}>{formatINR(r.cgst)}</td>
+                              <td className={WS_TD_NUM}>{formatINR(r.sgst)}</td>
+                              <td className={WS_TD}>{lineActions(r)}</td>
+                            </tr>
                           ))}
                         </React.Fragment>
                       );
                     })}
-                  </TableBody>
-                  <TableFooter>
-                    <TableRow>
-                      <TableCell colSpan={5} className="font-semibold">
+                  </tbody>
+                  <tfoot className={WS_TR_TOTAL}>
+                    <tr>
+                      <td className={cn(WS_TD, 'font-semibold')} colSpan={5}>
                         Bank total — tally against your statement or Tally
-                      </TableCell>
-                      <TableCell className="text-right font-semibold tabular-nums">{formatINR(registerTotals.bank)}</TableCell>
-                      <TableCell colSpan={4} />
-                    </TableRow>
-                    <TableRow>
-                      <TableCell colSpan={6} className="font-semibold">
+                      </td>
+                      <td className={cn(WS_TD_NUM, 'font-semibold')}>{formatINR(registerTotals.bank)}</td>
+                      <td className={WS_TD} colSpan={4} />
+                    </tr>
+                    <tr>
+                      <td className={cn(WS_TD, 'font-semibold')} colSpan={6}>
                         GST tax posted this period — tally against the return
-                      </TableCell>
-                      <TableCell className="text-right font-semibold tabular-nums">{formatINR(registerTotals.taxable)}</TableCell>
-                      <TableCell className="text-right font-semibold tabular-nums">{formatINR(registerTotals.cgst)}</TableCell>
-                      <TableCell className="text-right font-semibold tabular-nums">{formatINR(registerTotals.sgst)}</TableCell>
-                      <TableCell />
-                    </TableRow>
-                  </TableFooter>
-                </Table>
+                      </td>
+                      <td className={cn(WS_TD_NUM, 'font-semibold')}>{formatINR(registerTotals.taxable)}</td>
+                      <td className={cn(WS_TD_NUM, 'font-semibold')}>{formatINR(registerTotals.cgst)}</td>
+                      <td className={cn(WS_TD_NUM, 'font-semibold')}>{formatINR(registerTotals.sgst)}</td>
+                      <td className={WS_TD} />
+                    </tr>
+                  </tfoot>
+                </table>
               </div>
             )
           ) : units.length === 0 ? (
-            <div className="p-10 text-center text-muted-foreground">
-              <Users className="h-8 w-8 mx-auto mb-3 opacity-40" />
-              <p className="text-sm">No units in this project yet.</p>
+            <div className="py-8 text-center text-muted-foreground">
+              <p className="flex items-center justify-center gap-2 text-sm"><Users className="h-4 w-4 opacity-60" /> No units in this project yet.</p>
               {canEdit && (
                 <>
                   <p className="mx-auto mt-1 max-w-md text-xs">
                     Import the unit list to begin. Afterwards this is reached from Client setup —
                     it is an onboarding job, not a monthly one.
                   </p>
-                  <Button size="sm" className="mt-4" onClick={() => setSurface({ type: 'masters' })}>
-                    <Layers className="mr-2 h-4 w-4" /> Units &amp; masters
+                  <Button size="sm" className={cn(WS_BTN, 'mt-3')} onClick={() => setSurface({ type: 'masters' })}>
+                    <Layers className="h-3.5 w-3.5" /> Units &amp; masters
                   </Button>
                 </>
               )}
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-8" />
-                    <TableHead>
+            <div className={WS_TABLE_WRAP}>
+              <table className={WS_TABLE}>
+                <thead>
+                  <tr>
+                    <th className={cn(WS_TH, 'w-8')} />
+                    <th className={WS_TH}>
                       <Popover onOpenChange={(open) => { if (!open) setUnitNoSearch(''); }}>
                         <PopoverTrigger asChild>
-                          <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
+                          <Button variant="ghost" className="flex h-auto items-center gap-1 p-0 text-xs font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground">
                             Unit
                             <ChevronDown className="h-3 w-3" />
                             {(unitTypeFilter.length > 0 || unitNoFilter !== null) && (
@@ -1724,11 +1774,11 @@ const BuilderBookingsPage: React.FC = () => {
                           </div>
                         </PopoverContent>
                       </Popover>
-                    </TableHead>
-                    <TableHead>
+                    </th>
+                    <th className={WS_TH}>
                       <Popover>
                         <PopoverTrigger asChild>
-                          <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
+                          <Button variant="ghost" className="flex h-auto items-center gap-1 p-0 text-xs font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground">
                             Member(s)
                             <ChevronDown className="h-3 w-3" />
                             {bookingFilter.length > 0 && (
@@ -1755,12 +1805,12 @@ const BuilderBookingsPage: React.FC = () => {
                           </div>
                         </PopoverContent>
                       </Popover>
-                    </TableHead>
-                    <TableHead className="text-right">Carpet</TableHead>
-                    <TableHead>
+                    </th>
+                    <th className={cn(WS_TH, 'text-right')}>Carpet</th>
+                    <th className={WS_TH}>
                       <Popover>
                         <PopoverTrigger asChild>
-                          <Button variant="ghost" className="h-auto p-0 font-semibold hover:bg-transparent flex items-center gap-1">
+                          <Button variant="ghost" className="flex h-auto items-center gap-1 p-0 text-xs font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground">
                             Rate
                             <ChevronDown className="h-3 w-3" />
                             {rateFilter.length > 0 && (
@@ -1787,23 +1837,23 @@ const BuilderBookingsPage: React.FC = () => {
                           </div>
                         </PopoverContent>
                       </Popover>
-                    </TableHead>
-                    <TableHead className="text-right">Agreement</TableHead>
-                    <TableHead className="text-right">Opening</TableHead>
-                    <TableHead className="text-right">Received</TableHead>
-                    <TableHead className="text-right">Closing</TableHead>
-                    <TableHead className="text-right">Open advance</TableHead>
-                    <TableHead>Dastavej</TableHead>
-                    <TableHead className="w-36" />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+                    </th>
+                    <th className={cn(WS_TH, 'text-right')}>Agreement</th>
+                    <th className={cn(WS_TH, 'text-right')}>Opening</th>
+                    <th className={cn(WS_TH, 'text-right')}>Received</th>
+                    <th className={cn(WS_TH, 'text-right')}>Closing</th>
+                    <th className={cn(WS_TH, 'text-right')}>Open advance</th>
+                    <th className={WS_TH}>Dastavej</th>
+                    <th className={cn(WS_TH, 'w-36')} />
+                  </tr>
+                </thead>
+                <tbody>
                   {filteredUnits.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={11} className="text-center text-muted-foreground py-8 text-sm">
+                    <tr className={WS_TR}>
+                      <td className={cn(WS_TD, 'text-center text-muted-foreground py-8')} colSpan={11}>
                         No units match the current filters.
-                      </TableCell>
-                    </TableRow>
+                      </td>
+                    </tr>
                   )}
                   {filteredUnits.map((u) => {
                     const cls = classifyFor(u);
@@ -1817,13 +1867,13 @@ const BuilderBookingsPage: React.FC = () => {
                     const months = monthWiseFor(u.id);
                     return (
                       <React.Fragment key={u.id}>
-                        <TableRow>
-                          <TableCell>
+                        <tr className={WS_TR}>
+                          <td className={WS_TD}>
                             <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => toggle(u.id)}>
-                              {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                              {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                             </Button>
-                          </TableCell>
-                          <TableCell className="font-medium">
+                          </td>
+                          <td className={cn(WS_TD, 'font-medium')}>
                             {u.unit_no}
                             <span className="block text-xs text-muted-foreground">{u.unit_type}</span>
                             {u.onboarding_status === 'CLOSED_PRE_ONBOARDING' && (
@@ -1833,8 +1883,8 @@ const BuilderBookingsPage: React.FC = () => {
                             )}
                             {(openCancellations[u.id] || []).length > 0 && (
                               <Badge
-                                variant="outline"
-                                className="mt-1 text-[10px] block w-fit cursor-pointer border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                                variant="warning"
+                                className="mt-1 block w-fit cursor-pointer text-[10px] font-medium"
                                 title={
                                   `${formatINR(openCancellationTotal(u.id))} refund still owed from `
                                   + `${(openCancellations[u.id] || []).length > 1 ? 'earlier cancellations' : 'an earlier cancellation'} on this unit — `
@@ -1845,8 +1895,8 @@ const BuilderBookingsPage: React.FC = () => {
                                 {formatINR(openCancellationTotal(u.id))} refund pending
                               </Badge>
                             )}
-                          </TableCell>
-                          <TableCell className="text-sm">
+                          </td>
+                          <td className={WS_TD}>
                             {mem.length === 0 ? (
                               <span className="text-muted-foreground">{unbookedLabel(u.id)}</span>
                             ) : (
@@ -1859,56 +1909,56 @@ const BuilderBookingsPage: React.FC = () => {
                                 )}
                               </>
                             )}
-                          </TableCell>
-                          <TableCell className="text-right text-sm tabular-nums">
-                            {u.carpet_area_sqm || '—'}
-                          </TableCell>
-                          <TableCell className="text-sm">
+                          </td>
+                          <td className={WS_TD_NUM}>
+                            {u.carpet_area_sqm ? formatCarpet(u.carpet_area_sqm) : '—'}
+                          </td>
+                          <td className={WS_TD}>
                             {cls.ratePct}%
                             {cls.gross.impliedByReceipts && (
                               <span
                                 className="inline-block align-text-top"
                                 title={`Rate reflects ${formatINR(cls.gross.gross)} actually recognised (opening + receipts), which exceeds ${formatINR(cls.gross.base + cls.gross.includedCharges)} on the unit master. Update base consideration/charges to match.`}
                               >
-                                <AlertTriangle className="inline h-3 w-3 ml-1 text-amber-600" />
+                                <AlertTriangle className="ml-1 inline h-3 w-3 text-warning" />
                               </span>
                             )}
                             <span className="block text-xs text-muted-foreground">eff. {cls.effectiveRatePct}%</span>
-                          </TableCell>
-                          <TableCell className="text-right text-sm">{formatINR(agreement)}</TableCell>
-                          <TableCell className="text-right text-sm">{formatINR(openingLed.valueTaxed)}</TableCell>
-                          <TableCell className="text-right text-sm">
+                          </td>
+                          <td className={WS_TD_NUM}>{formatINR(agreement)}</td>
+                          <td className={WS_TD_NUM}>{formatINR(openingLed.valueTaxed)}</td>
+                          <td className={WS_TD_NUM}>
                             {formatINR(led.valueTaxed - openingLed.valueTaxed)}
-                          </TableCell>
-                          <TableCell className="text-right text-sm font-medium">
+                          </td>
+                          <td className={cn(WS_TD_NUM, 'font-medium')}>
                             {formatINR(led.valueTaxed)}
                             {!tie.reconciles && (
                               <span className="block text-xs text-destructive">
                                 over by {formatINR(tie.overTaxedBy)}
                               </span>
                             )}
-                          </TableCell>
-                          <TableCell className="text-right text-sm">
+                          </td>
+                          <td className={WS_TD_NUM}>
                             {led.openAdvance > 0 ? formatINR(led.openAdvance) : '—'}
-                          </TableCell>
-                          <TableCell className="text-sm tabular-nums">
+                          </td>
+                          <td className={WS_TD}>
                             {u.dastavej_date || <span className="text-muted-foreground">—</span>}
-                          </TableCell>
-                          <TableCell>
+                          </td>
+                          <td className={WS_TD}>
                             <div className="flex items-center gap-0.5">
                               {canEdit && !booking && u.status !== 'Cancelled' && (
-                                <Button variant="ghost" size="icon" title="Book unit" onClick={() => openBooking(u)}>
-                                  <UserPlus className="h-4 w-4" />
+                                <Button variant="ghost" size="icon" className="h-7 w-7" title="Book unit" onClick={() => openBooking(u)}>
+                                  <UserPlus className="h-3.5 w-3.5" />
                                 </Button>
                               )}
                               {canEdit && booking && (
                                 <>
-                                  <Button variant="ghost" size="icon" title="Add receipt" onClick={() => openReceipt(u, booking)}>
-                                    <Plus className="h-4 w-4" />
+                                  <Button variant="ghost" size="icon" className="h-7 w-7" title="Add receipt" onClick={() => openReceipt(u, booking)}>
+                                    <Plus className="h-3.5 w-3.5" />
                                   </Button>
                                   {raisesInvoices && (
-                                    <Button variant="ghost" size="icon" title="Raise invoice" onClick={() => openInvoice(u, booking)}>
-                                      <FileText className="h-4 w-4" />
+                                    <Button variant="ghost" size="icon" className="h-7 w-7" title="Raise invoice" onClick={() => openInvoice(u, booking)}>
+                                      <FileText className="h-3.5 w-3.5" />
                                     </Button>
                                   )}
                                 </>
@@ -1917,7 +1967,7 @@ const BuilderBookingsPage: React.FC = () => {
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
                                     <Button variant="ghost" size="icon" className="h-7 w-7">
-                                      <MoreHorizontal className="h-4 w-4" />
+                                      <MoreHorizontal className="h-3.5 w-3.5" />
                                       <span className="sr-only">More actions for unit {u.unit_no}</span>
                                     </Button>
                                   </DropdownMenuTrigger>
@@ -1981,76 +2031,70 @@ const BuilderBookingsPage: React.FC = () => {
                                 </DropdownMenu>
                               )}
                             </div>
-                          </TableCell>
-                        </TableRow>
+                          </td>
+                        </tr>
 
                         {isOpen && (
-                          <TableRow>
-                            <TableCell colSpan={13} className="bg-muted/30 p-4">
+                          <tr className={WS_TR}>
+                            <td className={cn(WS_TD, 'bg-muted/30 p-3')} colSpan={13}>
                               {months.length === 0 ? (
                                 <p className="text-sm text-muted-foreground">
                                   No receipts or invoices for this unit yet.
                                 </p>
                               ) : (
-                                <div className="space-y-4">
+                                <div className="space-y-3">
                                   {months.map(([period, entries]) => (
                                     <div key={period}>
                                       <p className="text-xs font-semibold text-muted-foreground mb-1">
                                         {prettyPeriodLabel(period)}
                                       </p>
-                                      <div className="rounded border bg-background">
-                                        <Table>
-                                          <TableHeader>
-                                            <TableRow>
-                                              <TableHead className="h-8">Date</TableHead>
-                                              <TableHead className="h-8">Document</TableHead>
-                                              <TableHead className="h-8">Table</TableHead>
-                                              <TableHead className="h-8 text-right">Consideration</TableHead>
-                                              <TableHead className="h-8 text-right">Taxable</TableHead>
-                                              <TableHead className="h-8 text-right">CGST</TableHead>
-                                              <TableHead className="h-8 text-right">SGST</TableHead>
-                                              <TableHead className="h-8 text-right">TDS</TableHead>
-                                              <TableHead className="h-8">Status</TableHead>
-                                              <TableHead className="h-8 text-right">Bounced</TableHead>
-                                              <TableHead className="h-8 w-24" />
-                                            </TableRow>
-                                          </TableHeader>
-                                          <TableBody>
+                                      <div className={WS_TABLE_WRAP}>
+                                        <table className={WS_TABLE}>
+                                          <thead>
+                                            <tr>
+                                              <th className={WS_TH}>Date</th>
+                                              <th className={WS_TH}>Document</th>
+                                              <th className={WS_TH}>Table</th>
+                                              <th className={cn(WS_TH, 'text-right')}>Consideration</th>
+                                              <th className={cn(WS_TH, 'text-right')}>Taxable</th>
+                                              <th className={cn(WS_TH, 'text-right')}>CGST</th>
+                                              <th className={cn(WS_TH, 'text-right')}>SGST</th>
+                                              <th className={cn(WS_TH, 'text-right')}>TDS</th>
+                                              <th className={WS_TH}>Status</th>
+                                              <th className={cn(WS_TH, 'text-right')}>Bounced</th>
+                                              <th className={cn(WS_TH, 'w-24')} />
+                                            </tr>
+                                          </thead>
+                                          <tbody>
                                             {entries.receipts.map((r) => {
                                               const posts = r.receipt_nature === 'ADVANCE'
                                                 && r.cheque_status !== 'Bounced' && !r.gst_already_discharged;
                                               return (
-                                                <TableRow key={r.id}>
-                                                  <TableCell className="text-xs py-1">{r.receipt_date}</TableCell>
-                                                  <TableCell className="text-xs py-1">
+                                                <tr className={WS_TR} key={r.id}>
+                                                  <td className={WS_TD}>{r.receipt_date}</td>
+                                                  <td className={WS_TD}>
                                                     Receipt {r.doc_no || ''}
                                                     <span className="block text-muted-foreground">
                                                       {r.instrument_type}
                                                       {r.amount_is_gst_inclusive ? ' · incl. GST' : ''}
                                                     </span>
-                                                  </TableCell>
-                                                  <TableCell className="text-xs py-1">
+                                                  </td>
+                                                  <td className={WS_TD}>
                                                     {posts ? (
-                                                      <Badge variant="outline" className="text-xs">11A</Badge>
+                                                      <Badge variant="outline" className="text-[10px] font-medium">11A</Badge>
                                                     ) : (
                                                       <span className="text-muted-foreground">—</span>
                                                     )}
-                                                  </TableCell>
-                                                  <TableCell className="text-xs py-1 text-right">{formatINR(r.consideration)}</TableCell>
-                                                  <TableCell className="text-xs py-1 text-right">{posts ? formatINR(r.taxable_value) : '—'}</TableCell>
-                                                  <TableCell className="text-xs py-1 text-right">{posts ? formatINR(r.cgst) : '—'}</TableCell>
-                                                  <TableCell className="text-xs py-1 text-right">{posts ? formatINR(r.sgst) : '—'}</TableCell>
-                                                  <TableCell className="text-xs py-1 text-right">{r.tds_194ia > 0 ? formatINR(r.tds_194ia) : '—'}</TableCell>
-                                                  <TableCell className="text-xs py-1">
+                                                  </td>
+                                                  <td className={WS_TD_NUM}>{formatINR(r.consideration)}</td>
+                                                  <td className={WS_TD_NUM}>{posts ? formatINR(r.taxable_value) : '—'}</td>
+                                                  <td className={WS_TD_NUM}>{posts ? formatINR(r.cgst) : '—'}</td>
+                                                  <td className={WS_TD_NUM}>{posts ? formatINR(r.sgst) : '—'}</td>
+                                                  <td className={WS_TD_NUM}>{r.tds_194ia > 0 ? formatINR(r.tds_194ia) : '—'}</td>
+                                                  <td className={WS_TD}>
                                                     <Badge
-                                                      variant="outline"
-                                                      className={
-                                                        r.cheque_status === 'Bounced'
-                                                          ? 'bg-red-100 text-red-800 border-red-200 text-xs'
-                                                          : r.cheque_status === 'Pending'
-                                                            ? 'bg-amber-100 text-amber-800 border-amber-200 text-xs'
-                                                            : 'text-xs'
-                                                      }
+                                                      variant={r.cheque_status === 'Bounced' ? 'destructive' : r.cheque_status === 'Pending' ? 'warning' : 'outline'}
+                                                      className="text-[10px] font-medium"
                                                     >
                                                       {CHEQUE_STATUS_LABEL[r.cheque_status]}
                                                     </Badge>
@@ -2060,14 +2104,14 @@ const BuilderBookingsPage: React.FC = () => {
                                                     {r.gst_already_discharged && (
                                                       <span className="block text-muted-foreground">GST already paid</span>
                                                     )}
-                                                  </TableCell>
+                                                  </td>
                                                   {/* Bounce as a deduction column, right in the register, rather
                                                       than a status buried in the edit dialog's dropdown: ticking
                                                       it deducts this receipt's full consideration — a bounced
                                                       instrument didn't clear for any partial amount. */}
-                                                  <TableCell className="text-xs py-1 text-right">
+                                                  <td className={WS_TD_NUM}>
                                                     {r.cheque_status === 'Bounced' ? (
-                                                      <span className="text-red-700 font-medium">
+                                                      <span className="font-medium text-destructive-strong">
                                                         -{formatINR(r.consideration)}
                                                       </span>
                                                     ) : canEdit ? (
@@ -2083,8 +2127,8 @@ const BuilderBookingsPage: React.FC = () => {
                                                     ) : (
                                                       <span className="text-muted-foreground">—</span>
                                                     )}
-                                                  </TableCell>
-                                                  <TableCell className="py-1">
+                                                  </td>
+                                                  <td className={WS_TD}>
                                                     {canEdit && (
                                                       <div className="flex items-center gap-0.5">
                                                         <Checkbox
@@ -2109,8 +2153,8 @@ const BuilderBookingsPage: React.FC = () => {
                                                         </Button>
                                                       </div>
                                                     )}
-                                                  </TableCell>
-                                                </TableRow>
+                                                  </td>
+                                                </tr>
                                               );
                                             })}
                                             {entries.invoices.map((i) => {
@@ -2120,107 +2164,107 @@ const BuilderBookingsPage: React.FC = () => {
                                               const obAbsorbed = obAdj.reduce((s, a) => s + (Number(a.consideration_adjusted) || 0), 0);
                                               return (
                                                 <React.Fragment key={i.id}>
-                                                  <TableRow>
-                                                    <TableCell className="text-xs py-1">{i.invoice_date}</TableCell>
-                                                    <TableCell className="text-xs py-1">
+                                                  <tr className={WS_TR}>
+                                                    <td className={WS_TD}>{i.invoice_date}</td>
+                                                    <td className={WS_TD}>
                                                       {INVOICE_TYPE_LABEL[i.invoice_type]} {i.doc_no || ''}
                                                       {i.milestone_label && (
                                                         <span className="block text-muted-foreground">{i.milestone_label}</span>
                                                       )}
-                                                    </TableCell>
-                                                    <TableCell className="text-xs py-1">
-                                                      <Badge variant="outline" className="text-xs">Table 7</Badge>
-                                                    </TableCell>
-                                                    <TableCell className="text-xs py-1 text-right">{formatINR(i.consideration)}</TableCell>
-                                                    <TableCell className="text-xs py-1 text-right">{formatINR(i.taxable_value)}</TableCell>
-                                                    <TableCell className="text-xs py-1 text-right">{formatINR(i.cgst)}</TableCell>
-                                                    <TableCell className="text-xs py-1 text-right">{formatINR(i.sgst)}</TableCell>
-                                                    <TableCell className="text-xs py-1 text-right">—</TableCell>
-                                                    <TableCell className="text-xs py-1" />
-                                                    <TableCell className="text-xs py-1" />
-                                                    <TableCell className="py-1" />
-                                                  </TableRow>
+                                                    </td>
+                                                    <td className={WS_TD}>
+                                                      <Badge variant="outline" className="text-[10px] font-medium">Table 7</Badge>
+                                                    </td>
+                                                    <td className={WS_TD_NUM}>{formatINR(i.consideration)}</td>
+                                                    <td className={WS_TD_NUM}>{formatINR(i.taxable_value)}</td>
+                                                    <td className={WS_TD_NUM}>{formatINR(i.cgst)}</td>
+                                                    <td className={WS_TD_NUM}>{formatINR(i.sgst)}</td>
+                                                    <td className={WS_TD_NUM}>—</td>
+                                                    <td className={WS_TD} />
+                                                    <td className={WS_TD} />
+                                                    <td className={WS_TD} />
+                                                  </tr>
                                                   {absorbed > 0 && (
-                                                    <TableRow>
-                                                      <TableCell className="text-xs py-1" />
-                                                      <TableCell className="text-xs py-1 text-muted-foreground">
+                                                    <tr className={WS_TR}>
+                                                      <td className={WS_TD} />
+                                                      <td className={cn(WS_TD, 'text-muted-foreground')}>
                                                         Advance adjusted ({adj.length} receipt{adj.length > 1 ? 's' : ''})
-                                                      </TableCell>
-                                                      <TableCell className="text-xs py-1">
-                                                        <Badge variant="outline" className="text-xs">11B</Badge>
-                                                      </TableCell>
-                                                      <TableCell className="text-xs py-1 text-right">-{formatINR(absorbed)}</TableCell>
-                                                      <TableCell className="text-xs py-1 text-right">—</TableCell>
-                                                      <TableCell className="text-xs py-1 text-right">
+                                                      </td>
+                                                      <td className={WS_TD}>
+                                                        <Badge variant="outline" className="text-[10px] font-medium">11B</Badge>
+                                                      </td>
+                                                      <td className={WS_TD_NUM}>-{formatINR(absorbed)}</td>
+                                                      <td className={WS_TD_NUM}>—</td>
+                                                      <td className={WS_TD_NUM}>
                                                         -{formatINR(adj.reduce((s, a) => s + (Number(a.cgst) || 0), 0))}
-                                                      </TableCell>
-                                                      <TableCell className="text-xs py-1 text-right">
+                                                      </td>
+                                                      <td className={WS_TD_NUM}>
                                                         -{formatINR(adj.reduce((s, a) => s + (Number(a.sgst) || 0), 0))}
-                                                      </TableCell>
-                                                      <TableCell className="text-xs py-1 text-right">—</TableCell>
-                                                      <TableCell className="text-xs py-1" />
-                                                      <TableCell className="text-xs py-1" />
-                                                      <TableCell className="py-1" />
-                                                    </TableRow>
+                                                      </td>
+                                                      <td className={WS_TD_NUM}>—</td>
+                                                      <td className={WS_TD} />
+                                                      <td className={WS_TD} />
+                                                      <td className={WS_TD} />
+                                                    </tr>
                                                   )}
                                                   {obAbsorbed > 0 && (
-                                                    <TableRow>
-                                                      <TableCell className="text-xs py-1" />
-                                                      <TableCell className="text-xs py-1 text-muted-foreground">
+                                                    <tr className={WS_TR}>
+                                                      <td className={WS_TD} />
+                                                      <td className={cn(WS_TD, 'text-muted-foreground')}>
                                                         Opening balance adjusted
-                                                      </TableCell>
-                                                      <TableCell className="text-xs py-1">
-                                                        <Badge variant="outline" className="text-xs">11B</Badge>
-                                                      </TableCell>
-                                                      <TableCell className="text-xs py-1 text-right">-{formatINR(obAbsorbed)}</TableCell>
-                                                      <TableCell className="text-xs py-1 text-right">—</TableCell>
-                                                      <TableCell className="text-xs py-1 text-right">
+                                                      </td>
+                                                      <td className={WS_TD}>
+                                                        <Badge variant="outline" className="text-[10px] font-medium">11B</Badge>
+                                                      </td>
+                                                      <td className={WS_TD_NUM}>-{formatINR(obAbsorbed)}</td>
+                                                      <td className={WS_TD_NUM}>—</td>
+                                                      <td className={WS_TD_NUM}>
                                                         -{formatINR(obAdj.reduce((s, a) => s + (Number(a.cgst) || 0), 0))}
-                                                      </TableCell>
-                                                      <TableCell className="text-xs py-1 text-right">
+                                                      </td>
+                                                      <td className={WS_TD_NUM}>
                                                         -{formatINR(obAdj.reduce((s, a) => s + (Number(a.sgst) || 0), 0))}
-                                                      </TableCell>
-                                                      <TableCell className="text-xs py-1 text-right">—</TableCell>
-                                                      <TableCell className="text-xs py-1" />
-                                                      <TableCell className="text-xs py-1" />
-                                                      <TableCell className="py-1" />
-                                                    </TableRow>
+                                                      </td>
+                                                      <td className={WS_TD_NUM}>—</td>
+                                                      <td className={WS_TD} />
+                                                      <td className={WS_TD} />
+                                                      <td className={WS_TD} />
+                                                    </tr>
                                                   )}
                                                 </React.Fragment>
                                               );
                                             })}
-                                          </TableBody>
-                                        </Table>
+                                          </tbody>
+                                        </table>
                                       </div>
                                     </div>
                                   ))}
                                 </div>
                               )}
-                            </TableCell>
-                          </TableRow>
+                            </td>
+                          </tr>
                         )}
                       </React.Fragment>
                     );
                   })}
-                </TableBody>
+                </tbody>
                 {filteredUnits.length > 0 && (
-                  <TableFooter>
-                    <TableRow>
-                      <TableCell colSpan={5} className="font-semibold">
+                  <tfoot className={WS_TR_TOTAL}>
+                    <tr>
+                      <td className={cn(WS_TD, 'font-semibold')} colSpan={5}>
                         Total ({filteredUnits.length} unit{filteredUnits.length === 1 ? '' : 's'})
-                      </TableCell>
-                      <TableCell className="text-right font-semibold tabular-nums">{formatINR(unitTotals.agreement)}</TableCell>
-                      <TableCell className="text-right font-semibold tabular-nums">{formatINR(unitTotals.opening)}</TableCell>
-                      <TableCell className="text-right font-semibold tabular-nums">{formatINR(unitTotals.received)}</TableCell>
-                      <TableCell className="text-right font-semibold tabular-nums">{formatINR(unitTotals.closing)}</TableCell>
-                      <TableCell className="text-right font-semibold tabular-nums">
+                      </td>
+                      <td className={cn(WS_TD_NUM, 'font-semibold')}>{formatINR(unitTotals.agreement)}</td>
+                      <td className={cn(WS_TD_NUM, 'font-semibold')}>{formatINR(unitTotals.opening)}</td>
+                      <td className={cn(WS_TD_NUM, 'font-semibold')}>{formatINR(unitTotals.received)}</td>
+                      <td className={cn(WS_TD_NUM, 'font-semibold')}>{formatINR(unitTotals.closing)}</td>
+                      <td className={cn(WS_TD_NUM, 'font-semibold')}>
                         {unitTotals.openAdvance > 0 ? formatINR(unitTotals.openAdvance) : '—'}
-                      </TableCell>
-                      <TableCell colSpan={2} />
-                    </TableRow>
-                  </TableFooter>
+                      </td>
+                      <td className={WS_TD} colSpan={2} />
+                    </tr>
+                  </tfoot>
                 )}
-              </Table>
+              </table>
             </div>
           )}
         </CardContent>
@@ -2255,8 +2299,8 @@ const BuilderBookingsPage: React.FC = () => {
           </div>
 
           {isTds194IAApplicable(parseFloat(bookingForm.total_consideration) || 0) && (
-            <div className="flex gap-2 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sky-900">
-              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            <div className="flex gap-2 rounded-md border border-info/40 bg-info/10 px-2.5 py-1.5 text-foreground">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-info" />
               <p className="text-xs">
                 Consideration is ₹50 lakh or more, so the buyer deducts 1% TDS u/s 194-IA on the whole
                 amount. GST is still computed on the full consideration, never on the 99% banked.
@@ -2324,8 +2368,8 @@ const BuilderBookingsPage: React.FC = () => {
           </div>
 
           {bookingUnit?.dastavej_date && (
-            <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900">
-              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            <div className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 px-2.5 py-1.5 text-foreground">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
               <div className="text-xs space-y-1.5 flex-1">
                 <p>
                   This unit still carries a dastavej date ({bookingUnit.dastavej_date}
@@ -2344,9 +2388,9 @@ const BuilderBookingsPage: React.FC = () => {
           )}
 
           {bookingUnit && (openCancellations[bookingUnit.id] || []).length > 0 && (
-            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900 space-y-2">
+            <div className="rounded-md border border-warning/50 bg-warning/10 px-2.5 py-1.5 text-foreground space-y-2">
               <div className="flex gap-2">
-                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
                 <div className="text-xs space-y-1">
                   <p className="font-medium">
                     This unit has {(openCancellations[bookingUnit.id] || []).length > 1 ? 'earlier cancellations' : 'an earlier cancellation'} with an unpaid refund:
@@ -2649,8 +2693,8 @@ const BuilderBookingsPage: React.FC = () => {
           </div>
 
           {receiptTarget?.unit.bu_event_id && (
-            <p className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <p className="flex items-start gap-2 rounded-md border border-info/40 bg-info/10 px-2.5 py-1.5 text-xs text-foreground">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-info" />
               This unit already went through its BU/dastavej differential — its whole balance was taxed
               at that cut-off. "GST already discharged" is switched on by default so this receipt is
               recorded as a plain collection, not taxed a second time. Turn it off only if that's wrong.
@@ -2699,8 +2743,8 @@ const BuilderBookingsPage: React.FC = () => {
                 </p>
               )}
               {Math.abs(receiptPreview.bankVariance) > 0.5 && (
-                <div className="flex gap-2 rounded border border-amber-200 bg-amber-50 p-2 text-amber-900">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <div className="flex gap-2 rounded-md border border-warning/50 bg-warning/10 px-2.5 py-1.5 text-foreground">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
                   <p className="text-xs">
                     Bank credit differs from expected by {formatINR(Math.abs(receiptPreview.bankVariance))}.
                     Check whether a TDS deduction is unrecorded — GST must still be on the full
@@ -2712,8 +2756,8 @@ const BuilderBookingsPage: React.FC = () => {
           )}
 
           {agreementWarning && (
-            <div className="flex gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900">
-              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            <div className="flex gap-2 rounded-md border border-warning/50 bg-warning/10 px-2.5 py-1.5 text-foreground">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
               <div className="text-xs space-y-1">
                 <p>
                   This receipt takes the unit's value taxed to{' '}

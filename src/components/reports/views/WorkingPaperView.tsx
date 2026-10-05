@@ -22,7 +22,8 @@ import React from 'react';
 import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge, type BadgeProps } from '@/components/ui/badge';
+import type { BadgeProps } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { Equal, ExternalLink, Inbox } from 'lucide-react';
@@ -128,7 +129,7 @@ const NumericValue: React.FC<{ value: Cell; header: string }> = ({ value, header
     );
   }
   if (/^status$/i.test(header.trim()) && cellText(value) !== '') {
-    return <Badge variant={statusVariant(String(value))}>{String(value)}</Badge>;
+    return <Badge variant={statusVariant(String(value))} className="text-[10px] font-medium">{String(value)}</Badge>;
   }
   if (typeof value === 'number') {
     return (
@@ -158,8 +159,8 @@ const DataRow: React.FC<{ row: Row; headers: string[]; indent: boolean; emphasiz
   return (
     <div
       className={cn(
-        'flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 py-2',
-        indent && 'ml-4 border-l-2 border-muted pl-4',
+        'flex flex-wrap items-baseline justify-between gap-x-6 gap-y-0.5 border-b border-dashed border-border/60 py-1.5 last:border-b-0',
+        indent && 'ml-3 border-l-2 border-l-muted pl-3',
         isTotal && !emphasize && 'font-semibold',
       )}
     >
@@ -167,7 +168,7 @@ const DataRow: React.FC<{ row: Row; headers: string[]; indent: boolean; emphasiz
         className={cn(
           'text-foreground',
           indent && 'text-muted-foreground',
-          emphasize ? 'text-base font-bold sm:text-lg' : 'text-sm',
+          emphasize ? 'text-[15px] font-bold' : 'text-xs',
         )}
       >
         {label || '\u00A0'}
@@ -179,7 +180,7 @@ const DataRow: React.FC<{ row: Row; headers: string[]; indent: boolean; emphasiz
             return (
               <div
                 key={i}
-                className={cn('min-w-[72px] text-right', emphasize ? 'text-base sm:text-lg' : 'text-sm')}
+                className={cn('min-w-[72px] text-right', emphasize ? 'text-[15px]' : 'text-xs')}
               >
                 {headers.length > 2 && (
                   <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -208,8 +209,8 @@ export const WorkingPaperView: React.FC<WorkingPaperViewProps> = ({ table, repor
   if (table.rows.length === 0) {
     return (
       <Card>
-        <CardContent className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
-          <Inbox className="h-8 w-8" />
+        <CardContent className="flex flex-col items-center justify-center gap-1.5 py-8 text-muted-foreground">
+          <Inbox className="h-5 w-5 opacity-60" />
           <p className="text-sm">No data available for this working paper yet.</p>
         </CardContent>
       </Card>
@@ -245,15 +246,15 @@ export const WorkingPaperView: React.FC<WorkingPaperViewProps> = ({ table, repor
 
   return (
     <Card className="overflow-hidden">
-      <CardHeader className="border-b bg-primary/5 pb-4">
+      <CardHeader className="space-y-0 border-b bg-muted/40 px-4 pb-2 pt-3">
         <div className="flex items-center gap-2">
           <ReportIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <CardTitle className="text-base">{table.title}</CardTitle>
+          <CardTitle className="text-[15px] leading-snug">{table.title}</CardTitle>
         </div>
         {subtitleChips.length > 0 && (
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
+          <div className="mt-1 flex flex-wrap gap-1">
             {subtitleChips.map((chip, i) => (
-              <Badge key={i} variant="outline" className="font-normal text-xs">
+              <Badge key={i} variant="outline" className="text-[10px] font-normal">
                 {chip}
               </Badge>
             ))}
@@ -261,19 +262,19 @@ export const WorkingPaperView: React.FC<WorkingPaperViewProps> = ({ table, repor
         )}
       </CardHeader>
 
-      <CardContent className="pt-6">
+      <CardContent className="px-4 pb-3 pt-3">
         <div className="mx-auto max-w-2xl">
           {blocks.map((block, bi) => {
             const segments = buildSegments(block, table.headers);
             return (
               <React.Fragment key={bi}>
-                {bi > 0 && <Separator className="my-4" />}
-                <div className="space-y-1">
+                {bi > 0 && <Separator className="my-3" />}
+                <div className="space-y-0.5">
                   {segments.map((seg, si) => (
-                    <div key={si} className={cn(si > 0 && 'mt-3')}>
+                    <div key={si} className={cn(si > 0 && 'mt-2')}>
                       {seg.markerLabel !== null && (
-                        <div className="mb-1 flex items-baseline justify-between gap-3 rounded-sm bg-muted/40 px-2 py-1.5">
-                          <span className="text-sm font-semibold text-foreground">{seg.markerLabel}</span>
+                        <div className="mb-0.5 flex items-baseline justify-between gap-3 rounded-sm bg-muted/50 px-2 py-1">
+                          <span className="text-xs font-semibold text-foreground">{seg.markerLabel}</span>
                           {seg.markerValues.length > 0 && (
                             <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                               {seg.markerValues.map(String).join(' · ')}
@@ -299,10 +300,10 @@ export const WorkingPaperView: React.FC<WorkingPaperViewProps> = ({ table, repor
 
           {/* The bottom line — the one number this working paper exists to prove. */}
           {finalRow && (
-            <div className="mt-6 rounded-md border-t-2 border-primary/40 bg-primary/5 px-4 py-4">
+            <div className="mt-4 rounded-md border border-primary/30 bg-primary/5 px-3 py-2.5">
               <div className="mb-1 flex items-center gap-2">
                 <Equal className="h-4 w-4 shrink-0 text-primary" />
-                <span className="text-xs font-semibold uppercase tracking-wide text-primary">Result</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">Result</span>
               </div>
               <DataRow row={finalRow} headers={table.headers} indent={false} emphasize />
             </div>

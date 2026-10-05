@@ -21,7 +21,10 @@ import React, { useMemo, useState } from 'react';
 import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge, type BadgeProps } from '@/components/ui/badge';
+import type { BadgeProps } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile } from '@/components/gstr9/ui';
+import { WS_TABLE, WS_TH, WS_TD, WS_TR_TOTAL } from '@/components/workspace/theme';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
@@ -230,8 +233,8 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
   if (table.rows.length === 0) {
     return (
       <Card>
-        <CardContent className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
-          <Inbox className="h-8 w-8" />
+        <CardContent className="flex flex-col items-center justify-center gap-1.5 py-8 text-muted-foreground">
+          <Inbox className="h-5 w-5 opacity-60" />
           <p className="text-sm">No data available for this report yet.</p>
         </CardContent>
       </Card>
@@ -239,33 +242,33 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Header strip */}
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader className="space-y-0 px-4 pb-2 pt-3">
           <div className="flex items-center gap-2">
             <ReportIcon className="h-4 w-4 text-muted-foreground shrink-0" />
-            <CardTitle className="text-base">{table.title}</CardTitle>
+            <CardTitle className="text-[15px] leading-snug">{table.title}</CardTitle>
           </div>
         </CardHeader>
-        <CardContent className="pt-0">
-          <div className="flex flex-wrap gap-x-8 gap-y-3">
+        <CardContent className="px-4 pb-3 pt-0">
+          <div className="flex flex-wrap gap-x-6 gap-y-2">
             {subtitleParts.map((part, i) => {
               const isStatus = /^status$/i.test(part.label);
               const isArn = /^arn$/i.test(part.label);
               return (
                 <div key={i} className="min-w-[100px]">
                   {part.label && (
-                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium">
+                    <div className="text-[11px] font-medium text-muted-foreground">
                       {part.label}
                     </div>
                   )}
                   {isStatus ? (
-                    <Badge variant={statusVariant(part.value)} className="mt-0.5">
+                    <Badge variant={statusVariant(part.value)} className="mt-0.5 text-[10px] font-medium">
                       {part.value || '—'}
                     </Badge>
                   ) : (
-                    <div className={cn('text-sm font-medium mt-0.5', isArn && 'font-mono tracking-wide')}>
+                    <div className={cn('text-xs font-medium mt-0.5', isArn && 'font-mono tracking-wide')}>
                       {part.value || '—'}
                     </div>
                   )}
@@ -278,40 +281,22 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
 
       {/* KPI strip */}
       {kpis.length > 0 && (
-        <div
-          className={cn(
-            'grid gap-3 grid-cols-2',
-            kpis.length === 3 ? 'sm:grid-cols-3' : kpis.length >= 4 ? 'sm:grid-cols-4' : 'sm:grid-cols-2',
-          )}
-        >
-          {kpis.map((kpi, i) => {
-            const Icon = kpi.icon;
-            return (
-              <Card key={i}>
-                <CardContent className="p-4 flex items-center gap-3">
-                  <div className="rounded-md bg-primary/10 p-2 shrink-0">
-                    <Icon className="h-4 w-4 text-primary" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-xs text-muted-foreground truncate">{kpi.title}</div>
-                    <div className="text-lg font-semibold tabular-nums">₹{formatCell(kpi.value)}</div>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+          {kpis.map((kpi, i) => (
+            <KpiTile key={i} label={kpi.title} value={`₹${formatCell(kpi.value)}`} />
+          ))}
         </div>
       )}
 
       {/* Search */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search this return…"
-            className="pl-8 h-8 text-sm"
+            className="pl-8 h-8 text-xs"
           />
         </div>
         <span className="text-xs text-muted-foreground shrink-0">
@@ -320,10 +305,10 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
       </div>
 
       {/* Sections */}
-      <div className="space-y-3">
+      <div className="space-y-2">
         {visibleSections.length === 0 && (
           <Card>
-            <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            <CardContent className="py-6 text-center text-sm text-muted-foreground">
               No rows match &quot;{search}&quot;.
             </CardContent>
           </Card>
@@ -339,29 +324,29 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
                   <CollapsibleTrigger asChild>
                     <button
                       type="button"
-                      className="w-full flex items-center justify-between px-4 py-2.5 bg-muted/40 hover:bg-muted/60 transition-colors text-left"
+                      className="w-full flex items-center justify-between border-b px-3 py-1.5 bg-muted/50 hover:bg-muted transition-colors text-left"
                     >
-                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
                         {section.heading || `Section ${idx + 1}`}
                       </span>
                       {isOpen ? (
-                        <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                       ) : (
-                        <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                       )}
                     </button>
                   </CollapsibleTrigger>
                 )}
                 <CollapsibleContent>
                   <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader className="sticky top-0 z-10 bg-background">
+                    <Table className={WS_TABLE}>
+                      <TableHeader className="sticky top-0 z-10">
                         <TableRow>
                           {table.headers.map((h, i) => (
                             <TableHead
                               key={i}
                               className={cn(
-                                'px-3 py-2 text-xs font-semibold whitespace-nowrap bg-muted/60',
+                                WS_TH, 'h-auto',
                                 isNumericHeader(h) && 'text-right',
                               )}
                             >
@@ -376,11 +361,11 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
                             const urlCell = row.find((c) => isUrl(c));
                             return (
                               <TableRow key={ri} className="bg-primary/5 hover:bg-primary/10">
-                                <TableCell colSpan={table.headers.length || 1} className="px-3 py-3">
+                                <TableCell colSpan={table.headers.length || 1} className="border-b px-3 py-2">
                                   <div className="flex items-center justify-between gap-3 flex-wrap">
-                                    <span className="text-sm font-medium">{rowLabel(row) || 'Filed Return PDF'}</span>
+                                    <span className="text-xs font-medium">{rowLabel(row) || 'Filed Return PDF'}</span>
                                     {urlCell ? (
-                                      <Button asChild size="sm" className="gap-1.5">
+                                      <Button asChild size="sm" className="h-8 gap-1 px-2.5 text-xs">
                                         <a href={String(urlCell)} target="_blank" rel="noreferrer">
                                           <FileText className="h-3.5 w-3.5" />
                                           View Filed PDF
@@ -395,12 +380,12 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
                             );
                           }
                           return (
-                            <TableRow key={ri}>
+                            <TableRow key={ri} className="hover:bg-muted/30">
                               {row.map((cell, ci) => {
                                 const header = table.headers[ci] || '';
                                 if (isUrl(cell)) {
                                   return (
-                                    <TableCell key={ci} className="px-3 py-2 text-xs whitespace-nowrap">
+                                    <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
                                       <a
                                         href={cell}
                                         target="_blank"
@@ -414,8 +399,8 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
                                 }
                                 if (ci === statusColIdx && String(cell) !== '') {
                                   return (
-                                    <TableCell key={ci} className="px-3 py-2 text-xs whitespace-nowrap">
-                                      <Badge variant={statusVariant(String(cell))} className="text-[10px] py-0">
+                                    <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
+                                      <Badge variant={statusVariant(String(cell))} className="text-[10px] py-0 font-medium">
                                         {String(cell)}
                                       </Badge>
                                     </TableCell>
@@ -423,7 +408,7 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
                                 }
                                 if (isSentinelCell(cell)) {
                                   return (
-                                    <TableCell key={ci} className="px-3 py-2 text-xs">
+                                    <TableCell key={ci} className={WS_TD}>
                                       <Badge
                                         variant="outline"
                                         className="border-dashed text-muted-foreground font-normal text-[10px]"
@@ -437,7 +422,7 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
                                   <TableCell
                                     key={ci}
                                     className={cn(
-                                      'px-3 py-2 text-xs',
+                                      WS_TD,
                                       isNumericHeader(header)
                                         ? 'text-right whitespace-nowrap tabular-nums'
                                         : 'max-w-[320px]',
@@ -462,19 +447,19 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
 
       {/* Pinned grand-total row(s) — always visible, exempt from search */}
       {grandTotalRows.length > 0 && (
-        <Card className="border-primary/30 sticky bottom-0 shadow-md">
+        <Card className="sticky bottom-0 overflow-hidden shadow-md">
           <CardContent className="p-0 overflow-x-auto">
-            <Table>
+            <Table className={WS_TABLE}>
               <TableBody>
                 {grandTotalRows.map((row, ri) => (
-                  <TableRow key={ri} className="bg-primary/5 font-semibold hover:bg-primary/10">
+                  <TableRow key={ri} className={cn(WS_TR_TOTAL, 'hover:bg-muted')}>
                     {row.map((cell, ci) => {
                       const header = table.headers[ci] || '';
                       return (
                         <TableCell
                           key={ci}
                           className={cn(
-                            'px-3 py-2 text-xs',
+                            WS_TD, 'border-b-0',
                             isNumericHeader(header) ? 'text-right whitespace-nowrap tabular-nums' : '',
                           )}
                         >

@@ -139,6 +139,246 @@ export type Database = {
           },
         ]
       }
+      annual_return_change_log: {
+        Row: {
+          action: string | null
+          changed_at: string
+          changed_by: string | null
+          client_id: string
+          doc_key: string
+          financial_year: string
+          id: number
+          kind: string
+          new_value: Json | null
+          old_value: Json | null
+          path: string[]
+          row_label: string | null
+          version: number | null
+        }
+        Insert: {
+          action?: string | null
+          changed_at?: string
+          changed_by?: string | null
+          client_id: string
+          doc_key: string
+          financial_year: string
+          id?: number
+          kind: string
+          new_value?: Json | null
+          old_value?: Json | null
+          path?: string[]
+          row_label?: string | null
+          version?: number | null
+        }
+        Update: {
+          action?: string | null
+          changed_at?: string
+          changed_by?: string | null
+          client_id?: string
+          doc_key?: string
+          financial_year?: string
+          id?: number
+          kind?: string
+          new_value?: Json | null
+          old_value?: Json | null
+          path?: string[]
+          row_label?: string | null
+          version?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "annual_return_change_log_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      annual_return_doc_history: {
+        Row: {
+          archived_at: string
+          client_id: string
+          data: Json
+          doc_id: string
+          doc_key: string
+          financial_year: string
+          id: string
+          reason: string | null
+          updated_at: string
+          updated_by: string | null
+          version: number
+        }
+        Insert: {
+          archived_at?: string
+          client_id: string
+          data: Json
+          doc_id: string
+          doc_key: string
+          financial_year: string
+          id?: string
+          reason?: string | null
+          updated_at: string
+          updated_by?: string | null
+          version: number
+        }
+        Update: {
+          archived_at?: string
+          client_id?: string
+          data?: Json
+          doc_id?: string
+          doc_key?: string
+          financial_year?: string
+          id?: string
+          reason?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "annual_return_doc_history_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      annual_return_docs: {
+        Row: {
+          client_id: string
+          created_at: string
+          data: Json
+          doc_key: string
+          financial_year: string
+          id: string
+          updated_at: string
+          updated_by: string | null
+          version: number
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          data?: Json
+          doc_key: string
+          financial_year: string
+          id?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          data?: Json
+          doc_key?: string
+          financial_year?: string
+          id?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "annual_return_docs_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      annual_return_payable_setoffs: {
+        Row: {
+          cess: number
+          cgst: number
+          client_id: string
+          created_at: string
+          created_by: string | null
+          delete_reason: string | null
+          deleted_at: string | null
+          deleted_by: string | null
+          doc_date: string | null
+          drc03_id: string | null
+          evidence_name: string | null
+          evidence_url: string | null
+          financial_year: string
+          gstr3b_period: string | null
+          gstr3b_table: string | null
+          id: string
+          igst: number
+          method: string
+          note: string | null
+          reference: string | null
+          sgst: number
+          side: string
+        }
+        Insert: {
+          cess?: number
+          cgst?: number
+          client_id: string
+          created_at?: string
+          created_by?: string | null
+          delete_reason?: string | null
+          deleted_at?: string | null
+          deleted_by?: string | null
+          doc_date?: string | null
+          drc03_id?: string | null
+          evidence_name?: string | null
+          evidence_url?: string | null
+          financial_year: string
+          gstr3b_period?: string | null
+          gstr3b_table?: string | null
+          id?: string
+          igst?: number
+          method: string
+          note?: string | null
+          reference?: string | null
+          sgst?: number
+          side: string
+        }
+        Update: {
+          cess?: number
+          cgst?: number
+          client_id?: string
+          created_at?: string
+          created_by?: string | null
+          delete_reason?: string | null
+          deleted_at?: string | null
+          deleted_by?: string | null
+          doc_date?: string | null
+          drc03_id?: string | null
+          evidence_name?: string | null
+          evidence_url?: string | null
+          financial_year?: string
+          gstr3b_period?: string | null
+          gstr3b_table?: string | null
+          id?: string
+          igst?: number
+          method?: string
+          note?: string | null
+          reference?: string | null
+          sgst?: number
+          side?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "annual_return_payable_setoffs_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "annual_return_payable_setoffs_drc03_id_fkey"
+            columns: ["drc03_id"]
+            isOneToOne: false
+            referencedRelation: "gst_drc03_filings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       annual_return_periods: {
         Row: {
           client_id: string
@@ -146,7 +386,17 @@ export type Database = {
           financial_year: string
           id: string
           locked_at: string | null
+          locked_by: string | null
           notes: string | null
+          payables_at_lock: Json | null
+          prepared_at: string | null
+          prepared_by_name: string | null
+          prepared_note: string | null
+          review_checklist: Json | null
+          review_note: string | null
+          reviewed_at: string | null
+          reviewed_by_name: string | null
+          reviewed_role: string | null
           prepared_by: string | null
           reviewed_by: string | null
           status: string
@@ -158,7 +408,17 @@ export type Database = {
           financial_year: string
           id?: string
           locked_at?: string | null
+          locked_by?: string | null
           notes?: string | null
+          payables_at_lock?: Json | null
+          prepared_at?: string | null
+          prepared_by_name?: string | null
+          prepared_note?: string | null
+          review_checklist?: Json | null
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by_name?: string | null
+          reviewed_role?: string | null
           prepared_by?: string | null
           reviewed_by?: string | null
           status?: string
@@ -170,7 +430,17 @@ export type Database = {
           financial_year?: string
           id?: string
           locked_at?: string | null
+          locked_by?: string | null
           notes?: string | null
+          payables_at_lock?: Json | null
+          prepared_at?: string | null
+          prepared_by_name?: string | null
+          prepared_note?: string | null
+          review_checklist?: Json | null
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by_name?: string | null
+          reviewed_role?: string | null
           prepared_by?: string | null
           reviewed_by?: string | null
           status?: string
@@ -3355,36 +3625,48 @@ export type Database = {
       client_annual_turnover: {
         Row: {
           aggregate_turnover: number | null
+          applicability_note: string | null
           client_id: string
           created_at: string
           entered_by: string | null
           exempt_turnover: number | null
           financial_year: string
+          gstr9_opt_in: boolean
+          gstr9c_opt_in: boolean
           id: string
           itc_directly_attributable_exempt: number | null
           updated_at: string
+          updated_by_name: string | null
         }
         Insert: {
           aggregate_turnover?: number | null
+          applicability_note?: string | null
           client_id: string
           created_at?: string
           entered_by?: string | null
           exempt_turnover?: number | null
           financial_year: string
+          gstr9_opt_in?: boolean
+          gstr9c_opt_in?: boolean
           id?: string
           itc_directly_attributable_exempt?: number | null
           updated_at?: string
+          updated_by_name?: string | null
         }
         Update: {
           aggregate_turnover?: number | null
+          applicability_note?: string | null
           client_id?: string
           created_at?: string
           entered_by?: string | null
           exempt_turnover?: number | null
           financial_year?: string
+          gstr9_opt_in?: boolean
+          gstr9c_opt_in?: boolean
           id?: string
           itc_directly_attributable_exempt?: number | null
           updated_at?: string
+          updated_by_name?: string | null
         }
         Relationships: [
           {
@@ -7592,6 +7874,15 @@ export type Database = {
       }
     }
     Views: {
+      annual_return_activity: {
+        Row: {
+          client_id: string | null
+          financial_year: string | null
+          last_saved_at: string | null
+          sheets: number | null
+        }
+        Relationships: []
+      }
       builder_dastavej_reco: {
         Row: {
           booked_at_cutoff: boolean | null
@@ -7778,6 +8069,70 @@ export type Database = {
       }
     }
     Functions: {
+      save_annual_return_doc: {
+        Args: {
+          p_client_id: string
+          p_data: Json
+          p_doc_key: string
+          p_expected_version: number
+          p_financial_year: string
+          p_action?: string
+          p_force_history?: boolean
+          p_role?: string
+          p_updated_by: string
+        }
+        Returns: number
+      }
+      set_annual_return_status: {
+        Args: {
+          p_by: string
+          p_checklist?: Json
+          p_client_id: string
+          p_financial_year: string
+          p_from: string
+          p_note?: string
+          p_payables?: Json
+          p_role?: string
+          p_to: string
+        }
+        Returns: undefined
+      }
+      mark_annual_return_prepared: {
+        Args: {
+          p_by: string
+          p_clear?: boolean
+          p_client_id: string
+          p_financial_year: string
+          p_note?: string
+        }
+        Returns: undefined
+      }
+      add_annual_return_setoff: {
+        Args: {
+          p_by: string
+          p_cess: number
+          p_cgst: number
+          p_client_id: string
+          p_doc_date?: string
+          p_drc03_id?: string
+          p_evidence_name?: string
+          p_evidence_url?: string
+          p_financial_year: string
+          p_gstr3b_period?: string
+          p_gstr3b_table?: string
+          p_igst: number
+          p_method: string
+          p_note?: string
+          p_reference?: string
+          p_sgst: number
+          p_side: string
+        }
+        Returns: string
+      }
+      remove_annual_return_setoff: {
+        Args: { p_by: string; p_id: string; p_reason: string }
+        Returns: undefined
+      }
       authenticate_client: {
         Args: { identifier: string; pass: string }
         Returns: {

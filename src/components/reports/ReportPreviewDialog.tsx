@@ -14,6 +14,7 @@ import React from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { FileSpreadsheet, FileText, Loader2, AlertCircle } from 'lucide-react';
+import { WS_BTN } from '@/components/workspace/theme';
 import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { LedgerRegisterView } from './views/LedgerRegisterView';
@@ -72,11 +73,11 @@ export const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[96vw] w-full h-[90vh] flex flex-col p-0 gap-0 sm:max-w-[96vw]">
-        <DialogHeader className="px-5 pt-5 pb-3 border-b shrink-0">
+        <DialogHeader className="shrink-0 border-b px-4 pb-2.5 pt-4">
           <div className="flex items-start justify-between gap-4 pr-8">
             <div className="min-w-0">
-              <DialogTitle className="text-lg">{report?.title || ''}</DialogTitle>
-              <DialogDescription className="mt-1">
+              <DialogTitle className="text-base leading-snug">{report?.title || ''}</DialogTitle>
+              <DialogDescription className="mt-0.5 text-xs">
                 {report?.description || 'Fetching from the database…'}
               </DialogDescription>
             </div>
@@ -85,33 +86,33 @@ export const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
 
         {loading && (
           <div className="flex-1 flex flex-col items-center justify-center gap-2 text-muted-foreground">
-            <Loader2 className="h-6 w-6 animate-spin" />
+            <Loader2 className="h-4 w-4 animate-spin" />
             <p className="text-sm">Loading report…</p>
           </div>
         )}
 
         {!loading && error && (
           <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center px-8">
-            <AlertCircle className="h-6 w-6 text-destructive" />
+            <AlertCircle className="h-5 w-5 text-destructive" />
             <p className="text-sm text-muted-foreground max-w-md">{error}</p>
           </div>
         )}
 
         {!loading && !error && table && report && (
           <>
-            <div className="flex items-center gap-3 px-5 py-2.5 border-b shrink-0">
+            <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
               <div className="flex-1" />
-              <Button variant="outline" size="sm" onClick={() => onExport('xlsx')} disabled={exportBusy !== null}>
-                {exportBusy === 'xlsx' ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <FileSpreadsheet className="h-3.5 w-3.5 mr-1.5" />}
+              <Button variant="outline" size="sm" className={WS_BTN} onClick={() => onExport('xlsx')} disabled={exportBusy !== null}>
+                {exportBusy === 'xlsx' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
                 Excel
               </Button>
-              <Button variant="outline" size="sm" onClick={() => onExport('pdf')} disabled={exportBusy !== null}>
-                {exportBusy === 'pdf' ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <FileText className="h-3.5 w-3.5 mr-1.5" />}
+              <Button variant="outline" size="sm" className={WS_BTN} onClick={() => onExport('pdf')} disabled={exportBusy !== null}>
+                {exportBusy === 'pdf' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
                 PDF
               </Button>
             </div>
 
-            <div className="flex-1 overflow-auto p-4">
+            <div className="flex-1 overflow-auto p-3">
               {renderView(report, table)}
             </div>
           </>

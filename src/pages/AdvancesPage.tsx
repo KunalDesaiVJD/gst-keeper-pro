@@ -10,7 +10,15 @@ import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { HandCoins, Plus, Loader2, Trash2, Pencil, Wand2, Link2, FileDown } from 'lucide-react';
+import { HandCoins, Plus, Loader2, Trash2, Pencil, Wand2, Link2, FileDown, RefreshCw } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, Note, SectionCard } from '@/components/gstr9/ui';
+import { TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepTabs';
+import {
+  WS_PAGE, WS_BTN, WS_TABLE_WRAP, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR,
+  WS_FILTER_LABEL, WS_CONTROL, WS_CELL_INPUT,
+} from '@/components/workspace/theme';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -44,6 +52,11 @@ interface Client { id: string; name: string; gstin: string; regular_sub_type?: s
 
 const inr = (n: number) => (n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const r2 = (n: number) => Math.round(n * 100) / 100;
+
+// Table pieces: the kit's TableHead carries h-12, and its row a hover tint of its own.
+const TH = `h-auto ${WS_TH}`;
+const TR = `border-0 ${WS_TR}`;
+const TABLE_WRAP = `${WS_TABLE_WRAP} max-h-[70vh]`;
 
 /** Ageing bucket for an advance open since `since`, as at `now`. */
 const ageBucket = (since: string | null, now: string): string => {
@@ -331,8 +344,8 @@ const AdvancesPage: React.FC = () => {
   });
 
   const ExportButton: React.FC<{ id: string; label: string; onClick: () => void; disabled?: boolean }> = ({ id, label, onClick, disabled }) => (
-    <Button variant="outline" size="sm" onClick={onClick} disabled={disabled || exporting !== null}>
-      {exporting === id ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <FileDown className="h-3.5 w-3.5 mr-1.5" />}
+    <Button variant="outline" size="sm" className={WS_BTN} onClick={onClick} disabled={disabled || exporting !== null}>
+      {exporting === id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileDown className="h-3.5 w-3.5" />}
       {label}
     </Button>
   );
@@ -372,345 +385,357 @@ const AdvancesPage: React.FC = () => {
 
   const clientOptions = clients.map((c) => ({ value: c.id, label: c.name }));
 
+  // Tabs are controlled only so the summary tiles can open the tab they count.
+  const [tab, setTab] = useState('ledger');
+  const goTo = (t: string) => { setTab(t); if (t === 'board' && board.length === 0) loadBoard(); };
+
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
         title="Advances"
         subtitle="Advance received, its set-off against invoices, and the open position month by month"
-        icon={<HandCoins className="h-5 w-5" />}
+        icon={<HandCoins />}
       />
 
       <Card>
-        <CardContent className="p-4 flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-muted-foreground">Client:</span>
-            <SearchableSelect
-              options={clientOptions}
-              value={selectedClient || ''}
-              onValueChange={setSelectedClient}
-              placeholder="Select client"
-              className="w-64"
-            />
+        <CardContent className="px-3 py-2">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="w-full min-w-0 space-y-0.5 sm:w-64">
+              <span className={WS_FILTER_LABEL}>Client</span>
+              <SearchableSelect
+                options={clientOptions}
+                value={selectedClient || ''}
+                onValueChange={setSelectedClient}
+                placeholder="Select client"
+                className={`w-full ${WS_CONTROL}`}
+              />
+            </label>
+            <label className="w-40 min-w-0 space-y-0.5">
+              <span className={WS_FILTER_LABEL}>Month</span>
+              <SearchableMonthSelect
+                options={monthOptions}
+                value={selectedMonth}
+                onValueChange={setSelectedMonth}
+                className={`w-full ${WS_CONTROL}`}
+              />
+            </label>
+            {loading && <Loader2 className="mb-2 h-4 w-4 animate-spin text-muted-foreground" />}
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-muted-foreground">Month:</span>
-            <SearchableMonthSelect
-              options={monthOptions}
-              value={selectedMonth}
-              onValueChange={setSelectedMonth}
-              className="w-40"
-            />
-          </div>
-          {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-          {ledger && (
-            <div className="ml-auto text-sm">
-              <span className="text-muted-foreground">Open advance </span>
-              <span className="font-bold tabular-nums text-primary">₹{inr(ledger.closingTotal.taxable)}</span>
-              {ledger.oldestOpenPeriod && (
-                <span className="text-muted-foreground"> · oldest {ledger.oldestOpenPeriod} ({ageBucket(ledger.oldestOpenPeriod, selectedMonth)})</span>
-              )}
-            </div>
-          )}
         </CardContent>
       </Card>
+
+      {ledger && !isBuilder && (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+          <TileButton active={tab === 'ledger'} onClick={() => goTo('ledger')} title="Open the ledger">
+            <KpiTile
+              label="Open advance"
+              value={<>₹{inr(ledger.closingTotal.taxable)}</>}
+              hint={ledger.oldestOpenPeriod ? `oldest ${ledger.oldestOpenPeriod} (${ageBucket(ledger.oldestOpenPeriod, selectedMonth)})` : undefined}
+            />
+          </TileButton>
+          <TileButton active={tab === 'register'} onClick={() => goTo('register')} title="Open the register">
+            <KpiTile label="Receipt vouchers" value={positions.length} hint={`${openPositions.length} with an open balance`} />
+          </TileButton>
+          <TileButton active={false} onClick={() => goTo('register')} title="Open the register">
+            <KpiTile
+              label="Register vs filed returns"
+              value={register.receipts.length === 0 ? '—' : reconciliation.length === 0 ? 'Agrees' : `${reconciliation.length} difference${reconciliation.length === 1 ? '' : 's'}`}
+              tone={register.receipts.length === 0 ? 'neutral' : reconciliation.length ? 'warn' : 'ok'}
+            />
+          </TileButton>
+          <TileButton active={tab === 'setoff'} onClick={() => goTo('setoff')} title="Open the set-off workspace">
+            <KpiTile label="Table 11B to report" value={<>₹{inr(allocTotal)}</>} hint={`Set off now · ${selectedMonth}`} />
+          </TileButton>
+          {canApprove && (
+            <TileButton active={tab === 'approvals'} onClick={() => goTo('approvals')} title="Open override approvals">
+              <KpiTile label="Pending approvals" value={pendingCount} tone={pendingCount ? 'warn' : 'ok'} hint="Set-off override requests" />
+            </TileButton>
+          )}
+        </div>
+      )}
 
       {/* Builders are out of scope by construction — their advances are
           generated and balanced by the Builder module (§1 of the doc). Saying
           so plainly beats showing an empty ledger that looks like a bug. */}
       {isBuilder && (
-        <Card className="border-info/40 bg-info/5">
-          <CardContent className="p-4 text-sm">
-            <p className="font-semibold text-foreground">Managed by the Builder module</p>
-            <p className="text-muted-foreground mt-1">
-              This client&apos;s advances come from bookings and receipts in the Builder module, where Table 11A and
-              11B are generated and balanced automatically. The register here is not used for promoter clients.
-            </p>
-          </CardContent>
-        </Card>
+        <Note tone="info" open>
+          <span className="font-semibold">Managed by the Builder module.</span>{' '}
+          This client&apos;s advances come from bookings and receipts in the Builder module, where Table 11A and
+          11B are generated and balanced automatically. The register here is not used for promoter clients.
+        </Note>
       )}
 
       {!isBuilder && (
-        <Tabs defaultValue="ledger">
-          <TabsList>
-            <TabsTrigger value="ledger">Ledger</TabsTrigger>
-            <TabsTrigger value="register">Register</TabsTrigger>
-            <TabsTrigger value="setoff">Set-off</TabsTrigger>
-            {isContractor && <TabsTrigger value="projects">Projects</TabsTrigger>}
+        <Tabs value={tab} onValueChange={setTab} className="space-y-3">
+          <TabsList className={TAB_LIST_CLASS}>
+            <TabsTrigger className={TAB_TRIGGER_CLASS} value="ledger">Ledger</TabsTrigger>
+            <TabsTrigger className={TAB_TRIGGER_CLASS} value="register">Register</TabsTrigger>
+            <TabsTrigger className={TAB_TRIGGER_CLASS} value="setoff">Set-off</TabsTrigger>
+            {isContractor && <TabsTrigger className={TAB_TRIGGER_CLASS} value="projects">Projects</TabsTrigger>}
             {canApprove && (
-              <TabsTrigger value="approvals">
+              <TabsTrigger className={TAB_TRIGGER_CLASS} value="approvals">
                 Approvals
                 {pendingCount > 0 && (
-                  <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-destructive/15 text-destructive tabular-nums">
+                  <Badge variant="destructive" className="h-4 min-w-4 justify-center rounded-full px-1 text-[10px] leading-none tabular-nums">
                     {pendingCount}
-                  </span>
+                  </Badge>
                 )}
               </TabsTrigger>
             )}
-            <TabsTrigger value="board" onClick={() => { if (board.length === 0) loadBoard(); }}>All clients</TabsTrigger>
+            <TabsTrigger className={TAB_TRIGGER_CLASS} value="board" onClick={() => { if (board.length === 0) loadBoard(); }}>All clients</TabsTrigger>
           </TabsList>
 
           {/* ---------------- Ledger ---------------- */}
-          <TabsContent value="ledger">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                  <p className="text-xs text-muted-foreground">
-                    Working papers print as at {selectedMonth}, in the firm&apos;s house style, for filing with the return.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <ExportButton id="ledger" label="Ledger" onClick={exportLedger} disabled={!selectedClient} />
-                    <ExportButton id="ageing" label="Ageing" onClick={exportAgeing} disabled={!selectedClient} />
-                    <ExportButton id="bridge" label="Amendment bridge" onClick={exportBridge} disabled={!selectedClient} />
-                    <ExportButton id="certificate" label="Exception certificate" onClick={exportCertificate} disabled={!selectedClient} />
-                  </div>
-                </div>
-                {!ledger || ledger.months.length === 0 ? (
-                  <TableEmptyState title="No advance activity in the imported returns for this client." />
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-primary hover:bg-primary">
-                        <TableHead className="text-primary-foreground font-bold">Period</TableHead>
-                        <TableHead className="text-primary-foreground font-bold text-right">Opening</TableHead>
-                        <TableHead className="text-primary-foreground font-bold text-right">11A received</TableHead>
-                        <TableHead className="text-primary-foreground font-bold text-right">11B adjusted</TableHead>
-                        <TableHead className="text-primary-foreground font-bold text-right">Closing</TableHead>
-                        <TableHead className="text-primary-foreground font-bold">Amended</TableHead>
+          <TabsContent value="ledger" className="mt-0">
+            <SectionCard
+              title="Advance ledger"
+              description={<>Working papers print as at {selectedMonth}, in the firm&apos;s house style, for filing with the return.</>}
+              actions={
+                <>
+                  <ExportButton id="ledger" label="Ledger" onClick={exportLedger} disabled={!selectedClient} />
+                  <ExportButton id="ageing" label="Ageing" onClick={exportAgeing} disabled={!selectedClient} />
+                  <ExportButton id="bridge" label="Amendment bridge" onClick={exportBridge} disabled={!selectedClient} />
+                  <ExportButton id="certificate" label="Exception certificate" onClick={exportCertificate} disabled={!selectedClient} />
+                </>
+              }
+            >
+              {!ledger || ledger.months.length === 0 ? (
+                <TableEmptyState title="No advance activity in the imported returns for this client." />
+              ) : (
+                <Table className={WS_TABLE} containerClassName={TABLE_WRAP}>
+                  <TableHeader>
+                    <TableRow className="border-0 hover:bg-transparent">
+                      <TableHead className={TH}>Period</TableHead>
+                      <TableHead className={`${TH} text-right`}>Opening</TableHead>
+                      <TableHead className={`${TH} text-right`}>11A received</TableHead>
+                      <TableHead className={`${TH} text-right`}>11B adjusted</TableHead>
+                      <TableHead className={`${TH} text-right`}>Closing</TableHead>
+                      <TableHead className={TH}>Amended</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {ledger.months.map((m) => (
+                      <TableRow key={m.period} className={TR}>
+                        <TableCell className={`${WS_TD} font-medium`}>{m.period}</TableCell>
+                        <TableCell className={WS_TD_NUM}>{inr(m.opening.taxable)}</TableCell>
+                        {/* As-AMENDED is the primary figure (firm's election,
+                            Sept 2026); the as-filed number sits under it as a
+                            memo so the paper still ties to the portal. */}
+                        <TableCell className={WS_TD_NUM}>
+                          {inr(m.effective.received.taxable)}
+                          {m.amended && Math.abs(m.effective.received.taxable - m.filed.received.taxable) > 0.5 && (
+                            <div className="text-[11px] text-muted-foreground font-normal">as filed {inr(m.filed.received.taxable)}</div>
+                          )}
+                        </TableCell>
+                        <TableCell className={WS_TD_NUM}>
+                          {inr(m.effective.adjusted.taxable)}
+                          {m.amended && Math.abs(m.effective.adjusted.taxable - m.filed.adjusted.taxable) > 0.5 && (
+                            <div className="text-[11px] text-muted-foreground font-normal">as filed {inr(m.filed.adjusted.taxable)}</div>
+                          )}
+                        </TableCell>
+                        <TableCell className={`${WS_TD_NUM} font-semibold`}>{inr(m.closing.taxable)}</TableCell>
+                        <TableCell className={`${WS_TD} text-muted-foreground`}>
+                          {m.amended
+                            ? `Restated in ${m.amendedIn.join(', ')} (11A ${m.differential.received.taxable >= 0 ? '+' : ''}${inr(m.differential.received.taxable)})`
+                            : '—'}
+                        </TableCell>
                       </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {ledger.months.map((m) => (
-                        <TableRow key={m.period}>
-                          <TableCell className="font-medium">{m.period}</TableCell>
-                          <TableCell className="text-right tabular-nums">{inr(m.opening.taxable)}</TableCell>
-                          {/* As-AMENDED is the primary figure (firm's election,
-                              Sept 2026); the as-filed number sits under it as a
-                              memo so the paper still ties to the portal. */}
-                          <TableCell className="text-right tabular-nums">
-                            {inr(m.effective.received.taxable)}
-                            {m.amended && Math.abs(m.effective.received.taxable - m.filed.received.taxable) > 0.5 && (
-                              <div className="text-[11px] text-muted-foreground font-normal">as filed {inr(m.filed.received.taxable)}</div>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {inr(m.effective.adjusted.taxable)}
-                            {m.amended && Math.abs(m.effective.adjusted.taxable - m.filed.adjusted.taxable) > 0.5 && (
-                              <div className="text-[11px] text-muted-foreground font-normal">as filed {inr(m.filed.adjusted.taxable)}</div>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums font-semibold">{inr(m.closing.taxable)}</TableCell>
-                          <TableCell className="text-xs text-muted-foreground">
-                            {m.amended
-                              ? `Restated in ${m.amendedIn.join(', ')} (11A ${m.differential.received.taxable >= 0 ? '+' : ''}${inr(m.differential.received.taxable)})`
-                              : '—'}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-                {ledger?.hasAmendments && (
-                  <p className="text-xs text-muted-foreground mt-3">
-                    Amended rows lead with the <strong>restated</strong> figure, with the amount originally
-                    filed shown underneath as a memo — a Table 11(2) amendment replaces the month it corrects
-                    rather than adding to it. The differential in brackets is what belongs in GSTR-3B
-                    Adjustments for that correction.
-                  </p>
-                )}
-              </CardContent>
-            </Card>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+              {ledger?.hasAmendments && (
+                <Note tone="info">
+                  Amended rows lead with the <strong>restated</strong> figure, with the amount originally
+                  filed shown underneath as a memo — a Table 11(2) amendment replaces the month it corrects
+                  rather than adding to it. The differential in brackets is what belongs in GSTR-3B
+                  Adjustments for that correction.
+                </Note>
+              )}
+            </SectionCard>
           </TabsContent>
 
           {/* ---------------- Register ---------------- */}
-          <TabsContent value="register">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-xs text-muted-foreground max-w-2xl">
-                    Receipt vouchers and the invoices that absorbed them. GSTR-1 Table 11A carries only place of
-                    supply and rate, so this is the only place the party and invoice behind an advance are recorded.
-                  </p>
-                  <div className="flex gap-2 shrink-0">
-                    <ExportButton id="register" label="Set-off register" onClick={exportRegister} disabled={!selectedClient} />
-                    {canEdit && selectedClient && (
-                      <Button size="sm" onClick={() => { setEditing(null); setReceiptDialogOpen(true); }}>
-                        <Plus className="h-3.5 w-3.5 mr-1.5" /> Add receipt
-                      </Button>
-                    )}
-                  </div>
-                </div>
+          <TabsContent value="register" className="mt-0">
+            <SectionCard
+              title="Receipt register"
+              description={<>Receipt vouchers and the invoices that absorbed them. GSTR-1 Table 11A carries only place of
+                supply and rate, so this is the only place the party and invoice behind an advance are recorded.</>}
+              actions={
+                <>
+                  <ExportButton id="register" label="Set-off register" onClick={exportRegister} disabled={!selectedClient} />
+                  {canEdit && selectedClient && (
+                    <Button size="sm" className={WS_BTN} onClick={() => { setEditing(null); setReceiptDialogOpen(true); }}>
+                      <Plus className="h-3.5 w-3.5" /> Add receipt
+                    </Button>
+                  )}
+                </>
+              }
+            >
+              {reconciliation.length > 0 && (
+                <Note tone="warn">
+                  <p className="font-semibold">Register does not agree with the filed returns</p>
+                  {reconciliation.map((row) => (
+                    <p key={row.key} className="mt-0.5 text-muted-foreground">
+                      {row.label}: register ₹{inr(row.register)} vs returns ₹{inr(row.filed)} — difference ₹{inr(Math.abs(row.difference))}
+                    </p>
+                  ))}
+                </Note>
+              )}
 
-                {reconciliation.length > 0 && (
-                  <div className="rounded-md border border-warning/40 bg-warning/5 p-3 mb-3 text-xs">
-                    <p className="font-semibold text-foreground">Register does not agree with the filed returns</p>
-                    {reconciliation.map((row) => (
-                      <p key={row.key} className="text-muted-foreground mt-1">
-                        {row.label}: register ₹{inr(row.register)} vs returns ₹{inr(row.filed)} — difference ₹{inr(Math.abs(row.difference))}
-                      </p>
+              {positions.length === 0 ? (
+                <TableEmptyState title="No receipt vouchers recorded for this client yet." />
+              ) : (
+                <Table className={WS_TABLE} containerClassName={TABLE_WRAP}>
+                  <TableHeader>
+                    <TableRow className="border-0 hover:bg-transparent">
+                      <TableHead className={TH}>Receipt</TableHead>
+                      <TableHead className={TH}>Date</TableHead>
+                      <TableHead className={TH}>Party</TableHead>
+                      <TableHead className={TH}>POS / Rate</TableHead>
+                      <TableHead className={`${TH} text-right`}>Taxable</TableHead>
+                      <TableHead className={`${TH} text-right`}>Adjusted</TableHead>
+                      <TableHead className={`${TH} text-right`}>Open</TableHead>
+                      <TableHead className={TH}>Status</TableHead>
+                      {canEdit && <TableHead className={`${TH} w-20`} />}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {positions.map((p) => (
+                      <TableRow key={p.receipt.id} className={TR}>
+                        <TableCell className={`${WS_TD} font-medium`}>{p.receipt.receipt_no || '—'}</TableCell>
+                        <TableCell className={`${WS_TD} whitespace-nowrap`}>{p.receipt.receipt_date}</TableCell>
+                        <TableCell className={`${WS_TD} max-w-[200px] truncate`}>{p.receipt.party_name || p.receipt.party_gstin || '—'}</TableCell>
+                        <TableCell className={`${WS_TD} whitespace-nowrap`}>{p.receipt.pos} @ {p.receipt.rate_pct}%</TableCell>
+                        <TableCell className={WS_TD_NUM}>
+                          {p.receipt.supply_nature === 'GOODS' ? <span className="text-muted-foreground">Goods — not taxable</span> : inr(p.receipt.taxable_value)}
+                        </TableCell>
+                        <TableCell className={WS_TD_NUM}>{inr(p.adjusted)}</TableCell>
+                        <TableCell className={`${WS_TD_NUM} font-semibold`}>{inr(p.open)}</TableCell>
+                        {/* Status is a word, not a colour — these tables get printed. */}
+                        <TableCell className={WS_TD}>{p.derivedStatus}</TableCell>
+                        {canEdit && (
+                          <TableCell className={`${WS_TD} py-0.5`}>
+                            <div className="flex gap-1">
+                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditing(p.receipt); setReceiptDialogOpen(true); }}>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeReceipt(p)}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        )}
+                      </TableRow>
                     ))}
-                  </div>
-                )}
+                  </TableBody>
+                </Table>
+              )}
+            </SectionCard>
+          </TabsContent>
 
-                {positions.length === 0 ? (
-                  <TableEmptyState title="No receipt vouchers recorded for this client yet." />
-                ) : (
-                  <Table>
+          {/* ---------------- Set-off ---------------- */}
+          <TabsContent value="setoff" className="mt-0">
+            <SectionCard
+              title="Set off open advances against an invoice"
+              description={<>Recorded against {selectedMonth}. Legs recorded here become this period&apos;s Table 11B —
+                write them into the GSTR-1 draft once the return is ready.</>}
+            >
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="w-40 min-w-0 space-y-0.5">
+                  <span className={WS_FILTER_LABEL}>Invoice no.</span>
+                  <Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} className={WS_CONTROL} placeholder="INV-001" />
+                </label>
+                {/* Contractors recover an advance from a specific RA bill;
+                    without naming it the project's recovery variance has
+                    nothing to compare the actual against. */}
+                {isContractor && raBills.length > 0 && (
+                  <label className="w-52 min-w-0 space-y-0.5">
+                    <span className={WS_FILTER_LABEL}>Recovered from RA bill</span>
+                    <Select value={setoffBillId} onValueChange={setSetoffBillId}>
+                      <SelectTrigger className={WS_CONTROL}><SelectValue placeholder="Select RA bill" /></SelectTrigger>
+                      <SelectContent>
+                        {raBills.map((b) => (
+                          <SelectItem key={b.id} value={b.id}>
+                            {b.bill_ref || `RA-${b.bill_no}`} · {b.period_month}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </label>
+                )}
+                <Button variant="outline" size="sm" className={WS_BTN} onClick={suggestAll} disabled={openPositions.length === 0}>
+                  <Wand2 className="h-3.5 w-3.5" /> Suggest (oldest first)
+                </Button>
+              </div>
+
+              {openPositions.length === 0 ? (
+                <TableEmptyState title="No open advances in the register for this client." />
+              ) : (
+                <>
+                  <Table className={WS_TABLE} containerClassName={TABLE_WRAP}>
                     <TableHeader>
-                      <TableRow className="bg-primary hover:bg-primary">
-                        <TableHead className="text-primary-foreground font-bold">Receipt</TableHead>
-                        <TableHead className="text-primary-foreground font-bold">Date</TableHead>
-                        <TableHead className="text-primary-foreground font-bold">Party</TableHead>
-                        <TableHead className="text-primary-foreground font-bold">POS / Rate</TableHead>
-                        <TableHead className="text-primary-foreground font-bold text-right">Taxable</TableHead>
-                        <TableHead className="text-primary-foreground font-bold text-right">Adjusted</TableHead>
-                        <TableHead className="text-primary-foreground font-bold text-right">Open</TableHead>
-                        <TableHead className="text-primary-foreground font-bold">Status</TableHead>
-                        {canEdit && <TableHead className="text-primary-foreground font-bold w-20" />}
+                      <TableRow className="border-0 hover:bg-transparent">
+                        <TableHead className={TH}>Receipt</TableHead>
+                        <TableHead className={TH}>Date</TableHead>
+                        <TableHead className={TH}>Party</TableHead>
+                        <TableHead className={TH}>POS / Rate</TableHead>
+                        <TableHead className={`${TH} text-right`}>Open</TableHead>
+                        <TableHead className={`${TH} text-right w-40`}>Set off now</TableHead>
+                        <TableHead className={`${TH} w-10`} />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {positions.map((p) => (
-                        <TableRow key={p.receipt.id}>
-                          <TableCell className="font-medium">{p.receipt.receipt_no || '—'}</TableCell>
-                          <TableCell>{p.receipt.receipt_date}</TableCell>
-                          <TableCell className="max-w-[200px] truncate">{p.receipt.party_name || p.receipt.party_gstin || '—'}</TableCell>
-                          <TableCell className="text-xs">{p.receipt.pos} @ {p.receipt.rate_pct}%</TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {p.receipt.supply_nature === 'GOODS' ? <span className="text-muted-foreground text-xs">Goods — not taxable</span> : inr(p.receipt.taxable_value)}
+                      {openPositions.map((p) => (
+                        <TableRow key={p.receipt.id} className={TR}>
+                          <TableCell className={`${WS_TD} font-medium`}>{p.receipt.receipt_no || '—'}</TableCell>
+                          <TableCell className={`${WS_TD} whitespace-nowrap`}>{p.receipt.receipt_date}</TableCell>
+                          <TableCell className={`${WS_TD} max-w-[180px] truncate`}>{p.receipt.party_name || p.receipt.party_gstin || '—'}</TableCell>
+                          <TableCell className={`${WS_TD} whitespace-nowrap`}>{p.receipt.pos} @ {p.receipt.rate_pct}%</TableCell>
+                          <TableCell className={WS_TD_NUM}>{inr(p.open)}</TableCell>
+                          <TableCell className="border-b border-r p-0">
+                            <Input
+                              type="number"
+                              className={`${WS_CELL_INPUT} text-right tabular-nums`}
+                              value={alloc[p.receipt.id] ?? ''}
+                              onChange={(e) => setAlloc({ ...alloc, [p.receipt.id]: e.target.value })}
+                              disabled={!canEdit}
+                            />
                           </TableCell>
-                          <TableCell className="text-right tabular-nums">{inr(p.adjusted)}</TableCell>
-                          <TableCell className="text-right tabular-nums font-semibold">{inr(p.open)}</TableCell>
-                          {/* Status is a word, not a colour — these tables get printed. */}
-                          <TableCell className="text-xs">{p.derivedStatus}</TableCell>
-                          {canEdit && (
-                            <TableCell>
-                              <div className="flex gap-1">
-                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditing(p.receipt); setReceiptDialogOpen(true); }}>
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </Button>
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeReceipt(p)}>
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            </TableCell>
-                          )}
+                          <TableCell className={`${WS_TD} py-0.5`}>
+                            <Button variant="ghost" size="icon" className="h-7 w-7" title="Set off the whole open balance" onClick={() => suggestFor(p)} disabled={!canEdit}>
+                              <Link2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
 
-          {/* ---------------- Set-off ---------------- */}
-          <TabsContent value="setoff">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">Set off open advances against an invoice</p>
-                    <p className="text-xs text-muted-foreground max-w-2xl mt-0.5">
-                      Recorded against {selectedMonth}. Legs recorded here become this period&apos;s Table 11B —
-                      write them into the GSTR-1 draft once the return is ready.
-                    </p>
-                  </div>
-                  <div className="flex items-end gap-2">
-                    <div>
-                      <label className="text-xs text-muted-foreground block mb-1">Invoice no.</label>
-                      <Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} className="w-40 h-9" placeholder="INV-001" />
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-2.5">
+                    <div className="text-xs">
+                      <span className="text-muted-foreground">Table 11B to report this month: </span>
+                      <span className="text-sm font-semibold tabular-nums text-primary">₹{inr(allocTotal)}</span>
                     </div>
-                    {/* Contractors recover an advance from a specific RA bill;
-                        without naming it the project's recovery variance has
-                        nothing to compare the actual against. */}
-                    {isContractor && raBills.length > 0 && (
-                      <div>
-                        <label className="text-xs text-muted-foreground block mb-1">Recovered from RA bill</label>
-                        <Select value={setoffBillId} onValueChange={setSetoffBillId}>
-                          <SelectTrigger className="w-52 h-9"><SelectValue placeholder="Select RA bill" /></SelectTrigger>
-                          <SelectContent>
-                            {raBills.map((b) => (
-                              <SelectItem key={b.id} value={b.id}>
-                                {b.bill_ref || `RA-${b.bill_no}`} · {b.period_month}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
-                    <Button variant="outline" size="sm" onClick={suggestAll} disabled={openPositions.length === 0}>
-                      <Wand2 className="h-3.5 w-3.5 mr-1.5" /> Suggest (oldest first)
-                    </Button>
-                  </div>
-                </div>
-
-                {openPositions.length === 0 ? (
-                  <TableEmptyState title="No open advances in the register for this client." />
-                ) : (
-                  <>
-                    <Table>
-                      <TableHeader>
-                        <TableRow className="bg-primary hover:bg-primary">
-                          <TableHead className="text-primary-foreground font-bold">Receipt</TableHead>
-                          <TableHead className="text-primary-foreground font-bold">Date</TableHead>
-                          <TableHead className="text-primary-foreground font-bold">Party</TableHead>
-                          <TableHead className="text-primary-foreground font-bold">POS / Rate</TableHead>
-                          <TableHead className="text-primary-foreground font-bold text-right">Open</TableHead>
-                          <TableHead className="text-primary-foreground font-bold text-right w-40">Set off now</TableHead>
-                          <TableHead className="text-primary-foreground font-bold w-10" />
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {openPositions.map((p) => (
-                          <TableRow key={p.receipt.id}>
-                            <TableCell className="font-medium">{p.receipt.receipt_no || '—'}</TableCell>
-                            <TableCell>{p.receipt.receipt_date}</TableCell>
-                            <TableCell className="max-w-[180px] truncate">{p.receipt.party_name || p.receipt.party_gstin || '—'}</TableCell>
-                            <TableCell className="text-xs">{p.receipt.pos} @ {p.receipt.rate_pct}%</TableCell>
-                            <TableCell className="text-right tabular-nums">{inr(p.open)}</TableCell>
-                            <TableCell>
-                              <Input
-                                type="number"
-                                className="h-8 text-right tabular-nums"
-                                value={alloc[p.receipt.id] ?? ''}
-                                onChange={(e) => setAlloc({ ...alloc, [p.receipt.id]: e.target.value })}
-                                disabled={!canEdit}
-                              />
-                            </TableCell>
-                            <TableCell>
-                              <Button variant="ghost" size="icon" className="h-7 w-7" title="Set off the whole open balance" onClick={() => suggestFor(p)} disabled={!canEdit}>
-                                <Link2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-
-                    <div className="flex flex-wrap items-center justify-between gap-3 mt-4 pt-3 border-t border-border">
-                      <div className="text-sm">
-                        <span className="text-muted-foreground">Table 11B to report this month: </span>
-                        <span className="font-bold tabular-nums text-primary">₹{inr(allocTotal)}</span>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button variant="outline" size="sm" onClick={writeToGstr1} disabled={!canEdit}>
-                          Write Table 11B to GSTR-1 draft
-                        </Button>
-                        <Button size="sm" onClick={recordSetoff} disabled={!canEdit || applying || allocTotal <= 0}>
-                          {applying && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
-                          Record set-off
-                        </Button>
-                      </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" className={WS_BTN} onClick={writeToGstr1} disabled={!canEdit}>
+                        Write Table 11B to GSTR-1 draft
+                      </Button>
+                      <Button size="sm" className={WS_BTN} onClick={recordSetoff} disabled={!canEdit || applying || allocTotal <= 0}>
+                        {applying && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                        Record set-off
+                      </Button>
                     </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
+                  </div>
+                </>
+              )}
+            </SectionCard>
           </TabsContent>
 
           {/* ---------------- Projects (contractors) ---------------- */}
           {isContractor && (
-            <TabsContent value="projects">
+            <TabsContent value="projects" className="mt-0">
               <ContractProjectsPanel
                 clientId={selectedClient || ''}
                 clientName={selected?.name || ''}
@@ -728,65 +753,64 @@ const AdvancesPage: React.FC = () => {
 
           {/* ---------------- Override approvals ---------------- */}
           {canApprove && (
-            <TabsContent value="approvals">
+            <TabsContent value="approvals" className="mt-0">
               <OverrideApprovalsPanel onDecided={refreshPending} />
             </TabsContent>
           )}
 
           {/* ---------------- All clients ---------------- */}
-          <TabsContent value="board">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-xs text-muted-foreground">
-                    Every client carrying an open advance as at {selectedMonth}, derived from their filed returns.
-                  </p>
-                  <div className="flex gap-2">
-                    <ExportButton id="control" label="Control sheet" onClick={exportControlSheet} />
-                    <Button variant="outline" size="sm" onClick={loadBoard} disabled={boardLoading}>
-                      {boardLoading && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />} Refresh
-                    </Button>
-                  </div>
-                </div>
-                {boardLoading ? (
-                  <p className="text-sm text-muted-foreground py-6 text-center">
-                    Reading every client&apos;s return history — this takes a moment.
-                  </p>
-                ) : board.length === 0 ? (
-                  <TableEmptyState title="No client is carrying an open advance for this period." />
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-primary hover:bg-primary">
-                        <TableHead className="text-primary-foreground font-bold">Client</TableHead>
-                        <TableHead className="text-primary-foreground font-bold text-right">Open advance</TableHead>
-                        <TableHead className="text-primary-foreground font-bold">Oldest</TableHead>
-                        <TableHead className="text-primary-foreground font-bold">Age</TableHead>
-                        <TableHead className="text-primary-foreground font-bold">Managed by</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {board.map((r) => {
-                        const match = clients.find((c) => c.gstin === r.clientGstin);
-                        return (
-                          <TableRow
-                            key={r.clientGstin || r.clientName}
-                            className={match ? 'cursor-pointer' : undefined}
-                            onClick={() => match && setSelectedClient(match.id)}
-                          >
-                            <TableCell className="font-medium">{r.clientName}</TableCell>
-                            <TableCell className="text-right tabular-nums font-semibold">{inr(r.open)}</TableCell>
-                            <TableCell>{r.oldest || '—'}</TableCell>
-                            <TableCell>{r.bucket}</TableCell>
-                            <TableCell className="text-xs text-muted-foreground">{r.managedBy}</TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                )}
-              </CardContent>
-            </Card>
+          <TabsContent value="board" className="mt-0">
+            <SectionCard
+              title="All clients"
+              description={<>Every client carrying an open advance as at {selectedMonth}, derived from their filed returns.</>}
+              actions={
+                <>
+                  <ExportButton id="control" label="Control sheet" onClick={exportControlSheet} />
+                  <Button variant="outline" size="sm" className={WS_BTN} onClick={loadBoard} disabled={boardLoading}>
+                    {boardLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Refresh
+                  </Button>
+                </>
+              }
+            >
+              {boardLoading ? (
+                <p className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Reading every client&apos;s return history — this takes a moment.
+                </p>
+              ) : board.length === 0 ? (
+                <TableEmptyState title="No client is carrying an open advance for this period." />
+              ) : (
+                <Table className={WS_TABLE} containerClassName={TABLE_WRAP}>
+                  <TableHeader>
+                    <TableRow className="border-0 hover:bg-transparent">
+                      <TableHead className={TH}>Client</TableHead>
+                      <TableHead className={`${TH} text-right`}>Open advance</TableHead>
+                      <TableHead className={TH}>Oldest</TableHead>
+                      <TableHead className={TH}>Age</TableHead>
+                      <TableHead className={TH}>Managed by</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {board.map((r) => {
+                      const match = clients.find((c) => c.gstin === r.clientGstin);
+                      return (
+                        <TableRow
+                          key={r.clientGstin || r.clientName}
+                          className={cn(TR, match && 'cursor-pointer')}
+                          onClick={() => match && setSelectedClient(match.id)}
+                        >
+                          <TableCell className={`${WS_TD} font-medium`}>{r.clientName}</TableCell>
+                          <TableCell className={`${WS_TD_NUM} font-semibold`}>{inr(r.open)}</TableCell>
+                          <TableCell className={WS_TD}>{r.oldest || '—'}</TableCell>
+                          <TableCell className={WS_TD}>{r.bucket}</TableCell>
+                          <TableCell className={`${WS_TD} text-muted-foreground`}>{r.managedBy}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </SectionCard>
           </TabsContent>
         </Tabs>
       )}
@@ -803,5 +827,20 @@ const AdvancesPage: React.FC = () => {
     </div>
   );
 };
+
+const TileButton: React.FC<{ active: boolean; onClick: () => void; title: string; children: React.ReactNode }> = ({ active, onClick, title, children }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={title}
+    aria-pressed={active}
+    className={cn(
+      'rounded-lg text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:h-full',
+      active && 'ring-2 ring-primary/60',
+    )}
+  >
+    {children}
+  </button>
+);
 
 export default AdvancesPage;

@@ -1,415 +1,336 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { AlertCircle, Check, ChevronLeft, ChevronRight, CloudUpload, History, Loader2, Lock, ScrollText, Users } from 'lucide-react';
+import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, ScrollText, ShieldCheck, Lock, Unlock, Info } from 'lucide-react';
-import { PageHeader } from '@/components/layout/PageHeader';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClient } from '@/contexts/ClientContext';
-import { toast } from 'sonner';
-import PLOutputCard from '@/components/annualReturn/PLOutputCard';
-import PLInputCard from '@/components/annualReturn/PLInputCard';
-import DutiesTaxesOutputCard from '@/components/annualReturn/DutiesTaxesOutputCard';
-import DutiesTaxesInputCard from '@/components/annualReturn/DutiesTaxesInputCard';
-import RcmAnnualReturnCard from '@/components/annualReturn/RcmAnnualReturnCard';
-import Gstr9OutputLinesCard from '@/components/annualReturn/Gstr9OutputLinesCard';
-import Gstr9OutputPortalCard from '@/components/annualReturn/Gstr9OutputPortalCard';
-import PortalCaptureCard from '@/components/annualReturn/PortalCaptureCard';
-import PortalTaxPaymentCard from '@/components/annualReturn/PortalTaxPaymentCard';
-import ReconciliationCard from '@/components/annualReturn/ReconciliationCard';
-import PLInputSummaryCard from '@/components/annualReturn/PLInputSummaryCard';
-import AnnualCrossCheckCard from '@/components/annualReturn/AnnualCrossCheckCard';
-import Gstr9InputView from '@/components/annualReturn/Gstr9InputView';
-import Gstr9OutputDiffView from '@/components/annualReturn/Gstr9OutputDiffView';
-import BsPlUploadCard from '@/components/annualReturn/BsPlUploadCard';
-import Gstr9cJsonExportCard from '@/components/annualReturn/Gstr9cJsonExportCard';
-import Gstr9cTable5TurnoverRecoCard from '@/components/annualReturn/Gstr9cTable5TurnoverRecoCard';
-import Gstr9cTable7TaxableTurnoverRecoCard from '@/components/annualReturn/Gstr9cTable7TaxableTurnoverRecoCard';
-import Gstr9cTable9RateWiseLiabilityCard from '@/components/annualReturn/Gstr9cTable9RateWiseLiabilityCard';
-import Gstr9cTable11AdditionalLiabilityCard from '@/components/annualReturn/Gstr9cTable11AdditionalLiabilityCard';
-import Table12NetItcSummaryCard from '@/components/annualReturn/Table12NetItcSummaryCard';
-import Gstr9cTable14ItcByExpenseHeadView from '@/components/annualReturn/Gstr9cTable14ItcByExpenseHeadView';
-import Gstr9cTable16TaxPayableCard from '@/components/annualReturn/Gstr9cTable16TaxPayableCard';
-import Gstr9cPartVAdditionalLiabilityCard from '@/components/annualReturn/Gstr9cPartVAdditionalLiabilityCard';
-import Gstr9cCertificationCard from '@/components/annualReturn/Gstr9cCertificationCard';
-import Annexure1Card from '@/components/annualReturn/Annexure1Card';
-import Annexure2Card from '@/components/annualReturn/Annexure2Card';
-import Annexure3Card from '@/components/annualReturn/Annexure3Card';
-import Annexure4Card from '@/components/annualReturn/Annexure4Card';
-import Table14DifferentialTaxCard from '@/components/annualReturn/Table14DifferentialTaxCard';
-import Table15DemandsRefundsCard from '@/components/annualReturn/Table15DemandsRefundsCard';
-import Table16CompositionDeemedApprovalCard from '@/components/annualReturn/Table16CompositionDeemedApprovalCard';
-import Table17HsnOutwardCard from '@/components/annualReturn/Table17HsnOutwardCard';
-import ItcReversalCard from '@/components/annualReturn/ItcReversalCard';
-import Gstr9FormView from '@/components/annualReturn/Gstr9FormView';
-import NoticeFormatView from '@/components/annualReturn/NoticeFormatView';
-import { fyOptions } from '@/lib/annualReturnPeriods';
-import { fetchReconciliationLines, isFullyReconciled } from '@/lib/annualReturnReconciliation';
+import { useWorkspace, WorkspaceClient, WorkspaceProvider } from '@/components/gstr9/WorkspaceContext';
+import { STEPS, stepByKey } from '@/components/gstr9/steps/registry';
+import RevisionHistory from '@/components/gstr9/overview/RevisionHistory';
+import ExportMenu from '@/components/gstr9/ExportMenu';
+import ApplicabilityRegister from '@/components/gstr9/register/ApplicabilityRegister';
+import ApplicabilityChip from '@/components/gstr9/register/ApplicabilityChip';
+import { PAGE_ROOT_ATTR, STEPBAR_H_VAR } from '@/components/gstr9/reco/StepTabs';
 
-interface Client {
-  id: string;
-  name: string;
-  gstin: string;
-  regular_sub_type: string | null;
-  builder_itc_type: string | null;
-}
+const FY_STORAGE_KEY = 'gstk_annual_return_fy';
 
-type PeriodStatus = 'not_started' | 'in_progress' | 'locked';
-
-interface AnnualReturnPeriod {
-  id: string;
-  financial_year: string;
-  status: PeriodStatus;
-  notes: string | null;
-  locked_at: string | null;
-  updated_at: string;
-}
-
-const STATUS_LABEL: Record<PeriodStatus, string> = {
-  not_started: 'Not started',
-  in_progress: 'In progress',
-  locked: 'Locked',
+/** The FY whose annual return is due: the last completed April–March year. */
+const dueFY = (): string => {
+  const now = new Date();
+  const start = now.getMonth() >= 3 ? now.getFullYear() - 1 : now.getFullYear() - 2;
+  return `${start}-${String(start + 1).slice(-2)}`;
 };
 
-const STATUS_BADGE_VARIANT: Record<PeriodStatus, 'secondary' | 'warning' | 'success'> = {
-  not_started: 'secondary',
-  in_progress: 'warning',
-  locked: 'success',
+const fyChoices = (): string[] => {
+  const due = Number(dueFY().slice(0, 4));
+  const out: string[] = [];
+  for (let y = due + 1; y >= due - 4; y--) out.push(`${y}-${String(y + 1).slice(-2)}`);
+  return out;
+};
+
+const readStoredFY = (): string => {
+  // A shared link's ?fy= wins over this browser's last-used year.
+  try {
+    const fromUrl = new URLSearchParams(window.location.search).get('fy');
+    if (fromUrl && fyChoices().includes(fromUrl)) return fromUrl;
+  } catch {
+    /* no window */
+  }
+  try {
+    const v = localStorage.getItem(FY_STORAGE_KEY);
+    if (v && fyChoices().includes(v)) return v;
+  } catch {
+    /* storage unavailable */
+  }
+  return dueFY();
 };
 
 /**
- * Landing page for the Annual Return (GSTR-9 / GSTR-9C) module — deliberately
- * its own top-level nav item, not folded into 2B Reconciliation, ITC Summary
- * or any other existing tab (the working papers this module builds toward
- * span all of those, so it needs to stay a neutral, separate destination).
- *
- * This is Phase 0 of the roadmap: it only tracks whether a (client, FY) pair
- * has been started/is in progress/is locked. Books entry, portal capture,
- * the reconciliation engine and the GSTR-9/9C tables themselves land here in
- * later phases — this page is the anchor they attach to.
+ * Annual Return (GSTR-9 / GSTR-9C) — a guided workspace that reproduces the
+ * firm's MASTER_PMS.xlsx working step by step. See docs/GSTR9_9C_WORKINGS.md.
  */
 const AnnualReturnPage: React.FC = () => {
   const { isStaffRole, user } = useAuth();
   const { selectedClientId, setSelectedClientId } = useClient();
-  const [clients, setClients] = useState<Client[]>([]);
-  const [financialYear, setFinancialYear] = useState<string>(fyOptions()[2]);
-  const [period, setPeriod] = useState<AnnualReturnPeriod | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [dutiesVersion, setDutiesVersion] = useState(0);
-  const [reconOpenCount, setReconOpenCount] = useState(0);
-  const [activeTab, setActiveTab] = useState('status');
-
   const isStaff = isStaffRole();
-  const selectedClient = clients.find((c) => c.id === selectedClientId) || null;
-  const isNoItcBuilder = selectedClient?.regular_sub_type === 'Builder' && selectedClient?.builder_itc_type === 'NO_ITC';
+  const [clients, setClients] = useState<WorkspaceClient[]>([]);
+  const [financialYear, setFinancialYear] = useState<string>(readStoredFY);
+  const [params, setParams] = useSearchParams();
+  const urlClient = params.get('client');
 
   useEffect(() => {
-    const fetchClients = async () => {
-      let query = supabase
-        .from('clients')
-        .select('id, name, gstin, regular_sub_type, builder_itc_type')
-        .order('name');
-      if (user && !isStaff) query = query.eq('id', user.id);
-      const { data, error } = await query;
+    let query = supabase
+      .from('clients')
+      .select('id, name, gstin, regular_sub_type, builder_itc_type, registration_type, registration_date, cancellation_date, registration_cancellation_date')
+      .order('name');
+    if (user && !isStaff) query = query.eq('id', user.id);
+    query.then(({ data, error }) => {
       if (error) { toast.error('Failed to fetch clients: ' + error.message); return; }
-      setClients((data || []) as Client[]);
-      if (!isStaff && data && data.length > 0 && !selectedClientId) setSelectedClientId(data[0].id);
-    };
-    fetchClients();
+      const list = (data || []) as WorkspaceClient[];
+      setClients(list);
+      if (!isStaff && list.length && !selectedClientId) setSelectedClientId(list[0].id);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStaff, user]);
 
-  const loadPeriod = useCallback(async () => {
-    if (!selectedClientId || !financialYear) { setPeriod(null); return; }
-    setLoading(true);
-    const { data, error } = await supabase
-      .from('annual_return_periods')
-      .select('id, financial_year, status, notes, locked_at, updated_at')
-      .eq('client_id', selectedClientId)
-      .eq('financial_year', financialYear)
-      .maybeSingle();
-    if (error) { toast.error('Could not load status: ' + error.message); setLoading(false); return; }
-    setPeriod((data as AnnualReturnPeriod) || null);
-    setLoading(false);
-  }, [selectedClientId, financialYear]);
+  useEffect(() => {
+    try { localStorage.setItem(FY_STORAGE_KEY, financialYear); } catch { /* storage unavailable */ }
+  }, [financialYear]);
 
-  useEffect(() => { loadPeriod(); }, [loadPeriod]);
+  // Staff: the URL says which working is open (?client=); without one the page shows every client (the register).
+  // The open client is also the app-wide selected client, so other pages follow it.
+  useEffect(() => {
+    if (isStaff && urlClient && urlClient !== selectedClientId && clients.some((c) => c.id === urlClient)) setSelectedClientId(urlClient);
+  }, [isStaff, urlClient, selectedClientId, clients, setSelectedClientId]);
 
-  // Powers the Reconciliation tab's badge — same "unexplained gap" count
-  // ReconciliationCard computes for its own banner, fetched here too so the
-  // tab bar can show it before staff ever click into that tab.
-  const loadReconOpenCount = useCallback(async () => {
-    if (!selectedClientId || !financialYear) { setReconOpenCount(0); return; }
-    try {
-      const lines = await fetchReconciliationLines(selectedClientId, financialYear, isNoItcBuilder);
-      setReconOpenCount(lines.filter((l) => l.reasonRequired && !l.reason.trim()).length);
-    } catch {
-      setReconOpenCount(0);
-    }
-  }, [selectedClientId, financialYear, isNoItcBuilder]);
+  // Keep the year in the URL so a reload or a shared link lands on the same year.
+  useEffect(() => {
+    if (params.get('fy') === financialYear) return;
+    const next = new URLSearchParams(params);
+    next.set('fy', financialYear);
+    setParams(next, { replace: true });
+  }, [financialYear, params, setParams]);
 
-  useEffect(() => { loadReconOpenCount(); }, [loadReconOpenCount]);
+  /** Open a client's working (from the register or the client picker). */
+  const openClient = useCallback((id: string) => {
+    if (!id) return;
+    setSelectedClientId(id);
+    // From the register, start at the overview; switching clients inside a working keeps the step.
+    const next = urlClient ? new URLSearchParams(params) : new URLSearchParams();
+    next.set('client', id);
+    next.set('fy', financialYear);
+    setParams(next, { replace: false });
+    window.scrollTo({ top: 0 });
+  }, [urlClient, params, financialYear, setParams, setSelectedClientId]);
 
-  const updateStatus = async (status: PeriodStatus) => {
-    if (!selectedClientId) return;
-    setSaving(true);
-    try {
-      if (status === 'locked') {
-        const lines = await fetchReconciliationLines(selectedClientId, financialYear, isNoItcBuilder);
-        if (!isFullyReconciled(lines)) {
-          const openLabels = lines.filter((l) => l.reasonRequired && !l.reason.trim()).map((l) => l.label);
-          toast.error(`Can't lock — reason needed for: ${openLabels.join(', ')}. See the Reconciliation tab.`, {
-            action: { label: 'View', onClick: () => setActiveTab('reconciliation') },
-          });
-          setSaving(false);
-          return;
-        }
-      }
-      const payload: Record<string, unknown> = {
-        client_id: selectedClientId,
-        financial_year: financialYear,
-        status,
-        updated_at: new Date().toISOString(),
-      };
-      if (status === 'locked') payload.locked_at = new Date().toISOString();
-      if (status === 'not_started' || status === 'in_progress') payload.locked_at = null;
-      const { error } = await supabase
-        .from('annual_return_periods')
-        .upsert(payload, { onConflict: 'client_id,financial_year' });
-      if (error) throw error;
-      toast.success(`FY ${financialYear} marked "${STATUS_LABEL[status]}".`);
-      await loadPeriod();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      toast.error('Save failed: ' + message);
-    } finally {
-      setSaving(false);
-    }
-  };
+  /** Back to every client for the year. */
+  const showRegister = useCallback(() => {
+    setParams(new URLSearchParams({ fy: financialYear }), { replace: false });
+    window.scrollTo({ top: 0 });
+  }, [financialYear, setParams]);
 
-  const status = period?.status || 'not_started';
+  const showingRegister = isStaff && !urlClient;
+  const client = (isStaff ? clients.find((c) => c.id === urlClient) : clients.find((c) => c.id === selectedClientId)) || null;
+  const clientOptions = useMemo(() => clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin })), [clients]);
 
   return (
-    <div className="space-y-4">
-      <PageHeader
-        title="Annual Return (GSTR-9 / 9C)"
-        subtitle="Preparation status for the client's annual return — every sheet gets its own tab here, matching the firm's working papers exactly. The GSTR-9/9C tables themselves land as later phases ship."
-        icon={<ScrollText className="h-5 w-5" />}
-      />
+    <div className="space-y-3 animate-fade-in">
+      {/* One compact row: what this is, which client, which year (the bell is fixed top-right). */}
+      <div className="flex flex-wrap items-center gap-2 md:pr-12">
+        <div className="mr-auto flex min-w-0 items-center gap-2">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary"><ScrollText className="h-4 w-4" /></div>
+          <h1 className="truncate font-heading text-lg font-bold leading-tight">
+            Annual Return <span className="font-semibold text-muted-foreground">· GSTR-9 &amp; 9C</span>
+          </h1>
+        </div>
+        {isStaff && !showingRegister && (
+          <Button type="button" variant="outline" size="sm" className="h-9" onClick={showRegister} title="Every client for the year: turnover, whether GSTR-9 / 9C apply, and each working's status">
+            <Users className="mr-1.5 h-4 w-4" /> All clients
+          </Button>
+        )}
+        <div className="w-full min-w-0 sm:w-[24rem] lg:w-[30rem]">
+          <SearchableSelect
+            options={clientOptions}
+            value={showingRegister ? '' : client?.id ?? ''}
+            onValueChange={(id) => (isStaff ? openClient(id) : setSelectedClientId(id))}
+            placeholder={showingRegister ? 'Open a client’s working…' : 'Select a client'}
+            searchPlaceholder="Search client or GSTIN…"
+            disabled={!isStaff}
+          />
+        </div>
+        <div className="w-40">
+          <Select value={financialYear} onValueChange={setFinancialYear}>
+            <SelectTrigger aria-label="Financial year"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {fyChoices().map((fy) => (
+                <SelectItem key={fy} value={fy}>FY {fy}{fy === dueFY() ? ' (due)' : ''}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
 
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex-1 min-w-[220px]">
-              <Select value={selectedClientId} onValueChange={setSelectedClientId} disabled={!isStaff}>
-                <SelectTrigger><SelectValue placeholder="Select a client" /></SelectTrigger>
-                <SelectContent>
-                  {clients.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>{c.name} — {c.gstin}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="w-40">
-              <Select value={financialYear} onValueChange={setFinancialYear}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {fyOptions().map((fy) => <SelectItem key={fy} value={fy}>FY {fy}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {!selectedClientId ? (
-        <Card><CardContent className="flex flex-col items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
-          Select a client to see their annual return status.
-        </CardContent></Card>
+      {showingRegister ? (
+        <ApplicabilityRegister financialYear={financialYear} onOpen={openClient} />
+      ) : !client ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+            {clients.length ? 'This client is not in the list.' : 'Loading…'}
+          </CardContent>
+        </Card>
       ) : (
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <div className="overflow-x-auto">
-            <TabsList>
-              <TabsTrigger value="status">Status</TabsTrigger>
-              <TabsTrigger value="books">Books Input</TabsTrigger>
-              <TabsTrigger value="duties">Duties &amp; Taxes</TabsTrigger>
-              <TabsTrigger value="rcm">RCM</TabsTrigger>
-              <TabsTrigger value="gstr9input">GSTR 9-Input</TabsTrigger>
-              <TabsTrigger value="gstr9output">GSTR 9-Output</TabsTrigger>
-              <TabsTrigger value="gstr9c">GSTR 9C</TabsTrigger>
-              <TabsTrigger value="annexure">Annexure</TabsTrigger>
-              <TabsTrigger value="gstr9form">GSTR-9</TabsTrigger>
-              <TabsTrigger value="notice">Notice Format</TabsTrigger>
-              <TabsTrigger value="portal">Portal Capture</TabsTrigger>
-              <TabsTrigger value="reconciliation" className="gap-1.5">
-                Reconciliation
-                {reconOpenCount > 0 && (
-                  <Badge
-                    variant="destructive"
-                    className="h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-none"
-                  >
-                    {reconOpenCount}
-                  </Badge>
-                )}
-              </TabsTrigger>
-            </TabsList>
-          </div>
-
-          <TabsContent value="status" className="space-y-4">
-            {isNoItcBuilder && (
-              <Card className="border-info/30 bg-info/5">
-                <CardContent className="p-4 flex items-start gap-3 text-sm">
-                  <Info className="h-4 w-4 text-info shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-medium text-foreground">No-ITC scheme client.</span>{' '}
-                    <span className="text-muted-foreground">
-                      This client is a builder on <code className="text-xs bg-muted px-1 py-0.5 rounded">NO_ITC</code>.
-                      The reconciliation engine won&apos;t treat zero ITC here as an unexplained gap —
-                      it&apos;s expected for this client, not a mismatch to justify.
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between gap-3 flex-wrap">
-                <div>
-                  <CardTitle className="text-lg">FY {financialYear}</CardTitle>
-                  <CardDescription>
-                    {period?.updated_at ? `Last updated ${new Date(period.updated_at).toLocaleString('en-IN')}` : 'No activity recorded yet'}
-                  </CardDescription>
-                </div>
-                {loading ? (
-                  <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" /> Loading...
-                  </span>
-                ) : (
-                  <Badge variant={STATUS_BADGE_VARIANT[status]}>{STATUS_LABEL[status]}</Badge>
-                )}
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant={status === 'in_progress' ? 'default' : 'outline'}
-                    disabled={saving || status === 'locked'}
-                    onClick={() => updateStatus('in_progress')}
-                  >
-                    <ShieldCheck className="h-3.5 w-3.5 mr-1.5" /> Mark in progress
-                  </Button>
-                  {status === 'locked' ? (
-                    <Button size="sm" variant="outline" disabled={saving} onClick={() => updateStatus('in_progress')}>
-                      <Unlock className="h-3.5 w-3.5 mr-1.5" /> Unlock
-                    </Button>
-                  ) : (
-                    <Button size="sm" variant="outline" disabled={saving} onClick={() => updateStatus('locked')}>
-                      <Lock className="h-3.5 w-3.5 mr-1.5" /> Lock this year
-                    </Button>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Locking checks the Reconciliation tab first — every unexplained difference needs a reason on file.
-                  The GSTR-9/9C tables themselves aren&apos;t built yet.
-                </p>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="books" className="space-y-4">
-            <p className="text-xs text-muted-foreground -mt-1">
-              PL-Output and PL-Input — annual, by ledger head, exactly as the firm's working papers have them. No month
-              here; monthly entry lives on the Duties &amp; Taxes tab, entered separately by design.
-            </p>
-            <PLOutputCard clientId={selectedClientId} financialYear={financialYear} />
-            <PLInputCard clientId={selectedClientId} financialYear={financialYear} onSaved={() => setDutiesVersion((v) => v + 1)} />
-            <PLInputSummaryCard clientId={selectedClientId} financialYear={financialYear} refreshKey={dutiesVersion} />
-          </TabsContent>
-
-          <TabsContent value="duties" className="space-y-4">
-            <p className="text-xs text-muted-foreground -mt-1">
-              Month-wise entry, separate from Books Input by design — the two are meant to cross-check each other's
-              annual totals, not derive from one another.
-            </p>
-            <AnnualCrossCheckCard clientId={selectedClientId} financialYear={financialYear} refreshKey={dutiesVersion} />
-            <DutiesTaxesOutputCard clientId={selectedClientId} financialYear={financialYear} onSaved={() => setDutiesVersion((v) => v + 1)} />
-            <DutiesTaxesInputCard clientId={selectedClientId} financialYear={financialYear} onSaved={() => setDutiesVersion((v) => v + 1)} />
-          </TabsContent>
-
-          <TabsContent value="rcm" className="space-y-4">
-            <RcmAnnualReturnCard clientId={selectedClientId} financialYear={financialYear} onSaved={() => setDutiesVersion((v) => v + 1)} />
-          </TabsContent>
-
-          <TabsContent value="gstr9input" className="space-y-4">
-            <Gstr9InputView clientId={selectedClientId} financialYear={financialYear} />
-            <ItcReversalCard clientId={selectedClientId} financialYear={financialYear} />
-          </TabsContent>
-
-          <TabsContent value="gstr9output" className="space-y-4">
-            <Gstr9OutputLinesCard clientId={selectedClientId} financialYear={financialYear} />
-            <Gstr9OutputPortalCard clientId={selectedClientId} financialYear={financialYear} />
-            <Gstr9OutputDiffView clientId={selectedClientId} financialYear={financialYear} />
-          </TabsContent>
-
-          <TabsContent value="gstr9c" className="space-y-4">
-            <BsPlUploadCard clientId={selectedClientId} financialYear={financialYear} />
-            <Gstr9cJsonExportCard clientId={selectedClientId} financialYear={financialYear} />
-            <Gstr9cTable5TurnoverRecoCard clientId={selectedClientId} financialYear={financialYear} />
-            <Gstr9cTable7TaxableTurnoverRecoCard clientId={selectedClientId} financialYear={financialYear} />
-            <Gstr9cTable9RateWiseLiabilityCard clientId={selectedClientId} financialYear={financialYear} />
-            <Gstr9cTable11AdditionalLiabilityCard clientId={selectedClientId} financialYear={financialYear} />
-            <Table12NetItcSummaryCard clientId={selectedClientId} financialYear={financialYear} />
-            <Gstr9cTable14ItcByExpenseHeadView clientId={selectedClientId} financialYear={financialYear} />
-            <Gstr9cTable16TaxPayableCard clientId={selectedClientId} financialYear={financialYear} />
-            <Gstr9cPartVAdditionalLiabilityCard clientId={selectedClientId} financialYear={financialYear} />
-            <Gstr9cCertificationCard clientId={selectedClientId} financialYear={financialYear} />
-          </TabsContent>
-
-          <TabsContent value="annexure" className="space-y-4">
-            <Annexure1Card clientId={selectedClientId} financialYear={financialYear} />
-            <Annexure2Card clientId={selectedClientId} financialYear={financialYear} />
-            <Annexure3Card clientId={selectedClientId} financialYear={financialYear} />
-            <Annexure4Card clientId={selectedClientId} financialYear={financialYear} />
-            <Table14DifferentialTaxCard clientId={selectedClientId} financialYear={financialYear} />
-            <Table15DemandsRefundsCard clientId={selectedClientId} financialYear={financialYear} />
-            <Table16CompositionDeemedApprovalCard clientId={selectedClientId} financialYear={financialYear} />
-          </TabsContent>
-
-          <TabsContent value="gstr9form" className="space-y-4">
-            <p className="text-xs text-muted-foreground -mt-1">
-              The full official form, Tables 4–13 — assembled, nothing entered here.
-            </p>
-            <Gstr9FormView clientId={selectedClientId} financialYear={financialYear} />
-            <Table17HsnOutwardCard clientId={selectedClientId} financialYear={financialYear} />
-          </TabsContent>
-
-          <TabsContent value="notice" className="space-y-4">
-            <NoticeFormatView clientId={selectedClientId} financialYear={financialYear} />
-          </TabsContent>
-
-          <TabsContent value="portal" className="space-y-4">
-            <p className="text-xs text-muted-foreground -mt-1">
-              Recent months aren&apos;t auto-pulled reliably yet — enter them from the filed return until that's wired up.
-            </p>
-            <PortalCaptureCard clientId={selectedClientId} financialYear={financialYear} />
-            <PortalTaxPaymentCard clientId={selectedClientId} financialYear={financialYear} />
-          </TabsContent>
-
-          <TabsContent value="reconciliation" className="space-y-4">
-            <p className="text-xs text-muted-foreground -mt-1">
-              Eleven lines, computed live from every sheet above — PL vs Duties &amp; Taxes, RCM Part A vs B, GSTR
-              9-Output books vs portal, Table 6/8D/9, and both Annexures. Every unexplained difference needs a
-              reason before FY {financialYear} can be locked — no override.
-            </p>
-            <ReconciliationCard clientId={selectedClientId} financialYear={financialYear} isNoItcBuilder={isNoItcBuilder} />
-          </TabsContent>
-        </Tabs>
+        <WorkspaceProvider key={`${client.id}|${financialYear}`} client={client} financialYear={financialYear}>
+          <Workspace />
+        </WorkspaceProvider>
       )}
     </div>
+  );
+};
+
+/** Save state. `compact` shows only the icon below 2xl (the words are its tooltip), for the step bar. */
+const SaveIndicator: React.FC<{ compact?: boolean }> = ({ compact }) => {
+  const { saveState, lastSavedAt, locked, readOnly } = useWorkspace();
+  const words = (text: string) => <span className={compact ? 'hidden 2xl:inline' : undefined}>{text}</span>;
+  // An unsaved edit outranks the lock: someone may have locked the year while
+  // this user's last change was still pending, and that change is not kept.
+  if (saveState === 'error') return <span title="Not saved" className="inline-flex items-center gap-1 text-xs font-medium text-destructive-strong"><AlertCircle className="h-3.5 w-3.5" /> Not saved</span>;
+  if (locked) return <span title="Locked" className="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-xs font-medium text-foreground"><Lock className="h-3 w-3 text-success-strong" /> Locked</span>;
+  if (readOnly) return <Badge variant="secondary">Read-only</Badge>;
+  if (saveState === 'saving' || saveState === 'pending') {
+    return <span title="Saving…" className="inline-flex items-center gap-1 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> {words('Saving…')}</span>;
+  }
+  if (saveState === 'saved' && lastSavedAt) {
+    const t = `Saved ${lastSavedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`;
+    return <span title={t} className="inline-flex items-center gap-1 text-xs text-muted-foreground"><Check className="h-3.5 w-3.5 text-success-strong" /> {words(t)}</span>;
+  }
+  return <span title="Autosave on — every change is saved as you type" className="inline-flex items-center gap-1 text-xs text-muted-foreground"><CloudUpload className="h-3.5 w-3.5" /> {words('Autosave on')}</span>;
+};
+
+/** Every change to the working — who, when, where, before and after — in a side panel, from any step. */
+const HistoryButton: React.FC = () => (
+  <Sheet>
+    <SheetTrigger asChild>
+      <Button variant="outline" size="sm" className="h-8 gap-1 px-2.5 text-xs" aria-label="Revision history">
+        <History className="h-3.5 w-3.5" /> <span className="hidden sm:inline">History</span>
+      </Button>
+    </SheetTrigger>
+    <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-2xl">
+      <SheetHeader className="mb-3">
+        <SheetTitle>Revision history</SheetTitle>
+        <SheetDescription>Recorded by the database on every autosave. It cannot be edited or deleted.</SheetDescription>
+      </SheetHeader>
+      <RevisionHistory compact />
+    </SheetContent>
+  </Sheet>
+);
+
+const Workspace: React.FC = () => {
+  const { workings, client, financialYear, period } = useWorkspace();
+  const [params, setParams] = useSearchParams();
+  const step = stepByKey(params.get('step'));
+  const idx = STEPS.findIndex((s) => s.key === step.key);
+  const go = (key: string) => {
+    const next = new URLSearchParams(params);
+    next.set('step', key);
+    setParams(next, { replace: false });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const StepComponent = step.component;
+  const phases = ['Collect', 'Reconcile', 'Returns', 'Finish'] as const;
+
+  // The step bar's height (one or two rows), so a step's tab row pins just below it.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    const bar = barRef.current;
+    if (!root || !bar) return;
+    const set = () => root.style.setProperty(STEPBAR_H_VAR, `${bar.offsetHeight}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, []);
+
+  return (
+    <div ref={rootRef} {...{ [PAGE_ROOT_ATTR]: '' }} className="space-y-3">
+      {/* Step bar: pinned while scrolling, so every step is one click away and the content keeps the full width. */}
+      <div ref={barRef} className="sticky top-0 z-30 -mx-4 border-b bg-background px-4 md:-mx-6 md:px-6">
+        <div className="flex items-center gap-1.5 py-1.5 md:pr-12">
+          <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" disabled={idx === 0} onClick={() => go(STEPS[idx - 1].key)} aria-label={idx > 0 ? `Previous: ${STEPS[idx - 1].label}` : 'Previous step'}>
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <StepBar active={step.key} onGo={go} stepOpen={workings.stepOpen} phases={phases} />
+          <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" disabled={idx === STEPS.length - 1} onClick={() => go(STEPS[idx + 1].key)} aria-label={idx < STEPS.length - 1 ? `Next: ${STEPS[idx + 1].label}` : 'Next step'}>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+
+      {/* Step heading: one line — what the step is, the sheet it reproduces, and export. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h2 className="font-heading text-lg font-semibold leading-tight">{idx}. {step.label}</h2>
+        <p className="min-w-[14rem] flex-1 text-xs leading-snug text-muted-foreground">
+          {step.intro} <span className="inline-block max-w-full break-words rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] sm:whitespace-nowrap">Excel: {step.excel}</span>
+        </p>
+        <div className="flex items-center gap-2">
+          <ApplicabilityChip />
+          <SaveIndicator />
+          <HistoryButton />
+          <ExportMenu />
+        </div>
+      </div>
+      {period?.status === 'locked' && step.key !== 'review' && step.key !== 'payables' && (
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Lock className="h-3 w-3" /> Locked{period.locked_by ? ` by ${period.locked_by}` : ''} — {client.name} FY {financialYear} is read-only until it is unlocked.
+        </p>
+      )}
+
+      <StepComponent />
+
+      <div className="flex items-center justify-between border-t pt-3">
+        <Button variant="outline" size="sm" disabled={idx === 0} onClick={() => go(STEPS[idx - 1].key)}>
+          <ChevronLeft className="mr-1 h-4 w-4" /> {idx > 0 ? STEPS[idx - 1].label : 'Back'}
+        </Button>
+        <Button size="sm" disabled={idx === STEPS.length - 1} onClick={() => go(STEPS[idx + 1].key)}>
+          {idx < STEPS.length - 1 ? STEPS[idx + 1].label : 'Done'} <ChevronRight className="ml-1 h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+};
+
+/** The steps as a row of chips grouped by phase (two rows on narrow screens). */
+const StepBar: React.FC<{
+  active: string;
+  onGo: (key: string) => void;
+  stepOpen: Record<string, number>;
+  phases: readonly ('Collect' | 'Reconcile' | 'Returns' | 'Finish')[];
+}> = ({ active, onGo, stepOpen, phases }) => {
+  return (
+    <nav aria-label="Annual return steps" className="min-w-0 flex-1">
+      {/* Wraps onto a second row when the screen is narrow, so every step stays in sight. */}
+      <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
+        {phases.map((phase, pi) => (
+          // `contents`: chips wrap one by one; a thin rule marks where a phase starts.
+          <div key={phase} role="group" aria-label={phase} className="contents">
+            {pi > 0 && <span aria-hidden className="mx-0.5 h-4 w-px shrink-0 bg-border" />}
+            {STEPS.filter((s) => s.phase === phase).map((s) => {
+              const n = STEPS.indexOf(s);
+              const open = s.key === 'overview' ? 0 : stepOpen[s.key] ?? 0;
+              const on = s.key === active;
+              return (
+                <button
+                  key={s.key}
+                  type="button"
+                  onClick={() => onGo(s.key)}
+                  aria-current={on ? 'step' : undefined}
+                  title={`${n}. ${s.label}${open ? ` — ${open} open` : ''}`}
+                  className={cn(
+                    'flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    on ? 'bg-primary font-medium text-primary-foreground' : 'text-foreground hover:bg-muted',
+                  )}
+                >
+                  <span className={cn('flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[11px] font-semibold', on ? 'bg-primary-foreground/20' : 'bg-muted text-muted-foreground')}>{n}</span>
+                  {s.short}
+                  {open > 0 && (
+                    <Badge variant="destructive" className="h-4 min-w-4 justify-center rounded-full px-1 text-[10px] leading-none" aria-label={`${open} open`}>{open}</Badge>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </nav>
   );
 };
 

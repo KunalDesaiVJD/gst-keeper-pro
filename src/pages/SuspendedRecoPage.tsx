@@ -10,13 +10,21 @@ import { exportSuspendedRecoToExcel } from '@/utils/suspendedRecoExcelExport';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
 import { parseElectronicCreditCsv, previousPeriodMonthKey, formatPeriodLabel } from '@/utils/parseElectronicCreditCsv';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, Note } from '@/components/gstr9/ui';
+import {
+  WS_PAGE, WS_BTN, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR, WS_TR_TOTAL, WS_FILTER_LABEL, WS_CONTROL, WS_CELL_INPUT,
+} from '@/components/workspace/theme';
+
+/** Dense workspace table; the last column drops its right rule (the wrapper draws it). */
+const TABLE_CLS = cn(WS_TABLE, '[&_tr>*:last-child]:border-r-0');
 
 type OpeningSource = 'manual' | 'csv' | 'not_applicable';
 
@@ -633,14 +641,14 @@ const SuspendedRecoPage: React.FC = () => {
 
   const renderEditableCell = (value: number, onChange: (val: number) => void) => {
     if (!isStaff) {
-      return <span className="block text-right tabular-nums px-3">{formatNumber(value)}</span>;
+      return <span className="block px-2 text-right tabular-nums">{formatNumber(value)}</span>;
     }
     return (
       <Input
         type="number"
         value={value || ''}
         onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-        className="h-10 text-right tabular-nums border-0 shadow-none rounded-none"
+        className={cn(WS_CELL_INPUT, 'text-right tabular-nums')}
         min="0"
         aria-label="Opening balance amount"
       />
@@ -681,33 +689,41 @@ const SuspendedRecoPage: React.FC = () => {
     window.postMessage({ __gstkPullLedgers: { clientId: selectedClientId, period_month: selectedMonth } }, '*');
   };
 
+  const sourceBadge = !useNewFlow ? null
+    : openingOverrideJustification ? <Badge variant="warning" className="px-1.5 text-[10px] font-medium">Overridden</Badge>
+    : openingSource === 'csv' ? <Badge variant="info" className="px-1.5 text-[10px] font-medium">CSV</Badge>
+    : openingSource === 'not_applicable' ? <Badge variant="secondary" className="px-1.5 text-[10px] font-medium">Not applicable</Badge>
+    : null;
+
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={WS_PAGE}>
       {/* Header */}
       <PageHeader
+        compact
         embedded
         title="Suspended Reconciliation"
         subtitle="Compare portal figures with books data"
-        icon={<FileText className="h-6 w-6" />}
+        icon={<FileText />}
         actions={
           <>
             {selectedClientId && (
               <Button
                 variant="outline"
+                size="sm"
                 onClick={pullLedgers}
                 disabled={!selectedClientId || !selectedMonth}
-                className={extReady ? '' : 'text-muted-foreground'}
+                className={cn(WS_BTN, !extReady && 'text-muted-foreground')}
                 title={extReady
                   ? 'Pull the opening balance from the portal ledgers (via the browser extension)'
                   : 'GST Keeper extension not detected yet — install/enable it and reload this page'}
               >
-                <RefreshCw className="h-4 w-4 mr-2" />
+                <RefreshCw className="h-3.5 w-3.5" />
                 Pull
               </Button>
             )}
 
             {selectedClientId && (
-              <Button variant="outline" onClick={() => {
+              <Button variant="outline" size="sm" className={WS_BTN} onClick={() => {
                 if (!selectedClientData) return;
                 exportSuspendedRecoToExcel({
                   clientName: selectedClientData.name,
@@ -720,21 +736,21 @@ const SuspendedRecoPage: React.FC = () => {
                 });
                 toast.success('Excel exported successfully');
               }}>
-                <FileSpreadsheet className="h-4 w-4 mr-2" />
+                <FileSpreadsheet className="h-3.5 w-3.5" />
                 Export Excel
               </Button>
             )}
 
             {isStaff && (
-              <Button onClick={handleSave} disabled={isSaving || !selectedClientId}>
-                {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+              <Button size="sm" className={WS_BTN} onClick={handleSave} disabled={isSaving || !selectedClientId}>
+                {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 Save Changes
               </Button>
             )}
 
             {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClientId && (
-              <Button variant="destructive" onClick={() => setShowClearData(true)}>
-                <Trash2 className="h-4 w-4 mr-2" />
+              <Button variant="destructive" size="sm" className={WS_BTN} onClick={() => setShowClearData(true)}>
+                <Trash2 className="h-3.5 w-3.5" />
                 Clear Data
               </Button>
             )}
@@ -742,80 +758,97 @@ const SuspendedRecoPage: React.FC = () => {
         }
       />
 
-      {lastSavedBy && (
-        <p className="text-xs text-muted-foreground -mt-3">
-          Last saved by <span className="font-semibold text-foreground">{lastSavedBy.name}</span>
-          {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
-          {lastSavedBy.time && (
-            <> on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</>
-          )}
-        </p>
-      )}
-
-      {/* Controls */}
+      {/* Controls: one labelled toolbar. */}
       <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="font-medium text-foreground whitespace-nowrap">Client:</span>
-              <div className="min-w-[250px]">
-                <SearchableSelect
-                  options={clients.map(c => ({
-                    value: c.id,
-                    label: c.name,
-                    sublabel: c.gstin,
-                  }))}
-                  value={selectedClientId}
-                  onValueChange={setSelectedClientId}
-                  placeholder="Select Client..."
-                  searchPlaceholder="Type to search clients..."
-                  emptyText="No clients found."
-                  disabled={!isStaff && clients.length <= 1}
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="font-medium text-foreground whitespace-nowrap">Month:</span>
-              <div className="w-40">
-                <SearchableMonthSelect
-                  options={generateMonthOptions}
-                  value={selectedMonth}
-                  onValueChange={setSelectedMonth}
-                  placeholder="Select Month"
-                />
-              </div>
-            </div>
+        <CardContent className="px-3 py-2">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="w-full min-w-0 space-y-0.5 sm:w-72">
+              <span className={WS_FILTER_LABEL}>Client</span>
+              <SearchableSelect
+                options={clients.map(c => ({
+                  value: c.id,
+                  label: c.name,
+                  sublabel: c.gstin,
+                }))}
+                value={selectedClientId}
+                onValueChange={setSelectedClientId}
+                placeholder="Select Client..."
+                searchPlaceholder="Type to search clients..."
+                emptyText="No clients found."
+                disabled={!isStaff && clients.length <= 1}
+                className={WS_CONTROL}
+              />
+            </label>
+            <label className="w-40 min-w-0 space-y-0.5">
+              <span className={WS_FILTER_LABEL}>Month</span>
+              <SearchableMonthSelect
+                options={generateMonthOptions}
+                value={selectedMonth}
+                onValueChange={setSelectedMonth}
+                placeholder="Select Month"
+                className={WS_CONTROL}
+              />
+            </label>
+            {lastSavedBy && (
+              <p className="ml-auto self-center text-[11px] text-muted-foreground">
+                Last saved by <span className="font-medium text-foreground">{lastSavedBy.name}</span>
+                {lastSavedBy.role && <span className="text-muted-foreground"> ({lastSavedBy.role})</span>}
+                {lastSavedBy.time && (
+                  <> on {new Date(lastSavedBy.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} {new Date(lastSavedBy.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</>
+                )}
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>
 
-      {/* Suspended Reconciliation Table */}
-      <Card>
-        <CardContent className="p-4">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-primary hover:bg-primary">
-                  <TableHead className="font-bold text-primary-foreground border border-primary w-48">PARTICULARS</TableHead>
-                  <TableHead className="font-bold text-primary-foreground text-center border border-primary">CGST</TableHead>
-                  <TableHead className="font-bold text-primary-foreground text-center border border-primary">SGST</TableHead>
-                  <TableHead className="font-bold text-primary-foreground text-center border border-primary">IGST</TableHead>
-                  <TableHead className="font-bold text-primary-foreground text-center border border-primary">TOTAL</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+      {!selectedClientId ? (
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            Please select a client to view suspended reconciliation data.
+          </CardContent>
+        </Card>
+      ) : isLoading ? (
+        <Card>
+          <CardContent className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          {/* Headline tiles: the four totals from the table below. */}
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+            <KpiTile label="Opening balance · portal" value={formatNumber(openingTotal)} hint={`CGST ${formatNumber(openingCgst)} · SGST ${formatNumber(openingSgst)} · IGST ${formatNumber(openingIgst)}`} />
+            <KpiTile label="Current total · suspended reco" value={formatNumber(portalTotal)} hint={`CGST ${formatNumber(portalCgst)} · SGST ${formatNumber(portalSgst)} · IGST ${formatNumber(portalIgst)}`} />
+            <KpiTile label="Closing balance · books" value={formatNumber(booksTotal)} hint={`CGST ${formatNumber(booksCgst)} · SGST ${formatNumber(booksSgst)} · IGST ${formatNumber(booksIgst)}`} />
+            <KpiTile
+              label="Difference"
+              value={formatNumber(diffTotal)}
+              hint={diffTotal !== 0 ? 'Opening + current − books' : 'Reconciled'}
+              tone={diffTotal !== 0 ? 'error' : 'ok'}
+            />
+          </div>
+
+          {/* Suspended Reconciliation Table */}
+          <div className="overflow-x-auto rounded-md border bg-card">
+            <table className={cn(TABLE_CLS, 'min-w-[640px]')} aria-label="Suspended reconciliation">
+              <thead>
+                <tr>
+                  <th className={cn(WS_TH, 'w-[40%]')}>Particulars</th>
+                  <th className={cn(WS_TH, 'text-right')}>CGST</th>
+                  <th className={cn(WS_TH, 'text-right')}>SGST</th>
+                  <th className={cn(WS_TH, 'text-right')}>IGST</th>
+                  <th className={cn(WS_TH, 'text-right')}>Total</th>
+                </tr>
+              </thead>
+              <tbody>
                 {/* Opening Balance As Per Portal */}
-                <TableRow>
-                  <TableCell className="font-medium border border-border align-top">
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span>OPENING BALANCE AS PER PORTAL</span>
+                <tr className={WS_TR}>
+                  <td className={cn(WS_TD, 'align-top font-medium')}>
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span>Opening balance as per portal</span>
+                        {sourceBadge}
                         {useNewFlow && openingSource !== 'manual' && (
                           <Popover>
                             <PopoverTrigger asChild>
@@ -824,7 +857,7 @@ const SuspendedRecoPage: React.FC = () => {
                                 className="inline-flex items-center text-muted-foreground hover:text-foreground"
                                 aria-label="Opening balance source info"
                               >
-                                <Info className="h-4 w-4" />
+                                <Info className="h-3.5 w-3.5" />
                               </button>
                             </PopoverTrigger>
                             <PopoverContent className="text-xs max-w-xs space-y-2" align="start">
@@ -861,11 +894,11 @@ const SuspendedRecoPage: React.FC = () => {
                         )}
                       </div>
                       {useNewFlow && isStaff && (
-                        <div className="flex gap-1.5 flex-wrap">
+                        <div className="flex flex-wrap gap-1">
                           <Button
                             size="sm"
                             variant="outline"
-                            className="h-7 text-xs"
+                            className="h-7 px-2 text-xs"
                             onClick={handleNotApplicable}
                             disabled={!selectedClientId || isSaving}
                           >
@@ -875,117 +908,91 @@ const SuspendedRecoPage: React.FC = () => {
                             <Button
                               size="sm"
                               variant="outline"
-                              className="h-7 text-xs"
+                              className="h-7 gap-1 px-2 text-xs"
                               onClick={() => setShowOverrideDialog(true)}
                               disabled={!selectedClientId || isSaving}
                             >
-                              <Edit3 className="h-3 w-3 mr-1" />
+                              <Edit3 className="h-3 w-3" />
                               Override
                             </Button>
                           )}
                           <Button
                             size="sm"
                             variant="ghost"
-                            className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                            className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
                             onClick={handleUploadClick}
                             disabled={!selectedClientId || isSaving}
                             title="Manual fallback — upload the ledger statement if the portal sync didn't set this"
                           >
-                            <Upload className="h-3 w-3 mr-1" />
+                            <Upload className="h-3 w-3" />
                             {openingSource === 'csv' ? 'Re-upload' : 'Upload'}
                           </Button>
                         </div>
                       )}
                     </div>
-                  </TableCell>
+                  </td>
                   {useNewFlow ? (
                     <>
-                      <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(openingCgst)}</TableCell>
-                      <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(openingSgst)}</TableCell>
-                      <TableCell className="text-right tabular-nums border border-border bg-accent/30">{formatNumber(openingIgst)}</TableCell>
+                      <td className={cn(WS_TD_NUM, 'bg-accent/30')}>{formatNumber(openingCgst)}</td>
+                      <td className={cn(WS_TD_NUM, 'bg-accent/30')}>{formatNumber(openingSgst)}</td>
+                      <td className={cn(WS_TD_NUM, 'bg-accent/30')}>{formatNumber(openingIgst)}</td>
                     </>
                   ) : (
                     <>
-                      <TableCell className="p-0 border border-border">{renderEditableCell(openingCgst, setOpeningCgst)}</TableCell>
-                      <TableCell className="p-0 border border-border">{renderEditableCell(openingSgst, setOpeningSgst)}</TableCell>
-                      <TableCell className="p-0 border border-border">{renderEditableCell(openingIgst, setOpeningIgst)}</TableCell>
+                      <td className="border-b border-r p-0">{renderEditableCell(openingCgst, setOpeningCgst)}</td>
+                      <td className="border-b border-r p-0">{renderEditableCell(openingSgst, setOpeningSgst)}</td>
+                      <td className="border-b border-r p-0">{renderEditableCell(openingIgst, setOpeningIgst)}</td>
                     </>
                   )}
-                  <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">
+                  <td className={cn(WS_TD_NUM, 'bg-muted/30 font-medium')}>
                     {formatNumber(openingTotal)}
-                  </TableCell>
-                </TableRow>
+                  </td>
+                </tr>
 
                 {/* Current Total - Auto-calculated from ITC Summary */}
-                <TableRow>
-                  <TableCell className="font-medium border border-border">
-                    CURRENT TOTAL AS PER SUSPENDED RECO
-                    <p className="text-[10px] text-muted-foreground font-normal mt-0.5">(4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5 + 4(D) 1.2)</p>
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/50">{formatNumber(portalCgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/50">{formatNumber(portalSgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/50">{formatNumber(portalIgst)}</TableCell>
-                  <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">
+                <tr className={WS_TR}>
+                  <td className={cn(WS_TD, 'font-medium')}>
+                    Current total as per suspended reco
+                    <p className="mt-0.5 text-[10px] font-normal text-muted-foreground">(4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5 + 4(D) 1.2)</p>
+                  </td>
+                  <td className={cn(WS_TD_NUM, 'bg-accent/50')}>{formatNumber(portalCgst)}</td>
+                  <td className={cn(WS_TD_NUM, 'bg-accent/50')}>{formatNumber(portalSgst)}</td>
+                  <td className={cn(WS_TD_NUM, 'bg-accent/50')}>{formatNumber(portalIgst)}</td>
+                  <td className={cn(WS_TD_NUM, 'bg-muted/30 font-medium')}>
                     {formatNumber(portalTotal)}
-                  </TableCell>
-                </TableRow>
-
-                {/* Empty Row for spacing */}
-                <TableRow className="h-2 hover:bg-transparent">
-                  <TableCell colSpan={5} className="border-0 p-0"></TableCell>
-                </TableRow>
+                  </td>
+                </tr>
 
                 {/* As Per Books Row - Auto-linked */}
-                <TableRow>
-                  <TableCell className="font-medium border border-border">CLOSING BALANCE AS PER BOOKS</TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/50">
-                    {formatNumber(booksCgst)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/50">
-                    {formatNumber(booksSgst)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums border border-border bg-accent/50">
-                    {formatNumber(booksIgst)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums font-medium border border-border bg-muted/30">
+                <tr className={WS_TR}>
+                  <td className={cn(WS_TD, 'font-medium')}>Closing balance as per books</td>
+                  <td className={cn(WS_TD_NUM, 'bg-accent/50')}>{formatNumber(booksCgst)}</td>
+                  <td className={cn(WS_TD_NUM, 'bg-accent/50')}>{formatNumber(booksSgst)}</td>
+                  <td className={cn(WS_TD_NUM, 'bg-accent/50')}>{formatNumber(booksIgst)}</td>
+                  <td className={cn(WS_TD_NUM, 'bg-muted/30 font-medium')}>
                     {formatNumber(booksTotal)}
-                  </TableCell>
-                </TableRow>
-
-                {/* Empty Row for spacing */}
-                <TableRow className="h-2 hover:bg-transparent">
-                  <TableCell colSpan={5} className="border-0 p-0"></TableCell>
-                </TableRow>
+                  </td>
+                </tr>
 
                 {/* Difference Row: Opening + Current - Books */}
-                <TableRow className="bg-warning/10 hover:bg-warning/10">
-                  <TableCell className="font-bold border border-border">DIFFERENCE</TableCell>
-                  <TableCell className={`text-right tabular-nums font-medium border border-border ${diffCgst !== 0 ? 'text-destructive' : ''}`}>
-                    {formatNumber(diffCgst)}
-                  </TableCell>
-                  <TableCell className={`text-right tabular-nums font-medium border border-border ${diffSgst !== 0 ? 'text-destructive' : ''}`}>
-                    {formatNumber(diffSgst)}
-                  </TableCell>
-                  <TableCell className={`text-right tabular-nums font-medium border border-border ${diffIgst !== 0 ? 'text-destructive' : ''}`}>
-                    {formatNumber(diffIgst)}
-                  </TableCell>
-                  <TableCell className={`text-right tabular-nums font-bold border border-border ${diffTotal !== 0 ? 'text-destructive' : ''}`}>
-                    {formatNumber(diffTotal)}
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-            </div>
-          )}
+                <tr className={WS_TR_TOTAL}>
+                  <td className={cn(WS_TD, 'border-b-0')}>Difference</td>
+                  <td className={cn(WS_TD_NUM, 'border-b-0', diffCgst !== 0 && 'text-destructive-strong')}>{formatNumber(diffCgst)}</td>
+                  <td className={cn(WS_TD_NUM, 'border-b-0', diffSgst !== 0 && 'text-destructive-strong')}>{formatNumber(diffSgst)}</td>
+                  <td className={cn(WS_TD_NUM, 'border-b-0', diffIgst !== 0 && 'text-destructive-strong')}>{formatNumber(diffIgst)}</td>
+                  <td className={cn(WS_TD_NUM, 'border-b-0', diffTotal !== 0 && 'text-destructive-strong')}>{formatNumber(diffTotal)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
 
-          {!selectedClientId && (
-            <div className="text-center py-8 text-sm text-muted-foreground">
-              Please select a client to view suspended reconciliation data.
-            </div>
-          )}
-        </CardContent>
-      </Card>
-      
+          <Note>
+            Difference = opening balance as per portal + current total − closing balance as per books.
+            {useNewFlow && ' From the Jun-26 return period, a difference of ₹10 or less in a tax head reads as 0.'}
+          </Note>
+        </>
+      )}
+
       {selectedClientId && selectedClientData && (
         <ClearDataDialog
           open={showClearData}

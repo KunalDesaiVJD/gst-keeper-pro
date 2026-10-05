@@ -21,6 +21,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  WS_CELL_INPUT, WS_CONTROL, WS_FILTER_LABEL, WS_TABLE_WRAP, WS_TR_HEADING, WS_TR_TOTAL,
+} from '@/components/workspace/theme';
+import { B_TABLE, B_TD, B_TD_NUM, B_TH, B_TH_NUM, B_TR, B_TR_HEAD } from './theme';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Loader2, Wallet } from 'lucide-react';
 import { formatINR, type BuilderRateCode } from '@/utils/builderRates';
@@ -195,22 +200,21 @@ const BulkOpeningBalancesDialog: React.FC<Props> = ({
         </DialogHeader>
 
         <div className="max-w-xs">
-          <Label className="mb-1.5 block text-xs">As at date *</Label>
-          <Input type="date" value={asAtDate} onChange={(e) => setAsAtDate(e.target.value)} />
+          <Label className={cn(WS_FILTER_LABEL, 'mb-0.5 block')}>As at date *</Label>
+          <Input type="date" className={WS_CONTROL} value={asAtDate} onChange={(e) => setAsAtDate(e.target.value)} />
         </div>
 
-        <div className="max-h-[50vh] overflow-auto rounded-md border">
-          <Table>
-            <TableHeader className="sticky top-0 bg-background">
-              <TableRow>
-                <TableHead>Unit</TableHead>
-                <TableHead>Rate</TableHead>
-                <TableHead className="w-36 text-right">Agreement value</TableHead>
-                <TableHead className="w-36 text-right">Value taxed</TableHead>
-                <TableHead className="w-32 text-right">CGST</TableHead>
-                <TableHead className="w-32 text-right">SGST</TableHead>
-                <TableHead className="w-32 text-right">Receipts (memo)</TableHead>
-                <TableHead className="w-32 text-right">TDS to date</TableHead>
+        <Table className={B_TABLE} containerClassName={cn(WS_TABLE_WRAP, 'max-h-[50vh]')}>
+            <TableHeader>
+              <TableRow className={B_TR_HEAD}>
+                <TableHead className={B_TH}>Unit</TableHead>
+                <TableHead className={B_TH}>Rate</TableHead>
+                <TableHead className={cn(B_TH_NUM, "w-36")}>Agreement value</TableHead>
+                <TableHead className={cn(B_TH_NUM, "w-36")}>Value taxed</TableHead>
+                <TableHead className={cn(B_TH_NUM, "w-32")}>CGST</TableHead>
+                <TableHead className={cn(B_TH_NUM, "w-32")}>SGST</TableHead>
+                <TableHead className={cn(B_TH_NUM, "w-32")}>Receipts (memo)</TableHead>
+                <TableHead className={cn(B_TH_NUM, "w-32")}>TDS to date</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -222,63 +226,63 @@ const BulkOpeningBalancesDialog: React.FC<Props> = ({
                 return (
                   <React.Fragment key={u.unitId}>
                   {showGroupHeader && (
-                    <TableRow className="bg-muted/50 hover:bg-muted/50">
-                      <TableCell colSpan={8} className="py-1.5 text-xs font-semibold text-muted-foreground">
+                    <TableRow className={cn(WS_TR_HEADING, 'border-0 hover:bg-muted/50')}>
+                      <TableCell colSpan={8} className={cn(B_TD, 'text-muted-foreground')}>
                         {groupLabelOf(u)}
                       </TableCell>
                     </TableRow>
                   )}
-                  <TableRow className={isActive ? 'bg-primary/5' : undefined}>
-                    <TableCell className="font-medium">
+                  <TableRow className={cn(B_TR, isActive && 'bg-primary/5')}>
+                    <TableCell className={cn(B_TD, 'font-medium')}>
                       {u.unitNo}
-                      {u.existing && <span className="block text-xs text-muted-foreground">on file</span>}
+                      {u.existing && <span className="block text-[11px] font-normal text-muted-foreground">on file</span>}
                     </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-xs">{u.ratePct}%</Badge>
+                    <TableCell className={B_TD}>
+                      <Badge variant="outline" className="text-[10px] font-medium">{u.ratePct}%</Badge>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className={cn(B_TD, 'p-0')}>
                       <Input
-                        inputMode="decimal" className="h-8 text-right tabular-nums"
+                        inputMode="decimal" className={cn(WS_CELL_INPUT, 'text-right tabular-nums')}
                         value={form.agreement_value}
                         onChange={(e) => setField(u.unitId, 'agreement_value', e.target.value)}
                         placeholder={u.defaultAgreementValue ? formatINR(u.defaultAgreementValue) : '—'}
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className={cn(B_TD, 'p-0')}>
                       <Input
-                        inputMode="decimal" className="h-8 text-right tabular-nums"
+                        inputMode="decimal" className={cn(WS_CELL_INPUT, 'text-right tabular-nums')}
                         value={form.cumulative_value_taxed}
                         onChange={(e) => setField(u.unitId, 'cumulative_value_taxed', e.target.value)}
                         placeholder="—"
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className={cn(B_TD, 'p-0')}>
                       <Input
-                        inputMode="decimal" className="h-8 text-right tabular-nums"
+                        inputMode="decimal" className={cn(WS_CELL_INPUT, 'text-right tabular-nums')}
                         value={form.cumulative_cgst}
                         onChange={(e) => setField(u.unitId, 'cumulative_cgst', e.target.value)}
                         placeholder="—"
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className={cn(B_TD, 'p-0')}>
                       <Input
-                        inputMode="decimal" className="h-8 text-right tabular-nums"
+                        inputMode="decimal" className={cn(WS_CELL_INPUT, 'text-right tabular-nums')}
                         value={form.cumulative_sgst}
                         onChange={(e) => setField(u.unitId, 'cumulative_sgst', e.target.value)}
                         placeholder="—"
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className={cn(B_TD, 'p-0')}>
                       <Input
-                        inputMode="decimal" className="h-8 text-right tabular-nums"
+                        inputMode="decimal" className={cn(WS_CELL_INPUT, 'text-right tabular-nums')}
                         value={form.cumulative_receipts}
                         onChange={(e) => setField(u.unitId, 'cumulative_receipts', e.target.value)}
                         placeholder="—"
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className={cn(B_TD, 'p-0')}>
                       <Input
-                        inputMode="decimal" className="h-8 text-right tabular-nums"
+                        inputMode="decimal" className={cn(WS_CELL_INPUT, 'text-right tabular-nums')}
                         value={form.cumulative_tds_194ia}
                         onChange={(e) => setField(u.unitId, 'cumulative_tds_194ia', e.target.value)}
                         placeholder="—"
@@ -289,21 +293,20 @@ const BulkOpeningBalancesDialog: React.FC<Props> = ({
                 );
               })}
             </TableBody>
-            <TableFooter>
-              <TableRow>
-                <TableCell colSpan={2} className="font-semibold">
+            <TableFooter className="sticky bottom-0 z-10 border-t-0 bg-muted">
+              <TableRow className={cn(WS_TR_TOTAL, 'border-0 hover:bg-muted')}>
+                <TableCell colSpan={2} className={B_TD}>
                   {active.length} of {units.length} units
                 </TableCell>
-                <TableCell className="text-right font-semibold tabular-nums">{formatINR(totals.agreement)}</TableCell>
-                <TableCell className="text-right font-semibold tabular-nums">{formatINR(totals.taxed)}</TableCell>
-                <TableCell className="text-right font-semibold tabular-nums">{formatINR(totals.cgst)}</TableCell>
-                <TableCell className="text-right font-semibold tabular-nums">{formatINR(totals.sgst)}</TableCell>
-                <TableCell />
-                <TableCell />
+                <TableCell className={B_TD_NUM}>{formatINR(totals.agreement)}</TableCell>
+                <TableCell className={B_TD_NUM}>{formatINR(totals.taxed)}</TableCell>
+                <TableCell className={B_TD_NUM}>{formatINR(totals.cgst)}</TableCell>
+                <TableCell className={B_TD_NUM}>{formatINR(totals.sgst)}</TableCell>
+                <TableCell className={B_TD} />
+                <TableCell className={B_TD} />
               </TableRow>
             </TableFooter>
           </Table>
-        </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>

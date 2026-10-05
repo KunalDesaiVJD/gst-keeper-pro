@@ -1,12 +1,4 @@
 import React from 'react';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -17,7 +9,10 @@ import {
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Trash2, Plus, Lock } from 'lucide-react';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { cn } from '@/lib/utils';
+import {
+  WS_CELL_INPUT, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR, WS_TR_HEADING, WS_TR_TOTAL,
+} from '@/components/workspace/theme';
 
 interface RCMMaster {
   id: string;
@@ -197,278 +192,157 @@ const RCMTable: React.FC<RCMTableProps> = ({
     return lockedMonths.has(month);
   };
 
+  const canEditRows = isStaff && !isLocked;
+  const colCount = months.length + 3 + (canEditRows ? 1 : 0);
+
+  // One computed row (tax head or tax total): label, "—" rate, a figure per month, the year total.
+  const figureRow = (label: string, perMonth: (month: string) => number, total: number, className: string = WS_TR) => (
+    <tr className={className}>
+      <td className={cn(WS_TD, 'font-medium')}>{label}</td>
+      <td className={cn(WS_TD, 'text-center text-muted-foreground')}>—</td>
+      {months.map((month) => (
+        <td key={month} className={WS_TD_NUM}>{formatNumber(perMonth(month))}</td>
+      ))}
+      <td className={cn(WS_TD_NUM, 'bg-muted/40 font-semibold', !canEditRows && 'border-r-0')}>{formatNumber(total)}</td>
+      {canEditRows && <td className={cn(WS_TD, 'border-r-0')} />}
+    </tr>
+  );
+
+  const headingRow = (label: string) => (
+    <tr className={WS_TR_HEADING}>
+      <td colSpan={colCount} className={cn(WS_TD, 'border-r-0')}>{label}</td>
+    </tr>
+  );
+
   return (
-    <div className="space-y-4">
-      <ScrollArea className="w-full">
-        <div className="min-w-[1400px]">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-primary hover:bg-primary">
-                <TableHead className="w-48 font-bold text-primary-foreground border border-border">
-                  <div className="flex flex-col">
-                    <span>Particulars</span>
-                    {isStaff && !isLocked && (
-                      <Button
-                        onClick={handleAddRow}
-                        variant="ghost"
-                        size="sm"
-                        className="mt-1 h-6 text-xs text-primary-foreground hover:bg-white/20 p-1"
-                      >
-                        <Plus className="h-3 w-3 mr-1" />
-                        Add Row
-                      </Button>
-                    )}
-                  </div>
-                </TableHead>
-                <TableHead className="w-24 font-bold text-primary-foreground text-center border border-border">RATE</TableHead>
-                {months.map((month) => (
-                  <TableHead key={month} className="w-20 font-bold text-primary-foreground text-center border border-border">
-                    <div className="flex items-center justify-center gap-1">
-                      {month}
-                      {isMonthLocked(month) && <Lock className="h-3 w-3" />}
-                    </div>
-                  </TableHead>
-                ))}
-                <TableHead className="w-24 font-bold text-primary-foreground text-center border border-border">TOTAL</TableHead>
-                {isStaff && !isLocked && (
-                  <TableHead className="w-12 text-center font-bold text-primary-foreground border border-border"></TableHead>
-                )}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.map((row, index) => (
-                <TableRow key={row.id || `new-${index}`} className="hover:bg-muted/50">
-                  <TableCell className="border border-border">
-                    {isStaff && !isLocked ? (
-                      <Select
-                        value={row.master_id || masters.find((m) => m.expense_name === row.particulars)?.id || ''}
-                        onValueChange={(val) => handleParticularsChange(index, val)}
-                      >
-                        <SelectTrigger className="h-8 border-0 shadow-none">
-                          <SelectValue placeholder="Select expense" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {masters.map((master) => (
-                            <SelectItem key={master.id} value={master.id}>
-                              {master.expense_name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <span>{row.particulars}</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-center border border-border font-medium">
-                    {row.rate}
-                  </TableCell>
-                  {months.map((month) => {
-                    const monthIsLocked = isMonthLocked(month);
-                    return (
-                      <TableCell 
-                        key={month} 
-                        className={`p-0 border border-border ${monthIsLocked ? 'bg-muted/50' : ''}`}
-                      >
-                        {isStaff && !isLocked && !monthIsLocked ? (
-                          <Input
-                            type="number"
-                            value={row.monthlyValues[month] || ''}
-                            onChange={(e) => handleMonthValueChange(index, month, e.target.value)}
-                            className="h-8 text-right border-0 shadow-none rounded-none [&::-webkit-inner-spin-button]:appearance-none"
-                            min="0"
-                          />
-                        ) : (
-                          <span className="block text-right px-2">
-                            {formatNumber(row.monthlyValues[month] || 0)}
-                          </span>
-                        )}
-                      </TableCell>
-                    );
-                  })}
-                  <TableCell className="text-right font-medium border border-border bg-muted/30">
-                    {formatNumber(getRowTotal(row))}
-                  </TableCell>
-                  {isStaff && !isLocked && (
-                    <TableCell className="text-center border border-border">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDeleteRow(index)}
-                        className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
+    <div className="space-y-2">
+      <div className={cn(WS_TABLE_WRAP, 'max-h-[70vh]')}>
+        <table className={cn(WS_TABLE, 'min-w-[1400px]')} aria-label="RCM summary">
+          <thead>
+            <tr>
+              <th className={cn(WS_TH, 'w-56')}>
+                <div className="flex items-center justify-between gap-2">
+                  <span>Particulars</span>
+                  {canEditRows && (
+                    <Button
+                      onClick={handleAddRow}
+                      variant="outline"
+                      size="sm"
+                      className="h-6 gap-1 px-1.5 text-[11px] font-medium"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Add row
+                    </Button>
                   )}
-                </TableRow>
+                </div>
+              </th>
+              <th className={cn(WS_TH, 'w-20 text-center')}>Rate</th>
+              {months.map((month) => (
+                <th key={month} className={cn(WS_TH, 'w-24 text-right')}>
+                  <span className="inline-flex items-center justify-end gap-1">
+                    {isMonthLocked(month) && <Lock className="h-3 w-3" aria-label="Locked" />}
+                    {month}
+                  </span>
+                </th>
               ))}
+              <th className={cn(WS_TH, 'w-28 text-right', !canEditRows && 'border-r-0')}>Total</th>
+              {canEditRows && (
+                <th className={cn(WS_TH, 'w-10 border-r-0')} aria-label="Delete row" />
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((row, index) => (
+              <tr key={row.id || `new-${index}`} className={WS_TR}>
+                <td className={cn(WS_TD, canEditRows && 'p-0')}>
+                  {canEditRows ? (
+                    <Select
+                      value={row.master_id || masters.find((m) => m.expense_name === row.particulars)?.id || ''}
+                      onValueChange={(val) => handleParticularsChange(index, val)}
+                    >
+                      <SelectTrigger className="h-8 rounded-none border-0 bg-transparent px-2 text-xs shadow-none" aria-label="Expense">
+                        <SelectValue placeholder="Select expense" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {masters.map((master) => (
+                          <SelectItem key={master.id} value={master.id}>
+                            {master.expense_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <span>{row.particulars}</span>
+                  )}
+                </td>
+                <td className={cn(WS_TD, 'text-center font-medium')}>
+                  {row.rate}
+                </td>
+                {months.map((month) => {
+                  const monthIsLocked = isMonthLocked(month);
+                  const editable = canEditRows && !monthIsLocked;
+                  return (
+                    <td
+                      key={month}
+                      className={cn(
+                        editable ? cn(WS_TD, 'bg-primary/[0.03] p-0') : WS_TD_NUM,
+                        monthIsLocked && 'bg-muted/40 text-muted-foreground',
+                      )}
+                    >
+                      {editable ? (
+                        <Input
+                          type="number"
+                          value={row.monthlyValues[month] || ''}
+                          onChange={(e) => handleMonthValueChange(index, month, e.target.value)}
+                          className={cn(WS_CELL_INPUT, 'text-right tabular-nums [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none')}
+                          aria-label={`${row.particulars || 'Expense'} ${month}`}
+                          min="0"
+                        />
+                      ) : (
+                        formatNumber(row.monthlyValues[month] || 0)
+                      )}
+                    </td>
+                  );
+                })}
+                <td className={cn(WS_TD_NUM, 'bg-muted/40 font-medium', !canEditRows && 'border-r-0')}>
+                  {formatNumber(getRowTotal(row))}
+                </td>
+                {canEditRows && (
+                  <td className={cn(WS_TD, 'border-r-0 p-0 text-center')}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDeleteRow(index)}
+                      className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                      aria-label="Delete row"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </td>
+                )}
+              </tr>
+            ))}
 
-              {/* Totals Row */}
-              <TableRow className="bg-primary hover:bg-primary font-bold">
-                <TableCell className="text-center text-primary-foreground border border-border">TOTAL</TableCell>
-                <TableCell className="text-center text-primary-foreground border border-border">-</TableCell>
-                {months.map((month) => (
-                  <TableCell key={month} className="text-right text-primary-foreground border border-border">
-                    {formatNumber(getMonthTotal(month))}
-                  </TableCell>
-                ))}
-                <TableCell className="text-right text-primary-foreground border border-border">
-                  {formatNumber(getGrandTotal())}
-                </TableCell>
-                {isStaff && !isLocked && <TableCell className="border border-border" />}
-              </TableRow>
+            {/* Totals Row */}
+            {figureRow('Total taxable value', getMonthTotal, getGrandTotal(), WS_TR_TOTAL)}
 
-              {/* Empty Row for spacing */}
-              <TableRow className="h-4 hover:bg-transparent">
-                <TableCell colSpan={months.length + 4} className="border-0"></TableCell>
-              </TableRow>
+            {/* GST Summary Rows */}
+            {headingRow('Tax payable under RCM, by rate')}
+            {figureRow('CGST 2.5%', (m) => getGSTForMonth(m, 'cgst_2_5'), getGSTTotal('cgst_2_5'))}
+            {figureRow('SGST 2.5%', (m) => getGSTForMonth(m, 'sgst_2_5'), getGSTTotal('sgst_2_5'))}
+            {figureRow('CGST 9%', (m) => getGSTForMonth(m, 'cgst_9'), getGSTTotal('cgst_9'))}
+            {figureRow('SGST 9%', (m) => getGSTForMonth(m, 'sgst_9'), getGSTTotal('sgst_9'))}
+            {figureRow('IGST 18%', (m) => getGSTForMonth(m, 'igst_18'), getGSTTotal('igst_18'))}
+            {figureRow('IGST 5%', (m) => getGSTForMonth(m, 'igst_5'), getGSTTotal('igst_5'))}
 
-              {/* GST Summary Rows */}
-              {/* CGST 2.5% */}
-              <TableRow className="hover:bg-muted/50">
-                <TableCell className="font-medium border border-border">CGST 2.5%</TableCell>
-                <TableCell className="text-center border border-border">-</TableCell>
-                {months.map((month) => (
-                  <TableCell key={month} className="text-right border border-border">
-                    {formatNumber(getGSTForMonth(month, 'cgst_2_5'))}
-                  </TableCell>
-                ))}
-                <TableCell className="text-right font-medium border border-border bg-muted/30">
-                  {formatNumber(getGSTTotal('cgst_2_5'))}
-                </TableCell>
-                {isStaff && !isLocked && <TableCell className="border border-border" />}
-              </TableRow>
-
-              {/* SGST 2.5% */}
-              <TableRow className="hover:bg-muted/50">
-                <TableCell className="font-medium border border-border">SGST 2.5%</TableCell>
-                <TableCell className="text-center border border-border">-</TableCell>
-                {months.map((month) => (
-                  <TableCell key={month} className="text-right border border-border">
-                    {formatNumber(getGSTForMonth(month, 'sgst_2_5'))}
-                  </TableCell>
-                ))}
-                <TableCell className="text-right font-medium border border-border bg-muted/30">
-                  {formatNumber(getGSTTotal('sgst_2_5'))}
-                </TableCell>
-                {isStaff && !isLocked && <TableCell className="border border-border" />}
-              </TableRow>
-
-              {/* CGST 9% */}
-              <TableRow className="hover:bg-muted/50">
-                <TableCell className="font-medium border border-border">CGST 9%</TableCell>
-                <TableCell className="text-center border border-border">-</TableCell>
-                {months.map((month) => (
-                  <TableCell key={month} className="text-right border border-border">
-                    {formatNumber(getGSTForMonth(month, 'cgst_9'))}
-                  </TableCell>
-                ))}
-                <TableCell className="text-right font-medium border border-border bg-muted/30">
-                  {formatNumber(getGSTTotal('cgst_9'))}
-                </TableCell>
-                {isStaff && !isLocked && <TableCell className="border border-border" />}
-              </TableRow>
-
-              {/* SGST 9% */}
-              <TableRow className="hover:bg-muted/50">
-                <TableCell className="font-medium border border-border">SGST 9%</TableCell>
-                <TableCell className="text-center border border-border">-</TableCell>
-                {months.map((month) => (
-                  <TableCell key={month} className="text-right border border-border">
-                    {formatNumber(getGSTForMonth(month, 'sgst_9'))}
-                  </TableCell>
-                ))}
-                <TableCell className="text-right font-medium border border-border bg-muted/30">
-                  {formatNumber(getGSTTotal('sgst_9'))}
-                </TableCell>
-                {isStaff && !isLocked && <TableCell className="border border-border" />}
-              </TableRow>
-
-              {/* IGST 18% */}
-              <TableRow className="hover:bg-muted/50">
-                <TableCell className="font-medium border border-border">IGST 18%</TableCell>
-                <TableCell className="text-center border border-border">-</TableCell>
-                {months.map((month) => (
-                  <TableCell key={month} className="text-right border border-border">
-                    {formatNumber(getGSTForMonth(month, 'igst_18'))}
-                  </TableCell>
-                ))}
-                <TableCell className="text-right font-medium border border-border bg-muted/30">
-                  {formatNumber(getGSTTotal('igst_18'))}
-                </TableCell>
-                {isStaff && !isLocked && <TableCell className="border border-border" />}
-              </TableRow>
-
-              {/* IGST 5% */}
-              <TableRow className="hover:bg-muted/50">
-                <TableCell className="font-medium border border-border">IGST 5%</TableCell>
-                <TableCell className="text-center border border-border">-</TableCell>
-                {months.map((month) => (
-                  <TableCell key={month} className="text-right border border-border">
-                    {formatNumber(getGSTForMonth(month, 'igst_5'))}
-                  </TableCell>
-                ))}
-                <TableCell className="text-right font-medium border border-border bg-muted/30">
-                  {formatNumber(getGSTTotal('igst_5'))}
-                </TableCell>
-                {isStaff && !isLocked && <TableCell className="border border-border" />}
-              </TableRow>
-
-              {/* Empty Row for spacing */}
-              <TableRow className="h-4 hover:bg-transparent">
-                <TableCell colSpan={months.length + 4} className="border-0"></TableCell>
-              </TableRow>
-
-              {/* TOTAL (CGST) */}
-              <TableRow className="bg-emerald-100 hover:bg-emerald-100 font-bold">
-                <TableCell className="font-bold border border-border">TOTAL (CGST)</TableCell>
-                <TableCell className="text-center border border-border">-</TableCell>
-                {months.map((month) => (
-                  <TableCell key={month} className="text-right border border-border">
-                    {formatNumber(getTotalCGSTForMonth(month))}
-                  </TableCell>
-                ))}
-                <TableCell className="text-right font-bold border border-border">
-                  {formatNumber(getGrandTotalCGST())}
-                </TableCell>
-                {isStaff && !isLocked && <TableCell className="border border-border" />}
-              </TableRow>
-
-              {/* TOTAL (SGST) */}
-              <TableRow className="bg-emerald-100 hover:bg-emerald-100 font-bold">
-                <TableCell className="font-bold border border-border">TOTAL (SGST)</TableCell>
-                <TableCell className="text-center border border-border">-</TableCell>
-                {months.map((month) => (
-                  <TableCell key={month} className="text-right border border-border">
-                    {formatNumber(getTotalSGSTForMonth(month))}
-                  </TableCell>
-                ))}
-                <TableCell className="text-right font-bold border border-border">
-                  {formatNumber(getGrandTotalSGST())}
-                </TableCell>
-                {isStaff && !isLocked && <TableCell className="border border-border" />}
-              </TableRow>
-
-              {/* TOTAL (IGST) */}
-              <TableRow className="bg-emerald-100 hover:bg-emerald-100 font-bold">
-                <TableCell className="font-bold border border-border">TOTAL (IGST)</TableCell>
-                <TableCell className="text-center border border-border">-</TableCell>
-                {months.map((month) => (
-                  <TableCell key={month} className="text-right border border-border">
-                    {formatNumber(getTotalIGSTForMonth(month))}
-                  </TableCell>
-                ))}
-                <TableCell className="text-right font-bold border border-border">
-                  {formatNumber(getGrandTotalIGST())}
-                </TableCell>
-                {isStaff && !isLocked && <TableCell className="border border-border" />}
-              </TableRow>
-            </TableBody>
-          </Table>
-        </div>
-        <ScrollBar orientation="horizontal" />
-      </ScrollArea>
-
+            {/* Tax totals */}
+            {headingRow('Tax payable under RCM, by head')}
+            {figureRow('Total (CGST)', getTotalCGSTForMonth, getGrandTotalCGST(), WS_TR_TOTAL)}
+            {figureRow('Total (SGST)', getTotalSGSTForMonth, getGrandTotalSGST(), WS_TR_TOTAL)}
+            {figureRow('Total (IGST)', getTotalIGSTForMonth, getGrandTotalIGST(), WS_TR_TOTAL)}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 };

@@ -20,14 +20,16 @@ import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile } from '@/components/gstr9/ui';
+import { WS_BTN, WS_TABLE, WS_TH, WS_TD, WS_TR_TOTAL } from '@/components/workspace/theme';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ChartContainer, ChartTooltip, type ChartConfig } from '@/components/ui/chart';
 import { cn } from '@/lib/utils';
 import { LineChart, Line, CartesianGrid, XAxis, YAxis } from 'recharts';
 import {
-  TrendingUp, Search, ExternalLink, Inbox, CalendarDays, EyeOff, Eye, BarChart3,
+  TrendingUp, Search, ExternalLink, Inbox, EyeOff, Eye, BarChart3,
 } from 'lucide-react';
 
 interface AnnualTrendViewProps {
@@ -159,31 +161,6 @@ const TrendTooltip: React.FC<TrendTooltipProps> = ({ active, payload, label, hea
   );
 };
 
-type Tone = 'primary' | 'neutral' | 'warning';
-
-const TONE_TEXT: Record<Tone, string> = {
-  primary: 'text-primary',
-  neutral: 'text-foreground',
-  warning: 'text-warning',
-};
-
-const StatTile: React.FC<{ label: string; value: string; tone: Tone; icon?: React.ComponentType<{ className?: string }>; sub?: string }> = ({
-  label, value, tone, icon: Icon, sub,
-}) => (
-  <div className="flex items-start gap-2.5 min-w-0">
-    {Icon && (
-      <div className={cn('mt-0.5 shrink-0 rounded-md border bg-background/70 p-1.5', TONE_TEXT[tone])}>
-        <Icon className="h-4 w-4" />
-      </div>
-    )}
-    <div className="min-w-0">
-      <p className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium truncate">{label}</p>
-      <p className={cn('text-base font-semibold tabular-nums truncate', TONE_TEXT[tone])}>{value}</p>
-      {sub && <p className="text-[10px] text-muted-foreground mt-0.5 truncate">{sub}</p>}
-    </div>
-  </div>
-);
-
 // ────────────────────────────────── view ──────────────────────────────────
 
 export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report }) => {
@@ -261,16 +238,16 @@ export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report 
   if (rows.length === 0) {
     return (
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <TrendingUp className="h-5 w-5 text-muted-foreground" />
+        <CardHeader className="space-y-0.5 px-4 pb-2 pt-3">
+          <CardTitle className="flex items-center gap-2 text-[15px] leading-snug">
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
             {table.title || report.title}
           </CardTitle>
-          {table.subtitle && <CardDescription className="whitespace-pre-line">{table.subtitle}</CardDescription>}
+          {table.subtitle && <CardDescription className="whitespace-pre-line text-xs">{table.subtitle}</CardDescription>}
         </CardHeader>
-        <CardContent>
-          <div className="flex flex-col items-center justify-center gap-2 py-14 text-center text-muted-foreground">
-            <Inbox className="h-8 w-8" />
+        <CardContent className="px-4 pb-3">
+          <div className="flex flex-col items-center justify-center gap-1.5 py-8 text-center text-muted-foreground">
+            <Inbox className="h-5 w-5 opacity-60" />
             <p className="text-sm">No months on record for this financial year yet.</p>
           </div>
         </CardContent>
@@ -279,54 +256,54 @@ export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report 
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <TrendingUp className="h-5 w-5 text-muted-foreground" />
+        <CardHeader className="space-y-0.5 px-4 py-3">
+          <CardTitle className="flex items-center gap-2 text-[15px] leading-snug">
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
             {table.title || report.title}
           </CardTitle>
-          {table.subtitle && <CardDescription className="whitespace-pre-line">{table.subtitle}</CardDescription>}
+          {table.subtitle && <CardDescription className="whitespace-pre-line text-xs">{table.subtitle}</CardDescription>}
         </CardHeader>
       </Card>
 
       {/* Totals strip — always the TOTAL row's own figures, unaffected by search/filter below */}
       {summaryStats.length > 0 && (
-        <Card className="border-primary/15 bg-primary/5">
-          <CardContent className="p-4">
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-              {summaryStats.map((s) => (
-                <StatTile
-                  key={s.header}
-                  label={s.header}
-                  value={formatNumber(s.value)}
-                  tone={s.isHeadline ? 'primary' : 'neutral'}
-                  icon={s.isHeadline ? TrendingUp : undefined}
-                />
-              ))}
-              <StatTile
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+          {summaryStats.map((s) => (
+            <KpiTile key={s.header} label={s.header} value={formatNumber(s.value)} />
+          ))}
+          {headlineColIdx !== -1 && hasGaps ? (
+            <TileButton active={hideNotPulled} onClick={() => setHideNotPulled((v) => !v)} title={hideNotPulled ? 'Show all months' : 'Hide not-pulled months'}>
+              <KpiTile
                 label="Months Pulled"
                 value={`${pulledCount} / ${chartData.length}`}
-                tone={pulledCount < chartData.length ? 'warning' : 'neutral'}
-                icon={CalendarDays}
-                sub={totalRows[0] ? 'Full FY, unfiltered' : undefined}
+                tone={pulledCount < chartData.length ? 'warn' : 'neutral'}
+                hint={totalRows[0] ? 'Full FY, unfiltered' : undefined}
               />
-            </div>
-          </CardContent>
-        </Card>
+            </TileButton>
+          ) : (
+            <KpiTile
+              label="Months Pulled"
+              value={`${pulledCount} / ${chartData.length}`}
+              tone={pulledCount < chartData.length ? 'warn' : 'neutral'}
+              hint={totalRows[0] ? 'Full FY, unfiltered' : undefined}
+            />
+          )}
+        </div>
       )}
 
       {/* Trend chart — the one archetype where a real chart earns its place */}
       {headlineColIdx !== -1 && chartData.length > 0 && (
         <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
-              <BarChart3 className="h-4 w-4" />
+          <CardHeader className="space-y-0 px-4 pb-1 pt-3">
+            <CardTitle className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+              <BarChart3 className="h-3.5 w-3.5" />
               {headlineHeader} — trend across the year
             </CardTitle>
           </CardHeader>
-          <CardContent className="pb-4">
-            <ChartContainer config={chartConfig} className="aspect-auto h-[260px] w-full">
+          <CardContent className="px-4 pb-3">
+            <ChartContainer config={chartConfig} className="aspect-auto h-[240px] w-full">
               <LineChart data={chartData} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
                 <CartesianGrid vertical={false} stroke="#ccc" strokeDasharray="3 3" />
                 <XAxis
@@ -380,14 +357,14 @@ export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report 
       )}
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search this report…"
-            className="pl-8 h-8 text-sm"
+            className="pl-8 h-8 text-xs"
           />
         </div>
 
@@ -398,7 +375,7 @@ export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report 
             size="sm"
             aria-pressed={hideNotPulled}
             onClick={() => setHideNotPulled((v) => !v)}
-            className="h-8 text-xs gap-1.5"
+            className={WS_BTN}
           >
             {hideNotPulled ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
             {hideNotPulled ? 'Show all months' : 'Hide not-pulled months'}
@@ -413,17 +390,17 @@ export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report 
       </div>
 
       {/* Monthly table — TOTAL row pinned bottom, never filtered out */}
-      <div className="rounded-md border max-h-[60vh] overflow-auto">
-        <Table>
-          <TableHeader className="sticky top-0 z-20 bg-background">
+      <div className="rounded-md border bg-card max-h-[60vh] overflow-auto">
+        <Table className={WS_TABLE}>
+          <TableHeader className="sticky top-0 z-20">
             <TableRow>
               {headers.map((h, i) => (
                 <TableHead
                   key={i}
                   className={cn(
-                    'px-3 py-2 text-xs font-semibold whitespace-nowrap bg-muted/60',
+                    WS_TH, 'h-auto',
                     isNumericCol[i] && 'text-right',
-                    i === headlineColIdx && 'border-l border-border',
+                    i === headlineColIdx && 'border-l',
                   )}
                 >
                   {h}
@@ -435,21 +412,21 @@ export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report 
           <TableBody>
             {filteredDataRows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={headers.length} className="text-center text-sm text-muted-foreground py-10">
+                <TableCell colSpan={headers.length} className="border-b text-center text-sm text-muted-foreground py-6">
                   No months match the current search/filter.
                 </TableCell>
               </TableRow>
             )}
 
             {filteredDataRows.map((row, ri) => (
-              <TableRow key={ri}>
+              <TableRow key={ri} className="hover:bg-muted/30">
                 {row.map((cell, ci) => {
                   const numeric = isNumericCol[ci];
                   const isHeadline = ci === headlineColIdx;
 
                   if (isUrlCell(cell)) {
                     return (
-                      <TableCell key={ci} className="px-3 py-2 text-xs whitespace-nowrap">
+                      <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
                         <a
                           href={cell}
                           target="_blank"
@@ -464,7 +441,7 @@ export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report 
 
                   if (isSentinelCell(cell)) {
                     return (
-                      <TableCell key={ci} className="px-3 py-2 text-xs whitespace-nowrap">
+                      <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
                         <Badge variant="outline" className="border-dashed text-muted-foreground text-[10px] py-0 font-normal">
                           Not pulled
                         </Badge>
@@ -474,8 +451,8 @@ export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report 
 
                   if (ci === statusColIdx && String(cell ?? '') !== '') {
                     return (
-                      <TableCell key={ci} className="px-3 py-2 text-xs whitespace-nowrap">
-                        <Badge variant={STATUS_VARIANT(String(cell))} className="text-[10px] py-0">{String(cell)}</Badge>
+                      <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
+                        <Badge variant={STATUS_VARIANT(String(cell))} className="text-[10px] py-0 font-medium">{String(cell)}</Badge>
                       </TableCell>
                     );
                   }
@@ -484,9 +461,9 @@ export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report 
                     <TableCell
                       key={ci}
                       className={cn(
-                        'px-3 py-2 text-xs',
+                        WS_TD,
                         numeric ? 'text-right whitespace-nowrap tabular-nums' : 'max-w-[240px]',
-                        isHeadline && 'border-l border-border font-medium text-foreground',
+                        isHeadline && 'border-l font-medium text-foreground',
                       )}
                     >
                       {numeric ? formatNumber(cell) : String(cell ?? '')}
@@ -503,7 +480,7 @@ export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report 
                 <TableRow
                   key={`total-${ri}`}
                   className={cn(
-                    'bg-primary/10 hover:bg-primary/10 font-semibold border-t-2 border-primary/20',
+                    WS_TR_TOTAL, 'hover:bg-muted',
                     ri === totalRows.length - 1 && 'sticky bottom-0 z-10',
                   )}
                 >
@@ -514,9 +491,9 @@ export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report 
                       <TableCell
                         key={ci}
                         className={cn(
-                          'px-3 py-2 text-xs bg-primary/10',
+                          WS_TD, 'bg-muted',
                           numeric && 'text-right whitespace-nowrap tabular-nums',
-                          ci === headlineColIdx && 'border-l border-border',
+                          ci === headlineColIdx && 'border-l',
                         )}
                       >
                         {display}
@@ -532,3 +509,18 @@ export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report 
     </div>
   );
 };
+
+const TileButton: React.FC<{ active: boolean; onClick: () => void; title: string; children: React.ReactNode }> = ({ active, onClick, title, children }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={title}
+    aria-pressed={active}
+    className={cn(
+      'rounded-lg text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:h-full',
+      active && 'ring-2 ring-primary/60',
+    )}
+  >
+    {children}
+  </button>
+);

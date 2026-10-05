@@ -10,6 +10,12 @@ interface PageHeaderProps {
   actions?: React.ReactNode;
   /** When rendered as a tab body, use a smaller heading (avoids double page-title). */
   embedded?: boolean;
+  /**
+   * The Annual Return (GSTR-9/9C) look: one dense row — small icon tile, a
+   * text-lg title with the subtitle inline after a "·", and the actions on the
+   * same line. Leaves room on the right for the fixed notification bell.
+   */
+  compact?: boolean;
   className?: string;
 }
 
@@ -24,8 +30,24 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
   icon,
   actions,
   embedded = false,
+  compact = false,
   className,
-}) => (
+}) => compact ? (
+  <div className={cn('flex flex-wrap items-center gap-2', !embedded && 'md:pr-12', className)}>
+    <div className="mr-auto flex min-w-0 items-center gap-2">
+      {icon && (
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary [&>svg]:h-4 [&>svg]:w-4">
+          {icon}
+        </div>
+      )}
+      <h1 className={cn('truncate font-heading font-bold leading-tight text-foreground', embedded ? 'text-base' : 'text-lg')}>
+        {title}
+        {subtitle && <span className="font-semibold text-muted-foreground"> · {subtitle}</span>}
+      </h1>
+    </div>
+    {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+  </div>
+) : (
   <div className={cn('flex flex-wrap items-start justify-between gap-3', className)}>
     <div className="flex items-center gap-3 min-w-0">
       {icon && (

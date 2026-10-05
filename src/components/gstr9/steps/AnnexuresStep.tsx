@@ -1,0 +1,56 @@
+import React from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
+import { OpenBadge, StepTab, StepTabsList, TabSub } from '../reco/StepTabs';
+import { useWorkspace } from '../WorkspaceContext';
+import { OpenDifferences } from '../ui';
+import Annexure1 from '../annexures/Annexure1';
+import Annexure2 from '../annexures/Annexure2';
+import Annexure3 from '../annexures/Annexure3';
+import Annexure4 from '../annexures/Annexure4';
+import { ANNEX_TAB_PARAM } from '../annexures/taxRows';
+
+const TABS = [
+  { key: 'a1', title: 'Annexure-1', sub: 'Income reco', diffPrefix: 'ann1.' },
+  { key: 'a2', title: 'Annexure-2', sub: 'ITC reco', diffPrefix: 'ann2.' },
+  { key: 'a3', title: 'Annexure-3', sub: 'DRC-03', diffPrefix: null },
+  { key: 'a4', title: 'Annexure-4', sub: 'Previous-year GSTR-9', diffPrefix: 'ann4.' },
+] as const;
+
+type TabKey = (typeof TABS)[number]['key'];
+
+/** Step 9 — the ANNEXURE sheet: income reco, ITC reco, DRC-03 working, previous year's GSTR-9 clauses. */
+const AnnexuresStep: React.FC = () => {
+  const { workings } = useWorkspace();
+  const [params, setParams] = useSearchParams();
+  const fromUrl = params.get(ANNEX_TAB_PARAM);
+  const tab: TabKey = TABS.some((t) => t.key === fromUrl) ? (fromUrl as TabKey) : 'a1';
+  const setTab = (v: string) => {
+    const next = new URLSearchParams(params);
+    next.set(ANNEX_TAB_PARAM, v);
+    setParams(next, { replace: true });
+  };
+  const openIn = (prefix: string | null) => (prefix ? workings.diffs.filter((d) => d.open && d.key.startsWith(prefix)).length : 0);
+
+  return (
+    <div className="space-y-3">
+      <OpenDifferences step="annexures" />
+      <Tabs value={tab} onValueChange={setTab} className="space-y-2">
+        <StepTabsList label="Annexures" value={tab}>
+          {TABS.map((t) => (
+            <StepTab key={t.key} value={t.key}>
+              {t.title} <TabSub>{t.sub}</TabSub>
+              <OpenBadge n={openIn(t.diffPrefix)} showOk={false} />
+            </StepTab>
+          ))}
+        </StepTabsList>
+        <TabsContent value="a1" className="mt-0"><Annexure1 /></TabsContent>
+        <TabsContent value="a2" className="mt-0"><Annexure2 /></TabsContent>
+        <TabsContent value="a3" className="mt-0"><Annexure3 /></TabsContent>
+        <TabsContent value="a4" className="mt-0"><Annexure4 /></TabsContent>
+      </Tabs>
+    </div>
+  );
+};
+
+export default AnnexuresStep;
