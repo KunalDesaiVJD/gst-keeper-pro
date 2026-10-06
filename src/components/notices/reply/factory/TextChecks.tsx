@@ -78,8 +78,9 @@ export const DashCheck: React.FC<{ hits: DashHit[]; onReplace?: () => void; disa
       )}
       {onReplace && (
         <p className="text-[11px] text-foreground/80">
-          Replace dashes uses the database's own rules: a dash between figures becomes a slash (2023/24), "/" with a dash after an amount goes, any
-          other dash becomes a space. Read the wording again afterwards.
+          Replace dashes uses the database's own rules: between months a dash reads "to" (Apr to Sep), between figures it becomes a slash
+          (2023/24), with a space on each side it becomes a comma, "/" with a dash after an amount goes, and any other dash becomes a space. Read
+          the wording again afterwards.
         </p>
       )}
     </div>

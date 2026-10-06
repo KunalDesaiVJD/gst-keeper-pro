@@ -75,7 +75,8 @@ export const TemplateViewDialog: React.FC<{
             <p className="text-xs text-muted-foreground">
               Placeholders are marked in blue; point at one to see what it prints. A red one is not filled by the app.
             </p>
-            <div className="max-h-[55vh] overflow-y-auto rounded-md border bg-card p-3">
+            <div className="max-h-[55vh] overflow-y-auto rounded-md border bg-card p-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              tabIndex={0} role="region" aria-label="The wording of the template">
               <MarkedText text={t.body} className="font-serif text-[13.5px]" />
             </div>
             <PlaceholdersPanel />

@@ -125,11 +125,16 @@ export const TemplatesTab: React.FC = () => {
     setBusy(t.key);
     try {
       await setTemplateActive(t.key, on, actor);
-      const orphaned = on ? [] : t.forms.filter((f) => !templates.some((o) => o.key !== t.key && o.is_active && o.forms.includes(f)));
+      // A form left with no active template of its own falls back to the general ones (not a form that needs no reply).
+      const orphaned = on ? [] : t.forms.filter((f) => typeByCode.get(f)?.response_need !== 'none'
+        && !templates.some((o) => o.key !== t.key && o.is_active && o.forms.includes(f)));
+      // The last general template switched off: a notice with no template of its own gets no prepared reply at all.
+      const lastGeneral = !on && t.forms.length === 0 && !templates.some((o) => o.key !== t.key && o.is_active && o.forms.length === 0);
       toast.success(on
         ? `Switched on: open notices ${t.forms.length ? `of ${t.forms.join(', ')}` : 'with no template of their own'} get "${t.title}" now.`
         : `Switched off: open notices no longer get "${t.title}".${orphaned.length
-          ? ` ${orphaned.join(', ')} ${orphaned.length === 1 ? 'has' : 'have'} no other active template, so ${orphaned.length === 1 ? 'its' : 'their'} notices get the general templates.` : ''}`);
+          ? ` ${orphaned.join(', ')} ${orphaned.length === 1 ? 'has' : 'have'} no other active template, so ${orphaned.length === 1 ? 'its' : 'their'} notices get the general templates.` : ''}${lastGeneral
+          ? ' No general template is on now, so a notice whose form has no template of its own gets no prepared reply.' : ''}`);
       invalidateReplyTemplates(qc);
     } catch (e) {
       toast.error(`Not changed. ${e instanceof Error ? e.message : String(e)}`);
@@ -189,9 +194,9 @@ export const TemplatesTab: React.FC = () => {
                 onBlur={(e) => { if ((e.target.value.trim() || null) !== (search || null)) set({ rq: e.target.value.trim() || null }); }}
                 className="h-8 pl-7 text-xs" />
             </div>
-            <FilterPill label="Form" allLabel="Every form" value={form} onChange={(v) => set({ rform: v })} options={[]}
+            <FilterPill label="Form" allLabel="Every form" value={form} onChange={(v) => set({ rform: v })} options={[]} className="max-w-full"
               extraOptions={[{ value: GENERAL, label: `${GENERAL_TITLE} (${plural(generalCount, 'template')})` }, ...formOptionsForFilter]} />
-            <FilterPill label="Offered" allLabel="On or off" value={offered} onChange={(v) => set({ ractive: v })} options={[]}
+            <FilterPill label="Offered" allLabel="On or off" value={offered} onChange={(v) => set({ ractive: v })} options={[]} className="max-w-full"
               extraOptions={[{ value: 'on', label: `Offered on open notices (${onCount})` }, { value: 'off', label: `Switched off (${total - onCount})` }]} />
           </div>
           {chips.length > 0 && (
@@ -277,7 +282,7 @@ export const TemplatesTab: React.FC = () => {
                               <p className="font-mono text-[11px] text-foreground/70">{t.key}</p>
                             </td>
                             <td className={WS_TD}><StanceChip stance={t.stance} /></td>
-                            <td className={cn(WS_TD, 'max-w-[12rem] text-xs')}>{t.forms.length ? t.forms.join(', ') : 'General'}</td>
+                            <td className={cn(WS_TD, 'max-w-[12rem] text-xs')}><FormList forms={t.forms} /></td>
                             <td className={WS_TD_NUM}>{t.version}</td>
                             <td className={WS_TD_NUM}>
                               {counts.data ? <CountLink to={viewHref(t.key, 'notices')} n={n} label={n === 1 ? 'notice holds this reply' : 'notices hold this reply'} /> : ''}
@@ -316,7 +321,7 @@ export const TemplatesTab: React.FC = () => {
       </SectionCard>
 
       <TemplateViewDialog t={opened} view={view} onView={(v) => set({ rview: v === 'wording' ? null : v })} onClose={closeView}
-        count={opened ? counts.data?.get(opened.key) ?? 0 : null} ownForms={ownForms} canEdit={canEdit}
+        count={opened && counts.data ? counts.data.get(opened.key) ?? 0 : null} ownForms={ownForms} canEdit={canEdit}
         onEdit={() => { if (opened) { setEditing({ mode: 'edit', source: opened }); closeView(); } }}
         onDuplicate={() => { if (opened) { setEditing({ mode: 'duplicate', source: opened }); closeView(); } }} />
       <TemplateEditDialog state={editing} templates={templates} formOptions={formOptions} ownForms={ownForms}
@@ -325,6 +330,11 @@ export const TemplatesTab: React.FC = () => {
     </div>
   );
 };
+
+/** Form codes keep their hyphen on one line ("REG-CANCEL-REJ", not "REG-" then "CANCEL-REJ"). */
+const FormList: React.FC<{ forms: string[] }> = ({ forms }) => (forms.length === 0 ? <>General</> : (
+  <>{forms.map((f, i) => <React.Fragment key={f}>{i > 0 && ', '}<span className="whitespace-nowrap">{f}</span></React.Fragment>)}</>
+));
 
 const TemplateCard: React.FC<{
   t: ReplyTemplate;
@@ -346,7 +356,7 @@ const TemplateCard: React.FC<{
     <p className="flex flex-wrap gap-x-2 text-[11px] text-foreground/70">
       <span className="font-mono">{t.key}</span>
       <span aria-hidden>·</span><span>Version {t.version}</span>
-      <span aria-hidden>·</span><span>{t.forms.length ? `For ${t.forms.join(', ')}` : 'General'}</span>
+      <span aria-hidden>·</span><span>{t.forms.length ? <>For <FormList forms={t.forms} /></> : 'General'}</span>
     </p>
     <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-1.5 text-xs">
       <span><CountLink to={noticesTo} n={n} /> {n === 1 ? 'notice holds' : 'notices hold'} this reply</span>

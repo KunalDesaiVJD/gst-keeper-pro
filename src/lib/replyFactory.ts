@@ -998,18 +998,33 @@ export type ReplyTemplate = Tables['reply_templates']['Row'];
 const DASH_ONE = /[\u002D\u00AD\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/;
 export const hasDash = (s: string | null | undefined): boolean => !!s && DASH_ONE.test(s);
 
+// The same rules as public.reply_dehyphen (20261008160000, as of e9b3d32), in the same order.
+const DASH = '[\\u002D\\u2010-\\u2015\\u2212\\uFE58\\uFE63\\uFF0D]';
+const MONTH = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?';
+const RE_SLASH_DASH = new RegExp(`/[ \\t]*${DASH}+(?![0-9])`, 'g');
+const RE_MONTHS = new RegExp(`(${MONTH}(?:[ \\t]+[0-9]{2,4})?)[ \\t]*${DASH}+[ \\t]*(?=${MONTH})`, 'gi');
+const RE_FIGURES = new RegExp(`([0-9])[ \\t]*${DASH}[ \\t]*(?=[0-9])`, 'g');
+const RE_PAUSE = new RegExp(`[ \\t]+${DASH}+[ \\t]+`, 'g');
+const RE_OTHER = new RegExp(`[ \\t]*${DASH}+[ \\t]*`, 'g');
+
 /**
- * The same rules as public.reply_dehyphen, in the same order: the soft hyphen
- * goes; "/" plus dashes (the "Rs. 500/-" suffix) goes; a dash between digits
- * becomes "/" (2023-24 to 2023/24); any other run of dashes becomes a space;
- * doubled spaces close up. Line breaks stay.
+ * What "Replace dashes" makes of a text, by the database's own rules
+ * (public.reply_dehyphen): a soft hyphen goes; "/" plus dashes after an amount
+ * goes ("Rs. 500/-"); a dash between months reads "to" (Apr to Sep 2024, April
+ * 2019 to March 2020); a dash between figures becomes "/" (2023/24); a dash
+ * with a space on each side is a pause and becomes a comma; any other dash a
+ * space (DRC 01, time barred). Line breaks stay.
  */
 export function dehyphen(text: string): string {
   return text
     .replace(/\u00AD/g, '')
-    .replace(/\/[ \t]*[\u002D\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]+(?![0-9])/g, '')
-    .replace(/([0-9])[ \t]*[\u002D\u2010-\u2015\u2212\uFE58\uFE63\uFF0D][ \t]*(?=[0-9])/g, '$1/')
-    .replace(/[ \t]*[\u002D\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]+[ \t]*/g, ' ')
+    .replace(RE_SLASH_DASH, '')
+    .replace(RE_MONTHS, '$1 to ')
+    .replace(RE_FIGURES, '$1/')
+    .replace(RE_PAUSE, ', ')
+    .replace(RE_OTHER, ' ')
+    .replace(/[ \t]+,/g, ',')
+    .replace(/,[ \t]*,/g, ',')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/^[ \t]+|[ \t]+$/g, '');
 }
@@ -1103,10 +1118,15 @@ function editDistance(a: string, b: string): number {
   return row[b.length];
 }
 
-/** The known key a mistyped one was most likely meant to be. */
+/** The known key a mistyped one was most likely meant to be ("client" is client_name, "officer_name" is officer). */
 export function nearestPlaceholder(word: string): string | null {
   const w = word.trim().toLowerCase().replace(/[\s.]+/g, '_');
   if (PLACEHOLDER_MEANING.has(w)) return w;
+  const keys = REPLY_PLACEHOLDERS.map((p) => p.key);
+  const longer = keys.filter((k) => k.startsWith(`${w}_`));
+  if (longer.length === 1) return longer[0];
+  const shorter = keys.filter((k) => w.startsWith(`${k}_`));
+  if (shorter.length === 1) return shorter[0];
   let best: string | null = null;
   let bestD = Infinity;
   for (const { key } of REPLY_PLACEHOLDERS) {

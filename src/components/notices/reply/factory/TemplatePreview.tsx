@@ -120,7 +120,8 @@ export const TemplatePreview: React.FC<{
             : !dbody.trim() ? <EmptyBox className="p-4">The wording is empty.</EmptyBox>
             : rendered.data === undefined ? <Skeleton className="h-48 w-full" />
             : (
-              <div className="max-h-[55vh] overflow-y-auto rounded-md border bg-card p-3 shadow-sm">
+              <div className="max-h-[55vh] overflow-y-auto rounded-md border bg-card p-3 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                tabIndex={0} role="region" aria-label="The reply as it would be prepared">
                 <MarkedText text={rendered.data} fillIns className="font-serif text-[13.5px]" />
               </div>
             )}
