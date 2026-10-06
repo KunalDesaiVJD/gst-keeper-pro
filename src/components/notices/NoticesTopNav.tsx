@@ -24,6 +24,7 @@ const NAV: NavItem[] = [
     label: 'Clients', to: '/notices-company-list',
     match: (p) => p === '/notices-company-list' || p.startsWith('/notices-company/') || p.startsWith('/notices-case-folder/'),
   },
+  { label: 'Autopilot', to: '/notices-autopilot', match: (p) => p === '/notices-autopilot' },
 ];
 
 const REPORTS = [

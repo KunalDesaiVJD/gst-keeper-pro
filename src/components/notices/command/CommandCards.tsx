@@ -13,6 +13,7 @@ import type { CommandCentre } from '@/lib/noticeCommandCentre';
 import { noticesListHref } from '@/lib/noticeQueries';
 import { fmtAgo, fmtDay, fmtInrShort, plural } from '@/lib/noticeFormat';
 import { runNoticeAlerts, describeAlertRun } from '@/lib/noticeAlertQueue';
+import { latestAgent, reasonLabel, useAutopilotBadge, useAutopilotStatus } from '@/lib/autopilot';
 import { cn } from '@/lib/utils';
 
 // ── KPI tiles ──────────────────────────────────────────────────────────────
@@ -77,6 +78,8 @@ export function healthState(cc: CommandCentre): { tone: 'ok' | 'warn' | 'error';
 export const AutopilotLine: React.FC<{ cc: CommandCentre }> = ({ cc }) => {
   const h = cc.health;
   const { tone, failing } = healthState(cc);
+  const badge = useAutopilotBadge();
+  const autopilotOn = badge.data ? !!badge.data.enabled : null;
   return (
     <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground" aria-live="polite">
       <span className={cn('inline-block h-2 w-2 rounded-full', tone === 'ok' ? 'bg-success' : tone === 'warn' ? 'bg-warning' : 'bg-destructive')} aria-hidden />
@@ -85,6 +88,9 @@ export const AutopilotLine: React.FC<{ cc: CommandCentre }> = ({ cc }) => {
       <span>· {plural(h.new_today, 'new notice')} today</span>
       {h.auto_closed_today > 0 && <span>· {h.auto_closed_today} closed automatically</span>}
       <span>· alerts {h.alerts_mode === 'live' ? 'live' : h.alerts_mode === 'off' ? 'off' : 'in preview'}</span>
+      {autopilotOn !== null && (
+        <span>· <Link to="/notices-autopilot" className="underline underline-offset-2 hover:text-foreground">autopilot {autopilotOn ? 'on' : 'off'}</Link></span>
+      )}
       {failing > 0 && (
         <Link to="/notices-company-list?status=failed" className="font-medium text-destructive-strong underline-offset-2 hover:underline">
           · {failing} need{failing === 1 ? 's' : ''} you →
@@ -133,19 +139,15 @@ export const ReplyPipeline: React.FC<{ cc: CommandCentre }> = ({ cc }) => {
 };
 
 // ── Autopilot health ───────────────────────────────────────────────────────
-const REASONS: Record<string, string> = {
-  login_failed: 'Login failed — password changed?',
-  captcha_timeout: 'CAPTCHA not typed',
-  session_mismatch: 'Portal session was another GSTIN',
-  portal_error: 'Portal error',
-  timeout: 'Portal timed out',
-  stalled: 'Run stalled',
-  other: 'Other failure',
-};
+// With the office agent and the CAPTCHA wall (roadmap Phase 3); failures in the
+// Autopilot page's words (reasonLabel, src/lib/autopilot.ts).
 
 export const AutopilotHealth: React.FC<{ cc: CommandCentre; canRunAlerts: boolean; onAlertsRun: () => void }> = ({ cc, canRunAlerts, onAlertsRun }) => {
   const h = cc.health;
   const { tone } = healthState(cc);
+  const ap = useAutopilotStatus({ refetchMs: 30_000 }).data;
+  const agent = latestAgent(ap);
+  const captchas = ap ? ap.queue.waiting_captcha + ap.queue.needs_human : 0;
   const [running, setRunning] = React.useState(false);
   const runAlerts = async () => {
     setRunning(true);
@@ -173,10 +175,18 @@ export const AutopilotHealth: React.FC<{ cc: CommandCentre; canRunAlerts: boolea
       <div className="divide-y">
         <Row label={run ? `Last sync run · ${run.status}${run.ext_version ? ` · extension v${run.ext_version}` : ''}` : 'No sync run recorded yet'}
           value={run ? `${fmtAgo(run.started_at)}${run.clients_total ? ` · ${run.clients_done}/${run.clients_total}` : ''}` : '—'} to="/notices-company-list?tab=log" />
+        {ap && (
+          <Row label={`Office agent · ${!agent ? 'not set up' : ap.agent_online ? 'online' : 'offline'}${ap.settings?.enabled ? '' : ' · autopilot off'}`}
+            value={agent ? `${ap.agent_online ? 'seen' : 'last seen'} ${fmtAgo(agent.last_seen)}` : '—'}
+            to="/notices-autopilot" bad={!!ap.settings?.enabled && !ap.agent_online} />
+        )}
+        {ap && (
+          <Row label="Waiting for a CAPTCHA" value={captchas} to="/notices-autopilot?tab=wall" bad={captchas > 0} />
+        )}
         <Row label="GSTINs synced in the last 24 h" value={`${h.fresh} / ${h.eligible}`} to="/notices-company-list" bad={h.fresh < h.eligible} />
         {h.never > 0 && <Row label="Never synced" value={h.never} to="/notices-company-list?status=never" bad />}
         {Object.entries(h.failing).map(([reason, n]) => (
-          <Row key={reason} label={REASONS[reason] ?? reason} value={n} to={`/notices-company-list?status=failed&reason=${encodeURIComponent(reason)}`} bad />
+          <Row key={reason} label={reasonLabel(reason)} value={n} to={`/notices-company-list?status=failed&reason=${encodeURIComponent(reason)}`} bad />
         ))}
         <Row label="New notices captured today" value={h.new_today} to={noticesListHref({ filter: 'new' })} />
         <Row label="Closed automatically today (reviewable)" value={h.auto_closed_today} to={noticesListHref({ filter: 'auto_closed' })} />

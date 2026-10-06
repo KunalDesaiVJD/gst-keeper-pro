@@ -27,8 +27,10 @@ notice.
    "n waiting for a CAPTCHA" (and at 09:00), open **Autopilot → CAPTCHA wall**, type
    each CAPTCHA and press Enter: the next one is ready while the agent reads the
    client you just let in. "Can't read it" gets a new one; "Skip this client" leaves
-   it for today. Keep the wall open until it says nothing is waiting — it only
-   fetches CAPTCHAs while someone has it open. See "Portal Autopilot" below.
+   it for today. Keep the wall open until it says nothing is waiting. You can
+   work in another tab meanwhile: the tab title shows how many are waiting (and,
+   if you allow it, a desktop notice), and the agent keeps fetching as long as you
+   type one at least every 10 minutes. See "Portal Autopilot" below.
 5. **Sync by hand** — "Sync now" asks which clients (stale and failed first) and either
    sends them to the office agent (their CAPTCHAs then come to the wall) or starts
    the Chrome extension on your PC (v0.6.0 recommended; its toolbar popup can start
@@ -58,8 +60,8 @@ Positions and the CAPTCHA posture: `docs/PORTAL_AUTOPILOT_POSITIONS.md`.
   chosen clients and periods; results land in the same reports as an extension pull.
 - **Portal e-mails** — notice e-mails from the portal read from the firm's notices
   inbox; each queues its client straight away (when the e-mail trigger is on).
-- **Acceptance** — per day: share of clients fresh or with a named reason, minutes at
-  the wall, how fast new notices arrived.
+- **Acceptance** — per day: share of clients fresh or with a named reason, time at
+  the CAPTCHAs (and minutes the wall was open), how fast new notices arrived.
 - **Settings** (managers) — on/off and pause, schedule (05:30 all, 13:00 urgent),
   browsers at once, keep portal sessions (ask the partner first), e-mail trigger.
 

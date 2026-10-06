@@ -23,9 +23,13 @@ posture", "Agent host", "Portal e-mail inbox").
   configured or used. The old agent's "solver seam"
   (`agent/src/captchaSolver.ts`) has been deleted, not left empty.
 - **No CAPTCHA is fetched for nobody.** The agent opens a portal login only
-  while somebody has the wall open (`autopilot_presence`, a ping every 2 s
-  while the wall is on screen; open = a ping in the last 30 s). Otherwise the
-  job is parked as `waiting_captcha` and the portal is not contacted at all.
+  while somebody is attentive at the wall (`autopilot_presence`: the wall pings
+  every 2 s while its tab is open; a ping is attentive while the wall is on
+  screen or its user typed or clicked on it in the last 10 minutes; the wall is
+  open while an attentive ping came in the last 30 s). Otherwise the job is
+  parked as `waiting_captcha` and the portal is not contacted at all. A person
+  can work in another tab between CAPTCHAs: the tab title shows how many are
+  waiting, and an opt-in desktop notice says when the first one arrives.
 - A person can say a CAPTCHA is unreadable ("Can't read it" — the agent
   reloads the login page for a new one) or skip a client for the day ("Skip
   this client" — recorded as `skipped_at_wall`).
@@ -178,9 +182,12 @@ with portal credentials, not inactive, not excluded from the notices sync
   is fresh when a notices pull succeeded in the 24 h before the day's end; it
   has a **named reason** when it is not fresh but a login or notices attempt
   in those 24 h failed with a reason class.
-- **Human time on fetching** (target ≤ 20 min a day): minutes somebody had the
-  CAPTCHA wall open and visible (`autopilot_wall_minutes`), plus — shown
-  separately — the typing time measured per CAPTCHA.
+- **Human time on fetching** (target ≤ 20 min a day): the time each CAPTCHA
+  was on screen in front of a person until they submitted it
+  (`portal_jobs.captcha_typing_ms`; the wall's clock pauses while its tab is
+  hidden; at most 2 minutes a CAPTCHA), summed per day. The minutes somebody
+  was attentive at the wall (`autopilot_wall_minutes`) are shown alongside as
+  the upper bound.
 - **In the app within 24 h:** new portal notices (issued at most 10 days
   before capture) captured before the end of the day after their issue date.
   The portal gives a date, not a time, so this is the closest honest measure.

@@ -47,11 +47,13 @@ To remove the auto-start: `uninstall-agent.bat` (files and `.env` stay).
 - Jobs wait as "waiting for a CAPTCHA" until someone opens the **CAPTCHA wall**.
   The 09:00 header badge says how many. Open the wall, type each CAPTCHA, press
   Enter; the agent logs in and reads that client while you type the next. "Can't
-  read it" fetches a new CAPTCHA; "Skip this client" leaves it for today.
+  read it" fetches a new CAPTCHA; "Skip this client" leaves it for today. You can
+  work in another tab meanwhile — the agent keeps fetching while the wall is on
+  screen or you typed on it in the last 10 minutes.
 - **Needs a person** lists clients the portal refused (password changed, account
   locked, CAPTCHA never typed…) with the fix next to each.
 - **Acceptance** shows, per day, the share of clients fresh or with a named
-  reason, minutes at the wall and how fast notices arrived.
+  reason, the time spent at the CAPTCHAs and how fast notices arrived.
 
 Settings (Notices → Autopilot → Settings, managers): master switch and pause,
 schedule times and the afternoon scope, browsers at once (1–4), keep portal
