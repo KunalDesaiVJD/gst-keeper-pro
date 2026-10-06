@@ -1,5 +1,7 @@
 # Real migration files replayed (in this order) on top of 00_stub_platform.sql.
 # Keep in sync when a notices-module migration is added.
+20260713170000_portal_agent.sql
+20260715120000_portal_sessions.sql
 20260725120000_gst_reminders.sql
 20260725130000_gst_reminders_rls_open.sql
 20260726120000_email_outbox_sending_status.sql
@@ -42,3 +44,7 @@
 20261006123000_notice_email_links.sql
 20261006124000_sync_status_legacy.sql
 20261006125000_owner_from_accountant_names.sql
+20261007120000_autopilot_queue.sql
+20261007121000_portal_emails.sql
+20261007122000_portal_coverage.sql
+20261007123000_autopilot_status.sql

@@ -61,7 +61,9 @@ CREATE TABLE public.clients (
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
 );
-CREATE TABLE public.filing_status (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
+CREATE TABLE public.filing_status (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id uuid, return_type public.return_type, period_month text, status text, filed_date date,
+  UNIQUE (client_id, return_type, period_month));
 CREATE TABLE public.profiles (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL UNIQUE,
