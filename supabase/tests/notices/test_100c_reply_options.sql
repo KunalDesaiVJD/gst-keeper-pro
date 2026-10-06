@@ -9,6 +9,10 @@ SELECT t_eq(reply_has_dash(E'en – em —'), true, 'so are the Unicode dashes')
 SELECT t_eq(reply_has_dash('FORM GST DRC 01 dated 6 October 2026'), false, 'clean text has none');
 SELECT t_eq(reply_dehyphen('FY 2023-24, DRC-01 dated 01-04-2023; Rs. 500/- paid'),
             'FY 2023/24, DRC 01 dated 01/04/2023; Rs. 500 paid', 'facts lose their dashes');
+SELECT t_eq(reply_dehyphen('ITC in GSTR-3B exceeds GSTR-2B, Apr–Sep 2024'), 'ITC in GSTR 3B exceeds GSTR 2B, Apr to Sep 2024',
+            'a dash between months reads "to"');
+SELECT t_eq(reply_dehyphen('April 2019 - March 2020'), 'April 2019 to March 2020', 'also with years');
+SELECT t_eq(reply_dehyphen('Notice — reply due; time-barred'), 'Notice, reply due; time barred', 'a spaced dash is a pause, a joining one a space');
 SELECT t_eq(reply_inr(12345678.5), 'Rs. 1,23,45,678.50', 'Indian grouping');
 SELECT t_eq(reply_inr(999), 'Rs. 999', 'no grouping below a thousand');
 SELECT t_eq(reply_inr_words(123456), 'Rupees One Lakh Twenty Three Thousand Four Hundred Fifty Six only', 'amount in words');

@@ -31,20 +31,30 @@ RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
 $$;
 COMMENT ON FUNCTION public.reply_has_dash(text) IS 'True when the text holds any hyphen or dash character (the reply wording rule).';
 
--- A fact going into a reply: "Rs. 500/-" loses its "/-", a dash between digits becomes
--- "/" (2023-24 → 2023/24, 01-04-2023 → 01/04/2023), any other dash a space; line breaks stay.
+-- A fact going into a reply, in this order: a soft hyphen goes; "Rs. 500/-" loses its "/-";
+-- a dash between months reads "to" (Apr–Sep 2024 → Apr to Sep 2024, April 2019 – March 2020
+-- → April 2019 to March 2020); a dash between digits becomes "/" (2023-24 → 2023/24,
+-- 01-04-2023 → 01/04/2023); a dash with a space on each side is a pause and becomes a comma;
+-- any other dash a space (DRC-01 → DRC 01, time-barred → time barred). Line breaks stay.
 CREATE OR REPLACE FUNCTION public.reply_dehyphen(p text)
-RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
-  SELECT CASE WHEN p IS NULL THEN NULL ELSE
-    btrim(regexp_replace(
-      regexp_replace(
-        regexp_replace(
-          regexp_replace(replace(p, U&'\00AD', ''),
-            '/[ \t]*[-‐-―−﹘﹣－]+(?![0-9])', '', 'g'),
-          '([0-9])[ \t]*[-‐-―−﹘﹣－][ \t]*(?=[0-9])', '\1/', 'g'),
-        '[ \t]*[-‐-―−﹘﹣－]+[ \t]*', ' ', 'g'),
-      '[ \t]{2,}', ' ', 'g'), E' \t')
-  END
+RETURNS text LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
+DECLARE
+  d  constant text := '[\u002D\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]';
+  mo constant text := '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?';
+  v  text := p;
+BEGIN
+  IF v IS NULL THEN RETURN NULL; END IF;
+  v := replace(v, U&'\00AD', '');
+  v := regexp_replace(v, '/[ \t]*' || d || '+(?![0-9])', '', 'g');
+  v := regexp_replace(v, '(' || mo || '(?:[ \t]+[0-9]{2,4})?)[ \t]*' || d || '+[ \t]*(?=' || mo || ')', '\1 to ', 'gi');
+  v := regexp_replace(v, '([0-9])[ \t]*' || d || '[ \t]*(?=[0-9])', '\1/', 'g');
+  v := regexp_replace(v, '[ \t]+' || d || '+[ \t]+', ', ', 'g');
+  v := regexp_replace(v, '[ \t]*' || d || '+[ \t]*', ' ', 'g');
+  v := regexp_replace(v, '[ \t]+,', ',', 'g');
+  v := regexp_replace(v, ',[ \t]*,', ',', 'g');
+  v := regexp_replace(v, '[ \t]{2,}', ' ', 'g');
+  RETURN btrim(v, E' \t');
+END;
 $$;
 
 -- Indian digit grouping: Rs. 1,23,45,678 (paise only when there are any).

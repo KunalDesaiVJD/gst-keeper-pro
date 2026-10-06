@@ -302,9 +302,11 @@ test("e: a person's sync in this Chrome comes first", { skip }, async () => {
   assert.equal(st.why, 'person_sync');
   assert.equal(st.job, null);
   assert.equal((await latestJob('asha')).status, 'queued', 'the runner waits');
-  // The person stops their sync and closes the tab; the runner goes on.
-  await personDone(r, person);
+  // The person closes the tab without stopping the sync: that sync cannot go on, and the runner does.
+  await person.close();
   await r.tick();
+  const slot0 = await r.activeJob();
+  assert.ok(!slot0 || slot0.runner, "the person's sync without its tab no longer holds the slot");
   const a = await waitFor('Asha to finish', () => ended('asha'), 120_000);
   assert.equal(a.status, 'succeeded');
 

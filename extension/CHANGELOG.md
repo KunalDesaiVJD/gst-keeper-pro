@@ -40,7 +40,10 @@ says "Database not updated" and takes nothing.
   runs, nor while a GST portal tab is open and someone has used the PC in the last 5
   minutes (`chrome.idle`): the portal keeps one session per browser profile, so logging
   a client in would change that person's session. A portal tab someone opens while a
-  scheduled client runs makes the runner give the client back and log out.
+  scheduled client runs, or someone coming back to the PC while a portal tab is open,
+  makes the runner give the client back and log out. A person's sync whose tab was
+  closed before it finished can never go on, so it no longer holds the browser (its run
+  is closed as abandoned).
 - **Restarts.** When Chrome or the extension restarts in the middle of a client, the
   runner gives it back at startup (`portal_jobs_release`, as the office agent does) and
   clears the job slot; a step it was in the middle of resumes from
@@ -53,7 +56,8 @@ says "Database not updated" and takes nothing.
 - **Deadlines kept by the service worker**, from timestamps on every alarm, not by the
   page's timers: the CAPTCHA wait (`captcha_wait_secs` + 45 s; the page's own timer
   normally ends it first), a login page that never loads (3 minutes), the whole client
-  (40 minutes, as the office agent) and a closed window. The watchdog treats a
+  (40 minutes, as the office agent) and a closed window. Every database call the runner
+  makes ends within 30 seconds, so a hung request never holds the next check. The watchdog treats a
   scheduled job like an agent job (a step stuck for 10 minutes is recorded as
   `stalled` and dropped).
 - **One job slot.** Every start (`start…`, `startAgentJob`, the popup's ledger pull

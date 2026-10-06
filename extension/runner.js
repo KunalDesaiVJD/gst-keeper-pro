@@ -165,7 +165,9 @@
     if (!hb.enabled) return 'autopilot_off';
     if (hb.paused) return 'paused';
     if (st.pause_until && Date.now() < st.pause_until) return 'window_closed';
-    if (await read(JOB_KEY)) return 'person_sync';
+    const aj = await read(JOB_KEY);
+    if (aj && (await stale(aj))) await dropStale(aj);
+    else if (aj) return 'person_sync';
     if ((await foreignPortalTabs(null)).length && (await personState()) === 'active') return 'portal_in_use';
     return null;
   }
@@ -447,6 +449,23 @@
   }
 
   const tabAlive = (id) => chrome.tabs.get(id).then(() => true, () => false);
+  // A person's sync whose tab was closed can never finish (its page scripts went
+  // with the tab), so it no longer holds this Chrome; nor does one untouched for 3 hours.
+  async function stale(aj) {
+    if (!aj || aj.runner || aj.agent) return false;
+    if (aj.tabId != null) return !(await tabAlive(aj.tabId));
+    return Date.now() - (aj.lastActivityAt || aj.startedAt || 0) > 3 * 3600 * 1000;
+  }
+  async function dropStale(aj) {
+    const dropped = await jobSlot(async () => {
+      const cur = await read(JOB_KEY);
+      if (!cur || cur.runner || cur.tabId !== aj.tabId || cur.startedAt !== aj.startedAt) return false;
+      await local.remove(JOB_KEY);
+      return true;
+    });
+    // Its run in the ledger is closed the way the watchdog closes an abandoned one.
+    if (dropped && aj.runId) await API.runFinish(aj.runId, 'abandoned', 'Its portal tab was closed before the sync finished.');
+  }
   async function portalTabs() {
     try { return await chrome.tabs.query({ url: PORTAL_TABS }); } catch (e) { return []; }
   }
