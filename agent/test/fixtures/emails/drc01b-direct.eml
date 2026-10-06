@@ -1,0 +1,48 @@
+Return-Path: <donotreply@gst.gov.in>
+From: GST Network <donotreply@gst.gov.in>
+To: notices@demo-ca-firm.example
+Subject: Intimation of difference in liability - FORM GST DRC-01B Part A
+Date: Thu, 01 Oct 2026 10:15:00 +0530
+Message-ID: <fixture-drc01b-0001@mail.gst.gov.in>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="b-drc01b"
+
+--b-drc01b
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Dear Taxpayer,
+
+GSTIN: 24ZZZZA0001A1ZZ
+Legal Name: EXAMPLE WEAVING WORKS (FICTITIOUS)
+Tax Period: August 2026
+
+An intimation in FORM GST DRC-01B Part A has been issued to you on the GST
+Portal: the tax liability declared in GSTR-1/IFF exceeds the liability paid
+through GSTR-3B by more than the prescribed limit.
+
+Reference No.: ZD241026000123A
+Date of issue: 01/10/2026
+
+Please pay the difference through FORM GST DRC-03, or explain it in Part B of
+FORM GST DRC-01B, within seven days.
+
+This is a system generated e-mail. Please do not reply to this e-mail.
+
+Goods and Services Tax Network
+
+--b-drc01b
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+<html><body>
+<p>Dear Taxpayer,</p>
+<p>GSTIN: 24ZZZZA0001A1ZZ<br>Legal Name: EXAMPLE WEAVING WORKS (FICTITIOUS)<br>Tax Period: August 2026</p>
+<p>An intimation in FORM GST DRC-01B Part A has been issued to you on the GST Portal: the tax liability declared in GSTR-1/IFF exceeds the liability paid through GSTR-3B by more than the prescribed limit.</p>
+<p>Reference No.: ZD241026000123A<br>Date of issue: 01/10/2026</p>
+<p>Please pay the difference through FORM GST DRC-03, or explain it in Part B of FORM GST DRC-01B, within seven days.</p>
+<p>This is a system generated e-mail. Please do not reply to this e-mail.</p>
+<p>Goods and Services Tax Network</p>
+</body></html>
+
+--b-drc01b--

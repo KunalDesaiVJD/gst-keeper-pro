@@ -11,6 +11,7 @@ import { loadConfig, VERSION, type AgentConfig } from './config.js';
 import { makeDb, sleep, type Db } from './db.js';
 import { stageExtension } from './extension.js';
 import { initLog, log } from './log.js';
+import { inboxAddress, inboxConfigFromEnv, startInboxWatcher, type InboxWatcher } from './mail/inbox.js';
 import { SessionStore } from './sessions.js';
 import { PortalWorker, type Hooks, type Settings, type Shared } from './worker.js';
 
@@ -48,6 +49,28 @@ export async function startAgent(opts: StartOptions = {}): Promise<RunningAgent>
   const workers = Array.from({ length: cfg.maxWorkers }, (_, i) =>
     new PortalWorker(i + 1, cfg, db, shared, ext.dir, sessions, { route: opts.route }));
 
+  // The portal e-mail inbox (optional, read-only): set up in agent/.env.
+  let inbox: InboxWatcher | null = null;
+  let inboxAddr: string | null = null;
+  let inboxError: string | null = null;
+  try {
+    const inboxCfg = inboxConfigFromEnv(opts.env ?? process.env);
+    if (inboxCfg) {
+      inboxAddr = inboxAddress(inboxCfg);
+      inbox = startInboxWatcher(inboxCfg, {
+        rpc: db.rpc,
+        log,
+        // Read while the e-mail trigger is on; with the autopilot off the e-mails
+        // are recorded ('autopilot_off') but queue nothing.
+        isEnabled: () => !shared.stopping && shared.settings.email_trigger,
+        stateFile: path.join(cfg.dataDir, 'inbox-state.json'),
+      });
+    }
+  } catch (e) {
+    inboxError = (e as Error).message;
+    log('error', `portal e-mail inbox not started: ${inboxError}`);
+  }
+
   let lastBeat = Date.now();
   let warnedNoKey = false;
   const beat = async () => {
@@ -57,6 +80,7 @@ export async function startAgent(opts: StartOptions = {}): Promise<RunningAgent>
         p_info: {
           version: VERSION, ext_version: ext.version, headful: cfg.headful, host: os.hostname(), started_at: startedAt,
           workers: workers.map((w) => w.info()),
+          inbox: { configured: !!inboxAddr, address: inboxAddr, error: inboxError, ...(inbox ? inbox.status() : {}) },
         },
       });
       if (s.keep_sessions && !sessions.enabled && !warnedNoKey) {
@@ -85,6 +109,7 @@ export async function startAgent(opts: StartOptions = {}): Promise<RunningAgent>
       shared.stopping = true;
       clearInterval(timer);
       await Promise.race([Promise.all(loops), sleep(15_000)]);
+      await inbox?.stop();
       await db.rpc('portal_jobs_release', { p_agent: cfg.agentId }).catch(() => 0);
       await Promise.all(workers.map((w) => w.closeBrowser()));
       log('info', 'agent stopped');

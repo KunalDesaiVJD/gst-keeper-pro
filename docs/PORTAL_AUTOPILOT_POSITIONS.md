@@ -112,11 +112,18 @@ deletes, moves or marks a message) when the e-mail trigger is on. Only
 e-mails from `gst.gov.in` (or forwarded portal e-mails) are considered. It
 stores the subject, a 400-character snippet and the extracted GSTIN, form
 code and reference (`portal_emails`) — never the whole e-mail or its
-attachments. A GSTIN that is exactly one client's queues a priority-90
-notices sync for that client; when the notice arrives the e-mail is linked to
-it and the capture time kept. Setting up the inbox (a notices@ mailbox,
-clients' forwarding rules or the firm as registered contact) is the firm's
-decision.
+attachments; OTP digits are masked. A GSTIN that is exactly one client's
+queues a priority-90 notices sync for that client — but only for an e-mail
+that reads as a notice (a form in `notice_form_rules`, a `Z…` reference, or
+notice wording such as notice, order, intimation, show cause, demand,
+defaulter); routine portal e-mails (OTPs, filing acknowledgements, payment
+receipts) are recorded as `ignored` and queue nothing, since every sync costs
+a CAPTCHA. When the notice arrives the e-mail is linked to it and the capture
+time kept. Setting up the inbox (a notices@ mailbox, clients' forwarding rules
+or the firm as registered contact) is the firm's decision. Microsoft 365
+mailboxes no longer accept a password over IMAP (they need OAuth, which the
+agent does not do); Google Workspace with an app password works
+(`agent/src/mail/README.md`).
 
 ## 7. E-mails the autopilot can send
 

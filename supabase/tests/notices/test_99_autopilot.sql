@@ -94,10 +94,18 @@ SELECT t_eq((SELECT jsonb_array_length(autopilot_wall_ping('a0000000-0000-0000-0
 SELECT t_eq((SELECT autopilot_wall_ping('a0000000-0000-0000-0000-0000000000a1', 'Riya') -> 'captchas' -> 0 ->> 'client_name'),
             'Fresh Fabrics', 'with the client');
 SELECT t_eq(autopilot_wall_open(), true, 'someone is at the wall');
-UPDATE autopilot_presence SET last_seen = now() - interval '20 seconds';
+UPDATE autopilot_presence SET last_seen = now() - interval '20 seconds', last_attentive = now() - interval '20 seconds';
 SELECT autopilot_wall_ping('a0000000-0000-0000-0000-0000000000a1', 'Riya');
 SELECT t_eq((SELECT round(seconds) FROM autopilot_wall_minutes WHERE user_id = 'a0000000-0000-0000-0000-0000000000a1'), 20::numeric,
             'time at the wall is counted between pings');
+-- Open in a tab nobody has looked at or typed on for 10 minutes: not attentive.
+UPDATE autopilot_presence SET last_attentive = now() - interval '11 minutes';
+SELECT autopilot_wall_ping('a0000000-0000-0000-0000-0000000000a1', 'Riya', false);
+SELECT t_eq(autopilot_wall_open(), false, 'a wall open but unattended fetches no CAPTCHAs');
+SELECT t_eq((SELECT round(seconds) FROM autopilot_wall_minutes WHERE user_id = 'a0000000-0000-0000-0000-0000000000a1'), 20::numeric,
+            'unattended time is not counted');
+SELECT autopilot_wall_ping('a0000000-0000-0000-0000-0000000000a1', 'Riya', true);
+SELECT t_eq(autopilot_wall_open(), true, 'back at the wall');
 SELECT t_eq(portal_job_answer((SELECT v::uuid FROM _ap WHERE k = 'job'), gen_random_uuid(), 'abc123'), 'stale', 'an answer to an old CAPTCHA is refused');
 SELECT t_eq(portal_job_answer((SELECT v::uuid FROM _ap WHERE k = 'job'), (SELECT v::uuid FROM _ap WHERE k = 'prompt'), '  '), 'empty', 'an empty answer is refused');
 SELECT t_eq(portal_job_answer((SELECT v::uuid FROM _ap WHERE k = 'job'), (SELECT v::uuid FROM _ap WHERE k = 'prompt'), ' 4 8 2 6 1 9 ', 'answer', 999999, NULL, 'Riya'),
@@ -156,6 +164,12 @@ SELECT t_eq(portal_email_ingest('<m3@gst.gov.in>', now(), 'donotreply@gst.gov.in
 SELECT t_eq((SELECT priority || '/' || origin FROM portal_jobs WHERE client_id = '99999999-0000-0000-0000-00000000000b' AND status = 'queued'),
             '100/email', 'at e-mail priority (plus never synced, capped at 100)');
 SELECT t_eq((portal_email_ingest('<m3@gst.gov.in>', now(), NULL, NULL, NULL, '{}', NULL, NULL) ->> 'duplicate')::boolean, true, 'each e-mail once');
+SELECT t_eq(portal_email_ingest('<m4@gst.gov.in>', now(), 'donotreply@gst.gov.in', 'OTP for login to GST portal', 'Your OTP is ******',
+                                ARRAY['24NEVER0000N1Z5'], NULL, NULL) ->> 'status', 'ignored', 'a routine portal e-mail queues nothing');
+SELECT portal_email_ingest('<m5@gst.gov.in>', now(), 'donotreply@gst.gov.in', 'Notice to return defaulter u/s 46 for not filing return',
+                           'x', ARRAY['24NEVER0000N1Z5'], NULL, NULL);
+SELECT t_eq((SELECT form_code || '/' || status FROM portal_emails WHERE message_id = '<m5@gst.gov.in>'), 'GSTR-3A/already_queued',
+            'the form is read from the subject when the agent found none');
 INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, description, issue_date, reference_number) VALUES
  ('e9900000-0000-0000-0000-000000000009', '99999999-0000-0000-0000-00000000000b', 'notices', 'ZD-AP-9', 'Notice',
   'Intimation of difference in liability (DRC-01B)', ist_today(), 'ZD-AP-9');

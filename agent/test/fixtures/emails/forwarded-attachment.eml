@@ -1,0 +1,34 @@
+From: Accounts - Demo Builders <accounts@demo-builders.example>
+To: notices@demo-ca-firm.example
+Subject: FW: GST notice
+Date: Tue, 6 Oct 2026 10:02:00 +0530
+Message-ID: <fixture-fwd-attachment-0011@demo-builders.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="b-outer"
+
+--b-outer
+Content-Type: text/plain; charset="utf-8"
+
+Forwarding the notice as an attachment.
+
+--b-outer
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="GST notice.eml"
+
+From: GST Network <donotreply@gst.gov.in>
+To: accounts@demo-builders.example
+Subject: Intimation of tax ascertained as being payable under section 73(5) - FORM GST DRC-01A
+Date: Tue, 06 Oct 2026 08:30:00 +0530
+Message-ID: <fixture-inner-0011@mail.gst.gov.in>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Dear Taxpayer,
+
+GSTIN: 24ZZZZB0002B1ZV
+
+An intimation in FORM GST DRC-01A has been issued to you.
+
+Reference No.: ZD241026000888H
+
+--b-outer--

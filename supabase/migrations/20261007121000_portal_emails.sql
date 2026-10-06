@@ -8,8 +8,11 @@
 -- a matched client gets a high-priority notices job straight away, so a
 -- short-clock notice is in the app within hours instead of at the next run.
 -- Only the subject, a short snippet and the extracted fields are stored, never
--- the whole e-mail. When the notice arrives, the e-mail is linked to it and
--- the capture time is kept, which is how the 4-hour target is measured.
+-- the whole e-mail. Routine portal e-mails (an OTP, a filing acknowledgement, a
+-- payment receipt: no notice form, no Z… reference, no notice wording) are
+-- recorded as 'ignored' and queue nothing, since every sync costs a CAPTCHA.
+-- When the notice arrives, the e-mail is linked to it and the capture time is
+-- kept, which is how the 4-hour target is measured.
 
 CREATE TABLE IF NOT EXISTS public.portal_emails (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -56,6 +59,8 @@ DECLARE
   v_gstins   text[];
   v_client   uuid;
   v_ref      text := nullif(upper(btrim(coalesce(p_reference, ''))), '');
+  v_form     text;
+  v_notice_like boolean;
   v_status   text;
   v_job      uuid;
   v_res      jsonb;
@@ -85,9 +90,17 @@ BEGIN
    ORDER BY g.ord
    LIMIT 1;
 
+  -- The form from the subject when the agent found none (wording without a code).
+  v_form := coalesce(nullif(upper(btrim(coalesce(p_form_code, ''))), ''), public.notice_form_code(NULL, p_subject));
+  v_notice_like := EXISTS (SELECT 1 FROM public.notice_form_rules r WHERE r.form_code = v_form AND r.is_active)
+                   OR coalesce(v_ref, '') ~ '^Z[A-Z0-9]'
+                   OR coalesce(p_subject, '') ~* '(notice|order|intimation|show cause|scrutiny|demand|defaulter|assessment|audit|summons|hearing|deficiency|cancell|suspen|attachment|rectification|appeal)';
+
   SELECT * INTO v_set FROM public.autopilot_settings WHERE id;
   IF v_client IS NULL THEN
     v_status := 'unmatched';
+  ELSIF NOT v_notice_like THEN
+    v_status := 'ignored';
   ELSIF NOT (coalesce(v_set.enabled, false) AND coalesce(v_set.email_trigger, false)) THEN
     v_status := 'autopilot_off';
   ELSE
@@ -110,7 +123,7 @@ BEGIN
   INSERT INTO public.portal_emails (message_id, received_at, from_addr, subject, snippet, gstins, form_code,
                                     reference_number, client_id, status, job_id, notice_id, notice_seen_at)
   VALUES (btrim(p_message_id), coalesce(p_received_at, now()), left(p_from, 200), left(p_subject, 500),
-          left(p_snippet, 600), v_gstins, nullif(upper(btrim(coalesce(p_form_code, ''))), ''), v_ref, v_client,
+          left(p_snippet, 600), v_gstins, v_form, v_ref, v_client,
           v_status, v_job, v_notice, v_seen)
   ON CONFLICT (message_id) DO NOTHING
   RETURNING id INTO v_id;

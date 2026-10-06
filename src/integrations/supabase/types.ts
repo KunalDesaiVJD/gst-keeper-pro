@@ -9200,7 +9200,7 @@ export type Database = {
         Returns: Json
       }
       autopilot_wall_ping: {
-        Args: { p_name?: string | null; p_user_id?: string | null }
+        Args: { p_attentive?: boolean; p_name?: string | null; p_user_id?: string | null }
         Returns: Json
       }
       notice_calendar: {

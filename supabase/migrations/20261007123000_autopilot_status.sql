@@ -260,7 +260,7 @@ BEGIN
     'wall', jsonb_build_object(
       'open', public.autopilot_wall_open(),
       'present', (SELECT coalesce(jsonb_agg(p.name ORDER BY p.name), '[]'::jsonb)
-                    FROM public.autopilot_presence p WHERE p.last_seen > now() - interval '30 seconds')),
+                    FROM public.autopilot_presence p WHERE p.last_attentive > now() - interval '30 seconds')),
     'queue', (SELECT jsonb_build_object(
                 'queued', count(*) FILTER (WHERE status = 'queued' AND (not_before IS NULL OR not_before <= now())),
                 'retrying', count(*) FILTER (WHERE status = 'queued' AND not_before > now()),

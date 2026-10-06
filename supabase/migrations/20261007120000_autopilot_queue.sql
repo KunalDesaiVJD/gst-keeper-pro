@@ -54,11 +54,17 @@ CREATE TRIGGER autopilot_settings_touch BEFORE UPDATE ON public.autopilot_settin
   FOR EACH ROW EXECUTE FUNCTION public.autopilot_settings_touch();
 
 -- ── Who has the CAPTCHA wall open, and for how long each day ───────────────
+-- The wall pings every few seconds while it is open. A person is attentive
+-- while the wall is on screen or they typed on it in the last 10 minutes
+-- (the wall alerts them when a CAPTCHA comes in while they work elsewhere);
+-- the agent fetches CAPTCHAs only while someone is attentive.
 CREATE TABLE IF NOT EXISTS public.autopilot_presence (
-  user_id   uuid PRIMARY KEY,
-  name      text,
-  last_seen timestamptz NOT NULL DEFAULT now()
+  user_id        uuid PRIMARY KEY,
+  name           text,
+  last_seen      timestamptz NOT NULL DEFAULT now(),
+  last_attentive timestamptz
 );
+ALTER TABLE public.autopilot_presence ADD COLUMN IF NOT EXISTS last_attentive timestamptz;
 CREATE TABLE IF NOT EXISTS public.autopilot_wall_minutes (
   ist_date date NOT NULL,
   user_id  uuid NOT NULL,
@@ -162,7 +168,7 @@ RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
 $$;
 CREATE OR REPLACE FUNCTION public.autopilot_wall_open()
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
-  SELECT EXISTS (SELECT 1 FROM public.autopilot_presence WHERE last_seen > now() - interval '30 seconds')
+  SELECT EXISTS (SELECT 1 FROM public.autopilot_presence WHERE last_attentive > now() - interval '30 seconds')
 $$;
 CREATE OR REPLACE FUNCTION public.autopilot_agent_online()
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
@@ -646,9 +652,13 @@ END;
 $$;
 GRANT EXECUTE ON FUNCTION public.portal_job_retry(uuid, uuid, text) TO anon, authenticated, service_role;
 
--- The wall polls this every few seconds while it is visible: it marks the
--- person present (so the agent opens logins) and returns the live CAPTCHAs.
-CREATE OR REPLACE FUNCTION public.autopilot_wall_ping(p_user_id uuid DEFAULT NULL, p_name text DEFAULT NULL)
+-- The wall polls this every few seconds while it is open: it marks the person
+-- present (attentive: the wall is on screen or they typed on it in the last 10
+-- minutes; only then does the agent open logins), counts attentive minutes,
+-- and returns the live CAPTCHAs.
+DROP FUNCTION IF EXISTS public.autopilot_wall_ping(uuid, text);
+CREATE OR REPLACE FUNCTION public.autopilot_wall_ping(p_user_id uuid DEFAULT NULL, p_name text DEFAULT NULL,
+                                                      p_attentive boolean DEFAULT true)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -660,11 +670,13 @@ DECLARE
   v_start timestamptz := ((now() AT TIME ZONE 'Asia/Kolkata')::date)::timestamp AT TIME ZONE 'Asia/Kolkata';
 BEGIN
   IF p_user_id IS NOT NULL THEN
-    SELECT last_seen INTO v_prev FROM public.autopilot_presence WHERE user_id = p_user_id;
-    INSERT INTO public.autopilot_presence (user_id, name, last_seen)
-    VALUES (p_user_id, nullif(btrim(p_name), ''), now())
-    ON CONFLICT (user_id) DO UPDATE SET last_seen = now(), name = coalesce(EXCLUDED.name, public.autopilot_presence.name);
-    IF v_prev IS NOT NULL AND v_prev > now() - interval '60 seconds' THEN
+    SELECT last_attentive INTO v_prev FROM public.autopilot_presence WHERE user_id = p_user_id;
+    INSERT INTO public.autopilot_presence (user_id, name, last_seen, last_attentive)
+    VALUES (p_user_id, nullif(btrim(p_name), ''), now(), CASE WHEN coalesce(p_attentive, true) THEN now() END)
+    ON CONFLICT (user_id) DO UPDATE
+      SET last_seen = now(), name = coalesce(EXCLUDED.name, public.autopilot_presence.name),
+          last_attentive = CASE WHEN coalesce(p_attentive, true) THEN now() ELSE public.autopilot_presence.last_attentive END;
+    IF coalesce(p_attentive, true) AND v_prev IS NOT NULL AND v_prev > now() - interval '60 seconds' THEN
       INSERT INTO public.autopilot_wall_minutes (ist_date, user_id, name, seconds)
       VALUES (v_day, p_user_id, nullif(btrim(p_name), ''), extract(epoch FROM now() - v_prev))
       ON CONFLICT (ist_date, user_id)
@@ -691,10 +703,10 @@ BEGIN
     'agent_online', public.autopilot_agent_online(),
     'enabled', (SELECT s.enabled AND NOT coalesce(s.paused_until > now(), false) FROM public.autopilot_settings s WHERE s.id),
     'present', (SELECT coalesce(jsonb_agg(p.name ORDER BY p.name), '[]'::jsonb) FROM public.autopilot_presence p
-                 WHERE p.last_seen > now() - interval '30 seconds'));
+                 WHERE p.last_attentive > now() - interval '30 seconds'));
 END;
 $$;
-GRANT EXECUTE ON FUNCTION public.autopilot_wall_ping(uuid, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.autopilot_wall_ping(uuid, text, boolean) TO anon, authenticated, service_role;
 
 -- The header badge: how many clients wait for a person. No presence.
 CREATE OR REPLACE FUNCTION public.autopilot_badge()
