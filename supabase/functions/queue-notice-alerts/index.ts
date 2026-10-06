@@ -166,15 +166,18 @@ Deno.serve(async (req) => {
     const subject = renderTemplate(tpl.subject, opts.vars);
     const body = renderTemplate(tpl.body, opts.vars);
 
-    const templateKey = opts.templateKey;
-    const shellKey = opts.priority === 'critical' ? 'notice_alert_critical' : 'notice_alert';
+    // email_outbox.template_key references email_templates(key), so store the rule's
+    // own template (seeded) — 'notice_alert' / 'notice_alert_critical' are only shell
+    // styles and never existed as template rows, which made every insert fail the FK.
+    // The shell style travels in render_vars._shell (read by _shared/email.ts).
+    const shell = opts.priority === 'critical' ? 'notice_alert_critical' : 'notice_alert';
 
     const { error: outboxErr, data: outboxRow } = await sb.from('email_outbox').insert({
       to_email: opts.toEmail,
       kind: 'notice_alert',
-      template_key: shellKey,
+      template_key: opts.templateKey,
       subject, body,
-      render_vars: opts.vars,
+      render_vars: { ...opts.vars, _shell: shell },
       status: 'pending',
       notice_id: opts.noticeId,
       client_id: opts.clientId,
@@ -202,9 +205,13 @@ Deno.serve(async (req) => {
   // Load clients for name/gstin lookup
   const clientIds = [...new Set(open.map((n: NoticeRow) => n.client_id))];
   const { data: clients } = await sb.from('clients')
-    .select('id, name, gstin, contact_person')
+    .select('id, name, gstin')
     .in('id', clientIds.slice(0, 500));
-  const clientMap = new Map((clients ?? []).map((c: { id: string; name: string; gstin: string | null; contact_person: string | null }) => [c.id, c]));
+  const clientMap = new Map((clients ?? []).map((c: { id: string; name: string; gstin: string | null }) => [c.id, c]));
+
+  // These alerts go to staff: greet the recipient and sign as the system.
+  const staffVars = (vars: Record<string, string>, r: { name: string }) =>
+    ({ ...vars, contact_person: r.name, staff_name: 'GST Keeper (automated alert)' });
 
   function buildVars(n: NoticeRow): Record<string, string> {
     const c = clientMap.get(n.client_id);
@@ -227,7 +234,7 @@ Deno.serve(async (req) => {
       staff_name: GST_FIRM.team,
       firm_name: GST_FIRM.name,
       firm_email: GST_FIRM.email,
-      contact_person: c?.contact_person || c?.name || '',
+      contact_person: c?.name || '',
     };
   }
 
@@ -260,7 +267,7 @@ Deno.serve(async (req) => {
         for (const s of teamEmails) {
           const sent = await enqueue({
             ruleId: e2Rule.id, noticeId: overdue[0].id, clientId: overdue[0].client_id,
-            toEmail: s.email, templateKey: e2Rule.template_key, vars,
+            toEmail: s.email, templateKey: e2Rule.template_key, vars: staffVars(vars, s),
             dedupe: dk + ':' + s.email,
           });
           if (sent) queued++;
@@ -288,7 +295,7 @@ Deno.serve(async (req) => {
         const sent = await enqueue({
           ruleId: e3Rule.id, noticeId: n.id, clientId: n.client_id,
           toEmail: r.email, templateKey: e3Rule.template_key,
-          vars: { ...vars, staff_name: r.name }, dedupe: dk + ':' + r.email,
+          vars: staffVars(vars, r), dedupe: dk + ':' + r.email,
         });
         if (sent) queued++;
       }
@@ -296,7 +303,7 @@ Deno.serve(async (req) => {
   }
 
   // ── E4: hearing reminder (hearing_date within 3 days) ──
-  const e4Rule = rules.find((r: AlertRule) => r.alert_key === 'E4_hearing');
+  const e4Rule = rules.find((r: AlertRule) => r.alert_key === 'E4_hearing_reminder');
   if (e4Rule) {
     const hearingSoon = open.filter((n: NoticeRow) => {
       if (!n.hearing_date) return false;
@@ -313,7 +320,7 @@ Deno.serve(async (req) => {
         const sent = await enqueue({
           ruleId: e4Rule.id, noticeId: n.id, clientId: n.client_id,
           toEmail: r.email, templateKey: e4Rule.template_key,
-          vars: { ...vars, staff_name: r.name }, dedupe: dk + ':' + r.email,
+          vars: staffVars(vars, r), dedupe: dk + ':' + r.email,
           priority: e4Rule.priority,
         });
         if (sent) queued++;
@@ -322,7 +329,7 @@ Deno.serve(async (req) => {
   }
 
   // ── E5: limitation period alert (matter_deadlines approaching in 30/15/7 days) ──
-  const e5Rule = rules.find((r: AlertRule) => r.alert_key === 'E5_limitation');
+  const e5Rule = rules.find((r: AlertRule) => r.alert_key === 'E5_limitation_alert');
   if (e5Rule) {
     const { data: deadlines } = await sb.from('matter_deadlines')
       .select('id, notice_id, deadline_type, deadline_date, statutory_basis, is_met')
@@ -346,7 +353,7 @@ Deno.serve(async (req) => {
         const sent = await enqueue({
           ruleId: e5Rule.id, noticeId: dl.notice_id, clientId: notice.client_id,
           toEmail: r.email, templateKey: e5Rule.template_key,
-          vars: { ...vars, staff_name: r.name }, dedupe: dk + ':' + r.email,
+          vars: staffVars(vars, r), dedupe: dk + ':' + r.email,
           priority: 'critical',
         });
         if (sent) queued++;
@@ -380,7 +387,7 @@ Deno.serve(async (req) => {
         for (const s of partnerEmails) {
           const sent = await enqueue({
             ruleId: e11Rule.id, noticeId: unassigned[0].id, clientId: unassigned[0].client_id,
-            toEmail: s.email, templateKey: e11Rule.template_key, vars,
+            toEmail: s.email, templateKey: e11Rule.template_key, vars: staffVars(vars, s),
             dedupe: dk + ':' + s.email,
           });
           if (sent) queued++;

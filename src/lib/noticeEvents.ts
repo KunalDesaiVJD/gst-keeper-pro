@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
 
 type EventType =
   | 'captured' | 'changed' | 'removed'
@@ -21,8 +22,8 @@ export async function logNoticeEvent(params: LogEventParams): Promise<void> {
     notice_id: params.noticeId,
     client_id: params.clientId,
     event_type: params.eventType,
-    old_value: params.oldValue ?? null,
-    new_value: params.newValue ?? null,
+    old_value: (params.oldValue ?? null) as Json,
+    new_value: (params.newValue ?? null) as Json,
     actor_id: params.actorId ?? null,
     actor_name: params.actorName ?? null,
   });

@@ -1,0 +1,8 @@
+{
+  "src/pages/FilingStatusPage.tsx": 2,
+  "src/pages/GSTR1DataPage.tsx": 4,
+  "src/pages/Gstr3bPage.tsx": 2,
+  "src/pages/TwoBReconciliationPage.tsx": 4,
+  "src/utils/filedReturnReports.ts": 1,
+  "src/utils/gstr1Reports.ts": 5
+}

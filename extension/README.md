@@ -30,6 +30,14 @@ Your browser (normal IP) ──logs in + reads──▶ GST portal
 
 That's it — nothing to keep running, no account, no card.
 
+## Updating (required: v0.4.0 or later)
+The app refuses to start a notices sync from an extension older than **v0.4.0**
+(`src/lib/extensionVersion.ts`). After pulling a new version of this folder, open
+`chrome://extensions` and click **Reload** on “GST Keeper Portal Sync” on **every PC**
+that syncs. v0.4.0 never marks saved notices missing after an empty or partly
+failed pull, checks that the portal session belongs to the client being synced, and
+no longer stores portal passwords in Chrome's extension storage — see CHANGELOG.md.
+
 ## Use it
 1. Click the extension icon → pick a **client** and the **return period** → **Start sync**.
 2. A GST-portal tab opens and logs in. **Type the CAPTCHA** in the popup that appears.

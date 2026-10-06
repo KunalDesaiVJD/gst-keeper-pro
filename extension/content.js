@@ -542,7 +542,10 @@
     banner('Logging in ' + cur.creds.name + '…' + progress);
     if (!(await waitFor('#username'))) { banner('Login form did not load — reload the page.', '#dc2626'); return; }
     setVal($('#username'), cur.creds.user);
-    setVal($('#user_pass'), cur.creds.pass);
+    let portalPass = cur.creds.pass || null; // jobs saved by extension < 0.4.0 still carry it
+    if (!portalPass) { try { portalPass = await GSTKdb.getPortalPassword(cur.clientId); } catch (e) { portalPass = null; } }
+    if (!portalPass) { banner('No saved GST portal password for ' + cur.creds.name + ' — update it in Edit Client.', '#dc2626'); return; }
+    setVal($('#user_pass'), portalPass);
     await waitFor('#imgCaptcha', 8000);
     // No custom popup — the CAPTCHA is typed straight into the portal's own
     // native #captcha field. The field has no maxlength/expected-length we
@@ -2643,8 +2646,45 @@
   // that second report in the Hub has no separate data source anymore).
   // services.gst.gov.in's own JSON API (get/notices), confirmed live via
   // DevTools network tab, same story as the ledger APIs above.
+  // Never save one client's portal data under another client's id. The portal
+  // session is shared by the whole Chrome profile, so a second tab logged into
+  // a different GSTIN would otherwise be read and saved as this client's.
+  // Returns a message when the session clearly belongs to someone else;
+  // null when it matches or cannot be checked (never blocks on uncertainty).
+  async function sessionGstinMismatch(cur) {
+    const expected = String((cur.creds && cur.creds.gstin) || '').trim().toUpperCase();
+    if (!expected) return null;
+    try {
+      const r = await withTimeout(fetch('https://services.gst.gov.in/services/auth/profile/detail', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      }), 10000, 'profile/detail');
+      if (!r.ok) return null;
+      const j = await r.json();
+      const found = String((j && (j.gstin || j.gstIn || j.gstinId)) || '').trim().toUpperCase();
+      if (/^[0-9A-Z]{15}$/.test(found) && found !== expected) {
+        return 'Portal session belongs to ' + found + ', not ' + expected + ' — nothing was saved for this client.';
+      }
+    } catch (e) { /* cannot verify — do not block */ }
+    return null;
+  }
+
+  // Skip the rest of this client's steps (all periods) and move to the next.
+  async function skipClient(job) {
+    if (Array.isArray(job.periods) && job.periods.length) job.periodIdx = job.periods.length - 1;
+    await advance(job);
+  }
+
   async function handleNotices(job, cur, progress) {
     if (!/\/services\/auth\/notices/.test(url)) { location.href = 'https://services.gst.gov.in/services/auth/notices'; return; }
+    banner('Checking the portal session…' + progress);
+    const mismatch = await sessionGstinMismatch(cur);
+    if (mismatch) {
+      banner(mismatch + progress, '#dc2626');
+      await logSyncAttempt(job, cur, 'failed', mismatch);
+      await sleep(2500);
+      await skipClient(job);
+      return;
+    }
     banner('Reading Notices & Orders…' + progress);
     const pullTs = new Date().toISOString();
     let list = [];
@@ -2656,6 +2696,12 @@
       if (!r.ok) throw new Error('HTTP ' + r.status + ' from get/notices');
       const j = await r.json();
       list = Array.isArray(j) ? j : Object.keys(j || {}).filter((k) => /^\d+$/.test(k)).map((k) => j[k]);
+      // An error envelope ({status: 0, error: …}) used to become an empty list
+      // and then soft-delete every saved notice of this client. Treat it as a
+      // failed read instead.
+      if (!Array.isArray(j) && list.length === 0 && j && typeof j === 'object' && (j.status === 0 || j.error || j.errorCode || j.errCd)) {
+        throw new Error('portal returned an error instead of a notice list: ' + JSON.stringify(j).slice(0, 160));
+      }
     } catch (e) {
       debugPanel(['STEP: View Notices and Orders  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
       banner('Notices & Orders: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
@@ -2676,6 +2722,7 @@
     // Best-effort: a failure here must not lose the get/notices rows already
     // read above, so it's swallowed to an empty list rather than aborting.
     let taskList = [];
+    let tasksComplete = false; // false → case-task rows are not marked missing this run
     try {
       const tr = await fetch('https://services.gst.gov.in/litserv/auth/api/case/task/get', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
@@ -2684,6 +2731,7 @@
       if (tr.ok) {
         const tj = await tr.json();
         taskList = Array.isArray(tj) ? tj : Object.keys(tj || {}).filter((k) => /^\d+$/.test(k)).map((k) => tj[k]);
+        tasksComplete = Array.isArray(tj) || taskList.length > 0 || !(tj && typeof tj === 'object' && (tj.status === 0 || tj.error || tj.errorCode || tj.errCd));
       }
     } catch (e) { /* non-fatal — get/notices rows above still get saved */ }
 
@@ -2864,14 +2912,16 @@
       if (t.caseId && t.arn && Array.isArray(folders) && folders.length) {
         try {
           const folderItems = [];
+          let folderFailures = 0;
           for (const folder of folders) {
             try {
               const fir = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder/items', {
                 method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ caseFolderId: folder.caseFolderId }),
               }), 15000, 'case/folder/items');
-              const fItems = fir.ok ? await fir.json() : [];
-              if (!Array.isArray(fItems)) continue;
+              if (!fir.ok) { folderFailures++; continue; }
+              const fItems = await fir.json();
+              if (!Array.isArray(fItems)) { folderFailures++; continue; }
               for (const fi of fItems) {
                 let fParsed = null;
                 try { fParsed = fi.itemJson ? JSON.parse(fi.itemJson) : null; } catch (e) { /* keep raw_json as the unparsed string below */ }
@@ -2908,17 +2958,23 @@
                   pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null,
                 });
               }
-            } catch (e) { /* best-effort per folder */ }
+            } catch (e) { folderFailures++; /* best-effort per folder */ }
           }
           if (folderItems.length) {
-            try { await GSTKdb.replaceCaseFolderItems(cur.clientId, t.arn, folderItems, pullTs); } catch (e2) { /* diagnostic only */ }
+            try { await GSTKdb.replaceCaseFolderItems(cur.clientId, t.arn, folderItems, pullTs, { complete: folderFailures === 0 }); } catch (e2) { /* diagnostic only */ }
           }
         } catch (e) { /* best-effort, never blocks the main notices row above */ }
       }
     }
 
     try {
-      await GSTKdb.replaceNotices(cur.clientId, rows, pullTs);
+      const saved = await GSTKdb.replaceNotices(cur.clientId, rows, pullTs, { complete: tasksComplete });
+      if (saved && saved.held) {
+        try { await GSTKdb.logClientSync(cur.clientId, 'notices_guard', 'success', 'Soft-delete held back: ' + saved.held); } catch (e) { /* diagnostic only */ }
+      }
+      // Date the case notices and close what the portal shows as finished,
+      // straight away rather than waiting for the nightly sweep.
+      try { await GSTKdb.runSweep(cur.clientId); } catch (e) { /* nightly sweep catches up */ }
 
       debugPanel([
         'STEP: View Notices and Orders  (' + location.pathname + ')',
@@ -3395,6 +3451,8 @@
     }
 
     try { await GSTKdb.replaceDrc03Filings(cur.clientId, rows, pullTs); } catch (e) { /* non-fatal */ }
+    // Acknowledged DRC-03 payments close their voluntary-payment case rows.
+    try { await GSTKdb.runSweep(cur.clientId); } catch (e) { /* nightly sweep catches up */ }
     debugPanel([
       'STEP: DRC-03 Filings  (' + location.pathname + ')',
       'cases read        : ' + cases.length,

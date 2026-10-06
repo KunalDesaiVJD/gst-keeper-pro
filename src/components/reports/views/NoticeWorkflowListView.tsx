@@ -11,6 +11,7 @@ import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import type { TablesUpdate } from '@/integrations/supabase/types';
 import { toast } from 'sonner';
 import { logNoticeFieldChanges } from '@/lib/noticeEvents';
 import { processEventAlert, flushOutbox } from '@/lib/noticeAlertQueue';
@@ -168,13 +169,17 @@ interface EditForm {
   remarks: string;
   financialYear: string;
   assignTo: string;
+  /** profiles.user_id of the owner — what the work queue's Mine / Unassigned tabs and the "assigned to you" alert read */
+  assignToUserId: string;
   closeReason: string;
 }
 
 const EMPTY_FORM: EditForm = {
   priority: '', replyRefNumber: '', replyDate: '', orderNumber: '', orderDate: '', submissionArn: '', submissionDate: '',
-  extendedDueDate: '', amountOfDemand: '', remarks: '', financialYear: '', assignTo: '', closeReason: '',
+  extendedDueDate: '', amountOfDemand: '', remarks: '', financialYear: '', assignTo: '', assignToUserId: '', closeReason: '',
 };
+
+interface StaffOption { id: string; name: string }
 
 const cellToText = (v: string | number | undefined): string => {
   const s = String(v ?? '').trim();
@@ -198,6 +203,26 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<EditForm>(EMPTY_FORM);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [staff, setStaff] = useState<StaffOption[]>([]);
+
+  // Staff the edit dialog can assign to (client logins have profile rows too).
+  useEffect(() => {
+    if (!canEdit) return;
+    let cancelled = false;
+    (async () => {
+      const [{ data: profiles }, { data: roles }] = await Promise.all([
+        supabase.from('profiles').select('user_id, first_name, email'),
+        supabase.from('user_roles').select('user_id, role'),
+      ]);
+      const staffIds = new Set((roles ?? []).filter((r) => r.role !== 'client').map((r) => r.user_id));
+      const list = (profiles ?? [])
+        .filter((p) => staffIds.has(p.user_id))
+        .map((p) => ({ id: p.user_id, name: (p.first_name ?? '').trim() || (p.email ?? '').split('@')[0] || 'Unnamed' }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      if (!cancelled) setStaff(list);
+    })();
+    return () => { cancelled = true; };
+  }, [canEdit]);
   // Checkbox selection + bulk "Update Status" — matches Notice Alert's own
   // toolbar (confirmed live), on top of the existing per-row inline editor.
   const [selectedIdx, setSelectedIdx] = useState<Set<number>>(new Set());
@@ -429,7 +454,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
         rowId, clientId,
         { staff_status: oldStatus },
         { staff_status: newStatus },
-        user?.id ?? null, user?.name ?? null,
+        user?.id ?? null, user?.firstName ?? null,
       ).then(async () => {
         const { data: events } = await supabase.from('notice_events')
           .select('*').eq('notice_id', rowId).order('created_at', { ascending: false }).limit(1);
@@ -465,7 +490,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     const ids = Array.from(selectedIdx).map((idx) => rowIds?.[idx]).filter((id): id is string => !!id);
     if (ids.length === 0) { setBulkStatusOpen(false); return; }
     setBulkSaving(true);
-    const payload: Record<string, string | null> = { staff_status: bulkStatus };
+    const payload: TablesUpdate<'gst_notices'> = { staff_status: bulkStatus };
     if (bulkStatus === 'Closed') payload.close_reason = bulkCloseReason || null;
     else payload.close_reason = null;
     const { error } = await supabase.from('gst_notices').update(payload).in('id', ids);
@@ -519,9 +544,19 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
       remarks: remarksColIdx !== -1 ? cellToText(row[remarksColIdx]) : '',
       financialYear: financialYearColIdx !== -1 ? cellToText(row[financialYearColIdx]) : '',
       assignTo: assignToColIdx !== -1 ? cellToText(row[assignToColIdx]) : '',
+      assignToUserId: '',
       closeReason: '',
     });
     setEditingIdx(idx);
+    // The owner id and close reason are not columns of this list: load them, so
+    // saving the dialog for any other reason no longer wipes them.
+    const rowId = rowIds?.[idx];
+    if (rowId) {
+      void supabase.from('gst_notices').select('assign_to, assign_to_user_id, close_reason').eq('id', rowId).maybeSingle()
+        .then(({ data }) => {
+          if (data) setEditForm((f) => ({ ...f, assignTo: data.assign_to ?? f.assignTo, assignToUserId: data.assign_to_user_id ?? '', closeReason: data.close_reason ?? '' }));
+        });
+    }
   };
 
   const saveEdit = async () => {
@@ -551,6 +586,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
       remarks: editForm.remarks || null,
       financial_year: editForm.financialYear || null,
       assign_to: editForm.assignTo || null,
+      assign_to_user_id: editForm.assignToUserId || null,
       close_reason: editForm.closeReason || null,
     }).eq('id', rowId);
     setSavingEdit(false);
@@ -561,14 +597,14 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
       const newFields = {
         staff_status: oldRow.staff_status,
         assign_to: editForm.assignTo || null,
-        assign_to_user_id: oldRow.assign_to_user_id,
+        assign_to_user_id: editForm.assignToUserId || null,
         reply_date: editForm.replyDate || null,
         reply_ref_number: editForm.replyRefNumber || null,
         order_date: editForm.orderDate || null,
         order_number: editForm.orderNumber || null,
         close_reason: editForm.closeReason || null,
       };
-      void logNoticeFieldChanges(rowId, clientId, oldRow, newFields, user?.id ?? null, user?.name ?? null)
+      void logNoticeFieldChanges(rowId, clientId, oldRow, newFields, user?.id ?? null, user?.firstName ?? null)
         .then(async () => {
           const { data: events } = await supabase.from('notice_events')
             .select('*').eq('notice_id', rowId).order('created_at', { ascending: false }).limit(5);
@@ -1159,7 +1195,21 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="assign-to">Assign To</Label>
-                <Input id="assign-to" placeholder="Staff member" value={editForm.assignTo} onChange={(e) => setEditForm((f) => ({ ...f, assignTo: e.target.value }))} />
+                <Select
+                  value={editForm.assignToUserId || 'none'}
+                  onValueChange={(v) => setEditForm((f) => (v === 'none'
+                    ? { ...f, assignToUserId: '', assignTo: '' }
+                    : { ...f, assignToUserId: v, assignTo: staff.find((m) => m.id === v)?.name ?? f.assignTo }))}
+                >
+                  <SelectTrigger id="assign-to"><SelectValue placeholder="Unassigned" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Unassigned</SelectItem>
+                    {staff.map((m) => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                {!editForm.assignToUserId && editForm.assignTo && (
+                  <p className="text-xs text-muted-foreground">Typed earlier as “{editForm.assignTo}” — pick the staff member so it shows in their queue.</p>
+                )}
               </div>
             </div>
             <div className="space-y-1.5">

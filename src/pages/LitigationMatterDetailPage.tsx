@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Navigate, useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import type { TablesUpdate } from '@/integrations/supabase/types';
 import { NoticesPageHeader } from '@/components/notices/NoticesPageHeader';
 import { NoticesCardHeader } from '@/components/notices/NoticesCardHeader';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
@@ -273,7 +274,7 @@ const LitigationMatterDetailPage: React.FC = () => {
       matter_id: matter.id,
       event_type: eventType,
       actor_user_id: user?.id ?? null,
-      actor_name: user?.name || user?.firstName || null,
+      actor_name: user?.firstName || null,
       payload: payload ?? null,
     });
   };
@@ -483,7 +484,7 @@ const LitigationMatterDetailPage: React.FC = () => {
     const num = parseFloat(value) || 0;
     const { error } = await supabase
       .from('litigation_matters')
-      .update({ [field]: num, updated_at: new Date().toISOString() })
+      .update({ [field]: num, updated_at: new Date().toISOString() } as TablesUpdate<'litigation_matters'>)
       .eq('id', matter.id);
     if (error) { toast.error(error.message); return; }
     setMatter({ ...matter, [field]: num });

@@ -1,46 +1,45 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { ListOrdered, Building2, BarChart3, ListChecks } from 'lucide-react';
+import { ListOrdered, Building2, BarChart3 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 
+// Each label opens the page it names. ("Matters" used to open a notice list
+// filtered to submissions and "Hearings" the litigation matters; there is no
+// hearings page yet — upcoming hearings are on the Litigation MIS.)
 const NAV_LINKS = [
   { label: 'Dashboard', to: '/notices-dashboard' },
   { label: 'Work Queue', to: '/notices-all' },
-  { label: 'Matters', to: '/notices-all?filter=submitted' },
-  { label: 'Hearings', to: '/litigation' },
-  { label: 'Clients', to: '/notices-gstin-wise-count' },
+  { label: 'Matters', to: '/litigation' },
+  { label: 'Clients', to: '/notices-company-list' },
 ];
 
-// Only the two report-only destinations. /notices-gstin-wise-count is
-// deliberately absent: the "Clients" tab owns it, and listing it here lit both
-// tabs at once.
-const REPORT_PATHS = ['/notices-report', '/litigation-mis', '/notices-company-list'];
+const REPORT_PATHS = ['/notices-report', '/notices-gstin-wise-count', '/litigation-mis'];
 
 const navItemClass = (active: boolean) => cn(
   'whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
   active ? 'bg-primary text-primary-foreground font-semibold' : 'text-muted-foreground hover:text-foreground',
 );
 
-function isNavItemActive(to: string, pathname: string, fullPath: string, search: string): boolean {
-  if (to.includes('?')) return fullPath === to;
-  if (to === '/notices-all') return pathname === '/notices-all' && search !== '?filter=submitted';
-  // A bare startsWith('/litigation') also swallowed /litigation-mis, lighting
-  // Hearings and Reports together; match the matters list and its detail route
-  // only.
+function isNavItemActive(to: string, pathname: string): boolean {
+  // A bare startsWith('/litigation') would also swallow /litigation-mis (a report);
+  // match the matters list and its detail route only.
   if (to === '/litigation') return pathname === '/litigation' || pathname.startsWith('/litigation/');
+  // A client's profile and its case folders sit under Clients.
+  if (to === '/notices-company-list') {
+    return pathname === to || pathname.startsWith('/notices-company/') || pathname.startsWith('/notices-case-folder/');
+  }
   return pathname === to;
 }
 
 export const NoticesTopNav: React.FC = () => {
-  const { pathname, search } = useLocation();
-  const fullPath = pathname + search;
+  const { pathname } = useLocation();
 
-  const activeLabel = NAV_LINKS.find((i) => isNavItemActive(i.to, pathname, fullPath, search))?.label;
+  const activeLabel = NAV_LINKS.find((i) => isNavItemActive(i.to, pathname))?.label;
   const isReportActive = !activeLabel && REPORT_PATHS.includes(pathname);
 
   return (
-    <nav className="inline-flex items-center gap-0.5 rounded-lg border bg-background p-[3px]">
+    <nav aria-label="Notices and litigation" className="inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-lg border bg-background p-[3px]">
       {NAV_LINKS.map((item) => {
         const active = item.label === activeLabel;
         return (
@@ -67,11 +66,6 @@ export const NoticesTopNav: React.FC = () => {
           <DropdownMenuItem asChild>
             <Link to="/litigation-mis" className="flex items-center gap-2 text-xs">
               <BarChart3 className="h-3.5 w-3.5" /> Litigation MIS
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link to="/notices-company-list" className="flex items-center gap-2 text-xs">
-              <ListChecks className="h-3.5 w-3.5" /> Company List &amp; sync log
             </Link>
           </DropdownMenuItem>
         </DropdownMenuContent>

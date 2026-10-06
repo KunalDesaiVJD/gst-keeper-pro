@@ -11,7 +11,8 @@ interface SyncHealthCardProps {
   totalClientsWithCreds?: number;
   failedLogins: number;
   newNotices24h: number;
-  changedRows24h: number;
+  /** notice_alert e-mails sent since midnight IST; null when the outbox could not be read */
+  emailsSentToday: number | null;
   extensionVersion: string | null;
   extensionReady: boolean;
 }
@@ -119,12 +120,15 @@ export default function SyncHealthCard({
   totalClientsWithCreds,
   failedLogins,
   newNotices24h,
-  changedRows24h,
+  emailsSentToday,
   extensionVersion,
   extensionReady,
 }: SyncHealthCardProps) {
-  const isHealthy = extensionReady && failedLogins === 0;
-  const needsAttention = extensionReady && failedLogins > 0;
+  // Healthy means the data is actually fresh, not just that the extension answered:
+  // no failed logins and every client a Sync All covers synced in the last 24 h.
+  const stale = totalClientsWithCreds ? Math.max(0, totalClientsWithCreds - clientsSynced24h) : 0;
+  const isHealthy = extensionReady && failedLogins === 0 && stale === 0;
+  const needsAttention = extensionReady && !isHealthy;
 
   const rows: { label: string; value: React.ReactNode }[] = [
     {
@@ -150,12 +154,12 @@ export default function SyncHealthCard({
       ),
     },
     {
-      label: 'New rows this sync · changed',
-      value: `${newNotices24h} · ${changedRows24h}`,
+      label: 'New notices (last 24 h)',
+      value: String(newNotices24h),
     },
     {
-      label: 'Emails sent today (digest + alerts)',
-      value: '0',
+      label: 'Alert e-mails sent today',
+      value: emailsSentToday === null ? '—' : String(emailsSentToday),
     },
     {
       label: 'Extension',
@@ -211,7 +215,7 @@ export default function SyncHealthCard({
         <ActivityFeed />
 
         <div className="mt-3 flex items-center justify-between text-[11px] text-muted-foreground">
-          <span>Next scheduled unattended sync: 06:00 IST</span>
+          <span>Portal sync runs when someone clicks Sync All; the closing sweep also runs nightly at 03:00 IST.</span>
           <Link to="/notices-company-list" className="shrink-0 font-semibold text-primary hover:underline">
             Sync log →
           </Link>

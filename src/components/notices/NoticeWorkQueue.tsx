@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import type { TablesUpdate } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -158,12 +159,23 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep, sweeping })
       const { data: clients } = await supabase.from('clients').select('id, name, gstin').in('id', clientIds);
       const clientMap = new Map((clients ?? []).map((c) => [c.id, c]));
 
-      const { data: profileRows } = await supabase.from('profiles').select('user_id, first_name, last_name');
-      const opts: ProfileOption[] = (profileRows ?? []).map((p) => {
-        const name = `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim() || 'Unnamed';
-        const initials = `${(p.first_name ?? '')[0] ?? ''}${(p.last_name ?? '')[0] ?? ''}`.toUpperCase() || '?';
-        return { user_id: p.user_id, name, initials };
-      });
+      // profiles has first_name and email only (no last_name — selecting it made the
+      // whole query fail, so the assignee list was empty and every owner showed "?").
+      // Offer staff only: client logins also have profile rows.
+      const [{ data: profileRows }, { data: roleRows }] = await Promise.all([
+        supabase.from('profiles').select('user_id, first_name, email'),
+        supabase.from('user_roles').select('user_id, role'),
+      ]);
+      const staffIds = new Set((roleRows ?? []).filter((r) => r.role !== 'client').map((r) => r.user_id));
+      const opts: ProfileOption[] = (profileRows ?? [])
+        .filter((p) => staffIds.has(p.user_id))
+        .map((p) => {
+          const name = (p.first_name ?? '').trim() || (p.email ?? '').split('@')[0] || 'Unnamed';
+          const words = name.split(/\s+/).filter(Boolean);
+          const initials = ((words[0]?.[0] ?? '') + (words[1]?.[0] ?? '')).toUpperCase() || '?';
+          return { user_id: p.user_id, name, initials };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
       const profileMap = new Map(opts.map((p) => [p.user_id, p.initials]));
 
       const queue: QueueItem[] = notices
@@ -263,7 +275,7 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep, sweeping })
     const ids = selectedIds();
     if (!bulkStage || ids.length === 0) return;
     setSaving(true);
-    const payload: Record<string, string | null> = { staff_status: bulkStage };
+    const payload: TablesUpdate<'gst_notices'> = { staff_status: bulkStage };
     payload.close_reason = bulkStage === 'Closed' ? (closeReason || null) : null;
     const { error } = await supabase.from('gst_notices').update(payload).in('id', ids);
     setSaving(false);

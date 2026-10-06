@@ -1,13 +1,18 @@
 {
   "manifest_version": 3,
   "name": "GST Keeper Portal Sync",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Pulls GST portal data into GST Keeper from your own browser, so the portal treats it as a normal user (no server, no firewall block).",
-  "permissions": ["storage", "tabs", "downloads", "unlimitedStorage", "declarativeNetRequest"],
+  "permissions": [
+    "storage",
+    "tabs",
+    "downloads",
+    "unlimitedStorage",
+    "declarativeNetRequest"
+  ],
   "host_permissions": [
     "https://*.gst.gov.in/*",
-    "https://gcquafqxbykxkbexcdpy.supabase.co/*",
-    "https://fastcaptcha.org/*"
+    "https://gcquafqxbykxkbexcdpy.supabase.co/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -18,19 +23,34 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://*.gst.gov.in/*"],
-      "js": ["inject.js"],
+      "matches": [
+        "https://*.gst.gov.in/*"
+      ],
+      "js": [
+        "inject.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": ["https://*.gst.gov.in/*"],
-      "js": ["vendor/jspdf.umd.min.js", "db.js", "content.js"],
+      "matches": [
+        "https://*.gst.gov.in/*"
+      ],
+      "js": [
+        "vendor/jspdf.umd.min.js",
+        "db.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://gst.vjdesai.com/*", "https://gst-keeper-pro.vercel.app/*", "https://*.vercel.app/*"],
-      "js": ["appbridge.js"],
+      "matches": [
+        "https://gst.vjdesai.com/*",
+        "https://gst-keeper-pro.vercel.app/*"
+      ],
+      "js": [
+        "appbridge.js"
+      ],
       "run_at": "document_idle"
     }
   ]

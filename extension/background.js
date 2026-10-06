@@ -68,9 +68,33 @@ const upsert = async (table, conflictCols, rows) => {
   return true;
 };
 
+// ── Sync write guards (Phase 0, notices roadmap) ───────────────────────────
+// A pull that returned nothing, or only part of what it should have, must
+// never mark the client's existing rows as gone. Callers pass
+// { complete: false } when any sub-fetch failed; an empty batch is treated the
+// same way; and a pass that would remove more than half of a client's live
+// rows (and more than 5) is held back and reported instead of applied.
+const dedupeRows = (rows, keys) => {
+  const m = new Map();
+  for (const r of rows) m.set(keys.map((k) => String(r[k] ?? '')).join('\u0001'), r);
+  return [...m.values()];
+};
+const guardedSoftDelete = async (table, scopeQuery, rows, pullTs, opts) => {
+  const complete = !opts || opts.complete !== false;
+  if (!rows.length) return { softDeleted: 0, held: 'empty pull — nothing marked missing' };
+  if (!complete) return { softDeleted: 0, held: 'partial pull — nothing marked missing' };
+  const live = await sel(`${table}?${scopeQuery}&deleted_at=is.null&select=id`);
+  const stale = await sel(`${table}?${scopeQuery}&deleted_at=is.null&last_seen_at=lt.${enc(pullTs)}&select=id`);
+  if (stale.length > 5 && stale.length > live.length / 2) {
+    return { softDeleted: 0, held: `would mark ${stale.length} of ${live.length} rows missing — held back for review` };
+  }
+  if (stale.length) await patch(`${table}?${scopeQuery}&deleted_at=is.null&last_seen_at=lt.${enc(pullTs)}`, { deleted_at: pullTs });
+  return { softDeleted: stale.length, held: null };
+};
+
 const API = {
-  getClients: () => sel('clients?select=id,name,gstin,gst_user_id,gst_password,selected_returns,notices_sync_excluded&order=name'),
-  getClient: (id) => sel(`clients?id=eq.${id}&select=id,name,gstin,gst_user_id,gst_password,selected_returns&limit=1`).then((a) => a[0] || null),
+  getClients: () => sel('clients?select=id,name,gstin,gst_user_id,selected_returns,notices_sync_excluded,inactive_at_hand&order=name'),
+  getClient: (id) => sel(`clients?id=eq.${id}&select=id,name,gstin,gst_user_id,selected_returns&limit=1`).then((a) => a[0] || null),
   upsertFilingStatus: (rows) => post('filing_status?on_conflict=client_id,return_type,period_month', rows, 'resolution=merge-duplicates,return=minimal'),
   upsertReco: async (table, clientId, period, patchObj) => {
     const ex = await sel(`${table}?client_id=eq.${clientId}&period_month=eq.${enc(period)}&select=id&limit=1`);
@@ -111,27 +135,24 @@ const API = {
   // Rows the portal no longer returns are soft-deleted (deleted_at set)
   // rather than hard-deleted, so staff notes survive even if the portal
   // drops a notice temporarily.
-  replaceNotices: async (clientId, rows, pullTs) => {
-    if (rows.length > 0) {
-      await upsert('gst_notices', 'client_id,source,portal_key', rows);
+  replaceNotices: async (clientId, rows, pullTs, opts) => {
+    const batch = dedupeRows(rows, ['client_id', 'source', 'portal_key']);
+    if (batch.length > 0) {
+      await upsert('gst_notices', 'client_id,source,portal_key', batch);
     }
-    await patch(
-      `gst_notices?client_id=eq.${clientId}&source=eq.notices&deleted_at=is.null&last_seen_at=lt.${enc(pullTs)}`,
-      { deleted_at: pullTs }
-    );
-    return true;
+    // Manual notices (portal_key 'manual:…') are never marked missing: the
+    // portal never returns them. A DB trigger enforces the same rule for
+    // older extension copies.
+    return guardedSoftDelete('gst_notices', `client_id=eq.${clientId}&source=eq.notices&portal_key=not.like.manual:*`, batch, pullTs, opts);
   },
 
   // Refund applications — upsert on (client_id, portal_key).
-  replaceRefundApplications: async (clientId, rows, pullTs) => {
-    if (rows.length > 0) {
-      await upsert('gst_refund_applications', 'client_id,portal_key', rows);
+  replaceRefundApplications: async (clientId, rows, pullTs, opts) => {
+    const batch = dedupeRows(rows, ['client_id', 'portal_key']);
+    if (batch.length > 0) {
+      await upsert('gst_refund_applications', 'client_id,portal_key', batch);
     }
-    await patch(
-      `gst_refund_applications?client_id=eq.${clientId}&deleted_at=is.null&last_seen_at=lt.${enc(pullTs)}`,
-      { deleted_at: pullTs }
-    );
-    return true;
+    return guardedSoftDelete('gst_refund_applications', `client_id=eq.${clientId}`, batch, pullTs, opts);
   },
 
   // Best-effort document capture (application/query-memo/order PDFs) writes
@@ -145,15 +166,12 @@ const API = {
     patch(`gst_refund_applications?client_id=eq.${clientId}&arn=eq.${enc(arn)}`, patchObj),
 
   // DRC-03 voluntary payments — upsert on (client_id, portal_key).
-  replaceDrc03Filings: async (clientId, rows, pullTs) => {
-    if (rows.length > 0) {
-      await upsert('gst_drc03_filings', 'client_id,portal_key', rows);
+  replaceDrc03Filings: async (clientId, rows, pullTs, opts) => {
+    const batch = dedupeRows(rows, ['client_id', 'portal_key']);
+    if (batch.length > 0) {
+      await upsert('gst_drc03_filings', 'client_id,portal_key', batch);
     }
-    await patch(
-      `gst_drc03_filings?client_id=eq.${clientId}&deleted_at=is.null&last_seen_at=lt.${enc(pullTs)}`,
-      { deleted_at: pullTs }
-    );
-    return true;
+    return guardedSoftDelete('gst_drc03_filings', `client_id=eq.${clientId}`, batch, pullTs, opts);
   },
 
   // Taxpayer profile — one row per client (client_id UNIQUE), so this is a
@@ -167,15 +185,27 @@ const API = {
     post('client_sync_log', [{ client_id: clientId, action, status, message: message || null }]),
 
   // Case folder items — upsert on (client_id, case_id, portal_key).
-  replaceCaseFolderItems: async (clientId, caseId, rows, pullTs) => {
-    if (rows.length > 0) {
-      await upsert('gst_case_folder_items', 'client_id,case_id,portal_key', rows);
+  replaceCaseFolderItems: async (clientId, caseId, rows, pullTs, opts) => {
+    const batch = dedupeRows(rows, ['client_id', 'case_id', 'portal_key']);
+    if (batch.length > 0) {
+      await upsert('gst_case_folder_items', 'client_id,case_id,portal_key', batch);
     }
-    await patch(
-      `gst_case_folder_items?client_id=eq.${clientId}&case_id=eq.${enc(caseId)}&deleted_at=is.null&last_seen_at=lt.${enc(pullTs)}`,
-      { deleted_at: pullTs }
-    );
-    return true;
+    return guardedSoftDelete('gst_case_folder_items', `client_id=eq.${clientId}&case_id=eq.${enc(caseId)}`, batch, pullTs, opts);
+  },
+
+  // Closing sweep (public.notices_sweep): fills case due dates from the case
+  // folder and auto-closes untriaged rows by rule, for this one client.
+  runSweep: async (clientId) => {
+    const r = await fetch(base + 'rpc/notices_sweep', { method: 'POST', headers: H, body: JSON.stringify({ p_client_id: clientId }) });
+    if (!r.ok) throw new Error('RPC notices_sweep -> ' + r.status + ' ' + (await r.text()).slice(0, 120));
+    return r.json();
+  },
+
+  // The portal password is fetched only at the moment the login form is
+  // filled, never stored with the job in chrome.storage.
+  getPortalPassword: async (clientId) => {
+    const rows = await sel(`clients?id=eq.${clientId}&select=gst_password&limit=1`);
+    return (rows[0] && rows[0].gst_password) || null;
   },
 
   upsertTaxpayerProfile: async (clientId, patchObj) => {
@@ -301,7 +331,7 @@ const API = {
     const fyStart = mm >= 4 ? yyyy : yyyy - 1;
     const job = {
       mode: 'returnpdf', period: info.period_month, fyStart, idx: 0, step: 'login', startedAt: Date.now(),
-      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
       ret: { return_type: info.return_type, period_month: info.period_month },
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
@@ -318,7 +348,7 @@ const API = {
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
     const job = {
       mode: 'twob', period: info.period_month, idx: 0, step: 'login', startedAt: Date.now(),
-      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
@@ -340,7 +370,7 @@ const API = {
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
     const job = {
       mode: 'twoa', period: info.period_month, idx: 0, step: 'login', startedAt: Date.now(),
-      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
@@ -365,7 +395,7 @@ const API = {
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
     const job = {
       mode: 'filing', period: info.period_month, idx: 0, step: 'login', startedAt: Date.now(),
-      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
       ret: { return_type: info.return_type, period_month: info.period_month },
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login', active: false });
@@ -393,7 +423,7 @@ const API = {
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
     const job = {
       mode: 'ledgers', period: info.period_month, idx: 0, step: 'login', startedAt: Date.now(),
-      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
@@ -421,7 +451,7 @@ const API = {
       : [info.period_month || ''];
     const job = {
       mode: info.mode, period: periods[0], periods, periodIdx: 0, idx: 0, step: 'login', startedAt: Date.now(),
-      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
@@ -459,6 +489,10 @@ const API = {
     if (scoped) {
       const idSet = new Set(info.clientIds);
       withCreds = withCreds.filter((c) => idSet.has(c.id));
+    } else if (info.mode === 'notices' || info.mode === 'notices_bundle') {
+      // An unscoped Sync All skips clients marked inactive (Edit Client);
+      // a hand-picked selection still syncs them.
+      withCreds = withCreds.filter((c) => !c.inactive_at_hand);
     }
     if (!withCreds.length) throw new Error(scoped ? 'None of the selected clients have saved GST portal credentials.' : 'No clients have saved GST portal credentials.');
     const job = {
@@ -472,7 +506,7 @@ const API = {
       logSync: info.mode === 'notices' || info.mode === 'notices_bundle',
       clients: withCreds.map((c) => ({
         clientId: c.id,
-        creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },
+        creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },
       })),
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
@@ -489,7 +523,7 @@ const API = {
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
     const job = {
       mode: 'login', idx: 0, step: 'login', startedAt: Date.now(),
-      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
@@ -513,7 +547,7 @@ const API = {
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
     const job = {
       mode: 'noticeopen', idx: 0, step: 'login', startedAt: Date.now(),
-      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
       referenceNumber: info.referenceNumber || '',
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
@@ -548,7 +582,7 @@ const API = {
       actorId: info.actorId || null,
       clients: [{
         clientId: c.id,
-        creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },
+        creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },
       }],
       gstr1: {
         rowId: stored.id,
@@ -583,7 +617,7 @@ const API = {
       actorId: info.actorId || null,
       clients: [{
         clientId: c.id,
-        creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },
+        creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },
       }],
       gstr3b: { json: info.gstr3bJson },
     };
@@ -659,7 +693,7 @@ const API = {
       actorId: info.actorId || null,
       clients: [{
         clientId: c.id,
-        creds: { user: c.gst_user_id, pass: c.gst_password, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },
+        creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },
       }],
       gstr1: { rowId: stored.id, periodShort: short },
     };

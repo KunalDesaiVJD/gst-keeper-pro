@@ -24,7 +24,10 @@ const SHELL: Record<string, ShellMeta> = {
 
 export function buildEmailHtml(opts: { key: string; kind: string; message: string; vars: EmailVars }): string {
   const { key, kind, message, vars } = opts;
-  const meta = SHELL[key] ?? SHELL.reminder_1;
+  // Notice alerts store their rule's own template key (an email_templates row); the
+  // shell style comes from render_vars._shell, defaulting to the standard alert shell.
+  const meta = SHELL[key]
+    ?? (kind === 'notice_alert' ? SHELL[String(vars._shell ?? '')] ?? SHELL.notice_alert : SHELL.reminder_1);
   const g = (k: string) => (vars[k] ?? '').toString().trim();
 
   const rows: Array<[string, string]> = [['GSTIN', g('gstin')]];

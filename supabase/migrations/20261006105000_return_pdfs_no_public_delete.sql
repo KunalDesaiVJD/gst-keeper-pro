@@ -1,0 +1,12 @@
+-- Notices Phase 0 · security stop-gap (docs/NOTICES_MISSION_AUDIT_AND_ROADMAP.pdf: R-01 / L-15 / S-11).
+--
+-- The return-pdfs bucket (notice PDFs, case-folder attachments, refund and DRC-03
+-- documents, registration certificates) let anyone holding the public key DELETE any
+-- file. Nothing in the app or the extension deletes from this bucket (the extension
+-- uploads with x-upsert, which needs INSERT + UPDATE only), so the delete policy goes.
+--
+-- Still open, and deliberately out of Phase 0: the bucket remains public-read and
+-- anonymous-writable. A private bucket with signed links needs a server-side check of
+-- who is asking, which this app does not have yet (it authenticates in localStorage —
+-- see CLAUDE.md); that is the project-wide authentication track in the roadmap.
+DROP POLICY IF EXISTS "Anyone can delete return PDFs" ON storage.objects;

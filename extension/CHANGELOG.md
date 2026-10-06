@@ -2,6 +2,36 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-06 — Safety release for notices sync (v0.4.0) — update on every PC
+
+Phase 0 of the notices roadmap (`docs/NOTICES_MISSION_AUDIT_AND_ROADMAP.pdf`). The app
+now refuses to start a notices sync from any copy older than 0.4.0.
+
+- **Nothing is marked missing after a bad pull.** A pull that returns no rows, a
+  portal error envelope (`{status: 0, error: …}`, previously read as "no notices"), a
+  failed case-task list or a failed case-folder read no longer soft-deletes the
+  client's saved notices, refunds, DRC-03 rows or folder items. A pass that would
+  remove more than half of a client's rows (and more than 5) is held back and logged
+  as `notices_guard` in the sync log instead of applied.
+- **Batches are de-duplicated** by their conflict key before upserting (a repeated
+  key made PostgREST reject the whole batch).
+- **Identity check.** Before saving anything, the notices step asks the portal whose
+  session this is (`profile/detail`); if the GSTIN differs from the client being
+  synced, nothing is saved for that client and the run moves on. If the GSTIN cannot
+  be read, the run is not blocked.
+- **Passwords leave chrome.storage.** Jobs no longer carry portal passwords; the
+  login step fetches the one password it needs at the moment it fills the form.
+- **Sweep after each client.** The notices step and the DRC-03 step call the
+  database's `notices_sweep` for that client, so case due dates and auto-closures
+  appear immediately (a nightly run covers older copies).
+- **Unscoped Sync All skips inactive clients** (`inactive_at_hand`); a hand-picked
+  selection still syncs them.
+- **The app bridge answers only the app.** It accepts messages from
+  `https://gst.vjdesai.com` and `https://gst-keeper-pro.vercel.app` only (previously
+  any `*.vercel.app` page could start portal logins, syncs or GSTR-1/3B pushes) and
+  replies to the page's own origin rather than `*`.
+- Removed the unused `fastcaptcha.org` host permission.
+
 ## 2026-09-28 — New: GSTR-9 system-computed pull for the Annual Return (v0.3.3)
 
 **What:** a new section-pull mode, `gstr9_pull`, started from Annual Return →

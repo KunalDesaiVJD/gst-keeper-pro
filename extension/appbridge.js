@@ -12,12 +12,14 @@ const EXT_VERSION = chrome.runtime.getManifest().version;
 const ALLOWED_ORIGINS = ['https://gst.vjdesai.com', 'https://gst-keeper-pro.vercel.app'];
 
 function announce() {
-  window.postMessage({ __gstkExtensionReady: true, version: EXT_VERSION }, '*');
+  window.postMessage({ __gstkExtensionReady: true, version: EXT_VERSION }, location.origin);
 }
 
 window.addEventListener('message', (e) => {
   if (e.source !== window) return;
-  if (!ALLOWED_ORIGINS.some((o) => e.origin === o) && !/\.vercel\.app$/.test(e.origin)) return;
+  // Only the app's own origins — any other page (e.g. any *.vercel.app site) must
+  // not be able to start portal logins, syncs or GSTR-1/3B pushes.
+  if (!ALLOWED_ORIGINS.includes(e.origin)) return;
   const d = e.data;
   if (!d || typeof d !== 'object') return;
 
@@ -31,7 +33,7 @@ window.addEventListener('message', (e) => {
     chrome.runtime.sendMessage({ gstk: true, fn: 'startReturnPull', args: [info] }, (resp) => {
       const ok = resp && resp.ok;
       const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
-      window.postMessage({ __gstkPullResult: ok ? { ok: true } : { ok: false, error } }, '*');
+      window.postMessage({ __gstkPullResult: ok ? { ok: true } : { ok: false, error } }, location.origin);
     });
     return;
   }
@@ -44,7 +46,7 @@ window.addEventListener('message', (e) => {
     chrome.runtime.sendMessage({ gstk: true, fn: 'startTwobPull', args: [info] }, (resp) => {
       if (!(resp && resp.ok)) {
         const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
-        window.postMessage({ __gstkPull2BResult: { ok: false, error } }, '*');
+        window.postMessage({ __gstkPull2BResult: { ok: false, error } }, location.origin);
       }
     });
     return;
@@ -59,7 +61,7 @@ window.addEventListener('message', (e) => {
     chrome.runtime.sendMessage({ gstk: true, fn: 'startTwoAPull', args: [info] }, (resp) => {
       if (!(resp && resp.ok)) {
         const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
-        window.postMessage({ __gstkPull2AResult: { ok: false, error } }, '*');
+        window.postMessage({ __gstkPull2AResult: { ok: false, error } }, location.origin);
       }
     });
     return;
@@ -73,7 +75,7 @@ window.addEventListener('message', (e) => {
     chrome.runtime.sendMessage({ gstk: true, fn: 'startFilingOpen', args: [info] }, (resp) => {
       const ok = resp && resp.ok;
       const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
-      window.postMessage({ __gstkOpenFilingResult: ok ? { ok: true } : { ok: false, error } }, '*');
+      window.postMessage({ __gstkOpenFilingResult: ok ? { ok: true } : { ok: false, error } }, location.origin);
     });
     return;
   }
@@ -86,7 +88,7 @@ window.addEventListener('message', (e) => {
     chrome.runtime.sendMessage({ gstk: true, fn: 'startPortalLogin', args: [info] }, (resp) => {
       const ok = resp && resp.ok;
       const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
-      window.postMessage({ __gstkPortalLoginResult: ok ? { ok: true } : { ok: false, error } }, '*');
+      window.postMessage({ __gstkPortalLoginResult: ok ? { ok: true } : { ok: false, error } }, location.origin);
     });
     return;
   }
@@ -98,7 +100,7 @@ window.addEventListener('message', (e) => {
     chrome.runtime.sendMessage({ gstk: true, fn: 'startLedgerPull', args: [info] }, (resp) => {
       const ok = resp && resp.ok;
       const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
-      window.postMessage({ __gstkPullLedgersResult: ok ? { ok: true } : { ok: false, error } }, '*');
+      window.postMessage({ __gstkPullLedgersResult: ok ? { ok: true } : { ok: false, error } }, location.origin);
     });
     return;
   }
@@ -112,7 +114,7 @@ window.addEventListener('message', (e) => {
     chrome.runtime.sendMessage({ gstk: true, fn: 'startSectionPull', args: [info] }, (resp) => {
       const ok = resp && resp.ok;
       const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
-      window.postMessage({ __gstkPullSectionResult: ok ? { ok: true } : { ok: false, error } }, '*');
+      window.postMessage({ __gstkPullSectionResult: ok ? { ok: true } : { ok: false, error } }, location.origin);
     });
     return;
   }
@@ -125,7 +127,7 @@ window.addEventListener('message', (e) => {
     chrome.runtime.sendMessage({ gstk: true, fn: 'startAllClientsSectionPull', args: [info] }, (resp) => {
       const ok = resp && resp.ok;
       const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
-      window.postMessage({ __gstkPullSectionAllClientsResult: ok ? { ok: true, count: resp.data.count } : { ok: false, error } }, '*');
+      window.postMessage({ __gstkPullSectionAllClientsResult: ok ? { ok: true, count: resp.data.count } : { ok: false, error } }, location.origin);
     });
     return;
   }
@@ -139,7 +141,7 @@ window.addEventListener('message', (e) => {
     chrome.runtime.sendMessage({ gstk: true, fn: 'startNoticeOpen', args: [info] }, (resp) => {
       const ok = resp && resp.ok;
       const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
-      window.postMessage({ __gstkOpenNoticeResult: ok ? { ok: true } : { ok: false, error } }, '*');
+      window.postMessage({ __gstkOpenNoticeResult: ok ? { ok: true } : { ok: false, error } }, location.origin);
     });
     return;
   }
@@ -154,7 +156,7 @@ window.addEventListener('message', (e) => {
     chrome.runtime.sendMessage({ gstk: true, fn: 'startGstr1Upload', args: [info] }, (resp) => {
       if (!(resp && resp.ok)) {
         const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
-        window.postMessage({ __gstkUploadGstr1Result: { ok: false, error } }, '*');
+        window.postMessage({ __gstkUploadGstr1Result: { ok: false, error } }, location.origin);
       }
       // On resp.ok the portal automation continues asynchronously; the final
       // result is broadcast via the storage listener below.
@@ -172,7 +174,7 @@ window.addEventListener('message', (e) => {
     chrome.runtime.sendMessage({ gstk: true, fn: 'startGstr1RefreshErrors', args: [info] }, (resp) => {
       if (!(resp && resp.ok)) {
         const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
-        window.postMessage({ __gstkUploadGstr1Result: { ok: false, error } }, '*');
+        window.postMessage({ __gstkUploadGstr1Result: { ok: false, error } }, location.origin);
       }
     });
   }
@@ -188,7 +190,7 @@ window.addEventListener('message', (e) => {
     chrome.runtime.sendMessage({ gstk: true, fn: 'startGstr3bPush', args: [info] }, (resp) => {
       if (!(resp && resp.ok)) {
         const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
-        window.postMessage({ __gstkPushGstr3bResult: { ok: false, error } }, '*');
+        window.postMessage({ __gstkPushGstr3bResult: { ok: false, error } }, location.origin);
       }
       // On resp.ok the portal automation continues asynchronously; the final
       // result is broadcast via the storage listener below.
@@ -204,14 +206,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.gstk_twob_result) {
     const v = changes.gstk_twob_result.newValue;
     if (v) {
-      window.postMessage({ __gstkPull2BResult: v }, '*');
+      window.postMessage({ __gstkPull2BResult: v }, location.origin);
       chrome.storage.local.remove('gstk_twob_result');
     }
   }
   if (changes.gstk_twoa_result) {
     const v = changes.gstk_twoa_result.newValue;
     if (v) {
-      window.postMessage({ __gstkPull2AResult: v }, '*');
+      window.postMessage({ __gstkPull2AResult: v }, location.origin);
       chrome.storage.local.remove('gstk_twoa_result');
     }
   }
@@ -221,7 +223,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.gstk_gstr1_upload_result) {
     const v = changes.gstk_gstr1_upload_result.newValue;
     if (v) {
-      window.postMessage({ __gstkUploadGstr1Result: v }, '*');
+      window.postMessage({ __gstkUploadGstr1Result: v }, location.origin);
       chrome.storage.local.remove('gstk_gstr1_upload_result');
     }
   }
@@ -231,7 +233,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.gstk_gstr3b_push_result) {
     const v = changes.gstk_gstr3b_push_result.newValue;
     if (v) {
-      window.postMessage({ __gstkPushGstr3bResult: v }, '*');
+      window.postMessage({ __gstkPushGstr3bResult: v }, location.origin);
       chrome.storage.local.remove('gstk_gstr3b_push_result');
     }
   }

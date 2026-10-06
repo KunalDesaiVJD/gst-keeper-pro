@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { Navigate, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { isExtensionOutdated, outdatedExtensionMessage } from '@/lib/extensionVersion';
 import { useNoticeSet } from '@/hooks/useNoticeSet';
 import { isOpen, isOverdue, isDueIn7, isNew } from '@/utils/noticeDefinitions';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -28,15 +29,6 @@ import {
   Bell, Loader2, RefreshCw, Search, Mail,
 } from 'lucide-react';
 
-function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] || 0) - (pb[i] || 0);
-    if (d !== 0) return d;
-  }
-  return 0;
-}
-
 interface SyncLogRow {
   client_id: string;
   status: 'success' | 'failed';
@@ -47,6 +39,8 @@ interface MiniClient {
   id: string;
   name: string;
   gstin: string | null;
+  gst_user_id?: string | null;
+  inactive_at_hand?: boolean;
 }
 
 function todayISOString(): string {
@@ -92,17 +86,24 @@ const NoticesDashboardPage: React.FC = () => {
   const [syncing, setSyncing] = useState(false);
   const [syncLogs, setSyncLogs] = useState<SyncLogRow[]>([]);
   const [clients, setClients] = useState<MiniClient[]>([]);
+  const [emailsSentToday, setEmailsSentToday] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [logRes, clientRes] = await Promise.all([
-        supabase.from('client_sync_log').select('client_id, status, created_at').eq('action', 'notices').order('created_at', { ascending: false }),
-        supabase.from('clients').select('id, name, gstin').eq('notices_sync_excluded', false).order('name'),
+      // A failed portal login is logged as action 'login_failed', not 'notices':
+      // read both, or a client whose password changed shows as healthy.
+      const startOfTodayIst = new Date(`${todayISOString()}T00:00:00+05:30`).toISOString();
+      const [logRes, clientRes, emailRes] = await Promise.all([
+        supabase.from('client_sync_log').select('client_id, status, created_at').in('action', ['notices', 'login_failed']).order('created_at', { ascending: false }),
+        supabase.from('clients').select('id, name, gstin, gst_user_id, inactive_at_hand').eq('notices_sync_excluded', false).order('name'),
+        supabase.from('email_outbox').select('id', { count: 'exact', head: true })
+          .eq('kind', 'notice_alert').eq('status', 'sent').gte('sent_at', startOfTodayIst),
       ]);
       if (!cancelled) {
         setSyncLogs((logRes.data || []) as SyncLogRow[]);
         setClients((clientRes.data || []) as MiniClient[]);
+        setEmailsSentToday(emailRes.error ? null : emailRes.count ?? 0);
       }
     })();
     return () => { cancelled = true; };
@@ -115,9 +116,7 @@ const NoticesDashboardPage: React.FC = () => {
       if (d.__gstkExtensionReady) {
         setExtReady(true);
         setExtVersion(d.version || null);
-        if (d.version && compareVersions(d.version, '0.3.0') < 0) {
-          toast.error('Extension v' + d.version + ' is outdated. Please update to v0.3.0+ for reliable sync.');
-        }
+        if (isExtensionOutdated(d.version)) toast.error(outdatedExtensionMessage(d.version));
       }
       if (d.__gstkPullSectionAllClientsResult) {
         setSyncing(false);
@@ -174,13 +173,12 @@ const NoticesDashboardPage: React.FC = () => {
       toast.error('GST Keeper browser extension not detected. Install/enable it to use Sync All.');
       return;
     }
+    if (isExtensionOutdated(extVersion)) { toast.error(outdatedExtensionMessage(extVersion)); return; }
     setSyncing(true);
     window.postMessage({ __gstkPullSectionAllClients: { mode: 'notices_bundle' } }, '*');
   };
 
   useEffect(() => { if (noticeError) toast.error(noticeError); }, [noticeError]);
-
-  if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
   // ── Derived data ──────────────────────────────────────────────────────────
 
@@ -255,13 +253,6 @@ const NoticesDashboardPage: React.FC = () => {
   const clientsSynced24h = new Set(syncLogs.filter((l) => l.status === 'success' && new Date(l.created_at).getTime() > now24h).map((l) => l.client_id)).size;
   const lastSuccessSync = syncLogs.find((l) => l.status === 'success');
   const newNotices24h = rows.filter((r) => r.first_seen_at && new Date(r.first_seen_at).getTime() > now24h).length;
-  const changedRows24h = rows.filter((r) => {
-    if (!r.pulled_at) return false;
-    const pulledTime = new Date(r.pulled_at).getTime();
-    if (pulledTime <= now24h) return false;
-    if (!r.issue_date) return false;
-    return new Date(r.issue_date).getTime() < now24h;
-  }).length;
 
   // Deadline strip window — 35 days so the strip's own "Month" toggle has data
   // to show; it renders only the range it is currently set to.
@@ -285,11 +276,16 @@ const NoticesDashboardPage: React.FC = () => {
   }, [displayRows]);
 
   // Sync line for header
-  const syncGstinCount = clients.length;
+  // Clients a Sync All actually covers: portal credentials saved, not marked inactive.
+  const syncGstinCount = clients.filter((c) => c.gst_user_id && !c.inactive_at_hand).length;
   const lastSyncTimeStr = lastSuccessSync
     ? new Date(lastSuccessSync.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }) +
       ', ' + new Date(lastSuccessSync.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }) + ' IST'
     : null;
+
+  // After every hook (Rules of Hooks): an early return above them would change
+  // the hook order if the role changes between renders.
+  if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -400,7 +396,7 @@ const NoticesDashboardPage: React.FC = () => {
           totalClientsWithCreds={syncGstinCount}
           failedLogins={failedLoginsCount}
           newNotices24h={newNotices24h}
-          changedRows24h={changedRows24h}
+          emailsSentToday={emailsSentToday}
           extensionVersion={extVersion}
           extensionReady={extReady}
         />

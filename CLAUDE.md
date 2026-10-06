@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Ignore the `SUPABASE_PROJECT_REF` environment variable — it is wrong.** It is set to `hubyywmodekfdzhwiumb`, which is a *different, live* Supabase project on the same account ("info@vjdesai.com's Project"). Applying a migration to it would hit real data belonging to the firm. Always pass `gcquafqxbykxkbexcdpy` explicitly. `SUPABASE_ACCESS_TOKEN` is correct and can reach all three projects on the account, so nothing stops a wrong-project write except naming the ref by hand.
 - **Apply DB migrations directly to project `gcquafqxbykxkbexcdpy`.** Add a new timestamped file under `supabase/migrations/` AND apply it to the live project — both must stay in sync. There is **no migration ledger**: this project has never been Supabase-CLI-managed, so `supabase_migrations.schema_migrations` does not exist and nothing records which files were applied. The directory is a convention held together by discipline; verify by checking that the objects a migration declares actually exist.
 - **RLS policies must be open to `public`.** This app does not establish a Supabase auth session — it authenticates through its own `localStorage` session and talks to Postgres with the anon key, so **`auth.uid()` is always NULL at runtime**. Any policy gated on `auth.uid()` or `is_staff(auth.uid())` fails closed: reads come back empty, writes are rejected, and the build stays green. Use `FOR ALL TO public USING (true) WITH CHECK (true)` and let login, staff-only routing and the permission keys be the gate. The one deliberate exception is `portal_sessions` (RLS on, *no* policies), because those rows are session cookies reached only by the service-role key on the agent runner. Note also that the Supabase **management API bypasses RLS**, so tests run through it will pass against policies that break the app — verify writes with the anon key from `.env`.
-- **Run `npm run build` before committing.** A green build is the gate for any commit.
+- **Run `npm run build` and `npm run typecheck` before committing.** Both must be green. `vite build` does not type-check, which is how queries naming columns that do not exist shipped to production; `npm run typecheck` (scripts/typecheck.mjs) fails on any type error in the notices & litigation module and on any new error elsewhere (existing ones are frozen in `scripts/tsc-baseline.json`).
 - **Never edit via Lovable.** This repo has been migrated off Lovable; all changes happen through Claude Code. Do not rely on Lovable round-tripping, and ignore the Lovable instructions still present in `README.md`.
 - **Unsubscribe from PR activity right after creating a PR, unless asked to watch it.** Still open a (draft) PR after every push, as usual. The platform auto-subscribes the session to the new PR's activity the instant `create_pull_request` returns — this is not something choosing not to call `subscribe_pr_activity` prevents, confirmed live on 2026-08-14 (PR #51 got a `subscription.created` system event despite no explicit subscribe call). So the actionable move is the opposite: call `unsubscribe_pr_activity` on the just-created PR immediately afterward, before ending the turn, unless a human explicitly asked this session to monitor/babysit that specific PR. Left subscribed, every GitHub event on the PR — including noisy third-party bot comments like a Vercel deploy-status ping on every push — gets relayed into the session as a wake-up.
 
@@ -16,6 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `npm run dev` — Vite dev server on port 8080 (host `::`)
 - `npm run build` — production build (run before every commit)
+- `npm run typecheck` — type-check gate (run before every commit; `-- --update-baseline` only after fixing errors)
 - `npm run build:dev` — development-mode build
 - `npm run lint` — ESLint over the repo
 - `npm run preview` — preview the production build
@@ -86,14 +87,17 @@ so treat them as reversible defaults pending confirmation, not fixed rules.
 ## Notices module
 
 Data from the GST portal's notices, refunds, and LUT cases, synced by a
-Chrome Extension (MV3, in `chrome-extension/`). The sync uses upsert +
-soft-delete (`deleted_at` timestamp) — all notice queries filter
-`deleted_at IS NULL`.
+Chrome Extension (MV3, in `extension/`; the app refuses to sync from versions
+below `MIN_EXTENSION_VERSION` in `src/lib/extensionVersion.ts`). The sync uses
+upsert + soft-delete (`deleted_at` timestamp) — all notice queries filter
+`deleted_at IS NULL`. DB triggers on `gst_notices` keep sync writes from blanking
+`pdf_url`/`case_id`, protect `manual:` notices and turn hard deletes into soft
+deletes; clients with notices or matters cannot be deleted (FK RESTRICT).
 
 **Tables:** `gst_notices` (notices + tasks), `gst_case_folder_items`
-(case-folder contents with `raw_json`). Refund status tracked in
-`refund_applications`, DRC-03 in `drc03_filings` — both have
-`client_id`, `arn`, `status`.
+(case-folder contents with `raw_json`, joined to notices on `(client_id,
+case_id)`). Refund status tracked in `gst_refund_applications`, DRC-03 in
+`gst_drc03_filings` — both have `client_id`, `arn`, `status`.
 
 **Shared data hook:** `src/hooks/useNoticeSet.ts` (`useNoticeSet()`)
 fetches notices, refund rows, and DRC-03 rows in parallel. Used by the
@@ -105,11 +109,10 @@ dashboard, summary report, and GSTIN-wise count pages.
 Disposed, Deleted, Adjudged). "Overdue" requires open + no reply +
 effective due < today IST.
 
-**Auto-close & due-date sweep:** `src/lib/noticeAutoClose.ts`. Three
-auto-close patterns (CLOSURE folder, refund+ORDERS, LUT+ORDERS) set
-`staff_status='Closed'` + `close_reason='auto:*'`. Due-date sweep
-extracts the earliest date from folder items' `raw_json.sdtls.duedate`
-or `raw_json.dtscn.duedate`.
+**Auto-close & due-date sweep:** the SQL function `public.notices_sweep(client)`
+(run by the extension after each client, nightly by pg_cron, and from the
+dashboard via `src/lib/noticeAutoClose.ts`). Rules and paths are in the
+positions doc §3–§4.
 
 **Read `docs/NOTICES_LITIGATION_POSITIONS.md` before changing auto-close
 logic, tile definitions, or due-date extraction.** The positions were

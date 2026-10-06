@@ -16,6 +16,7 @@ import {
   Phone
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { describeClientDeleteError } from '@/lib/clientDeleteError';
 import { toast } from 'sonner';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
@@ -84,7 +85,7 @@ const ClientManagementSection: React.FC = () => {
       .eq('id', id);
 
     if (error) {
-      toast.error('Failed to delete client: ' + error.message);
+      toast.error('Failed to delete client: ' + describeClientDeleteError(error));
     } else {
       toast.success('Client deleted successfully');
       fetchClients();

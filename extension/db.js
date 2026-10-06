@@ -31,10 +31,10 @@
     replaceCreditLedgerTxns: (clientId, period, rows) => call('replaceCreditLedgerTxns', clientId, period, rows),
     replaceLiabilityLedgerEntries: (clientId, period, rows) => call('replaceLiabilityLedgerEntries', clientId, period, rows),
     replaceCashLedgerEntries: (clientId, period, rows) => call('replaceCashLedgerEntries', clientId, period, rows),
-    replaceNotices: (clientId, rows, pullTs) => call('replaceNotices', clientId, rows, pullTs),
-    replaceRefundApplications: (clientId, rows, pullTs) => call('replaceRefundApplications', clientId, rows, pullTs),
+    replaceNotices: (clientId, rows, pullTs, opts) => call('replaceNotices', clientId, rows, pullTs, opts),
+    replaceRefundApplications: (clientId, rows, pullTs, opts) => call('replaceRefundApplications', clientId, rows, pullTs, opts),
     patchRefundDocument: (clientId, arn, patchObj) => call('patchRefundDocument', clientId, arn, patchObj),
-    replaceDrc03Filings: (clientId, rows, pullTs) => call('replaceDrc03Filings', clientId, rows, pullTs),
+    replaceDrc03Filings: (clientId, rows, pullTs, opts) => call('replaceDrc03Filings', clientId, rows, pullTs, opts),
     upsertTaxpayerProfile: (clientId, patchObj) => call('upsertTaxpayerProfile', clientId, patchObj),
     getTaxpayerRegistrationDate: (clientId) => call('getTaxpayerRegistrationDate', clientId),
     replaceChallans: (clientId, rows) => call('replaceChallans', clientId, rows),
@@ -53,7 +53,9 @@
     logClientSync: (clientId, action, status, message) => call('logClientSync', clientId, action, status, message),
     // Additional Notice Folder detail — one row per case-folder item, see
     // handleNotices' task-list loop in content.js for the capture.
-    replaceCaseFolderItems: (clientId, caseId, rows, pullTs) => call('replaceCaseFolderItems', clientId, caseId, rows, pullTs),
+    replaceCaseFolderItems: (clientId, caseId, rows, pullTs, opts) => call('replaceCaseFolderItems', clientId, caseId, rows, pullTs, opts),
+    getPortalPassword: (clientId) => call('getPortalPassword', clientId),
+    runSweep: (clientId) => call('runSweep', clientId),
     logEvent: (clientId, level, message) => { console.log('[GSTKeeper]', level, clientId, message); },
   };
 })();

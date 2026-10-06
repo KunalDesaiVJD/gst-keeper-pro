@@ -1,7 +1,8 @@
 // "Add Notice" — manual entry, matching Notice Alert's own dialog
 // (confirmed live 2026-08-25): GSTIN-TradeName, Section, Ref/Notice Id,
 // Issued By, Type, Issued Date, Due Date, Amount Of Demand, Attachment,
-// Description. Writes straight into gst_notices with source='notices' —
+// Description. Writes straight into gst_notices with source='notices' and a
+// 'manual:<uuid>' portal_key (never marked missing by the sync) —
 // the one bucket every other Notices Dashboard piece (KPI tiles, Notice
 // Summary, drill-down list, the per-client report) actually reads — so a
 // manually-added notice shows up everywhere a portal-pulled one would.
@@ -58,34 +59,66 @@ export const AddNoticeDialog: React.FC<AddNoticeDialogProps> = ({ onSuccess }) =
     if (amount !== null && !Number.isFinite(amount)) { toast.error('Amount of Demand must be a number.'); return; }
 
     setSaving(true);
-    let pdfUrl: string | null = null;
+    const refId = form.refId.trim();
+
+    // The same reference already on record for this client (captured by sync or
+    // added earlier) — open that one instead of creating a duplicate.
+    const { data: existing } = await supabase
+      .from('gst_notices')
+      .select('id')
+      .eq('client_id', form.clientId)
+      .eq('reference_number', refId)
+      .is('deleted_at', null)
+      .limit(1);
+    if (existing && existing.length > 0) {
+      setSaving(false);
+      toast.error(`${refId} is already on record for this client.`);
+      return;
+    }
+
+    // Insert first, attach second: the row must exist before any file is stored,
+    // so a failed save never leaves an orphaned public file behind. portal_key is
+    // required (NOT NULL since the upsert sync); the 'manual:' prefix also tells
+    // the sync never to mark this notice missing (the portal does not return it).
+    const { data: inserted, error } = await supabase
+      .from('gst_notices')
+      .insert({
+        client_id: form.clientId,
+        source: 'notices',
+        portal_key: `manual:${crypto.randomUUID()}`,
+        reference_number: refId,
+        notice_type: form.type,
+        issued_by: form.issuedBy.trim() || null,
+        issue_date: form.issuedDate,
+        due_date: form.dueDate || null,
+        amount_of_demand: amount,
+        description: form.description.trim() || null,
+        staff_status: 'Open',
+        pulled_at: new Date().toISOString(),
+      })
+      .select('id')
+      .single();
+    if (error || !inserted) {
+      setSaving(false);
+      toast.error('Failed to add notice: ' + (error?.message ?? 'no row returned'));
+      return;
+    }
+
     if (file) {
-      const path = `manual/${form.clientId}/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+      const path = `manual/${form.clientId}/${inserted.id}/${file.name.replace(/\s+/g, '_')}`;
       const { error: uploadError } = await supabase.storage.from('return-pdfs').upload(path, file);
       if (uploadError) {
         setSaving(false);
-        toast.error('Failed to upload attachment: ' + uploadError.message);
+        toast.warning(`Notice saved, but the attachment did not upload (${uploadError.message}). Add it again from the notice.`);
+        reset();
+        setOpen(false);
+        onSuccess();
         return;
       }
-      pdfUrl = supabase.storage.from('return-pdfs').getPublicUrl(path).data.publicUrl;
+      const pdfUrl = supabase.storage.from('return-pdfs').getPublicUrl(path).data.publicUrl;
+      await supabase.from('gst_notices').update({ pdf_url: pdfUrl }).eq('id', inserted.id);
     }
-
-    const { error } = await supabase.from('gst_notices').insert({
-      client_id: form.clientId,
-      source: 'notices',
-      reference_number: form.refId.trim(),
-      notice_type: form.type,
-      issued_by: form.issuedBy.trim() || null,
-      issue_date: form.issuedDate,
-      due_date: form.dueDate || null,
-      amount_of_demand: amount,
-      description: form.description.trim() || null,
-      staff_status: 'Open',
-      pdf_url: pdfUrl,
-      pulled_at: new Date().toISOString(),
-    });
     setSaving(false);
-    if (error) { toast.error('Failed to add notice: ' + error.message); return; }
 
     toast.success('Notice added');
     reset();

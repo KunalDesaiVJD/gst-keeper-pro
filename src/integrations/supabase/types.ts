@@ -4842,6 +4842,7 @@ export type Database = {
           extended_due_date: string | null
           financial_year: string | null
           first_seen_at: string
+          hearing_date: string | null
           id: string
           issue_date: string | null
           issued_by: string | null
@@ -4880,6 +4881,7 @@ export type Database = {
           extended_due_date?: string | null
           financial_year?: string | null
           first_seen_at?: string
+          hearing_date?: string | null
           id?: string
           issue_date?: string | null
           issued_by?: string | null
@@ -4918,6 +4920,7 @@ export type Database = {
           extended_due_date?: string | null
           financial_year?: string | null
           first_seen_at?: string
+          hearing_date?: string | null
           id?: string
           issue_date?: string | null
           issued_by?: string | null
@@ -8069,6 +8072,10 @@ export type Database = {
       }
     }
     Functions: {
+      notices_sweep: {
+        Args: { p_client_id?: string }
+        Returns: Json
+      }
       save_annual_return_doc: {
         Args: {
           p_client_id: string

@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const REPO = '/home/user/gst-keeper-pro';
+const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
 const OUT = path.join(path.dirname(new URL(import.meta.url).pathname), 'schema.json');
 
 // ---------- types.ts ----------

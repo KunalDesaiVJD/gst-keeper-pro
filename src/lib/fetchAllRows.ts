@@ -7,18 +7,23 @@
 // disagree on the same category's count. Paginate with .range() in a loop
 // until a page comes back short, so every caller sees the full table.
 import { supabase } from '@/integrations/supabase/client';
+import type { Database } from '@/integrations/supabase/types';
 
 const PAGE_SIZE = 1000;
 
 export async function fetchAllRows<T>(
-  table: string,
+  table: keyof Database['public']['Tables'],
   select: string,
-  build: (query: ReturnType<typeof supabase.from>) => ReturnType<typeof supabase.from> = (q) => q,
+  // The callback receives the .select() builder (filters, order, …). Typed loosely:
+  // the builder's generic type for a runtime select string is not expressible here.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  build: (query: any) => any = (q) => q,
 ): Promise<T[]> {
   const all: T[] = [];
   let from = 0;
   for (;;) {
-    const query: any = build(supabase.from(table).select(select) as any);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const query: any = build(supabase.from(table).select(select));
     const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
     if (error) throw new Error(`fetchAllRows(${table}) page ${from}: ${error.message}`);
     if (!data) break;

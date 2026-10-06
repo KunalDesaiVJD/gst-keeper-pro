@@ -95,10 +95,17 @@ async function isCoolingDown(ruleId: string, noticeId: string, cooldownHrs: numb
 async function getClient(clientId: string) {
   const { data } = await supabase
     .from('clients')
-    .select('name, gstin, email, contact_person')
+    .select('name, gstin, email')
     .eq('id', clientId)
     .maybeSingle();
   return data;
+}
+
+async function clientNames(ids: string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return new Map();
+  const { data } = await supabase.from('clients').select('id, name').in('id', unique);
+  return new Map((data ?? []).map((c) => [c.id, c.name]));
 }
 
 async function getStaffEmail(userId: string): Promise<StaffInfo | null> {
@@ -197,7 +204,7 @@ async function enqueueAlert(opts: {
   return true;
 }
 
-function buildNoticeVars(notice: NoticeRow, client: { name: string; gstin: string | null; contact_person?: string | null }): Record<string, string> {
+function buildNoticeVars(notice: NoticeRow, client: { name: string; gstin: string | null }): Record<string, string> {
   const effectiveDue = notice.extended_due_date || notice.due_date;
   const today = todayIST();
   let daysRemaining = '';
@@ -227,8 +234,15 @@ function buildNoticeVars(notice: NoticeRow, client: { name: string; gstin: strin
     staff_name: GST_FIRM.team,
     firm_name: GST_FIRM.name,
     firm_email: GST_FIRM.email,
-    contact_person: client.contact_person || client.name,
+    contact_person: client.name,
   };
+}
+
+// Alerts in this file go to staff, not to the client: greet the recipient and
+// sign as the system, instead of "Dear <client>" … "Warm regards, <recipient>".
+const ALERT_SIGNATURE = 'GST Keeper (automated alert)';
+function staffVars(vars: Record<string, string>, recipient: StaffInfo): Record<string, string> {
+  return { ...vars, contact_person: recipient.name, staff_name: ALERT_SIGNATURE };
 }
 
 // ─── Event-triggered alerts (E1, E6, E7, E8) ───────────────────────────────
@@ -275,7 +289,7 @@ export async function processEventAlert(event: NoticeEvent): Promise<number> {
         eventId: event.id,
         toEmail: recip.email,
         templateKey: rule.template_key,
-        vars: { ...vars, staff_name: recip.name },
+        vars: staffVars(vars, recip),
         dedupe: key,
       });
       if (sent) queued++;
@@ -337,9 +351,10 @@ export async function runScheduledAlerts(): Promise<{ queued: number; errors: st
     const todayStr = today.toISOString().slice(0, 10);
     const dk = dedupeKey('E2_overdue_digest', 'daily', todayStr);
     if (!(await isDuplicate(dk))) {
+      const names = await clientNames(overdue.slice(0, 50).map((n) => n.client_id));
       const noticeListLines = overdue.slice(0, 50).map((n) => {
         const due = n.extended_due_date || n.due_date || '?';
-        return `• ${n.notice_type || 'Notice'} — ${n.reference_number || 'No ref'} (Due: ${due})`;
+        return `• ${names.get(n.client_id) || 'Client'} — ${n.notice_type || 'Notice'} — ${n.reference_number || 'No ref'} (Due: ${due})`;
       });
       const vars: Record<string, string> = {
         overdue_count: String(overdue.length),
@@ -356,7 +371,7 @@ export async function runScheduledAlerts(): Promise<{ queued: number; errors: st
             clientId: overdue[0].client_id,
             toEmail: s.email,
             templateKey: rule.template_key,
-            vars,
+            vars: staffVars(vars, s),
             dedupe: dk + ':' + s.email,
           });
           if (sent) queued++;
@@ -386,7 +401,7 @@ export async function runScheduledAlerts(): Promise<{ queued: number; errors: st
       const sent = await enqueueAlert({
         ruleId: rule.id, noticeId: n.id, clientId: n.client_id,
         toEmail: r.email, templateKey: rule.template_key,
-        vars: { ...vars, staff_name: r.name }, dedupe: dk + ':' + r.email,
+        vars: staffVars(vars, r), dedupe: dk + ':' + r.email,
       });
       if (sent) queued++;
     }
@@ -405,14 +420,14 @@ export async function runScheduledAlerts(): Promise<{ queued: number; errors: st
     const client = await getClient(n.client_id);
     if (!client) continue;
     const vars = buildNoticeVars(n as NoticeRow, client);
-    const { data: rule } = await supabase.from('notice_alert_rules').select('id, template_key, recipient').eq('alert_key', 'E4_hearing').maybeSingle();
+    const { data: rule } = await supabase.from('notice_alert_rules').select('id, template_key, recipient').eq('alert_key', 'E4_hearing_reminder').maybeSingle();
     if (!rule) continue;
     const recipients = await resolveRecipients(rule.recipient || 'assignee', n as NoticeRow);
     for (const r of recipients) {
       const sent = await enqueueAlert({
         ruleId: rule.id, noticeId: n.id, clientId: n.client_id,
         toEmail: r.email, templateKey: rule.template_key,
-        vars: { ...vars, staff_name: r.name }, dedupe: dk + ':' + r.email,
+        vars: staffVars(vars, r), dedupe: dk + ':' + r.email,
       });
       if (sent) queued++;
     }
@@ -439,14 +454,14 @@ export async function runScheduledAlerts(): Promise<{ queued: number; errors: st
     vars.deadline_date = dl.deadline_date || '';
     vars.statutory_basis = dl.statutory_basis || '';
     vars.days_remaining = String(d);
-    const { data: rule } = await supabase.from('notice_alert_rules').select('id, template_key').eq('alert_key', 'E5_limitation').maybeSingle();
+    const { data: rule } = await supabase.from('notice_alert_rules').select('id, template_key').eq('alert_key', 'E5_limitation_alert').maybeSingle();
     if (!rule) continue;
     const partners = await getPartnerEmails();
     for (const r of partners) {
       const sent = await enqueueAlert({
         ruleId: rule.id, noticeId: dl.notice_id, clientId: notice.client_id,
         toEmail: r.email, templateKey: rule.template_key,
-        vars: { ...vars, staff_name: r.name }, dedupe: dk + ':' + r.email,
+        vars: staffVars(vars, r), dedupe: dk + ':' + r.email,
       });
       if (sent) queued++;
     }
@@ -459,8 +474,9 @@ export async function runScheduledAlerts(): Promise<{ queued: number; errors: st
     const todayStr = today.toISOString().slice(0, 10);
     const dk = dedupeKey('E11_unassigned', 'daily', todayStr);
     if (!(await isDuplicate(dk))) {
+      const names = await clientNames(unassigned.slice(0, 50).map((n) => n.client_id));
       const lines = unassigned.slice(0, 50).map((n) =>
-        `• ${n.notice_type || 'Notice'} — ${n.reference_number || 'No ref'} (Issued: ${n.issue_date || '?'})`,
+        `• ${names.get(n.client_id) || 'Client'} — ${n.notice_type || 'Notice'} — ${n.reference_number || 'No ref'} (Issued: ${n.issue_date || '?'})`,
       );
       const vars: Record<string, string> = {
         unassigned_count: String(unassigned.length),
@@ -474,7 +490,7 @@ export async function runScheduledAlerts(): Promise<{ queued: number; errors: st
           const sent = await enqueueAlert({
             ruleId: rule.id, noticeId: unassigned[0].id, clientId: unassigned[0].client_id,
             toEmail: s.email, templateKey: rule.template_key,
-            vars, dedupe: dk + ':' + s.email,
+            vars: staffVars(vars, s), dedupe: dk + ':' + s.email,
           });
           if (sent) queued++;
         }

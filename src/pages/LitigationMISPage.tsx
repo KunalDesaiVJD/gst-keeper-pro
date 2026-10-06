@@ -378,11 +378,7 @@ const LitigationMISPage: React.FC = () => {
       setLoading(true);
 
       const [mRes, cRes, pRes] = await Promise.all([
-        supabase.from('litigation_matters').select(
-          'id, client_id, matter_no, title, status, lifecycle, stage, owner_user_id, ' +
-          'demand_tax, demand_interest, demand_penalty, demand_cess, ' +
-          'paid_total, pre_deposit_total, hearing_at, created_at',
-        ),
+        supabase.from('litigation_matters').select('id, client_id, matter_no, title, status, lifecycle, stage, owner_user_id, demand_tax, demand_interest, demand_penalty, demand_cess, paid_total, pre_deposit_total, hearing_at, created_at'),
         supabase.from('clients').select('id, name, gstin'),
         supabase.from('profiles').select('user_id, first_name'),
       ]);

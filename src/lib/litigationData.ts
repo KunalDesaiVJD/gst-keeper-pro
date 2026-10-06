@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import type { TablesUpdate } from '@/integrations/supabase/types';
 
 export interface LitigationMatter {
   id: string;
@@ -534,7 +535,7 @@ export async function addPayment(
 
   if (matter) {
     const isPreDeposit = input.kind === 'pre_deposit';
-    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    const updates: TablesUpdate<'litigation_matters'> = { updated_at: new Date().toISOString() };
     if (isPreDeposit) {
       updates.pre_deposit_total = (matter.pre_deposit_total ?? 0) + total;
     } else {
@@ -626,10 +627,7 @@ export async function suggestMatters(): Promise<{
 }> {
   const { data: notices, error } = await supabase
     .from('gst_notices')
-    .select(
-      'id, case_id, client_id, notice_type, description, issue_date, due_date, ' +
-      'staff_status, amount_of_demand, financial_year, matter_id',
-    )
+    .select('id, case_id, client_id, notice_type, description, issue_date, due_date, staff_status, amount_of_demand, financial_year, matter_id')
     .is('deleted_at', null)
     .is('matter_id', null)
     .not('case_id', 'is', null)

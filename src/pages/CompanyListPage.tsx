@@ -22,6 +22,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { isExtensionOutdated, outdatedExtensionMessage } from '@/lib/extensionVersion';
+import { describeClientDeleteError } from '@/lib/clientDeleteError';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
@@ -61,6 +63,8 @@ interface SyncLogRow {
 
 const ROWS_PER_PAGE_OPTIONS = [10, 25, 50, 100];
 
+const STATUS_ACTIONS = new Set(['notices', 'login_failed']);
+
 const CompanyListPage: React.FC = () => {
   const { isStaffRole, canAddEditClients, canDeleteClients } = useAuth();
   const navigate = useNavigate();
@@ -90,6 +94,7 @@ const CompanyListPage: React.FC = () => {
   const [syncLogOpen, setSyncLogOpen] = useState(false);
 
   const [extReady, setExtReady] = useState(false);
+  const [extVersion, setExtVersion] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [fetching, setFetching] = useState(false);
   // Sync and Fetch Company now share the same underlying extension message
@@ -125,7 +130,7 @@ const CompanyListPage: React.FC = () => {
     const onMsg = (e: MessageEvent) => {
       const d: any = e.data;
       if (!d || typeof d !== 'object') return;
-      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkExtensionReady) { setExtReady(true); setExtVersion(d.version || null); }
       if (d.__gstkPullSectionAllClientsResult) {
         const action = pendingActionRef.current;
         pendingActionRef.current = null;
@@ -146,12 +151,13 @@ const CompanyListPage: React.FC = () => {
     return () => { window.removeEventListener('message', onMsg); clearTimeout(t1); clearTimeout(t2); };
   }, []);
 
-  if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
-
-  // Latest sync-log row per client (logs are already ordered newest-first).
+  // Latest notices-sync attempt per client (logs are already ordered newest-first).
+  // Only the notices step and login failures decide the status: diagnostic rows
+  // (refunds_debug, notices_gstr3a_debug, notices_guard) written later in the same
+  // run used to mask a failed sync as a success.
   const latestLogByClient = useMemo(() => {
     const m = new Map<string, SyncLogRow>();
-    for (const l of syncLogs) if (!m.has(l.client_id)) m.set(l.client_id, l);
+    for (const l of syncLogs) if (STATUS_ACTIONS.has(l.action) && !m.has(l.client_id)) m.set(l.client_id, l);
     return m;
   }, [syncLogs]);
 
@@ -198,7 +204,7 @@ const CompanyListPage: React.FC = () => {
     if (selected.size === 0) { toast.error('Select at least one company first.'); return; }
     if (!(await confirm({ title: `Delete ${selected.size} compan${selected.size === 1 ? 'y' : 'ies'}?`, description: 'This permanently deletes each selected company and all of its data.', destructive: true, confirmText: 'Delete' }))) return;
     const { error } = await supabase.from('clients').delete().in('id', Array.from(selected));
-    if (error) { toast.error('Delete failed: ' + error.message); return; }
+    if (error) { toast.error('Delete failed: ' + describeClientDeleteError(error, selected.size > 1)); return; }
     toast.success('Deleted.');
     setSelected(new Set());
     fetchAll();
@@ -207,7 +213,7 @@ const CompanyListPage: React.FC = () => {
   const handleDeleteOne = async (id: string, name: string) => {
     if (!(await confirm({ title: 'Delete company?', description: `This permanently deletes "${name}" and all of its data.`, destructive: true, confirmText: 'Delete' }))) return;
     const { error } = await supabase.from('clients').delete().eq('id', id);
-    if (error) { toast.error('Delete failed: ' + error.message); return; }
+    if (error) { toast.error('Delete failed: ' + describeClientDeleteError(error)); return; }
     toast.success('Deleted.');
     fetchAll();
   };
@@ -232,6 +238,7 @@ const CompanyListPage: React.FC = () => {
   const handleSync = () => {
     if (selected.size === 0) { toast.error('Select at least one company first.'); return; }
     if (!extReady) { toast.error('GST Keeper browser extension not detected. Install/enable it to sync.'); return; }
+    if (isExtensionOutdated(extVersion)) { toast.error(outdatedExtensionMessage(extVersion)); return; }
     // Clients with "Exclude from Notices Dashboard sync" set (Edit Client)
     // never load onto this page at all (see fetchAll's query), so `selected`
     // can't contain one — no filtering needed here.
@@ -255,6 +262,10 @@ const CompanyListPage: React.FC = () => {
 
   const selectedLogs = selected.size > 0 ? syncLogs.filter((l) => selected.has(l.client_id)) : syncLogs.slice(0, 50);
   const clientNameById = useMemo(() => new Map(clients.map((c) => [c.id, c.name])), [clients]);
+
+  // After every hook (Rules of Hooks): an early return above them would change
+  // the hook order if the role changes between renders.
+  if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
   return (
     <div className="space-y-4 animate-fade-in">
