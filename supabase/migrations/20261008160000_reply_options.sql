@@ -57,6 +57,14 @@ BEGIN
 END;
 $$;
 
+-- An issue title as staff or a reader wrote it, worded for a reply: "u/s 73 · Apr 2019 –
+-- Mar 2020" → "under section 73, Apr 2019 to Mar 2020".
+CREATE OR REPLACE FUNCTION public.reply_title(p text)
+RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT public.reply_dehyphen(
+           regexp_replace(regexp_replace(btrim(p), '\mu/s\M\.?', 'under section', 'gi'), '\s*·\s*', ', ', 'g'))
+$$;
+
 -- Indian digit grouping: Rs. 1,23,45,678 (paise only when there are any).
 CREATE OR REPLACE FUNCTION public.reply_inr(p numeric)
 RETURNS text LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
@@ -373,16 +381,16 @@ BEGIN
     i := i + 1;
     -- (a), (b), (c) so the list never clashes with the reply's numbered paragraphs
     v_list := v_list || CASE WHEN i > 1 THEN E';\n' ELSE '' END
-              || '(' || CASE WHEN i <= 26 THEN chr(96 + i) ELSE i::text END || ') ' || public.reply_dehyphen(btrim(r.title))
+              || '(' || CASE WHEN i <= 26 THEN chr(96 + i) ELSE i::text END || ') ' || public.reply_title(r.title)
               || CASE WHEN coalesce(r.amount, 0) > 0 THEN ' amounting to ' || public.reply_inr(r.amount) ELSE '' END;
     v_contest := v_contest || CASE WHEN i > 1 THEN E'\n\n' ELSE '' END
-              || 'Issue (' || CASE WHEN i <= 26 THEN chr(96 + i) ELSE i::text END || '): ' || public.reply_dehyphen(btrim(r.title))
+              || 'Issue (' || CASE WHEN i <= 26 THEN chr(96 + i) ELSE i::text END || '): ' || public.reply_title(r.title)
               || CASE WHEN coalesce(r.amount, 0) > 0 THEN ' (' || public.reply_inr(r.amount) || ')' ELSE '' END || E'\n'
               || coalesce(r.para_contest,
                    'The noticee respectfully submits that the proposal on this issue is not sustainable on facts and in law. '
                    || '[Set out the facts, the reconciliation and the legal submissions on this issue.]');
     v_accept := v_accept || CASE WHEN i > 1 THEN E'\n\n' ELSE '' END
-              || 'Issue (' || CASE WHEN i <= 26 THEN chr(96 + i) ELSE i::text END || '): ' || public.reply_dehyphen(btrim(r.title))
+              || 'Issue (' || CASE WHEN i <= 26 THEN chr(96 + i) ELSE i::text END || '): ' || public.reply_title(r.title)
               || CASE WHEN coalesce(r.amount, 0) > 0 THEN ' (' || public.reply_inr(r.amount) || ')' ELSE '' END || E'\n'
               || coalesce(r.para_accept,
                    'The noticee accepts the liability on this issue and has discharged the same together with applicable '
@@ -401,7 +409,7 @@ BEGIN
   SELECT string_agg('Annexure ' || n || ': ' || public.reply_dehyphen(t), E'\n' ORDER BY n) INTO v_annex
     FROM (
       SELECT row_number() OVER (ORDER BY a.generated_at, a.recipe_key) AS n,
-             regexp_replace(coalesce(nullif(btrim(a.title), ''), initcap(replace(a.recipe_key, '_', ' '))), '\s*·\s*', ', ', 'g')
+             public.reply_title(coalesce(nullif(btrim(a.title), ''), initcap(replace(a.recipe_key, '_', ' '))))
              || CASE WHEN a.financial_year IS NOT NULL AND coalesce(a.title, '') !~ '20[0-9]{2}'
                      THEN ' for the financial year ' || a.financial_year ELSE '' END AS t
         FROM public.reply_annexures a

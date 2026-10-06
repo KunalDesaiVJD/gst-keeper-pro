@@ -50,7 +50,9 @@ UPDATE portal_jobs SET status = 'waiting_captcha', claimed_by = NULL
  WHERE status = 'queued' AND client_id = '99b99999-0000-0000-0000-00000000000c';
 SELECT t_eq(portal_job_claim('chrome:c', true) IS NULL, true, 'a waiting_captcha job is not given to a Chrome, even with p_wall_open');
 SELECT t_eq((autopilot_badge() ->> 'waiting')::int, 0, 'no CAPTCHA badge without a wall');
-UPDATE portal_jobs SET status = 'queued' WHERE status = 'waiting_captcha';
+SELECT t_eq((autopilot_tick() ->> 'requeued_from_wall')::int, 1, 'the tick puts a job parked for the wall back in the queue');
+SELECT t_eq((SELECT status FROM portal_jobs WHERE client_id = '99b99999-0000-0000-0000-00000000000c' AND status <> 'cancelled'), 'queued',
+            'queued again');
 
 -- ── A CAPTCHA not filled in time: retried, then failed ─────────────────────
 SELECT t_eq((SELECT portal_job_start(id, 'chrome:a') FROM portal_jobs WHERE claimed_by = 'chrome:a'), true, 'the Chrome starts its job');

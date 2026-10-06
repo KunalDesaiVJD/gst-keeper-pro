@@ -514,7 +514,10 @@ SET search_path = public
 AS $$
   SELECT jsonb_build_object(
     'settings', (SELECT to_jsonb(s) FROM public.ai_settings s WHERE s.id),
-    'agent_online', public.autopilot_agent_online(),
+    -- The reader runs on the office agent, whatever runs the portal queue (a Chrome
+    -- runner's heartbeat, 'chrome:<id>', is not a reader).
+    'agent_online', EXISTS (SELECT 1 FROM public.portal_agent_heartbeat h
+                             WHERE h.agent_id NOT LIKE 'chrome:%' AND h.last_seen > now() - interval '150 seconds'),
     'spend_today_usd', public.ai_spend_today_usd(),
     'queue', (SELECT jsonb_build_object(
                 'queued', count(*) FILTER (WHERE status = 'queued'),

@@ -1,13 +1,14 @@
 // "Reply rules" (roadmap Phase 4; audit R-11): every issue code — what it is,
 // the evidence recipe that answers it, the documents the client is asked for,
-// and the firm's position — with its approval state. The positions are
+// the firm's position and the two paragraphs a prepared reply uses for it
+// (contesting, accepting; contract §B) — with its approval state. The positions are
 // engineering proposals until a partner approves each one
 // (docs/REPLY_FACTORY_POSITIONS.md); a GST manager can edit, approve or send
 // one back, everyone else reads. Filters live in the URL.
-import React, { useMemo, useState } from 'react';
+import React, { useId, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Check, MessageSquareWarning, Pencil, Search, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, MessageSquareWarning, Pencil, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,7 +22,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { fmtDate, plural } from '@/lib/noticeFormat';
 import {
   FAMILY_LABELS, POSITION_STATUS, approveIssueType, factoryHref, familyLabel, positionStatusDef, recipeLabel, requestIssueTypeChanges,
-  saveIssueType, useIssueTypes, type Actor, type IssueType,
+  saveIssueType, useIssueTypes, type Actor, type IssueType, type IssueTypePatch,
 } from '@/lib/replyFactory';
 import { RuleEditDialog } from './RuleEditDialog';
 import { cn } from '@/lib/utils';
@@ -62,7 +63,8 @@ export const RulesTab: React.FC = () => {
   };
 
   const base = useMemo(() => (q.data ?? []).filter((t) => (family === 'all' || t.family === family)
-    && (!search || `${t.code} ${t.title} ${t.description ?? ''} ${t.firm_position ?? ''} ${t.documents.join(' ')}`.toLowerCase().includes(search))), [q.data, family, search]);
+    && (!search || `${t.code} ${t.title} ${t.description ?? ''} ${t.firm_position ?? ''} ${t.documents.join(' ')} ${t.para_contest ?? ''} ${t.para_accept ?? ''}`
+      .toLowerCase().includes(search))), [q.data, family, search]);
   const byStatus = (s: string) => base.filter((t) => t.position_status === s).length;
   const rows = base.filter((t) => status === 'all' || t.position_status === status)
     .sort((a, b) => Number(b.is_active) - Number(a.is_active) || a.sort - b.sort);
@@ -91,11 +93,14 @@ export const RulesTab: React.FC = () => {
     }
   };
 
-  const save = async (t: IssueType, position: string | null, documents: string[]) => {
+  const save = async (t: IssueType, patch: IssueTypePatch) => {
     setBusy(t.code);
     try {
-      const { reset } = await saveIssueType(t, { firm_position: position, documents }, actor);
-      toast.success(reset ? `Saved. "${t.title}" is back to Proposed until a partner approves the new words.` : `Saved: ${t.title}.`);
+      const { reset, parasChanged } = await saveIssueType(t, patch, actor);
+      toast.success([
+        reset ? `Saved. "${t.title}" is back to Proposed until a partner approves the new words.` : `Saved: ${t.title}.`,
+        parasChanged ? 'Open notices that raise this issue get the new reply paragraphs; drafts already started keep their own text.' : '',
+      ].filter(Boolean).join(' '));
       setEditing(null);
       refresh();
     } catch (e) {
@@ -207,16 +212,17 @@ const RuleCard: React.FC<{ t: IssueType; canEdit: boolean; busy: boolean; onEdit
         <div className="min-w-0 space-y-2 text-xs">
           <div>
             <div className="font-semibold">Evidence</div>
-            <p className="text-foreground/80">{recipe ? `Built automatically: ${recipe}.` : 'No automatic evidence — built by hand.'}</p>
+            <p className="text-foreground/80">{recipe ? `Built automatically: ${recipe}.` : 'No automatic evidence: built by hand.'}</p>
           </div>
           <div>
             <div className="font-semibold">Documents asked from the client</div>
             {t.documents.length
               ? <ul className="list-disc space-y-0.5 pl-4 text-foreground/80">{t.documents.map((d) => <li key={d} className="break-words">{d}</li>)}</ul>
-              : <p className="text-foreground/80">None — the evidence comes from the portal figures.</p>}
+              : <p className="text-foreground/80">None: the evidence comes from the portal figures.</p>}
           </div>
         </div>
       </div>
+      <ReplyParagraphs t={t} />
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t pt-2">
         <span className="text-[11px] text-muted-foreground">{statusWords(t)}</span>
         {canEdit && (
@@ -238,6 +244,34 @@ const RuleCard: React.FC<{ t: IssueType; canEdit: boolean; busy: boolean; onEdit
         )}
       </div>
     </li>
+  );
+};
+
+/** The two paragraphs a prepared reply uses for the issue, read only (folded: they are long). */
+const ReplyParagraphs: React.FC<{ t: IssueType }> = ({ t }) => {
+  const uid = useId();
+  const [open, setOpen] = useState(false);
+  const written = [t.para_contest, t.para_accept].filter(Boolean).length;
+  return (
+    <div className="mt-2 rounded-md border bg-muted/20">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-controls={`${uid}-paras`}
+        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs font-semibold hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        {open ? <ChevronDown className="h-3.5 w-3.5" aria-hidden /> : <ChevronRight className="h-3.5 w-3.5" aria-hidden />}
+        Reply paragraphs<span className="sr-only"> for {t.title}</span>
+        <span className="font-normal text-foreground/70">{written === 2 ? 'contesting and accepting' : written === 1 ? 'one of two written' : 'none written: replies use a general paragraph'}</span>
+      </button>
+      {open && (
+        <div id={`${uid}-paras`} className="grid gap-3 border-t p-2 text-sm lg:grid-cols-2">
+          {([['When contesting', t.para_contest], ['When accepting', t.para_accept]] as const).map(([label, text]) => (
+            <div key={label} className="min-w-0 space-y-0.5">
+              <div className="text-xs font-semibold">{label}</div>
+              {text ? <p className="whitespace-pre-line break-words leading-relaxed">{text}</p>
+                : <p className="text-xs text-foreground/70">Not written: the reply uses a general paragraph.</p>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 };
 

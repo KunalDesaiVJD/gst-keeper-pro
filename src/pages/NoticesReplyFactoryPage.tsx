@@ -6,7 +6,9 @@
 // R-15 (the AI switch, spend, cap and audit on one page), R-25 (client
 // document requests measured) and R-28 (due-date coverage measured), and the
 // notice types the firm asked for on 6 October 2026: which need a reply and which
-// the dashboard shows. Tabs, filters and the open list live in the URL. Staff only.
+// the dashboard shows, and the reply templates every prepared reply starts from
+// (with the signature block). Tabs, filters and the open list live in the URL.
+// Staff only.
 import React from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -21,6 +23,7 @@ import { LoadError } from '@/components/notices/autopilot/parts';
 import { FactoryStatusLine } from '@/components/notices/reply/factory/FactoryStatusLine';
 import { OverviewTab } from '@/components/notices/reply/factory/OverviewTab';
 import { RulesTab } from '@/components/notices/reply/factory/RulesTab';
+import { TemplatesTab } from '@/components/notices/reply/factory/TemplatesTab';
 import { AiReadingTab } from '@/components/notices/reply/factory/AiReadingTab';
 import { ConsentTab } from '@/components/notices/reply/factory/ConsentTab';
 import { NoticeTypesSettings } from '@/components/notices/types/NoticeTypesSettings';
@@ -30,6 +33,7 @@ import { cn } from '@/lib/utils';
 const TABS: { key: FactoryTab; label: string }[] = [
   { key: 'overview', label: 'Overview' },
   { key: 'types', label: 'Notice types' },
+  { key: 'templates', label: 'Reply templates' },
   { key: 'rules', label: 'Reply rules' },
   { key: 'ai', label: 'AI reading' },
   { key: 'consent', label: 'Client consent' },
@@ -85,6 +89,7 @@ const NoticesReplyFactoryPage: React.FC = () => {
         </TabsList>
         <TabsContent value="overview" className="mt-0"><OverviewTab s={s} loading={status.isLoading} /></TabsContent>
         <TabsContent value="types" className="mt-0"><NoticeTypesSettings urlState /></TabsContent>
+        <TabsContent value="templates" className="mt-0"><TemplatesTab /></TabsContent>
         <TabsContent value="rules" className="mt-0"><RulesTab /></TabsContent>
         <TabsContent value="ai" className="mt-0"><AiReadingTab s={s} loading={status.isLoading} /></TabsContent>
         <TabsContent value="consent" className="mt-0"><ConsentTab /></TabsContent>

@@ -16,7 +16,7 @@ import type { CommandCentre } from '@/lib/noticeCommandCentre';
 import { dashListHref as dashHref, noticesListHref } from '@/lib/noticeQueries';
 import { fmtAgo, fmtDay, fmtInrShort, plural } from '@/lib/noticeFormat';
 import { runNoticeAlerts, describeAlertRun } from '@/lib/noticeAlertQueue';
-import { latestAgent, reasonLabel, useAutopilotBadge, useAutopilotStatus } from '@/lib/autopilot';
+import { chromeRunners, latestAgent, reasonLabel, runnerMode, runnerWords, useAutopilotBadge, useAutopilotStatus } from '@/lib/autopilot';
 import { cn } from '@/lib/utils';
 
 // ── KPI tiles ──────────────────────────────────────────────────────────────
@@ -202,7 +202,16 @@ export const AutopilotHealth: React.FC<{ cc: CommandCentre; canRunAlerts: boolea
       <div className="divide-y">
         <Row label={run ? `Last sync run · ${run.status}${run.ext_version ? ` · extension v${run.ext_version}` : ''}` : 'No sync run recorded yet'}
           value={run ? `${fmtAgo(run.started_at)}${run.clients_total ? ` · ${run.clients_done}/${run.clients_total}` : ''}` : '—'} to="/notices-company-list?tab=log" />
-        {ap && (
+        {ap && runnerMode(ap) === 'chrome' && (() => {
+          // The firm's Chrome runs the scheduled syncs (no CAPTCHA wall).
+          const runner = chromeRunners(ap)[0];
+          return (
+            <Row label={`Scheduled Chrome · ${!runner ? 'not set up' : runnerWords(runner)}${ap.settings?.enabled ? '' : ' · autopilot off'}`}
+              value={runner ? `${runner.online ? 'seen' : 'last seen'} ${fmtAgo(runner.last_seen)}` : '—'}
+              to="/notices-autopilot" bad={!!ap.settings?.enabled && !ap.agent_online} />
+          );
+        })()}
+        {ap && runnerMode(ap) !== 'chrome' && (
           <Row label={`Office agent · ${!agent ? 'not set up' : ap.agent_online ? 'online' : 'offline'}${ap.settings?.enabled ? '' : ' · autopilot off'}`}
             value={agent ? `${ap.agent_online ? 'seen' : 'last seen'} ${fmtAgo(agent.last_seen)}` : '—'}
             to="/notices-autopilot" bad={!!ap.settings?.enabled && !ap.agent_online} />

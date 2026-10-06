@@ -27,6 +27,21 @@ The test refuses any PostgREST that is not on 127.0.0.1 / localhost. Never point
 at the live project. Chromium comes from Playwright (`npx playwright install
 chromium`).
 
+- `chrome-runner.e2e.test.ts` runs the **0.7.0 Chrome runner** (scheduled syncs in the
+  firm's own Chrome, no CAPTCHA wall) in Chromium with the real extension against
+  `FakePortal`, with a test-only filler standing in for the firm's CAPTCHA extension
+  (`runnerHarness.ts`; nothing in `extension/` uses it). It covers: a claimed job filled
+  in one go logs in, syncs, succeeds and closes its window; an unfilled CAPTCHA fails
+  with `captcha_timeout`, is retried and the runner moves on; with `runner =
+  'office_agent'` the Chrome gets nothing; two runners never take the same job; a
+  person's sync comes first; a Chrome restart mid-client gives the client back. Same
+  database and PostgREST set-up as above (the database built like `run.sh`), then:
+
+```
+E2E_PGRST=http://127.0.0.1:54391 E2E_JWT_FILE=/path/to/anon.jwt \
+  node --import tsx --test test/chrome-runner.e2e.test.ts
+```
+
 ## The notice reader (Claude API)
 
 Never calls the real Claude API: every test points the SDK at `FakeAnthropic`

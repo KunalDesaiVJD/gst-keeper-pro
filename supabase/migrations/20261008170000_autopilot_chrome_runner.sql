@@ -52,6 +52,13 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS
            = coalesce((SELECT s.runner FROM public.autopilot_settings s WHERE s.id), 'chrome'))
 $$;
 
+-- Jobs parked for a typed CAPTCHA by the office agent have no wall to wait for once the
+-- Chrome runs the queue: they go back to the queue (here, and on every tick below).
+UPDATE public.portal_jobs
+   SET status = 'queued', claimed_by = NULL, human_prompt = NULL, human_response = NULL, prompt_id = NULL, updated_at = now()
+ WHERE status = 'waiting_captcha'
+   AND coalesce((SELECT s.runner FROM public.autopilot_settings s WHERE s.id), 'chrome') = 'chrome';
+
 -- ── Heartbeat: what the runner needs to know ───────────────────────────────
 CREATE OR REPLACE FUNCTION public.autopilot_heartbeat(p_agent text, p_info jsonb DEFAULT '{}'::jsonb)
 RETURNS jsonb
@@ -184,6 +191,15 @@ BEGIN
                       WHERE h.agent_id = j.claimed_by AND h.last_seen > now() - interval '3 minutes');
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_out := v_out || jsonb_build_object('released', v_n);
+
+  -- No wall for the Chrome: a job parked for a typed CAPTCHA goes back to the queue.
+  IF coalesce(v_set.runner, 'chrome') = 'chrome' THEN
+    UPDATE public.portal_jobs
+       SET status = 'queued', claimed_by = NULL, human_prompt = NULL, human_response = NULL, prompt_id = NULL, updated_at = now()
+     WHERE status = 'waiting_captcha';
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    IF v_n > 0 THEN v_out := v_out || jsonb_build_object('requeued_from_wall', v_n); END IF;
+  END IF;
 
   IF NOT coalesce(v_set.enabled, false) THEN
     RETURN v_out || jsonb_build_object('enabled', false);

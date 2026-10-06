@@ -2,14 +2,16 @@
 // Reply Factory page and the client portal read and write — the Phase 4
 // acceptance numbers (reply_factory_status), the lists behind each of them, the
 // reply rules (reply_issue_types), the AI reading switches, spend and audit,
-// client consent, and the client's own document requests (migrations
-// 20261008100000–140000). One place for the words, so every screen says the
-// same thing. Read docs/REPLY_FACTORY_POSITIONS.md before changing a rule here.
+// client consent, the client's own document requests (migrations
+// 20261008100000–140000), and the reply templates with their signature block
+// and checks (20261008160000; contract §B, §C). One place for the words, so
+// every screen says the same thing. Read docs/REPLY_FACTORY_POSITIONS.md
+// before changing a rule here.
 import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, type QueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import type { Database } from '@/integrations/supabase/types';
+import type { Database, Json } from '@/integrations/supabase/types';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { addDays, istToday } from '@/lib/noticeFacts';
 import { fmtAgo, fmtDate, fmtInr } from '@/lib/noticeFormat';
@@ -24,7 +26,7 @@ export type ClientDocRequest = Functions['client_doc_requests']['Returns'][numbe
 export type Tone = 'success' | 'warning' | 'info' | 'destructive' | 'secondary';
 export interface Actor { id: string; firstName: string }
 
-export type FactoryTab = 'overview' | 'types' | 'rules' | 'ai' | 'consent';
+export type FactoryTab = 'overview' | 'types' | 'templates' | 'rules' | 'ai' | 'consent';
 
 /** A list's page in the URL (?p= by default); links to another list leave it out, so a new list starts on page 1. */
 export function useListPage(param = 'p', pageSize = 50) {
@@ -758,21 +760,34 @@ export function documentsFromText(text: string): string[] {
   });
 }
 
+export interface IssueTypePatch {
+  firm_position: string | null;
+  documents: string[];
+  /** The reply paragraphs for the issue (no hyphen or dash; reply_issue_types_paras_no_dash). */
+  para_contest: string | null;
+  para_accept: string | null;
+}
+
 /**
- * Edits the rule's position and documents. A changed position goes back to
- * "Proposed": an approval covers the words that were approved.
+ * Edits the rule's position, documents and reply paragraphs. A changed
+ * position goes back to "Proposed": an approval covers the words that were
+ * approved. Changed paragraphs are sent only when they changed, since the
+ * database then prepares again the reply options of every open notice that
+ * raises the issue (trg_reply_issue_paras_changed).
  */
-export async function saveIssueType(t: IssueType, patch: { firm_position: string | null; documents: string[] }, actor: Actor | null) {
+export async function saveIssueType(t: IssueType, patch: IssueTypePatch, actor: Actor | null) {
   const positionChanged = (patch.firm_position ?? '') !== (t.firm_position ?? '');
   const reset = positionChanged && t.position_status !== 'proposed';
+  const parasChanged = (patch.para_contest ?? '') !== (t.para_contest ?? '') || (patch.para_accept ?? '') !== (t.para_accept ?? '');
   const { error } = await supabase.from('reply_issue_types').update({
     firm_position: patch.firm_position,
     documents: patch.documents,
+    ...(parasChanged ? { para_contest: patch.para_contest, para_accept: patch.para_accept } : {}),
     updated_by_name: actor?.firstName ?? null,
     ...(reset ? { position_status: 'proposed', approved_by_name: null, approved_at: null } : {}),
   }).eq('code', t.code);
-  if (error) throw error;
-  return { reset };
+  if (error) throw new Error(replyWriteErrorWords(error));
+  return { reset, parasChanged };
 }
 
 export async function approveIssueType(code: string, actor: Actor | null) {
@@ -967,4 +982,426 @@ export function neededByWords(due: string | null | undefined): { text: string; o
   }
   if (due === today) return { text: 'Needed today', overdue: false, soon: true };
   return { text: `Needed by ${fmtDate(due)}`, overdue: false, soon: due <= addDays(today, 2) };
+}
+
+// ── Reply templates (migration 20261008160000_reply_options.sql; contract §B, §C;
+// docs/REPLY_TEMPLATES.md, REPLY_FACTORY_POSITIONS §12) ─────────────────────
+// The firm's reply wording: one template per kind of reply for each form (an
+// empty form list is a general template, used when a notice's form has none of
+// its own). Saving one raises its version and the database prepares the options
+// of every open notice again; so does the signature block. Nothing in a reply
+// may hold a hyphen or a dash: the database refuses it, and the checks below
+// say so before Save.
+export type ReplyTemplate = Tables['reply_templates']['Row'];
+
+/** A dash a reply may not hold: public.reply_has_dash (hyphen, soft hyphen, U+2010 to U+2015, minus, small and fullwidth hyphens). */
+const DASH_ONE = /[\u002D\u00AD\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/;
+export const hasDash = (s: string | null | undefined): boolean => !!s && DASH_ONE.test(s);
+
+/**
+ * The same rules as public.reply_dehyphen, in the same order: the soft hyphen
+ * goes; "/" plus dashes (the "Rs. 500/-" suffix) goes; a dash between digits
+ * becomes "/" (2023-24 to 2023/24); any other run of dashes becomes a space;
+ * doubled spaces close up. Line breaks stay.
+ */
+export function dehyphen(text: string): string {
+  return text
+    .replace(/\u00AD/g, '')
+    .replace(/\/[ \t]*[\u002D\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]+(?![0-9])/g, '')
+    .replace(/([0-9])[ \t]*[\u002D\u2010-\u2015\u2212\uFE58\uFE63\uFF0D][ \t]*(?=[0-9])/g, '$1/')
+    .replace(/[ \t]*[\u002D\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]+[ \t]*/g, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/^[ \t]+|[ \t]+$/g, '');
+}
+
+const DASH_NAMES: Record<string, string> = {
+  '\u002D': 'hyphen', '\u00AD': 'soft hyphen', '\u2010': 'hyphen', '\u2011': 'non breaking hyphen', '\u2012': 'figure dash',
+  '\u2013': 'en dash', '\u2014': 'em dash', '\u2015': 'horizontal bar', '\u2212': 'minus sign', '\uFE58': 'small em dash',
+  '\uFE63': 'small hyphen', '\uFF0D': 'fullwidth hyphen',
+};
+const codePoint = (c: string) => `U+${(c.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')}`;
+
+/** One hyphen or dash found in a field, with the words around it on its line and what Replace dashes makes of them. */
+export interface DashHit {
+  field: string;
+  line: number;
+  char: string;
+  /** "en dash (U+2013)". */
+  name: string;
+  before: string;
+  after: string;
+  /** The same words after Replace dashes. */
+  becomes: string;
+}
+
+export function findDashes(text: string | null | undefined, field: string, span = 28): DashHit[] {
+  if (!text) return [];
+  const out: DashHit[] = [];
+  text.split('\n').forEach((ln, i) => {
+    const re = /[\u002D\u00AD\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(ln))) {
+      const s = Math.max(0, m.index - span);
+      const e = Math.min(ln.length, m.index + 1 + span);
+      const head = s > 0 ? '…' : '';
+      const tail = e < ln.length ? '…' : '';
+      out.push({
+        field, line: i + 1, char: m[0], name: `${DASH_NAMES[m[0]] ?? 'dash'} (${codePoint(m[0])})`,
+        before: head + ln.slice(s, m.index), after: ln.slice(m.index + 1, e) + tail,
+        becomes: head + dehyphen(ln.slice(s, e)) + tail,
+      });
+    }
+  });
+  return out;
+}
+
+/** The {{keys}} notice_reply_context() fills (contract §C), with what each one prints. */
+export const REPLY_PLACEHOLDERS: { key: string; meaning: string }[] = [
+  { key: 'today_long', meaning: "Today's date, as 6 October 2026." },
+  { key: 'client_name', meaning: "The client's name." },
+  { key: 'gstin', meaning: "The client's GSTIN." },
+  { key: 'sgst_act', meaning: 'The State or Union Territory GST Act from the GSTIN, as the Gujarat Goods and Services Tax Act, 2017.' },
+  { key: 'form_code_text', meaning: 'The form code with a space for the hyphen, as DRC 01.' },
+  { key: 'form_name', meaning: 'The form in full, as FORM GST DRC 01, or "the notice" when it is not a form.' },
+  { key: 'form_title', meaning: 'What the notice is, in small letters, as show cause notice for a tax demand.' },
+  { key: 'notice_ref', meaning: 'The reference number or case id, or [reference number].' },
+  { key: 'notice_date_long', meaning: 'The date of the notice, or [date of the notice].' },
+  { key: 'din_clause', meaning: '", bearing Document Identification Number …," when the notice has a DIN, else nothing. Follow it with a word, never a comma.' },
+  { key: 'officer', meaning: 'The officer who issued it, or Proper Officer (Appellate Authority for an appeal). Write "The {{officer}}".' },
+  { key: 'section_text', meaning: 'The provision in full, as section 73 of the Central Goods and Services Tax Act, 2017 read with the State Act.' },
+  { key: 'section_short', meaning: 'The provision in short, as section 73 or rule 88C, or "the relevant section".' },
+  { key: 'period_text', meaning: 'The period, as the period from 1 April 2023 to 31 March 2024, or the financial year 2023/24.' },
+  { key: 'fy_text', meaning: 'The financial year, as the financial year 2023/24.' },
+  { key: 'demand_total_text', meaning: 'The total demand in figures and words, or "the amount proposed in the notice".' },
+  { key: 'demand_total_figure', meaning: 'The total demand in figures, as Rs. 1,23,456, or [amount].' },
+  { key: 'demand_heads_text', meaning: 'The demand by head, as tax of Rs. X, interest of Rs. Y and penalty of Rs. Z.' },
+  { key: 'reply_due_long', meaning: 'The reply due date, or "the date specified in the notice".' },
+  { key: 'hearing_clause', meaning: 'A sentence naming the hearing date, or nothing when no hearing is fixed.' },
+  { key: 'hearing_date_long', meaning: 'The hearing date, or [date of hearing].' },
+  { key: 'issues_list', meaning: 'The issues raised, lettered (a), (b), (c), with their amounts.' },
+  { key: 'issues_contest_paras', meaning: 'For each issue, a heading and the paragraph contesting it (Reply rules tab).' },
+  { key: 'issues_accept_paras', meaning: 'For each issue, a heading and the paragraph accepting it (Reply rules tab).' },
+  { key: 'annexure_list', meaning: 'The annexures prepared for the notice, one per line, or [List of documents enclosed].' },
+  { key: 'payment_clause', meaning: 'The FORM GST DRC 03 payment words, with blanks for the ARN and the date of payment.' },
+  { key: 'place', meaning: 'The place in the signature block, or [place].' },
+  { key: 'signatory', meaning: 'The signatory in the signature block, or Authorised Signatory.' },
+];
+const PLACEHOLDER_MEANING = new Map(REPLY_PLACEHOLDERS.map((p) => [p.key, p.meaning]));
+export const placeholderMeaning = (key: string): string | null => PLACEHOLDER_MEANING.get(key) ?? null;
+
+function editDistance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cur = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+  }
+  return row[b.length];
+}
+
+/** The known key a mistyped one was most likely meant to be. */
+export function nearestPlaceholder(word: string): string | null {
+  const w = word.trim().toLowerCase().replace(/[\s.]+/g, '_');
+  if (PLACEHOLDER_MEANING.has(w)) return w;
+  let best: string | null = null;
+  let bestD = Infinity;
+  for (const { key } of REPLY_PLACEHOLDERS) {
+    const d = editDistance(w, key);
+    if (d < bestD) { bestD = d; best = key; }
+  }
+  return best && bestD <= Math.max(2, Math.floor(best.length / 4)) ? best : null;
+}
+
+/** A {{token}} that would not be filled as meant. */
+export interface PlaceholderProblem {
+  field: string;
+  line: number;
+  token: string;
+  reason: string;
+  /** The token to write instead, when there is an obvious one. */
+  fix: string | null;
+}
+
+/**
+ * The placeholders of a field that the renderer would not fill: an unknown key
+ * prints as "[key]", a key written with spaces or capitals is not filled. Where
+ * placeholders are not taken at all (a title, a summary, an issue paragraph,
+ * the signature block), every one is a problem.
+ */
+export function placeholderProblems(text: string | null | undefined, field: string, takesPlaceholders = true): PlaceholderProblem[] {
+  if (!text) return [];
+  const out: PlaceholderProblem[] = [];
+  text.split('\n').forEach((ln, i) => {
+    const re = /\{\{([^{}\n]*)\}\}/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(ln))) {
+      const inner = m[1];
+      const trimmed = inner.trim();
+      const line = i + 1;
+      if (!takesPlaceholders) {
+        out.push({ field, line, token: m[0], reason: `is not filled here: only the wording of a template takes placeholders, so it prints as ${/^[a-z0-9_]+$/.test(trimmed) ? `[${trimmed}]` : 'written'}.`, fix: null });
+        continue;
+      }
+      if (PLACEHOLDER_MEANING.has(inner)) continue;
+      if (PLACEHOLDER_MEANING.has(trimmed)) {
+        out.push({ field, line, token: m[0], reason: `has spaces inside the braces, so it is not filled and prints as [${trimmed}].`, fix: `{{${trimmed}}}` });
+      } else if (/^[a-z0-9_]+$/.test(trimmed)) {
+        const near = nearestPlaceholder(trimmed);
+        out.push({ field, line, token: m[0], reason: `is not a placeholder the app fills, so it prints as [${trimmed}].`, fix: near ? `{{${near}}}` : null });
+      } else {
+        const near = nearestPlaceholder(trimmed);
+        out.push({ field, line, token: m[0], reason: 'is not a placeholder the app fills (keys use small letters, digits and underscores), so it prints as written.', fix: near ? `{{${near}}}` : null });
+      }
+    }
+    const rest = ln.replace(/\{\{[^{}\n]*\}\}/g, '');
+    if (/\{\{|\}\}/.test(rest)) {
+      out.push({ field, line: i + 1, token: rest.includes('{{') ? '{{' : '}}', reason: 'has no matching pair of double braces on its line, so it prints as written.', fix: null });
+    }
+  });
+  return out;
+}
+
+/** The parts of a text: plain words and {{placeholders}} (for marking them on screen). */
+export function splitPlaceholders(text: string): { text: string; key: string | null; known: boolean }[] {
+  return text.split(/(\{\{[^{}\n]*\}\})/g).filter((p) => p !== '').map((p) => {
+    const m = p.match(/^\{\{([^{}\n]*)\}\}$/);
+    return m ? { text: p, key: m[1], known: PLACEHOLDER_MEANING.has(m[1]) } : { text: p, key: null, known: false };
+  });
+}
+
+export const TEMPLATE_KEY_RE = /^[a-z0-9_]+$/;
+
+/** A free key from the title (and the first form, as the seeded keys read: drc01_contest), or from a key being copied. */
+export function suggestTemplateKey(p: { title?: string; forms?: string[]; copyOf?: string }, taken: Set<string>): string {
+  const slug = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  let base: string;
+  if (p.copyOf) base = p.copyOf;
+  else {
+    const form = p.forms?.length ? slug(p.forms[0]).replace(/_/g, '') : 'general';
+    const words = slug(p.title ?? '').split('_').filter((w) => w && !['a', 'an', 'the', 'of', 'to', 'and', 'for', 'on', 'in', 'with'].includes(w));
+    base = [form, ...words].join('_').slice(0, 40).replace(/_+$/, '') || 'template';
+  }
+  if (!taken.has(base)) return base;
+  let i = 2;
+  while (taken.has(`${base}_${i}`)) i += 1;
+  return `${base}_${i}`;
+}
+
+/** A refusal from the database in plain words: the no dash rule, a key taken or badly formed. */
+export function replyWriteErrorWords(e: { code?: string; message: string; details?: string | null }, key?: string): string {
+  const text = `${e.message} ${e.details ?? ''}`;
+  const fix = 'Replies may not hold any hyphen or dash: use Replace dashes, then save again.';
+  if (e.code === '23505') return key ? `A template with the key "${key}" already exists. Choose another key.` : 'That key is already taken. Choose another.';
+  if (e.code === '23514') {
+    if (/reply_templates_key_check/.test(text)) return 'The key may hold only small letters, digits and underscores, as drc01_contest.';
+    if (/reply_templates_stance_check/.test(text)) return 'Choose one of the stances in the list.';
+    if (/reply_templates_title_check/.test(text)) return `The title is empty or holds a hyphen or dash. ${fix}`;
+    if (/reply_templates_summary_check/.test(text)) return `The summary holds a hyphen or dash. ${fix}`;
+    if (/reply_templates_body_check/.test(text)) return `The wording is empty or holds a hyphen or dash. ${fix}`;
+    if (/paras_no_dash/.test(text)) return `A reply paragraph holds a hyphen or dash. ${fix}`;
+    if (/notice_settings_reply_no_dash/.test(text)) return `The place or the signatory holds a hyphen or dash. ${fix}`;
+    return `The text holds a hyphen or dash. ${fix}`;
+  }
+  return e.message;
+}
+
+/** "06 Oct 2026" for a timestamp, on the India calendar ("" when there is none). */
+export const istDay = (ts: string | null | undefined): string =>
+  (ts ? fmtDate(new Date(ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })) : '');
+
+/** "Changed by Partner on 06 Oct 2026", or "Added on 06 Oct 2026" for a template nobody has changed. */
+export const templateChangedWords = (t: ReplyTemplate): string =>
+  (t.updated_by_name ? `Changed by ${t.updated_by_name} on ${istDay(t.updated_at)}` : `Added on ${istDay(t.created_at)}`);
+
+export const TEMPLATES_KEY = ['reply-factory', 'templates'] as const;
+
+export function useReplyTemplates() {
+  return useQuery({
+    queryKey: TEMPLATES_KEY,
+    staleTime: 30_000,
+    queryFn: async (): Promise<ReplyTemplate[]> => {
+      const { data, error } = await supabase.from('reply_templates').select('*').order('sort').order('key');
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+}
+
+/** How many notices hold an option from each template (notice_reply_options: one row per notice and template). */
+export function useTemplateOptionCounts() {
+  return useQuery({
+    queryKey: ['reply-factory', 'template-option-counts'],
+    staleTime: 30_000,
+    queryFn: async (): Promise<Map<string, number>> => {
+      const rows = await fetchAllRows<{ template_key: string }>('notice_reply_options', 'template_key', (q) => q.order('id'));
+      const out = new Map<string, number>();
+      rows.forEach((r) => out.set(r.template_key, (out.get(r.template_key) ?? 0) + 1));
+      return out;
+    },
+  });
+}
+
+export interface TemplateOptionRow {
+  id: string;
+  notice_id: string;
+  status: string;
+  template_version: number;
+  rendered_at: string;
+  used_at: string | null;
+  used_by_name: string | null;
+  notice: NoticeRef | null;
+}
+
+/** The notices holding an option from one template, newest notice first. */
+export function useTemplateOptions(key: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['reply-factory', 'template-options', key],
+    enabled: !!key && enabled,
+    staleTime: 30_000,
+    queryFn: async (): Promise<TemplateOptionRow[]> => {
+      const rows = await fetchAllRows<Omit<TemplateOptionRow, 'notice'>>('notice_reply_options',
+        'id, notice_id, status, template_version, rendered_at, used_at, used_by_name', (q) => q.eq('template_key', key).order('id'));
+      const refs = await loadNoticeRefs(rows.map((r) => r.notice_id));
+      return rows.map((r) => ({ ...r, notice: refs.get(r.notice_id) ?? null }))
+        .sort((a, b) => Number(b.notice?.is_open ?? false) - Number(a.notice?.is_open ?? false)
+          || (b.notice?.issue_date ?? '').localeCompare(a.notice?.issue_date ?? ''));
+    },
+  });
+}
+
+export interface TemplateDraft {
+  key: string;
+  title: string;
+  summary: string;
+  stance: string;
+  forms: string[];
+  body: string;
+  is_active: boolean;
+  sort: number;
+}
+
+/**
+ * Saves an edited template. It is refused when someone else saved it since it
+ * was opened (its version moved on). The database raises the version and
+ * prepares the options of every open notice again; returns the new version.
+ */
+export async function saveTemplate(t: ReplyTemplate, d: Pick<TemplateDraft, 'title' | 'summary' | 'stance' | 'forms' | 'body'>, actor: Actor | null): Promise<number> {
+  const { data, error } = await supabase.from('reply_templates').update({
+    title: d.title, summary: d.summary, stance: d.stance, forms: d.forms, body: d.body, updated_by_name: actor?.firstName ?? null,
+  }).eq('key', t.key).eq('version', t.version).select('version');
+  if (error) throw new Error(replyWriteErrorWords(error, t.key));
+  if (!data?.length) {
+    const { data: now } = await supabase.from('reply_templates').select('version, updated_by_name').eq('key', t.key).maybeSingle();
+    throw new Error(now
+      ? `Someone else saved this template while you were editing it (it is now version ${now.version}${now.updated_by_name ? `, by ${now.updated_by_name}` : ''}). Copy your changes, close it and open it again.`
+      : 'This template is no longer in the app.');
+  }
+  return data[0].version;
+}
+
+/** Adds a template (New template, Duplicate). */
+export async function createTemplate(d: TemplateDraft, actor: Actor | null): Promise<number> {
+  const { data, error } = await supabase.from('reply_templates').insert({
+    key: d.key, title: d.title, summary: d.summary, stance: d.stance, forms: d.forms, body: d.body, is_active: d.is_active, sort: d.sort,
+    updated_by_name: actor?.firstName ?? null,
+  }).select('version').single();
+  if (error) throw new Error(replyWriteErrorWords(error, d.key));
+  return data.version;
+}
+
+/** Switches a template on or off for open notices (its version stays). */
+export async function setTemplateActive(key: string, active: boolean, actor: Actor | null): Promise<void> {
+  const { error } = await supabase.from('reply_templates').update({ is_active: active, updated_by_name: actor?.firstName ?? null }).eq('key', key);
+  if (error) throw new Error(replyWriteErrorWords(error, key));
+}
+
+/** After a template or the signature block changed: the lists, the counts and every notice's options. */
+export function invalidateReplyTemplates(qc: QueryClient) {
+  qc.invalidateQueries({ queryKey: TEMPLATES_KEY });
+  qc.invalidateQueries({ queryKey: ['reply-factory', 'template-option-counts'] });
+  qc.invalidateQueries({ queryKey: ['reply-factory', 'template-options'] });
+  qc.invalidateQueries({ queryKey: ['reply-factory', 'reply-context'] });
+  qc.invalidateQueries({ queryKey: ['notice-reply-options'] });
+}
+
+// The signature block (notice_settings.reply_place, reply_signatory; one row).
+export interface ReplySignature { reply_place: string | null; reply_signatory: string | null }
+
+export function useReplySignature() {
+  return useQuery({
+    queryKey: ['reply-factory', 'signature'],
+    staleTime: 30_000,
+    queryFn: async (): Promise<ReplySignature> => {
+      const { data, error } = await supabase.from('notice_settings').select('reply_place, reply_signatory').eq('id', true).maybeSingle();
+      if (error) throw error;
+      return { reply_place: data?.reply_place ?? null, reply_signatory: data?.reply_signatory ?? null };
+    },
+  });
+}
+
+/** Saves the place and the signatory (blank is none: replies then show "[place]" and "Authorised Signatory"). */
+export async function saveReplySignature(sig: ReplySignature, actor: Actor | null): Promise<void> {
+  const clean = (v: string | null) => (v && v.trim() ? v.trim() : null);
+  const { error } = await supabase.from('notice_settings').update({
+    reply_place: clean(sig.reply_place), reply_signatory: clean(sig.reply_signatory),
+    updated_by: actor?.firstName ?? null, updated_at: new Date().toISOString(),
+  }).eq('id', true);
+  if (error) throw new Error(replyWriteErrorWords(error));
+}
+
+// Preview on a notice: notice_reply_context() for the facts, reply_render() for the words.
+export interface PreviewNotice {
+  id: string;
+  client_name: string | null;
+  client_gstin: string | null;
+  reference_number: string | null;
+  case_id: string | null;
+  form_code: string | null;
+  form_label: string | null;
+  issue_date: string | null;
+}
+const PREVIEW_SELECT = 'id, client_name, client_gstin, reference_number, case_id, form_code, form_label, issue_date';
+const searchSafe = (q: string) => q.replace(/[,()*"\\%:]/g, ' ').replace(/\s+/g, ' ').trim();
+
+/**
+ * Open notices to preview a template on: those it would be prepared for (its
+ * forms; for a general template, the forms with no active template of their
+ * own; never a type that needs no reply), or with `anyOpen` every open notice.
+ */
+export async function searchPreviewNotices(p: { forms: string[]; ownForms: string[]; anyOpen: boolean; q: string; limit?: number }): Promise<PreviewNotice[]> {
+  let query = supabase.from('notice_facts').select(PREVIEW_SELECT).eq('is_open', true);
+  if (!p.anyOpen) {
+    query = query.neq('response_need', 'none');
+    if (p.forms.length) query = query.in('form_code', p.forms);
+    else if (p.ownForms.length) query = query.or(`form_code.is.null,form_code.not.in.(${p.ownForms.map((f) => `"${f}"`).join(',')})`);
+  }
+  const q = searchSafe(p.q);
+  if (q) query = query.or(['client_name', 'client_gstin', 'reference_number', 'case_id', 'form_code'].map((c) => `${c}.ilike.*${q}*`).join(','));
+  const { data, error } = await query.order('issue_date', { ascending: false, nullsFirst: false }).order('id').limit(p.limit ?? 12);
+  if (error) throw error;
+  return (data ?? []) as PreviewNotice[];
+}
+
+/** The facts a reply to this notice is filled with (null when the notice is gone). */
+export function useNoticeReplyContext(noticeId: string | null) {
+  return useQuery({
+    queryKey: ['reply-factory', 'reply-context', noticeId],
+    enabled: !!noticeId,
+    staleTime: 60_000,
+    queryFn: async (): Promise<Json | null> => {
+      const { data, error } = await supabase.rpc('notice_reply_context', { p_notice_id: noticeId as string });
+      if (error) throw error;
+      return data ?? null;
+    },
+  });
+}
+
+export async function renderReply(body: string, ctx: Json): Promise<string> {
+  const { data, error } = await supabase.rpc('reply_render', { p_body: body, p_ctx: ctx });
+  if (error) throw error;
+  return data ?? '';
 }

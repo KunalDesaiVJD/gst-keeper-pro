@@ -72,8 +72,24 @@ extension 0.7.0.)
   CAPTCHA is retried up to three times and a wrong password never, as before.
 - **No wall.** In this mode there is no CAPTCHA wall, no CAPTCHA badge and no
   09:00 CAPTCHA nudge; `portal_job_claim` never hands a Chrome a job parked
-  for a typed CAPTCHA, and the office agent gets no portal jobs (its notice
-  reader and portal e-mail poller still work).
+  for a typed CAPTCHA (the tick puts such a job back in the queue), and the
+  office agent gets no portal jobs (its notice reader and portal e-mail poller
+  still work).
+- **A person comes first.** The runner starts a client only when this Chrome
+  is idle: a person's own sync in it always wins, and a client the runner holds
+  is given back to the queue (no try counted) when a person starts a sync,
+  opens a GST portal tab, or comes back to the PC while one is open (the
+  portal keeps one login per browser profile). It waits while a portal tab is
+  open and someone has used the PC in the last five minutes.
+- **Its own window.** Each client runs in a window of its own, never
+  minimised, focused only when nobody has used the PC for five minutes (so it
+  comes to the front at 05:30 and never takes the keyboard at 13:00), and
+  closed after the client. Chrome slows timers in hidden tabs; every deadline
+  (CAPTCHA wait plus 45 s, three minutes for the login page, 40 minutes a
+  client) is kept by the extension's background worker, so a slowed page can
+  delay one client but not hold the queue. A locked screen or a display that is
+  off also counts as hidden on Windows: keep that PC's display on, or have IT
+  turn off Chrome's `IntensiveWakeUpThrottlingEnabled` policy.
 - **What the firm should keep in mind.**
   - Automated CAPTCHA filling may not be what the GST portal's terms of use
     expect. The firm uses its own tool at its own discretion, for clients whose
