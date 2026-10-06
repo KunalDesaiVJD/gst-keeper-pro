@@ -18,9 +18,9 @@ export const WS_TABLE_WRAP = 'relative overflow-auto rounded-md border bg-card';
 /** The table itself. */
 export const WS_TABLE = 'w-full border-separate border-spacing-0 text-sm';
 /** Header cell: muted, sticky, bordered (replaces the navy bg-primary header). */
-export const WS_TH = 'sticky top-0 z-10 border-b border-r bg-muted px-2 py-1.5 text-left text-[13px] font-semibold text-muted-foreground whitespace-nowrap';
+export const WS_TH = 'sticky top-0 z-10 border-b border-r bg-muted px-2 py-1.5 text-left text-[13px] font-semibold text-foreground/70 whitespace-nowrap';
 /** Grouped (upper) header row cell. */
-export const WS_TH_GROUP = 'border-b border-r bg-muted px-2 py-1 text-center font-semibold text-muted-foreground';
+export const WS_TH_GROUP = 'border-b border-r bg-muted px-2 py-1 text-center font-semibold text-foreground/70';
 /** Body cell. */
 export const WS_TD = 'border-b border-r px-2 py-1.5';
 /** Numeric body cell. */

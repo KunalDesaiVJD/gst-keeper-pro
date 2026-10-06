@@ -2,6 +2,32 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-06 — Toolbar popup rebuilt as a portal autopilot (v0.5.1)
+
+Phase 2 of the notices roadmap (audit findings U-110, U-111). Popup only; the sync
+itself is unchanged.
+
+- **Status first.** The popup shows the last run, clients synced in the last 24 h
+  (n of N) and failing clients with their reasons, counted exactly like the app's
+  command centre (eligible = credentials, active, not excluded; failed = login failed
+  since the last notices success, or the notices step failed).
+- **Sync notices** defaults to the stale or failed clients, with "All active clients"
+  and a searchable one-client picker; a summary line gives clients, CAPTCHAs and an
+  estimate (~2.5 min a client) before an explicit Start. It starts the same
+  `notices_bundle` job as the app's Sync now (notices & orders, then refunds, then
+  DRC-03).
+- **Running job.** "Client 4 of 11 · name · step" from the active job, a "CAPTCHA
+  waiting → Open the portal tab" prompt at login, and Stop (only while a job runs),
+  which still records the stop in the run ledger and says what was stopped.
+- **Open Notices dashboard** link; the old return-period ledger pull moved under
+  "Other syncs" with an accurate description (it does not write filing status).
+- **Errors in the popup.** If the background worker or the database does not
+  answer, an error panel (Retry, reload link, raw message) replaces the form after
+  one automatic retry, and the last known status stays visible. No alert()/confirm().
+- Version shown in the header, with a warning below the app's minimum (0.4.0).
+- `db.js`: added `startSectionPull`, `getSyncStatus`, `getLastRun` (read-only REST
+  for the popup, which now loads `config.js`).
+
 ## 2026-10-06 — One pipe and a run ledger (v0.5.0) — reload on every PC
 
 Phase 1 of the notices roadmap (`docs/NOTICES_MISSION_AUDIT_AND_ROADMAP.pdf`). v0.4.x

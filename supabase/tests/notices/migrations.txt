@@ -36,3 +36,7 @@
 20261006115000_notice_alerts_engine.sql
 20261006116000_notice_form_rules_portal_wording.sql
 20261006117000_notice_alerts_engine_fast.sql
+20261006120000_notice_stages.sql
+20261006121000_notice_workspace.sql
+20261006122000_notice_command_centre.sql
+20261006123000_notice_email_links.sql

@@ -28,8 +28,11 @@ SELECT t_eq((SELECT string_agg(to_email || ':' || template_key || ':' || status,
             'riya@firm.test:notice_new:preview', 'E1 to the owner, as a preview');
 SELECT t_eq((SELECT body LIKE '%Kappa &lt;Industries&gt; &amp; Co%' FROM email_outbox), true, 'body variables escaped');
 SELECT t_eq((SELECT subject FROM email_outbox), 'New Intimation of liability difference, GSTR-1 vs GSTR-3B (DRC-01B) for Kappa <Industries> & Co (24KKKKK0000K1Z5)', 'subject unescaped');
-SELECT t_eq((SELECT body LIKE '%<a href="https://gst.vjdesai.com/notices-all?noticeId=%' FROM email_outbox), true, 'deep link');
-SELECT t_eq((SELECT render_vars ->> '_shell' FROM email_outbox), 'notice_alert_critical', 'High priority uses the urgent shell');
+SELECT t_eq((SELECT body LIKE '%<a href="https://gst.vjdesai.com/notices/' || notice_id || '">%' FROM email_outbox), true, 'deep link to the notice page');
+SELECT t_eq((SELECT render_vars ->> 'cta_url' FROM email_outbox), 'https://gst.vjdesai.com/notices/' || (SELECT id FROM gst_notices WHERE portal_key = 'K1'), 'Open notice button');
+SELECT t_eq((SELECT render_vars ->> 'headline' || ' | ' || (render_vars ->> '_audience') FROM email_outbox), 'New notice captured · due in 10 days | internal', 'internal headline');
+SELECT t_eq((SELECT render_vars ->> '_shell' FROM email_outbox), 'notice_alert', 'shell follows days left, not priority: 10 days is calm');
+SELECT t_eq((SELECT (render_vars ->> 'stage') || ' | ' || (render_vars ->> 'owner_name') FROM email_outbox), 'New | Riya', 'stage and owner in the facts');
 SELECT t_eq((SELECT status FROM notice_alert_log), 'preview', 'logged as preview');
 SELECT notice_alerts_run('events');
 SELECT t_eq((SELECT count(*) FROM email_outbox), 1::bigint, 'rerun writes nothing twice');
@@ -111,7 +114,12 @@ SELECT t_eq((SELECT body LIKE '%<em>(no owner)</em>%' AND body NOT LIKE '%Unowne
               WHERE template_key = 'notice_daily_digest' AND to_email = 'kunal@firm.test'), true, 'managers get unowned items, overdue ones via E2');
 SELECT t_eq((SELECT string_agg(to_email, ',' ORDER BY to_email) FROM email_outbox WHERE template_key = 'notice_overdue_digest'),
             'asha@firm.test,kunal@firm.test', 'E2 to managers');
-SELECT t_eq((SELECT body LIKE '%Lambda Ltd — Notice — no reference (due%no owner)%' FROM email_outbox WHERE template_key = 'notice_overdue_digest' AND to_email = 'asha@firm.test'), true, 'E2 lists unowned overdue');
+SELECT t_eq((SELECT body LIKE '%<strong>No owner (1)</strong><br>&bull; <a href="https://gst.vjdesai.com/notices/%">Lambda Ltd &middot; Notice</a> &middot; 2 days overdue%<strong>Riya (1)</strong>%'
+              FROM email_outbox WHERE template_key = 'notice_overdue_digest' AND to_email = 'asha@firm.test'), true, 'E2 grouped by owner, unowned first, linked');
+SELECT t_eq((SELECT render_vars ->> 'cta_url' FROM email_outbox WHERE template_key = 'notice_overdue_digest' AND to_email = 'asha@firm.test'),
+            'https://gst.vjdesai.com/notices-all?filter=overdue', 'E2 opens the overdue list');
+SELECT t_eq((SELECT body LIKE '%<a href="https://gst.vjdesai.com/notices/%">Kappa &lt;Industries&gt; &amp; Co &middot; Notice</a> &middot; % &middot; <strong>4 days late</strong>%'
+              FROM email_outbox WHERE template_key = 'notice_daily_digest' AND to_email = 'riya@firm.test'), true, 'morning lines linked, with days late');
 SELECT t_eq((SELECT count(*) FROM email_outbox WHERE template_key = 'notice_unassigned'), 2::bigint, 'E11 to managers');
 SELECT t_eq((SELECT count(*) FROM email_outbox WHERE status <> 'preview'), 0::bigint, 'nothing leaves while in preview');
 SELECT t_eq((notice_alerts_run('daily') -> 'daily' ->> 'queued')::int, 0, 'daily rerun writes nothing');

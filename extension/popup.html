@@ -1,31 +1,165 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
+  <title>GST Keeper Portal autopilot</title>
   <style>
-    body { font: 13px system-ui, sans-serif; width: 300px; padding: 14px; margin: 0; color: #222; }
-    h1 { font-size: 14px; margin: 0 0 10px; }
-    label { display: block; margin: 10px 0 3px; color: #555; }
-    select, input { width: 100%; padding: 7px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; }
-    button { width: 100%; padding: 9px; box-sizing: border-box; background: #2563eb; color: #fff; border: 0; border-radius: 6px; margin-top: 14px; cursor: pointer; font-weight: 600; font-size: 13px; }
-    button:disabled { background: #9db8f0; cursor: default; }
-    #stop { background: #ef4444; margin-top: 8px; }
-    .hint { color: #888; font-size: 11px; margin-top: 10px; line-height: 1.45; }
+    :root {
+      --navy: #0f2b46; --navy-hover: #173d61; --ink: #0f172a; --muted: #475569; --line: #e2e8f0;
+      --soft: #f1f5f9; --ok: #166534; --ok-bg: #f0fdf4; --warn: #92400e; --warn-bg: #fffbeb; --warn-line: #fcd34d;
+      --bad: #991b1b; --bad-bg: #fef2f2; --bad-line: #fca5a5; --focus: #2563eb;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; width: 340px; background: #fff; color: var(--ink);
+      font: 13px/1.45 Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    [hidden] { display: none !important; }
+    header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: var(--navy); color: #fff; }
+    header img { width: 30px; height: 30px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
+    header .t { flex: 1; min-width: 0; }
+    header h1 { margin: 0; font-size: 14px; font-weight: 700; }
+    header .sub { font-size: 11px; color: #cbd5e1; }
+    header .ver { font-size: 11px; padding: 2px 6px; border-radius: 999px; background: rgba(255,255,255,.14); color: #fff; }
+    main { padding: 12px 14px 14px; display: grid; gap: 10px; }
+    .card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+    .card h2 { margin: 0 0 6px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+    .rows { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; }
+    .rows dt { color: var(--muted); }
+    .rows dd { margin: 0; text-align: right; font-weight: 600; overflow-wrap: anywhere; }
+    .rows dd.bad { color: var(--bad); }
+    .rows dd.ok { color: var(--ok); }
+    .note { font-size: 11.5px; color: var(--muted); margin: 6px 0 0; }
+    .msg { border-radius: 8px; padding: 9px 10px; border: 1px solid; font-size: 12.5px; }
+    .msg strong { display: block; margin-bottom: 2px; }
+    .msg p { margin: 0; }
+    .msg.warn { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn); }
+    .msg.bad { background: var(--bad-bg); border-color: var(--bad-line); color: var(--bad); }
+    .msg.ok { background: var(--ok-bg); border-color: #86efac; color: var(--ok); }
+    .msg.info { background: var(--soft); border-color: var(--line); color: var(--ink); }
+    .msg .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+    .msg details { margin-top: 6px; font-size: 11.5px; }
+    .msg details pre { white-space: pre-wrap; word-break: break-word; margin: 4px 0 0; font: 11px/1.4 ui-monospace, Consolas, monospace; color: var(--ink); }
+    button, .btn { font: inherit; font-weight: 600; border-radius: 6px; cursor: pointer; padding: 8px 10px; border: 1px solid transparent; }
+    .primary { width: 100%; background: var(--navy); color: #fff; }
+    .primary:hover:not(:disabled) { background: var(--navy-hover); }
+    .secondary { background: #fff; color: var(--navy); border-color: #94a3b8; }
+    .secondary:hover:not(:disabled) { background: var(--soft); }
+    .danger { background: #fff; color: var(--bad); border-color: var(--bad-line); }
+    .danger:hover:not(:disabled) { background: var(--bad-bg); }
+    .small { padding: 5px 9px; font-size: 12px; }
+    .wide { width: 100%; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible {
+      outline: 2px solid var(--focus); outline-offset: 2px; }
+    fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 4px; }
+    legend { font-weight: 700; margin-bottom: 4px; padding: 0; }
+    .opt { display: flex; align-items: center; gap: 7px; padding: 4px 2px; cursor: pointer; }
+    .opt input { margin: 0; accent-color: var(--navy); }
+    label.f { display: block; font-size: 12px; color: var(--muted); margin: 6px 0 3px; }
+    input[type=search], input[type=text], select { width: 100%; padding: 6px 8px; border: 1px solid #94a3b8; border-radius: 6px; font: inherit; color: var(--ink); background: #fff; }
+    select[size] { padding: 2px; }
+    #picker { margin: 2px 0 4px 22px; }
+    .summary { font-weight: 600; margin: 8px 0 6px; }
+    .hint { font-size: 11.5px; color: var(--muted); margin: 6px 0 0; }
+    .progress { font-weight: 600; }
+    .bar { height: 6px; border-radius: 999px; background: var(--soft); overflow: hidden; margin: 6px 0; }
+    .bar span { display: block; height: 100%; background: var(--navy); width: 0; }
+    details.other summary { cursor: pointer; font-weight: 600; color: var(--navy); }
+    details.other[open] summary { margin-bottom: 6px; }
+    .links { display: grid; gap: 6px; }
+    .mt8 { margin-top: 8px; }
+    .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   </style>
 </head>
 <body>
-  <h1>GST Keeper — Portal Sync</h1>
-  <label>Client</label>
-  <select id="client"><option>Loading…</option></select>
-  <label>Return period (MM/YYYY)</label>
-  <input id="period" placeholder="06/2026" />
-  <button id="go">Start sync in this browser</button>
-  <button id="stop">Stop / clear current sync</button>
-  <div class="hint">
-    Opens the GST portal in a new tab, logs in (you type the CAPTCHA once), and pulls
-    filing status + ledger opening into GST Keeper. Keep that tab open until it shows
-    “done”. Runs on your own connection, so the portal treats it as a normal user.
-  </div>
+  <header>
+    <img src="icon128.png" alt="" />
+    <div class="t">
+      <h1>GST Keeper</h1>
+      <div class="sub">Portal autopilot</div>
+    </div>
+    <span class="ver" id="ver" title="Extension version">v–</span>
+  </header>
+
+  <main>
+    <div id="versionMsg" class="msg" role="status" hidden></div>
+
+    <div id="errorPanel" class="msg bad" role="alert" hidden>
+      <strong id="errTitle">The extension's background service is not responding</strong>
+      <p id="errText">Status and syncing are unavailable until it answers.</p>
+      <div class="actions">
+        <button type="button" id="errRetry" class="secondary small">Retry</button>
+        <button type="button" id="errReload" class="secondary small">Reload the extension (chrome://extensions)</button>
+      </div>
+      <details><summary>Technical details</summary><pre id="errRaw"></pre></details>
+    </div>
+
+    <section class="card" id="statusCard" aria-labelledby="statusHead">
+      <h2 id="statusHead">Notices sync status</h2>
+      <dl class="rows">
+        <dt>Last run</dt><dd id="stRun">Loading…</dd>
+        <dt>Synced in last 24 h</dt><dd id="stFresh">–</dd>
+        <dt>Failing</dt><dd id="stFail">–</dd>
+      </dl>
+      <p class="note" id="stReasons" hidden></p>
+      <p class="note" id="stNote" hidden></p>
+    </section>
+
+    <section class="card" id="jobCard" aria-labelledby="jobHead" hidden>
+      <h2 id="jobHead">Sync running</h2>
+      <div id="captchaMsg" class="msg warn" hidden>
+        <strong>CAPTCHA waiting</strong>
+        <p id="captchaText"></p>
+        <div class="actions"><button type="button" id="openTab" class="secondary small">Open the portal tab</button></div>
+      </div>
+      <div class="progress" id="jobProgress" aria-live="polite"></div>
+      <div class="bar" aria-hidden="true"><span id="jobBar"></span></div>
+      <div class="note" id="jobMode"></div>
+      <button type="button" id="stop" class="danger small wide mt8">Stop this sync</button>
+    </section>
+
+    <div id="flash" role="status" aria-live="polite" hidden></div>
+
+    <section class="card" id="formCard" aria-labelledby="formHead" hidden>
+      <h2 id="formHead">Sync notices</h2>
+      <fieldset>
+        <legend class="sr">Which clients</legend>
+        <label class="opt"><input type="radio" name="scope" value="stale" checked /> <span id="lblStale">Stale or failed</span></label>
+        <label class="opt"><input type="radio" name="scope" value="all" /> <span id="lblAll">All active clients</span></label>
+        <label class="opt"><input type="radio" name="scope" value="one" /> <span>One client…</span></label>
+      </fieldset>
+      <div id="picker" hidden>
+        <label class="f" for="clientSearch">Search clients</label>
+        <input type="search" id="clientSearch" placeholder="Name or GSTIN" autocomplete="off" />
+        <label class="f" for="clientList">Client</label>
+        <select id="clientList" size="5"></select>
+      </div>
+      <p class="summary" id="summary" aria-live="polite"></p>
+      <button type="button" id="start" class="primary">Sync notices</button>
+      <p class="hint" id="hint">For each client: logs in to the GST portal (you type the CAPTCHA), reads
+        notices &amp; orders with their case folders and PDFs, then refund applications, then DRC-03
+        payments. Clients are taken most urgent first. Keep the portal tab open until it says done.</p>
+    </section>
+
+    <div class="links">
+      <button type="button" id="openDash" class="secondary wide">Open Notices dashboard</button>
+    </div>
+
+    <details class="other card" id="otherCard" hidden>
+      <summary>Other syncs</summary>
+      <label class="f" for="legClient">Client</label>
+      <select id="legClient"></select>
+      <label class="f" for="period">Return period (MM/YYYY)</label>
+      <input type="text" id="period" inputmode="numeric" placeholder="06/2026" />
+      <p class="hint">Ledger pull: logs in, then reads the credit ledger (opening balance and entries, for
+        GST Receivable Reco), the credit reversal &amp; re-claim, liability and cash ledgers for the period,
+        and goes on through notices, refunds, DRC-03, taxpayer profile and challans without a run-ledger
+        record. It does not write filing status.</p>
+      <div id="legMsg" role="status" aria-live="polite"></div>
+      <button type="button" id="legGo" class="secondary wide mt8">Start ledger pull</button>
+    </details>
+  </main>
+
+  <script src="config.js"></script>
   <script src="db.js"></script>
   <script src="popup.js"></script>
 </body>

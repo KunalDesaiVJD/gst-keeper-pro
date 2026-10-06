@@ -65,5 +65,24 @@
     notifyCaptcha: (clientName, progress) => call('notifyCaptcha', clientName, progress),
     clearCaptchaNotice: () => call('clearCaptchaNotice'),
     logEvent: (clientId, level, message) => { console.log('[GSTKeeper]', level, clientId, message); },
+    // 0.5.1 popup: start a section pull (the app's "Sync now" uses the same
+    // background function) and read-only sync status straight from PostgREST.
+    startSectionPull: (info) => call('startAllClientsSectionPull', info),
+    getSyncStatus: () => restGet('client_sync_status?step=in.(notices,login)'
+      + '&select=client_id,step,last_attempt_at,last_status,last_reason_class,last_message,last_success_at'),
+    getLastRun: () => restGet('sync_runs?select=id,started_at,finished_at,status,mode,clients_total,clients_done,note'
+      + '&order=started_at.desc&limit=1').then((a) => (a && a[0]) || null),
   };
+
+  // GET only, for extension pages that load config.js (the popup). The
+  // background worker has no generic reader, and content scripts never call these.
+  async function restGet(path) {
+    const cfg = globalThis.GSTK_CONFIG;
+    if (!cfg) throw new Error('config.js is not loaded on this page');
+    const r = await fetch(cfg.SUPABASE_URL + '/rest/v1/' + path, {
+      headers: { apikey: cfg.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_ANON_KEY },
+    });
+    if (!r.ok) throw new Error('GET ' + path.split('?')[0] + ' -> ' + r.status + ' ' + (await r.text()).slice(0, 120));
+    return r.json();
+  }
 })();

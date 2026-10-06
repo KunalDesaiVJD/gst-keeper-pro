@@ -116,8 +116,19 @@ extension's ingest door + run ledger (`sync_ingest`, `sync_runs`, `sync_run_item
 **preview** — `notice_settings.alerts_mode`). Tests: `supabase/tests/notices/run.sh`
 (local Postgres) and `extension/test/notices-sync.sim.mjs`; see the README there.
 
+**Phase 2:** one stage vocabulary — `notice_stages` keys in `gst_notices.stage` and
+`litigation_matters.stage` (FK); label and tone from `src/lib/noticeStages.ts`, never
+the old labels; `staff_status` is only a mirror. One page per notice at
+`/notices/:id` (`src/lib/noticeWorkspace.ts`; `notice_issues`, `notice_drafts`,
+`notice_doc_requests`, `notice_payments`). The command centre is one RPC
+(`notices_command_centre`) over `notice_facts` + `notice_plan` (rank, next action), so
+every number equals its list's count; Ctrl K is `notices_search`. Module pages use
+`NoticesShell` and the WS_* house style. Alert e-mails link to `/notices/<id>`; their
+shell is `supabase/functions/_shared/email.ts` (redeploy `send-gst-email` before
+alerts go live).
+
 **Read `docs/NOTICES_LITIGATION_POSITIONS.md` before changing auto-close
-logic, tile definitions, due dates, clocks or alerts.** The positions were
+logic, tile definitions, due dates, clocks, stages, the plan ranking or alerts.** The positions were
 implemented by engineering judgement, not confirmed in a firm sign-off.
 
 

@@ -14,17 +14,15 @@ psql_q() { psql -X -q -v ON_ERROR_STOP=1 -d "$db" "$@"; }
 createdb "$db"
 trap '[ -n "$keep" ] || dropdb --if-exists "$db"' EXIT
 psql_q -f "$here/00_stub_platform.sql" >/dev/null
+# Every Phase 1+ migration is applied twice in a row: each must be safe to
+# re-run (SKIP_REAPPLY=1 applies it once).
 while read -r f; do
   case "$f" in ''|'#'*) continue ;; esac
   psql_q -f "$mig/$f" >/dev/null || { echo "FAILED applying $f"; exit 1; }
-done < "$here/migrations.txt"
-# Apply a second time: every migration must be safe to re-run.
-if [ -z "${SKIP_REAPPLY:-}" ]; then
-  while read -r f; do
-    case "$f" in ''|'#'*) continue ;; esac
+  if [ -z "${SKIP_REAPPLY:-}" ]; then
     case "$f" in 2026100611*|2026100612*) psql_q -f "$mig/$f" >/dev/null || { echo "FAILED re-applying $f"; exit 1; } ;; esac
-  done < "$here/migrations.txt"
-fi
+  fi
+done < "$here/migrations.txt"
 status=0
 shopt -s nullglob
 for t in "$here"/test_*.sql; do

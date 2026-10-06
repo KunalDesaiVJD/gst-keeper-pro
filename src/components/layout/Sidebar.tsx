@@ -21,8 +21,14 @@ import {
   FileCheck2,
   Building,
   FileSignature,
-  Bell,
-  ScrollText
+  ScrollText,
+  Scale,
+  ListTodo,
+  Inbox,
+  Briefcase,
+  Gavel,
+  CalendarDays,
+  BarChart3,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
@@ -34,6 +40,10 @@ interface NavItem {
   path: string;
   icon: React.ReactNode;
   roles?: ('superadmin' | 'gst_manager' | 'employee' | 'client')[];
+  /** Left out of the icon-only rail: its group's first page stands for it there. */
+  railHidden?: boolean;
+  /** The rail's tooltip, when it differs from the label (a group's first page). */
+  railLabel?: string;
 }
 
 interface SidebarProps {
@@ -77,6 +87,15 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     icon: <Users className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
+  // Notices & Litigation is a daily module: high in the list (audit U-130-5).
+  { label: 'Command centre', railLabel: 'Notices & Litigation', path: '/notices-dashboard', icon: <Scale className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'] },
+  { label: 'Work queue', path: '/notices-queue', icon: <ListTodo className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
+  { label: 'All notices', path: '/notices-all', icon: <Inbox className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
+  { label: 'Matters', path: '/litigation', icon: <Briefcase className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
+  { label: 'Hearings', path: '/notices-hearings', icon: <Gavel className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
+  { label: 'Calendar', path: '/notices-calendar', icon: <CalendarDays className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
+  { label: 'Clients and sync', path: '/notices-company-list', icon: <Users className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
+  { label: 'Reports', path: '/notices-report', icon: <BarChart3 className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
   {
     label: '2B Reconciliation',
     path: '/2b-and-rcm',
@@ -164,12 +183,6 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     icon: <FolderDown className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
-  {
-    label: 'Notices Dashboard',
-    path: '/notices-dashboard',
-    icon: <Bell className="h-5 w-5" />,
-    roles: ['superadmin', 'gst_manager', 'employee'],
-  },
 ];
 
 // Collapsible groups in the expanded rail. Order within `paths` is the order
@@ -185,9 +198,20 @@ interface NavGroup {
   label: string;
   icon: React.ReactNode;
   paths: string[];
+  /** Further route prefixes that belong to the group (pages reached from it). */
+  also?: string[];
 }
 
 const NAV_GROUPS: NavGroup[] = [
+  {
+    key: 'notices',
+    label: 'Notices & Litigation',
+    icon: <Scale className="h-5 w-5" />,
+    paths: ['/notices-dashboard', '/notices-queue', '/notices-all', '/litigation', '/notices-hearings',
+      '/notices-calendar', '/notices-company-list', '/notices-report'],
+    also: ['/notices', '/notices-company', '/notices-case-folder', '/notices-gstin-wise-count', '/refunds-all',
+      '/drc03-all', '/litigation-mis'],
+  },
   {
     key: 'gst-working',
     label: 'GST Working',
@@ -210,11 +234,9 @@ const NAV_GROUPS: NavGroup[] = [
 
 const GROUPED_PATHS = new Set(NAV_GROUPS.flatMap((g) => g.paths));
 
-const NOTICES_PATHS = [
-  '/notices-dashboard', '/notices-all', '/notices-report',
-  '/notices-gstin-wise-count', '/refunds-all', '/drc03-all',
-  '/litigation', '/litigation-mis',
-];
+// Every page of the module, for the rail's active mark (U-130-3).
+const NOTICES_PATHS = NAV_GROUPS.filter((g) => g.key === 'notices').flatMap((g) => [...g.paths, ...(g.also ?? [])]);
+const onPath = (pathname: string, p: string) => pathname === p || pathname.startsWith(`${p}/`);
 
 const getRoleLabel = (role: string) => {
   switch (role) {
@@ -256,7 +278,9 @@ const navLinkClasses = ({ isActive }: { isActive: boolean }) =>
 export const SidebarContents: React.FC<{
   onToggleMinimize?: () => void;
   onNavigate?: () => void;
-}> = ({ onToggleMinimize, onNavigate }) => {
+  /** In the phone drawer: leave room for its close button beside the logo (U-130-4). */
+  inDrawer?: boolean;
+}> = ({ onToggleMinimize, onNavigate, inDrawer }) => {
   const { user, logout, isStaffRole } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -271,9 +295,7 @@ export const SidebarContents: React.FC<{
       .sort((a, b) => g.paths.indexOf(a.path) - g.paths.indexOf(b.path)),
     // A group counts as active while the current route is one of its pages —
     // including nested routes such as /builder-projects/:id/bookings.
-    active: g.paths.some(
-      (p) => location.pathname === p || location.pathname.startsWith(`${p}/`),
-    ),
+    active: [...g.paths, ...(g.also ?? [])].some((p) => onPath(location.pathname, p)),
   })).filter((g) => g.children.length > 0);
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
@@ -297,7 +319,7 @@ export const SidebarContents: React.FC<{
     <>
       {/* Logo Section with Settings and User Control icons */}
       <div className="p-4 border-b border-sidebar-border">
-        <div className="bg-white rounded-lg px-3 py-2 mb-2 flex items-center justify-center">
+        <div className={cn('bg-white rounded-lg px-3 py-2 mb-2 flex items-center justify-center', inDrawer && 'mr-9')}>
           <img src={logo} alt="V. J. Desai & Co. LLP" className="h-8 w-auto object-contain max-w-full" />
         </div>
         <div className="flex items-center justify-between">
@@ -391,7 +413,7 @@ export const SidebarContents: React.FC<{
               onClick={onNavigate}
               className={({ isActive }) => {
                 const active = item.path === '/notices-dashboard'
-                  ? isActive || NOTICES_PATHS.some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`))
+                  ? isActive || NOTICES_PATHS.some((p) => onPath(location.pathname, p))
                   : isActive;
                 return navLinkClasses({ isActive: active });
               }}
@@ -466,14 +488,14 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
         {/* Minimized nav - icons only, with a tooltip carrying the label so the
             rail stays narrow without losing discoverability. */}
         <nav className="flex-1 py-4 px-2 space-y-2 overflow-y-auto">
-          {navItems.map((item) => (
+          {navItems.filter((item) => !item.railHidden).map((item) => (
             <Tooltip key={item.path} delayDuration={100}>
               <TooltipTrigger asChild>
                 <NavLink
                   to={item.path}
                   className={({ isActive }) => {
                     const active = item.path === '/notices-dashboard'
-                      ? isActive || NOTICES_PATHS.some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`))
+                      ? isActive || NOTICES_PATHS.some((p) => onPath(location.pathname, p))
                       : isActive;
                     return cn(
                       'relative flex items-center justify-center p-2 rounded-lg transition-all duration-200',
@@ -483,12 +505,12 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
                         : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground before:h-0'
                     );
                   }}
-                  aria-label={item.label}
+                  aria-label={item.railLabel ?? item.label}
                 >
                   {item.icon}
                 </NavLink>
               </TooltipTrigger>
-              <TooltipContent side="right">{item.label}</TooltipContent>
+              <TooltipContent side="right">{item.railLabel ?? item.label}</TooltipContent>
             </Tooltip>
           ))}
         </nav>

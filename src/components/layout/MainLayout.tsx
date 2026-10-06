@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { Outlet, Navigate } from 'react-router-dom';
+import { Outlet, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import Sidebar, { SidebarContents } from './Sidebar';
 import QuickActionsButton from './QuickActionsButton';
 import ChatWidget from '@/components/chat/ChatWidget';
 import NotificationBell from '@/components/notices/NotificationBell';
+import SearchPalette from '@/components/notices/SearchPalette';
 import { Loader2, Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
@@ -13,6 +14,10 @@ import logo from '@/assets/logo.png';
 
 const MainLayout: React.FC = () => {
   const { isAuthenticated, isLoading, isStaffRole } = useAuth();
+  const { pathname } = useLocation();
+  // The two floating buttons covered the Notices & Litigation lists' owner and
+  // action columns (audit cross-cutting finding): those pages go without them.
+  const noFabs = /^\/(notices|litigation|refunds-all|drc03-all)/.test(pathname);
   const [isSidebarMinimized, setIsSidebarMinimized] = useState(true);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
@@ -43,10 +48,10 @@ const MainLayout: React.FC = () => {
       <Sheet open={isMobileNavOpen} onOpenChange={setIsMobileNavOpen}>
         <SheetContent
           side="left"
-          className="w-72 p-0 bg-sidebar text-sidebar-foreground border-sidebar-border flex flex-col md:hidden"
+          className="w-72 p-0 bg-sidebar text-sidebar-foreground border-sidebar-border flex flex-col md:hidden [&>button]:right-3 [&>button]:top-6 [&>button]:p-1 [&>button]:text-sidebar-foreground [&>button]:opacity-100"
         >
           <SheetTitle className="sr-only">Navigation</SheetTitle>
-          <SidebarContents onNavigate={() => setIsMobileNavOpen(false)} />
+          <SidebarContents inDrawer onNavigate={() => setIsMobileNavOpen(false)} />
         </SheetContent>
       </Sheet>
 
@@ -70,14 +75,17 @@ const MainLayout: React.FC = () => {
           {isStaffRole() && <NotificationBell />}
         </div>
 
-        <main className="min-h-screen px-4 py-4 md:p-6">
+        <main className="min-h-screen px-4 pb-24 pt-4 md:px-6 md:pb-24 md:pt-6">
           <Outlet />
         </main>
       </div>
 
+      {/* Ctrl K / ⌘K search over clients and notices - only for staff */}
+      {isStaffRole() && <SearchPalette />}
+
       {/* Quick actions floating button - only for staff */}
-      {isStaffRole() && <QuickActionsButton />}
-      {isStaffRole() && <ChatWidget />}
+      {isStaffRole() && !noFabs && <QuickActionsButton />}
+      {isStaffRole() && !noFabs && <ChatWidget />}
     </div>
   );
 };

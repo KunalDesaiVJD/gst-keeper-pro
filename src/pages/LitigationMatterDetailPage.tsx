@@ -1,1106 +1,326 @@
-import React, { useEffect, useState } from 'react';
-import { Navigate, useParams, useNavigate, Link } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
-import type { TablesUpdate } from '@/integrations/supabase/types';
-import { NoticesPageHeader } from '@/components/notices/NoticesPageHeader';
-import { NoticesCardHeader } from '@/components/notices/NoticesCardHeader';
-import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
-import { useStaffList } from '@/hooks/useStaffList';
+// A litigation matter at /litigation/:id (roadmap Phase 2; audit U-84-1..5,
+// U-85..U-96, cross-cutting ui-c). Built like the notice workspace: a
+// breadcrumb, one header (title, the facts in a line, the next clock, stage,
+// priority, owner and reviewer, and the one next step), the stage rail, the
+// money in four figures, then tabs kept in the URL (?tab=) — Notices,
+// Hearings, Payments, Documents, Activity, Deadlines — beside the next step
+// and the key facts. A closed matter says how and when it closed and is
+// read-only until reopened.
+import React, { useMemo, useState } from 'react';
+import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Briefcase, Loader2, ArrowLeft, Calendar, User, FileText, Scale, Clock,
-  DollarSign, Gavel, Upload, Plus, Activity, AlertTriangle, CheckCircle2,
-  XCircle, RotateCcw,
+  CalendarClock, ChevronDown, FileText, Gavel, IndianRupee, MoreHorizontal, Pencil, RefreshCw, RotateCcw, Scale, Upload, UserPlus, XCircle,
 } from 'lucide-react';
+import { toast } from 'sonner';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from '@/components/gstr9/badge';
+import { KpiTile, Note } from '@/components/gstr9/ui';
+import { TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepTabs';
+import { WS_BTN, WS_PAGE } from '@/components/workspace/theme';
+import { useAuth } from '@/contexts/AuthContext';
+import { useStaffList } from '@/hooks/useStaffList';
+import { AssignPopover } from '@/components/notices/AssignPopover';
+import { StagePicker } from '@/components/notices/StagePicker';
+import { StageBadge } from '@/components/notices/StageBadge';
+import { OwnerChip } from '@/components/notices/OwnerChip';
+import { StageRail } from '@/components/notices/workspace/StageRail';
+import { stageLabel, type StageKey } from '@/lib/noticeStages';
+import { fmtDate, fmtDateTime, fmtFy, fmtInr, plural } from '@/lib/noticeFormat';
+import {
+  assignMatter, changeMatterStage, forumLabel, istDate, lifecycleLabel, loadMatterWorkspace, matterCloseText, MatterNotFound, mattersHref,
+  setMatterPriority, toStageKey, type MatterHearing, type MatterWorkspace,
+} from '@/lib/litigationData';
+import { clockWhen } from '@/components/litigation/matters/ClockCell';
+import { MatterNoticesTab, LinkNoticesDialog } from '@/components/litigation/matters/MatterNoticesTab';
+import { MatterHearingsTab } from '@/components/litigation/matters/MatterHearingsTab';
+import { HearingDialog, OutcomeDialog } from '@/components/litigation/matters/HearingDialogs';
+import { MatterPaymentsTab, RecordPaymentDialog, isAppeal, preDepositNeed } from '@/components/litigation/matters/MatterPayments';
+import { MatterDocumentsTab } from '@/components/litigation/matters/MatterDocumentsTab';
+import { MatterActivityTab } from '@/components/litigation/matters/MatterActivityTab';
+import { MatterDeadlinesTab } from '@/components/litigation/matters/MatterDeadlinesTab';
+import { KeyFacts, NextStepCard } from '@/components/litigation/matters/MatterSidePanel';
+import {
+  CloseMatterDialog, EditDemandDialog, EditMatterDialog, RecordOrderDialog, RecordReplyDialog, ReopenDialog,
+} from '@/components/litigation/matters/MatterDialogs';
+import { cn } from '@/lib/utils';
 
-interface Matter {
-  id: string;
-  client_id: string;
-  matter_no: string;
-  lifecycle: string;
-  title: string | null;
-  section_of_law: string | null;
-  financial_years: string[] | null;
-  authority: string | null;
-  officer: string | null;
-  jurisdiction: string | null;
-  stage: string;
-  status: string;
-  priority: string | null;
-  owner_user_id: string | null;
-  reviewer_user_id: string | null;
-  demand_tax: number;
-  demand_interest: number;
-  demand_penalty: number;
-  demand_cess: number;
-  paid_total: number;
-  pre_deposit_total: number;
-  computed_due_date: string | null;
-  override_due_date: string | null;
-  limitation_date: string | null;
-  hearing_at: string | null;
-  next_action: string | null;
-  closed_at: string | null;
-  closed_reason: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-interface LinkedNotice {
-  id: string;
-  notice_type: string | null;
-  reference_number: string | null;
-  description: string | null;
-  issue_date: string | null;
-  due_date: string | null;
-  staff_status: string | null;
-  amount_of_demand: number | null;
-}
-
-interface MatterEvent {
-  id: string;
-  event_type: string;
-  actor_name: string | null;
-  payload: Record<string, unknown> | null;
-  created_at: string;
-}
-
-interface Hearing {
-  id: string;
-  scheduled_at: string;
-  mode: string | null;
-  venue: string | null;
-  officer: string | null;
-  outcome: string | null;
-  adjourned: boolean;
-  next_date: string | null;
-  notes: string | null;
-}
-
-interface Payment {
-  id: string;
-  kind: string;
-  drc03_arn: string | null;
-  tax: number;
-  interest: number;
-  penalty: number;
-  cess: number;
-  paid_on: string | null;
-  remarks: string | null;
-}
-
-interface MatterDoc {
-  id: string;
-  kind: string;
-  title: string;
-  source: string;
-  created_at: string;
-}
-
-const STAGES = [
-  'Captured', 'Triage', 'Awaiting client data', 'Reply drafting',
-  'Partner review', 'Filed/submitted', 'Hearing', 'Order received',
-  'Appeal decision', 'Appeal filed', 'Closed',
+type Tab = 'notices' | 'hearings' | 'payments' | 'documents' | 'activity' | 'deadlines';
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'notices', label: 'Notices' }, { key: 'hearings', label: 'Hearings' }, { key: 'payments', label: 'Payments' },
+  { key: 'documents', label: 'Documents' }, { key: 'activity', label: 'Activity' }, { key: 'deadlines', label: 'Deadlines' },
 ];
+type DialogKey = 'hearing' | 'outcome' | 'payment' | 'reply' | 'order' | 'close' | 'decide' | 'reopen' | 'edit' | 'demand' | 'link' | null;
 
-function fmtDate(iso: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
-}
-
-function fmtMoney(n: number): string {
-  return `₹${n.toLocaleString('en-IN')}`;
-}
-
-function fmtRelative(iso: string): string {
-  const d = new Date(iso);
-  const now = new Date();
-  const diff = (now.getTime() - d.getTime()) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
-  return fmtDate(iso);
-}
-
-// Stage colour dot, matching NoticeWorkQueue — the tinted badge palette this
-// replaced was light-mode-only and off this module's scale.
-function stageDotClass(stage: string): string {
-  const s = (stage || '').toLowerCase();
-  if (s.startsWith('captured') || s.startsWith('triage')) return 'bg-blue-400';
-  if (s.includes('awaiting')) return 'bg-amber-400';
-  if (s.includes('drafting')) return 'bg-blue-500';
-  if (s.includes('partner')) return 'bg-violet-500';
-  if (s.includes('filed') || s.includes('submitted')) return 'bg-emerald-500';
-  if (s.includes('hearing')) return 'bg-amber-500';
-  if (s.includes('order')) return 'bg-orange-500';
-  if (s.includes('appeal')) return 'bg-red-500';
-  if (s.includes('closed')) return 'bg-slate-400';
-  return 'bg-slate-300';
-}
-
-function priorityChipClass(p: string): string {
-  const s = (p || '').toLowerCase();
-  if (s === 'high') return 'bg-destructive/10 text-destructive';
-  if (s === 'medium') return 'bg-amber-500/10 text-amber-700 dark:text-amber-400';
-  return 'bg-muted text-muted-foreground';
+/** Stages the matter has been in, from its stage history (null when it has none). */
+function visited(ws: MatterWorkspace): Set<string> | null {
+  if (!ws.history.length) return null;
+  const s = new Set<string>();
+  ws.history.forEach((h) => { if (h.from_stage) s.add(toStageKey(h.from_stage)); s.add(toStageKey(h.to_stage)); });
+  return s;
 }
 
 const LitigationMatterDetailPage: React.FC = () => {
-  const { id } = useParams<{ id: string }>();
-  const { isStaffRole, user } = useAuth();
-  const navigate = useNavigate();
+  const { id = '' } = useParams();
+  const [sp, setSp] = useSearchParams();
+  const qc = useQueryClient();
+  const { user, isStaffRole, canEditNoticeStatus } = useAuth();
   const { staff } = useStaffList();
-
-  const [matter, setMatter] = useState<Matter | null>(null);
-  const [clientName, setClientName] = useState('');
-  const [clientGstin, setClientGstin] = useState('');
-  const [notices, setNotices] = useState<LinkedNotice[]>([]);
-  const [events, setEvents] = useState<MatterEvent[]>([]);
-  const [hearings, setHearings] = useState<Hearing[]>([]);
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [documents, setDocuments] = useState<MatterDoc[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const [stageDialogOpen, setStageDialogOpen] = useState(false);
-  const [newStage, setNewStage] = useState('');
-  const [stageNote, setStageNote] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const [hearingDialogOpen, setHearingDialogOpen] = useState(false);
-  const [hearingDate, setHearingDate] = useState('');
-  const [hearingMode, setHearingMode] = useState('physical');
-  const [hearingVenue, setHearingVenue] = useState('');
-  const [hearingOfficer, setHearingOfficer] = useState('');
-
-  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
-  const [paymentKind, setPaymentKind] = useState('voluntary');
-  const [payTax, setPayTax] = useState('');
-  const [payInterest, setPayInterest] = useState('');
-  const [payPenalty, setPayPenalty] = useState('');
-  const [payCess, setPayCess] = useState('');
-  const [payDate, setPayDate] = useState('');
-  const [payRemarks, setPayRemarks] = useState('');
-
-  const [closeDialogOpen, setCloseDialogOpen] = useState(false);
-  const [closeReason, setCloseReason] = useState('');
-
-  const [outcomeDialogOpen, setOutcomeDialogOpen] = useState(false);
-  const [outcomeHearingId, setOutcomeHearingId] = useState('');
-  const [outcomeText, setOutcomeText] = useState('');
-  const [outcomeAdjourned, setOutcomeAdjourned] = useState(false);
-  const [outcomeNextDate, setOutcomeNextDate] = useState('');
-  const [outcomeNotes, setOutcomeNotes] = useState('');
-
-  const [docDialogOpen, setDocDialogOpen] = useState(false);
-  const [docTitle, setDocTitle] = useState('');
-  const [docKind, setDocKind] = useState('order');
-  const [docSource, setDocSource] = useState('manual');
-
-  useEffect(() => {
-    if (!id) return;
-    let cancelled = false;
-    setLoading(true);
-    (async () => {
-      const [{ data: m }, { data: n }, { data: ev }, { data: h }, { data: p }, { data: d }] = await Promise.all([
-        supabase.from('litigation_matters').select('*').eq('id', id).maybeSingle(),
-        supabase.from('gst_notices').select('id, notice_type, reference_number, description, issue_date, due_date, staff_status, amount_of_demand').eq('matter_id', id).is('deleted_at', null),
-        supabase.from('matter_events').select('id, event_type, actor_name, payload, created_at').eq('matter_id', id).order('created_at', { ascending: false }).limit(50),
-        supabase.from('matter_hearings').select('*').eq('matter_id', id).order('scheduled_at', { ascending: false }),
-        supabase.from('matter_payments').select('*').eq('matter_id', id).order('created_at', { ascending: false }),
-        supabase.from('matter_documents').select('id, kind, title, source, created_at').eq('matter_id', id).order('created_at', { ascending: false }),
-      ]);
-      if (cancelled) return;
-      setMatter(m as Matter | null);
-      setNotices((n ?? []) as LinkedNotice[]);
-      setEvents((ev ?? []) as MatterEvent[]);
-      setHearings((h ?? []) as Hearing[]);
-      setPayments((p ?? []) as Payment[]);
-      setDocuments((d ?? []) as MatterDoc[]);
-
-      if (m?.client_id) {
-        const { data: c } = await supabase.from('clients').select('name, gstin').eq('id', m.client_id).maybeSingle();
-        if (!cancelled && c) {
-          setClientName(c.name || '');
-          setClientGstin(c.gstin || '');
-        }
-      }
-      if (!cancelled) setLoading(false);
-    })();
-    return () => { cancelled = true; };
-  }, [id]);
+  const [dialog, setDialog] = useState<DialogKey>(null);
+  const [hearing, setHearing] = useState<MatterHearing | null>(null);
+  const q = useQuery({ queryKey: ['matter-workspace', id], queryFn: () => loadMatterWorkspace(id), enabled: !!id, retry: (n, e) => !(e instanceof MatterNotFound) && n < 2 });
+  const ws = q.data;
+  const tab = (TABS.some((t) => t.key === sp.get('tab')) ? sp.get('tab') : 'notices') as Tab;
+  const setTab = (t: string) => { const next = new URLSearchParams(sp); next.set('tab', t); setSp(next, { replace: true }); };
+  const rail = useMemo(() => (ws ? visited(ws) : null), [ws]);
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
-  if (loading) {
+  const reload = () => {
+    qc.invalidateQueries({ queryKey: ['matter-workspace', id] });
+    qc.invalidateQueries({ queryKey: ['matter-list'] });
+    qc.invalidateQueries({ queryKey: ['matter-suggestions'] });
+    qc.invalidateQueries({ queryKey: ['notices-command-centre'] });
+    qc.invalidateQueries({ queryKey: ['notice-hearings'] });
+  };
+
+  if (q.isLoading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      <div className={WS_PAGE} aria-busy="true">
+        <Skeleton className="h-4 w-80" /><Skeleton className="h-8 w-[32rem] max-w-full" /><Skeleton className="h-5 w-[40rem] max-w-full" />
+        <Skeleton className="h-16 w-full" />
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[70px]" />)}</div>
+        <Skeleton className="h-96 w-full" />
+      </div>
+    );
+  }
+  if (q.error || !ws) {
+    const notFound = q.error instanceof MatterNotFound;
+    return (
+      <div className={WS_PAGE}>
+        <nav aria-label="Breadcrumb" className="text-xs text-muted-foreground md:pr-12">
+          <Link to="/notices-dashboard" className="hover:underline">Notices & Litigation</Link> › <Link to="/litigation" className="hover:underline">Matters</Link>
+        </nav>
+        <Note tone="warn">{notFound ? (q.error as Error).message : <>Couldn't load the matter: {q.error instanceof Error ? q.error.message : String(q.error)}</>}</Note>
+        <div className="flex gap-2">
+          {!notFound && <Button size="sm" variant="outline" className={WS_BTN} onClick={() => q.refetch()}><RefreshCw className="h-3.5 w-3.5" aria-hidden /> Retry</Button>}
+          <Button size="sm" variant="outline" className={WS_BTN} asChild><Link to="/litigation">All matters</Link></Button>
+        </div>
       </div>
     );
   }
 
-  if (!matter) {
-    return (
-      <div className="space-y-4 py-10 text-center">
-        <p className="text-sm text-muted-foreground">Matter not found.</p>
-        <Button variant="outline" onClick={() => navigate('/litigation')}>
-          <ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Back to Matters
-        </Button>
-      </div>
+  const m = ws.matter;
+  const money = ws.money;
+  const stage = toStageKey(m.stage);
+  const closed = stage === 'closed';
+  const canEdit = canEditNoticeStatus();
+  const edit = canEdit && !closed;
+  const nameOf = (uid: string | null) => (uid ? staff.find((s) => s.userId === uid)?.name ?? (uid === user?.id ? user?.firstName ?? 'Me' : 'Staff') : null);
+  const owner = nameOf(m.owner_user_id);
+  const reviewer = nameOf(m.reviewer_user_id);
+  const next = ws.clocks[0] ?? null;
+  const last = ws.history[ws.history.length - 1];
+  const now = Date.now();
+  const awaitingOutcome = ws.hearings.find((h) => !h.outcome && new Date(h.scheduled_at).getTime() <= now);
+  const upcoming = ws.hearings.find((h) => !h.outcome && new Date(h.scheduled_at).getTime() > now);
+  const need = isAppeal(ws) ? preDepositNeed(ws) : null;
+  const openNotice = ws.notices.filter((n) => n.is_open && !n.reply_date).sort((a, b) => (a.effective_due ?? '9').localeCompare(b.effective_due ?? '9'))[0];
+  const closedEvent = ws.events.find((e) => e.event_type === 'closed');
+
+  const run = async (fn: () => Promise<void>, ok: string) => {
+    try { await fn(); toast.success(ok); reload(); }
+    catch (e) { toast.error(e instanceof Error ? e.message : String(e)); }
+  };
+  const changeStage = async (to: StageKey, reason?: string) => {
+    if (!user) return;
+    // Stages that carry facts ask for them first (U-89-3).
+    if (to === 'filed') { setDialog('reply'); return; }
+    if (to === 'order') { setDialog('order'); return; }
+    if (to === 'hearing' && !upcoming) { setHearing(null); setDialog('hearing'); return; }
+    await run(() => changeMatterStage(m, to, user, { reason: reason ?? null }), to === 'closed' ? 'Matter closed' : `Moved to ${stageLabel(to)}`);
+  };
+  const assign = (role: 'owner' | 'reviewer') => async (p: { userId: string; name: string } | null) => {
+    if (!user) return;
+    await run(() => assignMatter(m, role, p, role === 'owner' ? owner : reviewer, user), p ? `${role === 'owner' ? 'Owner' : 'Reviewer'}: ${p.name}` : `${role === 'owner' ? 'Owner' : 'Reviewer'} removed`);
+  };
+
+  // The one next step, by where the matter stands (U-84-5).
+  const step = ((): { hint: string; button: React.ReactNode } => {
+    const b = (label: string, onClick: () => void, Icon?: React.ElementType) => (
+      <Button size="sm" className={WS_BTN} onClick={onClick}>{Icon && <Icon className="h-3.5 w-3.5" aria-hidden />} {label}</Button>
     );
-  }
-
-  const effectiveDue = matter.override_due_date || matter.computed_due_date;
-  const totalDemand = matter.demand_tax + matter.demand_interest + matter.demand_penalty + matter.demand_cess;
-  const outstanding = totalDemand - matter.paid_total;
-  const ownerStaff = staff.find((s) => s.userId === matter.owner_user_id);
-  const reviewerStaff = staff.find((s) => s.userId === matter.reviewer_user_id);
-
-  const logEvent = async (eventType: string, payload?: Record<string, unknown>) => {
-    await supabase.from('matter_events').insert({
-      matter_id: matter.id,
-      event_type: eventType,
-      actor_user_id: user?.id ?? null,
-      actor_name: user?.firstName || null,
-      payload: payload ?? null,
-    });
-  };
-
-  const handleStageChange = async () => {
-    if (!newStage) return;
-    setSaving(true);
-    const oldStage = matter.stage;
-    const { error } = await supabase
-      .from('litigation_matters')
-      .update({ stage: newStage, updated_at: new Date().toISOString() })
-      .eq('id', matter.id);
-    if (error) { toast.error(error.message); setSaving(false); return; }
-    await supabase.from('matter_stage_history').insert({
-      matter_id: matter.id,
-      from_stage: oldStage,
-      to_stage: newStage,
-      changed_by: user?.id ?? null,
-      note: stageNote || null,
-    });
-    await logEvent('stage_changed', { from: oldStage, to: newStage, note: stageNote || null });
-    setMatter({ ...matter, stage: newStage });
-    setStageDialogOpen(false);
-    setNewStage('');
-    setStageNote('');
-    setSaving(false);
-    toast.success(`Stage updated to ${newStage}`);
-  };
-
-  const handleAssign = async (userId: string) => {
-    const { error } = await supabase
-      .from('litigation_matters')
-      .update({ owner_user_id: userId || null, updated_at: new Date().toISOString() })
-      .eq('id', matter.id);
-    if (error) { toast.error(error.message); return; }
-    const s = staff.find((st) => st.userId === userId);
-    await logEvent('assigned', { owner: s?.name || userId });
-    setMatter({ ...matter, owner_user_id: userId || null });
-    toast.success('Owner updated');
-  };
-
-  const handlePriorityChange = async (p: string) => {
-    const { error } = await supabase
-      .from('litigation_matters')
-      .update({ priority: p, updated_at: new Date().toISOString() })
-      .eq('id', matter.id);
-    if (error) { toast.error(error.message); return; }
-    await logEvent('priority_changed', { priority: p });
-    setMatter({ ...matter, priority: p });
-  };
-
-  const handleClose = async () => {
-    if (!closeReason.trim()) return;
-    setSaving(true);
-    const now = new Date().toISOString();
-    const { error } = await supabase
-      .from('litigation_matters')
-      .update({ status: 'Closed', closed_at: now, closed_reason: closeReason, stage: 'Closed', updated_at: now })
-      .eq('id', matter.id);
-    if (error) { toast.error(error.message); setSaving(false); return; }
-    await supabase.from('matter_stage_history').insert({
-      matter_id: matter.id, from_stage: matter.stage, to_stage: 'Closed',
-      changed_by: user?.id ?? null, note: closeReason,
-    });
-    await logEvent('closed', { reason: closeReason });
-    setMatter({ ...matter, status: 'Closed', stage: 'Closed', closed_at: now, closed_reason: closeReason });
-    setCloseDialogOpen(false);
-    setCloseReason('');
-    setSaving(false);
-    toast.success('Matter closed');
-  };
-
-  const handleReopen = async () => {
-    const { error } = await supabase
-      .from('litigation_matters')
-      .update({ status: 'Open', closed_at: null, closed_reason: null, stage: 'Triage', updated_at: new Date().toISOString() })
-      .eq('id', matter.id);
-    if (error) { toast.error(error.message); return; }
-    await supabase.from('matter_stage_history').insert({
-      matter_id: matter.id, from_stage: 'Closed', to_stage: 'Triage',
-      changed_by: user?.id ?? null, note: 'Reopened',
-    });
-    await logEvent('reopened');
-    setMatter({ ...matter, status: 'Open', stage: 'Triage', closed_at: null, closed_reason: null });
-    toast.success('Matter reopened');
-  };
-
-  const handleAddHearing = async () => {
-    if (!hearingDate) return;
-    setSaving(true);
-    const { error } = await supabase.from('matter_hearings').insert({
-      matter_id: matter.id,
-      scheduled_at: hearingDate,
-      mode: hearingMode,
-      venue: hearingVenue || null,
-      officer: hearingOfficer || null,
-    });
-    if (error) { toast.error(error.message); setSaving(false); return; }
-    await logEvent('hearing_scheduled', { date: hearingDate, mode: hearingMode });
-    await supabase.from('litigation_matters')
-      .update({ hearing_at: hearingDate, updated_at: new Date().toISOString() })
-      .eq('id', matter.id);
-    setMatter({ ...matter, hearing_at: hearingDate });
-    setHearingDialogOpen(false);
-    setHearingDate('');
-    setHearingVenue('');
-    setHearingOfficer('');
-    setSaving(false);
-    toast.success('Hearing scheduled');
-    const { data: h } = await supabase.from('matter_hearings').select('*').eq('matter_id', matter.id).order('scheduled_at', { ascending: false });
-    setHearings((h ?? []) as Hearing[]);
-  };
-
-  const handleAddPayment = async () => {
-    setSaving(true);
-    const t = parseFloat(payTax) || 0;
-    const i = parseFloat(payInterest) || 0;
-    const p = parseFloat(payPenalty) || 0;
-    const c = parseFloat(payCess) || 0;
-    const total = t + i + p + c;
-    const { error } = await supabase.from('matter_payments').insert({
-      matter_id: matter.id, kind: paymentKind,
-      tax: t, interest: i, penalty: p, cess: c,
-      paid_on: payDate || null, remarks: payRemarks || null,
-    });
-    if (error) { toast.error(error.message); setSaving(false); return; }
-    const newPaid = matter.paid_total + total;
-    await supabase.from('litigation_matters')
-      .update({ paid_total: newPaid, updated_at: new Date().toISOString() })
-      .eq('id', matter.id);
-    await logEvent('payment_added', { kind: paymentKind, amount: total });
-    setMatter({ ...matter, paid_total: newPaid });
-    setPaymentDialogOpen(false);
-    setPayTax(''); setPayInterest(''); setPayPenalty(''); setPayCess('');
-    setPayDate(''); setPayRemarks('');
-    setSaving(false);
-    toast.success('Payment recorded');
-    const { data: ps } = await supabase.from('matter_payments').select('*').eq('matter_id', matter.id).order('created_at', { ascending: false });
-    setPayments((ps ?? []) as Payment[]);
-  };
-
-  const handleAssignReviewer = async (userId: string) => {
-    const { error } = await supabase
-      .from('litigation_matters')
-      .update({ reviewer_user_id: userId || null, updated_at: new Date().toISOString() })
-      .eq('id', matter.id);
-    if (error) { toast.error(error.message); return; }
-    const s = staff.find((st) => st.userId === userId);
-    await logEvent('reviewer_assigned', { reviewer: s?.name || userId });
-    setMatter({ ...matter, reviewer_user_id: userId || null });
-    toast.success('Reviewer updated');
-  };
-
-  const handleRecordOutcome = async () => {
-    if (!outcomeHearingId) return;
-    setSaving(true);
-    const { error } = await supabase.from('matter_hearings')
-      .update({
-        outcome: outcomeText || null,
-        adjourned: outcomeAdjourned,
-        next_date: outcomeNextDate || null,
-        notes: outcomeNotes || null,
-      })
-      .eq('id', outcomeHearingId);
-    if (error) { toast.error(error.message); setSaving(false); return; }
-    await logEvent('hearing_outcome', { outcome: outcomeText, adjourned: outcomeAdjourned });
-    if (outcomeAdjourned && outcomeNextDate) {
-      await supabase.from('litigation_matters')
-        .update({ hearing_at: outcomeNextDate, updated_at: new Date().toISOString() })
-        .eq('id', matter.id);
-      setMatter({ ...matter, hearing_at: outcomeNextDate });
+    if (closed) return { hint: 'This matter is closed.', button: canEdit ? b('Reopen', () => setDialog('reopen'), RotateCcw) : null };
+    if (!canEdit) return { hint: next ? `${next.label} ${clockWhen(next)}` : 'Nothing is running.', button: null };
+    if (!m.owner_user_id) return { hint: 'Nobody owns this matter yet.', button: <AssignPopover currentOwnerId={null} suggestedName={ws.client?.assigned_accountant} onAssign={assign('owner')}><Button size="sm" className={WS_BTN}><UserPlus className="h-3.5 w-3.5" aria-hidden /> Assign</Button></AssignPopover> };
+    if (awaitingOutcome) return { hint: `The hearing of ${fmtDateTime(awaitingOutcome.scheduled_at)} has no outcome yet.`, button: b('Record outcome', () => { setHearing(awaitingOutcome); setDialog('outcome'); }, CalendarClock) };
+    if (stage === 'new') return { hint: 'Read the notices, set the priority and the next step.', button: b('Mark triaged', () => changeStage('triaged')) };
+    if (['triaged', 'evidence', 'waiting_client', 'draft'].includes(stage)) {
+      return openNotice
+        ? { hint: 'The reply is prepared on the notice.', button: <Button size="sm" className={WS_BTN} asChild><Link to={`/notices/${openNotice.id}?tab=draft`}><FileText className="h-3.5 w-3.5" aria-hidden /> Work on the reply</Link></Button> }
+        : { hint: 'Record the reply once it is filed on the portal.', button: b('Record reply filed', () => setDialog('reply'), FileText) };
     }
-    setOutcomeDialogOpen(false);
-    setOutcomeHearingId('');
-    setOutcomeText('');
-    setOutcomeAdjourned(false);
-    setOutcomeNextDate('');
-    setOutcomeNotes('');
-    setSaving(false);
-    toast.success('Hearing outcome recorded');
-    const { data: h } = await supabase.from('matter_hearings').select('*').eq('matter_id', matter.id).order('scheduled_at', { ascending: false });
-    setHearings((h ?? []) as Hearing[]);
-  };
+    if (stage === 'partner_review') return { hint: 'After approval, file the reply and record it.', button: b('Record reply filed', () => setDialog('reply'), FileText) };
+    if (stage === 'filed') return upcoming ? { hint: 'Waiting for the hearing or the order.', button: b('Record order', () => setDialog('order'), Gavel) } : { hint: 'Fix the hearing when the officer gives a date, or record the order.', button: b('Fix a hearing', () => { setHearing(null); setDialog('hearing'); }, CalendarClock) };
+    if (stage === 'hearing') return upcoming ? { hint: `Prepare for ${fmtDateTime(upcoming.scheduled_at)}.`, button: b('Prepare hearing', () => setTab('hearings'), CalendarClock) } : { hint: 'Record the order when it comes.', button: b('Record order', () => setDialog('order'), Gavel) };
+    if (stage === 'order') return { hint: `Accept, rectify or appeal${m.limitation_date ? ` by ${fmtDate(m.limitation_date)}` : ''}.`, button: b('Decide on the order', () => setDialog('decide'), Scale) };
+    if (need && money.preDeposit < need.required && need.tax > 0) return { hint: `Pre-deposit ${fmtInr(need.required - money.preDeposit)} short.`, button: b('Record pre-deposit', () => setDialog('payment'), IndianRupee) };
+    return upcoming ? { hint: `Prepare for ${fmtDateTime(upcoming.scheduled_at)}.`, button: b('Prepare hearing', () => setTab('hearings'), CalendarClock) } : { hint: 'Record the appeal order when it comes.', button: b('Record order', () => setDialog('order'), Gavel) };
+  })();
 
-  const handleAddDocument = async () => {
-    if (!docTitle.trim()) return;
-    setSaving(true);
-    const { error } = await supabase.from('matter_documents').insert({
-      matter_id: matter.id,
-      kind: docKind,
-      title: docTitle.trim(),
-      source: docSource,
-    });
-    if (error) { toast.error(error.message); setSaving(false); return; }
-    await logEvent('document_added', { title: docTitle, kind: docKind });
-    setDocDialogOpen(false);
-    setDocTitle('');
-    setDocKind('order');
-    setDocSource('manual');
-    setSaving(false);
-    toast.success('Document added');
-    const { data: d } = await supabase.from('matter_documents').select('id, kind, title, source, created_at').eq('matter_id', matter.id).order('created_at', { ascending: false });
-    setDocuments((d ?? []) as MatterDoc[]);
+  const counts: Record<Tab, number> = {
+    notices: ws.notices.length, hearings: ws.hearings.length, payments: ws.payments.length,
+    documents: ws.documents.length + ws.notices.filter((n) => n.pdf_url).length + ws.folder.reduce((s, f) => s + (Array.isArray(f.attachments) ? f.attachments.length : 0), 0),
+    activity: ws.events.length + ws.noticeEvents.length, deadlines: ws.clocks.length,
   };
-
-  const handleDemandUpdate = async (field: string, value: string) => {
-    const num = parseFloat(value) || 0;
-    const { error } = await supabase
-      .from('litigation_matters')
-      .update({ [field]: num, updated_at: new Date().toISOString() } as TablesUpdate<'litigation_matters'>)
-      .eq('id', matter.id);
-    if (error) { toast.error(error.message); return; }
-    setMatter({ ...matter, [field]: num });
-  };
+  const meta = [lifecycleLabel(m.lifecycle), m.section_of_law, (m.financial_years ?? []).length ? `FY ${(m.financial_years ?? []).map(fmtFy).join(', ')}` : '', forumLabel(m), m.officer].filter(Boolean);
 
   return (
-    <div className="space-y-4 animate-fade-in">
-      <NoticesPageHeader
-        title={matter.matter_no}
-        icon={Briefcase}
-        subtitle={
-          <>
-            <Link to={`/notices-company/${matter.client_id}`} className="font-medium text-primary hover:underline">
-              {clientName || 'Client'}
-            </Link>
-            {clientGstin && <span className="font-mono text-[10px]">{clientGstin}</span>}
-            <span className="inline-flex items-center gap-1.5">
-              <span className={cn('inline-block h-2 w-2 rounded-sm shrink-0', stageDotClass(matter.stage))} />
-              {matter.stage}
-            </span>
-          </>
-        }
-      />
+    <div className={WS_PAGE}>
+      <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground md:pr-12">
+        <Link to="/notices-dashboard" className="hover:underline">Notices & Litigation</Link> ›
+        <Link to="/litigation" className="hover:underline">Matters</Link> ›
+        <Link to={mattersHref({ client: m.client_id, status: 'all' })} className="hover:underline">{ws.client?.name ?? 'Client'}</Link> ›
+        <span className="whitespace-nowrap font-mono text-foreground">{m.matter_no}</span>
+      </nav>
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <NoticesTopNav />
-        <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => navigate('/litigation')}>
-          <ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> All matters
-        </Button>
+      <header className="flex flex-wrap items-start justify-between gap-3 md:pr-12">
+        <div className="min-w-0 flex-1 space-y-1">
+          <h1 className="break-words font-heading text-lg font-bold leading-tight sm:text-xl">{m.title || lifecycleLabel(m.lifecycle)}</h1>
+          <p className="text-xs text-muted-foreground">
+            <span className="whitespace-nowrap font-mono">{m.matter_no}</span> · {ws.client?.name}{ws.client?.gstin ? <> · <span className="font-mono">{ws.client.gstin}</span></> : null}
+            {meta.length ? ` · ${meta.join(' · ')}` : ''}
+          </p>
+          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+            {!closed && (next
+              ? <Badge variant={next.days < 0 ? 'destructive' : next.days <= 7 ? 'warning' : 'secondary'} className="text-[11px]">{next.label} · {clockWhen(next)} · {next.days < 0 ? `${-next.days} d late` : next.days === 0 ? 'today' : `in ${next.days} d`}</Badge>
+              : <Badge variant="secondary" className="text-[11px]">No clock running</Badge>)}
+            {edit ? <StagePicker noun="matter" value={m.stage} since={last?.changed_at} by={nameOf(last?.changed_by ?? null)} onChange={changeStage} /> : <StageBadge stage={m.stage} since={last?.changed_at} by={nameOf(last?.changed_by ?? null)} />}
+            {edit ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button type="button" className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    <Badge variant={m.priority === 'High' ? 'destructive' : m.priority === 'Medium' ? 'warning' : 'secondary'} className="gap-1 text-[11px]">
+                      Priority: {m.priority ?? 'not set'} <ChevronDown className="h-3 w-3" aria-hidden />
+                    </Badge>
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  {(['High', 'Medium', 'Low'] as const).map((p) => (
+                    <DropdownMenuItem key={p} onSelect={() => user && run(() => setMatterPriority(m, p, user), `Priority ${p}`)}>{p}</DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : m.priority && <Badge variant="secondary" className="text-[11px]">Priority: {m.priority}</Badge>}
+            {edit ? (
+              <AssignPopover currentOwnerId={m.owner_user_id} suggestedName={ws.client?.assigned_accountant} onAssign={assign('owner')} align="start">
+                <button type="button" className="rounded-md border px-1.5 py-0.5 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <span className="sr-only">Owner: </span><OwnerChip name={owner} showName /><span className="sr-only">. Change owner</span>
+                </button>
+              </AssignPopover>
+            ) : <OwnerChip name={owner} showName />}
+            {edit ? (
+              <AssignPopover currentOwnerId={m.reviewer_user_id} onAssign={assign('reviewer')} align="start">
+                <button type="button" className="rounded-md border px-1.5 py-0.5 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  Reviewer: {reviewer ?? 'none'}<span className="sr-only">. Change reviewer</span>
+                </button>
+              </AssignPopover>
+            ) : reviewer && <span className="text-xs">Reviewer: {reviewer}</span>}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {edit && <Button size="sm" variant="outline" className={WS_BTN} onClick={() => { setHearing(null); setDialog('hearing'); }}><CalendarClock className="h-3.5 w-3.5" aria-hidden /> Fix a hearing</Button>}
+          {edit && <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setDialog('payment')}><IndianRupee className="h-3.5 w-3.5" aria-hidden /> Record payment</Button>}
+          {canEdit && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild><Button size="sm" variant="outline" className={WS_BTN}><MoreHorizontal className="h-3.5 w-3.5" aria-hidden /> More</Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {!closed && <DropdownMenuItem onSelect={() => setDialog('reply')}><FileText className="mr-2 h-4 w-4" aria-hidden /> Record reply filed</DropdownMenuItem>}
+                {!closed && <DropdownMenuItem onSelect={() => setDialog('order')}><Gavel className="mr-2 h-4 w-4" aria-hidden /> Record order</DropdownMenuItem>}
+                {!closed && <DropdownMenuItem onSelect={() => setDialog('edit')}><Pencil className="mr-2 h-4 w-4" aria-hidden /> Edit details and dates</DropdownMenuItem>}
+                {!closed && <DropdownMenuItem onSelect={() => setDialog('demand')}><IndianRupee className="mr-2 h-4 w-4" aria-hidden /> Edit demand</DropdownMenuItem>}
+                {!closed && <DropdownMenuItem onSelect={() => setTab('documents')}><Upload className="mr-2 h-4 w-4" aria-hidden /> Upload documents</DropdownMenuItem>}
+                <DropdownMenuSeparator />
+                {closed
+                  ? <DropdownMenuItem onSelect={() => setDialog('reopen')}><RotateCcw className="mr-2 h-4 w-4" aria-hidden /> Reopen</DropdownMenuItem>
+                  : <DropdownMenuItem onSelect={() => setDialog('close')}><XCircle className="mr-2 h-4 w-4" aria-hidden /> Close the matter</DropdownMenuItem>}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          {step.button}
+        </div>
+      </header>
+
+      {closed && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+          <span>
+            <span className="font-semibold">Closed {fmtDate(istDate(m.closed_at ?? last?.changed_at ?? null))}</span>
+            {closedEvent?.actor_name ? ` by ${closedEvent.actor_name}` : ''}
+            {m.closed_reason ? ` · ${matterCloseText(m.closed_reason)}` : ''}
+            <span className="block text-xs text-foreground/70">Read-only while closed — reopen it to change anything.</span>
+          </span>
+          {canEdit && <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setDialog('reopen')}><RotateCcw className="h-3.5 w-3.5" aria-hidden /> Reopen</Button>}
+        </div>
+      )}
+      {!canEdit && <Note tone="info">You can read this matter. Changing it needs the "Edit notice status" permission — ask a GST manager.</Note>}
+
+      <StageRail stage={stage} visited={rail} since={last?.changed_at ?? m.created_at} by={nameOf(last?.changed_by ?? null)} closeReason={m.closed_reason ? matterCloseText(m.closed_reason) : null}
+        replyDate={ws.notices.map((n) => n.reply_date).filter(Boolean).sort().pop() ?? null}
+        hearingDate={ws.hearings.filter((h) => h.outcome).map((h) => istDate(h.scheduled_at)).pop() ?? null}
+        orderDate={ws.notices.map((n) => n.order_date).filter(Boolean).sort().pop() ?? null} />
+
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <KpiTile label="Demand" value={money.recorded ? fmtInr(money.demand) : 'Not recorded'}
+          hint={money.recorded ? `tax ${fmtInr(money.tax)} · interest ${fmtInr(money.interest)} · penalty ${fmtInr(money.penalty)}${money.cess ? ` · cess ${fmtInr(money.cess)}` : ''}`
+            : edit ? <button type="button" className="text-primary underline underline-offset-2" onClick={() => setDialog('demand')}>Add it from the notice or order</button> : 'no amount entered'} />
+        <KpiTile label="Paid" value={fmtInr(money.paid)} hint={money.refunded ? `refunded ${fmtInr(money.refunded)}` : plural(ws.payments.filter((p) => p.kind !== 'pre_deposit').length, 'payment')} />
+        <KpiTile label="Pre-deposit" value={fmtInr(money.preDeposit)}
+          hint={need && need.tax > 0 ? `${fmtInr(need.required)} required (${need.p107}% of tax)` : 'needed only to appeal'} tone={need && need.tax > 0 ? (money.preDeposit >= need.required ? 'ok' : 'warn') : 'neutral'} />
+        <KpiTile label="Outstanding" value={money.recorded ? fmtInr(money.outstanding) : '—'}
+          tone={!money.recorded ? 'neutral' : closed || money.outstanding === 0 ? 'ok' : 'error'}
+          hint={money.recorded ? `${fmtInr(money.demand)} − ${fmtInr(money.paid)} paid − ${fmtInr(money.preDeposit)} pre-deposit` : 'demand not recorded'} />
       </div>
 
-      {/* Header card */}
-      <Card>
-        <NoticesCardHeader
-          title={matter.title || matter.matter_no}
-          description={
-            <>
-              <Link to={`/notices-company/${matter.client_id}`} className="text-primary hover:underline">{clientName}</Link>
-              {clientGstin && <span className="ml-1.5 font-mono">({clientGstin})</span>}
-              {matter.section_of_law && <span className="ml-1.5">· {matter.section_of_law}</span>}
-            </>
-          }
-          badge={
-            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-              <span className="rounded-full bg-muted px-1.5 py-0 text-[9px] font-bold capitalize text-muted-foreground">
-                {matter.lifecycle}
-              </span>
-              {matter.priority && (
-                <span className={cn('rounded-full px-1.5 py-0 text-[9px] font-bold', priorityChipClass(matter.priority))}>
-                  {matter.priority}
-                </span>
-              )}
-              {matter.status === 'Closed' && (
-                <span className="rounded-full bg-muted px-1.5 py-0 text-[9px] font-bold text-muted-foreground">
-                  Closed: {matter.closed_reason}
-                </span>
-              )}
-            </div>
-          }
-        />
-        <CardContent className="pt-3 pb-3">
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
-            <div>
-              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Due Date</p>
-              <p className="text-sm">{fmtDate(effectiveDue)}</p>
-            </div>
-            <div>
-              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Limitation</p>
-              <p className="text-sm">{fmtDate(matter.limitation_date)}</p>
-            </div>
-            <div>
-              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Next Hearing</p>
-              <p className="text-sm">{fmtDate(matter.hearing_at)}</p>
-            </div>
-            <div>
-              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Authority</p>
-              <p className="text-sm">{matter.authority || '—'} {matter.officer && `· ${matter.officer}`}</p>
-            </div>
-            <div>
-              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Owner</p>
-              <Select value={matter.owner_user_id || ''} onValueChange={handleAssign}>
-                <SelectTrigger className="h-7 w-[160px] text-xs">
-                  <SelectValue placeholder="Unassigned" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">Unassigned</SelectItem>
-                  {staff.map((s) => (
-                    <SelectItem key={s.userId} value={s.userId}>{s.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Priority</p>
-              <Select value={matter.priority || 'Medium'} onValueChange={handlePriorityChange}>
-                <SelectTrigger className="h-7 w-[120px] text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="High">High</SelectItem>
-                  <SelectItem value="Medium">Medium</SelectItem>
-                  <SelectItem value="Low">Low</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Reviewer</p>
-              <Select value={matter.reviewer_user_id || ''} onValueChange={handleAssignReviewer}>
-                <SelectTrigger className="h-7 w-[160px] text-xs">
-                  <SelectValue placeholder="None" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">None</SelectItem>
-                  {staff.map((s) => (
-                    <SelectItem key={s.userId} value={s.userId}>{s.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {matter.next_action && (
-              <div>
-                <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Next Action</p>
-                <p className="text-sm">{matter.next_action}</p>
-              </div>
-            )}
+      <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <Tabs value={tab} onValueChange={setTab} className="min-w-0 space-y-2">
+          <TabsList className={cn(TAB_LIST_CLASS, 'w-full sm:w-auto')}>
+            {TABS.map((t) => (
+              <TabsTrigger key={t.key} value={t.key} className={cn(TAB_TRIGGER_CLASS, 'h-8 px-3')}>
+                {t.label}{counts[t.key] > 0 && <span className="rounded-full bg-card/30 px-1.5 text-[10px] font-semibold tabular-nums">{counts[t.key]}</span>}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          <div className="rounded-lg border bg-card p-3">
+            <TabsContent value="notices" className="mt-0"><MatterNoticesTab ws={ws} canEdit={edit} onLink={() => setDialog('link')} onChanged={reload} /></TabsContent>
+            <TabsContent value="hearings" className="mt-0">
+              <MatterHearingsTab ws={ws} canEdit={edit} onChanged={reload} onSchedule={() => { setHearing(null); setDialog('hearing'); }}
+                onChange={(h) => { setHearing(h); setDialog('hearing'); }} onOutcome={(h) => { setHearing(h); setDialog('outcome'); }} />
+            </TabsContent>
+            <TabsContent value="payments" className="mt-0"><MatterPaymentsTab ws={ws} canEdit={edit} onRecord={() => setDialog('payment')} onChanged={reload} /></TabsContent>
+            <TabsContent value="documents" className="mt-0"><MatterDocumentsTab ws={ws} canEdit={edit} onChanged={reload} /></TabsContent>
+            <TabsContent value="activity" className="mt-0"><MatterActivityTab ws={ws} canEdit={canEdit} onChanged={reload} /></TabsContent>
+            <TabsContent value="deadlines" className="mt-0"><MatterDeadlinesTab ws={ws} canEdit={edit} onChanged={reload} /></TabsContent>
           </div>
-
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setNewStage(matter.stage); setStageDialogOpen(true); }}>
-              Change Stage
-            </Button>
-            {matter.status === 'Open' ? (
-              <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" onClick={() => setCloseDialogOpen(true)}>
-                <XCircle className="mr-1 h-3 w-3" /> Close
-              </Button>
-            ) : (
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleReopen}>
-                <RotateCcw className="mr-1 h-3 w-3" /> Reopen
-              </Button>
-            )}
-            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setHearingDialogOpen(true)}>
-              <Calendar className="mr-1 h-3 w-3" /> Schedule Hearing
-            </Button>
-            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setPaymentDialogOpen(true)}>
-              <DollarSign className="mr-1 h-3 w-3" /> Record Payment
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Financial summary */}
-      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-5">
-        {[
-          { label: 'Tax', value: matter.demand_tax, field: 'demand_tax' },
-          { label: 'Interest', value: matter.demand_interest, field: 'demand_interest' },
-          { label: 'Penalty', value: matter.demand_penalty, field: 'demand_penalty' },
-          { label: 'Cess', value: matter.demand_cess, field: 'demand_cess' },
-        ].map((d) => (
-          <Card key={d.field} className="border-l-4 border-l-primary transition-shadow hover:shadow-md">
-            <CardContent className="p-3.5 space-y-1.5">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Demand {d.label}</span>
-              <Input
-                type="number"
-                className="h-7 text-sm font-semibold tabular-nums"
-                defaultValue={d.value || ''}
-                onBlur={(e) => handleDemandUpdate(d.field, e.target.value)}
-              />
-            </CardContent>
-          </Card>
-        ))}
-        <Card className={cn(
-          'border-l-4 transition-shadow hover:shadow-md',
-          outstanding > 0 ? 'border-l-destructive bg-destructive/5' : 'border-l-emerald-500 bg-emerald-500/10',
-        )}>
-          <CardContent className="p-3.5 space-y-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Outstanding</span>
-            <p className="font-heading text-[30px] font-bold tabular-nums leading-none">{fmtMoney(outstanding)}</p>
-            <div className="text-[11px] text-muted-foreground">
-              Paid: {fmtMoney(matter.paid_total)} / Pre-deposit: {fmtMoney(matter.pre_deposit_total)}
-            </div>
-          </CardContent>
-        </Card>
+        </Tabs>
+        <aside className="space-y-3" aria-label="Next step and key facts">
+          <NextStepCard ws={ws} hint={step.hint} action={step.button} />
+          <KeyFacts ws={ws} canEdit={edit} ownerName={owner} reviewerName={reviewer} onChanged={reload} />
+        </aside>
       </div>
 
-      {/* Tabs: Notices, Hearings, Payments, Documents, Activity */}
-      <Tabs defaultValue="notices">
-        <TabsList>
-          <TabsTrigger value="notices" className="text-xs">Notices ({notices.length})</TabsTrigger>
-          <TabsTrigger value="hearings" className="text-xs">Hearings ({hearings.length})</TabsTrigger>
-          <TabsTrigger value="payments" className="text-xs">Payments ({payments.length})</TabsTrigger>
-          <TabsTrigger value="documents" className="text-xs">Documents ({documents.length})</TabsTrigger>
-          <TabsTrigger value="activity" className="text-xs">Activity ({events.length})</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="notices">
-          <Card>
-            <CardContent className="p-0">
-              {notices.length === 0 ? (
-                <p className="py-8 text-center text-xs text-muted-foreground">No notices linked to this matter.</p>
-              ) : (
-                <Table containerClassName="overflow-auto rounded-md border">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Type</TableHead>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Reference</TableHead>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Description</TableHead>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Issue Date</TableHead>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Due Date</TableHead>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Status</TableHead>
-                      <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Demand</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {notices.map((n) => (
-                      <TableRow key={n.id}>
-                        <TableCell className="text-xs">{n.notice_type || '—'}</TableCell>
-                        <TableCell className="font-mono text-[10px] text-muted-foreground">{n.reference_number || '—'}</TableCell>
-                        <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground">{n.description || '—'}</TableCell>
-                        <TableCell className="text-xs">{fmtDate(n.issue_date)}</TableCell>
-                        <TableCell className="text-xs">{fmtDate(n.due_date)}</TableCell>
-                        <TableCell className="text-xs">{n.staff_status || '—'}</TableCell>
-                        <TableCell className="text-right text-xs tabular-nums">
-                          {n.amount_of_demand ? fmtMoney(n.amount_of_demand) : '—'}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="hearings">
-          <Card>
-            <CardContent className="p-0">
-              {hearings.length === 0 ? (
-                <p className="py-8 text-center text-xs text-muted-foreground">No hearings scheduled.</p>
-              ) : (
-                <Table containerClassName="overflow-auto rounded-md border">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Date</TableHead>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Mode</TableHead>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Venue</TableHead>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Officer</TableHead>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Outcome</TableHead>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Adjourned</TableHead>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {hearings.map((h) => (
-                      <TableRow key={h.id}>
-                        <TableCell className="text-xs">{fmtDate(h.scheduled_at)}</TableCell>
-                        <TableCell className="text-xs capitalize">{h.mode || '—'}</TableCell>
-                        <TableCell className="text-xs">{h.venue || '—'}</TableCell>
-                        <TableCell className="text-xs">{h.officer || '—'}</TableCell>
-                        <TableCell className="text-xs">{h.outcome || '—'}</TableCell>
-                        <TableCell className="text-xs">{h.adjourned ? 'Yes' : '—'}</TableCell>
-                        <TableCell>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-6 text-[10px]"
-                            onClick={() => {
-                              setOutcomeHearingId(h.id);
-                              setOutcomeText(h.outcome || '');
-                              setOutcomeAdjourned(h.adjourned);
-                              setOutcomeNextDate(h.next_date || '');
-                              setOutcomeNotes(h.notes || '');
-                              setOutcomeDialogOpen(true);
-                            }}
-                          >
-                            {h.outcome ? 'Edit' : 'Record Outcome'}
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="payments">
-          <Card>
-            <CardContent className="p-0">
-              {payments.length === 0 ? (
-                <p className="py-8 text-center text-xs text-muted-foreground">No payments recorded.</p>
-              ) : (
-                <Table containerClassName="overflow-auto rounded-md border">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Kind</TableHead>
-                      <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Tax</TableHead>
-                      <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Interest</TableHead>
-                      <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Penalty</TableHead>
-                      <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Cess</TableHead>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Paid On</TableHead>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Remarks</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {payments.map((p) => (
-                      <TableRow key={p.id}>
-                        <TableCell className="text-xs capitalize">{p.kind.replace(/_/g, ' ')}</TableCell>
-                        <TableCell className="text-right text-xs tabular-nums">{fmtMoney(p.tax)}</TableCell>
-                        <TableCell className="text-right text-xs tabular-nums">{fmtMoney(p.interest)}</TableCell>
-                        <TableCell className="text-right text-xs tabular-nums">{fmtMoney(p.penalty)}</TableCell>
-                        <TableCell className="text-right text-xs tabular-nums">{fmtMoney(p.cess)}</TableCell>
-                        <TableCell className="text-xs">{fmtDate(p.paid_on)}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground">{p.remarks || '—'}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="documents">
-          <Card>
-            <NoticesCardHeader
-              title="Documents"
-              badge={
-                <Button size="sm" variant="outline" className="h-7 shrink-0 text-xs" onClick={() => setDocDialogOpen(true)}>
-                  <Plus className="mr-1 h-3 w-3" /> Add Document
-                </Button>
-              }
-            />
-            <CardContent className="p-0">
-              {documents.length === 0 ? (
-                <p className="py-8 text-center text-xs text-muted-foreground">No documents attached.</p>
-              ) : (
-                <Table containerClassName="overflow-auto rounded-md border">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Title</TableHead>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Kind</TableHead>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Source</TableHead>
-                      <TableHead className="bg-muted text-[10px] font-semibold uppercase">Added</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {documents.map((d) => (
-                      <TableRow key={d.id}>
-                        <TableCell className="text-xs">{d.title}</TableCell>
-                        <TableCell className="text-xs capitalize">{d.kind}</TableCell>
-                        <TableCell className="text-xs capitalize">{d.source}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground">{fmtRelative(d.created_at)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="activity">
-          <Card>
-            <CardContent className="py-3">
-              {events.length === 0 ? (
-                <p className="py-8 text-center text-xs text-muted-foreground">No activity yet.</p>
-              ) : (
-                <div className="space-y-2">
-                  {events.map((ev) => (
-                    <div key={ev.id} className="flex items-start gap-2 text-xs">
-                      <div className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/40" />
-                      <div className="min-w-0">
-                        <span className="font-medium">{ev.event_type.replace(/_/g, ' ')}</span>
-                        {ev.actor_name && <span className="text-muted-foreground"> by {ev.actor_name}</span>}
-                        <span className="ml-1 text-muted-foreground">{fmtRelative(ev.created_at)}</span>
-                        {ev.payload && typeof ev.payload === 'object' && Object.keys(ev.payload).length > 0 && (
-                          <p className="text-muted-foreground">
-                            {Object.entries(ev.payload).map(([k, v]) => `${k}: ${v}`).join(' · ')}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-
-      {/* Change Stage dialog */}
-      <Dialog open={stageDialogOpen} onOpenChange={setStageDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Change Stage</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label>New Stage</Label>
-              <Select value={newStage} onValueChange={setNewStage}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {STAGES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Note (optional)</Label>
-              <Textarea value={stageNote} onChange={(e) => setStageNote(e.target.value)} rows={2} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setStageDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleStageChange} disabled={saving || !newStage}>
-              {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />} Update
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Close dialog */}
-      <Dialog open={closeDialogOpen} onOpenChange={setCloseDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Close Matter</DialogTitle></DialogHeader>
-          <div>
-            <Label>Reason</Label>
-            <Select value={closeReason} onValueChange={setCloseReason}>
-              <SelectTrigger><SelectValue placeholder="Select reason" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="dropped">Dropped</SelectItem>
-                <SelectItem value="paid">Paid / Settled</SelectItem>
-                <SelectItem value="won">Won</SelectItem>
-                <SelectItem value="lost">Lost</SelectItem>
-                <SelectItem value="partly">Partly Allowed</SelectItem>
-                <SelectItem value="withdrawn">Withdrawn</SelectItem>
-                <SelectItem value="auto:closure">Auto-closed</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCloseDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleClose} disabled={saving || !closeReason} variant="destructive">
-              {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />} Close Matter
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add hearing dialog */}
-      <Dialog open={hearingDialogOpen} onOpenChange={setHearingDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Schedule Hearing</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label>Date & Time</Label>
-              <Input type="datetime-local" value={hearingDate} onChange={(e) => setHearingDate(e.target.value)} />
-            </div>
-            <div>
-              <Label>Mode</Label>
-              <Select value={hearingMode} onValueChange={setHearingMode}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="physical">Physical</SelectItem>
-                  <SelectItem value="video">Video</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Venue</Label>
-              <Input value={hearingVenue} onChange={(e) => setHearingVenue(e.target.value)} />
-            </div>
-            <div>
-              <Label>Officer</Label>
-              <Input value={hearingOfficer} onChange={(e) => setHearingOfficer(e.target.value)} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setHearingDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleAddHearing} disabled={saving || !hearingDate}>
-              {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />} Schedule
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Record hearing outcome dialog */}
-      <Dialog open={outcomeDialogOpen} onOpenChange={setOutcomeDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Record Hearing Outcome</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label>Outcome</Label>
-              <Select value={outcomeText} onValueChange={setOutcomeText}>
-                <SelectTrigger><SelectValue placeholder="Select outcome" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Adjourned">Adjourned</SelectItem>
-                  <SelectItem value="Part heard">Part Heard</SelectItem>
-                  <SelectItem value="Order reserved">Order Reserved</SelectItem>
-                  <SelectItem value="Order passed">Order Passed</SelectItem>
-                  <SelectItem value="Dismissed">Dismissed</SelectItem>
-                  <SelectItem value="Allowed">Allowed</SelectItem>
-                  <SelectItem value="Partly allowed">Partly Allowed</SelectItem>
-                  <SelectItem value="Ex-parte">Ex-Parte</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="adjourned-check"
-                checked={outcomeAdjourned}
-                onChange={(e) => setOutcomeAdjourned(e.target.checked)}
-                className="h-4 w-4 rounded border-gray-300"
-              />
-              <Label htmlFor="adjourned-check">Adjourned to next date</Label>
-            </div>
-            {outcomeAdjourned && (
-              <div>
-                <Label>Next Hearing Date</Label>
-                <Input type="datetime-local" value={outcomeNextDate} onChange={(e) => setOutcomeNextDate(e.target.value)} />
-              </div>
-            )}
-            <div>
-              <Label>Notes (optional)</Label>
-              <Textarea value={outcomeNotes} onChange={(e) => setOutcomeNotes(e.target.value)} rows={2} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOutcomeDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleRecordOutcome} disabled={saving}>
-              {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />} Save Outcome
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add document metadata dialog */}
-      <Dialog open={docDialogOpen} onOpenChange={setDocDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Add Document</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label>Title</Label>
-              <Input value={docTitle} onChange={(e) => setDocTitle(e.target.value)} placeholder="e.g. DRC-01 Notice, Appeal Memo" />
-            </div>
-            <div>
-              <Label>Kind</Label>
-              <Select value={docKind} onValueChange={setDocKind}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="notice">Notice</SelectItem>
-                  <SelectItem value="order">Order</SelectItem>
-                  <SelectItem value="reply">Reply</SelectItem>
-                  <SelectItem value="appeal">Appeal</SelectItem>
-                  <SelectItem value="submission">Submission</SelectItem>
-                  <SelectItem value="hearing_notes">Hearing Notes</SelectItem>
-                  <SelectItem value="evidence">Evidence</SelectItem>
-                  <SelectItem value="other">Other</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Source</Label>
-              <Select value={docSource} onValueChange={setDocSource}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="manual">Manual Upload</SelectItem>
-                  <SelectItem value="portal">GST Portal</SelectItem>
-                  <SelectItem value="client">Client</SelectItem>
-                  <SelectItem value="department">Department</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDocDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleAddDocument} disabled={saving || !docTitle.trim()}>
-              {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />} Add
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add payment dialog */}
-      <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Record Payment</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label>Kind</Label>
-              <Select value={paymentKind} onValueChange={setPaymentKind}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pre_deposit">Pre-deposit</SelectItem>
-                  <SelectItem value="voluntary">Voluntary (DRC-03)</SelectItem>
-                  <SelectItem value="recovery">Recovery</SelectItem>
-                  <SelectItem value="refund_received">Refund Received</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div><Label>Tax</Label><Input type="number" value={payTax} onChange={(e) => setPayTax(e.target.value)} /></div>
-              <div><Label>Interest</Label><Input type="number" value={payInterest} onChange={(e) => setPayInterest(e.target.value)} /></div>
-              <div><Label>Penalty</Label><Input type="number" value={payPenalty} onChange={(e) => setPayPenalty(e.target.value)} /></div>
-              <div><Label>Cess</Label><Input type="number" value={payCess} onChange={(e) => setPayCess(e.target.value)} /></div>
-            </div>
-            <div><Label>Paid On</Label><Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} /></div>
-            <div><Label>Remarks</Label><Input value={payRemarks} onChange={(e) => setPayRemarks(e.target.value)} /></div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPaymentDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleAddPayment} disabled={saving}>
-              {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />} Record
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <HearingDialog open={dialog === 'hearing'} onOpenChange={(o) => setDialog(o ? 'hearing' : null)} ws={ws} hearing={hearing} onDone={reload} />
+      <OutcomeDialog open={dialog === 'outcome'} onOpenChange={(o) => setDialog(o ? 'outcome' : null)} ws={ws} hearing={hearing} onDone={reload} onOrder={() => setDialog('order')} />
+      <RecordPaymentDialog open={dialog === 'payment'} onOpenChange={(o) => setDialog(o ? 'payment' : null)} ws={ws} onDone={reload} />
+      <RecordReplyDialog open={dialog === 'reply'} onOpenChange={(o) => setDialog(o ? 'reply' : null)} ws={ws} onDone={reload} />
+      <RecordOrderDialog open={dialog === 'order'} onOpenChange={(o) => setDialog(o ? 'order' : null)} ws={ws} onDone={reload} />
+      <CloseMatterDialog open={dialog === 'close' || dialog === 'decide'} preset={dialog === 'decide' ? 'appeal' : null} onOpenChange={(o) => setDialog(o ? dialog : null)} ws={ws} onDone={reload} />
+      <ReopenDialog open={dialog === 'reopen'} onOpenChange={(o) => setDialog(o ? 'reopen' : null)} ws={ws} onDone={reload} />
+      <EditMatterDialog open={dialog === 'edit'} onOpenChange={(o) => setDialog(o ? 'edit' : null)} ws={ws} onDone={reload} />
+      <EditDemandDialog open={dialog === 'demand'} onOpenChange={(o) => setDialog(o ? 'demand' : null)} ws={ws} onDone={reload} />
+      <LinkNoticesDialog open={dialog === 'link'} onOpenChange={(o) => setDialog(o ? 'link' : null)} ws={ws} onDone={reload} />
     </div>
   );
 };

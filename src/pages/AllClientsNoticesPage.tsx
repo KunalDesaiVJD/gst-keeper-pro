@@ -1,287 +1,154 @@
-// The Notices Dashboard's tile drill-down target — the firm-wide, all-
-// clients equivalent of the per-client "View Notice and Orders" report.
-// Reuses NoticeWorkflowListView (search/filter/sort/status-edit/case-
-// tracking dialog) wholesale by feeding it the same ReportTable shape, with
-// GSTIN + Trade Name columns prepended so rows from different clients are
-// distinguishable.
-//
-// Every filter reads the canonical flags of public.notice_facts (lib/
-// noticeFacts) — the same flags the dashboard tiles and the Notice Summary
-// count — so a tile's number is always this list's row count.
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Navigate, useSearchParams } from 'react-router-dom';
+// Notices & Litigation · All notices (roadmap Phase 2; audit U-20..U-34).
+// Every dashboard number opens this list with the same filter, and the URL
+// carries every filter, so the two always agree and a link reproduces the
+// view. The database filters, sorts and pages (lib/noticeQueries), so it stays
+// quick at 5,000 notices. A row opens the notice workspace (/notices/:id);
+// old ?noticeId= links (e-mails, the bell) go there too.
+import React, { useMemo, useState } from 'react';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { FileSpreadsheet, Loader2, RefreshCw } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { loadNoticeFacts, loadRefundFacts, loadDrc03Facts, istToday, daysBetween, type NoticeFact, type RefundFact, type Drc03Fact } from '@/lib/noticeFacts';
-import { NoticeWorkflowListView } from '@/components/reports/views/NoticeWorkflowListView';
-import { EvidenceEventListView } from '@/components/reports/views/EvidenceEventListView';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Note } from '@/components/gstr9/ui';
+import { WS_BTN } from '@/components/workspace/theme';
+import { NoticesShell } from '@/components/notices/NoticesShell';
+import { NoticeFilterBar } from '@/components/notices/NoticeFilterBar';
+import { NoticeTable } from '@/components/notices/NoticeTable';
+import { Pager } from '@/components/notices/Pager';
 import { AddNoticeDialog } from '@/components/notices/AddNoticeDialog';
-import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
-import NoticesPageHeader from '@/components/notices/NoticesPageHeader';
-import FilterPill from '@/components/notices/FilterPill';
-import { cn } from '@/lib/utils';
-import type { ReportTable } from '@/utils/allClientsReports';
-import { classifyNoticeCategory, isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
-import { isOpen, isOverdue, isDueIn7, isNew } from '@/utils/noticeDefinitions';
-import { isoDateToDMY } from '@/utils/formatDate';
-import { toast } from 'sonner';
-import { Bell, Loader2, Layers } from 'lucide-react';
-
-const isRegistrationRelated = (r: NoticeFact) => isRegistrationDescription(r.description);
-const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
-
-const FILTER_LABELS: Record<string, string> = {
-  last15: 'issued in the last 15 days',
-  last24h: 'pulled from the portal in the last 24 hours',
-  due7: 'due within 7 days (not yet replied)',
-  overdue: 'overdue',
-  priority: 'flagged priority',
-  submitted: 'with a submission logged',
-  replied: 'with a reply logged',
-  new: 'first seen in the last 24 hours',
-  exposure: 'open disputes with a demand (each counted once)',
-  unassigned: 'open, without an owner',
-};
-
-const DUE_BASIS_LABEL: Record<string, string> = {
-  portal: 'Portal',
-  extended: 'Extended',
-  computed: 'Computed',
-};
+import {
+  defaultSort, fetchNoticePage, fetchNoticeRows, fetchNoticeSum, filterDef, listSearch, parseListParams, PAGE_SIZE,
+  type NoticeListParams, type SortKey, SORTS,
+} from '@/lib/noticeQueries';
+import { stageLabel } from '@/lib/noticeStages';
+import { closeReasonText, fmtDate, fmtFy, noticeTitle } from '@/lib/noticeFormat';
 
 const AllClientsNoticesPage: React.FC = () => {
-  const { isStaffRole, canEditNoticeStatus } = useAuth();
-  const [params, setParams] = useSearchParams();
-  const [records, setRecords] = useState<NoticeFact[]>([]);
-  const [refunds, setRefunds] = useState<RefundFact[]>([]);
-  const [drc03s, setDrc03s] = useState<Drc03Fact[]>([]);
-  const [clockNoticeIds, setClockNoticeIds] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
+  const { isStaffRole, user, canEditNoticeStatus, canExportData } = useAuth();
+  const [sp, setSp] = useSearchParams();
+  const qc = useQueryClient();
+  const params = useMemo(() => parseListParams(sp), [sp]);
+  const meId = user?.id ?? null;
+  const [exporting, setExporting] = useState(false);
 
-  const filter = params.get('filter') || '';
-  const status = params.get('status') || '';
-  const typeParam = params.get('type') || '';
-  const category = params.get('category') || '';
-  // From the Notices Dashboard calendar's date-click drill-down: notices issued,
-  // due, heard, or with an appeal / attachment clock on that day (YYYY-MM-DD).
-  const dateParam = params.get('date') || '';
-  // From a Company Profile page's "View All" links — one client's notices.
-  const clientParam = params.get('client') || '';
-  // Deep-link to one notice (drawer "Open in list", the bell, alert e-mails).
-  const noticeIdParam = params.get('noticeId') || '';
-  // "Notices & Orders" (editable) vs "Merged Notices" (every source combined, read-only).
-  const activeTab = params.get('tab') === 'merged' ? 'merged' : 'notices';
-  const setActiveTab = (tab: 'notices' | 'merged') => {
-    const next = new URLSearchParams(params);
-    if (tab === 'notices') next.delete('tab'); else next.set('tab', tab);
-    setParams(next, { replace: true });
-  };
+  const list = useQuery({
+    queryKey: ['notice-list', listSearch(params), meId],
+    queryFn: () => fetchNoticePage(params, meId),
+    placeholderData: (prev) => prev,
+  });
+  const exposureTotal = useQuery({
+    queryKey: ['notice-list-sum', listSearch(params), meId],
+    enabled: params.filter === 'exposure',
+    queryFn: () => fetchNoticeSum(params, meId, 'exposure_amount'),
+  });
+  const client = useQuery({
+    queryKey: ['client-name', params.client],
+    enabled: !!params.client,
+    queryFn: async () => (await supabase.from('clients').select('name, gstin').eq('id', params.client as string).maybeSingle()).data,
+  });
 
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [notices, refundRows, drc03Rows] = await Promise.all([
-        loadNoticeFacts(), loadRefundFacts(), loadDrc03Facts(),
-      ]);
-      const sorted = [...notices.rows].sort((a, b) => (b.issue_date || '').localeCompare(a.issue_date || ''));
-      setRecords(sorted);
-      setRefunds(refundRows);
-      setDrc03s(drc03Rows);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load notices');
-    }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { void fetchAll(); }, [fetchAll]);
-
-  // The calendar counts appeal / attachment clocks on a day too; load which notices have one.
-  useEffect(() => {
-    if (!dateParam) { setClockNoticeIds(new Set()); return; }
-    let cancelled = false;
-    supabase.from('matter_deadlines').select('notice_id')
-      .in('deadline_type', ['appeal_s107', 'appeal_s107_condonation', 'appeal_s112', 'appeal_s112_condonation', 'attachment_expiry'])
-      .eq('is_met', false).eq('deadline_date', dateParam)
-      .then(({ data }) => { if (!cancelled) setClockNoticeIds(new Set((data ?? []).map((d) => d.notice_id))); });
-    return () => { cancelled = true; };
-  }, [dateParam]);
-
-  const setTypeOfNoticesParam = (v: string) => {
-    const next = new URLSearchParams(params);
-    if (v === 'all') next.delete('type'); else next.set('type', v);
-    setParams(next, { replace: true });
-  };
-
-  const filtered = useMemo(() => {
-    const today = istToday();
-    const dayMs = 24 * 60 * 60 * 1000;
-    const now = Date.now();
-    let list = records;
-    if (typeParam === 'registration') list = list.filter(isRegistrationRelated);
-    if (typeParam === 'other') list = list.filter((r) => !isRegistrationRelated(r));
-    if (category) list = list.filter((r) => classifyNoticeCategory(r) === category);
-    if (status) list = list.filter((r) => (status.toLowerCase() === 'closed' ? !isOpen(r) : isOpen(r)));
-    if (filter === 'last15') list = list.filter((r) => !!r.issue_date && daysBetween(r.issue_date, today) >= 0 && daysBetween(r.issue_date, today) <= 15);
-    if (filter === 'last24h') list = list.filter((r) => !!r.pulled_at && now - new Date(r.pulled_at).getTime() <= dayMs);
-    if (filter === 'due7') list = list.filter((r) => isDueIn7(r));
-    if (filter === 'overdue') list = list.filter((r) => isOverdue(r));
-    if (filter === 'priority') list = list.filter((r) => !!r.priority);
-    if (filter === 'submitted') list = list.filter((r) => !!r.submission_date || !!r.submission_arn);
-    // Replies are counted on notices; refund / voluntary-payment case rows sit in their own sets.
-    if (filter === 'replied') list = list.filter((r) => (!!r.is_replied || !!r.reply_date) && !r.is_refund_case && !r.is_drc03_case);
-    if (filter === 'new') list = list.filter((r) => isNew(r));
-    if (filter === 'exposure') list = list.filter((r) => num(r.exposure_amount) > 0);
-    if (filter === 'unassigned') list = list.filter((r) => isOpen(r) && !r.assign_to_user_id);
-    if (dateParam) {
-      list = list.filter((r) => (r.issue_date || '').slice(0, 10) === dateParam
-        || (isOpen(r) && (r.effective_due || '').slice(0, 10) === dateParam)
-        || (isOpen(r) && (r.hearing_date || '').slice(0, 10) === dateParam)
-        || (!!r.id && clockNoticeIds.has(r.id)));
-    }
-    if (clientParam) list = list.filter((r) => r.client_id === clientParam);
-    if (noticeIdParam) list = list.filter((r) => r.id === noticeIdParam);
-    return list;
-  }, [records, typeParam, category, status, filter, dateParam, clientParam, noticeIdParam, clockNoticeIds]);
-
-  const table: ReportTable = {
-    title: 'Notices — All Clients',
-    subtitle:
-      `${filtered.length} record${filtered.length === 1 ? '' : 's'}` +
-      (FILTER_LABELS[filter] ? `, ${FILTER_LABELS[filter]}` : '') +
-      (status ? `, status ${status}` : '') +
-      (category ? `, ${category}` : '') +
-      (dateParam ? `, issued, due, heard or with a clock on ${dateParam}` : ''),
-    headers: [
-      'GSTIN', 'Trade Name', 'Reference No.', 'Case ID', 'Type', 'Form', 'Description', 'Issue Date', 'Due Date', 'Extended Due Date',
-      'Due Basis', 'Status', 'Priority', 'Reply Ref No.', 'Reply Date', 'Order No.', 'Order Date', 'Submission ARN', 'Submission Date',
-      'Amount of Demand', 'Remarks', 'Issued By', 'Financial Year', 'Assign To', 'PDF',
-    ],
-    rows: filtered.map((r) => [
-      r.client_gstin || '—', r.client_name || '—',
-      r.reference_number || '—', r.case_id || '—', r.notice_type || '—', r.form_label || r.form_code || '—', r.description || '—',
-      isoDateToDMY(r.issue_date),
-      // The short clock fills Due Date when the portal gives none (Due Basis says so).
-      isoDateToDMY(r.due_date || (r.due_basis === 'computed' ? r.effective_due : null)),
-      isoDateToDMY(r.extended_due_date),
-      r.due_basis ? (r.due_basis === 'computed' && r.due_basis_note ? `Computed — ${r.due_basis_note}` : DUE_BASIS_LABEL[r.due_basis] ?? r.due_basis) : '—',
-      r.staff_status || '—', r.priority || '—',
-      r.reply_ref_number || '—', isoDateToDMY(r.reply_date), r.order_number || '—', isoDateToDMY(r.order_date),
-      r.submission_arn || '—', isoDateToDMY(r.submission_date),
-      r.amount_of_demand != null ? num(r.amount_of_demand) : '—', r.remarks || '—', r.issued_by || '—', r.financial_year || '—', r.assign_to || '—',
-      r.pdf_url || '—',
-    ]),
-    rowIds: filtered.map((r) => r.id),
-    clientIds: filtered.map((r) => r.client_id),
-    rowFlags: filtered.map((r) => ({ overdue: isOverdue(r), dueIn7: isDueIn7(r) })),
-    fileNameBase: 'Notices_All_Clients',
-    columnWidths: [16, 24, 16, 16, 16, 22, 40, 12, 12, 14, 18, 10, 8, 14, 12, 14, 12, 16, 14, 14, 24, 12, 12, 14, 12],
-  };
-
-  const mergedRows = useMemo(() => {
-    // client_id only populated for Refunds/DRC-03 rows, where `ref` (the ARN)
-    // is itself a valid case-folder key.
-    type MergedRow = { gstin: string; trade: string; section: string; ref: string; type: string; date: string; due: string; desc: string; status: string; pdf: string | null; clientId: string | null };
-    // Same set and the same open / closed rule as the Notice Summary and the
-    // GSTIN-wise count, so their Total / Open / Closed numbers are this tab's rows.
-    const wantStatus = status.toLowerCase();
-    const statusOk = (open: boolean) => (wantStatus === 'open' ? open : wantStatus === 'closed' ? !open : true);
-    const clientOk = (clientId: string | null) => !clientParam || clientId === clientParam;
-    const noticeRows: MergedRow[] = records
-      .filter((r) => !r.is_refund_case && !r.is_drc03_case)
-      .filter((r) => clientOk(r.client_id) && statusOk(isOpen(r)))
-      .filter((r) => (typeParam === 'registration' ? isRegistrationRelated(r) : typeParam === 'other' ? !isRegistrationRelated(r) : true))
-      .map((r) => ({
-        gstin: r.client_gstin || '—', trade: r.client_name || '—', section: 'Notices & Orders',
-        ref: r.reference_number || '—', type: r.form_label || r.notice_type || '—', date: r.issue_date || '', due: r.effective_due || '—',
-        desc: r.description || '—', status: r.staff_status || '—', pdf: r.pdf_url, clientId: null,
-      }));
-    // The refund and DRC-03 sets already hold their case rows once (same ARN = same case).
-    const refundRows: MergedRow[] = typeParam === 'registration' ? [] : refunds.filter((r) => clientOk(r.client_id) && statusOk(!r.is_closed)).map((r) => {
-      const docs = Array.isArray(r.documents) ? (r.documents as { url?: string }[]) : [];
-      return {
-        gstin: r.client_gstin || '—', trade: r.client_name || '—', section: 'Refunds',
-        ref: r.arn || '—', type: r.origin === 'case' ? 'Refund case' : 'GST RFD-01', date: r.filed_date || '', due: '—',
-        desc: r.refund_type || '—', status: r.status || '—', pdf: docs[0]?.url || null, clientId: r.client_id,
-      };
-    });
-    const drc03Rows: MergedRow[] = typeParam === 'registration' ? [] : drc03s.filter((r) => clientOk(r.client_id) && statusOk(!r.is_closed)).map((r) => ({
-      gstin: r.client_gstin || '—', trade: r.client_name || '—', section: 'DRC-03',
-      ref: r.arn || '—', type: 'DRC-03', date: r.filed_date || '', due: '—',
-      desc: r.cause_of_payment || '—', status: r.status || '—', pdf: r.pdf_url, clientId: r.client_id,
-    }));
-    return [...noticeRows, ...refundRows, ...drc03Rows].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  }, [records, refunds, drc03s, typeParam, clientParam, status]);
-
-  const mergedTable: ReportTable = {
-    title: 'Merged Notices — All Clients',
-    subtitle: `${mergedRows.length} record${mergedRows.length === 1 ? '' : 's'}${status ? `, status ${status}` : ''} — every source (Notices & Orders, Refunds, DRC-03) combined, each case once, most recent first`,
-    headers: ['GSTIN', 'Trade Name', 'Section', 'Ref ID', 'Type', 'Issued Date', 'Due Date', 'Description', 'Status', 'PDF'],
-    rows: mergedRows.map((r) => [r.gstin, r.trade, r.section, r.ref, r.type, isoDateToDMY(r.date), isoDateToDMY(r.due), r.desc, r.status, r.pdf || '—']),
-    clientIds: mergedRows.map((r) => r.clientId),
-    fileNameBase: 'Merged_Notices_All_Clients',
-    columnWidths: [16, 24, 16, 18, 16, 12, 12, 40, 12, 30],
-  };
-
-  // After every hook (Rules of Hooks).
+  const legacyNotice = sp.get('noticeId');
+  if (legacyNotice) return <Navigate to={`/notices/${legacyNotice}`} replace />;
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
+  const update = (patch: Partial<NoticeListParams>) => {
+    const next = { ...params, ...patch };
+    setSp(new URLSearchParams(listSearch(next).slice(1)), { replace: false });
+  };
+  const sortKey: SortKey = params.sort ?? defaultSort(params.filter);
+  const sortDir: 'asc' | 'desc' = params.dir ?? (SORTS[sortKey].ascending ? 'asc' : 'desc');
+  const onSort = (k: SortKey) => {
+    if (k === sortKey) update({ sort: k, dir: sortDir === 'asc' ? 'desc' : 'asc', page: 1 });
+    else update({ sort: k, dir: undefined, page: 1 });
+  };
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['notice-list'] });
+    qc.invalidateQueries({ queryKey: ['notices-command-centre'] });
+    qc.invalidateQueries({ queryKey: ['notice-plan-top'] });
+  };
+
+  const exportXlsx = async () => {
+    setExporting(true);
+    try {
+      const rows = await fetchNoticeRows(params, meId);
+      const data = rows.map((r) => ({
+        Client: r.client_name, GSTIN: r.client_gstin, Notice: noticeTitle(r), Form: r.form_code ?? '', Reference: r.reference_number ?? '',
+        Case: r.case_id ?? '', Issued: fmtDate(r.issue_date), 'Due': fmtDate(r.effective_due), 'Due basis': r.due_basis ?? '',
+        'Days to due': r.is_open && !r.is_replied ? r.days_to_due ?? '' : '', Stage: stageLabel(r.stage), Owner: r.assign_to ?? '',
+        Priority: r.effective_priority ?? '', 'Demand (₹)': r.amount_of_demand ?? '', 'Exposure (₹)': r.exposure_amount ?? '',
+        'Replied on': fmtDate(r.reply_date), 'Order on': fmtDate(r.order_date), Category: r.category ?? '', FY: fmtFy(r.financial_year),
+        'Close reason': closeReasonText(r.close_reason), Description: r.description ?? '',
+      }));
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Notices');
+      XLSX.writeFile(wb, `Notices — ${filterDef(params.filter).title}${client.data?.name ? ` — ${client.data.name}` : ''}.xlsx`);
+      toast.success(`Exported ${rows.length} notice${rows.length === 1 ? '' : 's'}`);
+    } catch (e) {
+      toast.error(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally { setExporting(false); }
+  };
+
+  const total = list.data?.total ?? 0;
+  const heading = `${filterDef(params.filter).title}${client.data?.name ? ` · ${client.data.name}` : ''}`;
+
   return (
-    <div className="space-y-4 animate-fade-in">
-      <NoticesPageHeader
-        title="Notices — All Clients"
-        icon={Bell}
-        subtitle="Every client's notices and orders, filtered from the dashboard tile you clicked."
-        actions={canEditNoticeStatus() ? <AddNoticeDialog onSuccess={fetchAll} /> : undefined}
-      />
-
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <NoticesTopNav />
-        <FilterPill
-          label="Type"
-          allLabel="All notices"
-          value={typeParam || 'all'}
-          onChange={setTypeOfNoticesParam}
-          options={[]}
-          extraOptions={[
-            { value: 'registration', label: 'Registration' },
-            { value: 'other', label: 'Other than Registration' },
-          ]}
-        />
+    <NoticesShell
+      section="All notices"
+      actions={canEditNoticeStatus() ? <AddNoticeDialog onSuccess={refresh} /> : undefined}
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-base font-semibold" aria-live="polite">
+          {heading} <span className="text-muted-foreground">· {list.isLoading ? '…' : total.toLocaleString('en-IN')}</span>
+        </h2>
+        {params.client && (
+          <span className="text-xs text-muted-foreground">
+            <Link to={`/notices-company/${params.client}`} className="text-primary hover:underline">Client profile</Link>
+            {' · '}<Link to={`/refunds-all?client=${params.client}`} className="text-primary hover:underline">Refunds</Link>
+            {' · '}<Link to={`/drc03-all?client=${params.client}`} className="text-primary hover:underline">DRC-03</Link>
+          </span>
+        )}
       </div>
-
-      <div className="flex w-fit items-center gap-0.5 rounded-lg bg-muted p-0.5">
-        <button
-          type="button"
-          className={cn(
-            'rounded-md px-3 py-1 text-[11px] font-medium transition-colors',
-            activeTab === 'notices' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground',
+      <NoticeFilterBar params={params} onChange={update} clientName={client.data?.name ?? null}
+        actions={<>
+          <Button size="sm" variant="outline" className={WS_BTN} onClick={() => list.refetch()} aria-label="Refresh"><RefreshCw className="h-3.5 w-3.5" /></Button>
+          {canExportData() && (
+            <Button size="sm" variant="outline" className={WS_BTN} onClick={exportXlsx} disabled={exporting || !total}>
+              {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />} Export to Excel
+            </Button>
           )}
-          onClick={() => setActiveTab('notices')}
-        >
-          Notices & Orders
-        </button>
-        <button
-          type="button"
-          className={cn(
-            'rounded-md px-3 py-1 text-[11px] font-medium transition-colors',
-            activeTab === 'merged' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground',
-          )}
-          onClick={() => setActiveTab('merged')}
-        >
-          Merged Notices
-        </button>
-      </div>
+        </>} />
 
-      {loading ? (
-        <div className="flex items-center justify-center py-20 text-muted-foreground">
-          <Loader2 className="h-6 w-6 animate-spin" />
+      {list.error ? (
+        <Note tone="warn">Couldn't load the notices: {list.error instanceof Error ? list.error.message : String(list.error)}{' '}
+          <Button variant="link" className="h-auto p-0 text-xs" onClick={() => list.refetch()}>Retry</Button></Note>
+      ) : list.isLoading ? (
+        <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+      ) : total === 0 ? (
+        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+          No notices match. {params.filter !== 'all' && <button type="button" className="text-primary hover:underline" onClick={() => update({ filter: 'all', page: 1 })}>Show all notices</button>}
         </div>
-      ) : activeTab === 'merged' ? (
-        <EvidenceEventListView table={mergedTable} report={{ title: mergedTable.title, icon: Layers }} />
       ) : (
-        <NoticeWorkflowListView table={table} report={{ title: table.title, icon: Bell }} />
+        <>
+          <NoticeTable rows={list.data?.rows ?? []} canEdit={canEditNoticeStatus()} sort={sortKey} dir={sortDir} onSort={onSort}
+            onChanged={refresh} showClient={!params.client}
+            footerTotal={params.filter === 'exposure' && exposureTotal.data !== undefined
+              ? { label: `Total exposure across ${total.toLocaleString('en-IN')} notice${total === 1 ? '' : 's'}`, amount: exposureTotal.data } : null} />
+          {params.filter === 'exposure' && (
+            <p className="text-xs text-muted-foreground">
+              Each open dispute is counted once (its latest notice carries the demand). The dashboard's exposure also adds open
+              matters' outstanding — <Link to="/litigation" className="text-primary hover:underline">see Matters</Link>.
+            </p>
+          )}
+          <Pager page={params.page} pageSize={PAGE_SIZE} total={total} onPage={(p) => update({ page: p })} />
+        </>
       )}
-    </div>
+    </NoticesShell>
   );
 };
 

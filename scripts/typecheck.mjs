@@ -18,9 +18,9 @@ const BASELINE = path.join(ROOT, 'scripts', 'tsc-baseline.json');
 const PROTECTED = [
   /^src\/components\/notices\//,
   /^src\/components\/reports\/views\/(NoticeWorkflowListView|EvidenceEventListView)\.tsx$/,
-  /^src\/pages\/(NoticesDashboardPage|CompanyListPage|CompanyProfilePage|NoticeSummaryReportPage|GstinWiseNoticeCountPage|AdditionalNoticeFolderPage|AllClientsNoticesPage|AllClientsRefundsPage|AllClientsDrc03Page|Litigation\w*)\.tsx$/,
+  /^src\/pages\/(NoticesDashboardPage|CompanyListPage|CompanyProfilePage|NoticeSummaryReportPage|GstinWiseNoticeCountPage|AdditionalNoticeFolderPage|AllClientsNoticesPage|AllClientsRefundsPage|AllClientsDrc03Page|NoticeWorkspacePage|NoticeQueuePage|NoticesHearingsPage|NoticesCalendarPage|Litigation\w*)\.tsx$/,
   /^src\/lib\/(notice\w*|litigationData|fetchAllRows)\.ts$/,
-  /^src\/hooks\/useNoticeSet\.ts$/,
+  /^src\/hooks\/(useNoticeSet|useExtensionBridge|useStaffList)\.ts$/,
   /^src\/utils\/(notice\w*|litigationPdfExport)\.ts$/,
 ];
 

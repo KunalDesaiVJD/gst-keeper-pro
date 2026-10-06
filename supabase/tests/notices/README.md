@@ -26,6 +26,13 @@ PGHOST=/path/to/socket PGPORT=55432 PGUSER=postgres supabase/tests/notices/run.s
 | `test_50_clocks` | `matter_deadlines` writer, overrides, outer-limit window |
 | `test_60_alerts` | preview / live, dedupe (a rerun sends nothing twice), quiet hours, auto-owner |
 | `test_70_alerts_speed` | a 1,500-event backlog under the anon 3 s statement timeout |
+| `test_80_stages` | the one stage vocabulary: stage ↔ status mirror, facts move it forward, matters on the same keys (legacy labels mapped) |
+| `test_90_workspace` | issues, drafts and partner review, document requests and E12, payments, uploads, the stage moves they imply |
+| `test_95_command_centre` | every command-centre number equals the count of the list or plan tab it opens; calendar, hearings, search |
+| `test_96_scale` | 5,000 notices: the command centre, plan and list queries stay well under the first-paint budget |
+
+Phase 2's e-mail changes (deep links to `/notices/<id>`, headline, button, grouped
+overdue list) are covered in `test_60_alerts`.
 
 A new migration that touches these objects goes into `migrations.txt`.
 

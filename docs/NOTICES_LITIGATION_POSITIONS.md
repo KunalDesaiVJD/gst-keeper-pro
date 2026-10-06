@@ -5,7 +5,7 @@ encodes. Read this before changing auto-close logic, due-date extraction,
 or the KPI tile definitions.
 
 **These positions were implemented by engineering judgement during
-Phases 0 and 1 of the notices roadmap, not confirmed in a firm sign-off
+Phases 0–2 of the notices roadmap, not confirmed in a firm sign-off
 conversation.** Flag any that don't match how the firm actually wants it
 to work; each is a localised change to reverse. Statutory periods and form
 rules carry a `confirmed_at` column that stays empty until the firm confirms
@@ -294,3 +294,116 @@ for the weekly MIS.
   `notices_auto_assign_open()` does it on request.
 - Links in the e-mails point at `notice_settings.app_base_url`
   (`https://gst.vjdesai.com`).
+
+## 13. One stage vocabulary (Phase 2)
+
+Notices and matters share one list, held in `notice_stages` and stored as a key in
+`gst_notices.stage` and `litigation_matters.stage` (foreign keys; migration
+`20261006120000`):
+
+**New → Triaged → Evidence → Waiting on client → Draft → Partner review → Filed →
+Hearing → Order → Appeal → Closed.**
+
+- `staff_status` stays as a mirror for the Phase 0–1 logic that reads it (the closing
+  sweep, `notice_is_closed`, the alert engine). Setting the stage writes it (the
+  stage's label; empty for New; `Closed` unless a closed wording such as `Withdrawn`
+  is already there). A writer that sets only `staff_status` moves the stage to match.
+- **Facts move the stage forward, never back**, when nobody set the stage in the same
+  write: a staff member gives a New notice an owner → Triaged; a reply is logged
+  before Filed → Filed; an order is logged → Order; a hearing (today or later) is fixed
+  once Filed → Hearing. The workspace adds: documents requested → Waiting on client;
+  the last request received or waived → Evidence; a draft sent for review → Partner
+  review; changes requested → Draft. An owner set by **Auto-assign** does not triage
+  a notice — a person has to act on it first.
+- A notice reopened from Closed goes to Triaged and loses its close reason.
+- Matters: a legacy label written by an older screen (`'Reply drafting'`) is turned
+  into its key by a trigger before the foreign key is checked; the matter's
+  `status` (Open / Closed) follows its stage, and the reverse.
+- Closing always asks a reason from the firm's list (§6) — singly and in bulk — and
+  every bulk change offers Undo.
+
+## 14. Today's plan: ranking and the next action (Phase 2)
+
+`notice_plan` (migration `20261006122000`) gives every open notice the date that
+drives it, how ready it is, one next action and a score. Today's plan on the command
+centre and the Work queue page read it, so their counts agree.
+
+- **The driving date:** an Order or Appeal runs on its appeal / attachment clock;
+  Filed and Hearing on the hearing date; before filing, the reply due date — or a
+  hearing fixed earlier than it.
+- **Readiness (0–100 %)** comes from the stage: New 0, Triaged 10, Evidence 30–50 (by
+  how much of the issues' amount the firm's data explains), Waiting on client 25–50
+  (by documents received), Draft 60, Partner review 75–95 (by the draft's state),
+  Filed 100, Hearing 50, Order 20, Appeal 30.
+- **Score = urgency × value × (0.6 + 0.4 × readiness) × priority.** Urgency: overdue
+  1.5–2.5 (rising over 60 days late), due today 1.2, then 1.2 / (1 + days ÷ 3), no
+  date 0.15. Value: 1 + ln(1 + amount ÷ ₹1 lakh), amount = exposure, else demand, else
+  the issues' total. Priority: High × 1.3, Low × 0.8. Ready work on a big, close
+  deadline comes first; an untouched notice is not buried, because urgency dominates.
+- **Next action:** no owner → Assign; a hearing within 7 days on a Filed / Hearing
+  notice → Prepare hearing; then by stage — New → Triage, Triaged → Start work,
+  Evidence → Build evidence, Waiting on client → Chase the client (while documents
+  are open), Draft → Write the draft, Partner review → Review (draft in review) or
+  File the reply (approved), Order → Decide on the order, Appeal → Follow the appeal.
+  Filed / Hearing with nothing due are waiting on the officer and stay off the plan.
+
+## 15. The notice workspace (Phase 2)
+
+One page per notice at `/notices/<id>` replaces the drawer; every e-mail, the bell,
+search and every list link to it.
+
+- **Issues** (`notice_issues`): what the notice alleges, the amount per notice, how
+  much the firm's data explains, the position and annexures. Typed by staff for now;
+  Phase 4 reads them from the PDF into the same rows (`source = 'extracted'`, marked
+  "verify").
+- **Draft reply** (`notice_drafts`): versions; "Send for partner review" →
+  Partner review; only a GST manager or superadmin approves or asks for changes.
+- **Documents from the client** (`notice_doc_requests`, alert **E12**): requests have
+  a due date and are received or waived with a note. "E-mail the client" goes through
+  the alert engine — a preview while alerts are in preview — and is signed by the
+  staff member who sent it; reminders count up. A notice with open requests is
+  "Waiting on client" and its next action is "Remind client".
+- **Uploads** go to the `return-pdfs` bucket under `notices/<client>/uploads/<notice>/`
+  and are listed with the portal's case-folder items and the notice PDF.
+- **Payments** (`notice_payments`): a DRC-03 found by ARN in the portal pulls, or a
+  pre-deposit / other payment typed in. They count against the demand on the page.
+- **Deadlines:** statutory clocks from `matter_deadlines` (§10) can be marked met or
+  overridden with a reason (`source = 'override'`), and exported to a calendar (ICS).
+
+## 16. Alert e-mails (Phase 2)
+
+Migration `20261006123000`:
+
+- Every alert links to `/notices/<id>`; the e-mail shell shows that link as an
+  **Open notice** button above the facts (and "Notice PDF" when there is one). The
+  morning list opens the Work queue; the managers' overdue list opens the overdue
+  list.
+- Alerts to staff carry **no client greeting and no signature**. They open with a
+  one-line headline ("Assigned to you · due in 2 days") and give the facts once:
+  client, GSTIN, notice, reference, demand, stage, owner, reply due with days left,
+  hearing, priority.
+- **Colour follows days left, not the rule's priority:** two days or less (or
+  overdue) red, a week amber, otherwise calm.
+- Morning-list and overdue-list lines name client, form and reference, link to the
+  notice and give days and amount; the overdue list is grouped by owner (nobody's
+  first), most overdue first, and says how many more there are. Appeal-clock lines
+  carry the order's number and date, the s.107(6) pre-deposit reminder for first
+  appeals and a link to the matter.
+- Client e-mails (E12, E13) keep the greeting and are signed by the staff member.
+- Seeded templates were rewritten only where they still held their seeded text.
+- **Deploy note:** the shell that sent mail uses is `supabase/functions/_shared/email.ts`
+  (mirrored in `src/lib/emailTemplate.ts` for the in-app preview). The
+  `send-gst-email` edge function must be redeployed before alerts go `live`, or sent
+  mail keeps the old shell (it still works — the template bodies keep their text link
+  — but without the button and with the old greeting).
+
+## 17. Every number opens its list (Phase 2)
+
+The command centre's figures come from one call, `notices_command_centre()`, defined
+over `notice_facts` and `notice_plan` — the same views the lists read — so each tile,
+plan tab, pipeline stage, calendar day and client count opens a list with the same
+number (tested in `test_95_command_centre`, checked again in the browser pass). Ctrl K
+searches clients by name or GSTIN and notices by reference, case ID / ARN, reply or
+order number, form, and the DIN or reference inside case-folder items
+(`notices_search()`).
+
