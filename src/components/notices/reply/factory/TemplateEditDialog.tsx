@@ -123,7 +123,7 @@ export const TemplateEditDialog: React.FC<{
     : null;
   const finalBody = body.trimEnd();
   const changed = !src || isNew || title.trim() !== src.title || summary.trim() !== src.summary || stance !== src.stance
-    || finalBody !== src.body.trimEnd() || forms.join('\n') !== src.forms.join('\n');
+    || finalBody !== src.body.trimEnd() || [...forms].sort().join('\n') !== [...src.forms].sort().join('\n');
   const blockers = [
     !title.trim() && 'The title is empty.',
     !finalBody.trim() && 'The wording is empty.',
