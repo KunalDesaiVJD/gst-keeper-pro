@@ -394,7 +394,7 @@ BEGIN
            document_sha256 = coalesce(p_result ->> 'document_sha256', document_sha256)
      WHERE id = v_x.id;
     RETURN jsonb_build_object('status', p_status);
-  ELSIF p_status <> 'done' THEN
+  ELSIF p_status IS DISTINCT FROM 'done' THEN
     RAISE EXCEPTION 'notice_read_finish: unknown status %', p_status USING ERRCODE = '22023';
   END IF;
 

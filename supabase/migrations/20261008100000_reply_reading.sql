@@ -596,7 +596,7 @@ DECLARE
   v_code text;
 BEGIN
   SELECT g.form_code INTO v_form FROM public.gst_notices g WHERE g.id = p_notice_id AND g.deleted_at IS NULL;
-  IF v_form NOT IN ('DRC-01B', 'DRC-01C') THEN RETURN false; END IF;
+  IF v_form IS NULL OR v_form NOT IN ('DRC-01B', 'DRC-01C') THEN RETURN false; END IF;
   IF EXISTS (SELECT 1 FROM public.notice_issues i WHERE i.notice_id = p_notice_id) THEN RETURN false; END IF;
   v_code := CASE v_form WHEN 'DRC-01B' THEN 'LIAB_GSTR1_V_3B' ELSE 'ITC_2B_V_3B' END;
   INSERT INTO public.notice_issues (notice_id, seq, title, amount, status, source, issue_code, verified, created_by_name)

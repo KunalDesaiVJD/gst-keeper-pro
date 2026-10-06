@@ -42,7 +42,7 @@ UPDATE public.reply_issue_types AS t
      $p$It is respectfully submitted that the input tax credit in question was availed within the time allowed by section 16(4) of the Act. As amended by the Finance Act, 2022, that provision permits credit on an invoice or debit note to be availed up to the thirtieth day of November following the end of the financial year to which it pertains, or the date of furnishing the annual return, whichever is earlier, and credit is availed when the return in FORM GSTR 3B claiming it is furnished. Section 16(5) of the Act further entitles a registered person to credit for the financial years 2017/18 to 2020/21 availed in a return furnished up to 30 November 2021, and section 16(6) of the Act protects credit where a cancelled registration is restored on revocation. The enclosed statement shows that the credit in question falls within these provisions.$p$,
      $p$It is accepted that the input tax credit identified in the enclosed statement was availed after the time allowed by section 16(4) of the Act and is not saved by section 16(5) or section 16(6) of the Act. The credit so accepted has been reversed or paid through FORM GST DRC 03, together with interest under section 50 of the Act to the extent the credit was utilised, as set out in this reply.$p$),
     ('ITC_17_5',
-     $p$It is respectfully submitted that the input tax credit in question is not blocked by section 17(5) of the Act. Each item of expenditure has been examined against the clause of section 17(5) cited in the notice, and each falls either outside that clause or within an exception that the clause itself provides, for instance where the goods or services are used for making a further taxable supply of the same category, or where the works relate to plant and machinery. The itemwise analysis is enclosed, and the credit is therefore admissible.$p$,
+     $p$It is respectfully submitted that the input tax credit in question is not blocked by section 17(5) of the Act. Each item of expenditure has been examined against the clause of section 17(5) cited in the notice, and each falls either outside that clause or within an exception that the clause itself provides, for instance where the goods or services are used for making a further taxable supply of the same category, or where the works relate to plant and machinery. The analysis, item by item, is enclosed, and the credit is therefore admissible.$p$,
      $p$It is accepted that the input tax credit on the items identified in the enclosed statement falls within section 17(5) of the Act and is not available. The credit so accepted has been reversed or paid through FORM GST DRC 03, together with interest under section 50 of the Act to the extent the credit was utilised, as set out in this reply.$p$),
     ('ITC_CANCELLED_SUPPLIER',
      $p$It is respectfully submitted that the suppliers in question held valid registrations on the dates of the invoices, and that the conditions of section 16(2) of the Act are satisfied in respect of the credit, as the tax invoices are held, the goods or services have been received, the value with tax has been paid to the suppliers through banking channels and the returns have been furnished. The subsequent cancellation of the registration of a supplier, even with retrospective effect, does not by itself render a genuine transaction void or deny credit to a bona fide recipient who has paid the tax to the supplier. The invoices, proof of receipt, proof of payment and the registration status of the suppliers on the invoice dates are enclosed. The credit is therefore admissible.$p$,
@@ -250,7 +250,7 @@ Subject: Submissions in Part B on the intimation in {{form_name}} with reference
 
 Respected Sir/Madam,
 
-1. {{client_name}} (hereinafter referred to as "the noticee") is registered under the Central Goods and Services Tax Act, 2017 (hereinafter referred to as "the Act") and {{sgst_act}} with GSTIN {{gstin}}. The provisions of the Act and of {{sgst_act}} being in pari materia, a reference in this submission to a provision of the Act or of the Central Goods and Services Tax Rules, 2017 (hereinafter referred to as "the Rules") includes a reference to the corresponding provision under {{sgst_act}}.
+1. {{client_name}} (hereinafter referred to as "the noticee") is registered under the Central Goods and Services Tax Act, 2017 (hereinafter referred to as "the Act") and {{sgst_act}} with GSTIN {{gstin}}. The provisions of the Act and of {{sgst_act}} being in pari materia, a reference in these submissions to a provision of the Act or of the Central Goods and Services Tax Rules, 2017 (hereinafter referred to as "the Rules") includes a reference to the corresponding provision under {{sgst_act}}.
 
 2. The noticee is in receipt of the intimation in Part A of {{form_name}} with reference number {{notice_ref}} dated {{notice_date_long}} (hereinafter referred to as "the intimation"){{din_clause}} issued under rule 142(1A) of the Rules, by which the tax, interest and penalty ascertained with reference to {{section_text}} for {{period_text}} have been communicated to the noticee, namely {{demand_heads_text}}.
 
@@ -262,7 +262,7 @@ Respected Sir/Madam,
 
 5. Without prejudice to the above, as no tax is short paid, the question of interest under section 50 of the Act or of any penalty does not arise.
 
-6. The noticee relies on the following documents, which are enclosed and may kindly be read as part of this submission:
+6. The noticee relies on the following documents, which are enclosed and may kindly be read as part of these submissions:
 {{annexure_list}}
 
 7. In view of the foregoing, it is respectfully prayed that:
@@ -335,7 +335,7 @@ Subject: Submissions in Part B on the intimation in {{form_name}} with reference
 
 Respected Sir/Madam,
 
-1. {{client_name}} (hereinafter referred to as "the noticee") is registered under the Central Goods and Services Tax Act, 2017 (hereinafter referred to as "the Act") and {{sgst_act}} with GSTIN {{gstin}}. The provisions of the Act and of {{sgst_act}} being in pari materia, a reference in this submission to a provision of the Act or of the Central Goods and Services Tax Rules, 2017 (hereinafter referred to as "the Rules") includes a reference to the corresponding provision under {{sgst_act}}.
+1. {{client_name}} (hereinafter referred to as "the noticee") is registered under the Central Goods and Services Tax Act, 2017 (hereinafter referred to as "the Act") and {{sgst_act}} with GSTIN {{gstin}}. The provisions of the Act and of {{sgst_act}} being in pari materia, a reference in these submissions to a provision of the Act or of the Central Goods and Services Tax Rules, 2017 (hereinafter referred to as "the Rules") includes a reference to the corresponding provision under {{sgst_act}}.
 
 2. The noticee is in receipt of the intimation in Part A of {{form_name}} with reference number {{notice_ref}} dated {{notice_date_long}} (hereinafter referred to as "the intimation"){{din_clause}} issued under rule 142(1A) of the Rules, by which the tax, interest and penalty ascertained with reference to {{section_text}} for {{period_text}} have been communicated to the noticee, namely {{demand_heads_text}}.
 
@@ -352,7 +352,7 @@ Penalty, if any: Rs. [amount of penalty paid]
 
 6. Without prejudice to the above, as no tax is short paid on the balance, the question of interest or penalty on it does not arise.
 
-7. The noticee relies on the following documents, which are enclosed and may kindly be read as part of this submission:
+7. The noticee relies on the following documents, which are enclosed and may kindly be read as part of these submissions:
 {{annexure_list}}
 
 8. In view of the foregoing, it is respectfully prayed that:
@@ -1802,7 +1802,7 @@ Place: {{place}}
 Date: {{today_long}}$t$),
 
 -- drc13_not_due: DRC-13
-('drc13_not_due', $t$Statement that no money is due to or held for the defaulter$t$,
+('drc13_not_due', $t$Statement that no money is due to the defaulter$t$,
  $t$Use when the noticee owes no money to, and holds no money for, the person named as the defaulter.$t$,
  'explain', '{DRC-13}', 10,
 $t$To,
@@ -1879,7 +1879,7 @@ Place: {{place}}
 Date: {{today_long}}$t$),
 
 -- drc13_withdraw: DRC-13
-('drc13_withdraw', $t$Request to withdraw the notice as the demand is paid or stayed$t$,
+('drc13_withdraw', $t$Request to revoke the notice$t$,
  $t$Use when the notice seeks to recover a demand against the taxpayer that has since been paid or stayed in appeal.$t$,
  'appeal_stay', '{DRC-13}', 30,
 $t$To,
@@ -1985,7 +1985,7 @@ Respected Sir/Madam,
 
 1. {{client_name}} (hereinafter referred to as "the appellant") is registered under the Central Goods and Services Tax Act, 2017 (hereinafter referred to as "the Act") and {{sgst_act}} with GSTIN {{gstin}}. The provisions of the Act and of {{sgst_act}} being in pari materia, a reference in this letter to a provision of the Act or of the Central Goods and Services Tax Rules, 2017 (hereinafter referred to as "the Rules") includes a reference to the corresponding provision under {{sgst_act}}.
 
-2. The appellant has filed an appeal before the Appellate Authority under section 107 of the Act in FORM GST APL 01, bearing ARN [ARN of the appeal] dated [date of filing the appeal], against [order appealed against, with its reference number and date] (hereinafter referred to as "the appeal"). By {{form_name}} with reference number {{notice_ref}} dated {{notice_date_long}}{{din_clause}} the personal hearing in the appeal has been fixed on {{hearing_date_long}}.
+2. The appellant has filed an appeal before the Appellate Authority under section 107 of the Act in FORM GST APL 01, bearing ARN [ARN of the appeal] dated [date of filing the appeal], against [order appealed against, with its reference number and date] (hereinafter referred to as "the appeal"). The personal hearing in the appeal has been fixed on {{hearing_date_long}} by {{form_name}} with reference number {{notice_ref}} dated {{notice_date_long}}{{din_clause}} issued in the appeal.
 
 3. The appellant confirms that [name of the authorised representative], [designation or professional qualification], will appear on its behalf at the hearing on {{hearing_date_long}} at [time of hearing], as its authorised representative under section 116 of the Act. The authorisation is enclosed.
 
@@ -2016,7 +2016,7 @@ Respected Sir/Madam,
 
 1. {{client_name}} (hereinafter referred to as "the appellant") is registered under the Central Goods and Services Tax Act, 2017 (hereinafter referred to as "the Act") and {{sgst_act}} with GSTIN {{gstin}}. The provisions of the Act and of {{sgst_act}} being in pari materia, a reference in this letter to a provision of the Act or of the Central Goods and Services Tax Rules, 2017 (hereinafter referred to as "the Rules") includes a reference to the corresponding provision under {{sgst_act}}.
 
-2. The appellant has filed an appeal before the Appellate Authority under section 107 of the Act in FORM GST APL 01, bearing ARN [ARN of the appeal] dated [date of filing the appeal], against [order appealed against, with its reference number and date] (hereinafter referred to as "the appeal"). By {{form_name}} with reference number {{notice_ref}} dated {{notice_date_long}}{{din_clause}} the personal hearing in the appeal has been fixed on {{hearing_date_long}}.
+2. The appellant has filed an appeal before the Appellate Authority under section 107 of the Act in FORM GST APL 01, bearing ARN [ARN of the appeal] dated [date of filing the appeal], against [order appealed against, with its reference number and date] (hereinafter referred to as "the appeal"). The personal hearing in the appeal has been fixed on {{hearing_date_long}} by {{form_name}} with reference number {{notice_ref}} dated {{notice_date_long}}{{din_clause}} issued in the appeal.
 
 3. The appellant is unable to attend the hearing on {{hearing_date_long}} for the following reason: [reason for which the adjournment is sought].
 
@@ -2045,9 +2045,9 @@ Subject: Written submissions in the appeal, in response to {{form_name}} with re
 
 Respected Sir/Madam,
 
-1. {{client_name}} (hereinafter referred to as "the appellant") is registered under the Central Goods and Services Tax Act, 2017 (hereinafter referred to as "the Act") and {{sgst_act}} with GSTIN {{gstin}}. The provisions of the Act and of {{sgst_act}} being in pari materia, a reference in this submission to a provision of the Act or of the Central Goods and Services Tax Rules, 2017 (hereinafter referred to as "the Rules") includes a reference to the corresponding provision under {{sgst_act}}.
+1. {{client_name}} (hereinafter referred to as "the appellant") is registered under the Central Goods and Services Tax Act, 2017 (hereinafter referred to as "the Act") and {{sgst_act}} with GSTIN {{gstin}}. The provisions of the Act and of {{sgst_act}} being in pari materia, a reference in these submissions to a provision of the Act or of the Central Goods and Services Tax Rules, 2017 (hereinafter referred to as "the Rules") includes a reference to the corresponding provision under {{sgst_act}}.
 
-2. The appellant has filed an appeal before the Appellate Authority under section 107 of the Act in FORM GST APL 01, bearing ARN [ARN of the appeal] dated [date of filing the appeal], against [order appealed against, with its reference number and date] (hereinafter referred to as "the appeal"). By {{form_name}} with reference number {{notice_ref}} dated {{notice_date_long}}{{din_clause}} the personal hearing in the appeal has been fixed on {{hearing_date_long}}.
+2. The appellant has filed an appeal before the Appellate Authority under section 107 of the Act in FORM GST APL 01, bearing ARN [ARN of the appeal] dated [date of filing the appeal], against [order appealed against, with its reference number and date] (hereinafter referred to as "the appeal"). The personal hearing in the appeal has been fixed on {{hearing_date_long}} by {{form_name}} with reference number {{notice_ref}} dated {{notice_date_long}}{{din_clause}} issued in the appeal.
 
 3. The appellant submits these written submissions in lieu of appearing in person at the hearing, and requests that the appeal be decided on their basis, together with the grounds of appeal and the documents already on record. This is without prejudice to the right of the appellant to be heard under section 107(8) of the Act, which it does not waive, should the Appellate Authority be inclined to take any view adverse to it.
 
@@ -2120,7 +2120,7 @@ Place: {{place}}
 Date: {{today_long}}$t$),
 
 -- order_appeal_stay: DRC-07, MOV-09
-('order_appeal_stay', $t$Intimation of appeal with pre deposit and request to stay recovery$t$,
+('order_appeal_stay', $t$Intimation of appeal and request to stay recovery$t$,
  $t$Use after an appeal is filed with the pre deposit under section 107(6), to record that recovery of the balance stands stayed.$t$,
  'appeal_stay', '{DRC-07,MOV-09}', 10,
 $t$To,
@@ -2423,14 +2423,12 @@ Respected Sir/Madam,
 
 {{issues_contest_paras}}
 
-4. [Any further facts and submissions specific to the notice.]
+4. The noticee submits that, for the reasons stated above, no adverse action is called for in the matter. It craves leave to add to, alter or amend these submissions and to produce further documents, if required. {{hearing_clause}}
 
-5. The noticee submits that, for the reasons stated above, no adverse action is called for in the matter. It craves leave to add to, alter or amend these submissions and to produce further documents, if required. {{hearing_clause}}
-
-6. The noticee relies on the following documents, which are enclosed and may kindly be read as part of this reply:
+5. The noticee relies on the following documents, which are enclosed and may kindly be read as part of this reply:
 {{annexure_list}}
 
-7. In view of the foregoing, it is respectfully prayed that:
+6. In view of the foregoing, it is respectfully prayed that:
 (a) this reply be taken on record and accepted;
 (b) the proceedings initiated by the notice be dropped and the matter be closed;
 (c) the noticee be given an opportunity of being heard before any adverse decision is taken; and

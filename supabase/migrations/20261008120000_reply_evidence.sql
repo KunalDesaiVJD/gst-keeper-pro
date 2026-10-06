@@ -72,7 +72,7 @@ DECLARE
   v_issue  public.notice_issues;
   nil      constant uuid := '00000000-0000-0000-0000-000000000000';
 BEGIN
-  IF p_status NOT IN ('ready', 'partial', 'needs_data', 'not_applicable', 'failed') THEN
+  IF p_status IS NULL OR p_status NOT IN ('ready', 'partial', 'needs_data', 'not_applicable', 'failed') THEN
     RAISE EXCEPTION 'reply_annexure_save: unknown status %', p_status USING ERRCODE = '22023';
   END IF;
   SELECT g.client_id INTO v_client FROM public.gst_notices g WHERE g.id = p_notice_id;

@@ -207,7 +207,7 @@ export const AutopilotHealth: React.FC<{ cc: CommandCentre; canRunAlerts: boolea
             value={agent ? `${ap.agent_online ? 'seen' : 'last seen'} ${fmtAgo(agent.last_seen)}` : '—'}
             to="/notices-autopilot" bad={!!ap.settings?.enabled && !ap.agent_online} />
         )}
-        {ap && (
+        {ap && ap.runner !== 'chrome' && (
           <Row label="Waiting for a CAPTCHA" value={captchas} to="/notices-autopilot?tab=wall" bad={captchas > 0} />
         )}
         <Row label="GSTINs synced in the last 24 h" value={`${h.fresh} / ${h.eligible}`} to="/notices-company-list" bad={h.fresh < h.eligible} />

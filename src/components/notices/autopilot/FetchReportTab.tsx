@@ -1,8 +1,10 @@
 // "Fetch a report" (roadmap Phase 3; audit S-22, U-110-2): queue any portal
 // pull the extension can make — notices, returns as filed, ledgers,
 // statements — for picked clients or every active client, for a range of
-// months or a financial year. The office agent logs each client in once (one
-// CAPTCHA on the wall) and saves the data where the app's pages read it.
+// months or a financial year. The queue's runner logs each client in once — the
+// scheduled Chrome, whose CAPTCHA extension fills the CAPTCHA, or the office
+// agent, with one CAPTCHA on the wall — and the data is saved where the app's
+// pages read it.
 import React, { useId, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -18,7 +20,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { REPORTS_CATALOG } from '@/lib/reportsCatalog';
 import {
-  REPORT_MODES, enqueueJobs, modeDef, monthRange, periodLabel, periodsLabel, recentFys, recentMonths, type ReportMode,
+  REPORT_MODES, enqueueJobs, modeDef, monthRange, periodLabel, periodsLabel, recentFys, recentMonths, type ReportMode, type RunnerMode,
 } from '@/lib/autopilot';
 import { plural } from '@/lib/noticeFormat';
 import { ClientPicker, type PickClient } from './ClientPicker';
@@ -33,7 +35,7 @@ function reportsFor(mode: string): string[] {
   return REPORTS_CATALOG.filter((r) => r.pull?.mode === mode).map((r) => r.title).sort((a, b) => asFiled(a) - asFiled(b));
 }
 
-export const FetchReportTab: React.FC<{ onQueued: () => void }> = ({ onQueued }) => {
+export const FetchReportTab: React.FC<{ runner: RunnerMode; onQueued: () => void }> = ({ runner, onQueued }) => {
   const uid = useId();
   const { user, canEditNoticeStatus } = useAuth();
   const qc = useQueryClient();
@@ -69,6 +71,7 @@ export const FetchReportTab: React.FC<{ onQueued: () => void }> = ({ onQueued })
   const count = who === 'all' ? allActive : picked.length;
   const reports = reportsFor(mode);
   const canQueue = canEditNoticeStatus() && count > 0 && !tooMany && !busy;
+  const chrome = runner === 'chrome';
 
   const queue = async () => {
     setBusy(true);
@@ -81,7 +84,9 @@ export const FetchReportTab: React.FC<{ onQueued: () => void }> = ({ onQueued })
     setBusy(false);
     if (!res.ok) { toast.error(res.error); return; }
     setLast({ tone: res.tone, text: res.text, mode });
-    toast[res.tone === 'warning' ? 'warning' : 'success'](res.text, { description: res.result.queued ? 'The CAPTCHAs come to the CAPTCHA wall.' : undefined });
+    toast[res.tone === 'warning' ? 'warning' : 'success'](res.text, {
+      description: !res.result.queued ? undefined : chrome ? 'The scheduled Chrome takes them one at a time.' : 'The CAPTCHAs come to the CAPTCHA wall.',
+    });
     qc.invalidateQueries({ queryKey: ['autopilot-queue'] });
     qc.invalidateQueries({ queryKey: ['autopilot-status'] });
     onQueued();
@@ -89,7 +94,9 @@ export const FetchReportTab: React.FC<{ onQueued: () => void }> = ({ onQueued })
 
   return (
     <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,1fr)_20rem]">
-      <SectionCard title="Fetch a report now" description="Queue a portal pull for any clients. The office agent logs each one in once — one CAPTCHA on the wall — and saves it where the app reads it.">
+      <SectionCard title="Fetch a report now" description={chrome
+        ? 'Queue a portal pull for any clients. The scheduled Chrome logs each one in once (its CAPTCHA extension fills the CAPTCHA) and saves it where the app reads it.'
+        : 'Queue a portal pull for any clients. The office agent logs each one in once — one CAPTCHA on the wall — and saves it where the app reads it.'}>
         {!canEditNoticeStatus() && <Note tone="info">Queueing a fetch needs the "Edit notice status" permission. You can look at the choices.</Note>}
         <div className="space-y-1">
           <Label htmlFor={`${uid}-mode`} className="text-xs">What to fetch</Label>
@@ -167,7 +174,7 @@ export const FetchReportTab: React.FC<{ onQueued: () => void }> = ({ onQueued })
             Queue for {plural(count, 'client')}
           </Button>
           <span className="text-xs text-muted-foreground">
-            About {plural(count, 'CAPTCHA')}{def.period === 'month' && periods.length > 1 ? `; each client's ${periods.length} months are read in one login` : ''}.
+            About {plural(count, chrome ? 'login' : 'CAPTCHA')}{def.period === 'month' && periods.length > 1 ? `; each client's ${periods.length} months are read in one login` : ''}.
           </span>
         </div>
         {last && last.mode === mode && (

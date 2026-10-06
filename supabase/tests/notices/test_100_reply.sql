@@ -122,6 +122,11 @@ INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, descrip
 SELECT t_eq((SELECT string_agg(g.reference_number, ' ' ORDER BY g.reference_number) FROM notice_extractions x JOIN gst_notices g ON g.id = x.notice_id
               WHERE x.source = 'ai'),
             'ZD-01C ZD-ASMT', 'auto-read: the ASMT-10 of the client with consent; not the GSTR-3A, not a client without consent');
+-- A notice the rules cannot classify gets no issue from the form reader.
+INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, description, issue_date, reference_number) VALUES
+ ('c4200000-0000-0000-0000-000000000035', 'c4100000-0000-0000-0000-000000000001', 'notices', 'n6', NULL, NULL, ist_today(), 'ZD-BLANK');
+SELECT t_eq((SELECT count(*) FROM notice_issues WHERE notice_id = 'c4200000-0000-0000-0000-000000000035'), 0::bigint,
+            'an unclassified notice gets no form issue');
 -- A client's first sync brings old and closed notices: those are not read by themselves.
 INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, description, issue_date, reference_number, pdf_url, staff_status) VALUES
  ('c4200000-0000-0000-0000-000000000033', 'c4100000-0000-0000-0000-000000000001', 'notices', 'n4', 'Scrutiny Of Returns',

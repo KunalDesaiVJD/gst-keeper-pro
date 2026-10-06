@@ -118,11 +118,14 @@ export class CaptchaFiller {
       while (!page.isClosed()) {
         try {
           if (/\/services\/login/.test(page.url())) {
+            // No function declared inside: tsx names inner functions with a helper the page does not have.
             const s = await page.evaluate(() => {
-              const val = (sel: string) => (document.querySelector(sel) as HTMLInputElement | null)?.value ?? '';
+              const user = document.querySelector('#username') as HTMLInputElement | null;
+              const pass = document.querySelector('#user_pass') as HTMLInputElement | null;
+              const box = document.querySelector('#captcha') as HTMLInputElement | null;
               const img = document.querySelector('#imgCaptcha') as HTMLImageElement | null;
               return {
-                user: val('#username'), pass: val('#user_pass'), box: val('#captcha'), src: img?.src ?? '',
+                user: user ? user.value : '', pass: pass ? pass.value : '', box: box ? box.value : '', src: img ? img.src : '',
                 ready: !!img && img.complete && img.naturalWidth > 0,
                 marked: document.documentElement.getAttribute('data-gstk-captcha'),
               };
