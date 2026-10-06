@@ -571,8 +571,10 @@ BEGIN
     INSERT INTO public.notice_issues (notice_id, seq, title, detail, amount, status, source, issue_code,
                                       period_from, period_to, demand, verified, extraction_id, created_by_name)
     VALUES (p_notice_id, 1,
-            'Demand in the notice' || coalesce(' u/s ' || (v_fields ->> 'section_of_law'), '')
-              || CASE WHEN v_from IS NOT NULL THEN ' · ' || to_char(v_from, 'Mon YYYY') || ' – ' || to_char(v_to, 'Mon YYYY') ELSE '' END,
+            -- Worded so it reads well inside a reply too (no dashes): "Demand in the notice
+            -- under section 73(1) for April 2019 to March 2020".
+            'Demand in the notice' || coalesce(' under section ' || (v_fields ->> 'section_of_law'), '')
+              || CASE WHEN v_from IS NOT NULL THEN ' for ' || to_char(v_from, 'FMMonth YYYY') || ' to ' || to_char(v_to, 'FMMonth YYYY') ELSE '' END,
             left(coalesce(v_detail ->> 'grounds', v_detail ->> 'reason', v_detail ->> 'facts'), 2000),
             public.reply_demand_total(v_demand), 'open', 'portal', v_code,
             v_from, CASE WHEN v_from IS NOT NULL THEN v_to END, v_demand, true, v_id, 'Portal');

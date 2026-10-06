@@ -344,11 +344,14 @@ templates in `20261008161000_reply_templates_seed.sql`, catalogue in
   re-renders every open notice. A reply that cannot be prepared is logged as a
   warning and never blocks the sync's write. Closed notices and no-reply types
   get none.
-- **Which.** Every active template for the notice's form, two to four per form
-  that needs a reply (contest in full, part acceptance, acceptance and payment,
-  explanation, more time, documents relied upon, rectification, stay of
-  recovery, as the form allows); the general templates when the form has none
-  of its own.
+- **Which.** Every active template for the notice's form: two to five per form
+  that needs a reply (64 templates in all; contest in full, part acceptance,
+  acceptance and payment, explanation, more time, documents relied upon,
+  rectification, stay of recovery, as the form allows), and a paragraph per issue
+  code for contesting it and for accepting it; the three general templates when
+  the form has none of its own. The catalogue, with the legal basis of each and
+  the law points left as fill-ins for the partner to confirm, is
+  `docs/REPLY_TEMPLATES.md`.
 - **The wording rule.** Formal legal English and no hyphen or dash of any kind
   (U+002D, U+2010 to U+2015, U+2212, the small and fullwidth hyphens, the soft
   hyphen) in any template, issue paragraph, signature setting or rendered reply:

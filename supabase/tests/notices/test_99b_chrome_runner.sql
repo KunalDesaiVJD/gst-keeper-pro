@@ -25,7 +25,7 @@ SELECT t_eq(autopilot_runner_kind('office-pc'), 'office_agent', 'anything else i
 
 -- ── Heartbeat and online ───────────────────────────────────────────────────
 UPDATE autopilot_settings SET enabled = true, schedule_enabled = false, close_at = '23:59:59', max_attempts = 2,
-                              nudge_at = ((now() AT TIME ZONE 'Asia/Kolkata')::time - interval '5 minutes')::time;
+                              nudge_at = time '00:00';
 SELECT t_eq((autopilot_heartbeat('office-pc', '{"version": "1.1.0"}') ->> 'serves')::boolean, false,
             'the office agent is told it does not run the queue');
 SELECT t_eq(autopilot_agent_online(), false, 'an office agent kept for reading notices does not make the runner online');
@@ -74,7 +74,7 @@ SELECT t_eq((SELECT count(*) FROM sync_run_items i JOIN portal_jobs j ON j.run_i
 SELECT t_eq((autopilot_tick() ? 'nudge'), false, 'no 09:00 CAPTCHA nudge in Chrome mode');
 UPDATE portal_agent_heartbeat SET last_seen = now() - interval '1 hour' WHERE agent_id LIKE 'chrome:%';
 UPDATE portal_jobs SET created_at = now() - interval '2 hours', status = 'queued', claimed_by = NULL WHERE status IN ('claimed', 'running');
-UPDATE autopilot_settings SET close_at = ((now() AT TIME ZONE 'Asia/Kolkata')::time - interval '1 minute')::time WHERE id;
+UPDATE autopilot_settings SET close_at = time '00:00' WHERE id;  -- already past, at any hour
 SELECT t_eq((autopilot_tick() ->> 'closed')::int >= 1, true, 'the day closes what was not reached');
 SELECT t_eq((SELECT min(error) FROM portal_jobs WHERE reason_class = 'agent_offline'), 'The scheduled Chrome was offline.',
             'in the Chrome''s words');

@@ -376,12 +376,12 @@ BEGIN
               || CASE WHEN coalesce(r.amount, 0) > 0 THEN ' (' || public.reply_inr(r.amount) || ')' ELSE '' END || E'\n'
               || coalesce(r.para_accept,
                    'The noticee accepts the liability on this issue and has discharged the same together with applicable '
-                   || 'interest under section 50 through FORM GST DRC 03 vide [ARN] dated [date].');
+                   || 'interest under section 50, as set out in this reply.');
   END LOOP;
   IF i > 0 THEN v_list := v_list || '.'; END IF;
   IF i = 0 THEN
     v_list := '(a) The matters set out in the notice.';
-    v_contest := 'The noticee respectfully submits that the proposals made in the notice are not sustainable on facts and '
+    v_contest := 'The noticee respectfully submits that the matters raised in the notice are not sustainable on facts and '
               || 'in law. [Set out the facts, the reconciliation and the legal submissions on each matter raised in the notice.]';
     v_accept := 'The noticee has examined the matters set out in the notice and accepts the liability proposed therein. '
               || '[Describe the liability accepted and how it has been computed.]';
@@ -391,8 +391,9 @@ BEGIN
   SELECT string_agg('Annexure ' || n || ': ' || public.reply_dehyphen(t), E'\n' ORDER BY n) INTO v_annex
     FROM (
       SELECT row_number() OVER (ORDER BY a.generated_at, a.recipe_key) AS n,
-             coalesce(nullif(btrim(a.title), ''), initcap(replace(a.recipe_key, '_', ' ')))
-             || CASE WHEN a.financial_year IS NOT NULL THEN ' for the financial year ' || a.financial_year ELSE '' END AS t
+             regexp_replace(coalesce(nullif(btrim(a.title), ''), initcap(replace(a.recipe_key, '_', ' '))), '\s*·\s*', ', ', 'g')
+             || CASE WHEN a.financial_year IS NOT NULL AND coalesce(a.title, '') !~ '20[0-9]{2}'
+                     THEN ' for the financial year ' || a.financial_year ELSE '' END AS t
         FROM public.reply_annexures a
        WHERE a.notice_id = p_notice_id AND a.is_current AND a.status IN ('ready', 'partial')
     ) x;
@@ -413,7 +414,8 @@ BEGIN
     'notice_date_long', coalesce(public.reply_date_long(g.issue_date), '[date of the notice]'),
     'din_clause', CASE WHEN nullif(btrim(g.din), '') IS NOT NULL
                        THEN ', bearing Document Identification Number ' || btrim(g.din) || ',' ELSE '' END,
-    'officer', coalesce(v_officer, 'Proper Officer'),
+    'officer', coalesce(v_officer, CASE WHEN g.form_code IN ('APL-HEARING', 'APL-02', 'APL-04') THEN 'Appellate Authority'
+                                        ELSE 'Proper Officer' END),
     'section_text', v_sec,
     'section_short', coalesce(v_short, 'the relevant section'),
     'period_text', v_period,

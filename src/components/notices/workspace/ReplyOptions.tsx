@@ -20,7 +20,9 @@ import {
 } from '@/lib/noticeWorkspace';
 import { fmtDate } from '@/lib/noticeFormat';
 
-const STANCE: Record<string, { label: string; tone: 'destructive' | 'warning' | 'info' | 'success' | 'secondary' }> = {
+// Exported for the Reply templates tab (src/components/notices/reply/factory), so both say the same.
+// eslint-disable-next-line react-refresh/only-export-components
+export const STANCE: Record<string, { label: string; tone: 'destructive' | 'warning' | 'info' | 'success' | 'secondary' }> = {
   contest: { label: 'Contest', tone: 'destructive' },
   partial: { label: 'Part accept', tone: 'warning' },
   accept_pay: { label: 'Accept and pay', tone: 'warning' },
@@ -37,7 +39,7 @@ const STANCE: Record<string, { label: string; tone: 'destructive' | 'warning' | 
 const istDate = (ts: string) => new Date(ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-const StanceChip: React.FC<{ stance: string }> = ({ stance }) => {
+export const StanceChip: React.FC<{ stance: string }> = ({ stance }) => {
   const s = STANCE[stance] ?? STANCE.general;
   return <Badge variant={s.tone} className="shrink-0 whitespace-nowrap px-1.5 py-0 text-[10px]">{s.label}</Badge>;
 };

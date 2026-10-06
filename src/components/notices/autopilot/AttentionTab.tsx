@@ -47,7 +47,9 @@ function fixOf(g: FailureGroup, mode: RunnerMode): { kind: Fix; hint: string } {
     return { kind: 'retry', hint: 'The scheduled Chrome was closed or busy until the day closed. Keep that PC and Chrome on at the scheduled times, then run them again.' };
   }
   if (g.reason === 'skipped_at_wall') {
-    return { kind: 'wall', hint: 'Someone skipped these clients on the wall. Run them again when there is time to type their CAPTCHAs.' };
+    return mode === 'chrome'
+      ? { kind: 'retry', hint: 'Someone skipped these clients on the CAPTCHA wall while the office agent ran the queue. Run them again; the scheduled Chrome takes them.' }
+      : { kind: 'wall', hint: 'Someone skipped these clients on the wall. Run them again when there is time to type their CAPTCHAs.' };
   }
   return { kind: 'retry', hint: 'Usually temporary. Run them again; if one keeps failing, open its sync log.' };
 }

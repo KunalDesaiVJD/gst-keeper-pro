@@ -394,7 +394,7 @@
         : b.runner === 'office_agent' ? 'Set to the office agent' : !b.enabled ? 'Off' : b.paused ? 'Paused' : 'On';
       $('rnApp').className = b && b.ok && b.enabled && !b.paused && b.runner === 'chrome' ? 'ok' : (b && !b.ok ? 'bad' : '');
       const fresh = b && b.ok && b.at && Date.now() - b.at < 150000;
-      $('rnOnline').textContent = !b ? 'Starting…' : fresh ? 'Online · reported ' + fmtWhen(new Date(b.at).toISOString())
+      $('rnOnline').textContent = !b ? 'Starting…' : fresh ? 'Online · ' + fmtWhen(new Date(b.at).toISOString())
         : 'Not reporting' + (b.at ? ' since ' + fmtWhen(new Date(b.at).toISOString()) : '');
       $('rnOnline').className = fresh ? 'ok' : 'bad';
       const aj = runner.job && runner.job.runner && st.job && runner.job.runner.jobId === st.job.id ? runner.job : null;
