@@ -1,21 +1,26 @@
 {
   "name": "gst-keeper-portal-agent",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Local Playwright worker: pull/push between GST Keeper and the GST portal (save-only).",
+  "description": "Office-PC worker for GST Keeper's Portal Autopilot: drives the GST Keeper extension in its own Chromium, CAPTCHAs typed by people on the app's CAPTCHA wall.",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.89.0",
     "dotenv": "^16.4.5",
-    "playwright": "^1.48.0",
-    "xlsx": "^0.18.5"
+    "imapflow": "^1.0.191",
+    "mailparser": "^3.7.4",
+    "playwright": "1.56.1"
   },
   "devDependencies": {
+    "@types/mailparser": "^3.4.6",
     "@types/node": "^22.16.5",
     "tsx": "^4.19.2",
     "typescript": "^5.8.3"

@@ -743,9 +743,9 @@ BEGIN
     IF public.notice_alert_enqueue('E16_captcha_waiting', v_r.email, v_r.name, v_r.user_id,
          jsonb_build_object('waiting_count', p_waiting,
                             'headline', p_waiting || ' clients are waiting for a CAPTCHA',
-                            'cta_url', coalesce(v_base, '') || '/notices/autopilot',
+                            'cta_url', coalesce(v_base, '') || '/notices-autopilot',
                             'cta_label', 'Open the CAPTCHA wall',
-                            'link_html', '<a href="' || coalesce(v_base, '') || '/notices/autopilot">Open the CAPTCHA wall</a>'),
+                            'link_html', '<a href="' || coalesce(v_base, '') || '/notices-autopilot">Open the CAPTCHA wall</a>'),
          'E16:' || v_day || ':' || lower(v_r.email)) THEN
       v_n := v_n + 1;
     END IF;
