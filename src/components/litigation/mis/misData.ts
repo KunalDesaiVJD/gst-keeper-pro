@@ -112,6 +112,8 @@ export interface MisHearing {
   /** "Hearing", or "Hearing · ASMT-10" for a date taken from a linked notice. */
   label: string;
   noticeId: string | null;
+  /** The linked notice's reference, for a date taken from it. */
+  reference: string | null;
   mode: string | null;
   venue: string | null;
   officer: string | null;
@@ -218,8 +220,9 @@ export function buildMisData(rows: MatterListRow[], x: MisExtras, today: string 
       const d = c.at ? details.find((h) => new Date(h.scheduled_at).getTime() === new Date(c.at as string).getTime()) : undefined;
       return {
         key: d?.id ?? `${r.id}-${c.noticeId ?? 'h'}-${i}`, on: c.date, time: c.at ? istTime(c.at) : null, days: c.days,
-        label: c.label, noticeId: c.noticeId ?? null,
-        mode: d?.mode ? hearingModeLabel(d.mode) : null, venue: d?.venue ?? c.detail ?? null, officer: d?.officer ?? null, notes: d?.notes ?? null,
+        label: c.label, noticeId: c.noticeId ?? null, reference: c.noticeId ? c.detail ?? null : null,
+        mode: d?.mode ? hearingModeLabel(d.mode) : null, venue: d?.venue ?? (c.noticeId ? null : c.detail ?? null),
+        officer: d?.officer ?? null, notes: d?.notes ?? null,
         attendees: (d?.attended_by ?? []).map((id) => staffName(id) as string),
       };
     });

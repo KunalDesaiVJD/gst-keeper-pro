@@ -42,13 +42,13 @@ const Split: React.FC<{ r: Drc03Row; id: string }> = ({ r, id }) => (
     {r.heads ? (
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3 lg:grid-cols-9">
         {HEADS.map((h) => (
-          <div key={h.k}><dt className="text-muted-foreground">{h.label}</dt><dd className="tabular-nums">{r.heads?.[h.k] === null ? '—' : fmtInr(r.heads?.[h.k])}</dd></div>
+          <div key={h.k}><dt className="text-foreground/70">{h.label}</dt><dd className="tabular-nums">{r.heads?.[h.k] === null ? '—' : fmtInr(r.heads?.[h.k])}</dd></div>
         ))}
-        <div><dt className="text-muted-foreground">Paid in cash</dt><dd className="tabular-nums">{r.cash === null ? '—' : fmtInr(r.cash)}</dd></div>
-        <div><dt className="text-muted-foreground">From credit</dt><dd className="tabular-nums">{r.credit === null ? '—' : fmtInr(r.credit)}</dd></div>
+        <div><dt className="text-foreground/70">Paid in cash</dt><dd className="tabular-nums">{r.cash === null ? '—' : fmtInr(r.cash)}</dd></div>
+        <div><dt className="text-foreground/70">From credit</dt><dd className="tabular-nums">{r.credit === null ? '—' : fmtInr(r.credit)}</dd></div>
       </dl>
-    ) : <p className="text-xs text-muted-foreground">Tax heads not fetched: only the portal case is on record.</p>}
-    <p className="text-[11px] text-muted-foreground">
+    ) : <p className="text-xs text-foreground/70">Tax heads not fetched: only the portal case is on record.</p>}
+    <p className="text-[11px] text-foreground/70">
       {r.section ? `${r.section} · ` : ''}{r.fy ? `FY ${fmtFy(r.fy)} · ` : ''}The portal sync books mixed cash-and-credit lines to cash, so the split can understate credit.
     </p>
   </div>

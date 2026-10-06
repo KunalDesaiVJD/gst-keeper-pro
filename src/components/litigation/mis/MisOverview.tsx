@@ -68,7 +68,7 @@ export const MisCountsLine: React.FC<{ r: MisReport; links: MisLinks }> = ({ r, 
 
 // The badge says what kind of date it is; the line adds what the badge does not.
 const detail = (a: AgendaItem) => (a.kind === 'hearing' ? [a.label, a.time && `${a.time} IST`].filter(Boolean).join(' · ')
-  : /^(Due date|Reply due|Limitation)$/.test(a.label) ? '' : a.label);
+  : /^(Due date|Reply|Reply due|Limitation)$/.test(a.label) ? '' : a.label);
 
 const NextDays: React.FC<{ r: MisReport; links: MisLinks }> = ({ r, links }) => (
   <SectionCard title="Next 14 days" description="Hearings, due dates, limitation and appeal clocks on open matters (IST)"
@@ -109,10 +109,14 @@ const ByForum: React.FC<{ r: MisReport; links: MisLinks }> = ({ r, links }) => (
     actions={<Link to={links.tab('breakdown')} className="text-xs font-medium text-primary underline underline-offset-2">Breakdown</Link>}>
     <BarList rows={r.byForum.map((b) => ({ key: b.key, label: b.label, tone: b.tone, amount: b.money.outstanding, count: b.rows.length, to: links.drill(`forum:${b.key}`) }))} />
     <p className="text-[11px] text-muted-foreground">
-      <Link to={links.drill('proposed')} className="text-primary underline underline-offset-2">Proposed <Rupees v={r.money.proposed} /></Link>
+      {r.sets.proposed.length > 0
+        ? <Link to={links.drill('proposed')} className="text-primary underline underline-offset-2">Proposed <Rupees v={r.money.proposed} /></Link>
+        : <>Proposed <Rupees v={0} /></>}
       {' '}still at the notice stage ·{' '}
-      <Link to={links.drill('confirmed')} className="text-primary underline underline-offset-2">confirmed <Rupees v={r.money.confirmed} /></Link>
-      {' '}by an order or later. Forum is read from the lifecycle and stage.
+      {r.sets.confirmed.length > 0
+        ? <Link to={links.drill('confirmed')} className="text-primary underline underline-offset-2">confirmed <Rupees v={r.money.confirmed} /></Link>
+        : <>confirmed <Rupees v={0} /></>}
+      {' '}by an order or later. Forum is the matter's own, else read from its lifecycle and stage.
     </p>
   </SectionCard>
 );

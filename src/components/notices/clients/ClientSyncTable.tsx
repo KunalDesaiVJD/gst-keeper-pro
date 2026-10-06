@@ -199,8 +199,9 @@ export const NextStep: React.FC<{ h: ClientHealth; handlers: RowHandlers; busy: 
   return <span className="text-xs text-muted-foreground">nothing to do</span>;
 };
 
+// Not modal: a modal menu hides the rest of the page from screen readers while its links stay focusable (axe aria-hidden-focus).
 const RowMenu: React.FC<{ h: ClientHealth; handlers: RowHandlers }> = ({ h, handlers }) => (
-  <DropdownMenu>
+  <DropdownMenu modal={false}>
     <DropdownMenuTrigger asChild>
       <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={`More for ${h.client.name}`}><MoreHorizontal className="h-4 w-4" /></Button>
     </DropdownMenuTrigger>

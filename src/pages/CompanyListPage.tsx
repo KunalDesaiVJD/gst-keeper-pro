@@ -278,7 +278,7 @@ const CompanyListPage: React.FC = () => {
           ) : total === 0 ? (
             <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
               {status === 'failed' ? 'Nothing is failing.' : status === 'never' ? 'Every synced client has been tried at least once.' : 'No client matches these filters.'}{' '}
-              {chips.length > 0 && <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={() => set({ status: null, reason: null, owner: null, q: null })}>Show every synced client</button>}
+              {chips.length > 0 && <button type="button" className="text-primary underline underline-offset-2" onClick={() => set({ status: null, reason: null, owner: null, q: null })}>Show every synced client</button>}
             </div>
           ) : (
             <>

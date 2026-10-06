@@ -172,11 +172,11 @@ export const AutopilotHealth: React.FC<{ cc: CommandCentre; canRunAlerts: boolea
       </Badge>}>
       <div className="divide-y">
         <Row label={run ? `Last sync run · ${run.status}${run.ext_version ? ` · extension v${run.ext_version}` : ''}` : 'No sync run recorded yet'}
-          value={run ? `${fmtAgo(run.started_at)}${run.clients_total ? ` · ${run.clients_done}/${run.clients_total}` : ''}` : '—'} to="/notices-company-list" />
+          value={run ? `${fmtAgo(run.started_at)}${run.clients_total ? ` · ${run.clients_done}/${run.clients_total}` : ''}` : '—'} to="/notices-company-list?tab=log" />
         <Row label="GSTINs synced in the last 24 h" value={`${h.fresh} / ${h.eligible}`} to="/notices-company-list" bad={h.fresh < h.eligible} />
         {h.never > 0 && <Row label="Never synced" value={h.never} to="/notices-company-list?status=never" bad />}
         {Object.entries(h.failing).map(([reason, n]) => (
-          <Row key={reason} label={REASONS[reason] ?? reason} value={n} to="/notices-company-list?status=failed" bad />
+          <Row key={reason} label={REASONS[reason] ?? reason} value={n} to={`/notices-company-list?status=failed&reason=${encodeURIComponent(reason)}`} bad />
         ))}
         <Row label="New notices captured today" value={h.new_today} to={noticesListHref({ filter: 'new' })} />
         <Row label="Closed automatically today (reviewable)" value={h.auto_closed_today} to={noticesListHref({ filter: 'auto_closed' })} />

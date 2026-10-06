@@ -28,7 +28,7 @@ import { useExtensionBridge } from '@/hooks/useExtensionBridge';
 import { AsOfLine, FilterChips, FilterTile, type Chip } from '@/components/notices/reports/ReportBits';
 import { Drc03Table, type Drc03Sort } from '@/components/notices/reports/Drc03Table';
 import { periodText, useDrc03Ledger, type Drc03Row, type NoticeRef } from '@/components/notices/reports/ledgerData';
-import { DRC03_GROUPS, DRC03_SHOW, drc03ShowLabel, matchesDrc03Show, parseDrc03Show, type Drc03Show } from '@/components/notices/reports/ledgerStatus';
+import { DRC03_GROUPS, DRC03_SHOW, drc03ShowLabel, matchesDrc03Show, parseDrc03Show } from '@/components/notices/reports/ledgerStatus';
 import { downloadZip } from '@/components/notices/reports/zip';
 import { linkPayment } from '@/lib/noticeWorkspace';
 import { istToday } from '@/lib/noticeFacts';

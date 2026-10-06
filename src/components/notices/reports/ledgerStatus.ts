@@ -37,7 +37,8 @@ export interface FolderSignals {
   scn: { date: string | null; due: string | null } | null;
   replied: string | null;
   provisional: string | null;
-  order: { date: string | null; rejected: boolean } | null;
+  /** The latest RFD-06; "ambiguous" when its title names both sanction and rejection. */
+  order: { date: string | null; rejected: boolean; ambiguous: boolean } | null;
   paid: string | null;
 }
 
@@ -85,8 +86,9 @@ export function folderSignals(items: FolderItemLite[]): FolderSignals {
     if (/RFD-?04|PROVISIONAL/.test(kind)) { out.provisional = later(out.provisional, date ?? UNKNOWN); return; }
     if (sanc || sec.startsWith('ORD') || /RFD-?06/.test(kind)) {
       // As the closing sweep reads it (has_rejection); a combined "Sanction/Rejection" title says neither.
-      const rejected = /REJECT/.test(kind) && !/SANCTION\s*\/\s*REJECT/.test(kind);
-      if (!out.order || (date && (!out.order.date || date > out.order.date))) out.order = { date, rejected };
+      const ambiguous = /SANCTION\s*\/\s*REJECT/.test(kind);
+      const rejected = /REJECT/.test(kind) && !ambiguous;
+      if (!out.order || (date && (!out.order.date || date > out.order.date))) out.order = { date, rejected, ambiguous };
       return;
     }
     if (/RFD-?08|SHOW CAUSE|REJECTION OF APPLICATION/.test(kind)) {
@@ -246,10 +248,14 @@ export function refundState(r: RefundInput, f: FolderSignals | undefined, linked
     }
     return { ...none, group: 'process', open: true, label: 'Details not fetched', tone: 'warning', next: 'Fetch the application and its folder', due: null, basis: null, noDetails: true };
   }
+  // No amounts on a case, so as the closing sweep holds (positions §3): paid only on a payment
+  // advice with no rejection on file; a rejection, or an order that may be one, has an appeal clock.
+  if (f.order && (f.order.rejected || f.order.ambiguous)) {
+    return appeal(`${f.order.rejected ? 'Rejected' : 'Order'} (RFD-06) · from the case folder`, known(f.order.date), null);
+  }
   if (f.paid) return { ...none, group: 'paid', open: false, label: 'Paid (RFD-05) · from the case folder', tone: 'success', next: null, due: null, basis: null };
   if (f.order) {
-    return f.order.rejected ? appeal('Rejected (RFD-06) · from the case folder', known(f.order.date), null)
-      : { ...none, group: 'paid', open: false, label: 'Sanctioned (RFD-06) · from the case folder', tone: 'success', next: null, due: null, basis: null };
+    return { ...none, group: 'process', open: true, label: 'Sanctioned (RFD-06) · from the case folder', tone: 'info', next: 'Await the payment advice (RFD-05)', due: null, basis: null };
   }
   const st = f.scn && !answered ? 'rfd-08' : replied ? 'rfd-09' : f.provisional ? 'rfd-04' : f.deficiency ? 'rfd-03' : f.ack ? 'acknowledged' : 'filed';
   const label = `${FOLDER_LABELS.find(([re]) => re.test(st))?.[1] ?? 'Application filed'} · from the case folder`;
@@ -295,7 +301,7 @@ export interface Drc03State { group: Drc03Group; label: string; tone: Tone }
 /** A DRC-03 is a payment already made: "pending" waits on the officer's DRC-04, not on the firm (L-37). */
 export function drc03State(origin: string | null, status: string | null, caseOpen: boolean | null): Drc03State {
   if (origin === 'case') {
-    return caseOpen === false ? { group: 'acknowledged', label: 'Case closed', tone: 'secondary' } : { group: 'nodetails', label: 'Details not fetched', tone: 'warning' };
+    return caseOpen === false ? { group: 'nodetails', label: 'Case closed · details not fetched', tone: 'secondary' } : { group: 'nodetails', label: 'Details not fetched', tone: 'warning' };
   }
   const s = (status || '').toLowerCase();
   if (/acknowledg/.test(s)) return { group: 'acknowledged', label: 'Acknowledged (DRC-04)', tone: 'success' };

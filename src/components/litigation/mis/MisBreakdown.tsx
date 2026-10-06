@@ -31,21 +31,22 @@ export const MisBreakdown: React.FC<{ r: MisReport; links: MisLinks; by: Breakdo
   const description = by === 'forum' ? 'Where each open dispute sits, from notice to recovery'
     : by === 'stage' ? 'Open matters in pipeline order'
     : 'Open matters by lifecycle, largest outstanding first';
+  const switcher = (
+    <div role="group" aria-label="Break down by" className={cn(WS_TABS_LIST, 'p-0.5')}>
+      {BREAKDOWNS.map((b) => (
+        <Link key={b.key} to={links.tab('breakdown', { by: b.key === 'forum' ? undefined : b.key })} aria-current={b.key === by ? 'true' : undefined}
+          className={cn(WS_TAB, 'h-7 px-3 text-xs', b.key === by && WS_TAB_ACTIVE)}>
+          {b.label}
+        </Link>
+      ))}
+    </div>
+  );
   return (
     <SectionCard
       title={title}
       description={<>{description} · ₹ outstanding and number of matters</>}
-      actions={
-        <div role="group" aria-label="Break down by" className={cn(WS_TABS_LIST, 'p-0.5')}>
-          {BREAKDOWNS.map((b) => (
-            <Link key={b.key} to={links.tab('breakdown', { by: b.key === 'forum' ? undefined : b.key })} aria-current={b.key === by ? 'true' : undefined}
-              className={cn(WS_TAB, 'h-7 px-3 text-xs', b.key === by && WS_TAB_ACTIVE)}>
-              {b.label}
-            </Link>
-          ))}
-        </div>
-      }
     >
+      {switcher}
       {r.open.length === 0 ? <EmptyBox>No open matter to break down.</EmptyBox> : (
         <>
           <BarList rows={buckets.map((b) => ({ key: b.key, label: b.label, tone: b.tone, amount: b.money.outstanding, count: b.rows.length, to: countHref(b) }))} />
@@ -59,9 +60,9 @@ export const MisBreakdown: React.FC<{ r: MisReport; links: MisLinks; by: Breakdo
           />
           {by === 'forum' && (
             <Note tone="info">
-              Forum is read from each matter's lifecycle and stage until matters carry a forum of their own: a recovery or
-              tribunal lifecycle first, then an appeal (lifecycle or stage), then the Order stage; everything earlier is at
-              notice and reply. Proposed = outstanding at notice and reply; confirmed = the rest.
+              The forum is the one recorded on the matter (adjudicating officer, Appellate Authority, GSTAT, High Court or Supreme
+              Court), else read from its lifecycle; before the adjudicating officer it is split at the order, and recovery is shown
+              apart. Proposed = outstanding before any order; confirmed = the rest.
             </Note>
           )}
           {by === 'lifecycle' && (

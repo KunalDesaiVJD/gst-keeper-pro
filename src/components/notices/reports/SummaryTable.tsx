@@ -65,7 +65,11 @@ export const SummaryTable: React.FC<{
     { key: 'total', label: 'Total', node: (r, c) => count(r, c.total, { filter: 'all' }, 'all notices') },
   ];
   const firstHead = tab === 'stage' ? 'Stage' : tab === 'fy' ? 'Financial year' : 'Category';
-  const label = (r: SummaryRow) => (tab === 'stage' ? <StageBadge stage={r.key} /> : <span className="font-medium">{r.label}</span>);
+  // Refund and DRC-03 cases are notices here; their applications and payments are counted under the table.
+  const CASES: Record<string, string> = { Refunds: 'portal cases', 'Voluntary Payment': 'DRC-03 cases' };
+  const label = (r: SummaryRow) => (tab === 'stage' ? <StageBadge stage={r.key} /> : (
+    <span className="font-medium">{r.label}{tab === 'category' && CASES[r.key] && <span className="ml-1 text-xs font-normal text-muted-foreground">· {CASES[r.key]}</span>}</span>
+  ));
   const untracked = showUntracked ? WATCHED.filter((w) => !rows.some((r) => r.key === w)) : [];
   const unselectable = rows.some((r) => !r.param);
 

@@ -86,7 +86,7 @@ function hearingRows(r: MisReport): Cell[][] {
   return [
     ['Date', 'Time (IST)', 'Days away', 'Matter no', 'Matter', 'Client', 'Purpose', 'Mode', 'Venue', 'Before', 'Stage', 'Owner', 'Outstanding', 'Refund at stake'],
     ...[...r.hearings.next14, ...r.hearings.later].map(({ hearing: h, matter: m }) => [fmtDate(h.on), h.time ?? '', h.days, m.matterNo, m.title, m.clientName,
-      h.noticeId ? `${h.label} (linked notice)` : HEARING_PURPOSE[m.forum], h.mode ?? '', h.venue ?? '', h.officer ?? '', stageLabel(m.stage), m.ownerName ?? 'Unassigned',
+      h.noticeId ? `${h.label} on linked notice${h.reference ? ` ${h.reference}` : ''}` : HEARING_PURPOSE[m.forum], h.mode ?? '', h.venue ?? '', h.officer ?? '', stageLabel(m.stage), m.ownerName ?? 'Unassigned',
       m.recorded && !m.isRefund ? r0(m.outstanding) : '', m.isRefund ? r0(m.refundAtStake) : '']),
   ];
 }

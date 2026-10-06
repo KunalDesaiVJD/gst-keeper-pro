@@ -103,12 +103,12 @@ export interface BarRow { key: string; label: React.ReactNode; tone: Tone; amoun
 /** Horizontal bars of an amount, the whole row a link to the list it counts (U-102-1: sized by rupees, not by count). */
 export const BarList: React.FC<{ rows: BarRow[]; noun?: string; className?: string }> = ({ rows, noun = 'matters', className }) => {
   const max = Math.max(1, ...rows.map((r) => r.amount));
+  const row = 'grid grid-cols-[minmax(6rem,9rem)_minmax(0,1fr)_auto] items-center gap-2 rounded px-1 py-1 text-xs';
   return (
     <ul className={cn('space-y-1', className)}>
-      {rows.map((r) => (
-        <li key={r.key}>
-          <Link to={r.to}
-            className="grid grid-cols-[minmax(6rem,9rem)_minmax(0,1fr)_auto] items-center gap-2 rounded px-1 py-1 text-xs hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      {rows.map((r) => {
+        const body = (
+          <>
             <span className="truncate">{r.label}</span>
             <span className="h-2 rounded-full bg-muted" aria-hidden>
               {r.amount > 0 && <span className={cn('block h-2 rounded-full', r.barClass ?? BAR_TONE[r.tone])} style={{ width: `${Math.max(2, (r.amount / max) * 100)}%` }} />}
@@ -117,9 +117,16 @@ export const BarList: React.FC<{ rows: BarRow[]; noun?: string; className?: stri
               <span className="font-semibold">{fmtInrShort(r.amount)}</span>
               <span className="text-muted-foreground"> · {r.count.toLocaleString('en-IN')}<span className="sr-only"> {noun}</span></span>
             </span>
-          </Link>
-        </li>
-      ))}
+          </>
+        );
+        return (
+          <li key={r.key}>
+            {r.count > 0
+              ? <Link to={r.to} className={cn(row, 'hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring')}>{body}</Link>
+              : <div className={row}>{body}</div>}
+          </li>
+        );
+      })}
     </ul>
   );
 };

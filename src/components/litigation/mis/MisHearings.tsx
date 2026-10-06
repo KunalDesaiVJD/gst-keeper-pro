@@ -1,9 +1,10 @@
 // Litigation MIS · Hearings (audit U-106-1..3): every upcoming hearing on an
-// open matter, read from matter_hearings (not one date per matter) with the
-// date and time in IST, mode, venue and officer, what the hearing is for, the
-// client opening its matters, "—" where no amount was typed, and day chips
-// counted in IST calendar days. The firm-wide list of notice and matter
-// hearings is the module's Hearings page; this one is the matters' share.
+// open matter — the Matters list's hearing clocks, i.e. matter_hearings rows
+// (not one date per matter) plus hearing dates on linked notices — with the
+// date and time in IST, mode, venue, officer and who attends, what the hearing
+// is for, the client opening its matters, "—" where no amount was typed, and
+// day chips in IST calendar days. The firm-wide list of notice and matter
+// hearings is the module's Hearings page; this is the matters' share.
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { CalendarPlus } from 'lucide-react';
@@ -23,7 +24,8 @@ const where = (h: HearingItem['hearing']) => [h.mode, h.venue, h.officer].filter
 const going = (h: HearingItem['hearing']) => (h.attendees.length ? `Attending: ${h.attendees.join(', ')}` : '');
 
 // A hearing date taken from a linked notice says so; a matter's own hearing is named by its forum.
-const purpose = ({ hearing: h, matter: m }: HearingItem) => (h.noticeId ? `${h.label} (linked notice)` : HEARING_PURPOSE[m.forum]);
+const purpose = ({ hearing: h, matter: m }: HearingItem) =>
+  (h.noticeId ? `${h.label} on linked notice${h.reference ? ` ${h.reference}` : ''}` : HEARING_PURPOSE[m.forum]);
 
 /** All-day calendar entries (the shared .ics helper is date-only), the time in the title. */
 const exportIcs = (rows: HearingItem[]) => downloadIcs(rows.map((it) => ({
@@ -32,6 +34,7 @@ const exportIcs = (rows: HearingItem[]) => downloadIcs(rows.map((it) => ({
   title: `${it.hearing.time ? `${it.hearing.time} IST ` : ''}hearing — ${it.matter.clientName} · ${it.matter.matterNo}`,
   description: [it.matter.title, purpose(it), where(it.hearing), going(it.hearing), it.hearing.notes].filter(Boolean).join('\n'),
 })), 'matter-hearings', 'GST Keeper matter hearings');
+
 const year = (on: string) => on.slice(0, 4);
 
 const When: React.FC<{ h: HearingItem['hearing'] }> = ({ h }) => (
@@ -41,27 +44,56 @@ const When: React.FC<{ h: HearingItem['hearing'] }> = ({ h }) => (
   </span>
 );
 
+const HearingCard: React.FC<{ it: HearingItem; links: MisLinks }> = ({ it, links }) => {
+  const { hearing: h, matter: m } = it;
+  return (
+    <li className="rounded-lg border bg-card p-3 text-sm">
+      <div className="flex items-start justify-between gap-2">
+        <When h={h} />
+        <Badge variant="secondary" className="text-[10px]">{purpose(it)}</Badge>
+      </div>
+      <MatterLink m={m} className="mt-1.5" />
+      <Link to={links.matters({ client: m.clientId })} className="block truncate text-xs text-muted-foreground hover:underline">{m.clientName}</Link>
+      <p className="mt-1 break-words text-xs">{where(h)}</p>
+      {going(h) && <p className="break-words text-xs">{going(h)}</p>}
+      {h.notes && <p className="break-words text-xs text-muted-foreground">{h.notes}</p>}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <StageBadge stage={m.stage} />
+        <MatterAmount m={m} className="text-xs" />
+        <OwnerChip name={m.ownerName} showName className="ml-auto" />
+      </div>
+    </li>
+  );
+};
+
+const HearingRow: React.FC<{ it: HearingItem; links: MisLinks }> = ({ it, links }) => {
+  const { hearing: h, matter: m } = it;
+  return (
+    <tr className={WS_TR}>
+      <td className={WS_TD}><When h={h} /></td>
+      <td className={cn(WS_TD, 'min-w-[13rem]')}><MatterLink m={m} /></td>
+      <td className={cn(WS_TD, 'max-w-[12rem]')}>
+        <Link to={links.matters({ client: m.clientId })} className="block truncate hover:underline">{m.clientName}</Link>
+      </td>
+      <td className={cn(WS_TD, 'text-xs')}>
+        {h.noticeId ? <Link to={`/notices/${h.noticeId}?tab=hearings`} className="underline underline-offset-2">{purpose(it)}</Link> : purpose(it)}
+      </td>
+      <td className={cn(WS_TD, 'min-w-[12rem] text-xs')}>
+        {where(h)}
+        {going(h) && <div>{going(h)}</div>}
+        {h.notes && <div className="text-muted-foreground">{h.notes}</div>}
+      </td>
+      <td className={cn(WS_TD, 'whitespace-nowrap')}><StageBadge stage={m.stage} /></td>
+      <td className={cn(WS_TD, 'whitespace-nowrap')}><OwnerChip name={m.ownerName} showName /></td>
+      <td className={WS_TD_NUM}><MatterAmount m={m} /></td>
+    </tr>
+  );
+};
+
 const HearingList: React.FC<{ rows: HearingItem[]; links: MisLinks; caption: string }> = ({ rows, links, caption }) => (
   <>
     <ul className="space-y-2 md:hidden">
-      {rows.map((it) => { const { hearing: h, matter: m } = it; return (
-        <li key={h.key} className="rounded-lg border bg-card p-3 text-sm">
-          <div className="flex items-start justify-between gap-2">
-            <When h={h} />
-            <Badge variant="secondary" className="text-[10px]">{purpose(it)}</Badge>
-          </div>
-          <MatterLink m={m} className="mt-1.5" />
-          <Link to={links.matters({ client: m.clientId })} className="block truncate text-xs text-muted-foreground hover:underline">{m.clientName}</Link>
-          <p className="mt-1 break-words text-xs">{where(h)}</p>
-          {going(h) && <p className="break-words text-xs">{going(h)}</p>}
-          {h.notes && <p className="break-words text-xs text-muted-foreground">{h.notes}</p>}
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <StageBadge stage={m.stage} />
-            <MatterAmount m={m} className="text-xs" />
-            <OwnerChip name={m.ownerName} showName className="ml-auto" />
-          </div>
-        </li>
-      ); })}
+      {rows.map((it) => <HearingCard key={it.hearing.key} it={it} links={links} />)}
     </ul>
     <div className={cn(WS_TABLE_WRAP, 'hidden md:block')}>
       <table className={WS_TABLE}>
@@ -79,26 +111,7 @@ const HearingList: React.FC<{ rows: HearingItem[]; links: MisLinks; caption: str
           </tr>
         </thead>
         <tbody>
-          {rows.map((it) => { const { hearing: h, matter: m } = it; return (
-            <tr key={h.key} className={WS_TR}>
-              <td className={WS_TD}><When h={h} /></td>
-              <td className={cn(WS_TD, 'min-w-[13rem]')}><MatterLink m={m} /></td>
-              <td className={cn(WS_TD, 'max-w-[12rem]')}>
-                <Link to={links.matters({ client: m.clientId })} className="block truncate hover:underline">{m.clientName}</Link>
-              </td>
-              <td className={cn(WS_TD, 'text-xs')}>
-                {h.noticeId ? <Link to={`/notices/${h.noticeId}?tab=hearings`} className="underline underline-offset-2">{purpose(it)}</Link> : purpose(it)}
-              </td>
-              <td className={cn(WS_TD, 'min-w-[12rem] text-xs')}>
-                {where(h)}
-                {going(h) && <div>{going(h)}</div>}
-                {h.notes && <div className="text-muted-foreground">{h.notes}</div>}
-              </td>
-              <td className={cn(WS_TD, 'whitespace-nowrap')}><StageBadge stage={m.stage} /></td>
-              <td className={cn(WS_TD, 'whitespace-nowrap')}><OwnerChip name={m.ownerName} showName /></td>
-              <td className={WS_TD_NUM}><MatterAmount m={m} /></td>
-            </tr>
-          ); })}
+          {rows.map((it) => <HearingRow key={it.hearing.key} it={it} links={links} />)}
         </tbody>
       </table>
     </div>

@@ -275,7 +275,7 @@ const CompanyProfilePage: React.FC = () => {
             {total === 0 ? (
               <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
                 No {filterDef(show).label.toLowerCase()} notices{cat ? ` in ${cat}` : ''}.{' '}
-                {(show !== 'all' || cat) && <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={() => set({ show: 'all', cat: null })}>Show every notice</button>}
+                {(show !== 'all' || cat) && <button type="button" className="text-primary underline underline-offset-2" onClick={() => set({ show: 'all', cat: null })}>Show every notice</button>}
               </p>
             ) : (
               <>

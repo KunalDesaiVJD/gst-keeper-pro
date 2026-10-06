@@ -764,3 +764,11 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+-- ── An appeal filed (APL-01) is not the appellate order (APL-04) ──────────
+-- The APL-04 rule's "appellate authority" wording also caught "Appeal to
+-- Appellate Authority (APL-01)" case rows; a rule ordered before it reads them.
+INSERT INTO public.notice_form_rules (form_code, match_order, pattern, label, category, default_priority, is_active)
+VALUES ('APL-01', 14, 'apl[- ]?0?1\M|appeal to (the )?appellate authority',
+        'Appeal filed before the appellate authority (APL-01)', 'Appeal', 'High', true)
+ON CONFLICT (form_code) DO NOTHING;
