@@ -16,7 +16,9 @@
 --   / appeal_s112_condonation
 --   attachment_expiry        DRC-22 provisional attachment lapses after one year
 -- Periods come from litigation_rules (keys appeal_months.*, appeal_condonation.*,
--- drc22_validity.s83). Each row carries its basis, the date it runs from, the
+-- drc22_validity.s83). An appeal or attachment clock is kept until 30 days after
+-- its last possible day (so a just-missed window still shows), then dropped:
+-- orders from years ago carry no live clock. Each row carries its basis, the date it runs from, the
 -- rule key and whether the firm has confirmed that period (litigation_rules
 -- .confirmed_at). A date a person overrides (source = 'override') is never
 -- replaced; computed_date keeps showing what the rule says beside it.
@@ -86,7 +88,13 @@ BEGIN
            (g.extended_due_date IS NOT NULL OR g.due_date IS NOT NULL OR r.confirmed_at IS NOT NULL) AS due_confirmed,
            CASE WHEN g.order_date IS NOT NULL THEN g.order_date
                 WHEN r.appeal_section IS NOT NULL THEN g.issue_date END AS order_base,
-           CASE WHEN r.appeal_section = 's112' THEN 's112' ELSE 's107' END AS appeal_sec
+           CASE WHEN r.appeal_section = 's112' THEN 's112' ELSE 's107' END AS appeal_sec,
+           -- The last day an appeal can still be filed (with condonation).
+           public.litigation_rule_add(
+             public.litigation_rule_add(
+               CASE WHEN g.order_date IS NOT NULL THEN g.order_date WHEN r.appeal_section IS NOT NULL THEN g.issue_date END,
+               'appeal_months.' || CASE WHEN r.appeal_section = 's112' THEN 's112' ELSE 's107' END),
+             'appeal_condonation.' || CASE WHEN r.appeal_section = 's112' THEN 's112' ELSE 's107' END) AS appeal_outer
       FROM public.gst_notices g
       LEFT JOIN public.notice_form_rules r ON r.form_code = g.form_code AND r.is_active
      WHERE g.deleted_at IS NULL AND g.source = 'notices'
@@ -107,7 +115,7 @@ BEGIN
            coalesce(lr.note, 'Appeal period') || ', from the order dated ' || to_char(n.order_base, 'DD Mon YYYY'),
            n.order_base, lr.key, lr.confirmed_at IS NOT NULL, false, NULL
       FROM n JOIN public.litigation_rules lr ON lr.key = 'appeal_months.' || n.appeal_sec
-     WHERE n.order_base IS NOT NULL
+     WHERE n.order_base IS NOT NULL AND n.appeal_outer >= public.ist_today() - 30
     UNION ALL
     SELECT n.id, n.client_id, 'appeal_' || n.appeal_sec || '_condonation',
            public.litigation_rule_add(public.litigation_rule_add(n.order_base, 'appeal_months.' || n.appeal_sec),
@@ -116,7 +124,7 @@ BEGIN
              || to_char(n.order_base, 'DD Mon YYYY'),
            n.order_base, lr.key, lr.confirmed_at IS NOT NULL, false, NULL
       FROM n JOIN public.litigation_rules lr ON lr.key = 'appeal_condonation.' || n.appeal_sec
-     WHERE n.order_base IS NOT NULL
+     WHERE n.order_base IS NOT NULL AND n.appeal_outer >= public.ist_today() - 30
     UNION ALL
     SELECT n.id, n.client_id, 'attachment_expiry',
            public.litigation_rule_add(n.issue_date, 'drc22_validity.s83'),
@@ -125,6 +133,7 @@ BEGIN
            n.issue_date, lr.key, lr.confirmed_at IS NOT NULL, false, NULL
       FROM n JOIN public.litigation_rules lr ON lr.key = 'drc22_validity.s83'
      WHERE n.form_code = 'DRC-22' AND n.issue_date IS NOT NULL
+       AND public.litigation_rule_add(n.issue_date, 'drc22_validity.s83') >= public.ist_today() - 30
   ),
   written AS (
     INSERT INTO public.matter_deadlines AS m

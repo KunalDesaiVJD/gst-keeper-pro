@@ -34,3 +34,5 @@
 20261006113000_sync_run_ledger.sql
 20261006114000_notice_clocks.sql
 20261006115000_notice_alerts_engine.sql
+20261006116000_notice_form_rules_portal_wording.sql
+20261006117000_notice_alerts_engine_fast.sql
