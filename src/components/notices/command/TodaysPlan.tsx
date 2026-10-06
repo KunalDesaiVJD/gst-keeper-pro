@@ -19,7 +19,7 @@ import type { NoticePlanRow } from '@/lib/noticeFacts';
 import { queueHref, type QueueTab } from '@/lib/noticeQueries';
 import { nextActionDef } from '@/lib/noticeStages';
 import { fmtDay, fmtInrShort, noticeTitle, sentenceCase } from '@/lib/noticeFormat';
-import { assignOwner, emailDocumentRequests } from '@/lib/noticeWorkspace';
+import { assignOwner, docEmailOutcome, emailDocumentRequests } from '@/lib/noticeWorkspace';
 import { AssignPopover } from '../AssignPopover';
 import { OwnerChip } from '../OwnerChip';
 import { StageBadge } from '../StageBadge';
@@ -99,9 +99,9 @@ export const NextActionButton: React.FC<{ row: NoticePlanRow; onChanged: () => v
         setBusy(true);
         try {
           const r = await emailDocumentRequests(row.id!, user, true);
-          if (r.sent) toast.success(r.mode === 'live' ? `Reminder e-mailed to ${r.to}.` : `Reminder written to the outbox as a preview (${r.mode}).`);
-          else if (r.reason === 'no_client_email') { toast.warning('The client has no e-mail on file — add it in Edit Client.'); open(); }
-          else toast.info('Nothing to chase: every request is in.');
+          const o = docEmailOutcome(r, 'reminder');
+          toast[o.tone](o.text);
+          if (r.reason === 'no_client_email') open();
           onChanged();
         } catch (e) { toast.error(`Couldn't send the reminder: ${e instanceof Error ? e.message : String(e)}`); }
         finally { setBusy(false); }

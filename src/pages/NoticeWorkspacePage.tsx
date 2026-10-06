@@ -22,7 +22,7 @@ import { TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepT
 import { WS_BTN, WS_PAGE } from '@/components/workspace/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { useExtensionBridge } from '@/hooks/useExtensionBridge';
-import { loadWorkspace, NoticeNotFound, assignOwner, setPriority, setStage, emailDocumentRequests, type Workspace } from '@/lib/noticeWorkspace';
+import { loadWorkspace, NoticeNotFound, assignOwner, setPriority, setStage, docEmailOutcome, emailDocumentRequests, type Workspace } from '@/lib/noticeWorkspace';
 import { nextActionDef, type StageKey, type WorkspaceTab } from '@/lib/noticeStages';
 import { closeReasonText, dueWords, fmtDate, fmtDateTime, fmtInrShort, noticeTitle, sentenceCase } from '@/lib/noticeFormat';
 import { AssignPopover } from '@/components/notices/AssignPopover';
@@ -182,9 +182,8 @@ const NoticeWorkspacePage: React.FC = () => {
     if (!user) return;
     setBusy(true);
     try {
-      const r = await emailDocumentRequests(n.id, user, true);
-      if (r.sent) toast.success(r.mode === 'live' ? `Reminder e-mailed to ${r.to}.` : `Reminder written to the outbox as a preview (${r.mode}).`);
-      else toast.warning(r.reason === 'no_client_email' ? 'The client has no e-mail on file — add it in Edit Client.' : 'Nothing open to remind about.');
+      const o = docEmailOutcome(await emailDocumentRequests(n.id, user, true), 'reminder');
+      toast[o.tone](o.text);
       reload();
     } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }

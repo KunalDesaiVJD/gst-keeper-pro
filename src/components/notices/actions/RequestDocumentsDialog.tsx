@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Note } from '@/components/gstr9/ui';
 import { useAuth } from '@/contexts/AuthContext';
-import { emailDocumentRequests, requestDocuments } from '@/lib/noticeWorkspace';
+import { docEmailOutcome, emailDocumentRequests, requestDocuments } from '@/lib/noticeWorkspace';
 import { addDays, istToday } from '@/lib/noticeFacts';
 import { noticeTitle } from '@/lib/noticeFormat';
 import type { NoticeRef } from './NoticeContext';
@@ -57,9 +57,8 @@ export const RequestDocumentsDialog: React.FC<{
     try {
       await requestDocuments(notice.id, items, due || null, user);
       if (email && clientEmail) {
-        const r = await emailDocumentRequests(notice.id, user);
-        if (r.sent) toast.success(r.mode === 'live' ? `Request e-mailed to ${r.to}.` : `Request written to the e-mail outbox as a preview (alerts are in ${r.mode} mode).`);
-        else toast.warning(r.reason === 'no_client_email' ? 'Saved, but the client has no e-mail address on file.' : 'Saved; the e-mail was not sent.');
+        const o = docEmailOutcome(await emailDocumentRequests(notice.id, user), 'request');
+        toast[o.tone](o.text);
       } else toast.success(`${items.length} document${items.length === 1 ? '' : 's'} requested.`);
       onOpenChange(false);
       onDone();

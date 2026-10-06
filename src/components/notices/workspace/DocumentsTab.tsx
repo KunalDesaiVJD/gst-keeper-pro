@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  documentUrl, emailDocumentRequests, resolveRequest, uploadDocument, type FolderItem, type Workspace,
+  docEmailOutcome, documentUrl, emailDocumentRequests, resolveRequest, uploadDocument, type FolderItem, type Workspace,
 } from '@/lib/noticeWorkspace';
 import { fmtDate, fmtDateTime } from '@/lib/noticeFormat';
 
@@ -106,9 +106,8 @@ export const DocumentsTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged
     if (!user) return;
     setBusy('remind');
     try {
-      const r = await emailDocumentRequests(n.id, user, true);
-      if (r.sent) toast.success(r.mode === 'live' ? `Reminder e-mailed to ${r.to}.` : `Reminder written to the outbox as a preview (${r.mode}).`);
-      else toast.warning(r.reason === 'no_client_email' ? 'The client has no e-mail on file — add it in Edit Client.' : 'Nothing open to remind about.');
+      const o = docEmailOutcome(await emailDocumentRequests(n.id, user, true), 'reminder');
+      toast[o.tone](o.text);
       onChanged();
     } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(null); }

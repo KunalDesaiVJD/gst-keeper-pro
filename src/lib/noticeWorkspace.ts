@@ -240,6 +240,23 @@ export async function emailDocumentRequests(noticeId: string, actor: NoticeActor
   return (data ?? { sent: false }) as unknown as DocEmailResult;
 }
 
+/** What happened to a client e-mail, as one line for a toast (the same wording everywhere). */
+export function docEmailOutcome(r: DocEmailResult, what: 'request' | 'reminder'): { tone: 'success' | 'warning' | 'info'; text: string } {
+  const noun = what === 'request' ? 'Request' : 'Reminder';
+  if (r.sent) {
+    return r.mode === 'live'
+      ? { tone: 'success', text: `${noun} e-mailed to ${r.to}.` }
+      : { tone: 'success', text: `${noun} written to the outbox as a preview; nothing was sent.` };
+  }
+  if (r.reason === 'no_client_email') return { tone: 'warning', text: 'The client has no e-mail on file — add it in Edit Client.' };
+  if (r.reason === 'nothing_open') return { tone: 'info', text: 'Nothing to chase: every request is in.' };
+  // Notice e-mails switched off (the mode, or the client-documents rule): nothing is written.
+  return {
+    tone: 'info',
+    text: `Not e-mailed: e-mails to clients are switched off. ${what === 'request' ? 'The request is saved on the notice.' : 'The open requests stay on the notice.'}`,
+  };
+}
+
 // ── Payments ───────────────────────────────────────────────────────────────
 export async function linkPayment(noticeId: string, p: { kind: 'drc03' | 'pre_deposit' | 'other'; drc03_arn?: string | null; amount: number; paid_on: string | null; note?: string | null }, actor: NoticeActor) {
   const { error } = await supabase.from('notice_payments').insert({ ...p, notice_id: noticeId, created_by_name: actor.firstName ?? null });

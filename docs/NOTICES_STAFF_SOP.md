@@ -104,17 +104,24 @@ The sweep never touches a notice you have already moved.
 - The **Deadlines** tab is written automatically. A date you override stays yours;
   the computed date is shown beside it.
 
-## E-mail alerts (preview first)
+## E-mail alerts (switched off until turned on one by one)
 
-- New notices to their owner (every 15 minutes, one e-mail per client), the 09:30
-  morning list of your deadlines, the managers' overdue and unassigned lists, and the
-  Monday MIS. Routine alerts (assigned to you, stage changes, replies, portal updates)
-  between 20:00 and 08:00 wait until 08:00; a new notice is sent straight away.
+- **Today (6 Oct 2026) notice e-mails are off**: the mode is **Off** and every rule is
+  switched off, so nothing is written or sent — to staff or to clients. "Ask client"
+  and "Remind client" still record the request on the notice and say "Not e-mailed".
+- **To turn them on one at a time** (a GST manager or the superadmin): Settings → GST
+  Reminders → Notice Alerts. Set the mode to **Preview** (alerts are written to the
+  Email outbox for review, never sent) or **Live** (sent), then switch on one rule,
+  check what it produces in the Email outbox, and only then switch on the next.
+  Only switched-on rules write anything, in either mode. The rules: new notices to
+  their owner (every 15 minutes, one e-mail per client), assigned to you, stage
+  changes, replies logged, portal updates on a case, the 09:30 morning list, the
+  managers' overdue and unassigned lists, the Monday MIS, sync problems, and the two
+  e-mails to clients (documents needed, status update).
+- Routine alerts (assigned to you, stage changes, replies, portal updates) between
+  20:00 and 08:00 wait until 08:00; a new notice is sent straight away.
 - Every alert has an **Open notice** button that lands on the notice's page; lists
   link each line to its notice.
-- They start in **preview**: Reminders → Email outbox shows each alert as it would be
-  sent, but nothing leaves. A GST manager or the superadmin switches to live
-  (Reminders → Notice alerts) once the previews look right.
 
 ## The bell
 
